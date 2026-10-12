@@ -472,10 +472,19 @@ func (g *GeminiSim) SetSummary(summary string) {
 // toward the double-press quit (AppContainer's 3 s window is not timed here);
 // any other key resets the count.
 func (g *GeminiSim) Receive(text string) {
+	if g.receiveLocked(text) {
+		_ = g.Clear()
+	}
+}
+
+// receiveLocked applies one keystroke under the lock and reports whether it
+// submitted /clear (or /new), which runs outside it: its hooks may type back
+// into this pane.
+func (g *GeminiSim) receiveLocked(text string) (clear bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.alive {
-		return
+		return false
 	}
 	switch text {
 	case "C-c":
@@ -484,14 +493,14 @@ func (g *GeminiSim) Receive(text string) {
 		if g.ccPresses >= 2 {
 			g.alive = false
 		}
-		return
+		return false
 	case "Escape":
-		return
+		return false
 	case "Enter":
 	default:
 		g.ccPresses = 0
 		g.buf.WriteString(text)
-		return
+		return false
 	}
 	g.ccPresses = 0
 	line := strings.TrimSpace(g.buf.String())
@@ -500,6 +509,8 @@ func (g *GeminiSim) Receive(text string) {
 	case "":
 	case "/quit", "/exit":
 		g.alive = false
+	case "/clear", "/new":
+		return true
 	case "/compress", "/compact", "/summarize":
 		g.compressions++
 		_ = g.appendLocked(map[string]any{
@@ -512,6 +523,7 @@ func (g *GeminiSim) Receive(text string) {
 		// prompt, like plain text.
 		g.writeUserTurnLocked(line)
 	}
+	return false
 }
 
 // FireHook delivers one Gemini-shaped hook payload to the production callback

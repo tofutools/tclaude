@@ -1642,3 +1642,22 @@ func TestRunHookCallback_TaskModeSuppressesNotifications(t *testing.T) {
 		assert.Equal(t, 1, calls, "a normal interactive SessionEnd must still notify (control)")
 	})
 }
+
+// After a clear, the title is restored with the harness's own in-pane rename,
+// and with nothing when it has none: Gemini sends an unknown slash line to the
+// model. A row naming no registered harness predates the column and is
+// Claude Code's.
+func TestClearedTitleRenameCommand(t *testing.T) {
+	for name, want := range map[string]string{
+		harness.DefaultName:  "/rename",
+		harness.CopilotName:  "/rename",
+		harness.PiName:       "/name",
+		harness.CodexName:    "",
+		harness.GeminiName:   "",
+		harness.OpenCodeName: "",
+		"":                   "/rename",
+		"unregistered":       "/rename",
+	} {
+		assert.Equal(t, want, clearedTitleRenameCommand(name), "harness %q", name)
+	}
+}

@@ -100,3 +100,17 @@ func TestGeminiHooks_ClearKeepsIdentityWithoutTypingRename(t *testing.T) {
 	}
 	assert.Empty(t, sim.UserTurns(), "the model was sent nothing")
 }
+
+// /clear typed into the pane rotates the session the same way; it is a
+// command, never a prompt.
+func TestGeminiHooks_TypedClearRotatesTheSession(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{"name": "gemini-worker", "trust_dir": true})
+	sim.Receive("/clear")
+	sim.Receive("Enter")
+	require.NotEqual(t, resp.ConvID, sim.ConvID)
+	require.NotNil(t, findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "crew", sim.ConvID))
+	assert.Empty(t, sim.UserTurns())
+}
