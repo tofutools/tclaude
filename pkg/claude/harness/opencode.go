@@ -22,6 +22,7 @@ func init() {
 		Life:                     openCodeLifecycle{},
 		TmuxScrollback:           true,
 		LaunchEnrollment:         true,
+		PresetSessionID:          PresetSessionIDManagedServer,
 		ServerAuthoritative:      true,
 		AwaitingInputObservation: true,
 

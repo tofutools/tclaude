@@ -599,42 +599,21 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// --session-id pins a fresh conversation id for a harness that accepts a
-	// preset one: Claude Code (`claude --session-id`), GitHub Copilot CLI
-	// (`copilot --session-id`) and Gemini CLI (`gemini --session-id`, which
-	// accepts any [A-Za-z0-9_-] id but tclaude only ever mints UUIDs), all of
-	// which want a UUID — Copilot creates a
-	// session for an unmatched value ONLY when it is a valid UUID, so a name or
-	// an id prefix would silently leave the pane on a different conversation
-	// than the one tclaude enrolled. It is mutually exclusive with --resume (a
-	// resume already has an id); Codex generates its own at first turn.
-	// Validate the shape here so a malformed id fails cleanly rather than at
-	// harness launch.
+	// --session-id pins a fresh conversation id for a harness that declares a
+	// preset shape (Harness.PresetSessionID): a UUID for Claude Code, Copilot
+	// CLI and Gemini CLI, an agentd-minted ses_ id for OpenCode. Codex
+	// generates its own at first turn and refuses one.
 	params.SessionID = strings.TrimSpace(params.SessionID)
-	if params.SessionID != "" {
-		if params.Resume != "" {
-			return fmt.Errorf("--session-id cannot be combined with --resume")
-		}
-		switch h.Name {
-		case harness.DefaultName, harness.CopilotName, harness.GeminiName, harness.ShellName:
-			if !clcommon.IsValidUUID(params.SessionID) {
-				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
-			}
-		case harness.OpenCodeName:
-			if !params.ManagedLaunch || !strings.HasPrefix(params.SessionID, "ses_") {
-				return fmt.Errorf("--session-id for OpenCode is an internal agentd-minted ses_ id")
-			}
-		default:
-			return fmt.Errorf("--session-id is not supported for the %q harness", h.Name)
-		}
+	if err := validatePresetSessionID(h, params.SessionID, params.Resume, params.ManagedLaunch); err != nil {
+		return err
 	}
-	// Gemini CLI has no hook installer in this build, so nothing would ever
-	// report the id it mints for itself, and the session row would stay
-	// conversation-less for good — unresumable and invisible to every
+	// A harness that declares MintFreshSessionID (Gemini CLI) would otherwise
+	// have nothing report the id it mints for itself, and the session row would
+	// stay conversation-less for good — unresumable and invisible to every
 	// conv-keyed surface. Its `--session-id` accepts a caller-chosen id, so a
 	// fresh launch that was not handed one gets one here and is known from
 	// the first moment, exactly like a launch-enrolled daemon spawn.
-	if h.Name == harness.GeminiName && params.SessionID == "" && params.Resume == "" {
+	if h.MintsFreshLaunchSessionID() && params.SessionID == "" && params.Resume == "" {
 		params.SessionID = convops.GenerateUUID()
 	}
 	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
@@ -3929,8 +3908,8 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 	if h.Name == harness.OpenCodeName && strings.HasPrefix(shortID, "ses_") {
 		return shortID, cwd, nil
 	}
-	// Gemini CLI: a FULL session UUID plus the caller's cwd is everything
-	// `gemini --resume <uuid>` needs — Gemini resolves the id itself, scoped to
+	// A harness with ResumeFullIDWithoutStore (Gemini CLI): a FULL session
+	// UUID plus the caller's cwd is everything `gemini --resume <uuid>` needs — Gemini resolves the id itself, scoped to
 	// the project of the process cwd, which is the cwd the pane is launched in.
 	// Managed relaunches always carry both (the recorded conv id and `-C` with
 	// the recorded cwd), so they must not depend on tclaude's own reading of
@@ -3938,7 +3917,7 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 	// rule and so cannot see a conversation whose first turn never landed,
 	// which Gemini will then report itself. The store is still consulted first
 	// when there is one, because it knows the conversation's real project.
-	if h.Name == harness.GeminiName && clcommon.IsValidUUID(shortID) {
+	if h.ResumesFullIDWithoutStore() && clcommon.IsValidUUID(shortID) {
 		if h.SupportsConvs() {
 			if ref, err := h.Convs.Resolve(shortID, cwd, true); err == nil && ref != nil {
 				return ref.ConvID, ref.ProjectPath, nil
@@ -3957,6 +3936,32 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 		return "", "", resumeNotFoundErr(shortID, global)
 	}
 	return ref.ConvID, ref.ProjectPath, nil
+}
+
+// validatePresetSessionID checks an explicit `--session-id` against the
+// harness's declared PresetSessionIDKind, so a malformed or unsupported id
+// fails cleanly rather than at harness launch. It is mutually exclusive with
+// --resume (a resume already has an id).
+func validatePresetSessionID(h *harness.Harness, sessionID, resume string, managedLaunch bool) error {
+	if sessionID == "" {
+		return nil
+	}
+	if resume != "" {
+		return fmt.Errorf("--session-id cannot be combined with --resume")
+	}
+	switch h.PresetSessionIDKind() {
+	case harness.PresetSessionIDUUID:
+		if !clcommon.IsValidUUID(sessionID) {
+			return fmt.Errorf("--session-id must be a valid UUID, got %q", sessionID)
+		}
+	case harness.PresetSessionIDManagedServer:
+		if !managedLaunch || !strings.HasPrefix(sessionID, "ses_") {
+			return fmt.Errorf("--session-id for %s is an internal agentd-minted ses_ id", h.DisplayName)
+		}
+	default:
+		return fmt.Errorf("--session-id is not supported for the %q harness", h.Name)
+	}
+	return nil
 }
 
 func resumeIDFromParam(h *harness.Harness, value string) string {

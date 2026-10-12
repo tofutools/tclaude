@@ -25,6 +25,7 @@ func init() {
 		TclaudeLayerMode:         ShellSandboxOff,
 		TmuxScrollback:           true,
 		LaunchEnrollment:         true,
+		PresetSessionID:          PresetSessionIDUUID,
 		CommandInput:             true,
 	})
 }
