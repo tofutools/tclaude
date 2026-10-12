@@ -117,7 +117,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "history_required", "moves and teleports require native conversation history")
 		return
 	}
-	if len(b.Manifest.Findings) > 0 && !in.AllowFlagged {
+	if flaggedCredentials(b.Manifest.Findings) && !in.AllowFlagged {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or share without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}

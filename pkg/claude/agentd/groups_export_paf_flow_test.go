@@ -302,3 +302,46 @@ func TestGroupImport_ConfigOnlyMemberKeepsItsHarness(t *testing.T) {
 	assert.Equal(t, "codex", row.Harness)
 	assert.Equal(t, "cody", row.CustomTitle)
 }
+
+// A group PAF export scans the group's messages and conversations: a
+// credential refuses the export unless allowed, the allowance is recorded in
+// privacy.json, and the import preview rescans on this node.
+func TestGroupExport_PAFScanRefusesUnlessAllowed(t *testing.T) {
+	f := newFlow(t)
+	const conv = "abababab-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "sam")
+	f.HaveAliveSession(conv, "lbl-s", "tmux-s", f.TestCwd("work"))
+	g := f.HaveGroup("vault")
+	f.HaveMemberWithRole("vault", conv, "lead")
+	_, err := db.InsertAgentMessage(&db.AgentMessage{GroupID: g.ID, FromConv: conv, ToConv: conv, Body: "deploy with ghp_abcdefghijklmnopqrstuvwxyz0123"})
+	require.NoError(t, err)
+
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet, "/v1/groups/vault/export?format=paf", nil))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "github-token")
+	assert.NotContains(t, rec.Body.String(), "ghp_abcdef", "findings never carry the matched text")
+	// The zip export is unchanged: it does not scan.
+	exportGroupAs(t, f, "vault", "zip")
+
+	archive := exportGroupAs(t, f, "vault", "paf&allow_flagged=true")
+	a, err := paf.Open(bytes.NewReader(archive), int64(len(archive)), paf.Options{Purpose: paf.PurposeImport})
+	require.NoError(t, err)
+	p := a.Privacy()
+	require.NotNil(t, p)
+	require.NotNil(t, p.Scan)
+	assert.True(t, p.Scan.Allowed)
+	require.NotEmpty(t, p.Scan.Findings)
+	assert.Equal(t, "github-token", p.Scan.Findings[0].Kind)
+
+	r = agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/groups/import/inspect?as=vault2", bytes.NewReader(archive)))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var insp struct {
+		Findings []paf.Finding `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &insp))
+	require.NotEmpty(t, insp.Findings)
+	assert.Equal(t, "github-token", insp.Findings[0].Kind)
+	assert.Contains(t, insp.Findings[0].Locations[0], "ext/tclaude/group-state.json")
+}

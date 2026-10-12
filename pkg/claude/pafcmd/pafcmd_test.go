@@ -272,3 +272,18 @@ func TestInspectAndRenderGroupExport(t *testing.T) {
 	require.NoError(t, runRender(&out, &renderParams{File: file}))
 	assert.Contains(t, out.String(), "hello from native history")
 }
+
+func TestInspectScanRescans(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	b := legacyBundle(t)
+	b.SetHistory("claude-jsonl", "conv-1", []byte(`{"type":"user","message":{"role":"user","content":"AKIAIOSFODNN7EXAMPLE"}}`+"\n"))
+	var buf bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(b, &buf, legacy.WriteOptions{Producer: producer()}))
+	file := writeFile(t, dir, "x.paf", buf.Bytes())
+	var out bytes.Buffer
+	require.NoError(t, runInspect(&out, &inspectParams{File: file, Scan: true}))
+	assert.Contains(t, out.String(), "Scan (this node):")
+	assert.Contains(t, out.String(), "aws-access-key: 1")
+	assert.NotContains(t, out.String(), "AKIAIOSFODNN7EXAMPLE")
+}

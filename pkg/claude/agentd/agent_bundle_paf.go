@@ -78,10 +78,13 @@ type pafHistoryParts struct {
 	NoNative bool
 	// NoContext leaves the neutral context out.
 	NoContext bool
+	// AllowedFindings records a human's explicit allowance of the scan
+	// findings in privacy.json.
+	AllowedFindings bool
 }
 
 func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts) (*os.File, error) {
-	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit()}
+	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings}
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
 	}

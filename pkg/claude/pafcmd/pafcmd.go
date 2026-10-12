@@ -27,6 +27,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/render"
 )
 
@@ -122,6 +123,7 @@ func runValidate(out io.Writer, p *validateParams) int {
 type inspectParams struct {
 	File string `descr:"PAF file or legacy agent bundle" positional:"true"`
 	JSON bool   `long:"json" help:"Print the summary as JSON."`
+	Scan bool   `long:"scan" help:"Also scan the whole content for suspected credentials on this node, rather than trusting the producer's recorded scan."`
 }
 
 func inspectCmd() *cobra.Command {
@@ -149,6 +151,13 @@ func runInspect(out io.Writer, p *inspectParams) error {
 	}
 	defer func() { _ = o.Close() }()
 	s := summarize(o)
+	if p.Scan {
+		findings, err := privacy.ScanArchive(o.Archive, harness.MaxHistoryRecordBytes)
+		if err != nil {
+			return err
+		}
+		s.Rescan = findings
+	}
 	if p.JSON {
 		writeJSON(out, s)
 		return nil
@@ -159,6 +168,14 @@ func runInspect(out io.Writer, p *inspectParams) error {
 	}
 	for _, f := range render.ArchiveFacts(s) {
 		fmt.Fprintf(out, "  %-19s %s\n", f[0]+":", termSafe(f[1]))
+	}
+	if p.Scan {
+		if len(s.Rescan) == 0 {
+			fmt.Fprintf(out, "  %-19s %s\n", "Scan (this node):", "no suspected credentials")
+		}
+		for _, f := range s.Rescan {
+			fmt.Fprintf(out, "  %-19s %s\n", "Scan (this node):", termSafe(render.FindingLine(f)))
+		}
 	}
 	for _, ag := range s.Agents {
 		fmt.Fprintf(out, "\nagent %s (%s)\n", termSafe(ag.Name), termSafe(ag.Key))

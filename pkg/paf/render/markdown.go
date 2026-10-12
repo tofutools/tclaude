@@ -334,3 +334,13 @@ func AgentFacts(ag AgentSummary) [][2]string { return agentFacts(ag) }
 
 // LossLine formats one recorded loss.
 func LossLine(l paf.LossItem) string { return lossLine(l) }
+
+// FindingLine describes a scan finding: its kind, count and first
+// locations, never the matched text.
+func FindingLine(f paf.Finding) string {
+	line := fmt.Sprintf("%s: %d", f.Kind, f.Count)
+	if len(f.Locations) > 0 {
+		line += " (" + strings.Join(f.Locations, ", ") + ")"
+	}
+	return line
+}

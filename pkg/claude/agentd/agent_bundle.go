@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -26,6 +25,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
@@ -321,81 +321,43 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 // Counts are grouped by kind with at most three locations each, including for
 // large tool-output transcripts. Suspected values never reach diagnostics.
 func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
-	byKind := map[string]*agentbundle.Finding{}
-	scan := func(text, location string) {
-		for kind, count := range configbundle.CredentialKinds(text) {
-			f := byKind[kind]
-			if f == nil {
-				f = &agentbundle.Finding{Kind: kind}
-				byKind[kind] = f
-			}
-			f.Count += count
-			if len(f.Locations) < 3 {
-				f.Locations = append(f.Locations, location)
-			}
-		}
-	}
-	var walk func(any, string)
-	walk = func(value any, location string) {
-		switch v := value.(type) {
-		case string:
-			scan(v, location)
-		case map[string]any:
-			keys := make([]string, 0, len(v))
-			for key := range v {
-				keys = append(keys, key)
-			}
-			slices.Sort(keys)
-			for _, key := range keys {
-				walk(v[key], location+"."+key)
-			}
-		case []any:
-			for i, child := range v {
-				walk(child, fmt.Sprintf("%s[%d]", location, i))
-			}
-		}
-	}
+	c := privacy.NewCollector()
 	raw, _ := json.Marshal(b.Manifest.Agent)
-	var definition any
-	_ = json.Unmarshal(raw, &definition)
-	walk(definition, "manifest.agent")
+	c.JSON(raw, "manifest.agent")
 	metadata, _ := json.Marshal(struct {
 		Placeholders []configbundle.Placeholder `json:"placeholders"`
 		CreatedAt    string                     `json:"created_at"`
 		Version      string                     `json:"tclaude_version"`
 		Warnings     []string                   `json:"warnings"`
 	}{b.Manifest.Placeholders, b.Manifest.CreatedAt, b.Manifest.TclaudeVersion, b.Manifest.Warnings})
-	var meta any
-	_ = json.Unmarshal(metadata, &meta)
-	walk(meta, "manifest")
+	c.JSON(metadata, "manifest")
 	history, err := b.OpenHistory()
 	if err != nil {
 		return nil, err
 	}
 	defer history.Close()
-	scanner := bufio.NewScanner(history)
-	scanner.Buffer(make([]byte, min(64<<10, agentRecordLimit())), agentRecordLimit())
-	line := 0
-	for scanner.Scan() {
-		line++
-		var record any
-		if json.Unmarshal(scanner.Bytes(), &record) == nil {
-			walk(record, fmt.Sprintf("history line %d", line))
-		}
+	if err := c.JSONLines(history, "history", agentRecordLimit()); err != nil {
+		return nil, fmt.Errorf("federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan history within federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
+	return bundleFindings(c.Findings()), nil
+}
+
+func bundleFindings(fs []paf.Finding) []agentbundle.Finding {
+	out := []agentbundle.Finding{}
+	for _, f := range fs {
+		out = append(out, agentbundle.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
 	}
-	kinds := make([]string, 0, len(byKind))
-	for kind := range byKind {
-		kinds = append(kinds, kind)
+	return out
+}
+
+// flaggedCredentials reports findings an export refuses unless a human
+// allows them: any credential kind. High-entropy strings alone are advisory.
+func flaggedCredentials(fs []agentbundle.Finding) bool {
+	pf := make([]paf.Finding, 0, len(fs))
+	for _, f := range fs {
+		pf = append(pf, paf.Finding{Kind: f.Kind, Count: f.Count})
 	}
-	slices.Sort(kinds)
-	findings := []agentbundle.Finding{}
-	for _, kind := range kinds {
-		findings = append(findings, *byKind[kind])
-	}
-	return findings, nil
+	return privacy.Blocking(pf)
 }
 
 func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +380,7 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	if b.Manifest.Agent.CarryPermissions {
 		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
 	}
-	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
+	if flaggedCredentials(b.Manifest.Findings) && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
@@ -433,7 +395,7 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "format", "format must be bundle or paf")
 		return
 	}
-	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true"}
+	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: flaggedCredentials(b.Manifest.Findings)}
 	if (parts.NoNative || parts.NoContext) && format != agentArchivePAF {
 		writeError(w, 400, "format", "no_native and no_context apply only to format=paf")
 		return
@@ -493,6 +455,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
 	// neutral reads a PAF's neutral context while the archive file is open.
 	var neutral func(paf.ReadOptions) (*transcript.Transcript, error)
+	// rescan scans a PAF's whole content, including the neutral context and
+	// attachments a lowered bundle does not carry.
+	var rescan func(int) ([]paf.Finding, error)
 	// direct is a file import by the caller, as opposed to a federation
 	// offer, move or teleport handing over an already decoded bundle.
 	direct := b == nil
@@ -515,7 +480,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = b.Close() }()
-		neutral = info.Context
+		neutral, rescan = info.Context, info.Scan
 	}
 	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
@@ -616,7 +581,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	findings, err := scanAgentBundle(b)
+	var findings []agentbundle.Finding
+	if rescan != nil {
+		var fs []paf.Finding
+		fs, err = rescan(agentRecordLimit())
+		findings = bundleFindings(fs)
+	} else {
+		findings, err = scanAgentBundle(b)
+	}
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return
