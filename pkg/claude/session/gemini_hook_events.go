@@ -49,5 +49,6 @@ func normalizeGeminiHookEvent(input *HookCallbackInput, raw []byte) {
 			input.LastAssistantMessage = extra.PromptResponse
 		}
 	}
+	input.NativeHookEvent = input.HookEventName
 	input.HookEventName = mapped
 }

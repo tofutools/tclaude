@@ -446,6 +446,8 @@ func apiCostProvider(harnessName, model string) string {
 		return db.SubscriptionProviderOpenAI
 	case "copilot":
 		return db.SubscriptionProviderGitHub
+	case "gemini":
+		return "google"
 	case "opencode":
 		if provider, _, ok := strings.Cut(strings.TrimSpace(model), "/"); ok && provider != "" {
 			return strings.ToLower(provider)

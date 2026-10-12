@@ -59,7 +59,7 @@ func TestCapabilitySameContinuationUnsupportedOnOpenCode(t *testing.T) {
 func TestCapabilityNextTurnReachesEveryHarness(t *testing.T) {
 	for _, h := range KnownHarnesses {
 		c := CapabilityFor(db.StandingTimingNextTurn, db.StandingTriggerSessionStart, h)
-		assert.True(t, c.Supported(), h)
+		assert.Equal(t, h != harness.ShellName, c.Supported(), h)
 	}
 }
 

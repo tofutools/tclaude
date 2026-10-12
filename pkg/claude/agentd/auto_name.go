@@ -125,10 +125,22 @@ func markAutoNameAttempt(agentID string) bool {
 	return true
 }
 
+// A naming call must have a tested unattended read-only launch posture, not
+// merely an Ask adapter. Keep unsupported harnesses explicit for parity checks.
+var autoNameUnsupported = map[string]string{
+	harness.GeminiName:   "Gemini has no tested host-control sandbox posture for unattended naming",
+	harness.CopilotName:  "Copilot has no tested host-control sandbox posture for unattended naming",
+	harness.OpenCodeName: "OpenCode has no tested host-control sandbox posture for unattended naming",
+	harness.ShellName:    "shell has no model",
+}
+
 func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
 	h, err := harness.Resolve(harnessName)
-	if err != nil || !h.SupportsAsk() ||
-		(h.Name != harness.DefaultName && h.Name != harness.CodexName) {
+	if err != nil || !h.SupportsAsk() {
+		return
+	}
+	if reason, unsupported := autoNameUnsupported[h.Name]; unsupported {
+		slog.Info("automatic session naming kept generated fallback", "harness", h.Name, "reason", reason, "module", "agentd")
 		return
 	}
 	posture := harness.SpawnSpec{}
@@ -142,6 +154,9 @@ func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
 	case harness.CodexName:
 		posture.HarnessBuiltinMode = harness.SandboxReadOnly
 		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, "")
+	default:
+		slog.Warn("automatic naming posture is undeclared", "harness", h.Name, "module", "agentd")
+		return
 	}
 	if err != nil {
 		return
