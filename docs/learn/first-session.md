@@ -17,8 +17,8 @@ Setup installs the hooks that tell tclaude what your agent is doing
 tclaude setup
 ```
 
-It installs hooks for Claude Code and offers integrations for any other
-harness it finds on your `PATH`. Accept the defaults. Then check the result:
+It installs hooks for Claude Code and for any other harness it finds on your
+`PATH`, and asks about a few optional integrations. Accept the defaults. Then check the result:
 
 ```bash
 tclaude setup --check

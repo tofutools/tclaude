@@ -32,9 +32,10 @@ tclaude conv watch -g
 ```
 
 This is a searchable picker over the same list. Press **/** and type part of
-your first prompt (for example `three sentences`) to filter. Select the
-conversation and press **Enter**: tclaude starts a new session that continues
-it. Detach with **Ctrl+B D** as before.
+your first prompt (for example `three sentences`) to filter, then press
+**Enter** to leave the filter box. Pick the conversation with the arrow keys
+and press **Enter** again: tclaude starts a new session that continues it.
+Detach with **Ctrl+B D** as before.
 
 ![Conversation watch](../assets/term-conv-watch.png)
 
@@ -54,10 +55,12 @@ Each match starts with the first eight characters of its conversation id.
 Those eight characters are enough to resume it:
 
 ```bash
-tclaude conv resume <conv-id>
+tclaude conv resume -g <conv-id>
 ```
 
-You never say which harness to use. tclaude recorded it when the
+`-g` looks the id up across all projects, so this works from any directory.
+Without it, `conv resume` only looks in the current project. You never say
+which harness to use. tclaude recorded it when the
 conversation started and relaunches through the same one, in the
 conversation's own project directory.
 
