@@ -93,8 +93,7 @@ func Cmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
-	_ = cmd.Flags().MarkHidden("managed-launch")
-	_ = cmd.Flags().MarkHidden("managed-instructions-root")
+	session.HideInternalFlags(cmd)
 	cli.ConfigureRoot(cmd)
 	cmd.Args = cobra.ArbitraryArgs
 	session.RegisterJoinGroupCompletion(cmd)

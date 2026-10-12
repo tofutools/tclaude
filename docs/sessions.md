@@ -1,5 +1,9 @@
 # Sessions
 
+!!! tip "New to tclaude?"
+    Start with the tutorial [Your first session](learn/first-session.md).
+
+
 A session is a live tmux instance running a coding harness (or a plain
 shell). tclaude launches the harness inside its own tmux server (`-L
 tclaude`), tracks the session's status through harness hooks, and lets you

@@ -40,7 +40,7 @@ func cloneCmd() *cobra.Command {
 	return boa.CmdT[cloneParams]{
 		Use:   "clone",
 		Short: "Fork this agent (or another, with --target) into a sibling that inherits its identity",
-		Long: "Spawns a fresh CC instance that inherits the target agent's identity " +
+		Long: "Spawns a fresh agent session that inherits the target agent's identity " +
 			"(group memberships and roles, per-conv permission grants). The " +
 			"clone is renamed to `<original-title>-c-<N>`. The ORIGINAL keeps running " +
 			"— that's the difference vs reincarnate. " +

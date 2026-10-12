@@ -31,7 +31,7 @@ func ListCmd() *cobra.Command {
 	return boa.CmdT[ListParams]{
 		Use:         "ls",
 		Aliases:     []string{"list", "status"},
-		Short:       "List Claude Code sessions",
+		Short:       "List coding sessions",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *ListParams, cmd *cobra.Command, args []string) {
 			if err := runList(params); err != nil {
@@ -56,7 +56,7 @@ type WatchParams struct {
 func WatchCmd() *cobra.Command {
 	return boa.CmdT[WatchParams]{
 		Use:         "watch",
-		Short:       "Interactive watch mode for Claude Code sessions (alias for `session ls -w`)",
+		Short:       "Interactive watch mode for coding sessions (alias for `session ls -w`)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *WatchParams, cmd *cobra.Command, args []string) {
 			sortState := parseSortParams(params.Sort, params.Asc, params.Desc)
