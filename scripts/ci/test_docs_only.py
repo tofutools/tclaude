@@ -31,7 +31,7 @@ class DocsOnlyTest(unittest.TestCase):
 
             classify("false")  # Empty diffs must not skip evidence.
             for name in ("docs/learn/guide.md", "docs/assets/image.png",
-                         "README.md", "nested/notes.md", "mkdocs.yml",
+                         "README.md", "mkdocs.yml",
                          "docs/a name\nwith newline.png"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +39,17 @@ class DocsOnlyTest(unittest.TestCase):
                 git("add", name)
             git("commit", "--quiet", "-m", "docs")
             classify("true")
+            docs_head = git("rev-parse", "HEAD").decode().strip()
+            for name in ("pkg/claude/agent/skills/review/SKILL.md",
+                         "docs/paf/schema/v0.1/common.schema.json",
+                         "docs/paf/examples/full-agent/signature.json"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("invalid runtime artifact\n")
+                git("add", name)
+                git("commit", "--quiet", "-m", "runtime input")
+                classify("false")
+                git("reset", "--hard", docs_head)
             (root / "main.go").write_text("package changed\n")
             git("add", "main.go")
             git("commit", "--quiet", "-m", "mixed")
