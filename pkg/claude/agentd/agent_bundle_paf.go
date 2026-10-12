@@ -46,12 +46,13 @@ func decodeAgentArchiveBytes(raw []byte) (*agentbundle.Bundle, error) {
 	return b, err
 }
 
-// peerSupportsPAFBundles reports whether a peer advertised that it imports
-// agent transfers written as PAF. Other peers keep receiving bundle v1.
+// peerSupportsPAFBundles reports whether a peer advertised a PAF version
+// this instance writes for agent transfers. Other peers keep receiving
+// bundle v1.
 func peerSupportsPAFBundles(peer string) bool {
 	raw, _, err := db.GetFederationCatalog(peer)
 	var cat proto.CatalogPayload
-	return err == nil && json.Unmarshal([]byte(raw), &cat) == nil && cat.PAFAgentBundles != "" && paf.CanRead(cat.PAFAgentBundles, paf.Version)
+	return err == nil && json.Unmarshal([]byte(raw), &cat) == nil && paf.NegotiateVersion(cat.PAFVersions) != ""
 }
 
 // archiveAgentTransfer writes b in the requested format to a private

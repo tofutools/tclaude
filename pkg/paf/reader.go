@@ -48,11 +48,25 @@ func versionReadable(v string, major int) bool {
 	return err == nil && gotMajor == major
 }
 
-// CanRead reports whether a reader of version reader (MAJOR.MINOR) can
-// read a file stamped version: the same major.
-func CanRead(reader, version string) bool {
-	major, _, err := ParseVersion(reader)
-	return err == nil && versionReadable(version, major)
+// ReadVersions are the PAF versions this package reads natively, which an
+// instance advertises to its federation peers.
+func ReadVersions() []string { return []string{Version} }
+
+// writeVersions are the versions this package can write, newest first.
+var writeVersions = []string{Version}
+
+// NegotiateVersion picks the version to send a peer that reads peer: the
+// newest version this package writes that the peer lists, or "" when they
+// share none and the legacy carrier must be used.
+func NegotiateVersion(peer []string) string {
+	for _, v := range writeVersions {
+		for _, p := range peer {
+			if p == v {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // versionBefore reports whether MAJOR.MINOR a is older than b. Invalid

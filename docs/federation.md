@@ -1175,9 +1175,10 @@ Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration 
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
-A peer that advertises a PAF version that can read this node's PAF (the
-same major version and, while it is 0, the same minor version) receives the offer as a PAF signed with this node's federation key; any other
-peer receives agent bundle version 1.
+Each instance advertises the PAF versions it reads in its catalog
+(`paf_versions`). A peer that shares a PAF version with this node receives
+the offer as a PAF in the newest version both read, signed with this node's
+federation key; any other peer receives agent bundle version 1.
 Move and teleport follow the same rule. The neutral copy of the conversation
 is left out of the PAF when the native history is large (over 256 MiB or a
 third of `federation.agent_transfer_max_bytes`) or would not fit the

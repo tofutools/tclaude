@@ -647,3 +647,9 @@ func TestVersionReadable(t *testing.T) {
 	assert.False(t, versionBefore("0.2", "0.2"))
 	assert.False(t, versionBefore("0.3", "0.2"))
 }
+
+func TestNegotiateVersion(t *testing.T) {
+	assert.Equal(t, Version, NegotiateVersion([]string{"9.0", Version}))
+	assert.Empty(t, NegotiateVersion([]string{"9.0"}))
+	assert.Empty(t, NegotiateVersion(nil))
+}
