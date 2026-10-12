@@ -351,6 +351,7 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 		return
 	}
 	s.Pending, s.PendingDigest, s.PendingBytes, s.PendingAt = d.ID, snap.digest, d.Bytes, now
+	s.LastError = ""
 	s.NextDue = now.Add(p.every())
 }
 
@@ -531,7 +532,9 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 		return err
 	}
 	if err = validResilienceSnapshot(raw); err != nil {
-		_ = db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", err.Error())
+		if db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", err.Error()) == nil {
+			queueBundleResult(current, "declined")
+		}
 		return err
 	}
 	now := time.Now().UTC()
@@ -544,7 +547,9 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 	// go first, then the peer's oldest copies until the new one fits.
 	pruneHeld(o.Peer, r.SourceAgent, r.Keep-1, now)
 	if d.Bytes > resilienceHeldPeerBytes {
-		_ = db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", "snapshot exceeds what this node keeps for a peer")
+		if db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", "snapshot exceeds what this node keeps for a peer") == nil {
+			queueBundleResult(current, "declined")
+		}
 		return errors.New("snapshot too large to keep")
 	}
 	for heldBytes(o.Peer)+d.Bytes > resilienceHeldPeerBytes {
@@ -571,6 +576,7 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 	if err = db.SetFederationBundleOfferState("in", o.Peer, d.ID, "applied", ""); err != nil {
 		return err
 	}
+	queueBundleResult(current, "applied")
 	recordFederationAudit("resilience.snapshot.in", o.Peer, "", "", "agent="+r.SourceAgent+" offer="+d.ID, 200)
 	return nil
 }
