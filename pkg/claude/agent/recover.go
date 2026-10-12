@@ -17,9 +17,12 @@ import (
 )
 
 type recoverParams struct {
-	Held         string   `long:"held" optional:"true" help:"The held snapshot to recover: its offer id from tclaude agent snapshot held."`
-	From         string   `long:"from" help:"The peer that sent it: peer:<instance id or label>."`
-	Group        string   `long:"group" help:"The group the recovered agent joins."`
+	Held         string   `long:"held" optional:"true" help:"Recover a held snapshot: its offer id from tclaude agent snapshot held."`
+	Recall       string   `long:"recall" optional:"true" help:"Ask the peer in --from to return its newest snapshot of this agent id (agt_…)."`
+	Offer        string   `long:"offer" optional:"true" help:"With --recall: ask for this held snapshot instead of the newest."`
+	RecallID     string   `long:"recall-id" optional:"true" help:"Recover the snapshot a recall returned: its id from tclaude agent snapshot recalls."`
+	From         string   `long:"from" optional:"true" help:"With --held or --recall: the peer, peer:<instance id or label>."`
+	Group        string   `long:"group" optional:"true" help:"The group the recovered agent joins."`
 	AgentName    string   `long:"agent-name" optional:"true" help:"Name for the recovered agent."`
 	Cwd          string   `long:"cwd" optional:"true" help:"Working directory; without it the recorded one is kept."`
 	Harness      string   `long:"harness" optional:"true" help:"Landing harness."`
@@ -41,22 +44,40 @@ func recoverCmd() *cobra.Command {
 			"the source. --new-id recovers it as a new agent instead. When keeping the id conflicts with this node's\n" +
 			"records (the agent exists or runs here, is recorded elsewhere, or a newer snapshot is held), the preview\n" +
 			"lists the conflicts and you choose: --new-id, or --force-keep-id. A running agent is never taken over.\n\n" +
+			"A node rebuilt with its federation identity can ask a peer for the snapshots it holds of this node's\n" +
+			"agents: --recall asks, and once the snapshot is back (tclaude agent snapshot recalls), --recall-id\n" +
+			"recovers it the same way. A recall is answered once, by the peer asked, for the agent named.\n\n" +
 			"  tclaude agent snapshot held\n" +
 			"  tclaude agent recover --held OFFER --from peer:alice --group team\n" +
-			"  tclaude agent recover --held OFFER --from peer:alice --group team --preview-token TOKEN",
+			"  tclaude agent recover --held OFFER --from peer:alice --group team --preview-token TOKEN\n" +
+			"  tclaude agent recover --recall agt_… --from peer:bob\n" +
+			"  tclaude agent recover --recall-id RECALL --group team",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *recoverParams, _ *cobra.Command, _ []string) {
 			os.Exit(runRecover(p, os.Stdout, os.Stderr))
 		}}.ToCobra()
 }
 
 func runRecover(p *recoverParams, stdout, stderr io.Writer) int {
-	if p.Held == "" {
-		fmt.Fprintln(stderr, "Error: --held is required: the offer id from tclaude agent snapshot held")
+	modes := 0
+	for _, m := range []string{p.Held, p.Recall, p.RecallID} {
+		if m != "" {
+			modes++
+		}
+	}
+	if modes != 1 {
+		fmt.Fprintln(stderr, "Error: name one of --held, --recall or --recall-id")
 		return rcInvalidArg
 	}
 	peer, ok := strings.CutPrefix(p.From, "peer:")
-	if !ok || peer == "" {
+	if p.RecallID == "" && (!ok || peer == "") {
 		fmt.Fprintln(stderr, "Error: --from must be peer:<instance id or label>")
+		return rcInvalidArg
+	}
+	if p.Recall != "" {
+		return runRecallRequest(p, stdout, stderr)
+	}
+	if p.Group == "" {
+		fmt.Fprintln(stderr, "Error: --group is required: the group the recovered agent joins")
 		return rcInvalidArg
 	}
 	op := "preview"
@@ -78,6 +99,9 @@ func runRecover(p *recoverParams, stdout, stderr io.Writer) int {
 	}
 	var out map[string]any
 	path := "/v1/resilience/held/" + url.PathEscape(peer) + "/" + url.PathEscape(p.Held) + "/" + op
+	if p.RecallID != "" {
+		path = "/v1/resilience/recalls/" + url.PathEscape(p.RecallID) + "/" + op
+	}
 	if err := DaemonRequest(http.MethodPost, path, body, &out, DaemonOpts{Timeout: boardSnapshotTimeout}); err != nil {
 		if printIdentityConflicts(stdout, err) {
 			return MapDaemonErrorToRC(err)
@@ -114,6 +138,25 @@ func runRecover(p *recoverParams, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "Recovered agent %v in %s (conversation %v)\n", snap["source_agent"], termClean(p.Group), spawn["conv_id"])
 	}
+	return rcOK
+}
+
+func runRecallRequest(p *recoverParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var out struct {
+		ID        string `json:"id"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := DaemonPost("/v1/resilience/recalls", map[string]any{"from": p.From, "source_agent": p.Recall, "offer": p.Offer}, &out); err != nil {
+		fmt.Fprintln(stderr, err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return printJSON(stdout, out)
+	}
+	fmt.Fprintf(stdout, "Recall %s sent to %s; it expires at %s.\nWhen tclaude agent snapshot recalls shows it ready, recover it:\n  tclaude agent recover --recall-id %s --group GROUP\n", out.ID, termClean(p.From), out.ExpiresAt, out.ID)
 	return rcOK
 }
 

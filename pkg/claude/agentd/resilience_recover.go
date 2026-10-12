@@ -4,20 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
-	"github.com/tofutools/tclaude/pkg/paf/seal"
 )
 
 // handleResilienceRecover previews or recovers a held snapshot as a new
@@ -255,42 +252,12 @@ func openHeldSnapshot(peer, offer string) (*os.File, int64, heldSnapshot, error)
 	if err != nil {
 		return nil, 0, h, err
 	}
-	defer func() { _ = sealed.Close() }()
+	_ = sealed.Close()
 	if !time.Now().Before(h.ExpiresAt) {
 		return nil, 0, h, &boardHTTPError{410, "expired", "this held snapshot has expired"}
 	}
-	id, err := federationIdentity()
-	if err != nil {
-		return nil, 0, h, err
-	}
-	ageID, err := seal.Identity(id.Priv)
-	if err != nil {
-		return nil, 0, h, err
-	}
-	plain, err := seal.Decrypt(sealed, ageID)
-	if err != nil {
-		return nil, 0, h, &boardHTTPError{403, "not_recipient", "this node cannot decrypt the held snapshot: " + err.Error()}
-	}
-	dir := filepath.Join(config.DataDir(), "resilience", "recover")
-	if err = os.MkdirAll(dir, 0o700); err != nil {
-		return nil, 0, h, err
-	}
-	sweepRecoverPlaintext(dir, time.Now())
-	out, err := os.CreateTemp(dir, ".plain-")
-	if err != nil {
-		return nil, 0, h, err
-	}
-	limits := paf.DefaultLimits()
-	n, err := io.Copy(out, io.LimitReader(plain, limits.MaxArchiveBytes+1))
-	if err == nil && n > limits.MaxArchiveBytes {
-		err = &boardHTTPError{413, "too_large", "the decrypted snapshot exceeds the PAF size limit"}
-	}
-	if err != nil {
-		_ = out.Close()
-		_ = os.Remove(out.Name())
-		return nil, 0, h, err
-	}
-	return out, n, h, nil
+	out, n, err := decryptSealedSnapshot(resilienceHeldPath(h.Peer, h.SourceAgent, h.Offer))
+	return out, n, h, err
 }
 
 // sweepRecoverPlaintext removes decrypted copies a killed daemon left

@@ -40,6 +40,20 @@ var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.off
 // by the receiver for its sender. It is never imported on receipt.
 var Snapshot = Type{Name: "snapshot", MaxBytes: 65 << 20, AdmissionSlug: "snapshots.receive", PendingLimit: 20, PendingBytes: 512 << 20}
 
+// SnapshotReturn carries a held resilience snapshot back to the instance
+// that sent it, in answer to its recall. It has no standing admission
+// grant: the receiver admits it only against a matching recall it made.
+var SnapshotReturn = Type{Name: "snapshot_return", MaxBytes: Snapshot.MaxBytes, AdmissionSlug: "", PendingLimit: 5, PendingBytes: 5 * Snapshot.MaxBytes}
+
+// ReturnIntent binds a returned snapshot to the recall that asked for it.
+type ReturnIntent struct {
+	Recall      string `json:"recall"`
+	SourceAgent string `json:"source_agent"`
+	// Offer is the held snapshot's original offer id.
+	Offer   string    `json:"offer"`
+	TakenAt time.Time `json:"taken_at"`
+}
+
 // MaxResilienceKeep bounds how many snapshots of one agent a receiver keeps.
 const MaxResilienceKeep = 20
 
@@ -78,14 +92,16 @@ type Descriptor struct {
 	Move     *MoveIntent     `json:"move,omitempty"`
 	// Resilience is set exactly for snapshot offers.
 	Resilience *ResilienceIntent `json:"resilience,omitempty"`
-	ID         string            `json:"id"`
-	Type       string            `json:"type"`
-	Bytes      int64             `json:"bytes"`
-	SHA256     string            `json:"sha256"`
-	ExpiresAt  time.Time         `json:"expires_at"`
-	Summary    string            `json:"summary"`
-	Group      string            `json:"group,omitempty"`
-	Inline     []byte            `json:"inline,omitempty"`
+	// Return is set exactly for snapshot_return offers.
+	Return    *ReturnIntent `json:"return,omitempty"`
+	ID        string        `json:"id"`
+	Type      string        `json:"type"`
+	Bytes     int64         `json:"bytes"`
+	SHA256    string        `json:"sha256"`
+	ExpiresAt time.Time     `json:"expires_at"`
+	Summary   string        `json:"summary"`
+	Group     string        `json:"group,omitempty"`
+	Inline    []byte        `json:"inline,omitempty"`
 }
 
 func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
@@ -156,6 +172,12 @@ func (d Descriptor) Validate(kind Type, now time.Time) error {
 	}
 	if r := d.Resilience; r != nil && (!proto.ValidAgentRef(r.SourceAgent) || len(r.AgentName) > 256 || len(r.Harness) > 64 || r.TakenAt.IsZero() || r.Keep < 1 || r.Keep > MaxResilienceKeep || r.MaxAgeDays < 0 || r.MaxAgeDays > 365) {
 		return errors.New("invalid resilience snapshot identity")
+	}
+	if (d.Return != nil) != (kind.Name == SnapshotReturn.Name) {
+		return errors.New("return identity is required for, and only for, snapshot_return offers")
+	}
+	if r := d.Return; r != nil && (!proto.ValidStreamID(r.Recall) || !proto.ValidAgentRef(r.SourceAgent) || !proto.ValidStreamID(r.Offer) || r.TakenAt.IsZero()) {
+		return errors.New("invalid snapshot return identity")
 	}
 	if !proto.ValidStreamID(d.ID) || d.Type != kind.Name || d.Bytes <= 0 || d.Bytes > kind.MaxBytes {
 		return errors.New("invalid bundle offer identity, type or size")

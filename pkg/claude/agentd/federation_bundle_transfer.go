@@ -47,6 +47,17 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 			return validResilienceSnapshot(head[:n])
 		}}, true
 	}
+	if name == bundletransfer.SnapshotReturn.Name {
+		// Opaque until the operator recovers it: never imported here.
+		return fedBundleKind{Type: bundletransfer.SnapshotReturn, Validate: validResilienceSnapshot, ValidateFile: func(f *os.File) error {
+			head := make([]byte, 64)
+			n, err := io.ReadFull(f, head)
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return err
+			}
+			return validResilienceSnapshot(head[:n])
+		}}, true
+	}
 	if name == bundletransfer.Agent.Name {
 		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
 			b, err := decodeAgentArchive(f)
@@ -76,6 +87,10 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 	if kind.GroupScoped {
 		g, err := db.GetAgentGroupByName(d.Group)
 		return err == nil && g != nil && (fedPeerAllows(peer, g.ID, kind.AdmissionSlug) || d.Teleport != nil && fedPeerAllows(peer, g.ID, PermAgentsTeleportReceive))
+	}
+	if kind.Name == bundletransfer.SnapshotReturn.Name {
+		// No standing grant: only an answer to this node's own recall.
+		return resilienceRecallAdmits(peer, d)
 	}
 	if db.FederationPeerUnrestricted(peer) {
 		return true
@@ -187,6 +202,13 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 	}
+	if d.Return != nil {
+		// Single use: the recall is bound to this one offer.
+		if err := bindResilienceRecall(peer.InstanceID, d); err != nil {
+			refuse(fedCodeNotExported, err.Error())
+			return
+		}
+	}
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "in", State: "pending", GroupID: groupID, SenderAgent: env.From.Agent}
 	if _, err := db.InsertFederationBundleOffer(o, kind.Type); err != nil {
 		code := fedCodeInternal
@@ -218,6 +240,13 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			stored.State = "ready"
 		}
 		defer func() { go rt.resilienceReceive(&stored) }()
+	}
+	if d.Type == bundletransfer.SnapshotReturn.Name {
+		stored := o
+		if len(d.Inline) > 0 {
+			stored.State = "ready"
+		}
+		defer func() { go rt.resilienceReturnReceive(&stored) }()
 	}
 	if teleport != nil {
 		recordFederationAudit("teleport.receive", peer.InstanceID, teleport.Intent.SourceAgent, d.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s state=%s", d.ID, teleport.Intent.Chain, len(teleport.Intent.Hops), teleport.Credentials, teleport.State), 200)
