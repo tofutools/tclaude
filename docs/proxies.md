@@ -495,8 +495,9 @@ tclaude setup --install-proxy-skills
 ```
 
 installs the agent skill for each configured credential proxy (`proxy-git`,
-`proxy-linear`, and/or `proxy-awb`) into the Claude Code and Codex skill
-directories, so agents discover the semantic commands instead of fighting
+`proxy-linear`, and/or `proxy-awb`) into Claude Code, shared `~/.agents/skills`, and Codex home skill
+directories. The shared directory is read by Codex, Gemini, Copilot and
+OpenCode, so agents discover the semantic commands instead of fighting
 their missing credentials. "Configured" uses the host-side rules under
 [The command only appears when configured](#the-command-only-appears-when-configured).
 Setup answers from the config file alone: it deliberately does not consult

@@ -1009,7 +1009,7 @@ list then flags newer ones as *update*). Members who can post use
 and **New version…**; anything that looks like a credential is refused.
 Skills can also be posted as `skills/NAME`: one directory containing `SKILL.md`
 and its supporting files. **Post config…** lets you select its local source
-(Claude Code, Codex shared skills, or Codex home). The import preview lists every
+(Claude Code, shared `~/.agents/skills`, or Codex home). The import preview lists every
 file, marks scripts and executables **security-relevant**, and shows their
 contents as text. Choose the destination skill root(s), preview again, and
 confirm. Existing skills require overwrite confirmation. Executable bits are
