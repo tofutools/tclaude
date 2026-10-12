@@ -29,6 +29,8 @@ type groupsExportParams struct {
 	Name string `pos:"true" help:"Group to export"`
 	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.zip (or .paf) in the current directory. Pass '-' to stream the archive to stdout."`
 	Format string `long:"format" optional:"true" alts:"zip,paf" help:"Archive format: zip (the group export archive, default) or paf (a group Portable Agent Format file carrying the same data)"`
+
+	AllowFlagged bool `long:"allow-flagged" help:"With --format paf, export even when the credential scan flags suspected credentials; inspect before sharing."`
 }
 
 func groupsExportCmd() *cobra.Command {
@@ -72,9 +74,14 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: --format must be zip or paf\n")
 		return rcInvalidArg
 	}
-	archive, headers, err := DaemonGetRaw("/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format)
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format
+	if p.AllowFlagged {
+		path += "&allow_flagged=true"
+	}
+	archive, headers, err := DaemonGetRaw(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		fmt.Fprint(stderr, "Error: ")
+		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}
 
@@ -284,6 +291,11 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			ConvID string `json:"conv_id"`
 			Title  string `json:"title"`
 		} `json:"conv_collisions"`
+		Findings []struct {
+			Kind      string   `json:"kind"`
+			Count     int      `json:"count"`
+			Locations []string `json:"locations"`
+		} `json:"findings"`
 		Landings []struct {
 			Title         string   `json:"title"`
 			SourceHarness string   `json:"source_harness"`
@@ -328,6 +340,12 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
 
+	if len(insp.Findings) > 0 {
+		fmt.Fprintf(stdout, "\nCredential scan (this node):\n")
+		for _, f := range insp.Findings {
+			fmt.Fprintf(stdout, "  %s: %d occurrence(s); first locations: %s\n", f.Kind, f.Count, strings.Join(f.Locations, ", "))
+		}
+	}
 	if len(insp.Landings) > 0 {
 		fmt.Fprintf(stdout, "\nMembers land:\n")
 		for _, l := range insp.Landings {

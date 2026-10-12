@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 // SourceGroupExport names group export (v1 to v5) input.
@@ -43,6 +44,10 @@ type GroupWriteOptions struct {
 	Keys     []paf.SigningKey
 	// MaxArchiveBytes bounds the written archive; 0 uses the PAF default.
 	MaxArchiveBytes int64
+	// Findings, when set, are recorded as the credential scan in
+	// privacy.json; AllowedFindings records a human's allowance.
+	Findings        []paf.Finding
+	AllowedFindings bool
 }
 
 // WriteGroupExport writes a group export as a group PAF. group.json carries
@@ -151,6 +156,12 @@ func WriteGroupExport(exp *groupexport.Export, out io.Writer, opts GroupWriteOpt
 		return err
 	}
 
+	if len(opts.Findings) > 0 {
+		pr := paf.Privacy{Scan: &paf.Scan{Scanner: privacy.Scanner, Findings: opts.Findings, Allowed: opts.AllowedFindings}}
+		if err := w.WriteJSON(paf.PrivacyPath, pr); err != nil {
+			return err
+		}
+	}
 	var root paf.Extensions
 	if err := root.Set(paf.ExtTclaude, map[string]any{"converted_from": ConvertedFrom{Format: SourceGroupExport, FormatVersion: groupexport.FormatVersion, CreatedAt: exp.ExportedAt}}); err != nil {
 		return err

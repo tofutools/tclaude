@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -145,4 +146,34 @@ func TestAgentImportLandsContextOnlyPAF(t *testing.T) {
 	applied := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}, "model": {model}, "apply": {"true"}, "group": {"receiver"}, "name": {"from-context"}})
 	require.True(t, applied.Applied)
 	assert.Contains(t, historyText(t, claude, applied.Spawn.ConvID, dest), morphSecret)
+}
+
+// The import preview rescans a PAF's whole content, so a credential that
+// only the neutral context carries is still found.
+func TestAgentImportRescansNeutralContext(t *testing.T) {
+	f := newFlow(t)
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("token ghp_abcdefghijklmnopqrstuvwxyz0123")}}}
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindAgent, paf.Limits{})
+	require.NoError(t, w.AddAgent("ctx", paf.Agent{Name: "ctx"}, paf.Environment{Harness: paf.Harness{Name: "claude"}}))
+	require.NoError(t, paf.WriteTranscript(w, "ctx", paf.ScopeEffective, tr))
+	require.NoError(t, w.WriteJSON(paf.AgentPath("ctx", "context/losses.json"), paf.LossesFromReport(tr.Losses)))
+	_, err := w.Close(paf.Producer{Name: "other-tool"})
+	require.NoError(t, err)
+
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?cwd="+url.QueryEscape(testutil.CanonicalTempDir(t)), bytes.NewReader(buf.Bytes())))
+	rec := httptest.NewRecorder()
+	f.Mux.ServeHTTP(rec, r)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var preview struct {
+		Findings []struct {
+			Kind      string   `json:"kind"`
+			Locations []string `json:"locations"`
+		} `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+	require.Len(t, preview.Findings, 1)
+	assert.Equal(t, "github-token", preview.Findings[0].Kind)
+	assert.Contains(t, preview.Findings[0].Locations[0], "context/transcript.jsonl")
 }

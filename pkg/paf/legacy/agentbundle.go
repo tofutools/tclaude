@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 // SourceAgentBundleV1 names agent bundle v1 input.
@@ -120,6 +121,9 @@ type WriteOptions struct {
 	// OmitNative leaves the native history out, so the conversation travels
 	// only as the neutral Context, which must then be set.
 	OmitNative bool
+	// AllowedFindings records that a human explicitly allowed the scan
+	// findings.
+	AllowedFindings bool
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -236,7 +240,7 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 		}
 	}
 	if len(m.Findings) > 0 {
-		pr := paf.Privacy{Scan: &paf.Scan{Scanner: "tclaude-credential/1", Findings: []paf.Finding{}}}
+		pr := paf.Privacy{Scan: &paf.Scan{Scanner: privacy.Scanner, Findings: []paf.Finding{}, Allowed: opts.AllowedFindings}}
 		for _, f := range m.Findings {
 			pr.Scan.Findings = append(pr.Scan.Findings, paf.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
 		}

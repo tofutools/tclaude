@@ -27,6 +27,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 // groups_export.go is the daemon half of per-group export / import. It
@@ -91,7 +92,7 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be zip or paf")
 		return
 	}
-	serveGroupExport(w, g.Name, format)
+	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true")
 }
 
 // Archive formats a group export can be written in.
@@ -101,11 +102,16 @@ const (
 )
 
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName, format string) {
-	archive, err := buildGroupExportAs(groupName, format)
+func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged bool) {
+	archive, err := buildGroupExportAs(groupName, format, allowFlagged)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		var flagged *flaggedGroupExportError
+		if errors.As(err, &flagged) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error(), "code": "flagged_credentials", "findings": flagged.findings})
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "io", "export: "+err.Error())
@@ -132,7 +138,7 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string) {
 // member's conversation .jsonl, and serializes the whole thing as the v5
 // zip or a group PAF carrying the same data. A member whose .jsonl cannot
 // be located is flagged Missing — its DB rows still export.
-func buildGroupExportAs(groupName, format string) ([]byte, error) {
+func buildGroupExportAs(groupName, format string, allowFlagged bool) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
@@ -175,7 +181,16 @@ func buildGroupExportAs(groupName, format string) ([]byte, error) {
 
 	var archive []byte
 	if format == groupArchivePAF {
-		archive, err = groupExportPAF(exp)
+		// A group PAF records a credential scan in privacy.json and, like an
+		// agent export, refuses credential findings unless allowed.
+		findings, scanErr := scanGroupExport(exp)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		if privacy.Blocking(findings) && !allowFlagged {
+			return nil, &flaggedGroupExportError{findings: findings}
+		}
+		archive, err = groupExportPAF(exp, findings, allowFlagged && privacy.Blocking(findings))
 	} else {
 		archive, err = groupexport.Marshal(exp)
 	}
@@ -203,10 +218,10 @@ func buildGroupExportAs(groupName, format string) ([]byte, error) {
 
 // groupExportPAF writes exp as a group PAF, signed when this node already
 // has a federation identity (exporting never creates one).
-func groupExportPAF(exp *groupexport.Export) ([]byte, error) {
+func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed bool) ([]byte, error) {
 	// A PAF bounds its uncompressed size; the PAF default (2 GiB) leaves the
 	// same headroom the zip's 512 MiB compressed upload cap does.
-	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
+	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, Findings: findings, AllowedFindings: allowed}
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
 	}
@@ -215,6 +230,40 @@ func groupExportPAF(exp *groupexport.Export) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// flaggedGroupExportError refuses a group PAF export with credential
+// findings no human allowed.
+type flaggedGroupExportError struct{ findings []paf.Finding }
+
+func (e *flaggedGroupExportError) Error() string {
+	return "suspected credentials: use --allow-flagged to export anyway"
+}
+
+// scanGroupExport scans a group's conversations and its tclaude state
+// (messages, cron bodies, group context) for suspected credentials.
+func scanGroupExport(exp *groupexport.Export) ([]paf.Finding, error) {
+	c := privacy.NewCollector()
+	for _, conv := range exp.Convs {
+		if conv.Missing || conv.Content == nil {
+			continue
+		}
+		name := conv.Title
+		if name == "" {
+			name = conv.ConvID
+		}
+		if err := c.JSONLines(bytes.NewReader(conv.Content), name+" history", agentRecordLimit()); err != nil {
+			return nil, err
+		}
+	}
+	state := *exp
+	state.Convs = nil
+	raw, err := json.Marshal(&state)
+	if err != nil {
+		return nil, err
+	}
+	c.JSON(raw, "group")
+	return c.Findings(), nil
 }
 
 // decodedGroupArchive is an import archive read into the group export
@@ -406,6 +455,8 @@ type importInspection struct {
 	// Landings says where each conversation lands: its harness and model
 	// and the rung its history takes.
 	Landings []*groupMemberLanding `json:"landings"`
+	// Findings are this node's own credential scan of the archive.
+	Findings []paf.Finding `json:"findings"`
 }
 
 // convCollision is one imported conversation whose conv-id already
@@ -469,6 +520,14 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	}
 	closeGroupLandings(landings)
 	insp.Landings = landings
+	if decoded.Archive != nil {
+		insp.Findings, err = privacy.ScanArchive(decoded.Archive, agentRecordLimit())
+	} else {
+		insp.Findings, err = scanGroupExport(exp)
+	}
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: scan: %w", err)
+	}
 
 	// The effective target name: --as when given, else the exported name.
 	targetName := asName

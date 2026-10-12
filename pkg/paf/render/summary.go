@@ -31,6 +31,8 @@ type Summary struct {
 	Group       *GroupSummary      `json:"group,omitempty"`
 	Agents      []AgentSummary     `json:"agents"`
 	Privacy     *PrivacySummary    `json:"privacy,omitempty"`
+	// Rescan is the reader's own credential scan, when it ran one.
+	Rescan []paf.Finding `json:"rescan,omitempty"`
 }
 
 type ExtensionSummary struct {

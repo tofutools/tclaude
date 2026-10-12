@@ -309,10 +309,21 @@ prepared it for a wider audience.
 ### Defaults
 
 - **Scan on export and on import.** tclaude scans the definition, environment,
-  context, native blob and text attachments for suspected credentials. Findings
-  are counts and locations, never the matched text. Export refuses findings
-  unless you explicitly allow them. Import scans again and shows the findings
-  in the preview.
+  context, native blob, text attachments and extension data for suspected
+  credentials. Findings are counts and locations, never the matched text.
+  - **Detectors:** API and GitHub tokens, private keys, keychain references,
+    `token=`/`password=`-style assignments, AWS access key ids, and long
+    random-looking tokens (`high-entropy-string`).
+  - **Advisory kind:** `high-entropy-string` is reported but does not block
+    anything on its own. Identifiers, hex digests, UUIDs and encoded media are
+    not counted.
+  - **Export:** findings of any other kind refuse the export unless you
+    explicitly allow them (`--allow-flagged`). The allowance is recorded as
+    `scan.allowed`. A group PAF export scans every member's history and the
+    group's messages and settings too.
+  - **Import:** import never trusts the producer's recorded scan. It scans
+    again and shows its own findings in the preview.
+  - **Inspect:** `tclaude paf inspect --scan` runs the same scan on any file.
 - **No silent rewriting.** History is carried verbatim unless you ask for
   redaction.
 - **Redaction is opt-in, previewed and recorded.** The available redactions

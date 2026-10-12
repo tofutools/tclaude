@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 // WarningContextOnly is the bundle warning for a PAF whose history arrived
@@ -33,6 +34,9 @@ type Info struct {
 	// Context reads the neutral context while the decoded file stays open.
 	// It is nil when there is none.
 	Context func(paf.ReadOptions) (*transcript.Transcript, error)
+	// Scan rescans everything the PAF carries for suspected credentials
+	// while the decoded file stays open. It is nil for a v1 bundle.
+	Scan func(recordLimit int) ([]paf.Finding, error)
 }
 
 // DecodeLimits bounds DecodeBundleFile.
@@ -74,6 +78,7 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 		}
 		key := a.Manifest.Agents[0]
 		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}
+		info.Scan = func(recordLimit int) ([]paf.Finding, error) { return privacy.ScanArchive(a, recordLimit) }
 		if info.HasContext {
 			info.Context = func(opts paf.ReadOptions) (*transcript.Transcript, error) {
 				return paf.ReadTranscript(a, key, paf.ScopeEffective, opts)
