@@ -254,3 +254,35 @@ func gitOutputAllowError(t *testing.T, dir string, args ...string) string {
 	out, _ := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out))
 }
+
+// A fresh local repository has no remote. Fetching the base is on by default,
+// so a first spawn there must cut from the local base and say so, not fail.
+func TestDashboardCreateWorktree_FetchLatestWithoutRemoteUsesLocalBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := filepath.Join(t.TempDir(), "local-only")
+	require.NoError(t, os.Mkdir(repo, 0o755))
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	gitRun(t, repo, "config", "user.email", "test@example.invalid")
+	gitRun(t, repo, "config", "user.name", "test")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "initial")
+	head := gitOutput(t, repo, "rev-parse", "HEAD")
+
+	rec := postDashboardWorktree(t, map[string]any{
+		"repo": repo, "branch": "first-agent", "fetch_latest": true,
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Path string `json:"path"`
+		Note string `json:"note"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Note, "no git remote")
+	assert.Equal(t, head, gitOutput(t, resp.Path, "rev-parse", "HEAD"), "cut from the local main")
+
+	withBase := postDashboardWorktree(t, map[string]any{
+		"repo": repo, "branch": "second-agent", "from_branch": "main", "fetch_latest": true,
+	})
+	require.Equalf(t, http.StatusOK, withBase.Code, "body=%s", withBase.Body.String())
+	assert.Contains(t, withBase.Body.String(), "cut from the local main without fetching")
+}

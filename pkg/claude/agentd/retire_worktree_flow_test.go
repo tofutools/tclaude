@@ -170,6 +170,48 @@ func TestRetire_DeleteWorktreeRemovesWorktreeAndBranch(t *testing.T) {
 	require.NotNil(t, retiredRow(snap, conv), "the retired agent must appear in retired[]")
 }
 
+// An agent's branch with commits no trunk reaches survives retire: the
+// worktree directory goes, the branch and its commits stay, and the outcome
+// says why. An unknown count (no trunk, git error) keeps it too.
+func TestRetire_DeleteWorktreeKeepsUnmergedBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count func(string, string) (int, error)
+		why   string
+	}{
+		{"unmerged", func(string, string) (int, error) { return 3, nil }, "branch feat kept: 3 unmerged commits"},
+		{"unknown", func(string, string) (int, error) { return 0, errors.New("no main") }, "branch feat kept: could not confirm it is merged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+
+			const conv = "rwum-1111-2222-3333-4444"
+			cwd := f.TestCwd("rw-unmerged")
+			f.HaveConvWithTitle(conv, "wt-worker")
+			f.HaveAliveSession(conv, "spwn-rwum", "tmux-rwum", cwd)
+			f.HaveEnrolledAgent(conv)
+			fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+				cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+			})
+			var asked []string
+			t.Cleanup(agentd.SetUnmergedCommitsFnForTest(func(dir, branch string) (int, error) {
+				asked = append(asked, branch)
+				return tc.count(dir, branch)
+			}))
+
+			mux := agentd.BuildDashboardHandlerForTest()
+			code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+			require.Equal(t, http.StatusOK, code)
+			require.NotNil(t, resp.Worktree)
+			assert.Contains(t, resp.Worktree.Detail, tc.why)
+			assert.Equal(t, []string{"feat"}, asked, "the branch is checked before deletion")
+			assert.True(t, fw.wasRemoved(cwd), "the worktree directory is still removed")
+			assert.NotContains(t, fw.branchesRemoved(), "feat", "the unmerged branch must not be deleted")
+		})
+	}
+}
+
 // A detached worktree whose directory vanished still has a Git registration.
 // Retire exposes and removes that registration through the surviving main
 // checkout, without inventing a branch deletion for detached HEAD.

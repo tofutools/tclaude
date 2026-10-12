@@ -441,7 +441,9 @@ agents also auto-recover from crashes with exponential backoff.
 permissions and sudo revoked, the conversation kept and reinstatable. By
 default it also soft-exits the live session (`--no-shutdown` keeps it) and
 removes the agent's linked worktree and branch (`--no-delete-worktree`;
-the main repo and shared worktrees are always kept). `--reason` is
+the main repo and shared worktrees are always kept). The branch is deleted
+only when it is merged: a branch with commits that main or master (locally
+or on origin) does not reach is kept, and the outcome says how many. `--reason` is
 recorded.
 
 `reinstate <selector>` returns a retired agent to active status — old

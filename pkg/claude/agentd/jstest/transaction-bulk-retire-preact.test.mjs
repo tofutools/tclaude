@@ -207,7 +207,7 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   const shutdown = host.querySelector('#retire-preview-shutdown');
   const worktrees = host.querySelector('#retire-preview-wt');
   assert.equal(host.querySelector('#retire-preview-wt-row .wt-note').textContent,
-    'The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; deleting a linked worktree also deletes its branch.');
+    'The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; a branch is deleted with its worktree only if it is merged, so unmerged commits are kept.');
   assert.equal(shutdown.hasAttribute('checked'), true);
   assert.equal(worktrees.hasAttribute('checked'), true);
   shutdown.checked = false;

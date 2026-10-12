@@ -191,8 +191,10 @@ test('reincarnate dialog gates force mode and preserves plain DOM hooks', async 
   force.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#reincarnate-self-fields'));
-  assert.match(host.querySelector('#reincarnate-agent-modal').textContent, /<prev>-r-<N>/,
+  assert.match(host.querySelector('#reincarnate-agent-modal').textContent, /keeps the agent's name; the replaced session is kept as <name>-x/,
     'HTM help copy must render angle brackets as text rather than encoded entities');
+  assert.doesNotMatch(host.querySelector('#reincarnate-agent-modal').textContent, /-r-<N>/,
+    'the successor keeps its name; it is not renamed to <prev>-r-<N>');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(harness.document.activeElement.id, 'reincarnate-agent-followup');
   const submit = host.querySelector('#reincarnate-agent-submit');

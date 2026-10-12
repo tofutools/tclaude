@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -576,6 +577,60 @@ func DeleteBranchIn(dir, branch string) (bool, error) {
 		return false, fmt.Errorf("delete branch %s: %w", branch, err)
 	}
 	return true, nil
+}
+
+// UnmergedCommitsIn counts the commits on branch that no trunk reaches: the
+// repo's default branch, main and master, locally and on origin. Zero means
+// deleting the branch loses no commit. Cleanup that would otherwise
+// force-delete an agent's branch asks this first and keeps a branch with
+// work on it. A squash or rebase merge leaves new objects on the trunk, so
+// such a branch still counts as unmerged: keeping it is the safe direction.
+//
+// An error means the answer is unknown (no trunk to compare against, a
+// branch that does not resolve, or a git failure); callers keep the branch.
+func UnmergedCommitsIn(dir, branch string) (int, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return 0, fmt.Errorf("invalid branch %q", branch)
+	}
+	ref := "refs/heads/" + branch
+	if _, err := gitIn(dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return 0, fmt.Errorf("resolve branch %s: %w", branch, err)
+	}
+	candidates := []string{"refs/heads/main", "refs/heads/master", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"}
+	if def, err := DefaultBranchIn(dir); err == nil && def != "" {
+		candidates = append(candidates, "refs/heads/"+def, "refs/remotes/origin/"+def)
+	}
+	out, err := gitIn(dir, append([]string{"for-each-ref", "--format=%(refname)"}, candidates...)...)
+	if err != nil {
+		return 0, fmt.Errorf("list trunk branches: %w", err)
+	}
+	var trunks []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" && line != ref {
+			trunks = append(trunks, line)
+		}
+	}
+	if len(trunks) == 0 {
+		return 0, fmt.Errorf("no main or master branch to compare %s against", branch)
+	}
+	count, err := gitIn(dir, append([]string{"rev-list", "--count", ref, "--not"}, trunks...)...)
+	if err != nil {
+		return 0, fmt.Errorf("count unmerged commits on %s: %w", branch, err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(count))
+	if err != nil {
+		return 0, fmt.Errorf("count unmerged commits on %s: %w", branch, err)
+	}
+	return n, nil
+}
+
+// HasRemoteIn reports whether the repo containing dir has any git remote.
+// A fresh local repository has none, and there is nothing to fetch a
+// worktree base from.
+func HasRemoteIn(dir string) bool {
+	out, err := gitIn(dir, "remote")
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 // HasCommitsIn reports whether the repo containing dir has at least one
