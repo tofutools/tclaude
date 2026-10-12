@@ -55,6 +55,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude agent bundle import":                    "file",
 		"claude paf export":                             "file",
 		"claude paf import":                             "file",
+		"claude agent snapshot export":                  "file",
 		"claude paf consent":                            "out audience",
 		"claude agent groups import":                    "into",
 		"claude agent inbox prune":                      "older-than",

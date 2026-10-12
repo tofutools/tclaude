@@ -101,7 +101,7 @@ receiving side.
 |---|---|---|
 | **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF with [`tclaude paf export` / `import`](#exporting-and-importing-an-agent); `agent bundle export` still writes [agent bundle v1](federation.md#portable-local-agent-bundles) by default |
 | **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 by default; a group PAF with [`groups export --format paf`](#exporting-and-importing-a-group) |
-| **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | Not available yet |
+| **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | PAF in the [snapshot library](#snapshots) |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
@@ -196,6 +196,50 @@ On another harness the source's launch posture (approval, sandbox and the
 other profile settings) is not applied; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
+
+## Snapshots
+
+A snapshot is a named, point-in-time PAF of an agent, kept in this node's
+library. It is a fork point: the agent carries on, and the snapshot stays as
+it was captured.
+
+```bash
+tclaude agent snapshot create reviewer --name before-refactor --note "known good" --expires 30d
+tclaude agent snapshot ls
+tclaude agent snapshot show before-refactor
+tclaude agent snapshot export before-refactor -f before-refactor.paf
+tclaude agent snapshot rm before-refactor
+tclaude agent snapshot prune
+```
+
+- **What it holds.** The agent's definition, environment and conversation:
+  the native history plus a harness-neutral context, as `tclaude paf export
+  --history` writes them. `--no-history` captures the definition only.
+  `agent.json` carries `snapshot` (`name`, `note`, `taken_at`, `state`) and a
+  `snapshot` lineage step that names the source agent and conversation.
+- **Consistency.** An idle agent is captured whole (`state: idle`). A busy
+  agent is captured up to its last complete turn (`state:
+  last_complete_turn`): the history export writes only finished records.
+- **Names.** 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting
+  with a letter or digit. The default is `<agent>-<UTC timestamp>`.
+- **Storage.** Each snapshot is a directory under `~/.tclaude/data/snapshots/`
+  (mode 0700) holding `snapshot.paf` and a `snapshot.json` listing record
+  (files 0600). The PAF is the source of truth. A snapshot is written to a
+  hidden temporary directory, synced, and renamed into place, so a
+  half-written one never appears.
+- **Retention.** `--expires` takes a duration (`72h`, `30d`), an RFC 3339
+  time or `never`. Without it, the config key `snapshots.default_retention`
+  applies; when that is unset, snapshots are kept until removed. Expired
+  snapshots are removed when the library is listed, when a snapshot is
+  created and by `snapshot prune`. Removal and pruning are ordered with
+  creation under one lock, so retention never races a create.
+- **Who may.** Creating a snapshot needs `agent.bundle.export` on the agent,
+  as an export does. Listing and showing need only an identified caller.
+  Exporting a snapshot's PAF needs the human or `agent.bundle.export` on the
+  snapshotted agent. Removing and pruning are human-only.
+- **Credentials.** A snapshot stays on this node, so scan findings are
+  recorded rather than refused. Redact and consent before sharing an exported
+  snapshot.
 
 ## Exporting and importing a group
 
