@@ -92,7 +92,7 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be zip or paf")
 		return
 	}
-	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true")
+	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman)
 }
 
 // Archive formats a group export can be written in.
@@ -102,8 +102,8 @@ const (
 )
 
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged bool) {
-	archive, err := buildGroupExportAs(groupName, format, allowFlagged)
+func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool) {
+	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -138,7 +138,9 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlag
 // member's conversation .jsonl, and serializes the whole thing as the v5
 // zip or a group PAF carrying the same data. A member whose .jsonl cannot
 // be located is flagged Missing — its DB rows still export.
-func buildGroupExportAs(groupName, format string, allowFlagged bool) ([]byte, error) {
+// byHuman records allowFlagged as a human's allowance in privacy.json;
+// an agent's allowance passes the export but is not recorded as one.
+func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
@@ -190,7 +192,7 @@ func buildGroupExportAs(groupName, format string, allowFlagged bool) ([]byte, er
 		if privacy.Blocking(findings) && !allowFlagged {
 			return nil, &flaggedGroupExportError{findings: findings}
 		}
-		archive, err = groupExportPAF(exp, findings, allowFlagged && privacy.Blocking(findings))
+		archive, err = groupExportPAF(exp, findings, byHuman && allowFlagged && privacy.Blocking(findings))
 	} else {
 		archive, err = groupexport.Marshal(exp)
 	}

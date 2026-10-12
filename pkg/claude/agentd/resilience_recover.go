@@ -17,18 +17,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
-// handleResilienceRecover previews or recovers a held snapshot as a new
-// agent on this node, for when the peer that sent it is gone for good.
+// handleResilienceRecover previews or recovers an agent from a held
+// snapshot on this node, for when the peer that sent it is gone.
 //
 //	POST /v1/resilience/held/{peer}/{offer}/preview {group, name?, cwd?, …}
 //	POST /v1/resilience/held/{peer}/{offer}/import  {…, preview_token}
 //
 // The snapshot is sealed to this node's key as well as its sender's, so it
-// is decrypted here, checked to be signed by the sending instance, and
-// lands like a board snapshot import: a new identity, the receiver's
-// profile and policy, no permissions from the source, and an arrival
-// briefing that marks the history as received. Possession of a snapshot
-// never carries the original agent's identity. Human-only.
+// is decrypted here and checked to be signed by the sending instance. The
+// agent keeps its id by default, as with a teleport, unless new_id asks for
+// a fresh one; a conflict with this node's records is refused until the
+// human chooses new_id or force_keep_id. It gets the receiver's profile and
+// policy, no permissions from the source, and an arrival briefing that
+// marks the history as received. Human-only.
 func handleResilienceRecover(op string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireHuman(w, r, "recover an agent from a held resilience snapshot") {

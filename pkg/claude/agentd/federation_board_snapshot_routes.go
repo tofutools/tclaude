@@ -209,7 +209,7 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		return &boardHTTPError{400, "archive", err.Error()}
 	}
-	if len(findings) > 0 {
+	if privacy.Blocking(findings) {
 		return &boardHTTPError{422, "flagged_credentials", "suspected credentials must be removed before a snapshot goes on a board: export it, run tclaude paf redact, and share the redacted file"}
 	}
 	summary, err := privacy.SummarizeForConsent(arch, pafContextRecordLimit())
@@ -635,7 +635,7 @@ func scanReceivedSnapshot(f *os.File, size int64) (*privacy.ConsentSummary, erro
 	if err != nil {
 		return nil, &boardHTTPError{422, "archive", err.Error()}
 	}
-	if len(findings) > 0 {
+	if privacy.Blocking(findings) {
 		return nil, &boardHTTPError{422, "flagged_credentials", "the received snapshot contains suspected credentials; it was not kept"}
 	}
 	summary, err := privacy.SummarizeForConsent(arch, pafContextRecordLimit())

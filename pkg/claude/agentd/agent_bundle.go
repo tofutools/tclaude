@@ -396,7 +396,7 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "format", "format must be bundle or paf")
 		return
 	}
-	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: flaggedCredentials(b.Manifest.Findings)}
+	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && flaggedCredentials(b.Manifest.Findings)}
 	if (parts.NoNative || parts.NoContext) && format != agentArchivePAF {
 		writeError(w, 400, "format", "no_native and no_context apply only to format=paf")
 		return

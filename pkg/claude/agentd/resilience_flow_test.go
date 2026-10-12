@@ -7,12 +7,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/client"
@@ -229,6 +232,13 @@ func TestResilience_PolicySendsSealedSnapshotsToPeer(t *testing.T) {
 	require.Zero(t, st.Failures)
 	require.Len(t, p.envelopes(proto.KindBundleOffer), 1)
 
+	// Unchanged, it is still sent again before the peer's retention (30
+	// days by default) could remove the only copy.
+	backdateResilienceLastGood(t, 20*24*time.Hour)
+	v = resilienceRun(t, f, policy.ID)
+	require.NotEmpty(t, v.Policies[0].Agents[0].Pending, "a copy halfway to expiry is refreshed")
+	fedEventually(t, "refresh offer sent", func() bool { return len(p.envelopes(proto.KindBundleOffer)) == 2 })
+
 	rec = fedHuman(t, f, http.MethodDelete, "/v1/resilience/policies/"+policy.ID, nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	rec = fedHuman(t, f, http.MethodGet, "/v1/resilience/policies", nil)
@@ -329,4 +339,26 @@ func TestResilience_PolicyPutsSnapshotsOnBoard(t *testing.T) {
 	v = resilienceRun(t, f, policy.ID)
 	require.Contains(t, v.Policies[0].Agents[0].LastError, "suspected credential")
 	require.Len(t, list().Snapshots, 1)
+}
+
+// backdateResilienceLastGood moves every policy state's last good snapshot
+// back by d, as if that much time had passed.
+func backdateResilienceLastGood(t *testing.T, d time.Duration) {
+	t.Helper()
+	path := filepath.Join(config.DataDir(), "snapshots", "resilience.json")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var file map[string]any
+	require.NoError(t, json.Unmarshal(raw, &file))
+	for _, agents := range file["state"].(map[string]any) {
+		for _, st := range agents.(map[string]any) {
+			st := st.(map[string]any)
+			at, err := time.Parse(time.RFC3339Nano, st["last_good"].(string))
+			require.NoError(t, err)
+			st["last_good"] = at.Add(-d).Format(time.RFC3339Nano)
+		}
+	}
+	raw, err = json.Marshal(file)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
 }

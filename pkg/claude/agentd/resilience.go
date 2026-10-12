@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -100,6 +101,18 @@ type resiliencePolicy struct {
 }
 
 func (p resiliencePolicy) every() time.Duration { return time.Duration(p.EverySeconds) * time.Second }
+
+// retention is how long the destination keeps a snapshot.
+func (p resiliencePolicy) retention() time.Duration {
+	d := time.Duration(p.MaxAgeDays) * 24 * time.Hour
+	if d == 0 {
+		d = resilienceDefaultMaxAgeDays * 24 * time.Hour
+	}
+	if p.Dest.Kind == "board" && (p.MaxAgeDays == 0 || d > proto.MaxBoardSnapshotTTL) {
+		d = proto.MaxBoardSnapshotTTL
+	}
+	return d
+}
 
 // resilienceState is one agent's record under one policy.
 type resilienceState struct {
@@ -239,13 +252,27 @@ func startResilienceScheduler(stop <-chan struct{}) {
 	}()
 }
 
+// resilienceRunMu serializes snapshot passes. resilienceMu guards the
+// state file and is held only to read and write it, never across a
+// capture, encryption or network call, so listing and changing policies
+// stay responsive while a pass runs.
+var resilienceRunMu sync.Mutex
+
 // resilienceTickOnce runs every due agent of every policy, or of one
 // policy now when only is set.
 func resilienceTickOnce(now time.Time, only string) {
+	resilienceRunMu.Lock()
+	defer resilienceRunMu.Unlock()
+	type job struct {
+		p resiliencePolicy
+		s resilienceState
+	}
+	var jobs []job
+	notified := map[string]bool{}
 	resilienceMu.Lock()
-	defer resilienceMu.Unlock()
 	f, err := loadResilience()
 	if err != nil {
+		resilienceMu.Unlock()
 		slog.Warn("resilience: load", "error", err)
 		return
 	}
@@ -264,7 +291,33 @@ func resilienceTickOnce(now time.Time, only string) {
 			if s.Pending != "" || (only == "" && now.Before(s.NextDue)) {
 				continue
 			}
-			resilienceRun(f, p, s, now)
+			jobs = append(jobs, job{p, *s})
+		}
+	}
+	maps.Copy(notified, f.FindingsNotified)
+	if err := saveResilience(f); err != nil {
+		slog.Warn("resilience: save", "error", err)
+	}
+	resilienceMu.Unlock()
+	if len(jobs) == 0 {
+		return
+	}
+	for i := range jobs {
+		resilienceRun(notified, jobs[i].p, &jobs[i].s, now)
+	}
+	resilienceMu.Lock()
+	defer resilienceMu.Unlock()
+	if f, err = loadResilience(); err != nil {
+		slog.Warn("resilience: load", "error", err)
+		return
+	}
+	// A policy removed while the pass ran keeps no state.
+	for _, j := range jobs {
+		if slices.ContainsFunc(f.Policies, func(p resiliencePolicy) bool { return p.ID == j.p.ID }) {
+			*f.state(j.p.ID, j.s.Agent) = j.s
+			if notified[j.p.ID] {
+				f.FindingsNotified[j.p.ID] = true
+			}
 		}
 	}
 	if err := saveResilience(f); err != nil {
@@ -319,7 +372,7 @@ func resilienceFail(p resiliencePolicy, s *resilienceState, now time.Time, msg s
 }
 
 // resilienceRun takes and sends one snapshot of an agent.
-func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, now time.Time) {
+func resilienceRun(notified map[string]bool, p resiliencePolicy, s *resilienceState, now time.Time) {
 	s.LastAttempt, s.Deferred = now, ""
 	a, err := db.GetAgent(s.Agent)
 	if err != nil || !a.Active() || a.CurrentConvID == "" {
@@ -359,8 +412,8 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 		return
 	}
 	s.Findings = snap.findings
-	if snap.findings > 0 && !f.FindingsNotified[p.ID] {
-		f.FindingsNotified[p.ID] = true
+	if snap.findings > 0 && !notified[p.ID] {
+		notified[p.ID] = true
 		what := "is sent, encrypted, to " + destLabel + " as the policy says. Remove them from the conversation, or remove the policy, if that peer should not hold them."
 		if p.Dest.Kind == "board" {
 			what = "is not put on " + destLabel + ": a board never takes a snapshot with suspected credentials. Remove them from the conversation for snapshots to resume."
@@ -370,8 +423,10 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 			slog.Warn("resilience: notify", "error", err)
 		}
 	}
-	if snap.digest == s.LastDigest {
-		// Nothing changed since the last good snapshot.
+	if snap.digest == s.LastDigest && now.Sub(s.LastGood) < p.retention()/2 {
+		// Nothing changed since the last good snapshot, and the
+		// destination still holds it: it is sent again well before the
+		// destination's retention would remove the only copy.
 		s.NextDue = now.Add(p.every())
 		return
 	}
@@ -414,7 +469,7 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 // every board snapshot expires: after the policy's maximum age, at most
 // the board limit.
 func resilienceToBoard(p resiliencePolicy, s *resilienceState, snap *resilienceCapture, now time.Time) {
-	if snap.findings > 0 {
+	if snap.blocking {
 		resilienceFail(p, s, now, fmt.Sprintf("%d suspected credential(s); a board never takes them", snap.findings))
 		return
 	}
@@ -491,8 +546,8 @@ func resilienceBoardPublish(a *boardItemAccess, p resiliencePolicy, snap *resili
 	}
 	if findings, err := privacy.ScanArchive(arch, pafContextRecordLimit()); err != nil {
 		return v, err
-	} else if len(findings) > 0 {
-		return v, fmt.Errorf("%d suspected credential(s); a board never takes them", len(findings))
+	} else if privacy.Blocking(findings) {
+		return v, errors.New("suspected credentials; a board never takes them")
 	}
 	maxAge := time.Duration(p.MaxAgeDays) * 24 * time.Hour
 	if maxAge == 0 || maxAge > proto.MaxBoardSnapshotTTL {
@@ -510,6 +565,8 @@ type resilienceCapture struct {
 	size     int64
 	digest   string
 	findings int
+	// blocking is a finding of a credential kind, not only advisory ones.
+	blocking bool
 	name     string
 	harness  string
 }
@@ -535,9 +592,8 @@ func captureResilienceSnapshot(conv string, now time.Time) (*resilienceCapture, 
 	}
 	at := now.UTC().Truncate(time.Second)
 	parts := pafHistoryParts{
-		AllowedFindings: flaggedCredentials(b.Manifest.Findings),
-		Snapshot:        &paf.Snapshot{Name: "resilience", TakenAt: at, State: snapshotStateIdle},
-		Lineage:         []paf.LineageStep{{Op: paf.OpSnapshot, At: at, From: &paf.Ref{Conversation: conv}, Detail: "resilience snapshot"}},
+		Snapshot: &paf.Snapshot{Name: "resilience", TakenAt: at, State: snapshotStateIdle},
+		Lineage:  []paf.LineageStep{{Op: paf.OpSnapshot, At: at, From: &paf.Ref{Conversation: conv}, Detail: "resilience snapshot"}},
 	}
 	// Signed by this instance, so a custodian can check where it came from.
 	archive, err := archiveAgentPAFWith(b, true, parts)
@@ -557,7 +613,7 @@ func captureResilienceSnapshot(conv string, now time.Time) (*resilienceCapture, 
 		_ = os.Remove(archive.Name())
 		return nil, fmt.Errorf("validate: %w", err)
 	}
-	return &resilienceCapture{file: archive, size: st.Size(), digest: conversationDigest(a), findings: findings, name: b.Manifest.Agent.Name, harness: b.Manifest.Agent.Harness}, nil
+	return &resilienceCapture{file: archive, size: st.Size(), digest: conversationDigest(a), findings: findings, blocking: flaggedCredentials(b.Manifest.Findings), name: b.Manifest.Agent.Name, harness: b.Manifest.Agent.Harness}, nil
 }
 
 // conversationDigest identifies what a snapshot carries apart from when it

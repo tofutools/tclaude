@@ -106,6 +106,8 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		if expires == nil || expires.After(limit) {
 			expires = &limit
 		}
+		// Expired snapshots do not count against the cap.
+		_, _ = snapshotStore().Prune(now)
 		if list, err := snapshotStore().List(); err == nil && len(list) >= agentSnapshotLibraryCap {
 			writeError(w, 429, "library_full", fmt.Sprintf("the snapshot library holds %d snapshots; only the human can add more", len(list)))
 			return
@@ -146,9 +148,8 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		meta.Findings = append(meta.Findings, paf.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
 	}
 	parts := pafHistoryParts{
-		AllowedFindings: flaggedCredentials(b.Manifest.Findings),
-		Snapshot:        &paf.Snapshot{Name: name, Note: req.Note, TakenAt: now, State: state},
-		Lineage:         []paf.LineageStep{{Op: paf.OpSnapshot, At: now, From: from, Detail: "snapshot " + name}},
+		Snapshot: &paf.Snapshot{Name: name, Note: req.Note, TakenAt: now, State: state},
+		Lineage:  []paf.LineageStep{{Op: paf.OpSnapshot, At: now, From: from, Detail: "snapshot " + name}},
 	}
 	archive, err := archiveAgentPAFWith(b, false, parts)
 	if err != nil {

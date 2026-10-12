@@ -373,10 +373,15 @@ survives if this node is lost.
   this node is lost. The peer's operator can therefore decrypt it, as with
   any recipient: choose a peer you would trust with the conversations.
   tclaude on the peer stores the ciphertext and never previews or imports
-  it; the generic offer routes refuse it.
+  it on its own; the generic offer routes refuse it. Only its operator can
+  open it, by [recovering the agent](#recovering-an-agent) when this node is
+  lost.
 - **When.** At most every `--every` (at least 10 minutes), only while the
   agent is idle, and only when its conversation changed since the last
-  snapshot the peer kept. A busy agent is tried again on the next check.
+  snapshot the peer kept, or that snapshot is halfway to its maximum age, so
+  an unchanged agent still has a copy that has not expired. A busy agent is
+  tried again on the next check. tclaude does not learn when the peer drops
+  a copy early (`held --rm-peer`, its size cap, a lost disk).
 - **Credentials.** Suspected credentials are not removed or refused. Their
   count shows in `policy ls`, and you are told once per policy.
 - **Failures.** A failed snapshot is retried with growing delays, up to six
@@ -620,14 +625,20 @@ prepared it for a wider audience.
   (`drop_native`), and the PAF then lands through the translated rung.
   `paths_to_placeholders` records placeholder names without their `original`
   values.
-- **Consent before it leaves the node.** Sharing with a peer, posting to a
-  Board or publishing requires an explicit human confirmation. The confirmation
-  shows size, time range, turn count, findings and redactions, and is recorded
-  against the content digest. An agent can never share or publish history on
-  its own authority.
-- **Encrypted when stored off-node.** A PAF with context that is stored
-  anywhere other than its own node (another node, a Board, a backup target)
-  is [encrypted](#encryption) to named recipients.
+- **Consent before it leaves the node.** Posting a snapshot to a Board,
+  publishing, consenting with `tclaude paf consent` and setting a resilience
+  policy are human-only, after an explicit confirmation. The confirmation
+  shows size, time range, turn count, findings and redactions, and is
+  recorded against the content digest. An agent can never post history to a
+  Board or publish it on its own authority. Federation share, move and
+  teleport keep their own [authority model](federation.md): the human, or an
+  agent holding the grant (`agent.share`, `agent.move`, `self.teleport`),
+  with the same credential scan and `--allow-flagged`.
+- **Encrypted when stored off-node.** Snapshots stored on a Board or with a
+  resilience peer are [encrypted](#encryption) to named recipients. A share,
+  move or teleport hands the agent to a trusted peer over the authenticated
+  federation link and is not separately encrypted; the receiving node holds
+  it as it would any agent it imports.
 - **Retention.** A PAF can carry an expiry (`retention.expires_at`), which a
   receiving tclaude honours for the copies it keeps. Shared snapshots default
   to a short retention. Copies that recipients already fetched cannot be
