@@ -1,5 +1,9 @@
 # Portable Agent Format (PAF)
 
+!!! tip "New to PAF?"
+    The tutorial [Move and share agents](learn/move-and-share-agents.md) walks through export, reading, import, snapshots and moves.
+
+
 The Portable Agent Format is an open, versioned file format for the state of a
 coding agent. A `.paf` file holds what an agent needs to resume work: its
 conversation history in a harness-neutral form, its definition and identity,

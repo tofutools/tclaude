@@ -154,7 +154,7 @@ working without it.
 - The dashboard shows the team's status and mail.
 - `agent retire` ends an agent but keeps its conversation.
 
-**Next:** agents are the starting point for permissions, sandboxing,
-templates and more. [Permissions and audit](../permissions-and-audit.md)
+**Next:** [Move and share agents](move-and-share-agents.md). Agents are also
+the starting point for permissions, sandboxing, templates and more. [Permissions and audit](../permissions-and-audit.md)
 explains what agents may do, and [Teams at scale](../teams-at-scale.md) shows
 how to deploy whole teams at once.
