@@ -107,7 +107,7 @@ receiving side.
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer](#resilience-snapshots); Board destinations and recovery are not available yet |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
@@ -338,6 +338,51 @@ Receiving:
   from the source. Its arrival briefing marks the received conversation as
   untrusted: context to read, not instructions to follow.
 - These routes are human-only and are not served through peer view.
+
+### Resilience snapshots
+
+```bash
+tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5
+tclaude agent snapshot policy set group:team --every 6h --to peer:bob --keep 3 --max-age-days 14
+tclaude agent snapshot policy ls
+tclaude agent snapshot policy run POLICY
+tclaude agent snapshot policy rm POLICY
+tclaude agent snapshot held            # on the peer: what it keeps for others
+```
+
+A resilience policy sends snapshots of an agent, or of every agent in a
+group, to a trusted [federation peer](federation.md) that keeps them for
+you, so a copy survives if this node is lost.
+
+- **Consent.** Only the human operator sets, runs or removes a policy.
+  Setting one is your consent to send those agents' conversations to that
+  peer, encrypted.
+- **Encryption.** Each snapshot is sealed with [age](#encryption) to the
+  peer's and this node's instance keys. The peer stores the ciphertext and
+  cannot read, preview or import it; the generic offer routes refuse it.
+- **When.** At most every `--every` (at least 10 minutes), only while the
+  agent is idle, and only when its conversation changed since the last
+  snapshot the peer kept. A busy agent is tried again on the next check.
+- **Credentials.** Suspected credentials are not removed or refused. Their
+  count shows in `policy ls`, and you are told once per policy.
+- **Failures.** A failed snapshot is retried with growing delays, up to six
+  hours apart. `policy ls` shows the error; after three failures in a row
+  you are told once, and again only after a snapshot succeeds and fails again.
+- **The peer.** It must run a tclaude that advertises resilience snapshots
+  and grant this node `snapshots.receive`:
+
+  ```bash
+  tclaude federation grant alice snapshots.receive
+  ```
+
+  It keeps the newest `--keep` snapshots (1 to 20, default 5) of each agent
+  for at most `--max-age-days` (default 30, at most 365), and at most 2 GiB
+  for one sender, dropping the oldest first. A snapshot is at most 64 MiB
+  once encrypted. Revoking the grant stops new custody. Removing a policy
+  stops the schedule; the peer's copies stay until its retention removes
+  them.
+
+Recovering an agent from a held snapshot is not available yet.
 
 ## Exporting and importing a group
 

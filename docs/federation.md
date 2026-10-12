@@ -1010,6 +1010,20 @@ Agents need explicit `agent.bundle.export` / `agent.bundle.import` grants;
 neither is default-granted or implied by ownership. Import also requires normal
 spawn authority. These commands operate on local files and do not contact peers.
 
+## Keeping resilience snapshots for a peer
+
+A peer's [resilience policy](paf.md#resilience-snapshots) sends encrypted
+snapshots of its agents to this node for safekeeping. Accept them by granting
+the peer-only, unscoped `snapshots.receive` permission:
+
+```bash
+tclaude federation grant alice snapshots.receive
+```
+
+Snapshots stay encrypted here, are never imported, and are listed by
+`tclaude agent snapshot held`. Retention follows the sender's policy and is
+bounded at 2 GiB per peer.
+
 ## Offering configuration to a peer
 
 Config offers go to the remote operator, and are never applied automatically,
