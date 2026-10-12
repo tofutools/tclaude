@@ -18,10 +18,10 @@ These are implementation areas, not services already extracted on main.
 | Messaging | Existing daemon mailbox and harness delivery paths |
 | Persistence | Existing SQLite operations, used by application paths |
 
-Examples: [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
-[team templates](../../pkg/claude/agentd/templates.go),
-[harness boundary](../../pkg/claude/harness/harness.go), and
-[database code](../../pkg/claude/common/db/).
+Examples: [daemon lifecycle](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/lifecycle.go),
+[team templates](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/templates.go),
+[harness boundary](https://github.com/tofutools/tclaude/blob/main/pkg/claude/harness/harness.go), and
+[database code](https://github.com/tofutools/tclaude/blob/main/pkg/claude/common/db/).
 
 ## Future (proposed)
 

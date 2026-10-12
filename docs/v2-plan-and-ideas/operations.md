@@ -14,9 +14,9 @@ where they request the same behavior, retaining their actual caller identity.
 | Identity | Agent IDs, native conversation IDs and tclaude session/window IDs are distinct records, with historically accumulated associations |
 | Later observations | Native event handling updates state after the initiating call; this is not a single synchronous function result |
 
-See [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
-[harness lifecycle](../../pkg/claude/harness/lifecycle.go), and
-[Codex native lifecycle](../../pkg/claude/agentd/codex_native_registry_lifecycle.go).
+See [daemon lifecycle](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/lifecycle.go),
+[harness lifecycle](https://github.com/tofutools/tclaude/blob/main/pkg/claude/harness/lifecycle.go), and
+[Codex native lifecycle](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/codex_native_registry_lifecycle.go).
 This describes existing organization, not a verified step-by-step restart trace
 for every harness. That trace is still needed before choosing an extraction.
 

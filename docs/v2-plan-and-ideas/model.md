@@ -19,9 +19,9 @@ implementation already includes later additions such as stable agent IDs.
 | Team, process or automation | Existing templates and mechanisms for coordinating or repeating work. |
 | Activity | Existing readings and status assembled from native observations and tclaude runtime state. |
 
-Main evidence: [agent and conversation records](../../pkg/claude/common/db/agents.go),
-[session records](../../pkg/claude/common/db/sessions.go), and
-[window/session state](../../pkg/claude/session/session.go). These show current
+Main evidence: [agent and conversation records](https://github.com/tofutools/tclaude/blob/main/pkg/claude/common/db/agents.go),
+[session records](https://github.com/tofutools/tclaude/blob/main/pkg/claude/common/db/sessions.go), and
+[window/session state](https://github.com/tofutools/tclaude/blob/main/pkg/claude/session/session.go). These show current
 structures, not proof that their vocabulary or lifetimes are already settled.
 
 ## Future (proposed)
