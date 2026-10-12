@@ -110,5 +110,4 @@ tclaude ask -n "new topic: summarize the README"
 - `tclaude ask` answers quick questions without a session, and keeps a thread
   per terminal and directory.
 
-**Next:** solo use is covered. Running a team of agents gets its own tutorial
-next; until then, start with [Agents and groups](../agents-and-groups.md).
+**Next:** [Your first agent team](first-team.md).

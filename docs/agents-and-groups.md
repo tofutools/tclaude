@@ -1,5 +1,9 @@
 # Agents and groups
 
+!!! tip "New to tclaude?"
+    The tutorial [Your first agent team](learn/first-team.md) walks through a first group step by step.
+
+
 An **agent** is a conversation registered with the `agentd` daemon: it has a
 stable identity, belongs to groups, and can exchange mail with its peers and
 the operator. This page covers the daemon in brief, how identity works, what

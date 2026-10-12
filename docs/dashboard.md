@@ -1,5 +1,9 @@
 # Dashboard
 
+!!! tip "New to tclaude?"
+    The tutorial [Your first agent team](learn/first-team.md) walks through a first group step by step.
+
+
 The dashboard is the browser operations console for your agent fleet. Its
 design thesis is observability with zoom on demand: one screen shows every
 group and agent at a glance — status, context pressure, cost, branch and CI
