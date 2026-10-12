@@ -86,3 +86,28 @@ func TestManagedInstructionImportExactDirectory(t *testing.T) {
 	_, err = Import("skill", "release", skill)
 	require.ErrorContains(t, err, "symlink")
 }
+
+func TestManagedInstructionHookApprovalParsesFrontmatter(t *testing.T) {
+	for _, metadata := range []string{"hooks: {}", `"hooks": {}`, "hooks : {}", "base: &hooks {hooks: {}}\n<<: *hooks", "hooks: [invalid", "description: safe\n---missing"} {
+		t.Run(metadata, func(t *testing.T) {
+			require.True(t, RequiresCodeApproval(skillbundle.File{Path: "SKILL.md", Data: []byte("---\n" + metadata + "\n---\nGuidance")}))
+		})
+	}
+	require.False(t, RequiresCodeApproval(skillbundle.File{Path: "SKILL.md", Data: []byte("---\ndescription: Safe prose\n---\nGuidance")}))
+}
+
+func TestManagedInstructionReceiverPrecedenceAndCarriedDedup(t *testing.T) {
+	receiver := []db.ManagedInstruction{{Kind: "rule", Name: "safety", Scope: "user", Content: []byte("Receiver instruction")}}
+	carried := []db.ManagedInstruction{{Kind: "rule", Name: "old", Scope: "carried", Content: []byte("Carried instruction")}}
+	merged, err := Merge(receiver, carried)
+	require.NoError(t, err)
+	repeated, err := Merge(receiver, merged)
+	require.NoError(t, err)
+	require.Len(t, repeated, 2)
+	launch, err := Materialize(repeated)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(launch.Root) })
+	require.Contains(t, launch.Body, "win every conflict with carried guidance")
+	require.Contains(t, launch.Body, "Receiver instruction")
+	require.Contains(t, launch.Body, "Carried instruction")
+}

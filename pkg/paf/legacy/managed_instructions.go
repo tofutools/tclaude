@@ -76,8 +76,16 @@ func writeManagedInstructions(w *paf.Writer, agent *paf.Agent, env *paf.Environm
 func readManagedInstructions(a *paf.Archive, agent paf.Agent) ([]db.ManagedInstruction, error) {
 	var index ManagedInstructionIndex
 	present, err := agent.Extensions.Decode(ManagedInstructionsExtension, &index)
-	if err != nil || !present {
+	if err != nil {
 		return nil, err
+	}
+	if !present {
+		for _, required := range a.Manifest.ExtensionsRequired {
+			if required == ManagedInstructionsExtension {
+				return nil, errors.New("required managed instruction index is missing")
+			}
+		}
+		return nil, nil
 	}
 	if !a.UnderstandsExtension(ManagedInstructionsExtension) || index.Version != 1 {
 		return nil, errors.New("unsupported managed instruction resource index")

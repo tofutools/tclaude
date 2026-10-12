@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
@@ -44,7 +43,7 @@ func managedInstructionPreviews(items []db.ManagedInstruction) ([]managedInstruc
 			}
 			for _, file := range bundle.Files {
 				preview.Files = append(preview.Files, file.Path)
-				if skillbundle.SecurityRelevant(file) || file.Path == "SKILL.md" && strings.Contains(string(file.Data), "hooks:") {
+				if managedinstructions.RequiresCodeApproval(file) {
 					preview.CodeFiles = append(preview.CodeFiles, file.Path)
 					if preview.CodeText == nil {
 						preview.CodeText = map[string]string{}

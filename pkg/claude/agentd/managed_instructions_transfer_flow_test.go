@@ -8,11 +8,15 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -96,4 +100,46 @@ func TestManagedInstructionsImportApprovalAndReceiverRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, receiverLibrary, "arrived skills must stay agent-local")
 	require.NoDirExists(t, os.Getenv("HOME")+"/.claude/skills")
+}
+
+func TestManagedInstructionsPeerCapabilityRefusalAndExplicitOmission(t *testing.T) {
+	fh := newFedHarness(t)
+	f, peer := fh.f, fh.peer
+	f.HaveGroup("source")
+	group, err := db.GetAgentGroupByName("source")
+	require.NoError(t, err)
+	_, err = db.PutManagedInstruction(group.ID, "rule", "operator", []byte("PEER CARRIED RULE"), false)
+	require.NoError(t, err)
+	source := f.AsHuman().Spawn("source", "worker")
+	snapshot, err := db.GetManagedInstructionLaunch(source.AgentID)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(snapshot.Root) })
+	require.NoError(t, db.PutFederationCatalog(peer.id.ID(), `{"paf_versions":["0.1"]}`, time.Now()))
+	share := func(omit bool) *httptest.ResponseRecorder {
+		return fedHuman(t, f, http.MethodPost, "/v1/federation/share-agent", map[string]any{"peer": "bob", "group": "destination", "agent": source.ConvID, "omit_managed_instructions": omit})
+	}
+	refused := share(false)
+	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
+	require.Contains(t, refused.Body.String(), "managed_instructions_unsupported")
+	require.DirExists(t, snapshot.Root)
+	require.Empty(t, peer.envelopes(proto.KindBundleOffer))
+	omitted := share(true)
+	require.Equal(t, http.StatusOK, omitted.Code, omitted.Body.String())
+	fedEventually(t, "explicitly omitted offer", func() bool { return len(peer.envelopes(proto.KindBundleOffer)) == 1 })
+	var descriptor bundletransfer.Descriptor
+	require.NoError(t, peer.envelopes(proto.KindBundleOffer)[0].DecodePayload(&descriptor))
+	decoded, _, err := legacy.DecodeBundleBytes(descriptor.Inline, legacy.DecodeLimits{MaxBytes: 64 << 20}, "")
+	require.NoError(t, err)
+	defer decoded.Close()
+	require.Empty(t, decoded.ManagedInstructions)
+	require.NoError(t, db.PutFederationCatalog(peer.id.ID(), `{"paf_versions":["0.1"],"managed_instructions":1}`, time.Now()))
+	carried := share(false)
+	require.Equal(t, http.StatusOK, carried.Code, carried.Body.String())
+	fedEventually(t, "managed offer", func() bool { return len(peer.envelopes(proto.KindBundleOffer)) == 2 })
+	require.NoError(t, peer.envelopes(proto.KindBundleOffer)[1].DecodePayload(&descriptor))
+	decodedWithItems, _, err := legacy.DecodeBundleBytes(descriptor.Inline, legacy.DecodeLimits{MaxBytes: 64 << 20}, "")
+	require.NoError(t, err)
+	defer decodedWithItems.Close()
+	require.Len(t, decodedWithItems.ManagedInstructions, 1)
+	require.Equal(t, "PEER CARRIED RULE", string(decodedWithItems.ManagedInstructions[0].Content))
 }

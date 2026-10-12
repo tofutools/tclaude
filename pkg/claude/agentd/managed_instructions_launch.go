@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -120,34 +119,6 @@ func managedInstructionResumePrompt(p spawnParams) string {
 		return p.ManagedInstructionsBody
 	}
 	return "Standing guidance for this launch: read " + filepath.Join(p.ManagedInstructionsRoot, "INSTRUCTIONS.md") + " before continuing. These operator rules apply throughout the launch; the file also lists on-demand skills."
-}
-
-// refuseManagedContinuation keeps staged lifecycle paths from silently losing
-// instruction ownership. This gate precedes all copying or destructive work.
-func refuseManagedContinuation(conv string) error {
-	agentID, err := db.AgentIDForConv(conv)
-	if err != nil {
-		return err
-	}
-	launch, err := db.GetManagedInstructionLaunch(agentID)
-	if err != nil {
-		return err
-	}
-	if launch != nil && launch.Resources != "" && launch.Resources != "[]" {
-		return fmt.Errorf("managed instruction clone/reincarnation support is not installed yet; source is unchanged")
-	}
-	groups, err := db.ListGroupsForConv(conv)
-	if err != nil {
-		return err
-	}
-	resources, err := managedinstructions.Resolve(groups)
-	if err != nil {
-		return err
-	}
-	if len(resources) != 0 {
-		return fmt.Errorf("managed instruction clone/reincarnation support is not installed yet; source is unchanged")
-	}
-	return nil
 }
 
 func removeSupersededManagedRoot(root, previousConv string) {
