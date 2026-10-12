@@ -36,6 +36,25 @@ var Agent = Type{Name: "agent", MaxBytes: 2 << 30, AdmissionSlug: "agents.receiv
 
 var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.offer", PendingLimit: PendingLimit, PendingBytes: PendingBytes}
 
+// Snapshot is an encrypted resilience snapshot of an agent, kept opaquely
+// by the receiver for its sender. It is never imported on receipt.
+var Snapshot = Type{Name: "snapshot", MaxBytes: 65 << 20, AdmissionSlug: "snapshots.receive", PendingLimit: 20, PendingBytes: 512 << 20}
+
+// MaxResilienceKeep bounds how many snapshots of one agent a receiver keeps.
+const MaxResilienceKeep = 20
+
+// ResilienceIntent identifies a resilience snapshot. It travels in the
+// sender's signed envelope; the receiver keys retention by the
+// authenticated sender instance plus SourceAgent.
+type ResilienceIntent struct {
+	SourceAgent string    `json:"source_agent"`
+	AgentName   string    `json:"agent_name,omitempty"`
+	Harness     string    `json:"harness,omitempty"`
+	TakenAt     time.Time `json:"taken_at"`
+	Keep        int       `json:"keep"`
+	MaxAgeDays  int       `json:"max_age_days,omitempty"`
+}
+
 type MoveIntent struct {
 	DirectIfAllowed bool   `json:"direct_if_allowed,omitempty"`
 	Cwd             string `json:"cwd,omitempty"`
@@ -55,16 +74,18 @@ type MoveConfirmation struct {
 }
 
 type Descriptor struct {
-	Teleport  *TeleportIntent `json:"teleport,omitempty"`
-	Move      *MoveIntent     `json:"move,omitempty"`
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Bytes     int64           `json:"bytes"`
-	SHA256    string          `json:"sha256"`
-	ExpiresAt time.Time       `json:"expires_at"`
-	Summary   string          `json:"summary"`
-	Group     string          `json:"group,omitempty"`
-	Inline    []byte          `json:"inline,omitempty"`
+	Teleport *TeleportIntent `json:"teleport,omitempty"`
+	Move     *MoveIntent     `json:"move,omitempty"`
+	// Resilience is set exactly for snapshot offers.
+	Resilience *ResilienceIntent `json:"resilience,omitempty"`
+	ID         string            `json:"id"`
+	Type       string            `json:"type"`
+	Bytes      int64             `json:"bytes"`
+	SHA256     string            `json:"sha256"`
+	ExpiresAt  time.Time         `json:"expires_at"`
+	Summary    string            `json:"summary"`
+	Group      string            `json:"group,omitempty"`
+	Inline     []byte            `json:"inline,omitempty"`
 }
 
 func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
@@ -129,6 +150,12 @@ func (d Descriptor) Validate(kind Type, now time.Time) error {
 	}
 	if d.Move != nil && (len(d.Move.Cwd) > 4096 || len(d.Move.Landing) > 256 || d.Move.DirectIfAllowed && d.Teleport != nil) {
 		return errors.New("invalid direct move landing request")
+	}
+	if (d.Resilience != nil) != (kind.Name == Snapshot.Name) {
+		return errors.New("resilience identity is required for, and only for, snapshot offers")
+	}
+	if r := d.Resilience; r != nil && (!proto.ValidAgentRef(r.SourceAgent) || len(r.AgentName) > 256 || len(r.Harness) > 64 || r.TakenAt.IsZero() || r.Keep < 1 || r.Keep > MaxResilienceKeep || r.MaxAgeDays < 0 || r.MaxAgeDays > 365) {
+		return errors.New("invalid resilience snapshot identity")
 	}
 	if !proto.ValidStreamID(d.ID) || d.Type != kind.Name || d.Bytes <= 0 || d.Bytes > kind.MaxBytes {
 		return errors.New("invalid bundle offer identity, type or size")

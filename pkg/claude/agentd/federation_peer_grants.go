@@ -28,6 +28,9 @@ const (
 	PermMessageAttachments   = "message.attachments"
 	PermAgentsReceive        = "agents.receive"
 	PermJobsRun              = "jobs.run"
+	// PermSnapshotsReceive lets a peer send this node encrypted resilience
+	// snapshots of its agents to keep. Instance-wide; nothing is imported.
+	PermSnapshotsReceive = "snapshots.receive"
 )
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
@@ -237,7 +240,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage
+	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage || in.Slug == PermSnapshotsReceive
 	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return
