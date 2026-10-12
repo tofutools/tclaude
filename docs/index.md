@@ -164,6 +164,16 @@ are not shown proxy capabilities on installations where those services are
 not configured. Utility skills are opt-in too: they are workflows you choose
 to give your agents, not part of the baseline.
 
+To prepare hooks before installing the harness CLIs, add `--all-harnesses`.
+It creates missing configuration directories for every harness with a hook
+installer (Claude Code, Codex, Copilot and Gemini CLI); `--install-all` alone
+keeps the usual harness detection. Codex hook trust still needs its CLI:
+after installing Codex, rerun `tclaude setup --harness codex -y` to grant it.
+
+```bash
+tclaude setup --install-all --all-harnesses -y
+```
+
 !!! note "Skills do not start the daemon"
     The extras install skills and permissions. To use `tclaude agent`, also
     run `tclaude agentd serve` in a non-sandboxed shell.
@@ -177,31 +187,10 @@ tclaude setup --check --harness codex
 
 ## First session
 
-```bash
-# Your default harness in the current directory
-tclaude
-
-# Pick a harness explicitly
-tclaude session new --harness codex      # claude | codex | opencode | copilot | gemini
-
-# Start detached instead of attaching immediately
-tclaude session new --harness copilot --detached
-```
-
-Bare `tclaude` accepts the same launch flags as `session new`. With no
-`--harness`, the choice comes from your global default spawn profile, falling
-back to whichever harness is installed (Claude Code preferred). When the
-daemon is running and an agent group's default directory matches your launch
-directory, bare `tclaude` joins that group automatically — see
-[Sessions](sessions.md) for the details.
-
-Detach from an attached session with `Ctrl+B`, then `D`. Later:
-
-```bash
-tclaude session watch       # interactive list of running sessions
-tclaude conv watch -g       # conversation history across all projects
-tclaude conv resume <id>    # resumes through the recorded harness
-```
+Run bare `tclaude` in a project directory to start your default harness in a
+session (`tclaude --harness codex` picks another). The tutorial
+[Your first session](learn/first-session.md) walks through starting,
+detaching, watching and reattaching; [Sessions](sessions.md) is the reference.
 
 ## Quick questions from the shell
 
