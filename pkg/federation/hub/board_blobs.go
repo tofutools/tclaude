@@ -227,7 +227,11 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 		return adminErr(403, "board_member", "board membership removed")
 	}
 	if hardExpiry != "" {
-		dst = snapshotTTLWriter{dst: dst, now: s.now, expiry: parseTS(hardExpiry)}
+		guard := snapshotTTLWriter{dst: dst, now: s.now, expiry: parseTS(hardExpiry)}
+		if bandwidth, ok := dst.(*boardBandwidth); ok {
+			bandwidth.beforeWrite = guard.check
+		}
+		dst = guard
 	}
 	_, err = io.CopyN(dst, f, size)
 	return err
@@ -243,7 +247,7 @@ func (s *Store) SweepBoardBlobs() error {
 	if err := s.expireSnapshots(); err != nil {
 		return err
 	}
-	rows, err := s.db.Query(`SELECT x.board,x.id FROM board_blobs x WHERE (x.pinned=0 AND x.expires_at<=? AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id)) OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?)`, ts(s.now()), snapshotTS(s.now()))
+	rows, err := s.db.Query(`SELECT x.board,x.id FROM board_blobs x WHERE (x.pinned=0 AND x.expires_at<=? AND (x.state='pending' OR NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id))) OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?)`, ts(s.now()), snapshotTS(s.now()))
 	if err != nil {
 		return err
 	}
@@ -367,9 +371,15 @@ type snapshotTTLWriter struct {
 	expiry time.Time
 }
 
-func (w snapshotTTLWriter) Write(p []byte) (int, error) {
+func (w snapshotTTLWriter) check() error {
 	if !w.now().Before(w.expiry) {
-		return 0, adminErr(404, "blob_unknown", "snapshot expired")
+		return adminErr(404, "blob_unknown", "snapshot expired")
+	}
+	return nil
+}
+func (w snapshotTTLWriter) Write(p []byte) (int, error) {
+	if err := w.check(); err != nil {
+		return 0, err
 	}
 	return w.dst.Write(p)
 }

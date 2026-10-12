@@ -134,3 +134,45 @@ func TestBoardSnapshotPublisherAndPendingReservationAuthority(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM board_blobs WHERE state='pending'`).Scan(&pending))
 	require.Zero(t, pending)
 }
+
+func TestBoardSnapshotAbandonedReservationReleasesQuota(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	s, e := OpenStoreWithClock(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"), func() time.Time { return now })
+	require.NoError(t, e)
+	defer func() { require.NoError(t, s.Close()) }()
+	board, blob := proto.NewEnvelopeID(), proto.NewEnvelopeID()
+	id, e := proto.NewIdentity()
+	require.NoError(t, e)
+	_, e = s.db.Exec(`INSERT INTO boards(id,name,epoch,created_at) VALUES(?,'test',1,?)`, board, ts(now))
+	require.NoError(t, e)
+	_, e = s.db.Exec(`INSERT INTO board_blobs VALUES(?,?,100,?,'pending',?,0)`, board, blob, strings.Repeat("0", 64), ts(now.Add(time.Hour)))
+	require.NoError(t, e)
+	_, e = s.db.Exec(`INSERT INTO board_snapshot_blobs VALUES(?,?,?,?)`, board, blob, id.ID(), snapshotTS(now.Add(7*24*time.Hour)))
+	require.NoError(t, e)
+	now = now.Add(2 * time.Hour)
+	require.NoError(t, s.SweepBoardBlobs())
+	var pending int
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM board_blobs WHERE board=?`, board).Scan(&pending))
+	require.Zero(t, pending)
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM board_snapshot_blobs WHERE board=?`, board).Scan(&pending))
+	require.Zero(t, pending)
+}
+
+func TestBoardSnapshotStreamChecksExpiryAfterThrottle(t *testing.T) {
+	expiry := time.Now().UTC()
+	calls := 0
+	output := &bytes.Buffer{}
+	bandwidth := &boardBandwidth{rw: output, lim: newByteLimiter(1 << 20), done: make(chan struct{})}
+	guard := snapshotTTLWriter{dst: bandwidth, expiry: expiry, now: func() time.Time {
+		calls++
+		if calls == 1 {
+			return expiry.Add(-time.Nanosecond)
+		}
+		return expiry
+	}}
+	bandwidth.beforeWrite = guard.check
+	n, e := guard.Write([]byte("buffered ciphertext"))
+	require.Error(t, e)
+	require.Zero(t, n)
+	require.Empty(t, output.Bytes(), "expiry crossing the throttle boundary must release no ciphertext")
+}
