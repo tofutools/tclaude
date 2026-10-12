@@ -1,4 +1,4 @@
-// Package hubcmd is the CLI of the standalone tclaude-hub binary.
+// Package hubcmd supplies both `tclaude hub` and the standalone tclaude-hub CLI.
 package hubcmd
 
 import (
@@ -34,10 +34,10 @@ permissions.
 Admin commands edit the hub database directly; a running hub picks the
 changes up within its policy refresh interval (default 15s).`
 
-// RootCmd returns the tclaude-hub root command.
-func RootCmd() *cobra.Command {
-	cmd := boa.CmdT[struct{}]{
-		Use:         "tclaude-hub",
+// Cmd returns the hub subtree for the main tclaude binary.
+func Cmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "hub",
 		Short:       "Federation hub for tclaude agentd instances",
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -45,6 +45,12 @@ func RootCmd() *cobra.Command {
 			serveCmd(), adminCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
 		},
 	}.ToCobra()
+}
+
+// RootCmd mounts the same commands directly under the standalone binary.
+func RootCmd() *cobra.Command {
+	cmd := Cmd()
+	cmd.Use = "tclaude-hub"
 	cli.ConfigureRoot(cmd)
 	return cmd
 }

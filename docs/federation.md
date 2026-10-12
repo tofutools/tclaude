@@ -65,6 +65,15 @@ spontaneous agent send. Trust alone grants no group access.
 
 `tclaude-hub` is a separate binary, included in the release archives, or
 built with `go install github.com/tofutools/tclaude/cmd/tclaude-hub@latest`.
+
+The full command tree is also available as **`tclaude hub ...`**: for example,
+`tclaude hub serve`, `tclaude hub admin rotate-claim`, and `tclaude hub invite`.
+Replace the `tclaude-hub` prefix in any command below with `tclaude hub` to use
+the main binary. Both forms share the same flags, database, authorization and
+script guardian. The standalone binary remains available for existing services.
+When running `tclaude hub serve --supervised`, hub updates replace the serving
+`tclaude` executable and keep the `hub` prefix when restarting its worker;
+`tclaude-hub serve --supervised` continues to update the standalone executable.
 Run it anywhere every instance can reach: a team server, a cloud VM, or one
 of your own machines.
 
@@ -3236,11 +3245,13 @@ A remote admin can delegate it only if it already holds that capability.
 Removing the last admitted admin with `hub.admins.manage`, stripping that
 capability, revoking its admission, or recovering its lost key is refused. If all
 admin keys are lost, the hub host can run the shell-only command
-`tclaude-hub admin reset --db PATH` to clear admin authority and create a fresh
+`tclaude hub admin reset --db PATH` (or `tclaude-hub admin reset --db PATH`)
+to clear admin authority and create a fresh
 claim. There is no remote reset endpoint.
 
 To replace a leaked or unwanted **unredeemed** claim without clearing admins,
-run `tclaude-hub admin rotate-claim --db PATH` on the hub host. It immediately
+run `tclaude hub admin rotate-claim --db PATH` (equivalently,
+`tclaude-hub admin rotate-claim --db PATH`) on the hub host. It immediately
 invalidates the old claim, writes a fresh private token valid for 24 hours, and
 uses the same `--print-claim-token` output rule. Expired unredeemed claims can
 also be rotated. If the claim was redeemed, admins already exist, or no claim
