@@ -2,7 +2,6 @@ package paf
 
 import (
 	"archive/zip"
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -226,7 +225,7 @@ func (a *Archive) readManifest(purpose Purpose) error {
 	a.ManifestRaw = raw
 	m := &a.Manifest
 	for id, d := range m.ExtensionsUsed {
-		if !ValidExtensionID(id) {
+		if !wellFormedExtensionID(id) {
 			return fmt.Errorf("paf: invalid extension id %q", id)
 		}
 		if _, _, err := ParseVersion(d.Version); err != nil {
@@ -422,17 +421,24 @@ func (a *Archive) parseMetadata(p, schema string, raw []byte) error {
 // checkDeclared refuses extension ids used in raw that the manifest does
 // not declare.
 func (a *Archive) checkDeclared(raw []byte) error {
-	return forEachExtension(raw, func(id string, data map[string]any) error {
-		if _, ok := a.Manifest.ExtensionsUsed[id]; !ok {
-			return fmt.Errorf("extension %q is used but not declared", id)
+	return forEachExtension(raw, a.declaredExtension)
+}
+
+// checkDeclaredDoc is checkDeclared on an already decoded document.
+func (a *Archive) checkDeclaredDoc(doc any) error {
+	return walkExtensions(doc, a.declaredExtension)
+}
+
+func (a *Archive) declaredExtension(id string, data map[string]any) error {
+	if _, ok := a.Manifest.ExtensionsUsed[id]; !ok {
+		return fmt.Errorf("extension %q is used but not declared", id)
+	}
+	if schema := extensionSchemas[id]; schema != "" && a.UnderstandsExtension(id) {
+		if err := ValidateSchema(schema, any(data)); err != nil {
+			return fmt.Errorf("extension %q: %w", id, err)
 		}
-		if schema := extensionSchemas[id]; schema != "" && a.UnderstandsExtension(id) {
-			if err := ValidateSchema(schema, any(data)); err != nil {
-				return fmt.Errorf("extension %q: %w", id, err)
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // extensionSchemas are the bundled schemas of extensions this package
@@ -454,14 +460,18 @@ func (a *Archive) checkContext(p string, r io.Reader) error {
 		return fmt.Errorf("paf: %s: header scope %q, want %q", p, cr.Header.Scope, wantScope)
 	}
 	check := func(l Line) error {
-		raw := l.Raw
-		if err := validateJSON(SchemaLine, raw); err != nil {
+		// One decode serves the schema and the extension walk. The walk is
+		// structural: a key spelled with escapes is still an "extensions"
+		// key, so no byte search may stand in for it.
+		var doc any
+		if err := json.Unmarshal(l.Raw, &doc); err != nil {
 			return err
 		}
-		if bytes.Contains(raw, []byte(`"extensions"`)) {
-			if err := a.checkDeclared(raw); err != nil {
-				return err
-			}
+		if err := ValidateSchema(SchemaLine, doc); err != nil {
+			return err
+		}
+		if err := a.checkDeclaredDoc(doc); err != nil {
+			return err
 		}
 		for _, b := range l.Blocks {
 			for _, m := range b.Media {

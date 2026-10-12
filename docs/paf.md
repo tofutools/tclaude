@@ -1301,9 +1301,11 @@ keyed by its id:
 ```
 
 - **id:** lowercase. Ids with a single label (`tclaude`) are reserved for
-  extensions documented on this page, and a reader refuses any other
+  extensions documented on this page, and a writer must not mint any other
   single-label id. Anyone else uses a reverse-DNS id they control, such as
-  `com.example.agentlab`.
+  `com.example.agentlab`. A reader treats an undocumented single-label id
+  like any unknown extension: it ignores it, and refuses the file only when
+  `extensions_required` lists it.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
   same rules as `paf_version`. A reader that knows the extension but not that
   version (another major, or while the major is 0 any other minor) treats it
@@ -1435,8 +1437,9 @@ a reader checks them in code:
 - `agent.native.path` lies under that agent's own `agents/<key>/native/`;
 - every `attachment` reference resolves to an entry;
 - every extension id used in an `extensions` object, an `ext/` entry or
-  `extensions_required` is declared in `extensions_used`;
-- no single-label extension id appears other than those this page documents;
+  `extensions_required` is declared in `extensions_used`, found by decoding
+  the JSON (a key spelled with escapes counts) rather than by searching its
+  bytes;
 - JSON metadata has no duplicate keys.
 
 ## Legacy formats

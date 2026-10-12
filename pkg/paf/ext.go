@@ -33,7 +33,7 @@ func walkExtensions(v any, fn func(id string, data map[string]any) error) error 
 					return fmt.Errorf("extensions is not an object")
 				}
 				for id, data := range ext {
-					if !ValidExtensionID(id) {
+					if !wellFormedExtensionID(id) {
 						return fmt.Errorf("invalid extension id %q", id)
 					}
 					obj, ok := data.(map[string]any)

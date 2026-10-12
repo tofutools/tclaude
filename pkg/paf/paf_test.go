@@ -261,10 +261,19 @@ func TestOpenRefuses(t *testing.T) {
 			f[AgentPath("w", "environment.json")] = []byte(`{"harness":{"name":"codex"},"extensions":{"tclaude":{"harness":"not-an-object"}}}`)
 			remanifest(t, f, nil)
 		},
-		"reserved single-label extension": func(f map[string][]byte) {
+		// An undocumented single-label id is an unknown extension: refused
+		// only when required.
+		"required unknown single-label extension": func(f map[string][]byte) {
 			remanifest(t, f, func(m map[string]any) {
 				m["extensions_used"].(map[string]any)["agentlab"] = map[string]any{"version": "1.0", "system": "x", "spec": "x"}
+				m["extensions_required"] = []any{"agentlab"}
 			})
+		},
+		// The extension walk is structural, so an escaped key is still seen.
+		"undeclared extension behind an escaped key": func(f map[string][]byte) {
+			p := AgentPath("w", "context/transcript.jsonl")
+			f[p] = bytes.Replace(f[p], []byte(`"role":"assistant"`), []byte(`"role":"assistant","ext\u0065nsions":{"com.example.x":{}}`), 1)
+			remanifest(t, f, nil)
 		},
 		"native outside its agent": func(f map[string][]byte) {
 			var a map[string]any
@@ -300,19 +309,20 @@ func TestOpenRefuses(t *testing.T) {
 		},
 	}
 	want := map[string]string{
-		"unlisted entry":                    "not listed in the manifest",
-		"hash mismatch":                     "hash does not match",
-		"missing listed entry":              "is missing",
-		"duplicate manifest key":            "duplicate key",
-		"undeclared extension":              "used but not declared",
-		"reserved single-label extension":   "invalid extension id",
-		"invalid tclaude extension payload": `extension "tclaude"`,
-		"native outside its agent":          "outside its native directory",
-		"attachment not in archive":         "is not in the archive",
-		"closed enum value":                 `unknown role "system"`,
-		"context without losses":            "no losses.json",
-		"unknown major version":             "unsupported PAF version 1.0",
-		"newer 0.x minor version":           "unsupported PAF version 0.2 (written by test; this reader supports 0.1)",
+		"unlisted entry":                             "not listed in the manifest",
+		"hash mismatch":                              "hash does not match",
+		"missing listed entry":                       "is missing",
+		"duplicate manifest key":                     "duplicate key",
+		"undeclared extension":                       "used but not declared",
+		"required unknown single-label extension":    "requires features this reader does not support: ext:agentlab",
+		"undeclared extension behind an escaped key": "used but not declared",
+		"invalid tclaude extension payload":          `extension "tclaude"`,
+		"native outside its agent":                   "outside its native directory",
+		"attachment not in archive":                  "is not in the archive",
+		"closed enum value":                          `unknown role "system"`,
+		"context without losses":                     "no losses.json",
+		"unknown major version":                      "unsupported PAF version 1.0",
+		"newer 0.x minor version":                    "unsupported PAF version 0.2 (written by test; this reader supports 0.1)",
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -320,6 +330,16 @@ func TestOpenRefuses(t *testing.T) {
 			assert.ErrorContains(t, err, want[name])
 		})
 	}
+	t.Run("unknown single-label extension is ignored", func(t *testing.T) {
+		raw := rewrite(t, base, func(f map[string][]byte) {
+			f[AgentPath("w", "environment.json")] = []byte(`{"harness":{"name":"codex"},"extensions":{"agentlab":{"x":1}}}`)
+			remanifest(t, f, func(m map[string]any) {
+				m["extensions_used"].(map[string]any)["agentlab"] = map[string]any{"version": "1.0", "system": "x", "spec": "x"}
+			})
+		})
+		_, err := open(t, raw, PurposeImport)
+		assert.NoError(t, err)
+	})
 	t.Run("version error names producer", func(t *testing.T) {
 		_, err := open(t, rewrite(t, base, cases["unknown major version"]), PurposeInspect)
 		var ve *VersionError

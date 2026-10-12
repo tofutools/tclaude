@@ -79,16 +79,21 @@ func ValidEntryPath(name string) bool {
 func ValidAgentKey(k string) bool { return agentKeyRE.MatchString(k) }
 
 // documentedExtensions are the single-label extension ids the spec reserves
-// and documents. Readers refuse any other single-label id.
+// and documents. Writers mint no other single-label id.
 var documentedExtensions = map[string]bool{ExtTclaude: true}
 
-// ValidExtensionID reports whether id is an acceptable extension id: a
-// reverse-DNS id, or a single-label id documented in the spec.
+// ValidExtensionID reports whether a writer may use id: a reverse-DNS id,
+// or a single-label id documented in the spec.
 func ValidExtensionID(id string) bool {
-	if len(id) > 128 || !extensionIDRE.MatchString(id) {
-		return false
-	}
-	return strings.Contains(id, ".") || documentedExtensions[id]
+	return wellFormedExtensionID(id) && (strings.Contains(id, ".") || documentedExtensions[id])
+}
+
+// wellFormedExtensionID is what a reader requires of an extension id. An
+// undocumented single-label id, say one a later spec documents, is an
+// unknown extension like any other: ignored, and refused only when the
+// manifest lists it in extensions_required.
+func wellFormedExtensionID(id string) bool {
+	return len(id) <= 128 && extensionIDRE.MatchString(id)
 }
 
 func validSHA256(s string) bool { return sha256RE.MatchString(s) }
