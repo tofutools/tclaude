@@ -1,7 +1,7 @@
 # Sessions
 
 !!! tip "New to tclaude?"
-    Start with the tutorial [Your first session](learn/first-session.md).
+    Start with the [Learn path](learn/index.md). This page covers sessions from the command line.
 
 
 A session is a live tmux instance running a coding harness (or a plain

@@ -77,10 +77,34 @@ hideDragHint();`
 	states := []dashsnap.State{{
 		Key:     "learn-dashboard-groups",
 		Title:   "Learn — the hello team in Groups",
-		Caption: "first-team step 6 and dashboard-tour step 2.",
+		Caption: "first-agent step 3.",
 		JS:      showGroups,
 		Width:   1400, Height: 590,
 		SettleMS: 400,
+	}, {
+		Key:     "learn-dashboard-spawn",
+		Title:   "Learn — the spawn dialog",
+		Caption: "first-agent step 2.",
+		JS: showGroups + `return (async function(){
+  var head = await waitFor('summary, .group-head, details', 'hello');
+  var btn = (head.closest('details') || document).querySelector('[data-act="spawn-agent"]');
+  if (!btn) throw new Error('no spawn button on hello');
+  // first-agent starts from an empty group: hide the seeded rows behind the modal.
+  document.querySelectorAll('tbody tr').forEach(function(tr){ tr.style.visibility = 'hidden'; });
+  btn.click();
+  function fill(id, v){
+    var el = document.getElementById(id);
+    if (!el) throw new Error('missing #' + id);
+    el.value = v;
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  await waitFor('#agent-spawn-name');
+  fill('agent-spawn-name', 'alice');
+  fill('agent-spawn-init-msg', 'Read this project and tell me in three sentences what it does.');
+})();`,
+		// Crop below Harness and Model, the fields the tutorial mentions.
+		Width: 1400, Height: 660,
+		SettleMS: 500,
 	}, {
 		Key:     "learn-dashboard-agent-menu",
 		Title:   "Learn — an agent's ⚙ menu",
