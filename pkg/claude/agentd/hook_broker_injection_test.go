@@ -23,7 +23,8 @@ import (
 // where it can no longer be influenced. Both hold here, and this file is
 // the standing proof:
 //
-//   - `/rename ` is a literal in restoreClearedTitle. Nothing composes it.
+//   - The command is the harness's compile-time Lifecycle.RenameCommand
+//     (`/rename ` for Claude Code). Nothing composes it.
 //   - The injected title is not a payload field at all. It is the name
 //     db.RotateAgentConv carried off the OLD conversation, and it passes
 //     isValidRenameTitle immediately before the send-keys call — i.e. at

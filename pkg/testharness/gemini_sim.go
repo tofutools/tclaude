@@ -219,24 +219,77 @@ func (g *GeminiSim) Start() error {
 		if existing != "" {
 			return fmt.Errorf("gemini: Error starting session: Session ID %q already exists", g.ConvID)
 		}
-		if err := os.MkdirAll(chats, 0o755); err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		g.path = filepath.Join(chats, fmt.Sprintf("session-%s-%s.jsonl",
-			strings.ReplaceAll(now.Format("2006-01-02T15:04"), ":", "-"), g.ConvID[:min(8, len(g.ConvID))]))
-		if err := g.appendLocked(map[string]any{
-			"sessionId":   g.ConvID,
-			"projectHash": "sim",
-			"startTime":   now.Format(time.RFC3339Nano),
-			"lastUpdated": now.Format(time.RFC3339Nano),
-			"kind":        "main",
-		}); err != nil {
+		if err := g.createLocked(chats); err != nil {
 			return err
 		}
 	}
 	g.alive = true
 	return nil
+}
+
+// createLocked starts a new session file for g.ConvID in chats.
+func (g *GeminiSim) createLocked(chats string) error {
+	if err := os.MkdirAll(chats, 0o755); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	g.path = filepath.Join(chats, fmt.Sprintf("session-%s-%s.jsonl",
+		strings.ReplaceAll(now.Format("2006-01-02T15:04"), ":", "-"), g.ConvID[:min(8, len(g.ConvID))]))
+	g.nextMsg = 0
+	return g.appendLocked(map[string]any{
+		"sessionId":   g.ConvID,
+		"projectHash": "sim",
+		"startTime":   now.Format(time.RFC3339Nano),
+		"lastUpdated": now.Format(time.RFC3339Nano),
+		"kind":        "main",
+	})
+}
+
+// Clear runs Gemini's /clear (alias /new) as its clearCommand does:
+// SessionEnd(clear) for the session being left, a new session id and file,
+// then SessionStart(clear) under the new id. It is a method rather than a
+// typed line because the hooks dispatch synchronously and tclaude may type
+// back into this pane from inside them.
+func (g *GeminiSim) Clear() error {
+	if err := g.FireHook("SessionEnd", map[string]any{"reason": "clear"}); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.ConvID = convops.GenerateUUID()
+	err := g.createLocked(filepath.Dir(g.path))
+	g.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return g.FireHook("SessionStart", map[string]any{"source": "clear"})
+}
+
+// UserTurns returns the text of every user turn the current session holds:
+// what the model was sent.
+func (g *GeminiSim) UserTurns() []string {
+	g.mu.Lock()
+	path := g.path
+	g.mu.Unlock()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var turns []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		var record struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal([]byte(line), &record) != nil || record.Type != "user" {
+			continue
+		}
+		for _, part := range record.Content {
+			turns = append(turns, part.Text)
+		}
+	}
+	return turns
 }
 
 // geminiSimProjectDir returns (creating if needed) the tmp/<slug> directory for
@@ -454,9 +507,10 @@ func (g *GeminiSim) Receive(text string) {
 			"content": "Chat history compressed.",
 		})
 	default:
-		if !strings.HasPrefix(line, "/") {
-			g.writeUserTurnLocked(line)
-		}
+		// A slash line naming no command is not swallowed: Gemini's
+		// slash processor declines it and the line goes to the model as a
+		// prompt, like plain text.
+		g.writeUserTurnLocked(line)
 	}
 }
 

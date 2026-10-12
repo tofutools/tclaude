@@ -69,3 +69,34 @@ func TestGeminiHooks_TurnGoesWorkingThenIdle(t *testing.T) {
 	})
 	assert.Equal(t, session.StatusIdle, member().State.Status, "AfterAgent ends the turn")
 }
+
+// Gemini's /clear (and /new) moves the pane to a new session id, so tclaude
+// carries the agent's identity across as it does for Claude Code. It must not
+// restore the title by typing `/rename`: Gemini has no such command, and it
+// sends an unrecognized slash line to the model as a prompt. The name stays
+// on the dashboard through the actor instead.
+func TestGeminiHooks_ClearKeepsIdentityWithoutTypingRename(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":      "gemini-worker",
+		"trust_dir": true,
+	})
+	require.NoError(t, sim.FireHook("SessionStart", map[string]any{"source": "startup"}))
+	sentBefore := len(f.World.Tmux.Sent())
+
+	require.NoError(t, sim.Clear())
+	require.NotEqual(t, resp.ConvID, sim.ConvID, "/clear starts a new Gemini session")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	m := findDashMember(snap, "crew", sim.ConvID)
+	require.NotNil(t, m, "the agent continues under the new session id")
+	assert.Equal(t, "gemini-worker", m.Title, "the name carries across the clear")
+	assert.Nil(t, findDashMember(snap, "crew", resp.ConvID), "the old session is no longer a member")
+
+	for _, sent := range f.World.Tmux.Sent()[sentBefore:] {
+		assert.NotContains(t, sent.Text, "/rename", "nothing may type a rename Gemini does not have")
+	}
+	assert.Empty(t, sim.UserTurns(), "the model was sent nothing")
+}
