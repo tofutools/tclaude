@@ -68,6 +68,7 @@ type bundleImportParams struct {
 	AllowSensitivePermissions bool     `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
 	File                      string   `long:"file" short:"f" help:"Agent bundle ZIP or .paf archive; '-' reads stdin."`
 	Apply                     bool     `long:"apply" help:"Create a fresh local agent through normal spawn checks."`
+	NoStart                   bool     `long:"no-start" help:"With --apply, land the agent offline with its conversation; tclaude agent resume starts it."`
 	Group                     string   `long:"group" optional:"true" help:"Receiving group (required with --apply). Source memberships are advisory."`
 	Name                      string   `long:"name" optional:"true" help:"Override the imported agent name."`
 	Cwd                       string   `long:"cwd" optional:"true" help:"Remap the working directory."`
@@ -226,8 +227,15 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	for _, v := range p.Set {
 		q.Add("set", v)
 	}
+	if p.NoStart && !p.Apply {
+		fmt.Fprintln(stderr, "Error: --no-start applies only with --apply")
+		return rcInvalidArg
+	}
 	if p.Apply {
 		q.Set("apply", "true")
+	}
+	if p.NoStart {
+		q.Set("start", "false")
 	}
 	if p.KeepPaths {
 		q.Set("keep_paths", "true")

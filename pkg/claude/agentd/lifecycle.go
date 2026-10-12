@@ -4970,6 +4970,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Async: true,
 	}
 	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
+	p.NoLaunch, _ = r.Context().Value(bundleNoLaunchContextKey{}).(bool)
 	if teleportAuthority != nil {
 		p.launchAuthority = teleportAuthority.check
 		p.nodeCapacityReserved = true
@@ -5157,6 +5158,10 @@ type spawnParams struct {
 	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
 	launchAuthority func() error
 	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
+	// NoLaunch enrolls the agent and installs its history without starting a
+	// session: it lands offline and starts on resume. Trusted internal bundle
+	// route only, and only with BundleHistory.
+	NoLaunch bool
 	// AgentID is a stable identity reserved before a pending harness conv-id
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
@@ -6844,6 +6849,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// Uses* predicate degrades gracefully.
 	spawnHarness, _ := harness.Resolve(p.Harness)
 
+	// An import that lands offline needs history it can resume and a harness
+	// whose conversation exists without a running server.
+	if p.NoLaunch && (p.BundleHistory == nil || spawnHarness.UsesAuthoritativeServer()) {
+		return nil, &spawnFailure{http.StatusBadRequest, "no_start",
+			"only an import whose conversation lands, on a harness other than OpenCode, can land offline"}
+	}
+
 	// Async spawn of a server-authoritative harness (OpenCode): the managed
 	// server boot dominates spawn latency — typically seconds, bounded by
 	// openCodeStartupTimeout — and it runs BEFORE the pane fork, so the
@@ -7200,7 +7212,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// the online-message flush can claim and inject a redundant nudge.
 		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
-		briefingInlined = !spawnHarness.UsesCommandInput() && spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+		// An offline landing has no launch prompt to inline into: its briefing
+		// stays queued and is delivered when the agent first comes online.
+		briefingInlined = !p.NoLaunch && !spawnHarness.UsesCommandInput() && spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		mid, actorCreated, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
 		if fail != nil {
 			// Enrollment can fail with partial state already committed (the
@@ -7285,6 +7299,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
+	}
+	if p.NoLaunch {
+		return landSpawnOffline(g, p, spawnHarness, preConvID, preMsgID, preActorCreated)
 	}
 	// A Linux route-capable group must launch the namespace helper with a
 	// pre-enrolled identity. If the launch shape cannot prove that identity

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,8 +26,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 	"github.com/tofutools/tclaude/pkg/paf"
-	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 const PermAgentBundleExport = "agent.bundle.export"
@@ -439,7 +440,10 @@ type agentBundlePreview struct {
 	Findings    []agentbundle.Finding       `json:"findings,omitempty"`
 	Landing     *historyLanding             `json:"history_landing,omitempty"`
 	Applied     bool                        `json:"applied"`
-	Spawn       *agent.SpawnResponse        `json:"spawn,omitempty"`
+	// Offline reports an applied import that landed without starting
+	// (start=false); resume starts it.
+	Offline bool                 `json:"offline,omitempty"`
+	Spawn   *agent.SpawnResponse `json:"spawn,omitempty"`
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
@@ -493,6 +497,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	apply := q.Get("apply") == "true"
+	// start=false lands the applied agent offline: enrolled with its
+	// conversation installed, started later by resume.
+	noStart := q.Get("start") == "false"
 	d := b.Manifest.Agent
 	if name := q.Get("name"); name != "" {
 		d.Name = name
@@ -688,6 +695,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
 		return
 	}
+	if noStart && (!preview.History || h.UsesAuthoritativeServer()) {
+		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting, and not yet on OpenCode; import and start it instead")
+		return
+	}
 	var group *db.AgentGroup
 	if preview.Group != "" {
 		group, err = db.GetAgentGroupByName(preview.Group)
@@ -755,6 +766,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if preview.History {
 		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, landing.history))
 	}
+	if noStart {
+		inner = inner.WithContext(context.WithValue(inner.Context(), bundleNoLaunchContextKey{}, true))
+	}
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, group)
 	if rec.Code != 200 {
@@ -773,6 +787,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
 	}
 	preview.Applied = true
+	preview.Offline = noStart
 	preview.Spawn = &spawned
 	writeJSON(w, 200, preview)
 }
@@ -811,4 +826,31 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 	wire["task_ref_url"] = d.TaskURL
 	wire["task_ref_label"] = d.TaskLabel
 	return json.Marshal(wire)
+}
+
+// bundleNoLaunchContextKey marks an agent import that lands offline
+// (start=false). Only handleAgentBundleImport sets it.
+type bundleNoLaunchContextKey struct{}
+
+// landSpawnOffline finishes an enrolled, history-installed spawn without
+// starting a session. It records the conversation's resume profile so that
+// resume starts the agent on its landing harness in its working directory,
+// and names the conversation as a launch would.
+func landSpawnOffline(g *db.AgentGroup, p spawnParams, h *harness.Harness, convID string, msgID int64, actorCreated bool) (*spawnOutcome, *spawnFailure) {
+	if err := db.SetConversationResumeProfile(convID, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: h.Name, Cwd: p.Cwd,
+	}); err != nil {
+		rollbackSpawnEnrollment(g, convID, msgID, actorCreated)
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "record resume profile: " + err.Error()}
+	}
+	if p.Name != "" && isValidRenameTitle(p.Name) {
+		if err := db.SetConvIndexCustomTitle(convID, p.Name, h.Name); err != nil {
+			slog.Warn("import: offline landing title not recorded", "conv", short8(convID), "error", err)
+		}
+	}
+	agentID := p.AgentID
+	if agentID == "" {
+		agentID, _ = db.AgentIDForConv(convID)
+	}
+	return &spawnOutcome{AgentID: agentID, ConvID: convID, Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 }
