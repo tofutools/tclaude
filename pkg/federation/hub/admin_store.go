@@ -151,6 +151,47 @@ func (s *Store) PrepareAdminClaim(reset bool, now time.Time) (string, error) {
 	return token, nil
 }
 
+// RotateAdminClaim is host-only and replaces an outstanding bootstrap claim.
+// It never creates an additional administrator or resets existing authority.
+func (s *Store) RotateAdminClaim(now time.Time) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Acquire the database writer before checking claim/admin state, just as
+	// redemption does, so a concurrent claim either wins or sees the new hash.
+	if _, err = tx.Exec(`UPDATE hub_admin_claim SET consumed=consumed WHERE singleton=1`); err != nil {
+		return "", err
+	}
+	var admins int
+	if err = tx.QueryRow(`SELECT count(*) FROM hub_admins`).Scan(&admins); err != nil {
+		return "", err
+	}
+	if admins != 0 {
+		return "", adminErr(409, "claim_unavailable", "hub already has administrators; claim rotation leaves them unchanged")
+	}
+	var consumed bool
+	err = tx.QueryRow(`SELECT consumed FROM hub_admin_claim WHERE singleton=1`).Scan(&consumed)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && consumed {
+		return "", adminErr(409, "claim_unavailable", "no outstanding unredeemed claim token; start the unclaimed hub to prepare one")
+	}
+	if err != nil {
+		return "", err
+	}
+	token := "tchac_" + randHex(32)
+	if err = writeClaimFile(s.ClaimPath(), token); err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(`UPDATE hub_admin_claim SET token_hash=?,expires_at=? WHERE singleton=1`, hashToken(token), ts(now.Add(24*time.Hour))); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 func (s *Store) ClaimAdmin(instance string, pub ed25519.PublicKey, token string, now time.Time) error {
 	if len(token) != 70 || !strings.HasPrefix(token, "tchac_") {
 		return adminErr(403, "claim_invalid", "invalid claim token")
