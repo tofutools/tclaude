@@ -131,11 +131,16 @@ func ReadFile(root, relative string, limit int64) ([]byte, fs.FileMode, error) {
 	return raw, info.Mode(), err
 }
 func Export(root, name string) (Bundle, error) {
+	return ExportDirectory(filepath.Join(root, name), name)
+}
+
+// ExportDirectory reads one explicitly selected skill directory. Its directory
+// name need not equal the name chosen for the reusable library item.
+func ExportDirectory(dir, name string) (Bundle, error) {
 	b := Bundle{Format: Format, Name: name}
 	if !ValidName(name) {
 		return b, errors.New("invalid skill name")
 	}
-	dir := filepath.Join(root, name)
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return b, err

@@ -45,6 +45,20 @@ type bundleHistoryLaunch struct {
 }
 
 func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, error) {
+	// Foundation step: never export unusable paths while the companion PAF
+	// managed-resource attachment adapter has not landed yet.
+	if agentID, err := db.AgentIDForConv(convID); err != nil {
+		return nil, err
+	} else if agentID != "" {
+		launch, err := db.GetManagedInstructionLaunch(agentID)
+		if err != nil {
+			return nil, err
+		}
+		if launch != nil && launch.Resources != "" && launch.Resources != "[]" {
+			return nil, errors.New("managed instruction transfer support is not installed yet; no archive was produced")
+		}
+	}
+
 	h := harnessForConv(convID)
 	// Offline native conversations may have only their indexed harness tag.
 	if rows, err := db.FindSessionsByConvID(convID); err != nil {

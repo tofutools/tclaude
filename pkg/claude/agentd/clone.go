@@ -187,6 +187,9 @@ func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpoli
 // reuse the same race handling without duplicating it.
 func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
+	if err := refuseManagedContinuation(sourceConv); err != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "managed_instructions", Msg: err.Error()}
+	}
 	effort, model := p.Effort, p.Model
 	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
 	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs

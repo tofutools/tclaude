@@ -373,6 +373,13 @@ func cleanupAgentDirectoriesAfterRetire(convID string, shutdownRequested bool) {
 		if err != nil || state != db.AgentStateRetired || db.AgentConvAway(convID) {
 			return
 		}
+		agentID, managedErr := db.AgentIDForConv(convID)
+		if managedErr == nil && agentID != "" {
+			managedErr = db.RetireManagedInstructionLaunch(agentID)
+		}
+		if managedErr != nil {
+			slog.Warn("retire: managed instruction cleanup failed", "conv", convID, "error", managedErr)
+		}
 		removed, cleanupErr := removeAgentDirectoriesForConv(convID)
 		if cleanupErr != nil {
 			slog.Warn("retire: agent-owned directory cleanup failed",

@@ -37,7 +37,8 @@ your first prompt (for example `three sentences`) to filter, then press
 and press **Enter** again: tclaude starts a new session that continues it.
 Detach with **Ctrl+B D** as before.
 
-![Conversation watch](../assets/term-conv-watch.png)
+<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+![tclaude conv watch -g listing six conversations from two projects and three harnesses, newest first. Each row shows the harness, the project path and the title or first prompt.](../assets/learn-conv-watch.png)
 
 !!! info "Go deeper"
     [Conversations → Watch mode](../conversations.md#watch-mode) lists every

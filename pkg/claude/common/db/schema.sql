@@ -1791,3 +1791,20 @@ CREATE TABLE federation_link_mail (
  envelope_id TEXT PRIMARY KEY REFERENCES federation_outbox(envelope_id) ON DELETE CASCADE,
  link_id TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE managed_instruction_blobs (
+ digest TEXT PRIMARY KEY, content BLOB NOT NULL
+) STRICT;
+
+CREATE TABLE managed_instructions (
+ scope TEXT NOT NULL, group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL CHECK(kind IN ('skill','rule')), name TEXT NOT NULL,
+ digest TEXT NOT NULL REFERENCES managed_instruction_blobs(digest),
+ PRIMARY KEY(scope,kind,name),
+ CHECK((scope='user' AND group_id IS NULL) OR (group_id IS NOT NULL AND scope='group:'||group_id))
+) STRICT;
+
+CREATE TABLE managed_instruction_launches (
+ agent_id TEXT PRIMARY KEY, body TEXT NOT NULL, resources TEXT NOT NULL,
+ root TEXT NOT NULL DEFAULT ''
+) STRICT;

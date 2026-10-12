@@ -29,6 +29,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
@@ -1993,6 +1994,16 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 		Environment:      layout.environment,
 		FinalHideDirs:    layout.finalHideDirs,
 		ReadOnlyBinds:    layout.readOnlyBinds,
+	}
+	managed, err := db.GetManagedInstructionLaunch(agentID)
+	if err != nil {
+		return nil, err
+	}
+	if managed != nil && managed.Root != "" {
+		if err = managedinstructions.VerifyLaunchRoot(managed.Root); err != nil {
+			return nil, err
+		}
+		input.HarnessReadPaths = append(input.HarnessReadPaths, managed.Root)
 	}
 	if unixRelay {
 		controlPath, controlErr := openCodeControlSocketPath(agentID)

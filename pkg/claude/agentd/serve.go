@@ -1355,6 +1355,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
+	registerManagedInstructionRoutes(mux)
 	// Per-agent export (JOH-265). The agent half: `tclaude agent export
 	// show` reads the brief, `… submit` uploads the artifact. Self-scoped —
 	// requireExportJobAccess gates each on owning the job.

@@ -71,6 +71,14 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	if snap == nil && len(memberships) == 0 {
 		return Reinjection{}, nil
 	}
+	managed, err := db.GetManagedInstructionLaunch(agentID)
+	if err != nil {
+		return Reinjection{}, err
+	}
+	managedBody := ""
+	if managed != nil {
+		managedBody = managed.Body
+	}
 	identityOnly := false
 
 	primary := primaryMembership(snap, memberships)
@@ -80,7 +88,10 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	if primary != nil {
 		switch primary.Group.EffectiveReinjectAfterCompact() {
 		case db.ReinjectOff:
-			return Reinjection{}, nil
+			if managedBody == "" {
+				return Reinjection{}, nil
+			}
+			identityOnly = true
 		case db.ReinjectIdentity:
 			identityOnly = true
 		}
@@ -137,6 +148,9 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 		if ref := briefReference(agentID, snap); ref != "" {
 			sections = append(sections, ref)
 		}
+	}
+	if managedBody != "" {
+		sections = append(sections, managedBody)
 	}
 	return Reinjection{GroupID: groupID, Body: strings.Join(sections, sectionDivider)}, nil
 }
