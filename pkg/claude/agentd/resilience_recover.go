@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -160,6 +161,7 @@ func openHeldSnapshot(peer, offer string) (*os.File, int64, heldSnapshot, error)
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return nil, 0, h, err
 	}
+	sweepRecoverPlaintext(dir, time.Now())
 	out, err := os.CreateTemp(dir, ".plain-")
 	if err != nil {
 		return nil, 0, h, err
@@ -175,4 +177,15 @@ func openHeldSnapshot(peer, offer string) (*os.File, int64, heldSnapshot, error)
 		return nil, 0, h, err
 	}
 	return out, n, h, nil
+}
+
+// sweepRecoverPlaintext removes decrypted copies a killed daemon left
+// behind; a live preview or import holds its copy for minutes at most.
+func sweepRecoverPlaintext(dir string, now time.Time) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && strings.HasPrefix(e.Name(), ".plain-") && now.Sub(info.ModTime()) > time.Hour {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
