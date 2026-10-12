@@ -6,12 +6,12 @@ import (
 	"unicode/utf8"
 )
 
-// Keep the last three human turns readable; older tool records remain available
-// in the full transcript. A summary is not a new human task turn.
+// Keep the last three input turns readable; older tool records remain
+// available in the full transcript.
 func recentToolStart(entries []Entry) int {
 	turns := 0
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Origin == OriginHuman {
+		if inputTurn(entries[i]) {
 			turns++
 			if turns == 3 {
 				return i

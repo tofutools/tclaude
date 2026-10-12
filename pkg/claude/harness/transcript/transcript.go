@@ -100,6 +100,14 @@ func classifyHumanEntry(e Entry) (Origin, string) {
 	return OriginHuman, e.Author
 }
 
+// inputTurn reports whether e is user-side input that starts a turn: the
+// operator's text, another agent's message or a system notice, but not a
+// tool result. Budgeting cuts and pins at turns whoever wrote them; trust is
+// a separate question, answered by the origin label.
+func inputTurn(e Entry) bool {
+	return e.Role == RoleUser && e.Origin != OriginTool
+}
+
 // Heading is how a reader labels an entry: its role, or what produced it
 // when that is not the operator or the agent itself.
 func (e Entry) Heading() string {

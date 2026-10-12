@@ -167,7 +167,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				// Text that is not the operator's is labelled so the landing
 				// model does not take it as the operator's instructions,
 				// unless it already carries tclaude's own header.
-				if !strings.HasPrefix(strings.TrimSpace(text), "[system:") {
+				// A tclaude notice or agent message names its sender in its own
+				// header. An origin this reader does not know is labelled anyway:
+				// its text may only look like one.
+				if !strings.HasPrefix(strings.TrimSpace(text), "[system:") || !e.Origin.Known() {
 					switch {
 					case e.Origin == OriginPeer || (e.Author != "" && e.Origin.Known() && e.Origin != OriginSystem):
 						from := e.Author
@@ -245,7 +248,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		if len(out.Blocks) == 0 {
 			continue
 		}
-		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman && !daemonControlTurn(e), summary: summary})
+		entries = append(entries, planEntry{entry: out, sources: 1, turn: inputTurn(e) && !daemonControlTurn(e), summary: summary})
 	}
 
 	entries = coalesce(entries)
