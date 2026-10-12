@@ -22,15 +22,16 @@ const PermAgentShare = "agent.share"
 const PermAgentMove = "agent.move"
 
 type fedShareAgentRequest struct {
-	CarryPermissions bool   `json:"carry_permissions"`
-	DirectIfAllowed  bool   `json:"direct_if_allowed"`
-	Cwd              string `json:"cwd"`
-	Landing          string `json:"landing"`
-	Agent            string `json:"agent"`
-	Peer             string `json:"peer"`
-	Group            string `json:"group"`
-	History          bool   `json:"history"`
-	AllowFlagged     bool   `json:"allow_flagged"`
+	OmitManagedInstructions bool   `json:"omit_managed_instructions"`
+	CarryPermissions        bool   `json:"carry_permissions"`
+	DirectIfAllowed         bool   `json:"direct_if_allowed"`
+	Cwd                     string `json:"cwd"`
+	Landing                 string `json:"landing"`
+	Agent                   string `json:"agent"`
+	Peer                    string `json:"peer"`
+	Group                   string `json:"group"`
+	History                 bool   `json:"history"`
+	AllowFlagged            bool   `json:"allow_flagged"`
 }
 
 func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +152,17 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			b.Manifest.MailLedger = true
+		}
+	}
+	if !omitManagedInstructions(w, r, &b.ManagedInstructions, in.OmitManagedInstructions) {
+		return
+	}
+	if len(b.ManagedInstructions) > 0 {
+		raw, _, catalogErr := db.GetFederationCatalog(peer.InstanceID)
+		var catalog proto.CatalogPayload
+		if catalogErr != nil || json.Unmarshal([]byte(raw), &catalog) != nil || catalog.ManagedInstructions != 1 {
+			writeError(w, 409, "managed_instructions_unsupported", "peer cannot receive managed instructions; upgrade it or explicitly omit them")
+			return
 		}
 	}
 	format := agentArchiveBundle
@@ -313,13 +325,15 @@ type fedBundleImportRequest struct {
 	DropPermissions           bool `json:"drop_permissions"`
 	AllowSensitivePermissions bool `json:"allow_sensitive_permissions"`
 	configBundleRequest
-	Cwd         string   `json:"cwd"`
-	Worktree    string   `json:"worktree"`
-	Group       string   `json:"group"`
-	Name        string   `json:"name"`
-	SkipHistory bool     `json:"skip_history"`
-	Landing     string   `json:"landing"`
-	Set         []string `json:"set"`
+	Cwd                     string   `json:"cwd"`
+	Worktree                string   `json:"worktree"`
+	Group                   string   `json:"group"`
+	Name                    string   `json:"name"`
+	SkipHistory             bool     `json:"skip_history"`
+	ApproveManagedScripts   string   `json:"approve_managed_scripts"`
+	OmitManagedInstructions bool     `json:"omit_managed_instructions"`
+	Landing                 string   `json:"landing"`
+	Set                     []string `json:"set"`
 }
 
 func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
@@ -434,6 +448,10 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 	if in.SkipHistory {
 		q.Set("skip_history", "true")
 	}
+	if in.OmitManagedInstructions {
+		q.Set("omit_managed_instructions", "true")
+	}
+	q.Set("approve_managed_scripts", in.ApproveManagedScripts)
 	q["set"] = append([]string{}, in.Set...)
 	for name, value := range in.Values {
 		q.Add("set", name+"="+value)

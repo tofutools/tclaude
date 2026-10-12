@@ -3883,3 +3883,18 @@ A share item uses `host: "us"` or `"them"` and `group_id`; a link additionally
 uses `source`, `source_group_id` and `mode`, with `host` naming the receiving
 node. Local group names are accepted on input; wire identities survive renames
 and cannot select a replacement group after deletion.
+
+### Managed instructions on agent transfers
+
+Managed group/user skills and rules travel with agents in PAF, into a private
+agent overlay. Neither transfer nor return installs them into a user's global
+harness skill roots. The receiver's rules always apply. Older peers refuse only
+transfers that actually carry managed items; a human can choose
+`--omit-managed-instructions` to omit them explicitly.
+
+An incoming code-bearing skill requires per-transfer receiver approval, even
+with automatic agent admission. Preview the incoming bundle to inspect its files
+and script text, then apply with `--approve-managed-scripts DIGEST`, using the
+preview's `managed_instruction_digest`. Agents cannot approve this. A human can
+instead omit managed items. Clone overlays are independent, so retiring their
+source does not remove the clone's skills.

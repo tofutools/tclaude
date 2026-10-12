@@ -1570,3 +1570,15 @@ agent bundle for peers that do not advertise PAF support.
 - [Harnesses: cross-harness history translation](harnesses.md#cross-harness-history-translation)
 - [Spawning and lifecycle: morph and clone](spawning-and-lifecycle.md#morph)
 - [Federation: content boards](federation.md#content-board-membership)
+
+### Managed instructions
+
+`tclaude` carries its explicitly managed agent skills and rules as hashed
+`attachments/<sha256>` entries. A version 1 resource index on `agent.json`, under
+`extensions.org.tclaude.managed-instructions`, lists each item's kind, name,
+content digest and byte count. The required extension is version `1.0`; readers
+that do not support it refuse import. Ordinary PAFs do not require it.
+`environment.skills` lists the carried skill names and attachment digests.
+The content remains agent-scoped and confers no permissions or library writes.
+Receiving code-bearing skills requires a separate human decision bound to the
+verified resource digests; trusted-peer or automatic landing policy is insufficient.

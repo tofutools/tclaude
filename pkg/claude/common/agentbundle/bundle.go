@@ -83,6 +83,7 @@ type Finding struct {
 	Count     int      `json:"count"`
 	Locations []string `json:"locations"`
 }
+
 // AdvisoryHighEntropy is the PAF scanner's advisory finding kind (a
 // random-looking token). Releases that only read bundle v1 treat every
 // finding as a suspected credential, so a v1 manifest never carries it.
@@ -111,9 +112,11 @@ type Manifest struct {
 	Warnings       []string                   `json:"warnings,omitempty"`
 }
 type Bundle struct {
-	MailDeliveries []db.FederationMailDelivery
-	Manifest       Manifest
-	Transcript     []byte
+	// ManagedInstructions travel only in a PAF with required resource support.
+	ManagedInstructions []db.ManagedInstruction
+	MailDeliveries      []db.FederationMailDelivery
+	Manifest            Manifest
+	Transcript          []byte
 	// TranscriptPath is local-only; it is never an archive entry or a wire path.
 	TranscriptPath  string
 	MaxBytes        int64
@@ -187,6 +190,9 @@ func (b *Bundle) Encode() ([]byte, error) {
 	return out.Bytes(), nil
 }
 func (b *Bundle) EncodeTo(out io.Writer) error {
+	if len(b.ManagedInstructions) > 0 {
+		return errors.New("managed instructions require PAF; legacy archive cannot carry them")
+	}
 	if err := b.Validate(); err != nil {
 		return err
 	}

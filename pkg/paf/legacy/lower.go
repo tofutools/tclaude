@@ -152,6 +152,11 @@ func ToAgentBundle(a *paf.Archive, limit int64, dir string) (*agentbundle.Bundle
 	}
 
 	b := &agentbundle.Bundle{MaxBytes: limit}
+	resources, err := readManagedInstructions(a, *ag)
+	if err != nil {
+		return nil, err
+	}
+	b.ManagedInstructions = resources
 	m := &b.Manifest
 	m.Format, m.FormatVersion = agentbundle.Format, 1
 	m.CreatedAt = a.Manifest.CreatedAt.UTC().Format(time.RFC3339)

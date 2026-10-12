@@ -45,18 +45,9 @@ type bundleHistoryLaunch struct {
 }
 
 func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, error) {
-	// Foundation step: never export unusable paths while the companion PAF
-	// managed-resource attachment adapter has not landed yet.
-	if agentID, err := db.AgentIDForConv(convID); err != nil {
+	managed, err := managedInstructionsForExport(convID)
+	if err != nil {
 		return nil, err
-	} else if agentID != "" {
-		launch, err := db.GetManagedInstructionLaunch(agentID)
-		if err != nil {
-			return nil, err
-		}
-		if launch != nil && launch.Resources != "" && launch.Resources != "[]" {
-			return nil, errors.New("managed instruction transfer support is not installed yet; no archive was produced")
-		}
 	}
 
 	h := harnessForConv(convID)
@@ -299,7 +290,7 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		return nil, err
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
-	b := &agentbundle.Bundle{MaxBytes: agentTransferLimit(), Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
+	b := &agentbundle.Bundle{ManagedInstructions: managed, MaxBytes: agentTransferLimit(), Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
 	if historyWarning != "" {
 		b.Manifest.Warnings = append(b.Manifest.Warnings, historyWarning)
 	}
@@ -444,6 +435,9 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var archive *os.File
+	if !omitManagedInstructions(w, r, &b.ManagedInstructions, r.URL.Query().Get("omit_managed_instructions") == "true") {
+		return
+	}
 	if format == agentArchivePAF {
 		archive, err = archiveAgentPAFWith(b, false, parts)
 	} else {
@@ -469,18 +463,21 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentBundlePreview struct {
-	Permissions []carriedPermissionDecision `json:"permissions,omitempty"`
-	Agent       agentbundle.Definition      `json:"agent"`
-	Cwd         string                      `json:"cwd"`
-	Worktree    string                      `json:"worktree,omitempty"`
-	Group       string                      `json:"group,omitempty"`
-	History     bool                        `json:"history"`
-	Unresolved  []configbundle.Placeholder  `json:"unresolved,omitempty"`
-	Warnings    []string                    `json:"warnings"`
-	Security    string                      `json:"security"`
-	Findings    []agentbundle.Finding       `json:"findings,omitempty"`
-	Landing     *historyLanding             `json:"history_landing,omitempty"`
-	Applied     bool                        `json:"applied"`
+	ManagedInstructions           []managedInstructionPreview `json:"managed_instructions,omitempty"`
+	ManagedInstructionDigest      string                      `json:"managed_instruction_digest,omitempty"`
+	ManagedScriptApprovalRequired bool                        `json:"managed_script_approval_required,omitempty"`
+	Permissions                   []carriedPermissionDecision `json:"permissions,omitempty"`
+	Agent                         agentbundle.Definition      `json:"agent"`
+	Cwd                           string                      `json:"cwd"`
+	Worktree                      string                      `json:"worktree,omitempty"`
+	Group                         string                      `json:"group,omitempty"`
+	History                       bool                        `json:"history"`
+	Unresolved                    []configbundle.Placeholder  `json:"unresolved,omitempty"`
+	Warnings                      []string                    `json:"warnings"`
+	Security                      string                      `json:"security"`
+	Findings                      []agentbundle.Finding       `json:"findings,omitempty"`
+	Landing                       *historyLanding             `json:"history_landing,omitempty"`
+	Applied                       bool                        `json:"applied"`
 	// Offline reports an applied import that landed without starting
 	// (start=false); resume starts it.
 	Offline bool                 `json:"offline,omitempty"`
@@ -733,9 +730,27 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if needsConfirm {
 		preview.Warnings = append(preview.Warnings, fmt.Sprintf("Cutting %d%% of the conversation needs confirmation: --confirm-history-loss.", landing.cutPercent()))
 	}
+	if !omitManagedInstructions(w, r, &b.ManagedInstructions, q.Get("omit_managed_instructions") == "true") {
+		return
+	}
+	managedPreview, managedDigest, managedCode, managedErr := managedInstructionPreviews(b.ManagedInstructions)
+	if managedErr != nil {
+		writeError(w, 400, "managed_instructions", managedErr.Error())
+		return
+	}
+	preview.ManagedInstructions, preview.ManagedInstructionDigest, preview.ManagedScriptApprovalRequired = managedPreview, managedDigest, managedCode
 	if !apply {
 		writeJSON(w, 200, preview)
 		return
+	}
+	if managedCode {
+		if q.Get("approve_managed_scripts") != managedDigest {
+			writeJSON(w, 409, map[string]any{"code": "managed_script_approval_required", "error": "Inspect the carried script files, then explicitly approve this transfer's digest or omit managed instructions.", "preview": preview})
+			return
+		}
+		if !requireHuman(w, r, "managed instruction script approval or omission requires the receiving human") {
+			return
+		}
 	}
 	if needsConfirm && q.Get("confirm_history_loss") != "true" {
 		writeJSON(w, 409, map[string]any{"code": "history_confirmation_required", "preview": preview,
@@ -815,6 +830,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		copy.PermissionSummary = permissionCarrySummary(preview.Permissions)
 		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, &copy))
 	}
+	inner = inner.WithContext(context.WithValue(inner.Context(), managedInstructionLaunchContextKey{}, b.ManagedInstructions))
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(wire))
 	inner.ContentLength = int64(len(wire))

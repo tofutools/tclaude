@@ -23,18 +23,19 @@ const PermAgentsTeleportReceive = "agents.teleport.receive"
 
 type teleportSourceContextKey struct{}
 type teleportRequest struct {
-	CarryPermissions bool   `json:"carry_permissions,omitempty"`
-	Peer             string `json:"peer,omitempty"`
-	Node             string `json:"node,omitempty"`
-	Group            string `json:"group,omitempty"`
-	Require          string `json:"require,omitempty"`
-	Prefer           string `json:"prefer,omitempty"`
-	KeepPausedBackup bool   `json:"keep_paused_backup,omitempty"`
-	Clone            bool   `json:"clone,omitempty"`
-	Home             bool   `json:"home,omitempty"`
-	Note             string `json:"note,omitempty"`
-	Credentials      string `json:"credentials,omitempty"`
-	GitRef           string `json:"git_ref,omitempty"`
+	OmitManagedInstructions bool   `json:"omit_managed_instructions,omitempty"`
+	CarryPermissions        bool   `json:"carry_permissions,omitempty"`
+	Peer                    string `json:"peer,omitempty"`
+	Node                    string `json:"node,omitempty"`
+	Group                   string `json:"group,omitempty"`
+	Require                 string `json:"require,omitempty"`
+	Prefer                  string `json:"prefer,omitempty"`
+	KeepPausedBackup        bool   `json:"keep_paused_backup,omitempty"`
+	Clone                   bool   `json:"clone,omitempty"`
+	Home                    bool   `json:"home,omitempty"`
+	Note                    string `json:"note,omitempty"`
+	Credentials             string `json:"credentials,omitempty"`
+	GitRef                  string `json:"git_ref,omitempty"`
 }
 
 func teleportFrozen() bool {
@@ -337,7 +338,7 @@ func handleFederationTeleportForSource(w http.ResponseWriter, r *http.Request, c
 		writeError(w, 409, "teleport_limit", err.Error())
 		return
 	}
-	body, _ := json.Marshal(fedShareAgentRequest{Agent: actor.AgentID, Peer: p.InstanceID, Group: in.Group, History: true, CarryPermissions: in.CarryPermissions})
+	body, _ := json.Marshal(fedShareAgentRequest{OmitManagedInstructions: in.OmitManagedInstructions, Agent: actor.AgentID, Peer: p.InstanceID, Group: in.Group, History: true, CarryPermissions: in.CarryPermissions})
 	inner := r.Clone(context.WithValue(r.Context(), teleportSourceContextKey{}, &intent))
 	path := "/v1/federation/move-agent"
 	if in.Clone {

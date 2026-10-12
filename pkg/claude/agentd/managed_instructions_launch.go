@@ -42,6 +42,26 @@ func prepareManagedInstructions(g *db.AgentGroup, p *spawnParams) (func(bool), *
 	if err != nil {
 		return noop, &spawnFailure{Status: 500, Kind: "managed_instructions", Msg: err.Error()}
 	}
+	carried := append([]db.ManagedInstruction(nil), p.ManagedInstructionResources...)
+	if previous != nil && previous.Resources != "" {
+		var priorItems []db.ManagedInstruction
+		if err = json.Unmarshal([]byte(previous.Resources), &priorItems); err != nil {
+			return noop, &spawnFailure{Status: 500, Kind: "managed_instructions", Msg: err.Error()}
+		}
+		for _, item := range priorItems {
+			if item.Scope == "carried" {
+				carried = append(carried, item)
+			}
+		}
+	}
+	for i := range carried {
+		carried[i].Scope = "carried"
+		carried[i].GroupID = 0
+	}
+	resources, err = managedinstructions.Merge(resources, carried)
+	if err != nil {
+		return noop, &spawnFailure{Status: 409, Kind: "managed_instructions", Msg: err.Error()}
+	}
 	if len(resources) == 0 {
 		if previous == nil {
 			return noop, nil
@@ -51,7 +71,7 @@ func prepareManagedInstructions(g *db.AgentGroup, p *spawnParams) (func(bool), *
 		}
 		return func(success bool) {
 			if success {
-				_ = managedinstructions.RemoveLaunchRoot(previous.Root)
+				removeSupersededManagedRoot(previous.Root, p.ManagedPreviousConv)
 			} else {
 				_ = db.SaveManagedInstructionLaunch(*previous)
 			}
@@ -79,7 +99,7 @@ func prepareManagedInstructions(g *db.AgentGroup, p *spawnParams) (func(bool), *
 	return func(success bool) {
 		if success {
 			if previous != nil {
-				_ = managedinstructions.RemoveLaunchRoot(previous.Root)
+				removeSupersededManagedRoot(previous.Root, p.ManagedPreviousConv)
 			}
 			return
 		}
@@ -128,4 +148,16 @@ func refuseManagedContinuation(conv string) error {
 		return fmt.Errorf("managed instruction clone/reincarnation support is not installed yet; source is unchanged")
 	}
 	return nil
+}
+
+func removeSupersededManagedRoot(root, previousConv string) {
+	if previousConv == "" {
+		_ = managedinstructions.RemoveLaunchRoot(root)
+		return
+	}
+	goBackground(func() {
+		if waitForConvOffline(previousConv, retireWorktreeExitGrace) {
+			_ = managedinstructions.RemoveLaunchRoot(root)
+		}
+	})
 }

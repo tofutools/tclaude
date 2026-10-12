@@ -252,11 +252,12 @@ type CatalogPayload struct {
 	// PAFVersions lists the PAF versions (MAJOR.MINOR) this peer imports
 	// agent transfers in. A sender writes the newest version both share
 	// (paf.NegotiateVersion), and agent bundle v1 when they share none.
-	PAFVersions    []string       `json:"paf_versions,omitempty"`
-	Node           *NodeMetadata  `json:"node,omitempty"`
-	NodeAt         time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups         []CatalogGroup `json:"groups"`
+	ManagedInstructions int            `json:"managed_instructions,omitempty"`
+	PAFVersions         []string       `json:"paf_versions,omitempty"`
+	Node                *NodeMetadata  `json:"node,omitempty"`
+	NodeAt              time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt      time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups              []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.

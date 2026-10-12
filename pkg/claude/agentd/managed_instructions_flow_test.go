@@ -73,8 +73,7 @@ func TestManagedRulesBriefingAllHarnesses(t *testing.T) {
 			t.Cleanup(func() { _ = os.RemoveAll(snapshot.Root) })
 			require.Contains(t, soleInboxMessage(t, spawned.ConvID).Body, "CROSS HARNESS RULE")
 			rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+spawned.ConvID+"&format=paf", nil)
-			require.NotEqual(t, http.StatusOK, rec.Code)
-			require.Contains(t, rec.Body.String(), "managed instruction transfer support")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			require.DirExists(t, snapshot.Root)
 		})
 	}
@@ -121,7 +120,7 @@ func TestManagedRulesOneShotRefusesRatherThanOmitting(t *testing.T) {
 	require.Contains(t, string(result.Raw), "one-shot runs with managed instructions")
 }
 
-func TestManagedRulesContinuationRefusesBeforeChangingSource(t *testing.T) {
+func TestManagedRulesCloneAndReincarnationOwnOverlays(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	_, err := db.PutManagedInstruction(0, "rule", "operator", []byte("CONTINUATION RULE"), false)
@@ -131,14 +130,24 @@ func TestManagedRulesContinuationRefusesBeforeChangingSource(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(snapshot.Root) })
 	clone := f.AsHuman().CloneWith(source.ConvID, map[string]any{"follow_up": "continue"})
-	require.Equal(t, http.StatusConflict, clone.Code, string(clone.Raw))
-	reincarnate := f.AsHuman().ReincarnateWith(source.ConvID, map[string]any{"follow_up": "continue"})
-	require.Equal(t, http.StatusConflict, reincarnate.Code, string(reincarnate.Raw))
-	require.DirExists(t, snapshot.Root)
-	agent, err := db.GetAgentByConv(source.ConvID)
+	require.Equal(t, http.StatusOK, clone.Code, string(clone.Raw))
+	cloneID, err := db.AgentIDForConv(clone.NewConv)
 	require.NoError(t, err)
-	require.NotNil(t, agent)
-	require.Equal(t, source.ConvID, agent.CurrentConvID)
+	copy, err := db.GetManagedInstructionLaunch(cloneID)
+	require.NoError(t, err)
+	require.NotNil(t, copy)
+	t.Cleanup(func() { _ = os.RemoveAll(copy.Root) })
+	require.NotEqual(t, snapshot.Root, copy.Root)
+	require.Contains(t, copy.Body, "CONTINUATION RULE")
+	reincarnate := f.AsHuman().ReincarnateWith(source.ConvID, map[string]any{"follow_up": "continue"})
+	require.Equal(t, http.StatusOK, reincarnate.Code, string(reincarnate.Raw))
+	successor, err := db.GetManagedInstructionLaunch(source.AgentID)
+	require.NoError(t, err)
+	require.NotNil(t, successor)
+	t.Cleanup(func() { _ = os.RemoveAll(successor.Root) })
+	require.NotEqual(t, snapshot.Root, successor.Root)
+	require.Contains(t, successor.Body, "CONTINUATION RULE")
+	require.DirExists(t, copy.Root, "reincarnating the source must not remove the clone's independent overlay")
 }
 
 type managedDyingSpawner struct{ args clcommon.SpawnArgs }

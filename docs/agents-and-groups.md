@@ -414,10 +414,24 @@ skill in multiple groups refuse launch and name the conflicting groups. Rules
 are additive, deduplicated by content, and never grant permissions. Ambient
 harness instruction files are untouched and are not automatically imported.
 
-Agent transfer of these managed items is a separate addition. Until its companion
-PR lands, exporting, transferring, cloning or reincarnating an agent with managed
-items refuses clearly,
-so private skill paths cannot silently arrive without their contents. Agents
-without managed items retain the existing export/transfer behavior. Arrived items will remain
-agent-scoped; adoption into a library is outside v1. One-shot runs with managed
-items also refuse explicitly; use an ordinary worker.
+Managed items travel with an agent in PAF hashed attachments. The receiving agent
+gets its own overlay; the receiver's rules remain additive and authoritative,
+and carried skills override same-named library skills for that agent only.
+Cloning creates an independent overlay, and reincarnation refreshes the next
+launch without deleting the predecessor's files before it stops. A harness that
+cannot bind a no-copy clone's identity refuses that operation with managed items;
+use a history-copy clone. One-shot runs with managed items refuse explicitly;
+use an ordinary worker.
+
+Older receivers are refused only when managed items actually travel. A human can
+explicitly omit them using `--omit-managed-instructions` on export, share, move,
+teleport or import. Legacy v1 archives cannot carry them. Arrived items remain
+agent-scoped; there is no adoption into the library in v1.
+
+Scripts, executable files and skill hooks always require the receiving human's
+approval for each transfer. Import preview lists the files and script text, and
+returns `managed_instruction_digest`. After inspection, pass that exact value
+with `--approve-managed-scripts DIGEST` when applying a PAF or incoming agent
+bundle. A changed digest refuses; agent callers cannot approve. Peer auto-admission
+does not skip this step. Alternatively, a human may omit the carried items;
+receiver rules still apply. No automatic library or user-global install occurs.

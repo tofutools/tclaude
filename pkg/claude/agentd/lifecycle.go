@@ -2882,6 +2882,13 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 			"delete agent-owned directories: "+err.Error())
 		return
 	}
+	if agentID, err := db.AgentIDForConv(targetConv); err != nil {
+		writeError(w, 500, "managed_instructions", err.Error())
+		return
+	} else if err = db.RetireManagedInstructionLaunch(agentID); err != nil {
+		writeError(w, 500, "managed_instructions", err.Error())
+		return
+	}
 	counts, swept, err := conv.DeleteAgentAllGenerations(targetConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
@@ -4993,6 +5000,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Async: true,
 	}
 	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
+	p.ManagedInstructionResources, _ = r.Context().Value(managedInstructionLaunchContextKey{}).([]db.ManagedInstruction)
 	p.NoLaunch, _ = r.Context().Value(bundleNoLaunchContextKey{}).(bool)
 	if teleportAuthority != nil {
 		p.launchAuthority = teleportAuthority.check
@@ -5223,12 +5231,14 @@ type spawnParams struct {
 	// "Attached files" section, so the agent can Read them on its first turn.
 	// Already sanitised at the spawn boundary (handleGroupSpawn); empty for a
 	// spawn with no attachments.
-	ManagedInstructionsRoot string
-	ManagedInstructionsBody string
-	Attachments             []string
-	Cwd                     string // resolved absolute directory
-	WorktreePath            string // resolved absolute directory, or ""
-	WorktreeBranch          string
+	ManagedPreviousConv         string
+	ManagedInstructionResources []db.ManagedInstruction
+	ManagedInstructionsRoot     string
+	ManagedInstructionsBody     string
+	Attachments                 []string
+	Cwd                         string // resolved absolute directory
+	WorktreePath                string // resolved absolute directory, or ""
+	WorktreeBranch              string
 	// DirWriteProofDirs are the symlink-resolved directories a dir write-proof
 	// (spawn_dir_proof.go) verified for this spawn — the launch cwd and, when
 	// present, the worktree. executeSpawn re-asserts each is still canonical
