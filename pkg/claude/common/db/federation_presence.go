@@ -357,7 +357,8 @@ func bindFederationArrivalTx(tx *sql.Tx, id, conv, via string) (bool, error) {
 	if p == nil || p.State != "reserved" {
 		return false, nil
 	}
-	if _, e = tx.Exec(`UPDATE agent_conversations SET role=? WHERE agent_id=?`, ConvRoleGeneration, id); e != nil {
+	// The arriving conv stays head even when the caller already linked it.
+	if _, e = tx.Exec(`UPDATE agent_conversations SET role=? WHERE agent_id=? AND conv_id<>?`, ConvRoleGeneration, id, conv); e != nil {
 		return false, e
 	}
 	if e = linkConvTx(tx, conv, id, ConvRoleHead, via, time.Now()); e != nil {
