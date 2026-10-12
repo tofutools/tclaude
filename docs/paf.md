@@ -107,7 +107,7 @@ receiving side.
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) as a new agent |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
@@ -406,6 +406,7 @@ survives if this node is lost.
 tclaude agent snapshot held
 tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR]
 tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR] --preview-token TOKEN
+tclaude agent recover --held OFFER --from peer:alice --group team --new-id
 ```
 
 When a node that sent you resilience snapshots is lost, recover one of its
@@ -419,12 +420,24 @@ agents from a snapshot you hold. A board recipient recovers with
 - **Preview first.** Without `--preview-token`, `recover` shows the agent
   that would land and prints a single-use token, valid for ten minutes and
   only for the same snapshot and options.
-- **A new identity.** The recovered agent is a new agent: the group's policy
-  and profile, no permissions from the source, and an arrival briefing that
-  marks the conversation as received context, not instructions. Having a
-  snapshot never restores the original agent's identity, so a recovery cannot
-  collide with the original if its node comes back. Restoring an agent under
-  its original identity is not available yet.
+- **The agent keeps its id.** As with a teleport, the recovered agent keeps
+  its agent id and this node becomes its home. It gets the group's policy and
+  profile, no permissions from the source, and an arrival briefing that marks
+  the conversation as received context, not instructions. `--new-id`
+  recovers it as a new agent with a fresh id instead.
+- **Conflicts are your call.** When keeping the id conflicts with this
+  node's records, the preview lists why and recovers nothing until you
+  choose `--new-id` or `--force-keep-id`. Conflicts are:
+  - the agent exists here, or was retired here;
+  - this node's records place it elsewhere (away, or with another home);
+  - a newer snapshot of it is held.
+
+  With `--force-keep-id` an existing agent's id heads the recovered
+  conversation, and its earlier conversations become past generations. A
+  running agent is never taken over: stop it first, or use `--new-id`.
+  tclaude cannot tell whether the original still runs on a node it cannot
+  reach. If that node comes back, two agents share the id until you retire
+  one.
 - The held copy stays until its retention removes it.
 
 ## Exporting and importing a group

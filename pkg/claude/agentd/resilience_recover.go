@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"io"
 	"net/http"
 	"os"
@@ -52,12 +54,15 @@ func resilienceRecover(w http.ResponseWriter, r *http.Request, op string) error 
 	if !ok || !proto.ValidStreamID(offer) {
 		return &boardHTTPError{400, "held", "name a held snapshot: the peer (instance id or label) and the offer id from tclaude agent snapshot held"}
 	}
-	var in boardSnapshotImportInput
+	var in recoverInput
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		return &boardHTTPError{400, "json", err.Error()}
 	}
 	if in.Group == "" {
 		return &boardHTTPError{400, "group", "group is required: the receiving group"}
+	}
+	if in.NewID && in.ForceKeepID {
+		return &boardHTTPError{400, "identity", "choose one of new_id and force_keep_id"}
 	}
 	plain, size, h, err := openHeldSnapshot(peer, offer)
 	if err != nil {
@@ -74,6 +79,9 @@ func resilienceRecover(w http.ResponseWriter, r *http.Request, op string) error 
 	if !signedByInstance(arch.Signatures, h.Peer) {
 		return &boardHTTPError{422, "provenance", "the held snapshot is not signed by the instance that sent it"}
 	}
+	if ag, ok := arch.Agent(arch.Manifest.Agents[0]); !ok || (ag.ID != "" && ag.ID != h.SourceAgent) {
+		return &boardHTTPError{422, "provenance", "the held snapshot is not of agent " + h.SourceAgent}
+	}
 	summary, err := privacy.SummarizeForConsent(arch, pafContextRecordLimit())
 	if err != nil {
 		return &boardHTTPError{422, "archive", err.Error()}
@@ -82,15 +90,121 @@ func resilienceRecover(w http.ResponseWriter, r *http.Request, op string) error 
 	if p, err := resolveFederationPeerOpt(h.Peer, false); err == nil && p != nil {
 		from = peerDisplay(p)
 	}
-	arrival := &arrivalContext{Operation: "resilience recover", Peer: h.Peer, Reason: "--cwd or recorded path", UntrustedHistory: true,
-		Note: fmt.Sprintf("Recovered from a resilience snapshot of agent %s that %s sent to this node, taken %s. You are a new agent with a new identity; the original agent's identity is not restored.", h.SourceAgent, from, h.TakenAt.UTC().Format(time.RFC3339))}
+	var newer []string
+	for _, x := range listHeld("") {
+		if x.SourceAgent == h.SourceAgent && x.TakenAt.After(h.TakenAt) {
+			newer = append(newer, fmt.Sprintf("a newer snapshot of agent %s is held here (taken %s, offer %s)", h.SourceAgent, x.TakenAt.UTC().Format(time.RFC3339), x.Offer))
+			break
+		}
+	}
+	keep, conflicts := recoveryIdentityFor(h.SourceAgent, in, newer)
+	snapshot := map[string]any{"peer": h.Peer, "offer": h.Offer, "source_agent": h.SourceAgent, "agent_name": h.AgentName, "taken_at": h.TakenAt, "summary": summary}
+	if askRecoveryIdentity(w, h.SourceAgent, in, conflicts, snapshot) {
+		return nil
+	}
+	note := fmt.Sprintf("Recovered from a resilience snapshot of agent %s that %s sent to this node, taken %s. ", h.SourceAgent, from, h.TakenAt.UTC().Format(time.RFC3339))
+	if keep != nil {
+		note += "You keep your agent id; this node is now your home."
+	} else {
+		note += "You are a new agent with a new identity; the original agent's identity is not kept."
+	}
+	arrival := &arrivalContext{Operation: "resilience recover", Peer: h.Peer, Reason: "--cwd or recorded path", UntrustedHistory: true, Note: note}
 	key := struct{ Peer, Offer, SHA256 string }{h.Peer, h.Offer, h.SHA256}
-	snapshot := map[string]any{"peer": h.Peer, "offer": h.Offer, "source_agent": h.SourceAgent, "agent_name": h.AgentName, "taken_at": h.TakenAt, "identity": "new", "summary": summary}
-	landed, err := landSnapshotAsNewAgent(w, r, op, plain, size, in, key, summary, arrival, snapshot)
+	landed, err := landSnapshotAsAgent(w, r, op, plain, size, in.boardSnapshotImportInput, key, keep, summary, arrival, snapshot)
 	if err == nil && landed {
 		recordFederationAudit("resilience.recover", h.Peer, "", "", "agent="+h.SourceAgent+" offer="+h.Offer, 200)
 	}
 	return err
+}
+
+// recoverInput is a recovery's landing options and its identity choice.
+// By default a recovery keeps the agent id, as a teleport arrival does.
+type recoverInput struct {
+	boardSnapshotImportInput
+	// NewID recovers as a new agent with a fresh id.
+	NewID bool `json:"new_id,omitempty"`
+	// ForceKeepID keeps the id despite the conflicts a preview showed.
+	ForceKeepID bool `json:"force_keep_id,omitempty"`
+}
+
+// recoveryIdentity is the agent id a recovery keeps.
+type recoveryIdentity struct {
+	Agent string
+	Force bool
+}
+
+// recoveryIdentityFor decides whether a recovery keeps agentID and lists
+// what speaks against it on this node: a local record of the agent (a
+// running one is never taken over), presence records placing it
+// elsewhere, and newer snapshots the caller found.
+func recoveryIdentityFor(agentID string, in recoverInput, newer []string) (*recoveryIdentity, []string) {
+	if in.NewID {
+		return nil, nil
+	}
+	conflicts := append([]string{}, newer...)
+	if a, err := db.GetAgent(agentID); err == nil && a != nil {
+		switch {
+		case !a.Active():
+			conflicts = append(conflicts, "agent "+agentID+" was retired on this node")
+		case agentHasLiveSession(a):
+			conflicts = append(conflicts, "agent "+agentID+" is running on this node; stop it first, or recover with a new id")
+		default:
+			conflicts = append(conflicts, "agent "+agentID+" exists on this node; keeping the id makes the recovered conversation its current one")
+		}
+	}
+	if p, err := db.GetAgentFederationPresence(agentID); err == nil && p != nil {
+		switch {
+		case p.State == "away":
+			conflicts = append(conflicts, fmt.Sprintf("this node's records say agent %s is away at %s", agentID, p.CurrentInstance))
+		case p.State == "reserved":
+			conflicts = append(conflicts, "agent "+agentID+" has a launch in progress on this node")
+		case p.State == "terminal":
+			conflicts = append(conflicts, "agent "+agentID+" was explicitly retired or deleted on this node")
+		case p.HomeInstance != "" && p.HomeInstance != arrivalNode():
+			conflicts = append(conflicts, fmt.Sprintf("this node's records say agent %s's home is %s", agentID, p.HomeInstance))
+		}
+	}
+	return &recoveryIdentity{Agent: agentID, Force: in.ForceKeepID}, conflicts
+}
+
+// askRecoveryIdentity answers a recovery whose kept id conflicts with this
+// node's records, unless the operator chose: it never refuses outright or
+// silently forks. A running agent is never taken over, even with force.
+func askRecoveryIdentity(w http.ResponseWriter, agentID string, in recoverInput, conflicts []string, snapshot map[string]any) bool {
+	snapshot["identity"] = "keep"
+	if in.NewID {
+		snapshot["identity"] = "new"
+	}
+	if len(conflicts) == 0 {
+		return false
+	}
+	snapshot["identity_conflicts"] = conflicts
+	running := false
+	for _, c := range conflicts {
+		running = running || strings.Contains(c, "is running on this node")
+	}
+	if in.ForceKeepID && !running {
+		return false
+	}
+	writeJSON(w, 409, map[string]any{"code": "identity_conflict", "agent": agentID, "conflicts": conflicts, "snapshot": snapshot,
+		"error": "keeping agent id " + agentID + " conflicts with this node's records; recover with new_id, or with force_keep_id to keep it anyway"})
+	return true
+}
+
+func agentHasLiveSession(a *db.Agent) bool {
+	if a.CurrentConvID == "" {
+		return false
+	}
+	rows, err := db.FindSessionsByConvID(a.CurrentConvID)
+	if err != nil {
+		return true
+	}
+	for _, s := range rows {
+		if s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveHeldPeer maps an instance id or a trusted peer's label to the

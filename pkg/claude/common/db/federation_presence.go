@@ -158,6 +158,68 @@ func ReserveFederationIdentity(identity FederationIdentity, local, peer, offer s
 	return returning, tx.Commit()
 }
 
+// ReserveRecoveredIdentity pins an agent id for a launch recovered from a
+// resilience snapshot, making this node the agent's home. An id with no
+// local record is reserved outright. One with a local record or presence is
+// a conflict the operator must resolve; with force it is taken over: the
+// launch becomes the agent's new head generation, as when an agent returns
+// home. ReleaseFederationIdentity undoes an undispatched reservation.
+func ReserveRecoveredIdentity(agentID, local, offer string, force bool) error {
+	if agentID == "" || local == "" || offer == "" {
+		return errors.New("invalid recovery reservation")
+	}
+	d, e := Open()
+	if e != nil {
+		return e
+	}
+	tx, e := d.Begin()
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, e = tx.Exec(`UPDATE agent_federation_presence SET updated_at=updated_at WHERE agent_id=?`, agentID); e != nil {
+		return e
+	}
+	p, e := scanFederationPresence(tx.QueryRow(`SELECT `+federationPresenceColumns+` FROM agent_federation_presence WHERE agent_id=?`, agentID))
+	if e != nil {
+		return e
+	}
+	var previousConv string
+	switch e = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id=?`, agentID).Scan(&previousConv); {
+	case errors.Is(e, sql.ErrNoRows):
+		previousConv = ""
+	case e != nil:
+		return e
+	}
+	exists := e == nil
+	if p != nil && p.State == "reserved" {
+		return errors.New("agent identity has a launch in progress")
+	}
+	if (p != nil || exists) && !force {
+		return errors.New("agent identity is in use on this node")
+	}
+	next := AgentFederationPresence{AgentID: agentID, HomeInstance: local}
+	if p != nil {
+		rollback, err := json.Marshal(federationArrivalRollback{Presence: *p, Transfer: p.Transfer, NonceHash: p.ContinuationNonceHash, Conv: previousConv})
+		if err != nil {
+			return err
+		}
+		next = *p
+		next.HomeInstance = local
+		next.ArrivalRollbackJSON = string(rollback)
+	}
+	next.CurrentInstance = local
+	next.State = "reserved"
+	next.PredecessorInstance = ""
+	next.ArrivalOffer = offer
+	next.HopCount = 0
+	next.Transfer = FederationIdentity{Agent: agentID, Home: local, Proofs: map[string]string{}}
+	if e = putFederationPresenceTx(tx, next); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
 // ReleaseFederationIdentity only releases an undispatched reservation. A bound
 // generation is retained for inspection, as with bundle import reservations.
 func ReleaseFederationIdentity(id, offer string) error {

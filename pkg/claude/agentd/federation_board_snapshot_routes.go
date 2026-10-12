@@ -710,7 +710,7 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		Ref     boardItemRef
 		Payload string
 	}{ref, v.PayloadSHA256}
-	landed, err := landSnapshotAsNewAgent(w, r, op, f, st.Size(), in, key, summary, arrival, map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary})
+	landed, err := landSnapshotAsAgent(w, r, op, f, st.Size(), in, key, nil, summary, arrival, map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary})
 	if err == nil && landed {
 		removeBoardSnapshotSpool(ref)
 		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
@@ -718,19 +718,21 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 	return err
 }
 
-// landSnapshotAsNewAgent previews (op "preview") or imports (op "import")
-// a received one-agent PAF as a new agent through the agent bundle import.
-// Import needs the single-use token of a preview of the same content and
-// options; key names the source, so a token never carries over to another
-// snapshot. snapshot is added to the response; landed reports an import.
-func landSnapshotAsNewAgent(w http.ResponseWriter, r *http.Request, op string, f *os.File, size int64, in boardSnapshotImportInput, key any, summary *privacy.ConsentSummary, arrival *arrivalContext, snapshot map[string]any) (bool, error) {
+// landSnapshotAsAgent previews (op "preview") or imports (op "import") a
+// received one-agent PAF through the agent bundle import: as a new agent,
+// or, with keep, under the agent id it was taken of. Import needs the
+// single-use token of a preview of the same content, identity and options;
+// key names the source, so a token never carries over to another snapshot.
+// snapshot is added to the response; landed reports an import.
+func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *os.File, size int64, in boardSnapshotImportInput, key any, keep *recoveryIdentity, summary *privacy.ConsentSummary, arrival *arrivalContext, snapshot map[string]any) (bool, error) {
 	token := in.PreviewToken
 	in.PreviewToken = ""
 	options := boardPreviewHash(struct {
 		Key     any
+		Keep    *recoveryIdentity `json:",omitempty"`
 		Content string
 		Input   boardSnapshotImportInput
-	}{key, summary.Digest, in})
+	}{key, keep, summary.Digest, in})
 	if op == "import" {
 		boardPreviewPermits.Lock()
 		permit, ok := boardPreviewPermits.permits[token]
@@ -748,6 +750,9 @@ func landSnapshotAsNewAgent(w http.ResponseWriter, r *http.Request, op string, f
 		return false, &boardHTTPError{422, "archive", err.Error()}
 	}
 	arrival.Source = b.Manifest.Agent
+	if keep != nil {
+		arrival.Source.Identity = &db.FederationIdentity{Agent: keep.Agent, Home: arrivalNode()}
+	}
 	_ = b.Close()
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return false, err
@@ -773,8 +778,22 @@ func landSnapshotAsNewAgent(w http.ResponseWriter, r *http.Request, op string, f
 	inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: q.Encode()}
 	inner.Body = f
 	inner.ContentLength = size
+	var reservation string
+	if keep != nil && op == "import" {
+		// The kept id is reserved for exactly this launch; a launch that
+		// does not start releases it.
+		reservation = "recover-" + proto.NewEnvelopeID()
+		if err := db.ReserveRecoveredIdentity(keep.Agent, arrivalNode(), reservation, keep.Force); err != nil {
+			return false, &boardHTTPError{409, "identity_conflict", err.Error()}
+		}
+		ctx := context.WithValue(inner.Context(), reservedAgentIDContextKey{}, keep.Agent)
+		inner = inner.WithContext(context.WithValue(ctx, federationIdentityLaunchKey{}, federationIdentityLaunch{keep.Agent, reservation}))
+	}
 	rec := httptest.NewRecorder()
 	handleAgentBundleImport(rec, inner)
+	if rec.Code != 200 && reservation != "" {
+		_ = db.ReleaseFederationIdentity(keep.Agent, reservation)
+	}
 	if rec.Code != 200 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(rec.Code)

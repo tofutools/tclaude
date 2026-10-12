@@ -41,7 +41,7 @@ func fedPeerSnapshot(t *testing.T, fh *fedHarness, conv string, signer *proto.Id
 	return sealed.Bytes()
 }
 
-func TestResilience_RecoverHeldSnapshotAsNewAgent(t *testing.T) {
+func TestResilience_RecoverHeldSnapshotKeepsAgentID(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
 	f.HaveGroup("recovered")
@@ -57,7 +57,9 @@ func TestResilience_RecoverHeldSnapshotAsNewAgent(t *testing.T) {
 	require.NoError(t, err)
 	forged := fedSendSnapshot(t, p, fedPeerSnapshot(t, fh, conv, stranger), now.Add(-time.Hour), 5)
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, forged.ID).Status)
-	fedEventually(t, "snapshots held", func() bool { return len(fedHeld(t, f).Held) == 2 })
+	older := fedSendSnapshot(t, p, fedPeerSnapshot(t, fh, conv, p.id), now.Add(-2*time.Hour), 5)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, older.ID).Status)
+	fedEventually(t, "snapshots held", func() bool { return len(fedHeld(t, f).Held) == 3 })
 
 	path := func(offer, op string) string { return "/v1/resilience/held/bob/" + offer + "/" + op }
 	body := map[string]any{"group": "recovered", "name": "recovered-agent", "cwd": testutil.CanonicalTempDir(t)}
@@ -72,6 +74,16 @@ func TestResilience_RecoverHeldSnapshotAsNewAgent(t *testing.T) {
 	require.Equal(t, 422, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "provenance")
 
+	// Keeping the id of an older snapshot than one held is a question for
+	// the operator, answered with force_keep_id or new_id.
+	rec = fedHuman(t, f, http.MethodPost, path(older.ID, "preview"), body)
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "identity_conflict")
+	require.Contains(t, rec.Body.String(), "newer snapshot")
+	forced := map[string]any{"group": "recovered", "cwd": body["cwd"], "force_keep_id": true}
+	rec = fedHuman(t, f, http.MethodPost, path(older.ID, "preview"), forced)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+
 	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "preview"), body)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var preview struct {
@@ -83,7 +95,7 @@ func TestResilience_RecoverHeldSnapshotAsNewAgent(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
 	require.NotEmpty(t, preview.Token)
-	require.Equal(t, "new", preview.Snapshot.Identity)
+	require.Equal(t, "keep", preview.Snapshot.Identity)
 
 	// The token binds the options it was issued for.
 	other := map[string]any{"group": "recovered", "name": "other-name", "cwd": body["cwd"], "preview_token": preview.Token}
@@ -108,9 +120,45 @@ func TestResilience_RecoverHeldSnapshotAsNewAgent(t *testing.T) {
 	require.Equal(t, 409, rec.Code, rec.Body.String())
 
 	require.NotEqual(t, conv, landed.Spawn.ConvID)
-	src, _ := db.AgentIDForConv(conv)
 	got, err := db.AgentIDForConv(landed.Spawn.ConvID)
 	require.NoError(t, err)
+	require.Equal(t, resilienceSource, got, "a recovery keeps the agent id by default")
+
+	// The agent now runs here: keeping its id again is refused even with
+	// force; a new id is the way.
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "preview"), forced)
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "is running on this node")
+	// Stopped, it may be taken over with force: the recovered conversation
+	// becomes its current one.
+	f.Stop(landed.Spawn.ConvID, true)
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "preview"), body)
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "exists on this node")
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "preview"), forced)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+	forced["preview_token"] = preview.Token
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "import"), forced)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	first := landed.Spawn.ConvID
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &landed))
+	require.NotEqual(t, first, landed.Spawn.ConvID)
+	a, err := db.GetAgent(resilienceSource)
+	require.NoError(t, err)
+	require.Equal(t, landed.Spawn.ConvID, a.CurrentConvID, "the kept id now heads the recovered conversation")
+
+	fresh := map[string]any{"group": "recovered", "name": "second", "cwd": body["cwd"], "new_id": true}
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "preview"), fresh)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+	require.Equal(t, "new", preview.Snapshot.Identity)
+	fresh["preview_token"] = preview.Token
+	rec = fedHuman(t, f, http.MethodPost, path(good.ID, "import"), fresh)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &landed))
+	got, err = db.AgentIDForConv(landed.Spawn.ConvID)
+	require.NoError(t, err)
 	require.NotEmpty(t, got)
-	require.NotEqual(t, src, got, "a recovered agent has a new identity")
+	require.NotEqual(t, resilienceSource, got)
 }
