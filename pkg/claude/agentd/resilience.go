@@ -276,6 +276,7 @@ func resilienceTickOnce(now time.Time, only string) {
 		slog.Warn("resilience: load", "error", err)
 		return
 	}
+	before, _ := json.Marshal(f)
 	for _, p := range f.Policies {
 		if only != "" && p.ID != only {
 			continue
@@ -295,8 +296,12 @@ func resilienceTickOnce(now time.Time, only string) {
 		}
 	}
 	maps.Copy(notified, f.FindingsNotified)
-	if err := saveResilience(f); err != nil {
-		slog.Warn("resilience: save", "error", err)
+	// An idle tick changes nothing; rewriting and syncing the file every
+	// minute would be wasted I/O.
+	if after, _ := json.Marshal(f); !bytes.Equal(before, after) {
+		if err := saveResilience(f); err != nil {
+			slog.Warn("resilience: save", "error", err)
+		}
 	}
 	resilienceMu.Unlock()
 	if len(jobs) == 0 {
@@ -902,6 +907,10 @@ func resilienceReceiveRetry() {
 	resilienceHeldMu.Unlock()
 	rt := currentFederation()
 	if rt == nil {
+		return
+	}
+	// Most ticks have nothing in flight; skip reading every inbound offer.
+	if open, err := db.HasOpenInboundBundleOffers(); err != nil || !open {
 		return
 	}
 	offers, err := db.ListFederationBundleOffers("in")
