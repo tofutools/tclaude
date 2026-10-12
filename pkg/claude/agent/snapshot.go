@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -275,8 +276,9 @@ func runSpawnFromSnapshot(p *SpawnParams, cmd *cobra.Command, stdout, stderr io.
 		return rcInvalidArg
 	}
 	var refused []string
+	inherited := cmd.InheritedFlags()
 	cmd.Flags().Visit(func(f *pflag.Flag) {
-		if !snapshotSpawnFlags[f.Name] {
+		if !snapshotSpawnFlags[f.Name] && inherited.Lookup(f.Name) == nil {
 			refused = append(refused, "--"+f.Name)
 		}
 	})
@@ -307,20 +309,37 @@ func runSpawnFromSnapshot(p *SpawnParams, cmd *cobra.Command, stdout, stderr io.
 		// `paf import --keep-paths` does.
 		body["keep_paths"] = true
 	}
-	var res struct {
-		Snapshot string          `json:"snapshot"`
-		Spawned  []SpawnResponse `json:"spawned"`
-		Warnings []string        `json:"warnings"`
-	}
+	var res snapshotSpawnResult
 	if err := DaemonPost("/v1/snapshots/"+url.PathEscape(p.FromSnapshot)+"/spawn", body, &res); err != nil {
+		// A partial failure still created agents; list them so a retry
+		// does not duplicate them unknowingly.
+		var de *DaemonError
+		if errors.As(err, &de) && de.Code == "partial" {
+			var partial struct {
+				Result snapshotSpawnResult `json:"result"`
+			}
+			if json.Unmarshal(de.Raw, &partial) == nil {
+				printSnapshotSpawned(stdout, stderr, partial.Result)
+			}
+		}
 		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}
+	printSnapshotSpawned(stdout, stderr, res)
+	return rcOK
+}
+
+type snapshotSpawnResult struct {
+	Snapshot string          `json:"snapshot"`
+	Spawned  []SpawnResponse `json:"spawned"`
+	Warnings []string        `json:"warnings"`
+}
+
+func printSnapshotSpawned(stdout, stderr io.Writer, res snapshotSpawnResult) {
 	for _, w := range res.Warnings {
 		fmt.Fprintln(stderr, "Warning:", w)
 	}
 	for _, s := range res.Spawned {
 		fmt.Fprintf(stdout, "Spawned %s (%s) from snapshot %s in group %s; attach: %s\n", s.Label, s.AgentID, res.Snapshot, s.Group, s.AttachCmd)
 	}
-	return rcOK
 }
