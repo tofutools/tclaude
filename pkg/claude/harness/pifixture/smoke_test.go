@@ -1,6 +1,7 @@
 package pifixture
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,8 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func materializedExtension(t *testing.T) string {
@@ -71,6 +75,12 @@ func TestPiExtensionPayloadFidelity(t *testing.T) {
 		require.Truef(t, ok, "%s carries no tclaude_context: %v", step.event, recorded)
 		assert.EqualValues(t, 64000, ctxUsage["context_window"], step.event)
 		delete(recorded, "tclaude_context")
+		// Spend is reported once the session has some: from the first
+		// response, the tool call, on. Its figures are checked in
+		// TestPiExtensionReportsSpendAndCompactsAtPinnedWindow.
+		_, spent := recorded["tclaude_usage"]
+		assert.Equal(t, i >= 2, spent, "%s: tclaude_usage", step.event)
+		delete(recorded, "tclaude_usage")
 		expected := normalize(t, testharness.PiHookPayload(id, transcript, w.Project, MockModel, step.event, step.fields))
 		assert.Equalf(t, expected, recorded, "payload %d (%s)", i, step.event)
 	}
@@ -167,6 +177,7 @@ func TestPiExtensionLifecycleFidelity(t *testing.T) {
 	for i, step := range want {
 		recorded := got[i]
 		delete(recorded, "tclaude_context")
+		delete(recorded, "tclaude_usage")
 		convID, _ := recorded["session_id"].(string)
 		transcript, _ := recorded["transcript_path"].(string)
 		ids[convID] = true
@@ -183,4 +194,112 @@ func TestPiExtensionLifecycleFidelity(t *testing.T) {
 func strconvQuote(s string) string {
 	raw, _ := json.Marshal(s)
 	return string(raw)
+}
+
+// A history translated from another harness lands where pi looks for the
+// project's sessions, and resuming it by id sends the carried turns to the
+// model.
+func TestPiLandedTranscriptResumes(t *testing.T) {
+	w := NewWorld(t)
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	t.Setenv(harness.PiAgentDirEnvVar, w.AgentDir)
+	t.Setenv(harness.PiSessionDirEnvVar, "")
+
+	src := transcript.New(transcript.Source{Harness: harness.DefaultName, ConvID: "source-conv"})
+	src.Append(transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("Remember the secret word: PELICAN.")}})
+	src.Append(transcript.Entry{Role: transcript.RoleAssistant, Origin: transcript.OriginAgent, Blocks: []transcript.Block{transcript.Text("Noted, I will remember it.")}})
+	pi := harness.MustGet(harness.PiName)
+	plan := transcript.NewPlan(src, transcript.Options{Target: harness.PiName, TargetModel: MockModel, InlineMedia: true})
+	var encoded bytes.Buffer
+	sourceID, err := pi.Transcript.Encode(plan, w.Project, &encoded)
+	require.NoError(t, err)
+	id, cleanup, err := pi.History.Import(encoded.Bytes(), sourceID, w.Project)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	out, err := w.Run(w.Project, "-p", "What was the secret word?", "--session-id", id, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	sent := w.Mock.LastMessages()
+	assert.Contains(t, sent, "PELICAN", "the carried turn reaches the model")
+	assert.Contains(t, sent, "Noted, I will remember it.")
+	assert.Contains(t, sent, "What was the secret word?")
+	matches, _ := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
+	require.Len(t, matches, 1, "pi resumed the landed session rather than starting another")
+}
+
+// The extension reports what the session itself spent, priced from pi's
+// catalog, and compacts between runs once the context reaches a pinned
+// auto-compaction window, which tclaude hears as an automatic compaction.
+func TestPiExtensionReportsSpendAndCompactsAtPinnedWindow(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	// One response puts ~12k tokens in context (the mock's usage).
+	w.ExtraEnv = []string{harness.AutoCompactWindowEnvVar + "=10000"}
+	id := uuid.NewString()
+	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
+	rpc.AwaitEvent("agent_settled")
+	rpc.AwaitEvent("compaction_end")
+	rpc.Close()
+
+	got := w.RecordedPayloads()
+	byEvent := map[string]map[string]any{}
+	var events []string
+	for _, p := range got {
+		event := p["hook_event_name"].(string)
+		events = append(events, event)
+		if _, seen := byEvent[event]; !seen {
+			byEvent[event] = p
+		}
+	}
+	require.Contains(t, byEvent, "PreCompact", "events: %v", events)
+	assert.Equal(t, "auto", byEvent["PreCompact"]["trigger"])
+	require.Contains(t, byEvent, "PostCompact", "events: %v", events)
+	assert.Equal(t, "auto", byEvent["PostCompact"]["trigger"])
+
+	// Two responses (the tool call, then the answer) at $1/$2 per million.
+	spend, ok := byEvent["Stop"]["tclaude_usage"].(map[string]any)
+	require.True(t, ok, "Stop carries no tclaude_usage: %v", byEvent["Stop"])
+	assert.EqualValues(t, 2, spend["calls"])
+	assert.EqualValues(t, 24000, spend["input_tokens"])
+	assert.EqualValues(t, 60, spend["output_tokens"])
+	assert.InDelta(t, 0.02412, spend["cost_usd"], 1e-9)
+	assert.Equal(t, false, spend["subscription"], "an API key is billed per token")
+}
+
+// A session tclaude copies (clone, agent bundle, federation) starts at the
+// import: its copied history's spend stays with the source, and the copy
+// reports only its own.
+func TestPiImportedSessionReportsOnlyItsOwnSpend(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	t.Setenv(harness.PiAgentDirEnvVar, w.AgentDir)
+	t.Setenv(harness.PiSessionDirEnvVar, "")
+
+	source := uuid.NewString()
+	out, err := w.Run(w.Project, "-p", "first", "--session-id", source, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	pi := harness.MustGet(harness.PiName)
+	raw, err := pi.History.Export(source, w.Project)
+	require.NoError(t, err)
+	id, cleanup, err := pi.History.Import(raw, source, w.Project)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	out, err = w.Run(w.Project, "-p", "second", "--session-id", id, "--extension", ext, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	var stop map[string]any
+	for _, p := range w.RecordedPayloads() {
+		if p["hook_event_name"] == "Stop" {
+			stop = p
+		}
+	}
+	require.NotNil(t, stop)
+	spend, ok := stop["tclaude_usage"].(map[string]any)
+	require.True(t, ok, "Stop carries no tclaude_usage: %v", stop)
+	assert.EqualValues(t, 1, spend["calls"], "only the copy's own response")
 }

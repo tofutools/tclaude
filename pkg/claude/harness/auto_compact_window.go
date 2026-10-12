@@ -52,15 +52,16 @@ const (
 )
 
 // SupportsAutoCompactWindow reports whether the harness has an auto-compaction
-// window tclaude can pin. This is Claude Code's knob; Codex and OpenCode manage
-// their own compaction with no equivalent env var, so callers must not emit it
-// for them — and must hide the affordance.
+// window tclaude can pin. This is Claude Code's knob; tclaude's pi extension
+// reads the same variable and compacts between runs once the context reaches
+// it. Codex and OpenCode manage their own compaction with no equivalent env
+// var, so callers must not emit it for them — and must hide the affordance.
 //
 // Gated on the harness NAME rather than a capability func for the same reason
 // SupportsAutoMemory is: it is a plain environment variable, not a lifecycle
 // command with a per-harness implementation to probe.
 func (h *Harness) SupportsAutoCompactWindow() bool {
-	return h != nil && h.Name == DefaultName
+	return h != nil && (h.Name == DefaultName || h.Name == PiName)
 }
 
 // CanAutoCompactWindow is the UI-side predicate a spawn/profile control gates on

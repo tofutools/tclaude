@@ -75,6 +75,10 @@ type HookCallbackInput struct {
 	// max_output_tokens, unknown; error_message is the human-readable string.
 	ErrorType    string `json:"error_type,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
+	// PiContext and PiUsage are what tclaude's pi extension reports on every
+	// hook in place of a status line (see pi_hook_telemetry.go).
+	PiContext *PiContext `json:"tclaude_context,omitempty"`
+	PiUsage   *PiUsage   `json:"tclaude_usage,omitempty"`
 }
 
 func HookCallbackCmd() *cobra.Command {
@@ -1183,6 +1187,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// helper independently verifies the conversation match because PostCompact
 	// is exempt from the status machine's foreign-process guard above.
 	persistCodexHookModel(state, input)
+	persistPiHookTelemetry(state, input, amb)
 
 	// Update state based on hook event. This switch is tclaude's
 	// cross-harness event→status map. Claude Code and Codex deliver the

@@ -52,6 +52,13 @@ func MorphContextWindow(h *Harness, model string) (int64, string) {
 		if n, found, err := db.FreshCopilotModelPromptLimit(model, time.Now(), 24*time.Hour); err == nil && found {
 			return n, "Copilot model prompt limit"
 		}
+	case PiName:
+		if n := piConfiguredModelWindow(nil, model); n > 0 {
+			return n, "pi models.json"
+		}
+		if n, err := db.ObservedModelContextWindow(PiName, model); err == nil && n > 0 {
+			return n, "pi reported context window"
+		}
 	case OpenCodeName:
 		openCodeModelCache.Lock()
 		catalog := openCodeModelCache.value

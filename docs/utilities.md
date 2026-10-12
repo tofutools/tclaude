@@ -232,10 +232,11 @@ asking for a trim there is an error rather than a silent no-op.
 
 ## Auto-compact window
 
-`--auto-compact-window` (Claude Code only) pins the context capacity that
+`--auto-compact-window` (Claude Code and pi) pins the context capacity that
 Claude Code's auto-compaction reasons from, via
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. It accepts `450000`, `450k`, or `0.5M`;
-unset uses the model's own threshold.
+unset uses the model's own threshold. For pi, tclaude's extension compacts
+between runs once the context reaches the pinned window.
 
 The point is long-lived agents on large-window models: pin the window below a
 1M model's real capacity and the agent compacts while it is still sharp,

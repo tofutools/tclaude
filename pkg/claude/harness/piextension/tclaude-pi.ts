@@ -19,9 +19,23 @@
 
 import { spawn } from "node:child_process";
 
-export const TCLAUDE_PI_EXTENSION_VERSION = 1;
+export const TCLAUDE_PI_EXTENSION_VERSION = 2;
 
 const HOOK_BIN = process.env.TCLAUDE_PI_HOOK_BIN ?? "";
+// tclaude's auto-compaction window in tokens, when the agent pins one. pi
+// compacts on its own only near the model's full window; this compacts
+// earlier, between runs. pi's own threshold stays the backstop.
+// tclaude exports a canonical token count; anything else (a unit suffix from
+// the operator's own shell, a value outside tclaude's bounds) is ignored, as
+// tclaude's hook ignores it, so the compaction and the meter agree.
+const AUTO_COMPACT_TOKENS = pinnedWindow(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "");
+
+function pinnedWindow(raw: string): number {
+	const value = raw.trim();
+	if (!/^[0-9]+$/.test(value)) return 0;
+	const tokens = Number(value);
+	return tokens >= 10_000 && tokens <= 10_000_000 ? tokens : 0;
+}
 const CALLBACK_TIMEOUT_MS = 5_000;
 // How long shutdown waits for earlier events before sending SessionEnd.
 const SHUTDOWN_FLUSH_MS = 3_000;
@@ -154,9 +168,45 @@ function base(event: string, ctx: any): Payload {
 			};
 		}
 	} catch {}
+	try {
+		const spend = sessionSpend(ctx);
+		if (spend) payload.tclaude_usage = spend;
+	} catch {}
 	const model = ctx?.model;
 	if (model?.provider && model?.id) payload.model = `${model.provider}/${model.id}`;
 	return payload;
+}
+
+// sessionSpend sums what this session itself spent: every usage pi recorded
+// (responses, compaction and branch summaries, cache warming) at or after the
+// session's own start. A session made by /clone or /fork, or landed by
+// tclaude, starts with copies of earlier entries whose spend belongs to the
+// session they came from. The cost is pi's, priced from its model catalog; a
+// subscription login is not billed per token, so the figure is then only what
+// it would have cost.
+function sessionSpend(ctx: any): Payload | undefined {
+	const sm = ctx?.sessionManager;
+	const started = Date.parse(sm?.getHeader?.()?.timestamp ?? "");
+	const entries: any[] = sm?.getEntries?.() ?? [];
+	let input = 0;
+	let output = 0;
+	let cost = 0;
+	let calls = 0;
+	for (const entry of entries) {
+		if (Number.isFinite(started) && Date.parse(entry?.timestamp ?? "") < started) continue;
+		const usage = entry?.type === "message" ? entry?.message?.usage : entry?.usage;
+		if (!usage || typeof usage !== "object") continue;
+		calls++;
+		input += (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+		output += usage.output ?? 0;
+		cost += usage.cost?.total ?? 0;
+	}
+	if (calls === 0) return undefined;
+	let subscription = false;
+	try {
+		subscription = ctx?.model ? ctx?.modelRegistry?.isUsingOAuth?.(ctx.model) === true : false;
+	} catch {}
+	return { input_tokens: input, output_tokens: output, cost_usd: cost, calls, subscription };
 }
 
 function emit(event: string, ctx: any, fields: Payload = {}): Promise<string> {
@@ -206,8 +256,13 @@ const END_REASON: Record<string, string> = {
 };
 
 function compactTrigger(reason: string): string {
-	return reason === "manual" ? "manual" : "auto";
+	return reason === "manual" && !pinnedCompaction.active ? "manual" : "auto";
 }
+
+// Set while a compaction this extension started at the pinned window runs.
+// pi reports it as manual; to tclaude it is automatic, so the pre-compact
+// guard judges it like pi's own threshold compaction.
+const pinnedCompaction = { active: false };
 
 // The session last announced. pi can deliver session_start twice for one
 // session switch (observed in RPC mode), and may load this module afresh for
@@ -252,6 +307,18 @@ export default function tclaudePi(pi: any): void {
 
 	pi.on("agent_settled", (_event: any, ctx: any) => {
 		emit("Stop", ctx);
+		if (AUTO_COMPACT_TOKENS > 0) {
+			try {
+				const tokens = ctx?.getContextUsage?.()?.tokens;
+				if (typeof tokens === "number" && tokens >= AUTO_COMPACT_TOKENS && !pinnedCompaction.active) {
+					pinnedCompaction.active = true;
+					const done = () => {
+						pinnedCompaction.active = false;
+					};
+					ctx?.compact?.({ onComplete: done, onError: done });
+				}
+			} catch {}
+		}
 	});
 
 	pi.on("session_before_compact", async (event: any, ctx: any) => {
@@ -260,7 +327,7 @@ export default function tclaudePi(pi: any): void {
 		// tclaude may refuse an early automatic compaction, so only that one
 		// waits for its answer, briefly. A manual compaction is the user's
 		// own, and an overflow compaction must run for the turn to continue.
-		if (reason !== "threshold") return;
+		if (reason !== "threshold" && !(reason === "manual" && pinnedCompaction.active)) return;
 		const out = await within(pending, PRECOMPACT_DECISION_MS);
 		try {
 			const decision = JSON.parse(out.trim() || "{}");

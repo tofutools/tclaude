@@ -149,6 +149,11 @@ func saveSessionWithResumeProvenance(row *db.SessionRow) error {
 // Codex/OpenCode spawn records nothing.
 func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 	if args.Harness != "" && args.Harness != harness.DefaultName {
+		// As session.RecordLaunchPosture: the pinned window is recorded for
+		// every harness that honours one.
+		if h, ok := harness.Get(args.Harness); ok && h.SupportsAutoCompactWindow() {
+			return db.SetSessionAutoCompactWindow(label, args.AutoCompactWindow)
+		}
 		return nil
 	}
 	if err := db.SetSessionPeerMessaging(label, args.PeerMessaging); err != nil {

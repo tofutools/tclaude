@@ -39,6 +39,8 @@ type World struct {
 	Recorder string
 	Payloads string
 	Mock     *Mock
+	// ExtraEnv is added to the environment of every later pi launch.
+	ExtraEnv []string
 }
 
 // NewWorld skips unless the smoke is enabled and pi is installed.
@@ -105,6 +107,7 @@ func (w *World) Env(extra ...string) []string {
 		"PI_TELEMETRY=0",
 		harness.PiHookBinEnvVar + "=" + w.Recorder,
 	}
+	env = append(env, w.ExtraEnv...)
 	return append(env, extra...)
 }
 
@@ -146,9 +149,10 @@ func (w *World) RecordedPayloads() []map[string]any {
 // message containing TOOL is answered with one bash tool call; anything else,
 // including a tool result, with a short text reply.
 type Mock struct {
-	URL   string
-	mu    sync.Mutex
-	calls int
+	URL      string
+	mu       sync.Mutex
+	calls    int
+	messages []string
 }
 
 func NewMock(t *testing.T) *Mock {
@@ -164,6 +168,17 @@ func (m *Mock) Calls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls
+}
+
+// LastMessages returns the messages array of the latest completion request,
+// as JSON: what pi sent the model.
+func (m *Mock) LastMessages() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.messages) == 0 {
+		return ""
+	}
+	return m.messages[len(m.messages)-1]
 }
 
 // ToolCommand is the command the mock's tool call runs.
@@ -187,6 +202,7 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.Lock()
 	m.calls++
+	m.messages = append(m.messages, mustJSON(body.Messages))
 	m.mu.Unlock()
 	last := body.Messages[len(body.Messages)-1]
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -221,7 +237,7 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]any{
 		"id": "c1", "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": "mock-1",
 		"choices": []any{},
-		"usage":   map[string]any{"prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230},
+		"usage":   map[string]any{"prompt_tokens": 12000, "completion_tokens": 30, "total_tokens": 12030},
 	}))
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }
