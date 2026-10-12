@@ -108,7 +108,7 @@ hideDragHint();`
 	}, {
 		Key:     "learn-dashboard-agent-menu",
 		Title:   "Learn — an agent's ⚙ menu",
-		Caption: "dashboard-tour steps 3 and 5.",
+		Caption: "first-team step 4.",
 		JS: showGroups + `return (async function(){
   var row = await waitFor('tr', 'alice');
   var gear = row.querySelector('.cog-glyph');
@@ -121,9 +121,40 @@ hideDragHint();`
 		Width: 1400, Height: 688,
 		SettleMS: 400,
 	}, {
+		Key:     "learn-dashboard-resume",
+		Title:   "Learn — Retired and Conversations",
+		Caption: "find-and-resume steps 2 and 3.",
+		JS: showGroups + `return (async function(){
+  var view = await waitFor('button', '▾ view');
+  view.click();
+  for (const label of ['show retired', 'show conversations']) {
+    var opt = await waitFor('#filter-groups-view-menu label, #filter-groups-view-menu [role="menuitemcheckbox"]', label);
+    var box = opt.querySelector('input') || opt;
+    if (!box.checked) box.click();
+  }
+  view.click();
+  var retired = await waitFor('.group-name', 'Retired');
+  await waitFor('.group-name', 'Conversations');
+  document.querySelectorAll('details').forEach(function(d){ d.open = true; });
+  await waitFor('button', 'reinstate');
+  await waitFor('button', 'promote');
+  // Show only the two virtual groups: the live hello team (with its own bob)
+  // and Ungrouped belong to the earlier tutorials.
+  Array.from(document.querySelectorAll('.group-name')).forEach(function(n){
+    var name = n.textContent.trim();
+    if (name === 'hello' || name.indexOf('Ungrouped') === 0) {
+      var block = n.closest('details') || n.parentElement;
+      block.style.display = 'none';
+    }
+  });
+  void retired;
+})();`,
+		Width: 1400, Height: 420,
+		SettleMS: 600,
+	}, {
 		Key:     "learn-dashboard-messages",
 		Title:   "Learn — the hello group's mail",
-		Caption: "first-team step 6 and dashboard-tour step 4.",
+		Caption: "first-team step 3.",
 		JS: helpers + `return (async function(){
   document.querySelector('nav [data-tab="messages"]').click();
   (await waitFor('#mail-sidebar .mailbox', 'hello')).click();
@@ -190,6 +221,34 @@ func seedLearnTeam(t *testing.T, f *testharness.Flow) {
 	plain := learnAgent{conv: "1ea40000-0000-4000-8000-0000000501a0", title: "20261012-1017-1ea40501", model: "Sonnet 5.5", status: "idle", age: time.Minute, last: 30 * time.Second}
 	seedLearnSession(t, f, plain)
 	f.HaveEnrolledAgent(plain.conv)
+
+	// find-and-resume: bob after "Your first agent team" retired him (a
+	// separate conversation from the live bob above), and a conversation
+	// started from the shell that never became an agent.
+	retired := "1ea40000-0000-4000-8000-0000000b0b01"
+	seedLearnOfflineConv(t, f, retired, "bob")
+	f.HaveEnrolledAgent(retired)
+	if _, err := db.RetireAgent(retired, "operator", ""); err != nil {
+		t.Fatalf("retire bob: %v", err)
+	}
+	seedLearnOfflineConv(t, f, "1ea40000-0000-4000-8000-0000000c0a01", "fix the flaky login test")
+}
+
+// seedLearnOfflineConv writes a conversation transcript with no live session.
+func seedLearnOfflineConv(t *testing.T, f *testharness.Flow, conv, title string) {
+	t.Helper()
+	cc := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, learnProject)
+	if err := cc.Start(); err != nil {
+		t.Fatalf("transcript %s: %v", title, err)
+	}
+	row := agent.FreshConvRowAt(conv, learnProject)
+	if row == nil {
+		t.Fatalf("conv_index scan for %s", title)
+	}
+	row.CustomTitle = title
+	if err := db.UpsertConvIndex(row); err != nil {
+		t.Fatalf("title %s: %v", title, err)
+	}
 }
 
 func seedLearnSession(t *testing.T, f *testharness.Flow, a learnAgent) {
