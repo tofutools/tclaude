@@ -29,6 +29,7 @@ func registerFederationHubRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/hub/admins", hubOperatorRoute("admins.list"))
 	mux.HandleFunc("POST /v1/federation/hub/admins", hubOperatorRoute("admins.add"))
 	mux.HandleFunc("DELETE /v1/federation/hub/admins/{instance}", hubOperatorRoute("admins.remove"))
+	mux.HandleFunc("POST /v1/federation/hub/admissions/cleanup", hubOperatorRoute("admissions.cleanup"))
 	mux.HandleFunc("GET /v1/federation/hub/admissions", hubOperatorRoute("admissions.list"))
 	mux.HandleFunc("POST /v1/federation/hub/admissions", hubOperatorRoute("admissions.admit"))
 	mux.HandleFunc("DELETE /v1/federation/hub/admissions/{instance}", hubOperatorRoute("admissions.revoke"))

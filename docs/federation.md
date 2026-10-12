@@ -3269,6 +3269,8 @@ tclaude federation hub admins remove --instance inst_ID
 tclaude federation hub admissions list
 tclaude federation hub admissions admit --instance inst_ID --spaces team
 tclaude federation hub admissions revoke --instance inst_ID
+tclaude federation hub cleanup-stale --days 30 --preview
+tclaude federation hub cleanup-stale --days 30
 tclaude federation hub invites create --space team --ttl 1h
 tclaude federation hub invites list
 tclaude federation hub invites revoke --token-hash HASH
@@ -3284,6 +3286,18 @@ tclaude federation hub identity revoke-old --instance inst_OLD --fingerprint FP 
 tclaude federation hub health
 tclaude federation hub logs tail --max-entries 100
 ```
+
+**Stale admission cleanup** defaults to 30 days. The dashboard's Hub admissions
+section previews names, IDs and last-seen times before confirmation. The CLI
+prints the same preview and asks you to type `yes`; `--preview` stops without
+asking. Cleanup revokes admission using the individual revoke path; it does not
+delete node data or change node trust. Admins, the requesting node and connected
+instances are excluded. To remove a protected instance, explicitly use the
+individual revoke action (the last-admin safeguard still applies). Instances
+never seen use their admission date. Each batch is limited to 250; repeat for
+remaining candidates. Confirmation applies only to the previewed IDs and cutoff,
+and skips instances seen again or made admins in the meantime.
+
 
 Built-in hub rate limits are 600 frames/minute, 100 MiB/minute of sent data,
 and 10 MiB/second of relayed stream bandwidth per instance. Existing explicit
@@ -3311,6 +3325,7 @@ The local `/api/federation/hub/` dashboard routes and matching
 | `admins/{instance}` | DELETE | Remove an admin |
 | `admissions` | GET, POST | `{admissions:[...]}`; POST `{instance,spaces}` |
 | `admissions/{instance}` | DELETE | Revoke admission |
+| `admissions/cleanup` | POST | Preview `{days:30}`; confirm with `{days,cutoff,instances:[IDs],apply:true}` |
 | `invites` | GET, POST | `{invites:[...]}`; POST `{space,ttl_seconds}` returns bearer once |
 | `invites/{token_hash}` | DELETE | Revoke invitation |
 | `spaces` | GET, PUT | `{spaces:[...]}`; PUT `{instance,spaces}` |

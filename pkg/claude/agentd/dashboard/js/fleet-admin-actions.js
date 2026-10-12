@@ -75,6 +75,7 @@ const settingRows = (v) => {
     hubAdmins: async () => rows(await call('GET', 'hub/admins'), 'admins'),
     addHubAdmin: (instance, capabilities) => done(call('POST', 'hub/admins', { instance, capabilities })),
     removeHubAdmin: (instance) => done(call('DELETE', `hub/admins/${enc(instance)}`)),
+    cleanupHubAdmissions: (body) => call('POST', 'hub/admissions/cleanup', body),
     hubAdmissions: () => hubList('hub/admissions', 'admissions'),
     admitToHub: (instance, spaces) => done(call('POST', 'hub/admissions', { instance, spaces })),
     revokeHubAdmission: (instance) => done(call('DELETE', `hub/admissions/${enc(instance)}`)),

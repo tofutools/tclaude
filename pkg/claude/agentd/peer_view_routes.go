@@ -18,6 +18,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/hub/admins",
 	"POST /api/federation/hub/admins",
 	"DELETE /api/federation/hub/admins/{instance}",
+	"POST /api/federation/hub/admissions/cleanup",
 	"GET /api/federation/hub/admissions",
 	"POST /api/federation/hub/admissions",
 	"DELETE /api/federation/hub/admissions/{instance}",

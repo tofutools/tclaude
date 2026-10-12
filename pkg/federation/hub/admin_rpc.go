@@ -20,7 +20,7 @@ var adminMethodCapability = map[string]string{
 	"run.status": "@admin", "run.start": "hub.exec", "run.job": "@admin", "run.logs": "hub.exec", "audit": "hub.logs.read",
 	"update.status": "hub.update", "update.start": "hub.update", "update.job": "hub.update",
 	"admins.list": "hub.admins.manage", "admins.add": "hub.admins.manage", "admins.remove": "hub.admins.manage",
-	"admissions.list": "hub.admissions.manage", "admissions.admit": "hub.admissions.manage", "admissions.revoke": "hub.admissions.manage",
+	"admissions.cleanup": "hub.admissions.manage", "admissions.list": "hub.admissions.manage", "admissions.admit": "hub.admissions.manage", "admissions.revoke": "hub.admissions.manage",
 	"invites.list": "hub.invites.manage", "invites.create": "hub.invites.manage", "invites.revoke": "hub.invites.manage",
 	"spaces.list": "hub.spaces.manage", "spaces.set": "hub.spaces.manage",
 	"settings.get": "hub.settings.manage", "settings.patch": "hub.settings.manage",
@@ -90,12 +90,16 @@ func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
 	// Write before policy refresh: an admin may revoke its own admission.
 	// Mutations are never retried if the reply fails after execution.
 	_ = c.write(&proto.Frame{Type: proto.FrameAdminResult, AdminResult: result}, 5*time.Second)
-	if result.Status < 400 && (strings.HasPrefix(req.Method, "admissions.") || strings.HasPrefix(req.Method, "spaces.") || strings.HasPrefix(req.Method, "identity.") || req.Method == "settings.patch") {
+	// Cleanup may have committed earlier items before a later storage failure.
+	if (result.Status < 400 || req.Method == "admissions.cleanup") && (strings.HasPrefix(req.Method, "admissions.") || strings.HasPrefix(req.Method, "spaces.") || strings.HasPrefix(req.Method, "identity.") || req.Method == "settings.patch") {
 		h.RefreshPolicy()
 	}
 }
 
 type adminParams struct {
+	Days           int               `json:"days"`
+	Instances      []string          `json:"instances"`
+	Cutoff         time.Time         `json:"cutoff"`
 	Instance       string            `json:"instance"`
 	Capabilities   []string          `json:"capabilities"`
 	Spaces         []string          `json:"spaces"`
@@ -224,6 +228,8 @@ func (h *Hub) executeAdmin(c *conn, req *proto.HubAdminRequest) (any, error) {
 			return nil, adminErr(400, "instance", err.Error())
 		}
 		return map[string]bool{"ok": true}, nil
+	case "admissions.cleanup":
+		return h.cleanupStaleAdmissions(c.id, p, time.Now())
 	case "admissions.revoke":
 		if err = h.store.Revoke(p.Instance); err != nil {
 			return nil, err

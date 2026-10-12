@@ -163,28 +163,53 @@ func (s *Store) Admit(instanceID string, spaces ...string) error {
 // Revoke marks instanceID revoked; a live connection is dropped by the hub's
 // policy refresh.
 func (s *Store) Revoke(instanceID string) error {
+	_, err := s.revoke(instanceID, time.Time{})
+	return err
+}
+
+// revoke uses the single-instance cleanup path. A cutoff makes stale cleanup
+// conditional inside the write transaction, including protection for admins.
+func (s *Store) revoke(instanceID string, cutoff time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE instances SET revoked=revoked WHERE instance_id=?`, instanceID); err != nil {
-		return err
+		return false, err
+	}
+	if !cutoff.IsZero() {
+		var admitted, seen string
+		var revoked, admins int
+		err = tx.QueryRow(`SELECT admitted_at,last_seen,revoked,(SELECT count(*) FROM hub_admins WHERE instance_id=?) FROM instances WHERE instance_id=?`, instanceID, instanceID).Scan(&admitted, &seen, &revoked, &admins)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		at := parseTS(seen)
+		if at.IsZero() {
+			at = parseTS(admitted)
+		}
+		if revoked != 0 || admins != 0 || at.IsZero() || !at.Before(cutoff) {
+			return false, nil
+		}
 	}
 	if err = guardAdminLoss(tx, instanceID, false); err != nil {
-		return err
+		return false, err
 	}
 	res, err := tx.Exec(`UPDATE instances SET revoked=1 WHERE instance_id=?`, instanceID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("unknown instance %q", instanceID)
+		return false, fmt.Errorf("unknown instance %q", instanceID)
 	}
 	if _, err = tx.Exec(`DELETE FROM hub_admins WHERE instance_id=?`, instanceID); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit()
+	return true, tx.Commit()
 }
 
 // SetSpaces replaces instanceID's spaces.
@@ -210,6 +235,13 @@ func (s *Store) SetSpaces(instanceID string, spaces []string) error {
 func (s *Store) RecordSeen(instanceID string, pub []byte, name, version string, at time.Time) error {
 	_, err := s.db.Exec(`UPDATE instances SET pubkey=?, name=?, version=?, last_seen=? WHERE instance_id=?`,
 		pub, name, version, ts(at), instanceID)
+	return err
+}
+
+// RecordActivity updates fleet activity without rewriting identity metadata.
+// Board-only members without fleet admission are deliberately unaffected.
+func (s *Store) RecordActivity(instanceID string, at time.Time) error {
+	_, err := s.db.Exec(`UPDATE instances SET last_seen=? WHERE instance_id=?`, ts(at), instanceID)
 	return err
 }
 
