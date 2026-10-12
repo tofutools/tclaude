@@ -169,6 +169,8 @@ func harnessLabel(harness string) string {
 		return "Copilot"
 	case "opencode":
 		return "OpenCode"
+	case "pi":
+		return "pi"
 	case "shell": // session.ShellHarnessName for a plain interactive shell
 		return "Shell"
 	case "claude", "":

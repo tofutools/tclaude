@@ -38,7 +38,9 @@ func ForHarness(name string) ([]string, error) {
 		return []string{root}, nil
 	case "codex":
 		return Codex()
-	case "gemini", "copilot", "opencode":
+	case "gemini", "copilot", "opencode", "pi":
+		// pi also reads its own ~/.pi/agent/skills; tclaude installs only to
+		// the shared root, which every one of these discovers.
 		home, err := homeDirectory()
 		if err != nil {
 			return nil, err

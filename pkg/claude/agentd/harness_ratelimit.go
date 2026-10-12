@@ -160,6 +160,7 @@ var harnessUsageWindowUnavailable = map[string]string{
 	harness.GeminiName:   "Gemini account quota is not persisted in its session usage log",
 	harness.OpenCodeName: "OpenCode has no single account quota across provider keys",
 	harness.ShellName:    "shell has no model",
+	harness.PiName:       "pi has no single account quota across the providers it talks to",
 }
 
 func harnessUsageWindows(harnessName string, idleTimeout time.Duration, now time.Time) []harnessUsageWindow {
