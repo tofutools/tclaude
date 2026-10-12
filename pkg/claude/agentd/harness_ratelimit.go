@@ -150,18 +150,24 @@ func harnessRateLimitHold(policy *rateLimitPolicy, harnessName string, now time.
 //
 // Each harness's staleness rule matches the one its dashboard readout uses, so
 // a figure the top bar has already stopped trusting can never hold work back.
+var harnessUsageWindowReaders = map[string]func(time.Duration, time.Time) []harnessUsageWindow{
+	harness.DefaultName: claudeUsageWindows,
+	harness.CodexName:   func(_ time.Duration, now time.Time) []harnessUsageWindow { return codexUsageWindows(now) },
+	harness.CopilotName: copilotUsageWindows,
+}
+
+var harnessUsageWindowUnavailable = map[string]string{
+	harness.GeminiName:   "Gemini account quota is not persisted in its session usage log",
+	harness.OpenCodeName: "OpenCode has no single account quota across provider keys",
+	harness.ShellName:    "shell has no model",
+}
+
 func harnessUsageWindows(harnessName string, idleTimeout time.Duration, now time.Time) []harnessUsageWindow {
-	switch harnessName {
-	case harness.DefaultName:
-		return claudeUsageWindows(idleTimeout, now)
-	case harness.CodexName:
-		return codexUsageWindows(now)
-	case harness.CopilotName:
-		return copilotUsageWindows(idleTimeout, now)
-	case harness.GeminiName, harness.OpenCodeName, harness.ShellName:
-		// Gemini account quota is not persisted in its session usage log.
-		// OpenCode has no single account quota; shell has no model.
-		return nil
+	if read, ok := harnessUsageWindowReaders[harnessName]; ok {
+		return read(idleTimeout, now)
+	}
+	if _, declared := harnessUsageWindowUnavailable[harnessName]; !declared {
+		slog.Warn("rate limit gate has no declared account quota source", "harness", harnessName, "module", "agentd")
 	}
 	return nil
 }

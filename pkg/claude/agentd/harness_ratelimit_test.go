@@ -252,3 +252,11 @@ func TestHarnessRateLimitHoldStillGatesAFutureDatedReading(t *testing.T) {
 	assert.WithinDuration(t, reset, hold.ResetsAt, time.Second,
 		"the hold still ends at the window's own reset, so the skew cannot extend it indefinitely")
 }
+
+func TestRegisteredHarnessQuotaWindowCoverage(t *testing.T) {
+	for _, name := range harness.Names() {
+		_, supported := harnessUsageWindowReaders[name]
+		reason := harnessUsageWindowUnavailable[name]
+		require.NotEqual(t, supported, reason != "", "declare account quota windows or unavailability for %s", name)
+	}
+}

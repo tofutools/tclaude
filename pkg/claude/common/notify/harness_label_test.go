@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The banner title must name the session's harness so a Codex agent's
@@ -46,4 +47,14 @@ func TestHarnessLabel(t *testing.T) {
 func TestFormatStatus_AgentRecoveryTransitions(t *testing.T) {
 	assert.Equal(t, "Crashed", formatStatus("crashed"))
 	assert.Equal(t, "Crash loop / backoff", formatStatus("crash loop / backoff"))
+}
+
+func TestRegisteredHarnessNotificationLabels(t *testing.T) {
+	for _, name := range harness.Names() {
+		label := harnessLabel(name)
+		assert.NotEqual(t, "tclaude", label, "declare a notification label for %s", name)
+		if name != harness.DefaultName {
+			assert.NotEqual(t, "Claude", label, name)
+		}
+	}
 }
