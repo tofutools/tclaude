@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/paf/seal"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -316,4 +318,59 @@ func TestRedactPreviewsAndWritesARedactedCopy(t *testing.T) {
 	require.NoError(t, runRender(&out, &renderParams{File: dst}))
 	assert.Contains(t, out.String(), "[REDACTED:aws-access-key]", "the native-only history is carried as a redacted context")
 	assert.NotContains(t, out.String(), "AKIAIOSFODNN7EXAMPLE")
+}
+
+func TestEncryptReadAndDecrypt(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	self, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(identityPath()), 0o700))
+	require.NoError(t, proto.SaveIdentity(identityPath(), self))
+	other, err := proto.NewIdentity()
+	require.NoError(t, err)
+	otherRec, err := seal.Recipient(other.Pub)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(legacyBundle(t), &buf, legacy.WriteOptions{Producer: producer()}))
+	file := writeFile(t, dir, "reviewer.paf", buf.Bytes())
+	enc := filepath.Join(dir, "reviewer.paf.age")
+
+	var out bytes.Buffer
+	require.Error(t, runEncrypt(&out, &encryptParams{File: file, Out: enc}), "needs a recipient")
+	require.Error(t, runEncrypt(&out, &encryptParams{File: file, Out: enc, To: []string{"nobody"}}), "unknown peer")
+	require.NoError(t, runEncrypt(&out, &encryptParams{File: file, Out: enc, To: []string{otherRec}}))
+	raw, err := os.ReadFile(enc)
+	require.NoError(t, err)
+	assert.True(t, seal.IsEncrypted(raw))
+	assert.NotContains(t, string(raw), "hello from native history")
+
+	// This node is always a recipient, so the readers open it directly.
+	out.Reset()
+	require.NoError(t, runRender(&out, &renderParams{File: enc}))
+	assert.Contains(t, out.String(), "hello from native history")
+	out.Reset()
+	require.Equal(t, 0, runValidate(&out, &validateParams{File: enc}), out.String())
+
+	dec := filepath.Join(dir, "back.paf")
+	require.NoError(t, runDecrypt(&out, &decryptParams{File: enc, Out: dec}))
+	back, err := os.ReadFile(dec)
+	require.NoError(t, err)
+	assert.Equal(t, buf.Bytes(), back)
+
+	// The named recipient can decrypt it with its own identity; a node
+	// that is neither cannot.
+	otherID, err := seal.Identity(other.Priv)
+	require.NoError(t, err)
+	r, err := seal.Decrypt(bytes.NewReader(raw), otherID)
+	require.NoError(t, err)
+	plain, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, buf.Bytes(), plain)
+	stranger, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(identityPath()))
+	require.NoError(t, proto.SaveIdentity(identityPath(), stranger))
+	assert.ErrorIs(t, runDecrypt(&out, &decryptParams{File: enc, Out: filepath.Join(dir, "x.paf")}), seal.ErrNotRecipient)
 }

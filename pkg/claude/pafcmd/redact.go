@@ -14,7 +14,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
-	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/render"
 )
@@ -75,7 +74,7 @@ func runRedact(stdout io.Writer, p *redactParams) error {
 		return errors.New("a file is required")
 	}
 	// Rewriting needs every required feature, as import does.
-	o, err := legacy.OpenFile(p.File, "", producer(), paf.Options{Purpose: paf.PurposeImport})
+	o, err := openMaybeEncrypted(p.File, paf.Options{Purpose: paf.PurposeImport})
 	if err != nil {
 		return err
 	}
