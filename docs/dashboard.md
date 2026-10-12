@@ -1,7 +1,7 @@
 # Dashboard
 
 !!! tip "New to tclaude?"
-    The tutorial [Your first agent team](learn/first-team.md) walks through a first group step by step.
+    The tutorial [Tour the dashboard](learn/dashboard-tour.md) walks through the everyday parts, after [Your first agent team](learn/first-team.md).
 
 
 The dashboard is the browser operations console for your agent fleet. Its

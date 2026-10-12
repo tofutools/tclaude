@@ -29,6 +29,7 @@ want it.
 | 1 | [Your first session](first-session.md) | Run a coding agent inside tclaude, detach from it, and come back | 10 min |
 | 2 | [Find and resume your work](find-and-resume.md) | Find yesterday's conversation, pick it up again, and ask quick questions from the shell | 10 min |
 | 3 | [Your first agent team](first-team.md) | Start the daemon, spawn two agents into a group, and watch them message each other | 20 min |
+| 4 | [Tour the dashboard](dashboard-tour.md) | Read your agents' status, look into their terminals, read their mail, and manage them from the browser | 15 min |
 
 Steps 1 and 2 cover solo use and need no daemon. Step 3 starts the daemon,
 which everything multi-agent goes through.
