@@ -37,6 +37,11 @@ want it.
 | 4 | [Find and resume your work](find-and-resume.md) | Wake stopped agents, bring back retired ones, and turn past conversations into agents | 10 min |
 | 5 | [Keep agents going](keep-agents-going.md) | Watch an agent's context, clone or reincarnate it, and change its model in place | 20 min |
 | 6 | [Work in parallel with worktrees](parallel-worktrees.md) | Start agents on their own branches and checkouts, and clean up after merging | 15 min |
+| 7 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 3 | 45 min |
+
+The last step is optional and more advanced: it needs a second machine,
+and it uses [permissions](../permissions-and-audit.md) the earlier steps did
+not cover.
 
 ## The command line
 
