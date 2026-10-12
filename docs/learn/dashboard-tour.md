@@ -30,7 +30,8 @@ Tabs run across the top. You start on **Groups**, the home view.
 
 Each group is a block, with one row per agent:
 
-![The Groups view](../assets/dashboard-groups.png)
+<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+![The Groups view. The hello group lists alice, working, and bob, idle, with their model, state, age, working directory and branch. Below it, the Ungrouped block holds one plain session.](../assets/learn-dashboard-groups.png)
 
 Read a row from left to right:
 
@@ -59,8 +60,11 @@ group to make it a member.
 
 ## 3. Look inside an agent
 
-Open the row's **⚙** menu and choose **web window**. The agent's live
-terminal opens as a pane in the **Terminals** tab, which appears once a
+Open the row's **⚙** menu and choose **web window**.
+
+![alice's ⚙ menu open in the Groups view. It lists view messages, term, web term, open window and web window at the top, then edit, permissions and more.](../assets/learn-dashboard-agent-menu.png)
+
+The agent's live terminal opens as a pane in the **Terminals** tab, which appears once a
 terminal is open. It is the real session, not a copy, so what you type there
 reaches the agent. Switch back to **Groups** when you are done; the agent
 keeps running.
