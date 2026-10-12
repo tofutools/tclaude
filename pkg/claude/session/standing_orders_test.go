@@ -814,6 +814,8 @@ func withoutReinjections(t *testing.T, convID string) []*db.AgentMessage {
 func TestGeminiNativeSelectorMatchesDirectAndBrokeredNormalization(t *testing.T) {
 	group := standingOrderFixture(t, harness.GeminiName)
 	insertOrder(t, group, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerHookEvent
+		o.TriggerSources = nil
 		o.Timing = db.StandingTimingNextTurn
 		o.HookSelectors = []hookevents.Selector{{Harness: "gemini", Event: "BeforeAgent"}}
 	})
