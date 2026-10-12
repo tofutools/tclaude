@@ -45,11 +45,11 @@ func TestDeliverRename_RoutesToTitleStoreForOutOfBandHarness(t *testing.T) {
 	setupTestDB(t)
 
 	store := &fakeConvStore{}
-	harness.Register(&harness.Harness{
+	t.Cleanup(harness.RegisterForTest(&harness.Harness{
 		Name:  "faketitle-test",
 		Life:  fakeLifecycle{},
 		Convs: store,
-	})
+	}))
 
 	const convID = "conv-faketitle-1"
 	require.NoError(t, db.SaveSession(&db.SessionRow{
