@@ -99,6 +99,4 @@ of them.
 - **Morph** changes model, effort or harness in place through a spawn
   profile, with a preview first.
 
-**Next:** you have finished the path. The [Dashboard](../dashboard.md)
-reference covers every other tab, including **Usage** and **Costs** for your
-quota and spend.
+**Next:** [Work in parallel with worktrees](parallel-worktrees.md).
