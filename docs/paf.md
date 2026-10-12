@@ -107,7 +107,7 @@ receiving side.
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer](#resilience-snapshots); Board destinations and recovery are not available yet |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots); recovery is not available yet |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
@@ -344,6 +344,7 @@ Receiving:
 ```bash
 tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5
 tclaude agent snapshot policy set group:team --every 6h --to peer:bob --keep 3 --max-age-days 14
+tclaude agent snapshot policy set reviewer --every 6h --to board:BOARD --recipient bob --keep 2
 tclaude agent snapshot policy ls
 tclaude agent snapshot policy run POLICY
 tclaude agent snapshot policy rm POLICY
@@ -353,7 +354,8 @@ tclaude agent snapshot held --rm-peer alice
 
 A resilience policy sends snapshots of an agent, or of every agent in a
 group, to a trusted [federation peer](federation.md) that keeps them for
-you, so a copy survives if this node is lost.
+you, or puts them on a [Board](#sharing-a-snapshot-on-a-board), so a copy
+survives if this node is lost.
 
 - **Consent.** Only the human operator sets, runs or removes a policy.
   Setting one is your consent to send those agents' conversations to that
@@ -386,6 +388,17 @@ you, so a copy survives if this node is lost.
   new custody; `tclaude agent snapshot held --rm-peer alice` deletes what
   is already kept. Removing a policy stops the schedule; the peer's copies
   stay until its retention removes them.
+
+- **A Board.** `--to board:BOARD` puts each snapshot on the board as a
+  [shared snapshot](#sharing-a-snapshot-on-a-board), sealed to the members
+  named with `--recipient` (at least one besides this node, which is always
+  added) and published under the policy's consent. The board's rules hold:
+  a snapshot with suspected credentials is not put on it (the policy reports
+  a failure until they are gone from the conversation), it is at most 64 MiB
+  once encrypted, and it expires after `--max-age-days`, at most 30 (the
+  default for a board). After each snapshot, this agent's older snapshots
+  beyond `--keep` are deleted from the board. Recipients fetch and import
+  them like any shared snapshot.
 
 Recovering an agent from a held snapshot is not available yet.
 

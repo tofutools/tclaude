@@ -17,28 +17,31 @@ import (
 func snapshotPolicyCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "policy", Short: "Send scheduled resilience snapshots to a federation peer (human only)",
 		Long: "A resilience policy snapshots an agent, or every agent of a group, on a schedule and sends each snapshot,\n" +
-			"encrypted to the peer and this node, to a trusted federation peer that holds it for you. Snapshots are taken\n" +
-			"only while an agent is idle, and only when its conversation changed. The peer must grant this node\n" +
-			"snapshots.receive. The peer keeps the newest --keep snapshots per agent for at most --max-age-days.",
+			"encrypted, to a trusted federation peer that holds it for you, or puts it on a Board sealed to the members\n" +
+			"you name. Snapshots are taken only while an agent is idle, and only when its conversation changed. A peer\n" +
+			"must grant this node snapshots.receive. The newest --keep snapshots per agent are kept for at most\n" +
+			"--max-age-days (30 at most on a board). A board never takes a snapshot with suspected credentials.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds:     []*cobra.Command{snapshotPolicySetCmd(), snapshotPolicyListCmd(), snapshotPolicyRemoveCmd(), snapshotPolicyRunCmd()},
 	}.ToCobra()
 }
 
 type snapshotPolicySetParams struct {
-	Target     string `pos:"true" help:"Agent selector, or group:<name> for every agent of a group."`
-	Every      string `long:"every" help:"How often to snapshot, such as 30m or 6h; at least 10m."`
-	To         string `long:"to" help:"Destination: peer:<instance id or label>."`
-	Keep       int    `long:"keep" help:"Snapshots the peer keeps per agent (1-20)." default:"5"`
-	MaxAgeDays int    `long:"max-age-days" optional:"true" help:"Days the peer keeps a snapshot (default 30, at most 365)."`
-	JSON       bool   `long:"json" help:"Print the policy as JSON."`
+	Target     string   `pos:"true" help:"Agent selector, or group:<name> for every agent of a group."`
+	Every      string   `long:"every" help:"How often to snapshot, such as 30m or 6h; at least 10m."`
+	To         string   `long:"to" help:"Destination: peer:<instance id or label>, or board:<board id>."`
+	Recipients []string `long:"recipient" optional:"true" help:"For a board: a member to seal snapshots to (instance id or peer label); repeatable. This node is always added."`
+	Keep       int      `long:"keep" help:"Snapshots the peer keeps per agent (1-20)." default:"5"`
+	MaxAgeDays int      `long:"max-age-days" optional:"true" help:"Days the peer keeps a snapshot (default 30, at most 365)."`
+	JSON       bool     `long:"json" help:"Print the policy as JSON."`
 }
 
 func snapshotPolicySetCmd() *cobra.Command {
 	return boa.CmdT[snapshotPolicySetParams]{Use: "set <agent|group:name>", Short: "Add a resilience snapshot policy",
 		Long: "Adding a policy is your consent to send the agents' conversations, encrypted, to that peer. Suspected\n" +
 			"credentials are not removed: they are counted in policy ls and you are told once per policy.\n\n" +
-			"  tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5",
+			"  tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5\n" +
+			"  tclaude agent snapshot policy set group:team --every 6h --to board:BOARD --recipient bob --keep 3",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotPolicySetParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSnapshotPolicySet(p, os.Stdout, os.Stderr))
 		}}.ToCobra()
@@ -74,7 +77,7 @@ func runSnapshotPolicySet(p *snapshotPolicySetParams, stdout, stderr io.Writer) 
 		return rc
 	}
 	var out resiliencePolicyOut
-	body := map[string]any{"target": p.Target, "every": p.Every, "to": p.To, "keep": p.Keep, "max_age_days": p.MaxAgeDays}
+	body := map[string]any{"target": p.Target, "every": p.Every, "to": p.To, "recipients": p.Recipients, "keep": p.Keep, "max_age_days": p.MaxAgeDays}
 	if err := DaemonPost("/v1/resilience/policies", body, &out); err != nil {
 		fmt.Fprintln(stderr, err)
 		return MapDaemonErrorToRC(err)

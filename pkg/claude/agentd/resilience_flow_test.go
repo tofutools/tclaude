@@ -2,9 +2,12 @@ package agentd_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf/seal"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -230,4 +234,97 @@ func TestResilience_PolicySendsSealedSnapshotsToPeer(t *testing.T) {
 	rec = fedHuman(t, f, http.MethodGet, "/v1/resilience/policies", nil)
 	require.Equal(t, 200, rec.Code)
 	require.Contains(t, rec.Body.String(), `"policies":[]`)
+}
+
+// fedBoardWithMember creates a board on the harness hub and joins another
+// instance to it as a publisher.
+func fedBoardWithMember(t *testing.T, fh *fedHarness) (string, *proto.Identity) {
+	t.Helper()
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/boards", map[string]any{"name": "resilience-board"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var created struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/boards/"+created.ID+"/invites", map[string]any{"role": "publisher", "ttl_seconds": 120})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var invitation struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &invitation))
+	var invite struct{ Secret string }
+	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(invitation.Token, "board1_"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &invite))
+	member, err := proto.NewIdentity()
+	require.NoError(t, err)
+	joined, err := client.BoardCall(context.Background(), client.Options{URL: fh.url, Identity: member}, invite.Secret, "keys.join", map[string]any{"board": created.ID, "token": invite.Secret})
+	require.NoError(t, err)
+	require.Equal(t, 200, joined.Status, string(joined.Body))
+	return created.ID, member
+}
+
+func TestResilience_PolicyPutsSnapshotsOnBoard(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	const conv = "019fe740-43a4-7023-b8ae-1ee64459f2c9"
+	f.HaveAliveSession(conv, "resilient", "resilient-pane", testutil.CanonicalTempDir(t))
+	f.HaveEnrolledAgent(conv)
+	f.SetSessionStatus(conv, "idle")
+	board, member := fedBoardWithMember(t, fh)
+	to := "board:" + board
+
+	rec := fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "keep": 1})
+	require.Equal(t, 400, rec.Code, "a board destination names its recipients")
+	rec = fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "recipients": []string{member.ID()}, "keep": 1, "max_age_days": 31})
+	require.Equal(t, 400, rec.Code, "a board snapshot expires within 30 days")
+	rec = fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "recipients": []string{member.ID()}, "keep": 1, "max_age_days": 3})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var policy struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &policy))
+
+	type boardList struct {
+		Snapshots []struct {
+			Item      string    `json:"item"`
+			Version   string    `json:"version"`
+			Name      string    `json:"name"`
+			ExpiresAt time.Time `json:"expires_at"`
+		} `json:"snapshots"`
+	}
+	list := func() boardList {
+		t.Helper()
+		rec := fedHuman(t, f, http.MethodGet, "/v1/federation/boards/"+board+"/snapshots", nil)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var l boardList
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &l))
+		return l
+	}
+
+	v := resilienceRun(t, f, policy.ID)
+	require.Empty(t, v.Policies[0].Agents[0].LastError)
+	require.NotEmpty(t, v.Policies[0].Agents[0].LastDigest)
+	first := list()
+	require.Len(t, first.Snapshots, 1)
+	require.True(t, strings.HasPrefix(first.Snapshots[0].Name, "resilience-"), first.Snapshots[0].Name)
+	require.WithinDuration(t, time.Now().Add(72*time.Hour), first.Snapshots[0].ExpiresAt, time.Minute)
+
+	// Unchanged: nothing new on the board.
+	resilienceRun(t, f, policy.ID)
+	require.Len(t, list().Snapshots, 1)
+
+	// Changed: a new snapshot replaces the old one (keep 1).
+	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteUserTurn("one more turn"))
+	v = resilienceRun(t, f, policy.ID)
+	require.Empty(t, v.Policies[0].Agents[0].LastError)
+	second := list()
+	require.Len(t, second.Snapshots, 1)
+	require.NotEqual(t, first.Snapshots[0].Item, second.Snapshots[0].Item)
+
+	// A board never takes suspected credentials.
+	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteUserTurn("token ghp_"+strings.Repeat("a1B2", 9)))
+	v = resilienceRun(t, f, policy.ID)
+	require.Contains(t, v.Policies[0].Agents[0].LastError, "suspected credential")
+	require.Len(t, list().Snapshots, 1)
 }
