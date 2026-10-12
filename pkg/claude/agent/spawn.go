@@ -850,7 +850,7 @@ type SpawnParams struct {
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
-	Harness string `long:"harness" optional:"true" help:"Coding harness: claude | codex | opencode | copilot | gemini | shell. Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. Shell treats a non-interactive prompt as a command"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness: claude | codex | opencode | copilot | gemini | shell | pi (experimental: opt in with experimental_harnesses). Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. Shell treats a non-interactive prompt as a command"`
 
 	// Sandbox is the launch-time harness-builtin sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its

@@ -765,6 +765,42 @@ sandbox there.
 Gemini has no counterpart for remote control, fast mode, a command-backed
 status line, or tclaude's task runner.
 
+## pi (experimental)
+
+[pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`,
+1.1.0 or newer) is registered but **experimental**: tclaude launches it only
+after you opt in, and it is left out of the capability matrix above until it
+graduates. Opt in with `"experimental_harnesses": ["pi"]` in
+`~/.tclaude/data/config.json` (or `TCLAUDE_EXPERIMENTAL_HARNESSES=pi` in the
+daemon's environment). Until then pi is hidden from the spawn dialog and every
+launch path refuses it.
+
+**What works.** Spawn and resume (`--session-id`, and resume by session file
+so a pane never stops on pi's fork prompt), model and thinking level
+(`--model provider/id`, `--effort` as pi's `--thinking`), `/name`, `/compact`
+and a soft `/quit`, and directory pre-trust in pi's own `trust.json`. pi uses
+your own `~/.pi/agent`: its providers, logins, settings and telemetry choice.
+tclaude passes no credentials into pi.
+
+**Live status needs no setup.** pi has no hook configuration, so tclaude ships
+a small pi extension inside its binary, writes it read-only under its cache
+directory, and loads it per launch with `--extension`. It reports turns, tools,
+dialogs, compaction, `/clone`/`/new` session switches and exit to tclaude the
+way other harnesses' hooks do. Nothing is written to `~/.pi`, and a slow or
+missing tclaude never stalls pi.
+
+**Approval and sandboxing.** pi has no approval prompts and no sandbox of its
+own; its posture is the tool set it exposes. `auto` (the default) runs every
+tool, including shell commands, unattended. `read-only` exposes only `read`,
+`grep`, `find` and `ls`. Because nothing confines `auto`, a fresh `auto` launch
+is refused unless tclaude's own sandbox wraps it or the human ticks **Allow
+launch with unenforced rules** in the dashboard spawn dialog. tclaude's sandbox
+does not support pi yet, so that allowance is currently required.
+
+**Not yet.** Conversation listing and search, history copy for clone and
+morph, usage and cost, the context meter, `ask`, and tclaude's sandbox are
+still to come.
+
 ## Related pages
 
 - [Sessions](sessions.md) — launching, attaching, and the shell hack.

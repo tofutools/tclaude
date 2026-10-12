@@ -565,6 +565,10 @@ func harnessOnPath(h *harness.Harness) bool {
 // build is skipped with a note rather than failing the whole run.
 func installHooksForHarness(h *harness.Harness, grantTrust bool) error {
 	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
+	if h.StatusExtension != nil {
+		fmt.Printf("  live status comes from tclaude's own extension, loaded per launch; nothing to install\n")
+		return nil
+	}
 	if !h.SupportsHooks() {
 		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
 		return nil
@@ -641,6 +645,10 @@ func installHooksForHarness(h *harness.Harness, grantTrust bool) error {
 // `tclaude setup --check` output.
 func checkHooksForHarness(h *harness.Harness, expectTrust bool) {
 	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
+	if h.StatusExtension != nil {
+		fmt.Printf("✓ live status comes from tclaude's own extension, loaded per launch; nothing to install\n")
+		return
+	}
 	if !h.SupportsHooks() {
 		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
 		return

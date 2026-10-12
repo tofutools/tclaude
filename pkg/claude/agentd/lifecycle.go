@@ -6884,6 +6884,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {
 		return nil, fail
 	}
+	// The same rule session new enforces, refused here with an API error
+	// rather than as a forked launch that exits.
+	if err := session.RequireConfinementForApproval(childHarness, p.ApprovalPolicy,
+		sandboxpolicy.Implementation(p.SandboxImplementation).UsesTclaudeLayer(),
+		p.AllowUnenforcedSandbox, false); err != nil {
+		return nil, &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
+	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.CodexGitCommonDir = ""
 		p.CodexGitCommonDirPinned = false

@@ -191,3 +191,39 @@ func TestPiExperimentalGate(t *testing.T) {
 		t.Fatalf("opted-in pi refused: %v", err)
 	}
 }
+
+func TestPiVersionAtLeast(t *testing.T) {
+	for _, tc := range []struct {
+		found string
+		ok    bool
+	}{
+		{"1.1.0", true}, {"1.1.0\n", true}, {"1.2.0", true}, {"1.10.0", true}, {"2.0.0", true},
+		{"1.0.9", false}, {"0.99.99", false}, {"", false}, {"pi version unknown", false},
+	} {
+		if got := piVersionAtLeast(tc.found, PiMinimumVersion); got != tc.ok {
+			t.Errorf("piVersionAtLeast(%q) = %v", tc.found, got)
+		}
+	}
+}
+
+func TestCheckPiVersion(t *testing.T) {
+	dir := t.TempDir()
+	fake := func(version string) string {
+		path := filepath.Join(dir, "pi-"+version)
+		script := "#!/bin/sh\n[ \"$1\" = --version ] || exit 2\necho " + version + "\n"
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if err := CheckPiVersion(fake("1.1.0")); err != nil {
+		t.Fatalf("minimum version refused: %v", err)
+	}
+	err := CheckPiVersion(fake("1.0.4"))
+	if err == nil || !strings.Contains(err.Error(), "1.1.0 or newer") || !strings.Contains(err.Error(), "npm install") {
+		t.Fatalf("old pi: %v", err)
+	}
+	if err := CheckPiVersion(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("a missing binary passed the gate")
+	}
+}

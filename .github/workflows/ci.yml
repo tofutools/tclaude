@@ -1150,6 +1150,66 @@ jobs:
             exit 1
           fi
 
+  # Runs the real pi binary at harness.PiMinimumVersion against a local mock
+  # provider, credential-free: tclaude's status extension must emit exactly the
+  # payloads PiSim feeds the flow tests, and pi's session flags must behave as
+  # the spawner assumes.
+  pi-smoke:
+    name: pi smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # This job runs `npm install --global` and then a third-party CLI.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for pi
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Keep in step with harness.PiMinimumVersion.
+      - name: Install pi
+        shell: bash
+        run: |
+          npm install --global @earendil-works/pi-coding-agent@1.1.0
+          pi --version </dev/null
+
+      - name: pi smoke
+        shell: bash
+        env:
+          TCLAUDE_PI_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/harness/pifixture/... -run '^TestPi' \
+            -v -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/pi-smoke.log"
+
+      # A skipped test still exits 0, so require an explicit pass from every
+      # scenario the package defines.
+      - name: Reject a silently skipped smoke
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/pi-smoke.log"
+          scenarios="$(go test -list '^TestPi' ./pkg/claude/harness/pifixture/ | grep '^Test' || true)"
+          if [[ -z "$scenarios" ]]; then
+            echo "::error::the pi fixture package defines no scenarios"
+            exit 1
+          fi
+          missing=()
+          while read -r test_name; do
+            grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done <<< "$scenarios"
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::pi smoke scenarios did not report an explicit pass: ${missing[*]}"
+            exit 1
+          fi
+
   # The filtered-network proxy smokes build real sandboxes against live
   # fixtures. Everything that decides what runs, what counts as evidence, which
   # harness versions are pinned and how fixtures are built lives in

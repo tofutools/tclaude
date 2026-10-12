@@ -113,6 +113,16 @@ func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoRev
 			}
 		}
 		return hint + "; this parent cannot delegate any provable Gemini posture, so a human must spawn this child"
+	case PiName:
+		if strings.TrimSpace(childPolicy) != PiApprovalAuto {
+			return ""
+		}
+		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview, PiName, PiApprovalReadOnly, false) {
+			return fmt.Sprintf("%q runs every pi tool, including shell commands, with no prompt; pass %q for a child limited to reading",
+				PiApprovalAuto, PiApprovalReadOnly)
+		}
+		return fmt.Sprintf("%q runs every pi tool, including shell commands, with no prompt, and can only be minted by a parent that already holds that capability, or by a human",
+			PiApprovalAuto)
 	case OpenCodeName:
 		if strings.TrimSpace(childPolicy) != OpenCodeApprovalAllowTools {
 			return ""
@@ -401,6 +411,23 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 			return approvalLineagePosture{capability: capability, valid: true}
 		default:
 			// Blank is a pre-catalog Gemini row: unreconstructable, fail closed.
+			return approvalLineagePosture{}
+		}
+	case PiName:
+		// pi has no approval prompts and no reviewer: its posture is the tool
+		// set it exposes.
+		if autoReview {
+			return approvalLineagePosture{}
+		}
+		switch policy {
+		case PiApprovalReadOnly:
+			// Only read, grep, find and ls exist: nothing can act.
+			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
+		case PiApprovalAuto:
+			// Every tool runs unattended, as under Gemini `yolo`. "InSandbox"
+			// names the capability; the sandbox axis guards the confinement.
+			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
+		default:
 			return approvalLineagePosture{}
 		}
 	case ShellName:

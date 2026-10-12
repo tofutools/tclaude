@@ -91,6 +91,11 @@ type World struct {
 	Geminis          *GeminiRegistry
 	geminiLaunchCmds map[string]string
 
+	// Pis is the pi analog, and piLaunchCmds the production launch strings
+	// its spawns were booted from, keyed by conv-id.
+	Pis          *PiRegistry
+	piLaunchCmds map[string]string
+
 	// CopilotLaunches records, keyed by conv-id, the launch command string the
 	// PRODUCTION Copilot spawner produced for each simulated spawn. A flow
 	// test asserts on the parsed form (World.CopilotLaunchCommand); the raw string is
@@ -161,6 +166,9 @@ func New(t *testing.T) *World {
 	// operator's exported value would point the production Gemini store at
 	// their real chats instead of the simulator's.
 	t.Setenv(harness.GeminiHomeEnvVar, "")
+	// Likewise pi resolves its store from these before HOME.
+	t.Setenv(harness.PiAgentDirEnvVar, "")
+	t.Setenv(harness.PiSessionDirEnvVar, "")
 	// Launches now resolve Claude Code's OS-sandbox posture, and the enterprise
 	// managed-policy tier lives at a machine-global path that $HOME cannot
 	// redirect. Left alone, every simulated Claude spawn would read whatever
@@ -183,6 +191,8 @@ func New(t *testing.T) *World {
 		Copilots:            newCopilotRegistry(),
 		Geminis:             newGeminiRegistry(),
 		geminiLaunchCmds:    map[string]string{},
+		Pis:                 newPiRegistry(),
+		piLaunchCmds:        map[string]string{},
 		copilotLaunchCmds:   map[string]string{},
 		spawnEfforts:        map[string]string{},
 		spawnModels:         map[string]string{},
@@ -837,5 +847,21 @@ func (w *World) CopilotLaunchCommand(convID string) (string, bool) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()
 	cmd, ok := w.copilotLaunchCmds[convID]
+	return cmd, ok
+}
+
+// RecordPiLaunchCommand captures the production-rendered pi launch string for
+// a conv.
+func (w *World) RecordPiLaunchCommand(convID, cmd string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.piLaunchCmds[convID] = cmd
+}
+
+// PiLaunchCommand returns the latest pi launch string recorded for a conv.
+func (w *World) PiLaunchCommand(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	cmd, ok := w.piLaunchCmds[convID]
 	return cmd, ok
 }

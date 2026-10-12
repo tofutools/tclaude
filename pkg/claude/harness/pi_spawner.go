@@ -19,6 +19,9 @@ import (
 //     id is only the fallback when no file is found.
 //   - `--name`, `--model`, `--thinking` set the session name, model and
 //     thinking level.
+//   - `--extension <path>` loads tclaude's status extension (pi_extension.go),
+//     which runs the hook callback at $TCLAUDE_PI_HOOK_BIN. Explicit
+//     extensions load even under a pass-through `--no-extensions`.
 //   - Positional arguments after `--` are messages: the first turn is
 //     submitted at launch and the TUI stays open. A message starting with `@`
 //     would be read as a file to attach, which is pi's own syntax.
@@ -57,6 +60,13 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 		}
 	}
 	args := []string{}
+	prefix := ""
+	if spec.StatusExtensionPath != "" {
+		args = append(args, "--extension", spec.StatusExtensionPath)
+		if spec.TclaudeExecutable != "" {
+			prefix = "export " + PiHookBinEnvVar + "=" + clcommon.ShellQuoteArg(spec.TclaudeExecutable) + "; "
+		}
+	}
 	if spec.ResumeID != "" {
 		session := spec.ResumeID
 		if path := piSessionFileLookup(spec.Cwd, spec.ResumeID); path != "" {
@@ -84,7 +94,7 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 	for i, a := range args {
 		quoted[i] = clcommon.ShellQuoteArg(a)
 	}
-	cmd := spec.EnvExports + spec.PreLaunchScript + binary
+	cmd := spec.EnvExports + prefix + spec.PreLaunchScript + binary
 	if len(quoted) > 0 {
 		cmd += " " + strings.Join(quoted, " ")
 	}

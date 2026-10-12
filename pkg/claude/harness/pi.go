@@ -21,9 +21,12 @@ func init() {
 		// until live status and the context meter land for it.
 		Experimental: true,
 
-		Spawn:  piSpawner{},
-		Models: piModels{},
-		Life:   piLifecycle{},
+		Spawn:             piSpawner{},
+		Models:            piModels{},
+		StatusExtension:   MaterializePiExtension,
+		ConfinedApprovals: []string{PiApprovalAuto},
+		CheckVersion:      CheckPiVersion,
+		Life:              piLifecycle{},
 
 		// `pi --session-id <id>` opens the session with that exact id, creating
 		// it when it does not exist, so the id is known before the pane starts.
