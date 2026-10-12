@@ -30,8 +30,8 @@ go test ./pkg/claude/agentd/ \
 
 shopt -s nullglob
 pngs=("$out"/learn-*.png)
-if (( ${#pngs[@]} != 5 )); then
-  echo "expected 5 images in $out, got ${#pngs[@]}: is Chrome installed? (the generator skips without it)" >&2
+if (( ${#pngs[@]} != 9 )); then
+  echo "expected 9 images in $out, got ${#pngs[@]}: is Chrome installed? (the generator skips without it)" >&2
   exit 1
 fi
 for png in "${pngs[@]}"; do

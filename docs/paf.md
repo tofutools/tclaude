@@ -123,7 +123,7 @@ smaller model, fork it from a snapshot, and move it to another machine. Each
 step links the section that explains it in full.
 
 **You need:** the daemon running and `TCLAUDE_HUMAN_TOKEN` exported, as in
-[Your first agent team](learn/first-team.md). The last step also needs two
+[Get started](learn/get-started.md). The last step also needs two
 linked machines. All the other steps work on one.
 
 ### 1. Give an agent something worth saving

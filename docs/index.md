@@ -213,7 +213,7 @@ capture safety, and how the harness is chosen.
 Solo sessions work without the daemon. For anything multi-agent (groups,
 messaging, spawning, permissions, the dashboard), run `tclaude agentd serve`
 in a non-sandboxed terminal. The tutorial
-[Your first agent team](learn/first-team.md) walks through it step by step.
+[Run a team through a lead](learn/team-lead.md) walks through it step by step.
 The reference starts at [Agents and groups](agents-and-groups.md).
 
 Use `tclaude <command> --help` for the live flag reference; these guides
