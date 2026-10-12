@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/seal"
 )
 
@@ -310,7 +311,7 @@ func resilienceFail(p resiliencePolicy, s *resilienceState, now time.Time, msg s
 	s.NextDue = now.Add(min(backoff, resilienceMaxBackoff))
 	if s.Failures >= resilienceNotifyAfter && !s.Notified {
 		s.Notified = true
-		body := fmt.Sprintf("Resilience snapshots of agent %s (policy %s, to %s) have failed %d times in a row. Last error: %s\n\nSee tclaude agent snapshot policy ls. You will not be told again until a snapshot succeeds.", s.Agent, p.ID, p.Dest.Peer, s.Failures, msg)
+		body := fmt.Sprintf("Resilience snapshots of agent %s (policy %s, to %s) have failed %d times in a row. Last error: %s\n\nSee tclaude agent snapshot policy ls. You will not be told again until a snapshot succeeds.", s.Agent, p.ID, p.Dest, s.Failures, msg)
 		if _, err := recordHumanMessage("", "Resilience snapshots failing", body); err != nil {
 			slog.Warn("resilience: notify", "error", err)
 		}
@@ -483,6 +484,15 @@ func resilienceBoardPublish(a *boardItemAccess, p resiliencePolicy, snap *resili
 	arch, err := paf.Open(snap.file, snap.size, paf.Options{Purpose: paf.PurposeInspect})
 	if err != nil {
 		return v, err
+	}
+	// The Board rule, on exactly what is uploaded.
+	if len(arch.Manifest.Agents) != 1 {
+		return v, errors.New("a board snapshot holds exactly one agent")
+	}
+	if findings, err := privacy.ScanArchive(arch, pafContextRecordLimit()); err != nil {
+		return v, err
+	} else if len(findings) > 0 {
+		return v, fmt.Errorf("%d suspected credential(s); a board never takes them", len(findings))
 	}
 	maxAge := time.Duration(p.MaxAgeDays) * 24 * time.Hour
 	if maxAge == 0 || maxAge > proto.MaxBoardSnapshotTTL {

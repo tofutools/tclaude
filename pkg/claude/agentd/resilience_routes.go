@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -96,7 +98,25 @@ func handleResiliencePolicySet(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "max_age_days", fmt.Sprintf("a board snapshot expires within %d days", int(proto.MaxBoardSnapshotTTL/(24*time.Hour))))
 			return
 		}
-		dest, audit = resilienceDest{Kind: "board", Board: ref, Recipients: req.Recipients}, ""
+		// Recipients are fixed now, as instance ids: a peer label changing
+		// later must never redirect snapshots to an instance the operator
+		// did not name.
+		var recipients []string
+		for _, name := range req.Recipients {
+			id := strings.TrimSpace(name)
+			if !proto.ValidInstanceID(id) {
+				peer, err := resolveFederationPeerOpt(id, false)
+				if err != nil || peer == nil {
+					writeError(w, 400, "recipients", fmt.Sprintf("recipient %q is neither an instance id nor a trusted peer's label", name))
+					return
+				}
+				id = peer.InstanceID
+			}
+			if !slices.Contains(recipients, id) {
+				recipients = append(recipients, id)
+			}
+		}
+		dest, audit = resilienceDest{Kind: "board", Board: ref, Recipients: recipients}, ""
 	default:
 		writeError(w, 400, "to", "to must be peer:<instance id or label> or board:<board id>")
 		return

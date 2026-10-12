@@ -278,6 +278,8 @@ func TestResilience_PolicyPutsSnapshotsOnBoard(t *testing.T) {
 	require.Equal(t, 400, rec.Code, "a board destination names its recipients")
 	rec = fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "recipients": []string{member.ID()}, "keep": 1, "max_age_days": 31})
 	require.Equal(t, 400, rec.Code, "a board snapshot expires within 30 days")
+	rec = fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "recipients": []string{"nobody"}, "keep": 1})
+	require.Equal(t, 400, rec.Code, "a recipient is an instance id or a trusted peer's label")
 	rec = fedHuman(t, f, http.MethodPost, "/v1/resilience/policies", map[string]any{"target": conv, "every": "1h", "to": to, "recipients": []string{member.ID()}, "keep": 1, "max_age_days": 3})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var policy struct {
