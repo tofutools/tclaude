@@ -109,7 +109,11 @@ func runRecover(p *recoverParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	spawn, _ := out["spawn"].(map[string]any)
-	fmt.Fprintf(stdout, "Recovered as a new agent in %s (conversation %v)\n", termClean(p.Group), spawn["conv_id"])
+	if snap["identity"] == "new" {
+		fmt.Fprintf(stdout, "Recovered as a new agent in %s (conversation %v)\n", termClean(p.Group), spawn["conv_id"])
+	} else {
+		fmt.Fprintf(stdout, "Recovered agent %v in %s (conversation %v)\n", snap["source_agent"], termClean(p.Group), spawn["conv_id"])
+	}
 	return rcOK
 }
 

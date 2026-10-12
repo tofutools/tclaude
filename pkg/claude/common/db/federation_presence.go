@@ -195,17 +195,34 @@ func ReserveRecoveredIdentity(agentID, local, offer string, force bool) error {
 	if p != nil && p.State == "reserved" {
 		return errors.New("agent identity has a launch in progress")
 	}
+	if p != nil && !exists && p.State == "here" {
+		// A presence left behind by an agent record that is gone.
+		p = nil
+	}
 	if (p != nil || exists) && !force {
 		return errors.New("agent identity is in use on this node")
 	}
 	next := AgentFederationPresence{AgentID: agentID, HomeInstance: local}
 	if p != nil {
-		rollback, err := json.Marshal(federationArrivalRollback{Presence: *p, Transfer: p.Transfer, NonceHash: p.ContinuationNonceHash, Conv: previousConv})
+		next = *p
+		next.HomeInstance = local
+	}
+	if exists {
+		old := federationArrivalRollback{Recovery: true, Conv: previousConv, HadPresence: p != nil}
+		if p != nil {
+			old.Presence, old.Transfer, old.NonceHash = *p, p.Transfer, p.ContinuationNonceHash
+		}
+		var retiredAt dbTimestamp
+		if e = tx.QueryRow(`SELECT retired_at, retired_by, retire_reason, retired_by_agent FROM agents WHERE agent_id=?`, agentID).Scan(&retiredAt, &old.RetiredBy, &old.RetireReason, &old.RetiredByAgt); e != nil {
+			return e
+		}
+		if t := retiredAt.Time(); !t.IsZero() {
+			old.RetiredAt = &t
+		}
+		rollback, err := json.Marshal(old)
 		if err != nil {
 			return err
 		}
-		next = *p
-		next.HomeInstance = local
 		next.ArrivalRollbackJSON = string(rollback)
 	}
 	next.CurrentInstance = local
@@ -243,6 +260,12 @@ func ReleaseFederationIdentity(id, offer string) error {
 		var old federationArrivalRollback
 		if e = json.Unmarshal([]byte(p.ArrivalRollbackJSON), &old); e != nil {
 			return e
+		}
+		if old.Recovery {
+			if e = restoreRecoveryPresenceTx(tx, id, old); e != nil {
+				return e
+			}
+			return tx.Commit()
 		}
 		old.Presence.ContinuationNonceHash = old.NonceHash
 		old.Presence.Transfer = old.Transfer
@@ -447,6 +470,26 @@ type federationArrivalRollback struct {
 	Transfer  FederationIdentity
 	NonceHash string
 	Conv      string
+	// Recovery marks a reservation by ReserveRecoveredIdentity over an
+	// existing local agent: rollback restores the agent's own retirement
+	// state, keeps its grants, and restores no presence when it had none.
+	Recovery     bool       `json:",omitempty"`
+	HadPresence  bool       `json:",omitempty"`
+	RetiredAt    *time.Time `json:",omitempty"`
+	RetiredBy    string     `json:",omitempty"`
+	RetireReason string     `json:",omitempty"`
+	RetiredByAgt string     `json:",omitempty"`
+}
+
+// restoreRecoveryPresenceTx puts back what a recovery reservation replaced.
+func restoreRecoveryPresenceTx(tx *sql.Tx, id string, old federationArrivalRollback) error {
+	if !old.HadPresence {
+		_, e := tx.Exec(`DELETE FROM agent_federation_presence WHERE agent_id=?`, id)
+		return e
+	}
+	old.Presence.ContinuationNonceHash = old.NonceHash
+	old.Presence.Transfer = old.Transfer
+	return putFederationPresenceTx(tx, old.Presence)
 }
 
 // RollbackFederationArrival restores a pre-existing away actor after a proven
@@ -478,6 +521,27 @@ func RollbackFederationArrival(conv string) (bool, error) {
 	var old federationArrivalRollback
 	if e = json.Unmarshal([]byte(p.ArrivalRollbackJSON), &old); e != nil {
 		return false, e
+	}
+	if old.Recovery {
+		// Undo a recovery's takeover of an existing local agent: its own
+		// head, retirement state, grants and presence come back.
+		if _, e = tx.Exec(`DELETE FROM agent_conversations WHERE conv_id=? AND agent_id=?`, conv, id); e != nil {
+			return false, e
+		}
+		if _, e = tx.Exec(`UPDATE agent_conversations SET role=? WHERE conv_id=? AND agent_id=?`, ConvRoleHead, old.Conv, id); e != nil {
+			return false, e
+		}
+		var retiredAt any
+		if old.RetiredAt != nil {
+			retiredAt = dbTime(*old.RetiredAt)
+		}
+		if _, e = tx.Exec(`UPDATE agents SET current_conv_id=?,retired_at=?,retired_by=?,retire_reason=?,retired_by_agent=? WHERE agent_id=? AND current_conv_id=?`, old.Conv, retiredAt, old.RetiredBy, old.RetireReason, old.RetiredByAgt, id, conv); e != nil {
+			return false, e
+		}
+		if e = restoreRecoveryPresenceTx(tx, id, old); e != nil {
+			return false, e
+		}
+		return true, tx.Commit()
 	}
 	if old.Presence.HomeInstance != p.CurrentInstance {
 		// A visiting actor had no remaining local authority at departure. Remove

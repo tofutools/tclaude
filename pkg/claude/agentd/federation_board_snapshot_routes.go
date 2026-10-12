@@ -792,7 +792,11 @@ func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *o
 	rec := httptest.NewRecorder()
 	handleAgentBundleImport(rec, inner)
 	if rec.Code != 200 && reservation != "" {
-		_ = db.ReleaseFederationIdentity(keep.Agent, reservation)
+		// Release only a reservation no launch can still claim; one that
+		// may have started keeps it, as a teleport arrival does.
+		if pending, err := db.GetPendingSpawnByAgentID(keep.Agent); err == nil && pending == nil {
+			_ = db.ReleaseFederationIdentity(keep.Agent, reservation)
+		}
 	}
 	if rec.Code != 200 {
 		w.Header().Set("Content-Type", "application/json")
