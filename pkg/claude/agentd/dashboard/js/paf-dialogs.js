@@ -213,8 +213,8 @@ function HistoryLanding({ landing }) {
 
 // AgentImportPreview is the agent half of the ⤒ import… dialog: the import
 // preview for an agent PAF or legacy agent bundle, with where and how the
-// agent lands. "Import & start" applies it (there is no offline landing for
-// a single agent yet, tcl-7kb9sp).
+// agent lands. "Import (offline)" lands it without starting; "Import &
+// start" also starts it.
 export function AgentImportPreview({ preview, choices, setChoices }) {
   const snapshot = dashboardState.snapshot.value;
   const groups = (snapshot?.groups || []).map((group) => group.name);
@@ -247,12 +247,25 @@ export function AgentImportPreview({ preview, choices, setChoices }) {
   </div>`;
 }
 
-// agentImportParams maps the preview choices to the import query.
-export function agentImportParams(choices, apply = false) {
+// agentImportParams maps the preview choices to the import query. An
+// applied import with start false lands the agent offline (start=false).
+export function agentImportParams(choices, apply = false, start = true) {
   return {
     apply, group: choices.group, name: choices.name.trim(), harness: choices.harness, model: choices.model,
     cwd: choices.keepPaths ? '' : choices.cwd.trim(), keep_paths: choices.keepPaths,
+    start: apply && !start ? 'false' : '',
   };
+}
+
+// offlineImportBlocker says why an agent cannot land offline, or '' when it
+// can: offline needs a conversation that lands (resume starts it), and
+// OpenCode cannot take one yet. The route refuses the same cases (no_start).
+export function offlineImportBlocker(preview, choices) {
+  if (!preview) return '';
+  if (!preview.history) return 'No conversation lands, so there is nothing to resume: import and start it instead';
+  const harness = choices?.harness || preview.history_landing?.harness || preview.agent?.harness;
+  if (harness === 'opencode') return 'An OpenCode agent cannot land offline yet: import and start it instead';
+  return '';
 }
 
 // MemberLandings is the group preview's per-member landing table: each
