@@ -42,6 +42,7 @@ nav:
       - Find and resume your work: learn/find-and-resume.md
       - Your first agent team: learn/first-team.md
       - Tour the dashboard: learn/dashboard-tour.md
+      - Link two machines: federation-setup.md
   - Architecture: architecture.md
   - Everyday use:
       - Harnesses: harnesses.md
@@ -59,7 +60,6 @@ nav:
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
       - Federation: federation.md
-      - Federation setup: federation-setup.md
       - Portable Agent Format: paf.md
   - Confinement:
       - Sandboxing: sandboxing.md
@@ -70,7 +70,16 @@ nav:
       - Task runner: tasks.md
   - Reference:
       - Utilities: utilities.md
+      - Usage and costs: usage-and-costs.md
+      - Host status: host.md
+      - Codex permission registry: codex-native-permission-registry.md
       - Adding a harness: adding-a-harness.md
+
+# Pages built but deliberately left out of the nav: a contributor runbook,
+# and preliminary v2 designs that are not user guidance.
+not_in_nav: |
+  /e2e-manual-verification.md
+  /v2-plan-and-ideas/
 
 # `mkdocs build --strict` (docs-check workflow) fails on any of these.
 validation:
