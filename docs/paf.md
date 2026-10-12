@@ -107,7 +107,7 @@ receiving side.
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots); recovery is not available yet |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) as a new agent |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
@@ -400,7 +400,32 @@ survives if this node is lost.
   beyond `--keep` are deleted from the board. Recipients fetch and import
   them like any shared snapshot.
 
-Recovering an agent from a held snapshot is not available yet.
+#### Recovering an agent
+
+```bash
+tclaude agent snapshot held
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR]
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR] --preview-token TOKEN
+```
+
+When a node that sent you resilience snapshots is lost, recover one of its
+agents from a snapshot you hold. A board recipient recovers with
+[`snapshot board fetch`, `preview` and `import`](#sharing-a-snapshot-on-a-board).
+
+- **Human-only.** Only the operator previews or recovers.
+- **Checks.** The held copy is decrypted with this node's key, must be a
+  valid one-agent PAF signed by the instance that sent it, and is
+  summarized again; suspected credentials are shown in the preview.
+- **Preview first.** Without `--preview-token`, `recover` shows the agent
+  that would land and prints a single-use token, valid for ten minutes and
+  only for the same snapshot and options.
+- **A new identity.** The recovered agent is a new agent: the group's policy
+  and profile, no permissions from the source, and an arrival briefing that
+  marks the conversation as received context, not instructions. Having a
+  snapshot never restores the original agent's identity, so a recovery cannot
+  collide with the original if its node comes back. Restoring an agent under
+  its original identity is not available yet.
+- The held copy stays until its retention removes it.
 
 ## Exporting and importing a group
 

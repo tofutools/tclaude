@@ -22,6 +22,8 @@ func registerResilienceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/resilience/policies/{id}/run", handleResiliencePolicyRun)
 	mux.HandleFunc("GET /v1/resilience/held", handleResilienceHeld)
 	mux.HandleFunc("DELETE /v1/resilience/held/{peer}", handleResilienceHeldRemove)
+	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/preview", handleResilienceRecover("preview"))
+	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/import", handleResilienceRecover("import"))
 }
 
 type resiliencePolicySetRequest struct {
@@ -294,14 +296,10 @@ func handleResilienceHeldRemove(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "remove held resilience snapshots") {
 		return
 	}
-	peer := r.PathValue("peer")
-	if !proto.ValidInstanceID(peer) {
-		if p, err := resolveFederationPeerOpt(peer, false); err == nil && p != nil {
-			peer = p.InstanceID
-		} else {
-			writeError(w, 400, "peer", "peer must be an instance id or a trusted peer's label")
-			return
-		}
+	peer, ok := resolveHeldPeer(r.PathValue("peer"))
+	if !ok {
+		writeError(w, 400, "peer", "peer must be an instance id or a trusted peer's label")
+		return
 	}
 	n := removeHeldPeer(peer)
 	recordFederationAudit("resilience.held.remove", peer, "", "", fmt.Sprintf("removed=%d", n), 200)
