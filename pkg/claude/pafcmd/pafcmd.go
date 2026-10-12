@@ -75,6 +75,7 @@ type validateResult struct {
 	Source      string                    `json:"source,omitempty"`
 	Error       string                    `json:"error,omitempty"`
 	Unsupported []string                  `json:"unsupported,omitempty"`
+	Warnings    []string                  `json:"warnings,omitempty"`
 	Signatures  []render.SignatureSummary `json:"signatures,omitempty"`
 }
 
@@ -86,7 +87,7 @@ func runValidate(out io.Writer, p *validateParams) int {
 	} else {
 		defer func() { _ = o.Close() }()
 		s := summarize(o)
-		res.Valid, res.Source, res.Unsupported, res.Signatures = true, o.Source, s.Unsupported, s.Signatures
+		res.Valid, res.Source, res.Unsupported, res.Warnings, res.Signatures = true, o.Source, s.Unsupported, s.Warnings, s.Signatures
 		for _, sig := range s.Signatures {
 			if sig.Status == string(paf.SignatureInvalid) {
 				res.Valid, res.Error = false, "signature "+sig.Path+" is invalid"
@@ -99,6 +100,9 @@ func runValidate(out io.Writer, p *validateParams) int {
 		fmt.Fprintf(out, "valid: %s (%s)\n", termSafe(p.File), sourceLabel(res.Source))
 		if len(res.Unsupported) > 0 {
 			fmt.Fprintf(out, "warning: requires features this tclaude does not understand: %s; it can be read but not imported\n", termSafe(strings.Join(res.Unsupported, ", ")))
+		}
+		for _, w := range res.Warnings {
+			fmt.Fprintf(out, "warning: %s\n", termSafe(w))
 		}
 		switch {
 		case len(res.Signatures) == 0:

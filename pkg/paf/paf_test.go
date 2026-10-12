@@ -303,9 +303,9 @@ func TestOpenRefuses(t *testing.T) {
 		"unknown major version": func(f map[string][]byte) {
 			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "1.0"`), 1)
 		},
-		// While the major version is 0, a newer minor may break the format.
-		"newer 0.x minor version": func(f map[string][]byte) {
-			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "0.2"`), 1)
+		// A deliberate break is marked with min_reader_version.
+		"needs a newer reader": func(f map[string][]byte) {
+			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "0.3", "min_reader_version": "0.3"`), 1)
 		},
 	}
 	want := map[string]string{
@@ -322,7 +322,7 @@ func TestOpenRefuses(t *testing.T) {
 		"closed enum value":                          `unknown role "system"`,
 		"context without losses":                     "no losses.json",
 		"unknown major version":                      "unsupported PAF version 1.0",
-		"newer 0.x minor version":                    "unsupported PAF version 0.2 (written by test; this reader supports 0.1)",
+		"needs a newer reader":                       "this file needs PAF >= 0.3 (written by test as PAF 0.3); this reader supports PAF 0.1",
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -341,10 +341,30 @@ func TestOpenRefuses(t *testing.T) {
 		assert.NoError(t, err)
 	})
 	t.Run("version error names producer", func(t *testing.T) {
-		_, err := open(t, rewrite(t, base, cases["unknown major version"]), PurposeInspect)
+		_, err := open(t, rewrite(t, base, cases["unknown major version"]), PurposeImport)
 		var ve *VersionError
 		require.True(t, errors.As(err, &ve))
 		assert.Equal(t, "test", ve.Producer.Name)
+	})
+	// Minor versions only add, from 0.1 on: a newer 0.y with fields this
+	// reader does not know imports.
+	t.Run("newer minor version imports", func(t *testing.T) {
+		raw := rewrite(t, base, func(f map[string][]byte) {
+			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "0.7", "added_in_0_7": {"x": 1}`), 1)
+		})
+		a, err := open(t, raw, PurposeImport)
+		require.NoError(t, err)
+		assert.Empty(t, a.Warnings)
+	})
+	// Inspection reads a file that needs a newer reader best effort, and
+	// says so.
+	t.Run("inspect reads a newer file best effort", func(t *testing.T) {
+		for _, name := range []string{"needs a newer reader", "unknown major version"} {
+			a, err := open(t, rewrite(t, base, cases[name]), PurposeInspect)
+			require.NoError(t, err, name)
+			require.NotEmpty(t, a.Warnings, name)
+			assert.Contains(t, a.Warnings[0], "read best effort", name)
+		}
 	})
 }
 
@@ -614,11 +634,16 @@ func TestWriterRefusesContextLineOverRecordLimit(t *testing.T) {
 	require.ErrorIs(t, WriteTranscript(w, "a", ScopeEffective, tr), ErrRecordTooLarge)
 }
 
+// Minor versions only add, from 0.1 on, so a reader reads every minor of
+// its own major.
 func TestVersionReadable(t *testing.T) {
-	for v, want := range map[string]bool{"0.1": true, "0.0": false, "0.2": false, "1.0": false, "x": false} {
-		assert.Equal(t, want, versionReadable(v, 0, 1), v)
+	for v, want := range map[string]bool{"0.1": true, "0.0": true, "0.2": true, "1.0": false, "x": false} {
+		assert.Equal(t, want, versionReadable(v, 0), v)
 	}
-	// From 1.0, minors only add, so a newer one is readable.
-	assert.True(t, versionReadable("1.7", 1, 0))
-	assert.False(t, versionReadable("2.0", 1, 0))
+	assert.True(t, versionReadable("1.7", 1))
+	assert.False(t, versionReadable("2.0", 1))
+	assert.True(t, versionBefore("0.1", "0.2"))
+	assert.True(t, versionBefore("0.9", "1.0"))
+	assert.False(t, versionBefore("0.2", "0.2"))
+	assert.False(t, versionBefore("0.3", "0.2"))
 }

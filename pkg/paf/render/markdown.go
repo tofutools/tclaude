@@ -75,6 +75,9 @@ func provenanceNote(s Summary) string {
 	if len(s.Unsupported) > 0 {
 		note += " This reader does not understand: " + strings.Join(s.Unsupported, ", ") + "; parts of the content may be misread."
 	}
+	if len(s.Warnings) > 0 {
+		note += " Read best effort: " + s.Warnings[0] + "."
+	}
 	return note
 }
 
@@ -92,6 +95,9 @@ func archiveFacts(s Summary) [][2]string {
 	}
 	if len(s.Unsupported) > 0 {
 		f = append(f, [2]string{"Not understood", strings.Join(s.Unsupported, ", ")})
+	}
+	if len(s.Warnings) > 0 {
+		f = append(f, [2]string{"Read best effort", strings.Join(s.Warnings, "; ")})
 	}
 	if len(s.Extensions) > 0 {
 		var parts []string

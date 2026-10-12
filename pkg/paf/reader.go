@@ -39,30 +39,46 @@ var knownFeatures = map[string]bool{}
 // the newest version it knows.
 var knownExtensions = map[string][2]int{ExtTclaude: {0, 1}}
 
-// CanRead reports whether a reader of version reader (MAJOR.MINOR) can
-// read a file stamped version: the rule a sender applies to a peer's
-// advertised PAF version.
-func CanRead(reader, version string) bool {
-	major, minor, err := ParseVersion(reader)
-	return err == nil && versionReadable(version, major, minor)
+// versionReadable reports whether a MAJOR.MINOR version can be read by a
+// reader of the given major version. Minor versions only add, from 0.1 on
+// (see "Compatibility policy" in docs/paf.md), so any minor of the same
+// major is read; a deliberate break is marked with min_reader_version.
+func versionReadable(v string, major int) bool {
+	gotMajor, _, err := ParseVersion(v)
+	return err == nil && gotMajor == major
 }
 
-// versionReadable reports whether a MAJOR.MINOR version can be read by a
-// reader that knows major.minor: the major must match, and while it is 0
-// any other minor may differ incompatibly, so only the same one is read.
-func versionReadable(v string, major, minor int) bool {
-	gotMajor, gotMinor, err := ParseVersion(v)
-	return err == nil && gotMajor == major && (major != 0 || gotMinor == minor)
+// CanRead reports whether a reader of version reader (MAJOR.MINOR) can
+// read a file stamped version: the same major.
+func CanRead(reader, version string) bool {
+	major, _, err := ParseVersion(reader)
+	return err == nil && versionReadable(version, major)
 }
+
+// versionBefore reports whether MAJOR.MINOR a is older than b. Invalid
+// versions compare as not older.
+func versionBefore(a, b string) bool {
+	aMajor, aMinor, errA := ParseVersion(a)
+	bMajor, bMinor, errB := ParseVersion(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return aMajor < bMajor || aMajor == bMajor && aMinor < bMinor
+}
+
+// maxWarnings bounds the best-effort warnings one Open collects.
+const maxWarnings = 20
 
 // ErrNotPAF reports an archive that is not a PAF file.
 var ErrNotPAF = errors.New("paf: not a PAF archive")
 
-// VersionError reports a PAF of a major version this package cannot read.
-// It still carries what the manifest says, so a user knows what to upgrade.
+// VersionError reports a PAF this package cannot import: another major
+// version, or a min_reader_version newer than this reader. It still carries
+// what the manifest says, so a user knows what to upgrade.
 type VersionError struct {
-	PafVersion string
-	Producer   Producer
+	PafVersion       string
+	MinReaderVersion string
+	Producer         Producer
 }
 
 func (e *VersionError) Error() string {
@@ -70,11 +86,10 @@ func (e *VersionError) Error() string {
 	if e.Producer.Version != "" {
 		p += " " + e.Producer.Version
 	}
-	supports := fmt.Sprintf("%d.x", Major)
-	if Major == 0 {
-		supports = fmt.Sprintf("0.%d", Minor)
+	if e.MinReaderVersion != "" {
+		return fmt.Sprintf("paf: this file needs PAF >= %s (written by %s as PAF %s); this reader supports PAF %s", e.MinReaderVersion, p, e.PafVersion, Version)
 	}
-	return fmt.Sprintf("paf: unsupported PAF version %s (written by %s; this reader supports %s)", e.PafVersion, p, supports)
+	return fmt.Sprintf("paf: unsupported PAF version %s (written by %s; this reader supports %d.x)", e.PafVersion, p, Major)
 }
 
 // Archive is a verified, opened PAF.
@@ -85,6 +100,13 @@ type Archive struct {
 	// Unsupported lists required features and extensions this reader does
 	// not understand. It is only ever non-empty for PurposeInspect.
 	Unsupported []string
+	// Warnings says why an inspection read the file best effort: it needs
+	// a newer reader, and what did not check out. Only PurposeInspect.
+	Warnings []string
+
+	// bestEffort reports schema mismatches as warnings instead of
+	// refusing: set for an inspected file that needs a newer reader.
+	bestEffort bool
 
 	limits    Limits
 	listedSet map[string]bool
@@ -206,17 +228,31 @@ func (a *Archive) readManifest(purpose Purpose) error {
 		return fmt.Errorf("paf: manifest.json: %w", err)
 	}
 	var head struct {
-		Format     string   `json:"format"`
-		PafVersion string   `json:"paf_version"`
-		Producer   Producer `json:"producer"`
+		Format           string   `json:"format"`
+		PafVersion       string   `json:"paf_version"`
+		MinReaderVersion string   `json:"min_reader_version"`
+		Producer         Producer `json:"producer"`
 	}
 	if err := json.Unmarshal(raw, &head); err != nil || head.Format != Format {
 		return ErrNotPAF
 	}
-	if !versionReadable(head.PafVersion, Major, Minor) {
-		return &VersionError{PafVersion: head.PafVersion, Producer: head.Producer}
+	var verr *VersionError
+	switch {
+	case !versionReadable(head.PafVersion, Major):
+		verr = &VersionError{PafVersion: head.PafVersion, Producer: head.Producer}
+	case head.MinReaderVersion != "" && versionBefore(Version, head.MinReaderVersion):
+		verr = &VersionError{PafVersion: head.PafVersion, MinReaderVersion: head.MinReaderVersion, Producer: head.Producer}
 	}
-	if err := validateJSON(SchemaManifest, raw); err != nil {
+	if verr != nil {
+		// Import and resume refuse a file that needs a newer reader;
+		// inspection and rendering still try, and say so.
+		if purpose != PurposeInspect {
+			return verr
+		}
+		a.bestEffort = true
+		a.warn(strings.TrimPrefix(verr.Error(), "paf: ") + "; read best effort, and parts may be missing or misread")
+	}
+	if err := a.lenient("manifest.json", validateJSON(SchemaManifest, raw)); err != nil {
 		return fmt.Errorf("paf: manifest.json: %w", err)
 	}
 	if err := json.Unmarshal(raw, &a.Manifest); err != nil {
@@ -257,6 +293,26 @@ func (a *Archive) readManifest(purpose Purpose) error {
 	return nil
 }
 
+// warn records a best-effort warning, up to maxWarnings.
+func (a *Archive) warn(msg string) {
+	switch {
+	case len(a.Warnings) < maxWarnings:
+		a.Warnings = append(a.Warnings, msg)
+	case len(a.Warnings) == maxWarnings:
+		a.Warnings = append(a.Warnings, "more warnings not shown")
+	}
+}
+
+// lenient passes a schema error through, or, reading best effort, records
+// it as a warning and returns nil.
+func (a *Archive) lenient(where string, err error) error {
+	if err == nil || !a.bestEffort {
+		return err
+	}
+	a.warn(where + ": " + err.Error())
+	return nil
+}
+
 // UnderstandsExtension reports whether this package knows a declared
 // extension at its declared major version.
 func (a *Archive) UnderstandsExtension(id string) bool {
@@ -265,7 +321,7 @@ func (a *Archive) UnderstandsExtension(id string) bool {
 		return false
 	}
 	known, ok := knownExtensions[id]
-	return ok && versionReadable(d.Version, known[0], known[1])
+	return ok && versionReadable(d.Version, known[0])
 }
 
 func (a *Archive) verifyEntries() error {
@@ -384,7 +440,7 @@ func (a *Archive) parseMetadata(p, schema string, raw []byte) error {
 	if err := checkNoDuplicateKeys(raw); err != nil {
 		return fmt.Errorf("paf: %s: %w", p, err)
 	}
-	if err := validateJSON(schema, raw); err != nil {
+	if err := a.lenient(p, validateJSON(schema, raw)); err != nil {
 		return fmt.Errorf("paf: %s: %w", p, err)
 	}
 	if err := a.checkDeclared(raw); err != nil {
@@ -434,7 +490,7 @@ func (a *Archive) declaredExtension(id string, data map[string]any) error {
 		return fmt.Errorf("extension %q is used but not declared", id)
 	}
 	if schema := extensionSchemas[id]; schema != "" && a.UnderstandsExtension(id) {
-		if err := ValidateSchema(schema, any(data)); err != nil {
+		if err := a.lenient("extension "+id, ValidateSchema(schema, any(data))); err != nil {
 			return fmt.Errorf("extension %q: %w", id, err)
 		}
 	}
@@ -467,7 +523,7 @@ func (a *Archive) checkContext(p string, r io.Reader) error {
 		if err := json.Unmarshal(l.Raw, &doc); err != nil {
 			return err
 		}
-		if err := ValidateSchema(SchemaLine, doc); err != nil {
+		if err := a.lenient(p, ValidateSchema(SchemaLine, doc)); err != nil {
 			return err
 		}
 		if err := a.checkDeclaredDoc(doc); err != nil {

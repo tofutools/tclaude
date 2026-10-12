@@ -25,6 +25,7 @@ type Summary struct {
 	Producer    paf.Producer       `json:"producer"`
 	Requires    []string           `json:"requires,omitempty"`
 	Unsupported []string           `json:"unsupported,omitempty"`
+	Warnings    []string           `json:"warnings,omitempty"`
 	Extensions  []ExtensionSummary `json:"extensions,omitempty"`
 	Signatures  []SignatureSummary `json:"signatures"`
 	Entries     int                `json:"entries"`
@@ -142,7 +143,7 @@ func Summarize(a *paf.Archive, source string) Summary {
 	s := Summary{
 		Source: source, Format: m.Format, PafVersion: m.PafVersion, Kind: m.Kind,
 		CreatedAt: m.CreatedAt, Producer: m.Producer, Requires: m.Requires,
-		Unsupported: a.Unsupported, Entries: len(m.Entries), Signatures: []SignatureSummary{},
+		Unsupported: a.Unsupported, Warnings: a.Warnings, Entries: len(m.Entries), Signatures: []SignatureSummary{},
 		Agents: []AgentSummary{},
 	}
 	sizes := map[string]int64{}

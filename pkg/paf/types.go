@@ -59,9 +59,12 @@ type Manifest struct {
 	Requires           []string                 `json:"requires"`
 	ExtensionsUsed     map[string]ExtensionDecl `json:"extensions_used,omitempty"`
 	ExtensionsRequired []string                 `json:"extensions_required,omitempty"`
-	Agents             []string                 `json:"agents"`
-	Entries            []Entry                  `json:"entries"`
-	Extensions         Extensions               `json:"extensions,omitempty"`
+	// MinReaderVersion marks a deliberate break: the oldest PAF version
+	// whose reader can import the file. Writers leave it out otherwise.
+	MinReaderVersion string     `json:"min_reader_version,omitempty"`
+	Agents           []string   `json:"agents"`
+	Entries          []Entry    `json:"entries"`
+	Extensions       Extensions `json:"extensions,omitempty"`
 }
 
 // Producer names the software that wrote the file.

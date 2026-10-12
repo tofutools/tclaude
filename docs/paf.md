@@ -1307,9 +1307,8 @@ keyed by its id:
   like any unknown extension: it ignores it, and refuses the file only when
   `extensions_required` lists it.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
-  same rules as `paf_version`. A reader that knows the extension but not that
-  version (another major, or while the major is 0 any other minor) treats it
-  as unknown.
+  same rules as `paf_version`: minor versions only add. A reader that knows
+  the extension but not its major version treats it as unknown.
 - **`system` and `system_version`:** which software wrote the data, and which
   version of it.
 - **`spec`:** where the extension is documented. `schema` (optional) points
@@ -1383,18 +1382,40 @@ The extension is `copy: unsafe`, version `0.1`.
 `paf_version` is `MAJOR.MINOR`, compared the way semantic versioning
 compares versions.
 
-- **While the major version is 0**, the format is still settling and any
-  minor version may change it incompatibly. A 0.x reader reads exactly the
-  0.y versions it implements and refuses every other one, older or newer,
-  the same way it refuses an unknown major version. The rule below that a
-  minor version only adds applies from 1.0.
-- From 1.0, a **minor** version only adds: new optional fields, new optional
-  entries, new enum values in fields documented as open (loss kinds, lineage
-  ops, redaction kinds), or new `requires` features. A 1.0 reader reads every
-  1.x file.
-- A **major** version may change anything. A reader refuses an unknown major
-  version, but still shows `format`, `paf_version` and `producer` so the user
-  knows what to upgrade.
+### Compatibility policy
+
+PAF aims to stay backward and forward compatible from 0.1 on. Until 1.0 this
+is best effort rather than a guarantee, and any break is marked clearly.
+
+- **Minor versions only add**, from 0.1 on: new optional fields, new
+  optional entries, new values in enumerations documented as open, or new
+  `requires` features. A reader reads every minor version of its major
+  version, older or newer, ignoring what it does not know and still
+  honouring `requires` and `extensions_required`.
+- **A deliberate break is marked with `min_reader_version`** in the
+  manifest: the oldest PAF version whose reader can import the file. A
+  writer sets it only when the file cannot be read correctly by an older
+  reader. A reader older than that refuses to import or resume the file,
+  with a message that names the version it needs ("this file needs PAF >=
+  0.3"). Inspection and rendering still read it best effort and warn that
+  parts may be missing or misread.
+- **A major version** may change anything. A reader refuses to import a
+  file of another major version. Inspection and rendering read it best
+  effort, with the same warning, and always show `format`, `paf_version` and
+  `producer` so the user knows what to upgrade.
+- **Read retention.** Once a version is published, later tclaude releases
+  keep reading it: natively, or by converting it to the current model on
+  read. A newer tclaude never drops the ability to open a file an older one
+  wrote.
+- **Federation** sends PAF only in a version both sides read: each instance
+  advertises the list of PAF versions it reads (`paf_versions`), the sender
+  writes the highest version both share, and falls back to the legacy
+  carrier when they share none.
+
+| Version | Breaking? | Changes |
+| --- | --- | --- |
+| 0.1 | (first version) | The initial format. |
+
 - Readers **ignore unknown fields** and any listed entry they do not
   understand, wherever it sits. Writers must not rely on readers understanding
   a field or entry unless it is listed in `requires`.
@@ -1407,8 +1428,8 @@ compares versions.
   "unsupported content" placeholder that keeps its `text` when present, and
   never drops it silently. A writer that needs a reader to understand a new
   value lists a feature in `requires`.
-- **Closed enumerations** change only in a major version (or, while the
-  major version is 0, in any minor version): `format`, `kind`
+- **Closed enumerations** change only in a major version, or in a minor
+  version that sets `min_reader_version`: `format`, `kind`
   (`agent`, `group`), entry `role` (`user`, `assistant`) and `origin`
   (`human`, `agent`, `tool`), and the transcript `scope`.
 - **`requires`** names features without which the content would be
@@ -1425,8 +1446,9 @@ compares versions.
 - Writers stamp the lowest version that expresses the content.
 
 The schemas for version 0.1 live under `docs/paf/schema/v0.1/`, and their
-`$id`s include `v0.1`. While the major version is 0, each minor version gets
-its own schema directory. From 1.0, one directory per major version (`v1/`)
+`$id`s include `v0.1`. They allow unknown properties, so they validate later
+0.y files too; a later minor version that needs new schemas adds a
+directory. From 1.0, one directory per major version (`v1/`)
 validates every file of that major version, because unknown properties are
 allowed. A few rules are semantic rather than structural, and
 a reader checks them in code:
