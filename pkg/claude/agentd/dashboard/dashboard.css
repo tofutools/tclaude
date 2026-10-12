@@ -8658,6 +8658,15 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-member-table th { text-align: left; color: #7d8590; font-weight: normal; border-bottom: 1px solid #2a3340; padding: 3px 6px; }
 .paf-member-table td { border-bottom: 1px solid #1c2128; padding: 4px 6px; vertical-align: top; }
 #paf-export-modal, #group-import-modal { max-width: 760px; }
+/* Snapshots view (tcl-3hjdm1): library table with inline panels. */
+#snapshots-modal { min-width: 720px; max-width: 920px; max-height: 90vh; overflow-y: auto; }
+.snap-toolbar { display: flex; gap: 8px; margin: 6px 0; }
+.snap-panel { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 8px 11px; margin: 8px 0; }
+.snap-acts { white-space: nowrap; text-align: right; }
+.snap-acts button { padding: 1px 7px; margin-left: 3px; }
+#snapshots-list tr.active td { background: #111d2b; }
+.snap-recipients { display: flex; flex-direction: column; gap: 2px; }
+.snap-recipients .paf-check { margin: 2px 0; }
 /* Group templates — the Templates tab list + the editor / instantiate
    / from-group modals. The modals reuse .cron-create-modal for the
    shell + rows; these rules add the template-specific surfaces. */

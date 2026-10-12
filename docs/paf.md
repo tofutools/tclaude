@@ -155,6 +155,7 @@ security posture before anything starts.
 tclaude paf export reviewer --file reviewer.paf --history
 tclaude paf import --file reviewer.paf --cwd "$PWD"                      # preview
 tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply
+tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply --no-start
 tclaude paf import --file reviewer.paf --cwd "$PWD" --harness codex --model gpt-5.5
 ```
 
@@ -170,6 +171,13 @@ history out, so the conversation travels only in neutral form.
 permission handling. It accepts PAF files and legacy agent bundles. The
 import is a fork: the new agent gets a new identity, and the source's
 permissions and ownership are advisory only.
+
+`--apply` starts the imported agent. With `--no-start` it lands offline
+instead: it joins the group with its conversation installed and its
+briefing queued, and `tclaude agent resume` starts it later on its landing
+harness. Landing offline needs a conversation that lands (not
+`--skip-history` or a configuration-only import) and is not yet available
+on OpenCode.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for

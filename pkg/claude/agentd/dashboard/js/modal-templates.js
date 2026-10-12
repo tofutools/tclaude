@@ -74,12 +74,17 @@ export function openAgentExport(value) {
   return managementController().openAgentExport(value);
 }
 
+export function openSnapshots(preset = {}) {
+  return managementController().openSnapshots(preset);
+}
+
 export function openGroupExport(group) {
   return managementController().openGroupExport(group);
 }
 
 export function bindGroupImportModal() {
   document.querySelector('#group-import-open')?.addEventListener('click', () => openGroupImport());
+  document.querySelector('#snapshots-open')?.addEventListener('click', () => openSnapshots());
   bindPAFDrop({ open: openGroupImport, refuse: () => refuseInPeerView('Import') });
 }
 

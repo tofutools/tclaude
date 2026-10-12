@@ -25,7 +25,7 @@ const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-
 // GATED_CONTROLS are mutation controls without a data-act: group creation and
 // the management overlays, which edit the shown node's configuration.
 const GATED_CONTROLS = [
-  '#group-create-open', '#group-import-open', '#cleanup-all-open', '#delete-retired-open',
+  '#group-create-open', '#group-import-open', '#snapshots-open', '#cleanup-all-open', '#delete-retired-open',
   '#profiles-manage-open', '#templates-manage-open', '#roles-manage-open',
   '#sandbox-profiles-manage-open', '#spawn-harness-policy-open',
 ];
