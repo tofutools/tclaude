@@ -30,6 +30,10 @@ want it.
 | 2 | [Find and resume your work](find-and-resume.md) | Find yesterday's conversation, pick it up again, and ask quick questions from the shell | 10 min |
 | 3 | [Your first agent team](first-team.md) | Start the daemon, spawn two agents into a group, and watch them message each other | 20 min |
 | 4 | [Tour the dashboard](dashboard-tour.md) | Read your agents' status, look into their terminals, read their mail, and manage them from the browser | 15 min |
+| 5 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 3 | 45 min |
 
 Steps 1 and 2 cover solo use and need no daemon. Step 3 starts the daemon,
 which everything multi-agent goes through.
+The last step is optional and more advanced: it needs a second machine,
+and it uses [permissions](../permissions-and-audit.md) the earlier steps did
+not cover.
