@@ -36,6 +36,13 @@ as the agent's working directory. Set:
 <!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
 ![The spawn dialog, joining group hello. Name is alice, the initial message asks for a three-sentence summary of the project, and Harness and Model are left at their defaults.](../assets/learn-dashboard-spawn.png)
 
+Because the directory is a git repository, the dialog also prepares a new
+git worktree, a separate checkout on its own branch named after the agent.
+**Sync worktree branch with name** does that, and it is on by default. For
+this first agent, untick it and set **Worktree** to
+**(no worktree — use CWD above)**, so `alice` works in your project directory
+itself. A later tutorial covers worktrees.
+
 Leave the rest at its defaults: your default harness and model. To use
 another harness, pick it under **Harness**. Click **Spawn**.
 
