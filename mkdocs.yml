@@ -40,7 +40,8 @@ nav:
       - Learning path: learn/index.md
       - Get started: learn/get-started.md
       - Your first agent: learn/first-agent.md
-      - Your first agent team: learn/first-team.md
+      - Set up your team: learn/team-setup.md
+      - Run a team through a lead: learn/team-lead.md
       - Find and resume your work: learn/find-and-resume.md
       - Keep agents going: learn/keep-agents-going.md
       - Work in parallel with worktrees: learn/parallel-worktrees.md

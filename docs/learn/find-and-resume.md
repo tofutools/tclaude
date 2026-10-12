@@ -4,8 +4,8 @@ Agents come and go, but tclaude keeps their conversations. In this tutorial
 you find past work in the dashboard and pick it up again: a stopped agent, a
 retired one, and a conversation you had outside any group.
 
-**You need:** [Your first agent team](first-team.md) completed: `alice` in
-`hello`, and `bob` retired.
+**You need:** [Run a team through a lead](team-lead.md) completed: `alice`
+in `hello`, and `bob` retired.
 
 ## 1. Wake a stopped agent
 

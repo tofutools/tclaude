@@ -1,7 +1,7 @@
 # Spawning and lifecycle
 
 !!! tip "New to tclaude?"
-    The tutorial [Your first agent team](learn/first-team.md) walks through a first group step by step.
+    The tutorial [Run a team through a lead](learn/team-lead.md) walks through a first team step by step.
 
 
 Agents create other agents, and someone has to keep that safe. This page
