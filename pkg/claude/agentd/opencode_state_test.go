@@ -867,5 +867,5 @@ func TestManagedInstructionsOpenCodeServerReadGrant(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cwd, 0700))
 	spec, err := openCodeTclaudeLayerLaunchSpec("tclaude-layer", cwd, nil, nil, agentID)
 	require.NoError(t, err)
-	require.Contains(t, spec.Contract.ReadOnlyStateDirs, launch.Root)
+	require.Contains(t, spec.Contract.ProfileFilesystem, sandboxpolicy.FilesystemGrant{Path: launch.Root, Access: sandboxpolicy.AccessRead})
 }
