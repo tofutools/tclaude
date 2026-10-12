@@ -23,12 +23,20 @@ xdg="$(mktemp -d)"
 trap 'rm -rf "$xdg"' EXIT
 export XDG_CONFIG_HOME="$xdg/config" XDG_CACHE_HOME="$xdg/cache" XDG_DATA_HOME="$xdg/data"
 export TCLAUDE_DOCSHOTS=1
+# UTC keeps the timestamps in the images free of the local timezone.
+export TZ=UTC
 
 cd "$root"
 go test ./pkg/claude/agentd/ ./pkg/claude/session/ ./pkg/claude/conv/ \
   -run '^TestLearnShots$' -count=1 -timeout 600s
 
-for png in "$out"/learn-*.png; do
+shopt -s nullglob
+pngs=("$out"/learn-*.png)
+if (( ${#pngs[@]} != 5 )); then
+  echo "expected 5 images in $out, got ${#pngs[@]}: is Chrome installed? (the generators skip without it)" >&2
+  exit 1
+fi
+for png in "${pngs[@]}"; do
   if command -v oxipng >/dev/null; then
     oxipng -q -o 4 --strip safe "$png"
   elif command -v optipng >/dev/null; then

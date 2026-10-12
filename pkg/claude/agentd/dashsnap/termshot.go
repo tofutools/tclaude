@@ -108,9 +108,18 @@ func ansiToHTML(in string) string {
 			i = j + 1
 			continue
 		}
-		if c == 0x1b { // other escapes (OSC etc.): skip to BEL or ST
-			j := i + 1
+		if c == 0x1b && i+1 < len(in) && strings.IndexByte("]P_^", in[i+1]) >= 0 {
+			// OSC/DCS/APC/PM string: skip to BEL or ST.
+			j := i + 2
 			for j < len(in) && in[j] != 0x07 && !(in[j] == '\\' && in[j-1] == 0x1b) {
+				j++
+			}
+			i = j + 1
+			continue
+		}
+		if c == 0x1b { // two-byte escape (ESC 7, ESC ( B, …): intermediates + final
+			j := i + 1
+			for j < len(in) && in[j] >= 0x20 && in[j] <= 0x2f {
 				j++
 			}
 			i = j + 1
