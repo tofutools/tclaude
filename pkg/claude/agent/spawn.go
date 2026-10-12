@@ -938,6 +938,11 @@ type SpawnParams struct {
 	// NoOwner declines group ownership for the new agent whatever the profile
 	// chain says. It is the explicit-false twin of --owner.
 	NoOwner bool `long:"no-owner" help:"Do not make the new agent a group owner, whatever the selected or a default spawn profile says (default: the profile chain decides, and unset everywhere spawns an ordinary member)"`
+
+	// FromSnapshot instantiates the agent from a snapshot in the local
+	// library instead of a fresh launch (see 'tclaude agent snapshot').
+	FromSnapshot string `long:"from-snapshot" optional:"true" help:"Instantiate new agents from this snapshot: its definition, launch shape and conversation, each with a new identity. Combines with --name, --cwd, --harness, --model and --count only"`
+	Count        int    `long:"count" optional:"true" help:"With --from-snapshot: how many independent agents to create (1-20; names get a -N suffix)"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -1025,6 +1030,9 @@ func spawnCmd() *cobra.Command {
 			// Presence must therefore be sampled here, after parsing, so an
 			// explicit false remains distinguishable from omission.
 			recordSpawnFlagPresence(p, cmd)
+			if p.FromSnapshot != "" || cmd.Flags().Changed("count") {
+				os.Exit(runSpawnFromSnapshot(p, cmd, os.Stdout, os.Stderr))
+			}
 			_, rc := RunSpawn(p, os.Stdout, os.Stderr, os.Stdin)
 			os.Exit(rc)
 		},
