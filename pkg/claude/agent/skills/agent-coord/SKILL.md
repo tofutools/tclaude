@@ -462,9 +462,9 @@ generates no approval request for the reviewer to decide.
 
 The agent skills (this one, `agent-rename`, …) are bundled into the
 `tclaude` binary. Materialise them under the supported user skill roots
-(`~/.claude/skills/<name>/` for Claude Code and
-`~/.agents/skills/<name>/` plus `$CODEX_HOME/skills/<name>/` for
-Codex CLI) with:
+(`~/.claude/skills/<name>/` for Claude Code, shared
+`~/.agents/skills/<name>/` for Codex, Gemini, Copilot and OpenCode, and
+`$CODEX_HOME/skills/<name>/` for Codex CLI) with:
 
 ```bash
 tclaude setup --install-agent-skills

@@ -155,7 +155,7 @@ func AllowedForConv(convID string) bool {
 }
 
 // harnessLabel maps a session's harness id to the label used in the
-// notification banner title. The empty/unknown harness defaults to
+// notification banner title. The empty harness defaults to
 // "Claude" so Claude Code notifications — and harness-neutral callers
 // like the task runner and rate-limit warnings, which go through Send —
 // read exactly as before.
@@ -163,10 +163,18 @@ func harnessLabel(harness string) string {
 	switch harness {
 	case "codex": // session.SessionState.Harness for OpenAI Codex CLI
 		return "Codex"
+	case "gemini":
+		return "Gemini"
+	case "copilot":
+		return "Copilot"
+	case "opencode":
+		return "OpenCode"
 	case "shell": // session.ShellHarnessName for a plain interactive shell
 		return "Shell"
-	default:
+	case "claude", "":
 		return "Claude"
+	default:
+		return "tclaude"
 	}
 }
 

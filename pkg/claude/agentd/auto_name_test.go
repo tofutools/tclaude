@@ -112,3 +112,19 @@ func TestBrokeredAutoNameTargetRejectsForeignConversation(t *testing.T) {
 	assert.Equal(t, harness.CodexName, gotHarness)
 	assert.NotEmpty(t, gotCwd)
 }
+
+func TestAutoNameHarnessCoverageAndUnsupportedNoCall(t *testing.T) {
+	oldRunner := runAutoNameHarness
+	t.Cleanup(func() { runAutoNameHarness = oldRunner })
+	runAutoNameHarness = func(_ context.Context, _ SeanceExecPlan) SeanceExecResult {
+		t.Fatal("unsupported auto-naming must not launch a model")
+		return SeanceExecResult{}
+	}
+	for _, name := range harness.Names() {
+		if name == harness.DefaultName || name == harness.CodexName {
+			continue
+		}
+		require.NotEmpty(t, autoNameUnsupported[name], "declare an unattended naming posture or reason for %s", name)
+		runAutoName("agent", "conv", name, t.TempDir(), "fallback", "prompt")
+	}
+}

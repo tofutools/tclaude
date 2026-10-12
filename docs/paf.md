@@ -8,7 +8,8 @@ in the original harness's own native format, so the same harness can resume it
 without any loss. You can resume that agent on another machine or in another
 harness, possibly long after the original harness or model has gone.
 
-This page is both the specification and the user guide. It covers why the
+This page is both the specification and the user guide; the
+[Walkthrough](#walkthrough) is a hands-on start. It covers why the
 format exists, how tclaude uses it, how to share agent state safely, and the
 exact file layout. Every PAF wire structure also has a JSON Schema
 under [`docs/paf/schema/v0.1/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/schema/v0.1), and [`docs/paf/examples/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/examples)
@@ -113,6 +114,168 @@ receiving side.
 The last column says what each operation uses in this release. tclaude keeps
 importing every legacy carrier after an operation switches to PAF; see
 [Legacy formats](#legacy-formats).
+
+## Walkthrough
+
+This hands-on walkthrough exercises the main operations on one agent. You
+save it to a file, read it with no harness, land it on another harness or a
+smaller model, fork it from a snapshot, and move it to another machine. Each
+step links the section that explains it in full.
+
+**You need:** the daemon running and `TCLAUDE_HUMAN_TOKEN` exported, as in
+[Your first agent team](learn/first-team.md). The last step also needs two
+linked machines. All the other steps work on one.
+
+### 1. Give an agent something worth saving
+
+```bash
+cd ~/code/my-project
+tclaude agent groups create lab --descr "PAF walkthrough"
+tclaude agent spawn lab --name scout \
+  --initial-message "Read this project and write a short list of its main packages and what each does."
+```
+
+Wait until `scout` is idle in the dashboard or in `tclaude session watch`.
+
+### 2. Export it to a file
+
+```bash
+tclaude paf export scout --history --file scout.paf
+```
+
+`--history` includes the conversation twice:
+- as the harness's own native history, for a lossless resume on the same
+  harness;
+- as a harness-neutral copy that any harness can land.
+
+If the conversation contains text that looks like a credential, the export
+refuses and says where. Check the finding. Then export without `--history`,
+or with `--allow-flagged` if you are sure the file stays with you. See
+[Exporting and importing an agent](#exporting-and-importing-an-agent).
+
+### 3. Read it without any harness
+
+```bash
+tclaude paf inspect scout.paf
+tclaude paf render scout.paf --out scout.html
+```
+
+`inspect` shows what the file holds: harness, model, working directory,
+signatures and privacy findings. It does not show the conversation. `render`
+writes the conversation as one self-contained HTML page, or as Markdown when
+you leave out `--out`. See [Reading a PAF](#reading-a-paf).
+
+### 4. Land it on another harness or a smaller model
+
+Import creates a **new** agent with a new identity. It previews first and
+changes nothing until you add `--apply`. Preview a landing on Codex, and name
+the model so tclaude can fit the conversation to its context window:
+
+```bash
+tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --model gpt-5.5
+```
+
+`history_landing` in the preview has three possible values:
+- **native** when the history fits as it is: same harness, and a window
+  large enough;
+- **translated** when it moves to another harness or must be cut to fit,
+  listing what does not carry over;
+- **none**, meaning the agent would import as configuration only.
+
+A model with a smaller window works the same way:
+
+```bash
+tclaude paf import --file scout.paf --cwd "$PWD" --model sonnet
+```
+
+The preview says how much of the conversation would be cut, if any. From a
+25% cut, `--apply` refuses until you choose one of three options:
+- `--confirm-history-loss`;
+- a model with a larger window;
+- `--skip-history`.
+
+Then land it for real:
+
+```bash
+tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --model gpt-5.5 \
+  --group lab --name scout-codex --apply
+```
+
+See [Landing a PAF](#landing-a-paf) and
+[Landing on a smaller context window](#landing-on-a-smaller-context-window).
+
+### 5. Fork agents from a snapshot
+
+A snapshot is a named save point in this machine's library. The agent carries
+on, and the snapshot stays as it was:
+
+```bash
+tclaude agent snapshot create scout --name scout-v1 --note "after the package survey"
+tclaude agent spawn lab --from-snapshot scout-v1 --count 2 --name trial
+```
+
+`trial-1` and `trial-2` each start with their own identity and a copy of the
+conversation. See [Snapshots](#snapshots) and
+[Spawning from a snapshot](#spawning-from-a-snapshot).
+
+### 6. Move an agent to another machine
+
+This needs two instances linked through a hub
+([Federation setup](federation-setup.md)). Below, this machine is `desktop`,
+and the trusted peer `laptop` has a group `helpers`.
+
+1. With restricted trust, first allow the move on `laptop`:
+
+    ```bash
+    tclaude federation grant desktop agents.receive --scope group=helpers
+    ```
+
+2. Move `scout` from `desktop`:
+
+    ```bash
+    tclaude federation move-agent scout laptop --group helpers
+    ```
+
+3. Accept the offer on `laptop`, previewing it first:
+
+    ```bash
+    tclaude federation offers
+    tclaude federation offers import OFFER_ID --cwd ~/code/my-project
+    tclaude federation offers import OFFER_ID --cwd ~/code/my-project --apply
+    ```
+
+The source keeps running until the agent runs on `laptop`, then retires
+`scout`. `tclaude federation moves ls` shows the progress.
+
+An agent can also move itself. Grant `trial-1` teleport rights scoped to the
+destination, then ask it to run `tclaude agent teleport laptop --group helpers`:
+
+```bash
+tclaude agent permissions grant trial-1 self.teleport --scope peer=laptop
+```
+
+With only the `agents.receive` grant, the teleport arrives on `laptop` as an
+ordinary offer. Accept it with `federation offers import` as in step 3.
+Automatic landing needs extra setup on the receiver.
+
+See [Moving an agent](federation.md#moving-an-agent) and
+[Teleport yourself to another node](federation.md#teleport-yourself-to-another-node).
+
+!!! note "Sharing snapshots on a Board"
+    `tclaude agent snapshot share` shares a snapshot, encrypted to named
+    members, on a federation Board. Update `tclaude-hub` first: an older hub
+    without board snapshot support is refused before anything is uploaded.
+    See [Sharing a snapshot on a Board](#sharing-a-snapshot-on-a-board).
+
+### 7. Clean up
+
+```bash
+tclaude agent groups retire lab
+tclaude agent groups archive lab
+tclaude agent snapshot rm scout-v1
+```
+
+On `laptop`, retire the moved agents too if you no longer need them.
 
 ## Landing a PAF
 

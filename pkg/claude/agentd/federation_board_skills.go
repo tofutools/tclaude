@@ -41,7 +41,7 @@ func boardSkillRoots() ([]boardSkillRoot, error) {
 	if e != nil {
 		return nil, e
 	}
-	out := []boardSkillRoot{{ID: "claude", Label: "Claude Code", Path: claude, Kind: "harness"}, {ID: "agents", Label: "Codex shared (.agents)", Path: codex[0], Kind: "harness"}}
+	out := []boardSkillRoot{{ID: "claude", Label: "Claude Code", Path: claude, Kind: "harness"}, {ID: "agents", Label: "Shared agent skills (.agents)", Path: codex[0], Kind: "harness"}}
 	if len(codex) > 1 {
 		out = append(out, boardSkillRoot{ID: "codex", Label: "Codex home", Path: codex[1], Kind: "harness"})
 	}

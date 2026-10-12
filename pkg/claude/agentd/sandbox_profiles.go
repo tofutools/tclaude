@@ -35,6 +35,7 @@ type sandboxCommonRuleCatalogJSON struct {
 	// editors persist pack IDs from NetworkPacks instead of inserting rows.
 	NetworkTemplates     []sandboxAccessTemplateJSON `json:"network_templates"`
 	SocketTemplates      []sandboxAccessTemplateJSON `json:"socket_templates"`
+	GlobalHarnessNotes   map[string]string           `json:"global_harness_notes,omitempty"`
 	GlobalConfigWarnings []string                    `json:"global_config_warnings"`
 }
 
@@ -69,6 +70,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		Platform:             runtime.GOOS,
 		Home:                 home,
 		Categories:           rules,
+		GlobalHarnessNotes:   global.HarnessNotes,
 		GlobalFilesystem:     global.Filesystem,
 		GlobalNetwork:        globalAccess.Network,
 		GlobalUnixSockets:    globalAccess.UnixSockets,

@@ -771,6 +771,29 @@ func Register(h *Harness) {
 	registry[h.Name] = h
 }
 
+// RegisterForTest temporarily adds or replaces a harness and returns a cleanup
+// that restores the prior registration. Pass it to t.Cleanup; tests using this
+// process-wide registry override must not run in parallel with registry readers.
+func RegisterForTest(h *Harness) func() {
+	if h == nil || h.Name == "" {
+		panic("harness: RegisterForTest requires a non-nil Harness with a Name")
+	}
+	name := h.Name
+	registryMu.Lock()
+	original, existed := registry[name]
+	registry[name] = h
+	registryMu.Unlock()
+	return func() {
+		registryMu.Lock()
+		defer registryMu.Unlock()
+		if existed {
+			registry[name] = original
+		} else {
+			delete(registry, name)
+		}
+	}
+}
+
 // Get returns the registered harness for name, or (nil, false) when none
 // is registered under that name.
 func Get(name string) (*Harness, bool) {

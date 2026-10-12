@@ -1,6 +1,6 @@
 site_name: tclaude
 site_url: https://tofutools.github.io/tclaude/
-site_description: A self-hosted agentic dev environment — sessions, fleet operations, permissions, and sandboxing for Claude Code, Codex CLI, OpenCode, and Copilot CLI
+site_description: A self-hosted agentic dev environment — sessions, fleet operations, permissions, and sandboxing for Claude Code, Codex CLI, OpenCode, Copilot CLI, and Gemini CLI
 repo_url: https://github.com/tofutools/tclaude
 repo_name: tofutools/tclaude
 
@@ -38,10 +38,12 @@ nav:
   - Home: index.md
   - Learn:
       - Learning path: learn/index.md
-      - Your first session: learn/first-session.md
-      - Find and resume your work: learn/find-and-resume.md
+      - Get started: learn/get-started.md
+      - Your first agent: learn/first-agent.md
       - Your first agent team: learn/first-team.md
       - Tour the dashboard: learn/dashboard-tour.md
+      - Find and resume your work: learn/find-and-resume.md
+      - Link two machines: federation-setup.md
   - Architecture: architecture.md
   - Everyday use:
       - Harnesses: harnesses.md
@@ -59,7 +61,6 @@ nav:
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
       - Federation: federation.md
-      - Federation setup: federation-setup.md
       - Portable Agent Format: paf.md
   - Confinement:
       - Sandboxing: sandboxing.md
@@ -70,7 +71,16 @@ nav:
       - Task runner: tasks.md
   - Reference:
       - Utilities: utilities.md
+      - Usage and costs: usage-and-costs.md
+      - Host status: host.md
+      - Codex permission registry: codex-native-permission-registry.md
       - Adding a harness: adding-a-harness.md
+
+# Pages built but deliberately left out of the nav: a contributor runbook,
+# and preliminary v2 designs that are not user guidance.
+not_in_nav: |
+  /e2e-manual-verification.md
+  /v2-plan-and-ideas/
 
 # `mkdocs build --strict` (docs-check workflow) fails on any of these.
 validation:

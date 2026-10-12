@@ -1,11 +1,11 @@
 # Find and resume your work
 
-In the [first tutorial](first-session.md) you ended a session, but its
+In [Your first agent](first-agent.md) you stopped an agent, but its
 conversation was kept. Here you find that conversation again, continue it,
 and learn a lighter way to ask quick questions without starting a session.
 
-**You need:** at least one finished conversation, for example the one from
-[Your first session](first-session.md).
+**You need:** at least one finished conversation, for example `alice`'s from
+[Your first agent](first-agent.md).
 
 ## 1. List your conversations
 

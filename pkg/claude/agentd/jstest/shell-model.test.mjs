@@ -472,3 +472,15 @@ test('an offline agent shared by hidden and visible groups remains counted', asy
   assert.match(activity.title, /1 offline/);
   assert.doesNotMatch(activity.title, /2 offline/);
 });
+
+test('Google what-if costs remain visible without captured quota windows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { usageView } = await harness.importDashboardModule('js/shell-model.js');
+  const usage = { what_if_enabled: true, what_if_costs: [{ provider: 'google', total_cost_usd: 1.25, today_cost_usd: 0.50 }] };
+  const view = usageView(usage);
+  assert.equal(view.na, false);
+  assert.deepEqual(view.lines.map((line) => line.label), ['Google WHAT-IF:']);
+  assert.equal(view.lines[0].tokens[0].kind, 'cost');
+  assert.deepEqual(view.lines[0].modes, [], 'no invented quota percentage mode');
+  assert.equal(usageView({ ...usage, what_if_enabled: false }).na, true);
+});

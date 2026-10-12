@@ -13,6 +13,8 @@ const (
 	HarnessClaude   = "claude"
 	HarnessCodex    = "codex"
 	HarnessOpenCode = "opencode"
+	HarnessGemini   = "gemini"
+	HarnessCopilot  = "copilot"
 )
 
 // Selector is one exact harness-native hook branch. A standing order with
@@ -85,6 +87,22 @@ var definitions = []Definition{
 	def(HarnessCodex, "SubagentStart", true, false),
 	def(HarnessCodex, "SubagentStop", true, false),
 	def(HarnessCodex, "SessionEnd", false, false),
+
+	// Only the installed Gemini/Copilot baseline is selectable. Their hook
+	// stdout is currently discarded by the installer, so orders use durable
+	// next-turn messages rather than promising inline response delivery.
+	def(HarnessGemini, "SessionStart", true, false),
+	def(HarnessGemini, "BeforeAgent", true, false),
+	def(HarnessGemini, "BeforeTool", true, false),
+	def(HarnessGemini, "AfterTool", true, false),
+	def(HarnessGemini, "AfterAgent", true, false),
+	def(HarnessGemini, "Notification", true, false),
+	def(HarnessGemini, "SessionEnd", true, false),
+	def(HarnessCopilot, "SessionStart", true, false),
+	def(HarnessCopilot, "UserPromptSubmit", true, false),
+	def(HarnessCopilot, "PostToolUse", true, false),
+	def(HarnessCopilot, "Stop", true, false),
+	def(HarnessCopilot, "SessionEnd", true, false),
 
 	// OpenCode. These are native event-stream/plugin names. The question.* and
 	// permission.v2.* spellings are emitted by released servers even though

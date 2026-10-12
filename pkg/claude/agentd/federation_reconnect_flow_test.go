@@ -3,9 +3,12 @@ package agentd_test
 import (
 	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -24,35 +27,65 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := listener.Addr().String()
-	require.NoError(t, listener.Close())
-	var runningHub *hub.Hub
+	// Keep the port reserved through startup and outages. Releasing an
+	// ephemeral port and later rebinding lets another test/process claim it.
+	t.Cleanup(func() { _ = listener.Close() })
+	activeListener := &outageHubListener{Listener: listener, closed: true}
+	var runningHub atomic.Pointer[hub.Hub]
 	var server *httptest.Server
-	var activeListener *outageHubListener
 	stop := func() {
-		if runningHub != nil {
-			// Abruptly sever hijacked WebSockets before graceful Close can send a
-			// shutting_down refusal (which intentionally backs off for 30s).
-			_ = activeListener.Close()
+		current := runningHub.Swap(nil)
+		if activeListener != nil {
+			// Abruptly sever hijacked WebSockets before graceful Close can
+			// send shutting_down, which intentionally backs off for 30s.
 			activeListener.closeConnections()
-			runningHub.Close()
-			server.Close()
-			runningHub = nil
-			server = nil
+		}
+		if current != nil {
+			current.Close()
 		}
 	}
-	t.Cleanup(stop)
+	t.Cleanup(func() {
+		stop()
+		if server != nil {
+			server.Close()
+		}
+	})
+	server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if current := runningHub.Load(); current != nil {
+			current.Handler().ServeHTTP(w, r)
+			return
+		}
+		// A request already accepted when stop raced it also fails abruptly,
+		// without speaking the hub's deliberate graceful-refusal protocol.
+		if hijacker, ok := w.(http.Hijacker); ok {
+			conn, _, err := hijacker.Hijack()
+			if err == nil {
+				_ = conn.Close()
+				return
+			}
+		}
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+	}))
+	require.NoError(t, server.Listener.Close())
+	server.Listener = activeListener
+	server.Start()
+	// Cleanup also works before any hub was created.
+	stop()
+	assertPortReserved := func() {
+		t.Helper()
+		competing, err := net.Listen("tcp", address)
+		if competing != nil {
+			_ = competing.Close()
+		}
+		require.ErrorIs(t, err, syscall.EADDRINUSE, "outages must not release the selected hub port")
+	}
+	assertPortReserved()
 	start := func() {
 		t.Helper()
-		var err error
-		runningHub, err = hub.New(st, hub.Config{})
+		current, err := hub.New(st, hub.Config{})
 		require.NoError(t, err)
-		listener, err := net.Listen("tcp", address)
-		require.NoError(t, err)
-		server = httptest.NewUnstartedServer(runningHub.Handler())
-		require.NoError(t, server.Listener.Close())
-		activeListener = &outageHubListener{Listener: listener}
-		server.Listener = activeListener
-		server.Start()
+		runningHub.Store(current)
+		activeListener.openConnections()
 	}
 	a := startHistoryNode(t, "claude", "A", "TCLAUDE_TEST_FAST_RECONNECT=1")
 	b := startHistoryNode(t, "claude", "B", "TCLAUDE_TEST_FAST_RECONNECT=1")
@@ -97,6 +130,7 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 		require.Equal(t, 200, code, string(raw))
 	}
 	stop()
+	assertPortReserved()
 	for _, node := range nodes {
 		fedEventually(t, "hub outage visible", func() bool { s := status(node); return s.Hub != nil && s.Hub.State == "disconnected" })
 	}
@@ -179,9 +213,16 @@ func (l *outageHubListener) Accept() (net.Conn, error) {
 func (l *outageHubListener) closeConnections() {
 	l.mu.Lock()
 	l.closed = true
-	connections := append([]net.Conn(nil), l.connections...)
+	connections := l.connections
+	l.connections = nil
 	l.mu.Unlock()
 	for _, conn := range connections {
 		_ = conn.Close()
 	}
+}
+
+func (l *outageHubListener) openConnections() {
+	l.mu.Lock()
+	l.closed = false
+	l.mu.Unlock()
 }

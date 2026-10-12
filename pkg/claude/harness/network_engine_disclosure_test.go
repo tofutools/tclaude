@@ -828,3 +828,13 @@ func activatedProxyEngineHarnesses(t *testing.T) []*Harness {
 		"the activation record is empty, so every assertion about activated harnesses would be vacuous")
 	return out
 }
+
+func TestRegisteredHarnessProxyActivationCoverage(t *testing.T) {
+	for _, platform := range []string{"linux", "darwin"} {
+		for _, name := range Names() {
+			smokes := proxyEngineActivatedSmokes[platform][name]
+			reason := proxyEngineUnavailableReasons[platform][name]
+			require.NotEqual(t, len(smokes) > 0, reason != "", "%s/%s must have smoke evidence or an explicit unavailable reason", platform, name)
+		}
+	}
+}
