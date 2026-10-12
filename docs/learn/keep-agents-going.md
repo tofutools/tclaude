@@ -33,7 +33,7 @@ notice. A scheduled message does. Open `alice`'s **⚙** menu and choose
 **⏰ schedule…**. The dialog targets `alice`. Set:
 
 - **Schedule**: **Interval**, `1h`;
-- **Body**: `Check on your workers. Nudge any that have gone quiet, and tell me if one is stuck.`
+- **Body**: `Check on your workers. Nudge any that have gone quiet, and send the human a notification if one is stuck.`
 
 Click **Create**. Every hour the message lands in `alice`'s inbox. While
 she is stopped, the ticks are skipped, so she does not wake up to a pile of
