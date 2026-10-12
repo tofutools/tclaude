@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -25,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/seal"
 )
 
@@ -63,9 +65,28 @@ const (
 var resilienceReceiving atomic.Bool
 
 type resilienceDest struct {
-	// Kind is "peer"; boards come later.
+	// Kind is "peer" or "board".
 	Kind string `json:"kind"`
-	Peer string `json:"peer"`
+	Peer string `json:"peer,omitempty"`
+	// Board and Recipients name a board and the members a snapshot is
+	// sealed to; this node is always added.
+	Board      string   `json:"board,omitempty"`
+	Recipients []string `json:"recipients,omitempty"`
+}
+
+func (d resilienceDest) String() string {
+	if d.Kind == "board" {
+		return "board:" + d.Board
+	}
+	return "peer:" + d.Peer
+}
+
+// resilienceBoardItem is a snapshot a policy published on a board.
+type resilienceBoardItem struct {
+	Item      string    `json:"item"`
+	Version   string    `json:"version"`
+	At        time.Time `json:"at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type resiliencePolicy struct {
@@ -97,6 +118,9 @@ type resilienceState struct {
 	Failures      int       `json:"failures,omitempty"`
 	Notified      bool      `json:"failure_notified,omitempty"`
 	Findings      int       `json:"findings,omitempty"`
+	// BoardItems are this agent's snapshots on the policy's board, newest
+	// last; those beyond the keep count are deleted from the board.
+	BoardItems []resilienceBoardItem `json:"board_items,omitempty"`
 }
 
 type resilienceFile struct {
@@ -287,7 +311,7 @@ func resilienceFail(p resiliencePolicy, s *resilienceState, now time.Time, msg s
 	s.NextDue = now.Add(min(backoff, resilienceMaxBackoff))
 	if s.Failures >= resilienceNotifyAfter && !s.Notified {
 		s.Notified = true
-		body := fmt.Sprintf("Resilience snapshots of agent %s (policy %s, to %s) have failed %d times in a row. Last error: %s\n\nSee tclaude agent snapshot policy ls. You will not be told again until a snapshot succeeds.", s.Agent, p.ID, p.Dest.Peer, s.Failures, msg)
+		body := fmt.Sprintf("Resilience snapshots of agent %s (policy %s, to %s) have failed %d times in a row. Last error: %s\n\nSee tclaude agent snapshot policy ls. You will not be told again until a snapshot succeeds.", s.Agent, p.ID, p.Dest, s.Failures, msg)
 		if _, err := recordHumanMessage("", "Resilience snapshots failing", body); err != nil {
 			slog.Warn("resilience: notify", "error", err)
 		}
@@ -307,18 +331,22 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 		s.Deferred = "busy"
 		return
 	}
-	peer, err := db.GetFederationPeer(p.Dest.Peer)
-	if err != nil || peer == nil {
-		resilienceFail(p, s, now, "peer "+p.Dest.Peer+" is not a trusted federation peer")
-		return
-	}
-	var catalog proto.CatalogPayload
-	if raw, _, err := db.GetFederationCatalog(peer.InstanceID); err == nil {
-		_ = json.Unmarshal([]byte(raw), &catalog)
-	}
-	if catalog.ResilienceSnapshots < 1 {
-		resilienceFail(p, s, now, "peer "+peerDisplay(peer)+" does not accept resilience snapshots (it needs a newer tclaude)")
-		return
+	var peer *db.FederationPeer
+	destLabel := p.Dest.String()
+	if p.Dest.Kind == "peer" {
+		if peer, err = db.GetFederationPeer(p.Dest.Peer); err != nil || peer == nil {
+			resilienceFail(p, s, now, "peer "+p.Dest.Peer+" is not a trusted federation peer")
+			return
+		}
+		destLabel = peerDisplay(peer)
+		var catalog proto.CatalogPayload
+		if raw, _, err := db.GetFederationCatalog(peer.InstanceID); err == nil {
+			_ = json.Unmarshal([]byte(raw), &catalog)
+		}
+		if catalog.ResilienceSnapshots < 1 {
+			resilienceFail(p, s, now, "peer "+destLabel+" does not accept resilience snapshots (it needs a newer tclaude)")
+			return
+		}
 	}
 	snap, err := captureResilienceSnapshot(a.CurrentConvID, now)
 	if err != nil {
@@ -333,7 +361,11 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 	s.Findings = snap.findings
 	if snap.findings > 0 && !f.FindingsNotified[p.ID] {
 		f.FindingsNotified[p.ID] = true
-		body := fmt.Sprintf("A resilience snapshot of agent %s (policy %s) holds %d suspected credential(s) and is sent, encrypted, to %s as the policy says. Remove them from the conversation, or remove the policy, if that peer should not hold them.\n\nThis is the only notice for this policy; tclaude agent snapshot policy ls keeps showing the count.", s.Agent, p.ID, snap.findings, peerDisplay(peer))
+		what := "is sent, encrypted, to " + destLabel + " as the policy says. Remove them from the conversation, or remove the policy, if that peer should not hold them."
+		if p.Dest.Kind == "board" {
+			what = "is not put on " + destLabel + ": a board never takes a snapshot with suspected credentials. Remove them from the conversation for snapshots to resume."
+		}
+		body := fmt.Sprintf("A resilience snapshot of agent %s (policy %s) holds %d suspected credential(s) and %s\n\nThis is the only notice for this policy; tclaude agent snapshot policy ls keeps showing the count.", s.Agent, p.ID, snap.findings, what)
 		if _, err := recordHumanMessage("", "Resilience snapshot holds suspected credentials", body); err != nil {
 			slog.Warn("resilience: notify", "error", err)
 		}
@@ -341,6 +373,10 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 	if snap.digest == s.LastDigest {
 		// Nothing changed since the last good snapshot.
 		s.NextDue = now.Add(p.every())
+		return
+	}
+	if p.Dest.Kind == "board" {
+		resilienceToBoard(p, s, snap, now)
 		return
 	}
 	self, err := federationIdentity()
@@ -370,6 +406,103 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 	s.Pending, s.PendingDigest, s.PendingBytes, s.PendingAt = d.ID, snap.digest, d.Bytes, now
 	s.LastError = ""
 	s.NextDue = now.Add(p.every())
+}
+
+// resilienceToBoard publishes a snapshot on the policy's board, sealed to
+// the named members and this node, then deletes this agent's snapshots
+// beyond the keep count. A board never takes suspected credentials, and
+// every board snapshot expires: after the policy's maximum age, at most
+// the board limit.
+func resilienceToBoard(p resiliencePolicy, s *resilienceState, snap *resilienceCapture, now time.Time) {
+	if snap.findings > 0 {
+		resilienceFail(p, s, now, fmt.Sprintf("%d suspected credential(s); a board never takes them", snap.findings))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	a, err := newBoardItemAccess(ctx)
+	if err != nil {
+		resilienceFail(p, s, now, "board: "+err.Error())
+		return
+	}
+	v, err := resilienceBoardPublish(a, p, snap, now)
+	if err != nil {
+		var be *boardHTTPError
+		if errors.As(err, &be) {
+			err = errors.New(be.Message)
+		}
+		resilienceFail(p, s, now, "board: "+err.Error())
+		return
+	}
+	s.BoardItems = append(s.BoardItems, resilienceBoardItem{Item: v.Item, Version: v.Version, At: now.UTC().Truncate(time.Second), ExpiresAt: v.ExpiresAt})
+	s.LastGood, s.LastDigest, s.LastBytes = now, snap.digest, v.PayloadBytes
+	s.Failures, s.Notified, s.LastError = 0, false, ""
+	s.NextDue = now.Add(p.every())
+	// Expired items are gone from the board; delete the rest beyond keep.
+	// A failed delete stays listed and is tried again next time.
+	var kept []resilienceBoardItem
+	for i, it := range s.BoardItems {
+		if !now.Before(it.ExpiresAt) {
+			continue
+		}
+		if len(s.BoardItems)-i > p.Keep {
+			if _, err := a.call("items.delete", map[string]any{"board": p.Dest.Board, "item": it.Item, "version_id": it.Version}); err == nil {
+				recordFederationAudit("resilience.board.delete", "", "", p.Dest.Board, "item="+it.Item+" version="+it.Version, 200)
+				continue
+			} else {
+				slog.Warn("resilience: delete old board snapshot", "board", p.Dest.Board, "item", it.Item, "error", err)
+			}
+		}
+		kept = append(kept, it)
+	}
+	s.BoardItems = kept
+}
+
+func resilienceBoardPublish(a *boardItemAccess, p resiliencePolicy, snap *resilienceCapture, now time.Time) (proto.BoardSnapshotVersion, error) {
+	var v proto.BoardSnapshotVersion
+	if err := a.snapshotCapable(); err != nil {
+		return v, err
+	}
+	members, err := a.boardMembers(p.Dest.Board)
+	if err != nil {
+		return v, err
+	}
+	peers, err := db.ListFederationPeers()
+	if err != nil {
+		return v, err
+	}
+	instances, recipients, err := boardSnapshotRecipients(a.opts.Identity, members, p.Dest.Recipients, peers)
+	if err != nil {
+		return v, err
+	}
+	if len(instances) < 2 {
+		return v, errors.New("name a recipient other than this node: a copy only this node can open is lost with it")
+	}
+	if _, err = snap.file.Seek(0, io.SeekStart); err != nil {
+		return v, err
+	}
+	arch, err := paf.Open(snap.file, snap.size, paf.Options{Purpose: paf.PurposeInspect})
+	if err != nil {
+		return v, err
+	}
+	// The Board rule, on exactly what is uploaded.
+	if len(arch.Manifest.Agents) != 1 {
+		return v, errors.New("a board snapshot holds exactly one agent")
+	}
+	if findings, err := privacy.ScanArchive(arch, pafContextRecordLimit()); err != nil {
+		return v, err
+	} else if len(findings) > 0 {
+		return v, fmt.Errorf("%d suspected credential(s); a board never takes them", len(findings))
+	}
+	maxAge := time.Duration(p.MaxAgeDays) * 24 * time.Hour
+	if maxAge == 0 || maxAge > proto.MaxBoardSnapshotTTL {
+		maxAge = proto.MaxBoardSnapshotTTL
+	}
+	name := "resilience-" + snap.name
+	if snap.name == "" || len(name) > 128 {
+		name = "resilience-" + p.ID
+	}
+	return a.publishBoardSnapshot(p.Dest.Board, arch, name, instances, recipients, now.Add(maxAge).UTC().Truncate(time.Second))
 }
 
 type resilienceCapture struct {

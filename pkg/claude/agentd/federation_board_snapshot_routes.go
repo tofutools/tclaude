@@ -256,59 +256,72 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 		return &boardHTTPError{409, "consent", "the snapshot changed after it was reviewed (content digest " + summary.Digest + ", reviewed " + want + ")"}
 	}
 
-	// Record the human's consent for exactly these recipients, then seal.
+	v, err := a.publishBoardSnapshot(board, arch, name, instances, recipients, expires)
+	if err != nil {
+		return err
+	}
+	preview.Published, preview.Item, preview.Version, preview.Bytes = true, v.Item, v.Version, v.PayloadBytes
+	writeJSON(w, 200, preview)
+	return nil
+}
+
+// publishBoardSnapshot records the consent for exactly these recipients,
+// seals the PAF to them and publishes it on the board. The caller has the
+// human's confirmation: a reviewed digest, or a resilience policy.
+func (a *boardItemAccess) publishBoardSnapshot(board string, arch *paf.Archive, name string, instances, recipients []string, expires time.Time) (v proto.BoardSnapshotVersion, err error) {
+	limits := paf.DefaultLimits()
 	id := a.opts.Identity
 	consented, err := os.CreateTemp("", ".board-snapshot-consent-")
 	if err != nil {
-		return err
+		return v, err
 	}
 	defer func() { _ = consented.Close(); _ = os.Remove(consented.Name()) }()
 	keys := []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
 	req := privacy.ConsentRequest{By: pafConsentBy, Audience: privacy.AudienceRecipients, Recipients: instances, KeepExisting: paf.SignedBy(arch.Signatures, id.Pub)}
 	if _, err = privacy.AddConsent(arch, consented, req, limits, paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, keys...); err != nil {
-		return &boardHTTPError{400, "consent", err.Error()}
+		return v, &boardHTTPError{400, "consent", err.Error()}
 	}
 	if _, err = consented.Seek(0, io.SeekStart); err != nil {
-		return err
+		return v, err
 	}
 	var sealed bytes.Buffer
 	if err = seal.Encrypt(&sealed, consented, recipients...); err != nil {
-		return err
+		return v, err
 	}
 	chunks, err := splitBoardSnapshot(sealed.Bytes())
 	if err != nil {
-		return &boardHTTPError{413, "too_large", err.Error()}
+		return v, &boardHTTPError{413, "too_large", err.Error()}
 	}
 	state, err := a.call("boards.get", map[string]any{"board": board})
 	if err != nil {
-		return err
+		return v, err
 	}
 	var b struct {
 		Epoch int64 `json:"epoch"`
 	}
 	if err = json.Unmarshal(state, &b); err != nil {
-		return err
+		return v, err
 	}
 	key, err := a.key(board, b.Epoch)
 	if err != nil {
-		return err
+		return v, err
 	}
 	sum := sha256.Sum256(sealed.Bytes())
-	v := proto.BoardSnapshotVersion{Board: board, Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Epoch: b.Epoch, PayloadSHA256: hex.EncodeToString(sum[:]), PayloadBytes: int64(sealed.Len()), Recipients: instances, ExpiresAt: expires}
+	v = proto.BoardSnapshotVersion{Board: board, Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Epoch: b.Epoch, PayloadSHA256: hex.EncodeToString(sum[:]), PayloadBytes: int64(sealed.Len()), Recipients: instances, ExpiresAt: expires}
 	m := proto.BoardSnapshotManifest{Item: v.Item, Version: v.Version, Name: name, Kind: boardSnapshotKind, PayloadSHA256: v.PayloadSHA256, PayloadBytes: v.PayloadBytes, Recipients: instances, ExpiresAt: expires}
 	m.Sign(id)
 	metadata, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return v, err
 	}
 	if v.Metadata, err = proto.SealBoardContent(key, board, b.Epoch, v.Version, metadata); err != nil {
-		return err
+		return v, err
 	}
 	ciphers := make([][]byte, len(chunks))
 	for i, c := range chunks {
 		blob := proto.NewEnvelopeID()
 		if ciphers[i], err = proto.SealBoardContent(key, board, b.Epoch, blob, c); err != nil {
-			return err
+			return v, err
 		}
 		cs := sha256.Sum256(ciphers[i])
 		v.Chunks = append(v.Chunks, proto.BoardSnapshotChunk{Blob: blob, SHA256: hex.EncodeToString(cs[:]), Bytes: int64(len(ciphers[i]))})
@@ -316,16 +329,14 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 	v.Sign(id)
 	for i := range ciphers {
 		if _, err = client.BoardSnapshotBlob(a.ctx, a.opts, v, i, ciphers[i]); err != nil {
-			return fmt.Errorf("upload chunk %d of %d: %w", i+1, len(ciphers), err)
+			return v, fmt.Errorf("upload chunk %d of %d: %w", i+1, len(ciphers), err)
 		}
 	}
 	if _, err = a.call("snapshots.publish", map[string]any{"board": board, "snapshot": v}); err != nil {
-		return err
+		return v, err
 	}
 	recordFederationAudit("boards.snapshot.publish", "", "", board, fmt.Sprintf("item=%s version=%s recipients=%s expires=%s", v.Item, v.Version, strings.Join(instances, ","), expires.Format(time.RFC3339)), 200)
-	preview.Published, preview.Item, preview.Version, preview.Bytes = true, v.Item, v.Version, v.PayloadBytes
-	writeJSON(w, 200, preview)
-	return nil
+	return v, nil
 }
 
 // boardSnapshotSource copies the snapshot to share into a private temp
