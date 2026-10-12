@@ -259,8 +259,9 @@ func (c *Collector) Findings() []paf.Finding {
 // ScanArchive scans everything a PAF carries that can hold text: group,
 // agent and environment metadata, context files, handoffs, native blobs,
 // text attachments and extension entries. It skips the manifest,
-// signatures and privacy.json, which a producer writes about the content,
-// and binary attachments.
+// signatures and binary attachments. Of privacy.json, which a producer
+// writes about the content, it scans the free text a file can carry: the
+// redaction details and extensions.
 func ScanArchive(a *paf.Archive, recordLimit int) ([]paf.Finding, error) {
 	c := NewCollector()
 	if len(a.Manifest.Extensions) > 0 {
@@ -269,6 +270,13 @@ func ScanArchive(a *paf.Archive, recordLimit int) ([]paf.Finding, error) {
 			return nil, err
 		}
 		c.JSON(raw, "manifest.json extensions")
+	}
+	if p := a.Privacy(); p != nil && (len(p.Redactions) > 0 || len(p.Extensions) > 0) {
+		raw, err := json.Marshal(map[string]any{"redactions": p.Redactions, "extensions": p.Extensions})
+		if err != nil {
+			return nil, err
+		}
+		c.JSON(raw, paf.PrivacyPath)
 	}
 	for _, e := range a.Manifest.Entries {
 		if e.Path == paf.PrivacyPath || strings.HasPrefix(e.Path, paf.SignaturesDir) {

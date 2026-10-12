@@ -24,7 +24,9 @@ var errZipLayout = errors.New("paf: ZIP central directory cannot be read")
 // entry's local header offset. archive/zip does not expose these offsets,
 // and the local header must be read at its real position, never searched
 // for: a search can be steered to a forged header inside an extra field.
-func localHeaderOffsets(ra io.ReaderAt, size int64) (map[string]int64, error) {
+// entries is the number of entries archive/zip read; the declared count is
+// untrusted and never sizes anything beyond it.
+func localHeaderOffsets(ra io.ReaderAt, size int64, entries int) (map[string]int64, error) {
 	tailLen := min(size, 22+65535)
 	tail := make([]byte, tailLen)
 	if _, err := ra.ReadAt(tail, size-tailLen); err != nil {
@@ -66,7 +68,12 @@ func localHeaderOffsets(ra io.ReaderAt, size int64) (map[string]int64, error) {
 		cdSize = binary.LittleEndian.Uint64(rec[40:])
 		cdOff = binary.LittleEndian.Uint64(rec[48:])
 	}
-	if cdOff+cdSize > uint64(size) || cdSize > 1<<30 {
+	if cdOff > uint64(size) || cdSize > uint64(size)-cdOff || cdSize > 1<<30 {
+		return nil, errZipLayout
+	}
+	// Each central directory header is at least 46 bytes, and archive/zip
+	// read the entries there are: a larger declared count is a lie.
+	if count > cdSize/46 || count > uint64(entries) {
 		return nil, errZipLayout
 	}
 	cd := make([]byte, cdSize)

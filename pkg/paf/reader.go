@@ -132,7 +132,7 @@ func (a *Archive) indexFiles(ra io.ReaderAt, size int64, files []*zip.File) erro
 	if len(files) > a.limits.MaxEntries+1+64 {
 		return errors.New("paf: too many archive entries")
 	}
-	offsets, err := localHeaderOffsets(ra, size)
+	offsets, err := localHeaderOffsets(ra, size, len(files))
 	if err != nil {
 		return err
 	}

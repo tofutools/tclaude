@@ -193,14 +193,31 @@ func (r *redactor) run(producer paf.Producer, keys []paf.SigningKey) (*RedactRep
 			r.scan.JSON(raw, "manifest.json extensions")
 		}
 	}
+	// The source's earlier redaction records and privacy extensions are
+	// free text from the file: they are rewritten like any other content
+	// and scanned, before the report is taken, so a credential cannot ride
+	// along in privacy.json past a scan that reports none.
+	var carried []paf.Redaction
+	var carriedExt paf.Extensions
+	old := r.a.Privacy()
+	if old != nil {
+		for _, red := range old.Redactions {
+			red.Detail = r.text(red.Detail, false)
+			carried = append(carried, red)
+		}
+		carriedExt = r.exts(old.Extensions)
+		if raw, err := json.Marshal(map[string]any{"redactions": carried, "extensions": carriedExt}); err == nil {
+			r.scan.JSON(raw, paf.PrivacyPath)
+		}
+	}
 	rep := r.report()
 	pr := paf.Privacy{Scan: &paf.Scan{Scanner: Scanner, Findings: rep.Findings}}
 	now := time.Now().UTC().Truncate(time.Second)
 	pr.Scan.At = &now
-	if old := r.a.Privacy(); old != nil {
+	if old != nil {
 		pr.Sensitivity, pr.Audience, pr.Retention = old.Sensitivity, old.Audience, old.Retention
-		pr.Redactions = append(pr.Redactions, old.Redactions...)
-		pr.Extensions = r.exts(old.Extensions)
+		pr.Redactions = append(pr.Redactions, carried...)
+		pr.Extensions = carriedExt
 	}
 	pr.Redactions = append(pr.Redactions, rep.Redactions...)
 	if err := r.w.WriteJSON(paf.PrivacyPath, pr); err != nil {

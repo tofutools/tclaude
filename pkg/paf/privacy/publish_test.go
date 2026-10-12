@@ -85,3 +85,41 @@ func TestPublishStripsIdentityAndSignsAsPublisher(t *testing.T) {
 		assert.True(t, c.Current)
 	}
 }
+
+// An earlier redaction record is free text from the file: a credential in
+// its detail is found by the scan and does not survive publication.
+func TestPublishScrubsEarlierRedactionDetails(t *testing.T) {
+	const leak = "ghp_zyxwvutsrqponmlkjihgfedcba9876"
+	tr := transcript.New(transcript.Source{Harness: "claude", Format: "claude-jsonl", ConvID: "conv-1", Cwd: project})
+	tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("hello")}}}
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindAgent, paf.Limits{})
+	require.NoError(t, w.AddAgent("a", paf.Agent{Name: "a"}, paf.Environment{Harness: paf.Harness{Name: "claude"}}))
+	require.NoError(t, paf.WriteTranscript(w, "a", paf.ScopeEffective, tr))
+	require.NoError(t, w.WriteJSON(paf.AgentPath("a", "context/losses.json"), paf.LossesFromReport(tr.Losses)))
+	require.NoError(t, w.WriteJSON(paf.PrivacyPath, paf.Privacy{Redactions: []paf.Redaction{{Kind: RedactMaskSpans, Count: 1, Detail: "was " + leak}}}))
+	_, err := w.Close(paf.Producer{Name: "test"})
+	require.NoError(t, err)
+	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{})
+	require.NoError(t, err)
+
+	findings, err := ScanArchive(a, 1<<20)
+	require.NoError(t, err)
+	assert.True(t, Blocking(findings), "the scan sees the credential in privacy.json")
+
+	scratch, err := os.CreateTemp(testutil.CanonicalTempDir(t), "scratch-")
+	require.NoError(t, err)
+	defer func() { _ = scratch.Close() }()
+	p, err := PreparePublication(a, scratch, PublishOptions{}, paf.Producer{Name: "test"}, 1<<20)
+	require.NoError(t, err)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.NoError(t, FinishPublication(p, &out, paf.Producer{Name: "test"}, paf.SigningKey{Key: priv, KeyID: "pub_test", Signer: &paf.Signer{Kind: "publisher"}}, paf.Limits{}))
+	b, err := paf.Open(bytes.NewReader(out.Bytes()), int64(out.Len()), paf.Options{})
+	require.NoError(t, err)
+	assert.NotContains(t, allText(t, b), leak)
+	findings, err = ScanArchive(b, 1<<20)
+	require.NoError(t, err)
+	assert.False(t, Blocking(findings))
+}
