@@ -125,8 +125,8 @@ func TestAgentImportLandsContextOnlyPAF(t *testing.T) {
 	require.Nil(t, ag.Native, "no_native leaves the native history out")
 	claude := mustGetHarness(t, harness.DefaultName)
 
-	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&no_native=true", nil)
-	require.Equal(t, http.StatusBadRequest, rec.Code, "no_native needs format=paf")
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=v1&no_native=true", nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "no_native needs a PAF, not agent bundle v1")
 	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf&no_native=true&no_context=true", nil)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 

@@ -138,11 +138,11 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
   </${Overlay}>`;
 }
 
-// GroupExportDialog picks the group archive format: the .zip tclaude has
-// always written, or a group PAF other tools can read.
+// GroupExportDialog picks the group archive format: a group PAF, the
+// default, or the legacy .zip an older tclaude imports.
 export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [format, setFormat] = useState('zip');
+  const [format, setFormat] = useState('paf');
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -165,10 +165,10 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
     <h3 id="group-export-title">Export group ${descriptor.group}</h3>
     <div class="modal-meta">Members, roles, permissions, messages and every conversation, in one file.</div>
-    <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-zip" checked=${format === 'zip'} onChange=${() => pick('zip')} />
-      <span>.zip<span class="paf-hint">tclaude's group archive. Conversations on harnesses other than Claude Code export without history.</span></span></label>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-paf" checked=${format === 'paf'} onChange=${() => pick('paf')} />
       <span>.paf<span class="paf-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
+    <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-zip" checked=${format === 'zip'} onChange=${() => pick('zip')} />
+      <span>.zip (legacy)<span class="paf-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
     ${findings && html`<${FindingsPanel} findings=${findings} />
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
     <div class="cron-create-error" role="alert">${error}</div>

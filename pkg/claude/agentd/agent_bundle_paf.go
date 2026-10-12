@@ -22,6 +22,8 @@ import (
 const (
 	agentArchiveBundle = "bundle"
 	agentArchivePAF    = "paf"
+	// agentArchiveV1 is what users ask for agent bundle v1 by.
+	agentArchiveV1 = "v1"
 )
 
 // neutralContextMaxHistory is the largest native history a transfer decodes

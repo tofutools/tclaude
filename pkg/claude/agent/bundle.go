@@ -20,10 +20,10 @@ import (
 type bundleExportParams struct {
 	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	Agent            string `pos:"true" help:"Agent selector to export."`
-	File             string `long:"file" short:"f" help:"Destination ZIP archive."`
+	File             string `long:"file" short:"f" help:"Destination file: a .paf, or with --format v1 an agent bundle ZIP."`
 	History          bool   `long:"history" help:"Include native conversation history when supported."`
 	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
-	Format           string `long:"format" optional:"true" help:"Archive format: bundle (the default, readable by every tclaude) or paf (Portable Agent Format, see docs/paf.md)."`
+	Format           string `long:"format" optional:"true" alts:"paf,v1" help:"Archive format: paf (the default; Portable Agent Format, see docs/paf.md) or v1 (agent bundle v1, for importing into an older tclaude)."`
 	NoNative         bool   `long:"no-native" help:"PAF only: leave the native history out and carry the conversation in harness-neutral form only."`
 	NoContext        bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
 	WithSummary      bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
@@ -88,7 +88,7 @@ type bundleImportParams struct {
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable ZIP archive", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
+		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
 		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
 		}}.ToCobra(),
@@ -120,9 +120,10 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		return rc
 	}
 	q := url.Values{"agent": {p.Agent}}
+	legacyFormat := p.Format == "v1" || p.Format == "bundle"
 	if p.WithSummary {
-		if p.Format != "paf" {
-			fmt.Fprintln(stderr, "Error: --with-summary needs --format paf")
+		if legacyFormat {
+			fmt.Fprintln(stderr, "Error: --with-summary needs a PAF export; agent bundle v1 cannot carry a summary")
 			return rcInvalidArg
 		}
 		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)

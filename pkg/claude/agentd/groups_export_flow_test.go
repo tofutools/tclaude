@@ -180,7 +180,8 @@ func groupRoundTripPreservesEverything(t *testing.T, format string) {
 
 	archive := exportGroupAs(t, f, "team", format)
 	require.NotEmpty(t, archive)
-	assert.Equal(t, format == "paf", legacy.IsPAF(bytes.NewReader(archive), int64(len(archive))))
+	// A group export is a PAF unless the legacy zip is asked for.
+	assert.Equal(t, format != "zip", legacy.IsPAF(bytes.NewReader(archive), int64(len(archive))))
 
 	// Capture the source .jsonl content, then wipe the machine clean.
 	srcContentA, err := os.ReadFile(convJSONLPath(home, srcCwd, aConv))

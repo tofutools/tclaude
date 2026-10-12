@@ -84,12 +84,14 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if _, ok := requirePermission(w, r, PermGroupsExport); !ok {
 		return
 	}
+	// A group export writes PAF unless asked for the legacy .zip, which an
+	// older tclaude reads.
 	format := r.URL.Query().Get("format")
 	if format == "" {
-		format = groupArchiveZip
+		format = groupArchivePAF
 	}
 	if format != groupArchiveZip && format != groupArchivePAF {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be zip or paf")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be paf (the default) or zip")
 		return
 	}
 	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman)

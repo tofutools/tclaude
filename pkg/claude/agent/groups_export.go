@@ -27,24 +27,24 @@ import (
 
 type groupsExportParams struct {
 	Name string `pos:"true" help:"Group to export"`
-	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.zip (or .paf) in the current directory. Pass '-' to stream the archive to stdout."`
-	Format string `long:"format" optional:"true" alts:"zip,paf" help:"Archive format: zip (the group export archive, default) or paf (a group Portable Agent Format file carrying the same data)"`
+	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.paf (or .zip) in the current directory. Pass '-' to stream the archive to stdout."`
+	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
 
-	AllowFlagged bool `long:"allow-flagged" help:"With --format paf, export even when the credential scan flags suspected credentials; inspect before sharing."`
+	AllowFlagged bool `long:"allow-flagged" help:"Export a PAF even when the credential scan flags suspected credentials; inspect before sharing."`
 }
 
 func groupsExportCmd() *cobra.Command {
 	return boa.CmdT[groupsExportParams]{
 		Use:   "export",
-		Short: "Export a whole group to a portable .zip or .paf archive",
+		Short: "Export a whole group to a portable .paf (or legacy .zip) archive",
 		Long: "Export a group — the group row, its members and owners, " +
 			"permissions, enrollment, cron jobs, message history and audit " +
 			"trail, plus every member's conversation .jsonl — into a single " +
-			"self-contained .zip. The archive is portable across machines, " +
-			"users and OSes (Linux <-> macOS); import it elsewhere with " +
-			"`tclaude agent groups import`. --format paf writes the same data " +
-			"as a group Portable Agent Format file instead, which " +
-			"`tclaude paf inspect|render` can read. It contains full conversation " +
+			"self-contained group Portable Agent Format (.paf) file. The archive is " +
+			"portable across machines, users and OSes (Linux <-> macOS); import it " +
+			"elsewhere with `tclaude agent groups import`, or read it with " +
+			"`tclaude paf inspect|render`. --format zip writes the legacy .zip " +
+			"archive instead, for importing into an older tclaude. It contains full conversation " +
 			"content, so treat it as sensitive. Gated server-side on the " +
 			"groups.export permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -68,10 +68,10 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	}
 	format := p.Format
 	if format == "" {
-		format = "zip"
+		format = "paf"
 	}
 	if format != "zip" && format != "paf" {
-		fmt.Fprintf(stderr, "Error: --format must be zip or paf\n")
+		fmt.Fprintf(stderr, "Error: --format must be paf or zip\n")
 		return rcInvalidArg
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format

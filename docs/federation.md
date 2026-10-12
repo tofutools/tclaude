@@ -953,21 +953,22 @@ transfer as local files; these commands do not send anything to a peer.
 
 ## Portable local agent bundles
 
-Agent transfer uses a ZIP archive, separate from the existing export jobs.
-The default is agent bundle version 1. `--format paf` (or
-[`tclaude paf export`](paf.md#exporting-and-importing-an-agent)) writes a
-[Portable Agent Format](paf.md) file instead, which carries the same
-configuration and native history plus a harness-neutral copy of the
-conversation when the harness can decode it. A PAF export is signed with the
+Agent transfer uses a single archive file, separate from the existing export
+jobs. Export writes a [Portable Agent Format](paf.md) file by default (as does
+[`tclaude paf export`](paf.md#exporting-and-importing-an-agent)), which carries
+the agent's configuration and native history plus a harness-neutral copy of
+the conversation when the harness can decode it. `--format v1` writes the
+legacy agent bundle version 1 ZIP instead, for importing into an older
+tclaude. A PAF export is signed with the
 node's federation key when one exists; exporting never creates a key. Import
 accepts either format and tells them apart by content, not file name.
 
 ```bash
-tclaude agent bundle export reviewer --file reviewer.zip --history
-tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team
-tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team --apply
-tclaude agent bundle export reviewer --file reviewer.paf --history --format paf
+tclaude agent bundle export reviewer --file reviewer.paf --history
 tclaude agent bundle import --file reviewer.paf --cwd "$PWD" --group team
+tclaude agent bundle import --file reviewer.paf --cwd "$PWD" --group team --apply
+tclaude agent bundle export reviewer --file reviewer.zip --history --format v1
+tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team
 ```
 
 Preview is the default. `--apply` creates a fresh local agent through the normal

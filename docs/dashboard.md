@@ -141,8 +141,8 @@ download a [PAF](paf.md). When the credential scan flags something, the
 download waits until you either tick *Export anyway; I have checked the
 findings* or choose **Redact…**. The redact step previews what it masks or drops
 and what the scan still finds, then downloads a redacted copy. Nothing is
-written on this node. A group's `⚙` **⤓ export…** offers a `.zip` (the default)
-or a group `.paf`.
+written on this node. A group's `⚙` **⤓ export…** offers a group `.paf` (the
+default) or a legacy `.zip` for importing into an older tclaude.
 
 **⤒ import…** in the toolbar `⚙` menu takes either. The file decides which
 preview opens. Dropping a `.paf` or `.zip` onto the page opens the same dialog.

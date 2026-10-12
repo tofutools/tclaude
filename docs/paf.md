@@ -99,8 +99,8 @@ receiving side.
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF with [`tclaude paf export` / `import`](#exporting-and-importing-an-agent); `agent bundle export` still writes [agent bundle v1](federation.md#portable-local-agent-bundles) by default |
-| **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 by default; a group PAF with [`groups export --format paf`](#exporting-and-importing-a-group) |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation.md#portable-local-agent-bundles) with `--format v1` |
+| **Group export / import** | A group PAF: group configuration plus every member. | A [group PAF](#exporting-and-importing-a-group) by default; group export v5 with `--format zip` |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | PAF in the [snapshot library](#snapshots) |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
@@ -159,7 +159,7 @@ tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply --no-st
 tclaude paf import --file reviewer.paf --cwd "$PWD" --harness codex --model gpt-5.5
 ```
 
-`paf export` is `agent bundle export --format paf`, with the same
+`paf export` is `agent bundle export`, which writes a PAF by default, with the same
 permission (`agent.bundle.export`), credential scan and `--allow-flagged`.
 With `--history` the conversation travels twice: as the native history and
 as the harness-neutral context, when tclaude can decode that harness.
@@ -541,21 +541,22 @@ tclaude agent recover --recall-id RECALL --group team [--new-id | --force-keep-i
 ## Exporting and importing a group
 
 ```bash
-tclaude agent groups export team --format paf --out team.paf
+tclaude agent groups export team --out team.paf
 tclaude agent groups import team.paf --dry-run --into "$PWD"
 tclaude agent groups import team.paf --into "$PWD" --as team-copy
 tclaude agent groups import team.paf --into "$PWD" --harness codex --model gpt-5.5 \
   --member-harness reviewer=claude --member-model reviewer=claude-opus-5-5
 ```
 
-`groups export --format paf` writes the group as a group PAF.
+`groups export` writes the group as a group PAF.
 - `group.json` holds the group's name, description and members with their
   roles.
 - Each member is an agent carrying its own harness's native history.
 - tclaude's own group state (settings, owners, permissions, enrollment, cron
   jobs, messages and audit trail) travels in the `tclaude` extension.
 
-The default `.zip` carries Claude Code conversations only; members on other
+`--format zip` writes the legacy group export v5 instead, for importing into
+an older tclaude. It carries Claude Code conversations only; members on other
 harnesses export without history. The export is signed when this node has a
 federation identity. Both formats need the same permission
 (`groups.export`).

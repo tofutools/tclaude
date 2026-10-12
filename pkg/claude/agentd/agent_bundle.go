@@ -389,12 +389,16 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	if caller, human, ok := authedCaller(w, r); ok && b.Manifest.Agent.Origin != nil {
 		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, res.ConvID, human)
 	}
+	// An export writes PAF unless asked for the legacy agent bundle v1,
+	// which an older tclaude reads ("bundle" is its earlier name).
 	format := r.URL.Query().Get("format")
-	if format == "" {
+	switch format {
+	case "", agentArchivePAF:
+		format = agentArchivePAF
+	case agentArchiveV1, agentArchiveBundle:
 		format = agentArchiveBundle
-	}
-	if format != agentArchiveBundle && format != agentArchivePAF {
-		writeError(w, 400, "format", "format must be bundle or paf")
+	default:
+		writeError(w, 400, "format", "format must be paf (the default) or v1")
 		return
 	}
 	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && flaggedCredentials(b.Manifest.Findings)}
@@ -404,7 +408,7 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	if id := r.URL.Query().Get("summary"); id != "" {
 		if format != agentArchivePAF {
-			writeError(w, 400, "format", "a summary travels only in a PAF: use --format paf")
+			writeError(w, 400, "format", "a summary travels only in a PAF: drop --format v1")
 			return
 		}
 		caller, _, _ := authedCaller(w, r)
