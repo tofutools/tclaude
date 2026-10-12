@@ -339,6 +339,10 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //
 // Writes the JSON response (or error) directly to w.
 func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, sudoGrantID int64, body reincarnateBody, relatedEventID string) {
+	if err := refuseManagedContinuation(target); err != nil {
+		writeError(w, http.StatusConflict, "managed_instructions", err.Error())
+		return
+	}
 	launchLock := resumeLaunchLock(target)
 	launchLock.Lock()
 	defer launchLock.Unlock()

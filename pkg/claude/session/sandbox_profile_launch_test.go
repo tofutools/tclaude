@@ -409,3 +409,17 @@ func TestDenyCoverageResolvesSymlinkedLaunchPaths(t *testing.T) {
 	assert.Equal(t, []string{workspace}, sandboxLaunchContractReadDirs(&snapshot, viaLink),
 		"the emitted reopen must name the resolved path the sandbox will see")
 }
+
+func TestManagedInstructionsCodexProfileReadGrant(t *testing.T) {
+	root := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", root)
+	t.Setenv("CODEX_HOME", filepath.Join(root, ".codex"))
+	overlay := filepath.Join(root, "launch-overlay")
+	require.NoError(t, os.MkdirAll(overlay, 0700))
+	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true, ManagedInstructionsRoot: overlay}
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, root, "1234567890abcdef", nil)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"`+overlay+`" = "read"`)
+}

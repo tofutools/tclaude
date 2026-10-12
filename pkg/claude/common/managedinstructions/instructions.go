@@ -22,8 +22,13 @@ import (
 func Import(kind, name, path string) ([]byte, error) {
 	switch kind {
 	case "skill":
-		b, err := skillbundle.Export(path, name)
+		path = filepath.Clean(path)
+		b, err := skillbundle.Export(filepath.Dir(path), filepath.Base(path))
 		if err != nil {
+			return nil, err
+		}
+		b.Name = name
+		if err = b.Validate(); err != nil {
 			return nil, err
 		}
 		raw, err := json.Marshal(b)

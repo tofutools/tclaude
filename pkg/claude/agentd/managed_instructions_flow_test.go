@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -108,4 +109,61 @@ func TestManagedRulesResumeRefreshAndRetireCleanup(t *testing.T) {
 	retired, err := db.GetManagedInstructionLaunch(spawned.AgentID)
 	require.NoError(t, err)
 	require.Nil(t, retired)
+}
+
+func TestManagedRulesOneShotRefusesRatherThanOmitting(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.PutManagedInstruction(0, "rule", "operator", []byte("ONE SHOT RULE"), false)
+	require.NoError(t, err)
+	result := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "non_interactive": true, "initial_message": "task"})
+	require.Equal(t, http.StatusConflict, result.Code, string(result.Raw))
+	require.Contains(t, string(result.Raw), "one-shot runs with managed instructions")
+}
+
+func TestManagedRulesContinuationRefusesBeforeChangingSource(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.PutManagedInstruction(0, "rule", "operator", []byte("CONTINUATION RULE"), false)
+	require.NoError(t, err)
+	source := f.AsHuman().Spawn("alpha", "worker")
+	snapshot, err := db.GetManagedInstructionLaunch(source.AgentID)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(snapshot.Root) })
+	clone := f.AsHuman().CloneWith(source.ConvID, map[string]any{"follow_up": "continue"})
+	require.Equal(t, http.StatusConflict, clone.Code, string(clone.Raw))
+	reincarnate := f.AsHuman().ReincarnateWith(source.ConvID, map[string]any{"follow_up": "continue"})
+	require.Equal(t, http.StatusConflict, reincarnate.Code, string(reincarnate.Raw))
+	require.DirExists(t, snapshot.Root)
+	agent, err := db.GetAgentByConv(source.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.Equal(t, source.ConvID, agent.CurrentConvID)
+}
+
+type managedDyingSpawner struct{ args clcommon.SpawnArgs }
+
+func (s *managedDyingSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	s.args = args
+	return (asyncDyingSpawner{}).SpawnNew(args)
+}
+func (*managedDyingSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return (asyncDyingSpawner{}).SpawnResume(args)
+}
+func TestManagedRulesConfirmedLaunchFailureCleansOverlay(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.PutManagedInstruction(0, "rule", "operator", []byte("FAILURE RULE"), false)
+	require.NoError(t, err)
+	dying := &managedDyingSpawner{}
+	previous := agentd.Spawn
+	agentd.Spawn = dying
+	t.Cleanup(func() { agentd.Spawn = previous })
+	response := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "doomed"})
+	require.Equal(t, http.StatusInternalServerError, response.Code, string(response.Raw))
+	require.NotEmpty(t, dying.args.ManagedInstructionsRoot)
+	require.NoDirExists(t, dying.args.ManagedInstructionsRoot)
+	snapshot, err := db.GetManagedInstructionLaunch(dying.args.AgentID)
+	require.NoError(t, err)
+	require.Nil(t, snapshot)
 }

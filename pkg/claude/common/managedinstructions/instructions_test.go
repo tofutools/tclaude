@@ -69,3 +69,20 @@ func TestManagedInstructionMaterializeRegisteredBytesOnly(t *testing.T) {
 	require.NoError(t, os.WriteFile(rootFile, []byte("tampered"), 0600))
 	require.ErrorContains(t, VerifyLaunchRoot(launch.Root), "changed")
 }
+
+func TestManagedInstructionImportExactDirectory(t *testing.T) {
+	root := testutil.CanonicalTempDir(t)
+	skill := filepath.Join(root, "release-skill")
+	require.NoError(t, os.MkdirAll(skill, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("Release fixture"), 0600))
+	raw, err := Import("skill", "release", skill)
+	require.NoError(t, err)
+	bundle, err := skillbundle.Decode(raw)
+	require.NoError(t, err)
+	require.Equal(t, "release", bundle.Name)
+	require.Len(t, bundle.Files, 1)
+	require.Equal(t, "Release fixture", string(bundle.Files[0].Data))
+	require.NoError(t, os.Symlink(filepath.Join(skill, "SKILL.md"), filepath.Join(skill, "alias")))
+	_, err = Import("skill", "release", skill)
+	require.ErrorContains(t, err, "symlink")
+}

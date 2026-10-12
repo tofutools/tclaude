@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -5050,6 +5051,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"global_default": globalProfile,
 	}))
 	if body.NonInteractive {
+		managed, managedErr := managedinstructions.Resolve([]*db.AgentGroup{g})
+		if managedErr != nil {
+			writeError(w, 409, "managed_instructions", managedErr.Error())
+			return
+		}
+		if len(managed) != 0 {
+			writeError(w, 409, "managed_instructions", "one-shot runs with managed instructions are not supported yet; use an ordinary worker")
+			return
+		}
 		p.OneShotName = oneShotName
 		p.RemoteJob, _ = r.Context().Value(federationJobContextKey{}).(*federationJobLaunch)
 		if p.RemoteJob != nil {
@@ -7444,6 +7454,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
+		managedStarted = false // confirmed failed launch relinquishes its overlay
 		importedCleanup()
 		importedCleanup = func() {}
 		privateAttachmentCleanup()

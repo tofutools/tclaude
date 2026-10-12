@@ -94,7 +94,7 @@ func VerifyLaunchRoot(root string) error {
 	}
 	expected["INSTRUCTIONS.md"] = []byte(stored.Body)
 	for path, want := range expected {
-		got, _, e := skillbundle.ReadFile(root, path, int64(db.ManagedInstructionAgentLimit+8<<20))
+		got, _, e := skillbundle.ReadFile(root, path, int64(db.ManagedInstructionAgentLimit+(8<<20)))
 		if e != nil {
 			return e
 		}

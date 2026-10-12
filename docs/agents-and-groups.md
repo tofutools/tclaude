@@ -401,7 +401,8 @@ can change the library; agents can read user items and their own groups' items.
 Managed instructions never automatically install into `~/.claude/skills`,
 `~/.codex`, `~/.agents/skills`, project instruction files or global harness config.
 Each managed agent launch gets a private instruction directory with read-only
-files and a read-only sandbox grant where the sandbox is active. Claude
+files and an explicit sandbox read grant. The tclaude sandbox mounts it read-only;
+harness-native enforcement follows that harness's filesystem policy. Claude
 Code loads its skills as the `tclaude-managed` plugin when the installed CLI
 supports `--plugin-dir`; all harnesses receive skill paths in their startup
 briefing as on-demand instructions. Rules are included in the briefing and
@@ -414,7 +415,9 @@ are additive, deduplicated by content, and never grant permissions. Ambient
 harness instruction files are untouched and are not automatically imported.
 
 Agent transfer of these managed items is a separate addition. Until its companion
-PR lands, exporting or transferring an agent with managed items refuses clearly,
+PR lands, exporting, transferring, cloning or reincarnating an agent with managed
+items refuses clearly,
 so private skill paths cannot silently arrive without their contents. Agents
 without managed items retain the existing export/transfer behavior. Arrived items will remain
-agent-scoped; adoption into a library is outside v1.
+agent-scoped; adoption into a library is outside v1. One-shot runs with managed
+items also refuse explicitly; use an ordinary worker.

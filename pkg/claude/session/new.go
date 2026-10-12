@@ -2228,6 +2228,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	if params.ManagedInstructionsRoot != "" {
+		launchReadDirs = appendUniqueDir(launchReadDirs, params.ManagedInstructionsRoot)
+	}
 	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
 	// gate saw only the authored profile, but the launch contract above adds
@@ -2466,6 +2469,9 @@ func runNew(params *NewParams) error {
 		boundaryInput.HarnessSandboxPath = stackedProof.Executable.Path
 		if stackedProof.RuntimeRoot != "" {
 			boundaryInput.HarnessRuntimeRoots = []string{stackedProof.RuntimeRoot}
+			if params.ManagedInstructionsRoot != "" {
+				boundaryInput.HarnessRuntimeRoots = append(boundaryInput.HarnessRuntimeRoots, params.ManagedInstructionsRoot)
+			}
 			boundaryInput.HarnessRuntimeBindings = append(
 				[]StackedSandboxRuntimeBinding(nil), stackedProof.RuntimeBindings...)
 		}
@@ -3081,6 +3087,9 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	launchContractReadDirs := sandboxLaunchContractReadDirs(effectiveSandbox, append([]string{cwd}, writeDirs...)...)
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	if params.ManagedInstructionsRoot != "" {
+		readDirs = appendUniqueDir(readDirs, params.ManagedInstructionsRoot)
+	}
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
 		// `extends = ":workspace"` still grants the launch directory, but a deny
