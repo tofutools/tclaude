@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// All returns the lexical, absolute skill roots used by Claude Code and Codex
-// CLI. Literal roots are preserved even when one is a symlink to another:
+// All returns the lexical, absolute install roots shared by the supported
+// coding harnesses. Literal roots are preserved even when one is a symlink to another:
 // harness permission matchers authorize the path the agent actually uses.
 func All() ([]string, error) {
 	claude, err := Claude()
@@ -22,6 +22,37 @@ func All() ([]string, error) {
 		return nil, err
 	}
 	return dedupe(append([]string{claude}, codex...)), nil
+}
+
+// ForHarness returns the installed user roots a harness discovers. Gemini and
+// Copilot support ~/.agents/skills; OpenCode also reads ~/.claude/skills unless
+// external skills are disabled. Shell has no skill loader. Unknown harnesses
+// fail explicitly so adding a harness requires deciding its skill support.
+func ForHarness(name string) ([]string, error) {
+	switch name {
+	case "claude":
+		root, err := Claude()
+		if err != nil {
+			return nil, err
+		}
+		return []string{root}, nil
+	case "codex":
+		return Codex()
+	case "gemini", "copilot", "opencode":
+		home, err := homeDirectory()
+		if err != nil {
+			return nil, err
+		}
+		roots := []string{filepath.Join(home, ".agents", "skills")}
+		if name == "opencode" {
+			roots = append(roots, filepath.Join(home, ".claude", "skills"))
+		}
+		return roots, nil
+	case "shell":
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("skill discovery is not declared for harness %q", name)
+	}
 }
 
 // Claude returns Claude Code's user-scope skill root.

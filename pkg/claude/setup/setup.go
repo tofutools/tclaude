@@ -70,8 +70,8 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
-	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) skills for configured credential proxies into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Idempotent; overwrites existing if present."`
+	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) skills for configured credential proxies for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Not included by --install-all."`
 	InstallUtilitySkills     bool `long:"install-utility-skills" help:"Also install (or refresh) optional utility skills (e.g. demo-recording: record and send a demo video of a feature built end to end) into Claude Code and Codex CLI user skill directories. Not included by --install-all."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandboxing.md. Append-only and idempotent; never removes or overwrites existing values."`
@@ -702,7 +702,7 @@ func installAgentSkills() error {
 		return fmt.Errorf("install Codex CLI agent skills: %w", err)
 	}
 	for _, s := range codexInstalled {
-		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
+		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
 	}
 	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
 	return nil
@@ -723,7 +723,7 @@ func installUtilitySkills() error {
 		return fmt.Errorf("install Codex CLI utility skills: %w", err)
 	}
 	for _, s := range codexInstalled {
-		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
+		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
 	}
 	return nil
 }
@@ -765,7 +765,7 @@ func installProxySkills() error {
 		return fmt.Errorf("install Codex CLI proxy skills: %w", err)
 	}
 	for _, s := range codexInstalled {
-		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
+		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
 	}
 	return nil
 }
