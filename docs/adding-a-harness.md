@@ -490,8 +490,7 @@ The codebase predates the seam, so many internal identifiers still carry a
 `Claude`/`claude`/`TCLAUDE_` prefix (`buildClaudeCmd`, `FindClaudePID`, the
 `TCLAUDE_SESSION_ID` env var) even though the code behind them is
 harness-agnostic. These names are historical, not Claude-Code-specific — they
-operate on whatever harness a conversation records (see
-[History](history.md)). A mass rename is high-churn and low-value; if you hit
+operate on whatever harness a conversation records. A mass rename is high-churn and low-value; if you hit
 a clean, contained rewrite point where renaming one falls out naturally, do
 it there, and keep a broad rename in its own focused PR.
 
