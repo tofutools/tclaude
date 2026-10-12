@@ -13,9 +13,10 @@ import (
 
 // TestLearnDocsCommandsResolve keeps the Learn tutorials honest: every
 // `tclaude …` command in a fenced bash block under docs/learn/ must name a
-// real subcommand, only real flags, and an accepted number of arguments. Nothing is executed — each line is
-// resolved against the live Cobra tree — so a renamed command or flag fails
-// here instead of in a new user's terminal.
+// real subcommand, only real flags, and an accepted number of arguments.
+// Nothing is executed — each line is resolved against the live Cobra tree —
+// so a renamed command or flag fails here instead of in a new user's
+// terminal.
 func TestLearnDocsCommandsResolve(t *testing.T) {
 	pages, err := filepath.Glob(filepath.Join("..", "..", "docs", "learn", "*.md"))
 	if err != nil || len(pages) == 0 {
