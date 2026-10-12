@@ -633,10 +633,14 @@ How tclaude publishes:
   than you.
 - Credentials the scan flags are masked. If the scan still finds any in the
   redacted copy, nothing is published.
-- Identity goes in two steps: the identifying fields are cleared, and the
-  ids and the instance name are also replaced with `[REDACTED:identity]`
-  wherever they appear in text, such as an agent name derived from its
-  conversation id. The source must hold exactly one agent.
+- Identity goes in two steps. First the identifying fields are cleared: the
+  agent's name becomes `agent` (tclaude names an agent after its
+  conversation's title) and so does its key in entry paths; ids and titles,
+  the instance, groups, lineage sources, the task (`definition.task`) and
+  the workspace repository, branch, commit and worktree go. Then the ids,
+  the original name and titles, the instance name and the group names are
+  replaced with `[REDACTED:identity]` wherever they appear in text. The
+  source must hold exactly one agent.
 - Optional extra redactions: `--stub-tool-results` (with `--keep-turns`),
   `--drop-media` and `--drop-reasoning`.
 - The publisher key is created on first use under
@@ -646,7 +650,8 @@ How tclaude publishes:
   each other but not to your node. Delete the file to start a new
   pseudonym.
 - What is not removed: the conversation text itself, apart from the
-  credentials, paths and ids above. Names, hostnames, URLs, customer details
+  credentials, paths, ids and names above. Ids of other agents and nodes
+  mentioned in it stay. Names, hostnames, URLs, customer details
   or anything else you discussed are published as written. Read the
   redacted copy with `tclaude paf render` before you share it.
 

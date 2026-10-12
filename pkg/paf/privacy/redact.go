@@ -230,7 +230,7 @@ func (r *redactor) report() *RedactReport {
 	}
 	rep.Placeholders = names
 	add(RedactPaths, r.counts[RedactPaths], strings.Join(names, ", "))
-	add(RedactStripIdentity, r.counts[RedactStripIdentity], "agent, instance and conversation ids and titles, groups, media paths")
+	add(RedactStripIdentity, r.counts[RedactStripIdentity], "agent name, agent, instance and conversation ids and titles, groups, repository and task, media paths")
 	var dropped []string
 	for d := range r.dropped {
 		dropped = append(dropped, d)
@@ -313,12 +313,22 @@ func identifiers(a *paf.Archive) []string {
 			continue
 		}
 		add(ag.ID)
+		add(ag.Title)
+		// The name is usually the conversation title; a name that is
+		// just the role stays readable in the text.
+		if ag.Name != ag.Definition.Role {
+			add(ag.Name)
+		}
+		for _, g := range ag.Groups {
+			add(g.Name)
+		}
 		if ag.Instance != nil {
 			add(ag.Instance.ID)
 			add(ag.Instance.Name)
 		}
 		if ag.Conversation != nil {
 			add(ag.Conversation.ID)
+			add(ag.Conversation.Title)
 		}
 		for _, l := range ag.Lineage {
 			if l.From != nil {
@@ -337,6 +347,7 @@ func identifiers(a *paf.Archive) []string {
 			if cr, closer, err := a.Context(key, scope); err == nil {
 				if cr.Header.Source != nil {
 					add(cr.Header.Source.ConvID)
+					add(cr.Header.Source.Title)
 				}
 				_ = closer.Close()
 			}
@@ -548,7 +559,7 @@ func (r *redactor) file(e paf.Entry) error {
 			out.Write(b)
 			out.WriteByte('\n')
 		}
-		return r.writeFile(e.Path, e.MediaType, out.Bytes())
+		return r.writeFile(r.outPath(e.Path), e.MediaType, out.Bytes())
 	case strings.HasSuffix(e.Path, ".json") || e.MediaType == "application/json":
 		v, err := decodeJSON(data)
 		if err != nil {
@@ -559,9 +570,9 @@ func (r *redactor) file(e paf.Entry) error {
 		if err != nil {
 			return err
 		}
-		return r.writeFile(e.Path, e.MediaType, b)
+		return r.writeFile(r.outPath(e.Path), e.MediaType, b)
 	case looksText(data):
-		return r.writeFile(e.Path, e.MediaType, []byte(r.text(string(data), false)))
+		return r.writeFile(r.outPath(e.Path), e.MediaType, []byte(r.text(string(data), false)))
 	}
 	r.drop(e.Path)
 	return nil
@@ -591,15 +602,15 @@ func (r *redactor) agent(key string) error {
 	if err := r.doc(src, &ag); err != nil {
 		return err
 	}
-	if r.opts.StripIdentity {
-		r.stripAgent(&ag)
-	}
 	var env paf.Environment
 	if err := r.doc(srcEnv, &env); err != nil {
 		return err
 	}
+	if r.opts.StripIdentity {
+		r.stripAgent(&ag, &env)
+	}
 	r.placeholders(&env)
-	if err := r.w.AddAgent(key, ag, env); err != nil {
+	if err := r.w.AddAgent(r.outKey(key), ag, env); err != nil {
 		return err
 	}
 	r.scanAgentJSON(key, ag, env)
@@ -656,8 +667,35 @@ func (r *redactor) agent(key string) error {
 	return nil
 }
 
-// stripAgent removes the agent's identifying fields.
-func (r *redactor) stripAgent(ag *paf.Agent) {
+// strippedName is the agent's name and key in a PAF with its identity
+// stripped: tclaude names an agent after its conversation title.
+const strippedName = "agent"
+
+// outKey is the agent key an agent is written under.
+func (r *redactor) outKey(key string) string {
+	if r.opts.StripIdentity {
+		return strippedName
+	}
+	return key
+}
+
+// outPath maps an agent entry's path to its output agent key.
+func (r *redactor) outPath(path string) string {
+	if !r.opts.StripIdentity {
+		return path
+	}
+	for _, key := range r.a.Manifest.Agents {
+		if rest, ok := strings.CutPrefix(path, paf.AgentPath(key, "")); ok {
+			return paf.AgentPath(strippedName, rest)
+		}
+	}
+	return path
+}
+
+// stripAgent removes the agent's identifying fields: its ids, its name and
+// titles (tclaude names an agent after its conversation's title), its
+// node, groups, lineage sources, and the repository and task it worked on.
+func (r *redactor) stripAgent(ag *paf.Agent, env *paf.Environment) {
 	n := 0
 	blank := func(s *string) {
 		if *s != "" {
@@ -667,6 +705,20 @@ func (r *redactor) stripAgent(ag *paf.Agent) {
 	}
 	blank(&ag.ID)
 	blank(&ag.Title)
+	if ag.Name != strippedName {
+		ag.Name = strippedName
+		n++
+	}
+	if ag.Definition.Task != nil {
+		ag.Definition.Task = nil
+		n++
+	}
+	if ws := env.Workspace; ws != nil {
+		blank(&ws.RepoURL)
+		blank(&ws.Branch)
+		blank(&ws.Commit)
+		blank(&ws.Worktree)
+	}
 	if ag.Instance != nil {
 		ag.Instance = nil
 		n++
@@ -693,10 +745,10 @@ func (r *redactor) stripAgent(ag *paf.Agent) {
 
 func (r *redactor) scanAgentJSON(key string, ag paf.Agent, env paf.Environment) {
 	if raw, err := json.Marshal(ag); err == nil {
-		r.scan.JSON(raw, paf.AgentPath(key, "agent.json"))
+		r.scan.JSON(raw, paf.AgentPath(r.outKey(key), "agent.json"))
 	}
 	if raw, err := json.Marshal(env); err == nil {
-		r.scan.JSON(raw, paf.AgentPath(key, "environment.json"))
+		r.scan.JSON(raw, paf.AgentPath(r.outKey(key), "environment.json"))
 	}
 }
 
@@ -757,7 +809,7 @@ func (r *redactor) losses(key string, src *paf.Losses) error {
 			l.Items = append(l.Items, paf.LossItem{Kind: LossRedacted, Severity: k.severity, Count: n, Detail: k.kind})
 		}
 	}
-	return r.writeJSON(paf.AgentPath(key, "context/losses.json"), l)
+	return r.writeJSON(paf.AgentPath(r.outKey(key), "context/losses.json"), l)
 }
 
 // --- context ---
@@ -832,7 +884,7 @@ func (r *redactor) context(a *paf.Archive, key, scope string) error {
 	if scope == paf.ScopeFull {
 		name = "full.jsonl"
 	}
-	return r.writeFile(paf.AgentPath(key, "context/"+name), "application/jsonl", buf.Bytes())
+	return r.writeFile(paf.AgentPath(r.outKey(key), "context/"+name), "application/jsonl", buf.Bytes())
 }
 
 // entry redacts one entry line in place and reports whether it still has

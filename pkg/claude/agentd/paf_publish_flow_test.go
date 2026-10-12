@@ -89,7 +89,10 @@ func TestPAFPublishFlow(t *testing.T) {
 	require.Len(t, pr.Consent, 1)
 	assert.Equal(t, privacy.AudiencePublic, pr.Consent[0].Audience)
 	assert.Equal(t, preview.Summary.Digest, pr.Consent[0].ContentDigest)
+	assert.Equal(t, []string{"agent"}, a.Manifest.Agents, "the agent is not keyed by its conversation title")
+	assert.Equal(t, "agent", ag.Name)
 	for _, e := range a.Manifest.Entries {
+		assert.NotContains(t, e.Path, source)
 		raw, err := a.ReadEntry(e.Path, 1<<20)
 		require.NoError(t, err)
 		assert.NotContains(t, string(raw), source, "%s names the source conversation", e.Path)
