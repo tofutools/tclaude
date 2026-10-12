@@ -69,3 +69,10 @@ nav:
   - Reference:
       - Utilities: utilities.md
       - Adding a harness: adding-a-harness.md
+
+# `mkdocs build --strict` (docs-check workflow) fails on any of these.
+validation:
+  omitted_files: info
+  absolute_links: info
+  unrecognized_links: warn
+  anchors: warn

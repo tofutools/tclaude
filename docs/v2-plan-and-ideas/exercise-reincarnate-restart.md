@@ -18,7 +18,7 @@ Two operations were traced:
 ## Reincarnate: side by side
 
 Entry: `runReincarnationOrchestration` in
-[reincarnate.go](../../pkg/claude/agentd/reincarnate.go). One function serves
+[reincarnate.go](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/reincarnate.go). One function serves
 every harness and branches on `launchEnroll :=
 successorHarness.SupportsLaunchEnrollment()` plus a few `harness.CodexName`
 checks.
@@ -52,7 +52,7 @@ checks.
 ## Restart: the control case
 
 Entry: `dashboardRestartAgent` in
-[agent_restart.go](../../pkg/claude/agentd/agent_restart.go).
+[agent_restart.go](https://github.com/tofutools/tclaude/blob/main/pkg/claude/agentd/agent_restart.go).
 
 1. Resolve agent, launch lock, current-generation check, idle preflight.
 2. Durable relaunch config must resolve before anything is stopped.

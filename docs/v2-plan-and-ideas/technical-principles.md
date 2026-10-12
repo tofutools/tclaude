@@ -16,9 +16,9 @@ concepts, and interfaces where behavior varies**.
 | Inheritance | Go has no class inheritance; existing harness differences do not require an Agent subclass hierarchy. |
 | Entity-component-system (ECS) | The inspected main structures are ordinary Go and SQLite records, not evidence of a general ECS architecture. |
 
-Examples: [agent records](../../pkg/claude/common/db/agents.go),
-[session records](../../pkg/claude/common/db/sessions.go), and
-[harness interfaces](../../pkg/claude/harness/harness.go).
+Examples: [agent records](https://github.com/tofutools/tclaude/blob/main/pkg/claude/common/db/agents.go),
+[session records](https://github.com/tofutools/tclaude/blob/main/pkg/claude/common/db/sessions.go), and
+[harness interfaces](https://github.com/tofutools/tclaude/blob/main/pkg/claude/harness/harness.go).
 
 ## Future (proposed)
 

@@ -1,0 +1,35 @@
+name: Docs check
+
+# Build the docs site in strict mode on PRs that touch it, so a broken link
+# or anchor fails before merge. Deploy (docs.yml) builds the same site from main.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mkdocs-strict:
+    name: mkdocs --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install mkdocs-material
+        run: pip install mkdocs-material
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict
