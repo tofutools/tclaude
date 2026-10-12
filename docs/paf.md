@@ -861,7 +861,12 @@ tclaude paf decrypt reviewer.paf.age -o reviewer.paf
 - **`decrypt`** decrypts with this node's identity and verifies the result.
   A file this node is not a recipient of is refused.
 - `validate`, `inspect`, `render` and `redact` read an encrypted PAF
-  addressed to this node directly. Decrypt a file before importing it.
+  addressed to this node directly. Decrypt a file before importing it. Their
+  output (a rendered document, a redacted PAF) is plaintext; encrypt a
+  redacted copy again before it leaves the node.
+- `--to` names a trusted peer by instance id or the label you gave it, never
+  by the name the peer advertises, so a peer cannot claim a name meant for
+  another.
 
 ## Extensions
 

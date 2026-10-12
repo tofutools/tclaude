@@ -73,21 +73,23 @@ func runEncrypt(stdout io.Writer, p *encryptParams) error {
 		}
 		recipients = append(recipients, r)
 	}
-	// Only a valid PAF is encrypted: the recipient must be able to read it.
-	o, err := legacy.OpenFile(p.File, "", producer(), paf.Options{Purpose: paf.PurposeInspect})
-	if err != nil {
-		return err
-	}
-	_ = o.Close()
-	if o.Source != paf.Format {
-		return fmt.Errorf("%s is a %s, not a PAF; export it as a PAF first", p.File, o.Source)
-	}
 	in, err := os.Open(p.File)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	if err := writeAtomic(p.File, p.Out, func(w io.Writer) error { return seal.Encrypt(w, in, recipients...) }); err != nil {
+	// Only a valid PAF is encrypted, the bytes validated are the bytes
+	// encrypted: both read the same descriptor.
+	st, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if _, err := paf.Open(in, st.Size(), paf.Options{Purpose: paf.PurposeInspect}); err != nil {
+		return fmt.Errorf("%s is not a valid PAF (export it as a PAF first): %w", p.File, err)
+	}
+	if err := writeAtomic(p.File, p.Out, func(w io.Writer) error {
+		return seal.Encrypt(w, io.NewSectionReader(in, 0, st.Size()), recipients...)
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "wrote %s for %d recipient(s) including this node\n", termSafe(p.Out), len(recipients))
@@ -95,28 +97,38 @@ func runEncrypt(stdout io.Writer, p *encryptParams) error {
 }
 
 // resolveRecipient maps --to to an age recipient: an age1… recipient as
-// is, or a trusted federation peer by instance id, name or label.
+// is, or a trusted federation peer by exact instance id or operator-set
+// label, else by an instance id prefix of at least 8 characters. The
+// hub-reported name is never used: the peer or hub chooses it, so it must
+// not be able to capture a PAF meant for another peer (the rule message
+// addressing uses).
 func resolveRecipient(to string) (string, error) {
+	to = strings.TrimSpace(to)
 	if strings.HasPrefix(to, "age1") {
 		return to, nil
 	}
 	var peers []db.FederationPeer
 	if _, err := os.Stat(db.DBPath()); err == nil {
-		peers, _ = db.ListFederationPeers()
-	}
-	var match []db.FederationPeer
-	for _, p := range peers {
-		if p.InstanceID == to || p.Name == to || p.Label == to {
-			match = append(match, p)
+		if peers, err = db.ListFederationPeers(); err != nil {
+			return "", fmt.Errorf("read trusted peers: %w", err)
 		}
 	}
-	switch len(match) {
-	case 0:
-		return "", fmt.Errorf("no trusted federation peer %q; name a peer by instance id, name or label, or give an age1… recipient", to)
-	case 1:
-		return seal.Recipient(ed25519.PublicKey(match[0].PubKey))
+	var hits []db.FederationPeer
+	for _, p := range peers {
+		switch {
+		case p.InstanceID == to, p.Label != "" && p.Label == to:
+			return seal.Recipient(ed25519.PublicKey(p.PubKey))
+		case len(to) >= 8 && (strings.HasPrefix(p.InstanceID, to) || strings.HasPrefix(p.InstanceID, proto.InstanceIDPrefix+to)):
+			hits = append(hits, p)
+		}
 	}
-	return "", fmt.Errorf("%q names %d peers; use the instance id", to, len(match))
+	switch len(hits) {
+	case 0:
+		return "", fmt.Errorf("no trusted federation peer %q; name a peer by instance id or label, or give an age1… recipient", to)
+	case 1:
+		return seal.Recipient(ed25519.PublicKey(hits[0].PubKey))
+	}
+	return "", fmt.Errorf("%q matches %d trusted peers; use the label or instance id", to, len(hits))
 }
 
 type decryptParams struct {
@@ -154,14 +166,21 @@ func runDecrypt(stdout io.Writer, p *decryptParams) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(p.File, p.Out, func(w io.Writer) error { _, err := io.Copy(w, r); return err }); err != nil {
+	// The plaintext is verified before it is renamed into place, so a
+	// failure leaves nothing at --out.
+	if err := writeAtomic(p.File, p.Out, func(w io.Writer) error {
+		f := w.(*os.File)
+		n, err := io.Copy(f, r)
+		if err != nil {
+			return err
+		}
+		if _, err := paf.Open(f, n, paf.Options{Purpose: paf.PurposeInspect}); err != nil {
+			return fmt.Errorf("decrypted, but the result is not a valid PAF: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
-	o, err := legacy.OpenFile(p.Out, "", producer(), paf.Options{Purpose: paf.PurposeInspect})
-	if err != nil {
-		return fmt.Errorf("decrypted, but the result is not a valid PAF: %w", err)
-	}
-	_ = o.Close()
 	fmt.Fprintf(stdout, "wrote %s\n", termSafe(p.Out))
 	return nil
 }

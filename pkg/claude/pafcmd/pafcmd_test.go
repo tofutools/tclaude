@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
@@ -373,4 +374,24 @@ func TestEncryptReadAndDecrypt(t *testing.T) {
 	require.NoError(t, os.Remove(identityPath()))
 	require.NoError(t, proto.SaveIdentity(identityPath(), stranger))
 	assert.ErrorIs(t, runDecrypt(&out, &decryptParams{File: enc, Out: filepath.Join(dir, "x.paf")}), seal.ErrNotRecipient)
+}
+
+func TestEncryptRecipientIgnoresAdvertisedNames(t *testing.T) {
+	isolate(t)
+	a, err := proto.NewIdentity()
+	require.NoError(t, err)
+	b, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: a.ID(), PubKey: a.Pub, Label: "lab"}))
+	// b advertises a's label as its name; it must not capture the address.
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: b.ID(), PubKey: b.Pub, Name: "lab"}))
+	want, err := seal.Recipient(a.Pub)
+	require.NoError(t, err)
+	for _, to := range []string{"lab", a.ID()} {
+		got, err := resolveRecipient(to)
+		require.NoError(t, err, to)
+		assert.Equal(t, want, got, to)
+	}
+	_, err = resolveRecipient("nobody")
+	assert.Error(t, err)
 }
