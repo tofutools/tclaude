@@ -5,8 +5,9 @@ tutorial you start the tclaude daemon, put two agents in a group, and watch
 them message each other. That is the foundation for everything else tclaude
 does with teams: groups, mail, the dashboard, and permissions.
 
-**You need:** [Your first session](first-session.md) completed, and a project
-directory to experiment in.
+**You need:** [Your first session](first-session.md) completed. Use the same
+project directory as there: your harness has already asked you to trust it,
+and agents spawned in the background cannot answer that question.
 
 ## 1. Install the agent extras
 
@@ -82,6 +83,10 @@ tclaude agent spawn hello --name alice \
 ```
 
 Each agent starts in the current directory, using your default harness.
+If an agent sits still and never starts working, it is probably waiting on
+the harness's "trust this folder?" prompt: attach to it (step 6) and accept
+it, or spawn again with `--trust-dir`.
+
 Teams can mix harnesses: add `--harness codex` (or `opencode`, `copilot`,
 `gemini`) to either spawn.
 
@@ -99,7 +104,8 @@ From the terminal you can see the same:
 
 ```bash
 tclaude agent groups members hello
-tclaude agent inbox ls --target alice
+tclaude agent inbox ls --target alice    # bob's reply
+tclaude agent inbox ls --target bob      # alice's question
 ```
 
 To see an agent's own terminal, attach to its session. `tclaude session
@@ -113,13 +119,13 @@ usual.
 
 ## 7. Send an agent a message yourself
 
-You can mail any agent:
+You can mail any agent from the dashboard. Use the **+ message** button in
+the **Messages** tab, pick `alice`, and write:
 
-```bash
-tclaude agent message alice "Thanks! Now ask bob where the tests live."
-```
+> Thanks! Now ask bob where the tests live.
 
-The message lands in alice's inbox and pops into her terminal. She answers in
+(`tclaude agent message` is the agents' own command; it does not work from
+your shell.) The message lands in alice's inbox and pops into her terminal. She answers in
 her terminal, not by mail: agents can't reply to the operator's mail directly.
 Mail to you goes through `notify-human`, a permission-gated channel covered
 in the reference.
