@@ -34,6 +34,10 @@ MIT-licensed; the models are the only external part.
   bubblewrap, Seatbelt or the harness's own sandbox.
 - **Automation**: scheduled nudges, workflows, credential proxies, and
   shell-native `tclaude ask`.
+- **Across machines**: link nodes through a self-hosted
+  [hub](https://tofutools.github.io/tclaude/federation/); move, teleport or
+  snapshot agents, and resume them on another harness or model with the
+  [Portable Agent Format](https://tofutools.github.io/tclaude/paf/).
 
 Harnesses don't all expose the same primitives; tclaude says so instead of
 pretending. See the
