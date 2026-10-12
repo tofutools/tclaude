@@ -36,6 +36,8 @@ const SpawnDirWriteProofPrefix = ".tclaude-write-proof-"
 //     (handleGroupSpawn / the `agent spawn` CLI); the forked `tclaude session
 //     new` re-validates.
 type SpawnArgs struct {
+	ManagedInstructionsRoot string
+
 	// EffectiveSandbox is the frozen additive capability payload. Production
 	// serializes it to a private one-shot file before forking session new.
 	EffectiveSandbox *sandboxpolicy.Snapshot

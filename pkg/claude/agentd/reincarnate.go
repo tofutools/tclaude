@@ -342,6 +342,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	launchLock := resumeLaunchLock(target)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	if err := refuseManagedContinuation(target); err != nil {
+		writeError(w, http.StatusConflict, "managed_instructions", err.Error())
+		return
+	}
+
 	actor, actorErr := db.GetAgentByConv(target)
 	if actorErr != nil {
 		writeError(w, http.StatusInternalServerError, "io", "resolve target agent: "+actorErr.Error())

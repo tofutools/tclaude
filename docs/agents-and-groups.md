@@ -376,3 +376,48 @@ Agents learn this command surface from bundled skills: `tclaude setup
 --install-agent-skills` installs the `agent-coord`, `agent-lifecycle`,
 `human-notify`, and related skills into each harness's skill directory.
 Re-run it after upgrading the binary.
+
+## Managed skills and rules
+
+Operators can keep instructions in a tclaude-managed group or user library:
+
+```bash
+tclaude skills import release --group builders --path ./release-skill
+tclaude rules add conventions --user --path ./rules.md
+tclaude skills ls --group builders
+tclaude skills show release --group builders
+tclaude skills show release --group builders --path scripts/check.sh
+tclaude rules show conventions --user
+tclaude rules rm conventions --user
+```
+
+`add` and `import` both read an explicitly supplied directory (skills) or UTF-8
+file (rules). Existing names require `--overwrite`. A skill directory must contain
+SKILL.md and can include supporting files; symlinks, special files and suspected
+credentials are refused. Limits are 1 MiB per stored item and 16 MiB per agent's
+effective set. Library changes apply at the next launch or resume. Only the human
+can change the library; agents can read user items and their own groups' items.
+
+Managed instructions never automatically install into `~/.claude/skills`,
+`~/.codex`, `~/.agents/skills`, project instruction files or global harness config.
+Each managed agent launch gets a private instruction directory with read-only
+files and an explicit sandbox read grant. The tclaude sandbox mounts it read-only;
+harness-native enforcement follows that harness's filesystem policy. Claude
+Code loads its skills as the `tclaude-managed` plugin when the installed CLI
+supports `--plugin-dir`; all harnesses receive skill paths in their startup
+briefing as on-demand instructions. Rules are included in the briefing and
+re-applied after compaction or clear. The launch snapshot stays frozen even when
+the library changes. Group context opt-outs do not remove managed operator rules.
+
+Group skills override same-named user skills. Different versions of the same
+skill in multiple groups refuse launch and name the conflicting groups. Rules
+are additive, deduplicated by content, and never grant permissions. Ambient
+harness instruction files are untouched and are not automatically imported.
+
+Agent transfer of these managed items is a separate addition. Until its companion
+PR lands, exporting, transferring, cloning or reincarnating an agent with managed
+items refuses clearly,
+so private skill paths cannot silently arrive without their contents. Agents
+without managed items retain the existing export/transfer behavior. Arrived items will remain
+agent-scoped; adoption into a library is outside v1. One-shot runs with managed
+items also refuse explicitly; use an ordinary worker.

@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -34,6 +35,7 @@ import (
 )
 
 type NewParams struct {
+	ManagedInstructionsRoot string `long:"managed-instructions-root" optional:"true" help:"Internal: registered managed instruction launch directory"`
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
 	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
@@ -1095,6 +1097,14 @@ func runNew(params *NewParams) error {
 		return JoinGroupHandler(params)
 	}
 	extraArgs := clcommon.ExtractClaudeExtraArgs()
+	if params.ManagedInstructionsRoot != "" {
+		if err := managedinstructions.VerifyLaunchRoot(params.ManagedInstructionsRoot); err != nil {
+			return fmt.Errorf("managed instructions: %w", err)
+		}
+		if h.Name == harness.DefaultName && managedinstructions.HasNativeSkills(params.ManagedInstructionsRoot) && managedinstructions.ClaudeNativeAvailable() {
+			extraArgs = append(extraArgs, "--plugin-dir", params.ManagedInstructionsRoot)
+		}
+	}
 
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
@@ -2120,6 +2130,9 @@ func runNew(params *NewParams) error {
 	executablePath := ""
 	executableInterpreter := ""
 	var harnessReadPaths []string
+	if params.ManagedInstructionsRoot != "" {
+		harnessReadPaths = append(harnessReadPaths, params.ManagedInstructionsRoot)
+	}
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
 	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {
@@ -2201,6 +2214,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	if params.ManagedInstructionsRoot != "" {
+		launchReadDirs = appendUniqueDir(launchReadDirs, params.ManagedInstructionsRoot)
+	}
 	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
 	// gate saw only the authored profile, but the launch contract above adds
@@ -2439,6 +2455,9 @@ func runNew(params *NewParams) error {
 		boundaryInput.HarnessSandboxPath = stackedProof.Executable.Path
 		if stackedProof.RuntimeRoot != "" {
 			boundaryInput.HarnessRuntimeRoots = []string{stackedProof.RuntimeRoot}
+			if params.ManagedInstructionsRoot != "" {
+				boundaryInput.HarnessRuntimeRoots = append(boundaryInput.HarnessRuntimeRoots, params.ManagedInstructionsRoot)
+			}
 			boundaryInput.HarnessRuntimeBindings = append(
 				[]StackedSandboxRuntimeBinding(nil), stackedProof.RuntimeBindings...)
 		}
@@ -3054,6 +3073,9 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	launchContractReadDirs := sandboxLaunchContractReadDirs(effectiveSandbox, append([]string{cwd}, writeDirs...)...)
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	if params.ManagedInstructionsRoot != "" {
+		readDirs = appendUniqueDir(readDirs, params.ManagedInstructionsRoot)
+	}
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
 		// `extends = ":workspace"` still grants the launch directory, but a deny

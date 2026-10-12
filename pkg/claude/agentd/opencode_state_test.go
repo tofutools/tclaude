@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
@@ -848,4 +849,23 @@ func TestOpenCodeRuntimeSandboxSpecSurfacesAStrandedControlAuthority(t *testing.
 	// outside an authority that had never been computed.
 	require.NotContains(t, err.Error(),
 		"control path is outside its allocated agent authority")
+}
+
+func TestManagedInstructionsOpenCodeServerReadGrant(t *testing.T) {
+	setupTestDB(t)
+	agentID := "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	_, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	resources := []db.ManagedInstruction{{Kind: "rule", Name: "operator", Content: []byte("SERVER RULE")}}
+	launch, err := managedinstructions.Materialize(resources)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(launch.Root) })
+	raw, err := json.Marshal(resources)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: agentID, Root: launch.Root, Body: launch.Body, Resources: string(raw)}))
+	cwd := filepath.Join(os.Getenv("HOME"), "workspace")
+	require.NoError(t, os.MkdirAll(cwd, 0700))
+	spec, err := openCodeTclaudeLayerLaunchSpec("tclaude-layer", cwd, nil, nil, agentID)
+	require.NoError(t, err)
+	require.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{Path: launch.Root, Access: sandboxpolicy.AccessRead})
 }
