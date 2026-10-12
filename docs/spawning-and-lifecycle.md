@@ -1,5 +1,9 @@
 # Spawning and lifecycle
 
+!!! tip "New to tclaude?"
+    The tutorial [Your first agent team](learn/first-team.md) walks through a first group step by step.
+
+
 Agents create other agents, and someone has to keep that safe. This page
 covers `tclaude agent spawn`, the seven guardrails that bound what a
 spawning agent can create, the profile and role libraries that make spawns

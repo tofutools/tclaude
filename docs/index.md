@@ -221,26 +221,11 @@ capture safety, and how the harness is chosen.
 
 ## Operate a fleet
 
-Solo sessions work without the daemon. For anything multi-agent — groups,
-messaging, spawning, permissions, the dashboard — keep `agentd` running in a
-non-sandboxed terminal:
-
-```bash
-tclaude agentd serve      # or the standalone tclaude-agentd binary
-```
-
-Then open the dashboard:
-
-```bash
-tclaude agent dashboard
-```
-
-From the dashboard or `tclaude agent`, you create allow-listed groups, spawn
-agents into them, message peers, manage lifecycle and permissions, and deploy
-whole teams from templates. Groups freely mix agents from all five harnesses.
-Start with [Agents and groups](agents-and-groups.md), then
-[Spawning and lifecycle](spawning-and-lifecycle.md) and the
-[Dashboard](dashboard.md).
+Solo sessions work without the daemon. For anything multi-agent (groups,
+messaging, spawning, permissions, the dashboard), run `tclaude agentd serve`
+in a non-sandboxed terminal. The tutorial
+[Your first agent team](learn/first-team.md) walks through it step by step.
+The reference starts at [Agents and groups](agents-and-groups.md).
 
 Use `tclaude <command> --help` for the live flag reference; these guides
 focus on workflows and the behavior that is easy to miss from help text.
