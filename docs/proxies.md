@@ -400,6 +400,8 @@ The harness checked is the one the spawn would actually use: the process's
 issue metadata `agent.harness`, then the process's `harness`, or whatever its `profile`, the group default profile, or the global
 default profile resolves to. OpenCode runs against the operator's own provider
 keys and has no account-wide window to read, so its processes are never held.
+Gemini session logs do not provide captured account-quota windows either, so
+Gemini processes are not held by this gate; check the CLI’s `/model` quota display.
 
 A process can name several harnesses instead of one, as an ordered fallback
 chain:

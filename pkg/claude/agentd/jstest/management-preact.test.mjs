@@ -3227,7 +3227,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [{ path: '/work', access: 'write' }], environment: [], includes: [], agent_directories: [] }, options: {} });
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
-    async loadCommonRuleCatalog() { return { ...COMMON_RULES, global_config_warnings: ['Claude settings could not be parsed.'] }; },
+    async loadCommonRuleCatalog() { return { ...COMMON_RULES, global_config_warnings: ['Claude settings could not be parsed.'], global_harness_notes: { gemini: 'Gemini has no native global path rules; use tclaude-layer.' } }; },
     async saveSandbox(value) { saved = value; },
   });
   await waitForCondition(harness,
@@ -3235,6 +3235,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
     'the editor should render the inherited-context toggle');
 
   const toggle = host.querySelector('#sandbox-profile-editor-show-global-filesystem');
+  assert.ok(!host.textContent.includes('Gemini has no native global path rules'), 'global notes start folded with the rows');
   // LinkeDOM does not implement HTMLInputElement.checked, so use the
   // state-aware selector rather than asserting only that an attribute exists.
   assert.equal(toggle.matches(':checked'), false, 'inherited context starts folded');
@@ -3247,6 +3248,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   toggle.checked = true;
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
+  assert.ok(host.textContent.includes('Gemini has no native global path rules; use tclaude-layer.'));
   const filter = host.querySelector('#sandbox-profile-editor-global-harness-filter');
   assert.equal(filter.querySelector('option:checked').value, 'both');
   const selectedDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(filter.querySelector('option')), 'selected');
@@ -4974,4 +4976,19 @@ test('scribe browser handoffs dismiss the manager so the terminal tab is visible
   state.openTemplateManager();
   await actions.editTemplatesWithAgent();
   assert.equal(state.templateManager.value, true, 'failed handoff keeps the manager available');
+});
+
+test('sandbox evaluation targets follow the daemon catalog including new harnesses', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const catalog = ['gemini', 'copilot', 'future-harness'].map((name) => ({ name, display_name: name, can_tclaude_layer: true }));
+  state.openDialog({ kind: 'sandbox-editor', catalog, seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+  const values = [...host.querySelector('#sandbox-profile-editor-evaluate-harness').options].map((option) => option.value);
+  assert.deepEqual(values, ['', ...catalog.map((entry) => entry.name)]);
+  unmount();
 });

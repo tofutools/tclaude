@@ -50,9 +50,11 @@ function UsageToken({ token }) {
 
 function Usage({ state }) {
   const prefKey = (provider) => `tclaude.dash.headerUsageMode.${provider}`;
-  const [modes, setModes] = useState(() => Object.fromEntries(['claude', 'codex', 'copilot']
-    .map((provider) => [provider, dashPrefs.getItem(prefKey(provider)) || 'usage'])));
-  const view = usageView(state.snapshot.value?.usage, modes);
+  const [modes, setModes] = useState({});
+  const usage = state.snapshot.value?.usage;
+  const savedModes = Object.fromEntries((usageView(usage).lines || [])
+    .map((line) => [line.key, dashPrefs.getItem(prefKey(line.key)) || 'usage']));
+  const view = usageView(usage, { ...savedModes, ...modes });
   const setMode = (provider, mode) => {
     setModes((current) => ({ ...current, [provider]: mode }));
     dashPrefs.setItem(prefKey(provider), mode);

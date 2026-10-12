@@ -1,6 +1,6 @@
 site_name: tclaude
 site_url: https://tofutools.github.io/tclaude/
-site_description: A self-hosted agentic dev environment — sessions, fleet operations, permissions, and sandboxing for Claude Code, Codex CLI, OpenCode, and Copilot CLI
+site_description: A self-hosted agentic dev environment — sessions, fleet operations, permissions, and sandboxing for Claude Code, Codex CLI, OpenCode, Copilot CLI, and Gemini CLI
 repo_url: https://github.com/tofutools/tclaude
 repo_name: tofutools/tclaude
 
