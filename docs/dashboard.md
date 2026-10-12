@@ -153,8 +153,10 @@ preview opens. Dropping a `.paf` or `.zip` onto the page opens the same dialog.
 
   It also shows how its history lands (native, translated with the expected
   losses, or configuration only), this node's credential scan and the security
-  posture. **Import & start** creates a new agent and starts it; an import is
-  always a fork.
+  posture. **Import (offline)** lands the agent with its conversation without starting
+  it; wake it (or `tclaude agent resume`) to start it. It needs a conversation
+  that lands and is not yet available on OpenCode. **Import & start** also
+  starts it. An import is always a fork.
 - **Group:** keeps the collision preview and adds a per-member table.
   - Each member can land on another harness or model, or all members can be
     changed at once.

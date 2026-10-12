@@ -676,7 +676,8 @@ export function createManagementActions({
     if (!response.ok) throw await pafError(response);
     return preview ? response.json() : response.blob();
   }
-  // importAgentPAF previews (apply false) or lands and starts the agent.
+  // importAgentPAF previews (apply false) or lands the agent, started or
+  // offline (start=false).
   async function importAgentPAF(file, params) {
     const response = await fetch(`/api/agent-bundle/import${queryString(params)}`, {
       method: 'POST', credentials: 'same-origin', body: file,
@@ -685,7 +686,7 @@ export function createManagementActions({
     const result = await response.json();
     if (params.apply) {
       state.closeDialog();
-      notify(`Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group} and started it`);
+      notify(`Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`);
       await refresh();
     }
     return result;
