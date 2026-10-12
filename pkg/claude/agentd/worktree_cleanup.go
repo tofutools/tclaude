@@ -743,7 +743,7 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	case removed && branchDeleted:
 		return "worktree + branch " + wt.Branch + " removed", true
 	case removed && keptWhy != "":
-		return "worktree removed (branch " + wt.Branch + " kept: " + keptWhy + ")", true
+		return retireBranchKeptPrefix + wt.Branch + " kept: " + keptWhy + ")", true
 	case removed && wt.Branch != "" && !isProtectedBranchName(wt.Branch):
 		// Removed the dir but the branch survived (already gone, or git
 		// refused) — say so rather than implying a clean sweep.
@@ -754,6 +754,11 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 		return "worktree already gone", true
 	}
 }
+
+// retireBranchKeptPrefix starts the note for a retire that removed the
+// worktree but kept its unmerged branch. The deferred path, whose toast fired
+// long before, tells the human about it.
+const retireBranchKeptPrefix = "worktree removed (branch "
 
 // retireBranchLabel names a branch for a human-facing note, including the
 // detached-HEAD case where there is no branch to name.
@@ -931,9 +936,12 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 			}
 			note, ok := applyRetireWorktreeCleanup(wt, true)
 			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note, "ok", ok)
-			if !ok {
-				// Only a real removal failure reaches the human.
+			switch {
+			case !ok:
 				postRetireWorktreeNotice(title, "Retire worktree cleanup failed", note)
+			case strings.HasPrefix(note, retireBranchKeptPrefix) && strings.Contains(note, " kept: "):
+				// The toast could not know the branch had unmerged work.
+				postRetireWorktreeNotice(title, "Retire kept an unmerged branch", note)
 			}
 		} else {
 			note := "worktree kept — agent did not exit within " + retireWorktreeExitGrace.String() +
@@ -943,7 +951,7 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 			postRetireWorktreeNotice(title, "Retire worktree kept", note)
 		}
 	})
-	detail := "worktree + branch will be removed after the agent exits"
+	detail := "worktree will be removed after the agent exits, with its branch if it is merged (an unmerged branch is kept)"
 	if wt.KeepBranch {
 		detail = "worktree will be removed after the agent exits (branch " +
 			retireBranchLabel(wt.Branch) + " kept)"

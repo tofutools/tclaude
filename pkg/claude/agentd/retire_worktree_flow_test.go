@@ -570,6 +570,45 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	assert.Empty(t, msgs, "a successful deferred delete must not post a human notice; got %+v", msgs)
 }
 
+// Scenario: a DEFERRED delete whose branch has unmerged commits keeps the
+// branch and tells the human: the optimistic toast fired before anyone knew.
+func TestRetire_DeleteWorktreeDeferredKeepsUnmergedBranchWithNotice(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwdu-1111-2222-3333-4444"
+	cwd := f.TestCwd("rw-deferred-unmerged")
+	f.HaveConvWithTitle(conv, "unmerged-worker")
+	f.HaveAliveSession(conv, "spwn-rwdu", "tmux-rwdu", cwd)
+	f.HaveEnrolledAgent(conv)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+	t.Cleanup(agentd.SetUnmergedCommitsFnForTest(func(string, string) (int, error) { return 2, nil }))
+
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	exitPane := holdRetiringPane(t, f, cc, "tmux-rwdu")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "scheduled", resp.Worktree.Action)
+	assert.Contains(t, resp.Worktree.Detail, "an unmerged branch is kept", "the promise does not overstate")
+
+	exitPane()
+	agentd.WaitForBackgroundForTest()
+
+	assert.True(t, fw.wasRemoved(cwd), "the worktree directory is removed")
+	assert.NotContains(t, fw.branchesRemoved(), "feat", "the unmerged branch is kept")
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "the kept branch is reported to the human")
+	assert.Contains(t, msgs[0].Subject, "unmerged branch")
+	assert.Contains(t, msgs[0].Body, "branch feat kept: 2 unmerged commits")
+}
+
 // Scenario: a DEFERRED delete that FAILS (git removal errors) DOES post
 // a human notice — the optimistic toast already fired, so the human must
 // learn the promise wasn't kept.

@@ -1383,8 +1383,8 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${busy}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         />
-        <span>Also delete each agent's git worktree + branch
-          <span class="wt-note">removes the worktree directory, and its branch if it is merged (a branch with unmerged commits is kept) — the main repo and worktrees shared with a surviving agent are always kept</span>
+        <span>Also delete each agent's git worktree
+          <span class="wt-note">removes the worktree directory; the branch and its commits are kept — the main repo and worktrees shared with a surviving agent are always kept</span>
         </span>
       </label>
     `}
