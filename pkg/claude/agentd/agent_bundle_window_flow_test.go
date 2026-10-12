@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -152,6 +153,41 @@ func TestAgentImportBudgetsNativeHistory(t *testing.T) {
 	preview := importAgentArchive(t, f, rec.Body.Bytes(), url.Values{"cwd": {testutil.CanonicalTempDir(t)}, "model": {model}})
 	assert.Equal(t, "translated", preview.Landing.Rung)
 	assert.Contains(t, strings.Join(preview.Warnings, "\n"), "exceeds")
+}
+
+// An older bundle names no source model, so its window is unknown. Landing
+// it budgets by size: a history that fits the landing model lands natively,
+// and only one over the budget is translated and trimmed.
+func TestAgentImportOldBundleWithoutSourceModelBudgetsBySize(t *testing.T) {
+	f := newFlow(t)
+	claude := mustGetHarness(t, harness.DefaultName)
+	var model string
+	for _, m := range claude.Models.Models() {
+		if m != "" && !strings.HasSuffix(m, "[1m]") {
+			model = m
+			break
+		}
+	}
+	require.NotEmpty(t, model)
+	oldBundle := func(source, label string, turns, size int) []byte {
+		seedLongClaudeConversation(t, f, source, label, testutil.CanonicalTempDir(t), turns, size)
+		rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=v1", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		b, err := agentbundle.Decode(rec.Body.Bytes())
+		require.NoError(t, err)
+		b.Manifest.Agent.Origin = nil
+		raw, err := b.Encode()
+		require.NoError(t, err)
+		return raw
+	}
+
+	small := importAgentArchive(t, f, oldBundle("0f0e0d0c-0b0a-4908-8706-050403020c05", "old-small", 4, 200), url.Values{"cwd": {testutil.CanonicalTempDir(t)}, "model": {model}})
+	assert.Equal(t, "native", small.Landing.Rung, "a history that fits lands as it is")
+	assert.NotContains(t, strings.Join(small.Warnings, "\n"), "exceeds")
+
+	large := importAgentArchive(t, f, oldBundle("0f0e0d0c-0b0a-4908-8706-050403020c06", "old-large", 60, 6000), url.Values{"cwd": {testutil.CanonicalTempDir(t)}, "model": {model}})
+	assert.Equal(t, "translated", large.Landing.Rung, "a history over the budget is trimmed")
+	assert.Contains(t, strings.Join(large.Warnings, "\n"), "exceeds")
 }
 
 // A summary too large for the landing's budget is left out rather than

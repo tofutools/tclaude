@@ -241,8 +241,11 @@ func nativeOverBudget(b *agentbundle.Bundle, dst *harness.Harness, model string,
 // landsOnSmallerWindow says whether a native history should be budgeted:
 // it lands on a context window smaller than the one it ran in, for example
 // opus[1m] onto opus at 200k. Equal windows keep native fidelity, as does
-// the same model when a window is unknown; a different model whose source
-// window is unknown is budgeted, to be safe.
+// the same model when a window is unknown. When the source window is
+// unknown (an older bundle names no model), a different landing model is
+// budgeted by size: nativeOverBudget estimates the history's tokens, and
+// only a history over the landing budget is trimmed; one that fits still
+// lands natively.
 func landsOnSmallerWindow(dst *harness.Harness, origin *agentbundle.Origin, model string) bool {
 	source := ""
 	if origin != nil {
