@@ -49,7 +49,7 @@ type ConvParams struct {
 func Cmd() *cobra.Command {
 	cmd := boa.CmdT[ConvParams]{
 		Use:         "conv",
-		Short:       "Manage Claude Code conversations",
+		Short:       "Manage coding-harness conversations",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			ListCmd(),

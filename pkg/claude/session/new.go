@@ -100,7 +100,7 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic. Direct `--harness shell` keeps the
 	// lightweight session path; agentd's managed form uses the registered shell
 	// pseudo-harness so profiles and tclaude's sandbox still apply. See shell.go.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | shell. Unset = global profile, then an installed harness (claude preferred)"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | gemini | shell. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
 	// ShellHarnessName in runNew before any harness resolution happens.
@@ -404,20 +404,7 @@ func NewCmd() *cobra.Command {
 
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
-	_ = cmd.Flags().MarkHidden("managed-launch")
-	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
-	_ = cmd.Flags().MarkHidden("sandbox-continuation")
-	_ = cmd.Flags().MarkHidden("cwd-write-proof")
-	_ = cmd.Flags().MarkHidden("dir-write-proof")
-	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
-	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
-	_ = cmd.Flags().MarkHidden("git-worktree-write-dir")
-	_ = cmd.Flags().MarkHidden("git-worktree-write-dirs-pinned")
-	_ = cmd.Flags().MarkHidden("route-helper-agent-id")
-	_ = cmd.Flags().MarkHidden("route-helper-conv-id")
-	_ = cmd.Flags().MarkHidden("route-helper-launch-generation")
-	_ = cmd.Flags().MarkHidden("route-helper-credential-handoff-socket")
-	_ = cmd.Flags().MarkHidden("route-helper-group-id")
+	HideInternalFlags(cmd)
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
