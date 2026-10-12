@@ -9,8 +9,10 @@ does with teams: groups, mail, the dashboard, and permissions.
 project directory as there: your harness has already asked you to trust it,
 and agents spawned in the background cannot answer that question.
 
-If you followed [Get started](get-started.md), steps 1 and 2 are done
-already: skip to step 3.
+If you followed [Get started](get-started.md) and
+[Your first agent](first-agent.md), steps 1 to 4 are done and `alice`
+already exists: wake her with her status dot if she is stopped, and in step 5
+spawn only `bob`.
 
 ## 1. Install the agent extras
 
