@@ -500,7 +500,7 @@ it there, and keep a broad rename in its own focused PR.
   matrix.
 - **[Architecture](architecture.md)** — where the seam sits in the system.
 - `pkg/claude/harness/` — the contracts and the `claude` / `codex` /
-  `opencode` / `copilot` implementations.
+  `opencode` / `copilot` / `gemini` implementations.
 - `pkg/claude/copilotapi/` — the JSON-RPC client for Copilot's embedded
   server, if you are adding a harness with a similar single-process API
   shape.

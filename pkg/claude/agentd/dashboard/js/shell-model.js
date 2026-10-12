@@ -62,6 +62,7 @@ function providerLabel(provider) {
   if (provider === 'anthropic') return 'Anthropic';
   if (provider === 'openai') return 'OpenAI';
   if (provider === 'github') return 'GitHub Copilot';
+  if (provider === 'google') return 'Google';
   if (provider === 'opencode') return 'OpenCode';
   if (provider === 'unknown') return 'Unknown';
   return String(provider || 'Unknown');
@@ -154,6 +155,22 @@ export function usageView(usage, modes = {}) {
       tokens: mode === 'units' ? [unitsToken('copilot-monthly-units', copilotUsage.monthly)]
         : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd)]
         : copilot,
+    });
+  }
+  // Some harnesses expose token-priced what-if cost without account quota
+  // windows (Gemini and provider-backed OpenCode). Keep those estimates visible
+  // without inventing a usage percentage or quota switch.
+  const withQuota = new Set([
+    ...(claude.length ? ['anthropic'] : []),
+    ...(codex.length && codexPeriods.length ? ['openai'] : []),
+    ...(copilot.length ? ['github'] : []),
+  ]);
+  if (usage?.what_if_enabled) for (const [provider, estimate] of whatIfCosts) {
+    if (withQuota.has(provider) || !(Number(estimate.total_cost_usd) > 0)) continue;
+    lines.push({
+      key: `whatif-${provider}`, label: `${providerLabel(provider)} WHAT-IF:`,
+      mode: 'cost', modes: [],
+      tokens: [costToken(`whatif-cost-${provider}`, estimate.today_cost_usd, estimate.total_cost_usd)],
     });
   }
   for (const item of apiCosts) {

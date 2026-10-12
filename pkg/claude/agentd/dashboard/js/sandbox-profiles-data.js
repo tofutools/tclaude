@@ -622,7 +622,7 @@ export function sandboxOtherAssignmentWarnings(overallAxes = {}, selectedAxes = 
 
 export function sandboxTargetLabel(value = {}) {
   const target = value.target || value;
-  const harness = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' }[target.harness] || target.harness || 'Harness';
+  const harness = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', gemini: 'Gemini', copilot: 'Copilot', shell: 'Shell' }[target.harness] || target.harness || 'Harness';
   const platform = { linux: 'Linux', darwin: 'macOS' }[target.platform] || target.platform || 'current platform';
   const implementation = {
     'harness-builtin': 'built-in sandbox',

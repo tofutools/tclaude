@@ -151,7 +151,7 @@ Optional extras are additive and idempotent:
 
 | Flag | Adds |
 |---|---|
-| `--install-agent-skills` | Bundled coordination skills (`agent-*`, `human-*`, `process-templates`) for Claude Code and Codex CLI skill directories |
+| `--install-agent-skills` | Bundled coordination skills (`agent-*`, `human-*`, `process-templates`) for every coding harness through Claude Code, shared `~/.agents/skills`, and Codex home directories |
 | `--install-proxy-skills` | Skills for the configured [credential proxies](proxies.md) (`proxy-git`, `proxy-linear`, and/or `proxy-awb`); not included by `--install-all` |
 | `--install-utility-skills` | Optional utility skills from the repo's `skills/` directory, such as `demo-recording` (record a narrated demo video of a feature built end to end and send it to the operator); not included by `--install-all` |
 | `--install-default-agent-permissions` | Low-risk permission slugs the bundled skills exercise, as agent defaults in `~/.tclaude/config.json` |
