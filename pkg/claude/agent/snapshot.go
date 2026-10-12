@@ -28,6 +28,7 @@ func snapshotCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			snapshotCreateCmd(), snapshotListCmd(), snapshotShowCmd(), snapshotRemoveCmd(), snapshotExportCmd(), snapshotPruneCmd(),
+			snapshotShareCmd(), snapshotBoardCmd(),
 		}}.ToCobra()
 }
 

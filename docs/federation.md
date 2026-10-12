@@ -3599,6 +3599,12 @@ Installing a skill does not execute any of its files. Agents may later follow
 its instructions or run scripts, including through an interpreter without an
 executable bit, so inspect them before confirming.
 
+Agent snapshots are a third item kind, `agent-snapshot`: a snapshot PAF
+encrypted to named members only, with a hard expiry (7 days by default, at
+most 30) and up to four blobs. Use `tclaude agent snapshot share` and
+`tclaude agent snapshot board ls|fetch|preview|import|rm`; see
+[PAF: Sharing a snapshot on a Board](paf.md#sharing-a-snapshot-on-a-board).
+
 Use `federation boards publish --board ID --name NAME --only roles/NAME`,
 `items --board ID`, and `versions --board ID --item ITEM`. Updates use
 `publish --item ITEM --parent VERSION`; a stale parent is refused. `pin --board

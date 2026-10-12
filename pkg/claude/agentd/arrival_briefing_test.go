@@ -24,3 +24,11 @@ func TestArrivalGitProbeKeepsFailedFactsUnknown(t *testing.T) {
 	require.False(t, ok)
 	require.False(t, absent, "an execution failure cannot establish absence")
 }
+
+func TestArrivalBriefingMarksUntrustedHistory(t *testing.T) {
+	cwd := testutil.CanonicalTempDir(t)
+	a := arrivalContext{Operation: "board snapshot import"}
+	require.NotContains(t, buildArrivalBriefing(a, "agt_x", cwd, "g", "claude", ""), "Untrusted history")
+	a.UntrustedHistory = true
+	require.Contains(t, buildArrivalBriefing(a, "agt_x", cwd, "g", "claude", ""), "Untrusted history: the earlier conversation was received from another node")
+}
