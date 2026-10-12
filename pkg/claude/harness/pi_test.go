@@ -182,6 +182,9 @@ func TestPiExperimentalGate(t *testing.T) {
 	if _, err := Resolve(PiName); err != nil {
 		t.Fatalf("pi must still resolve: %v", err)
 	}
+	if _, err := ResolveSpawnCatalog(PiName); err != nil {
+		t.Fatalf("client-side pre-validation must leave the opt-in to the daemon: %v", err)
+	}
 	restore()
 	t.Setenv(ExperimentalHarnessesEnvVar, "codex, pi")
 	if _, err := ResolveSpawnable(PiName); err != nil {

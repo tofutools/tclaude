@@ -33,8 +33,10 @@ const (
 	piTrustStoreUI  = "~/.pi/agent/trust.json"
 	// piTrustLockStale matches proper-lockfile's default: a lock directory
 	// older than this belongs to a process that died holding it.
-	piTrustLockStale   = 10 * time.Second
-	piTrustLockTimeout = 5 * time.Second
+	piTrustLockStale = 10 * time.Second
+	// piTrustLockTimeout outlasts the stale threshold, so a lock left by a
+	// crashed pi is broken rather than waited out.
+	piTrustLockTimeout = piTrustLockStale + 2*time.Second
 )
 
 // EnsurePiDirTrustedForLaunch records projectDir as trusted in the trust store

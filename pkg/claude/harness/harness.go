@@ -825,17 +825,29 @@ func Resolve(name string) (*Harness, error) {
 // not-yet-spawnable harness fails fast with a clear message instead of a
 // silent conv-id-poll timeout once the forked session exits.
 func ResolveSpawnable(name string) (*Harness, error) {
+	h, err := ResolveSpawnCatalog(name)
+	if err != nil {
+		return nil, err
+	}
+	if !h.Spawnable() {
+		return nil, fmt.Errorf("harness %q is experimental and not enabled; add %q to "+
+			"\"experimental_harnesses\" in %s (or set %s=%s) to opt in",
+			h.Name, h.Name, config.ConfigPath(), ExperimentalHarnessesEnvVar, h.Name)
+	}
+	return h, nil
+}
+
+// ResolveSpawnCatalog is ResolveSpawnable without the experimental opt-in. It
+// is for client-side pre-validation of a spawn the daemon will still gate: a
+// sandboxed agent may not see the operator's config, so its own view of the
+// opt-in is not authoritative.
+func ResolveSpawnCatalog(name string) (*Harness, error) {
 	h, err := Resolve(name)
 	if err != nil {
 		return nil, err
 	}
 	if h.Spawn == nil || h.Models == nil {
 		return nil, fmt.Errorf("harness %q is not spawnable (no spawner/model catalog)", h.Name)
-	}
-	if !h.Spawnable() {
-		return nil, fmt.Errorf("harness %q is experimental and not enabled; add %q to "+
-			"\"experimental_harnesses\" in %s (or set %s=%s) to opt in",
-			h.Name, h.Name, config.ConfigPath(), ExperimentalHarnessesEnvVar, h.Name)
 	}
 	return h, nil
 }

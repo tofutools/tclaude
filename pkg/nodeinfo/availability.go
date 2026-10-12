@@ -41,7 +41,7 @@ func ProbeAvailability(ctx context.Context) Availability {
 	for _, name := range harness.Names() {
 		h, _ := harness.Get(name)
 		row := HarnessAvailability{Name: name, DisplayName: h.DisplayName, VersionStatus: "not_installed"}
-		if h.Spawn == nil {
+		if h.Spawn == nil || !h.Spawnable() {
 			row.VersionStatus = "not_spawnable"
 			out.Harnesses = append(out.Harnesses, row)
 			continue

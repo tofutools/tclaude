@@ -25,7 +25,7 @@ func Probe(ctx context.Context) proto.NodeMetadata {
 	n.OSVersion = osVersion(ctx)
 	for _, name := range harness.Names() {
 		h, _ := harness.Get(name)
-		if h.Spawn == nil {
+		if h.Spawn == nil || !h.Spawnable() {
 			continue
 		}
 		path, err := exec.LookPath(h.Spawn.Binary())
