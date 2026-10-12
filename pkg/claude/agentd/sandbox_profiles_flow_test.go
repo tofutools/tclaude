@@ -194,10 +194,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 			Access    string   `json:"access"`
 			Harnesses []string `json:"harnesses"`
 		} `json:"global_filesystem"`
-		GlobalWarnings   []string         `json:"global_config_warnings"`
-		GlobalNetwork    []map[string]any `json:"global_network"`
-		GlobalSockets    []map[string]any `json:"global_unix_sockets"`
-		NetworkTemplates []struct {
+		GlobalHarnessNotes map[string]string `json:"global_harness_notes"`
+		GlobalWarnings     []string          `json:"global_config_warnings"`
+		GlobalNetwork      []map[string]any  `json:"global_network"`
+		GlobalSockets      []map[string]any  `json:"global_unix_sockets"`
+		NetworkTemplates   []struct {
 			ID      string                            `json:"id"`
 			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
 			Warning string                            `json:"warning"`
@@ -212,6 +213,10 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		} `json:"socket_templates"`
 	}
 	testharness.DecodeJSON(t, rec, &catalog)
+	for _, name := range []string{"gemini", "copilot", "opencode", "shell"} {
+		require.Contains(t, catalog.GlobalHarnessNotes, name)
+		require.Contains(t, catalog.GlobalHarnessNotes[name], "tclaude-layer")
+	}
 	assert.Equal(t, 1, catalog.Version)
 	assert.NotEmpty(t, catalog.Platform)
 	assert.Equal(t, canonicalHome, catalog.Home)

@@ -33,8 +33,9 @@ type sandboxGlobalFilesystemRuleOriginJSON struct {
 }
 
 type sandboxGlobalFilesystemRulesJSON struct {
-	Filesystem []sandboxGlobalFilesystemRuleJSON `json:"filesystem"`
-	Warnings   []string                          `json:"warnings"`
+	HarnessNotes map[string]string                 `json:"harness_notes,omitempty"`
+	Filesystem   []sandboxGlobalFilesystemRuleJSON `json:"filesystem"`
+	Warnings     []string                          `json:"warnings"`
 }
 
 type sandboxGlobalFilesystemRuleCandidate struct {
@@ -57,9 +58,10 @@ type sandboxGlobalAccessRuleJSON struct {
 }
 
 type sandboxGlobalAccessRulesJSON struct {
-	Network     []sandboxGlobalAccessRuleJSON `json:"network"`
-	UnixSockets []sandboxGlobalAccessRuleJSON `json:"unix_sockets"`
-	Warnings    []string                      `json:"warnings"`
+	HarnessNotes map[string]string             `json:"harness_notes,omitempty"`
+	Network      []sandboxGlobalAccessRuleJSON `json:"network"`
+	UnixSockets  []sandboxGlobalAccessRuleJSON `json:"unix_sockets"`
+	Warnings     []string                      `json:"warnings"`
 }
 
 type sandboxAccessTemplateJSON struct {
@@ -72,11 +74,38 @@ type sandboxAccessTemplateJSON struct {
 	Warning string `json:"warning,omitempty"`
 }
 
+// A native global layer must be declared even when the harness deliberately
+// contributes none. These notes explain empty per-harness projections to API
+// and dashboard consumers instead of suggesting Claude settings apply to all.
+var sandboxGlobalConfigSupport = map[string]string{
+	harness.DefaultName:  "",
+	harness.CodexName:    "",
+	harness.GeminiName:   "Gemini tools.sandbox selects a fixed or container posture, not per-path global OS rules; use a tclaude-layer profile for path rules",
+	harness.CopilotName:  "Copilot's native global sandbox confines commands rather than built-in file edits; use a tclaude-layer profile for OS path rules",
+	harness.OpenCodeName: "OpenCode global permissions are soft tool controls rather than an OS filesystem baseline; use a tclaude-layer profile for OS path rules",
+	harness.ShellName:    "Shell has no harness-global sandbox policy; use a tclaude-layer profile",
+}
+
+func sandboxGlobalHarnessNotes() map[string]string {
+	notes := map[string]string{}
+	for _, name := range harness.Names() {
+		reason, declared := sandboxGlobalConfigSupport[name]
+		if !declared {
+			reason = "Global sandbox config support is not declared for this harness"
+		}
+		if reason != "" {
+			notes[name] = reason
+		}
+	}
+	return notes
+}
+
 func sandboxGlobalAccessRules(home string) sandboxGlobalAccessRulesJSON {
 	out := sandboxGlobalAccessRulesJSON{
-		Network:     []sandboxGlobalAccessRuleJSON{},
-		UnixSockets: []sandboxGlobalAccessRuleJSON{},
-		Warnings:    []string{},
+		HarnessNotes: sandboxGlobalHarnessNotes(),
+		Network:      []sandboxGlobalAccessRuleJSON{},
+		UnixSockets:  []sandboxGlobalAccessRuleJSON{},
+		Warnings:     []string{},
 	}
 	path := session.ClaudeSettingsPath()
 	if path != "" {
@@ -202,6 +231,11 @@ func sandboxSocketTemplates() []sandboxAccessTemplateJSON {
 //   - Claude Code's user settings.json sandbox block; and
 //   - the canonical baseline rendered into every managed Codex launch profile.
 //
+// Gemini's tools.sandbox selects a fixed/container posture, not granular path
+// rules. Copilot's native policy only confines shell commands, and OpenCode's
+// config permissions are soft tool controls rather than an OS filesystem
+// baseline. These harnesses therefore contribute no global OS rule layer;
+// their tclaude-layer rules are supplied by the selected profile instead.
 // A missing config is an empty layer, not an error. A malformed config is
 // reported as an inline warning while the other harness remains useful. This
 // feed is explanatory only and must never make the editor unable to save its
@@ -231,8 +265,9 @@ func sandboxGlobalFilesystemRules(home string) sandboxGlobalFilesystemRulesJSON 
 	}
 
 	return sandboxGlobalFilesystemRulesJSON{
-		Filesystem: mergeSandboxGlobalFilesystemRules(home, candidates),
-		Warnings:   warnings,
+		HarnessNotes: sandboxGlobalHarnessNotes(),
+		Filesystem:   mergeSandboxGlobalFilesystemRules(home, candidates),
+		Warnings:     warnings,
 	}
 }
 
@@ -414,7 +449,7 @@ func mergeSandboxGlobalFilesystemRules(home string, candidates []sandboxGlobalFi
 		for _, origin := range rule.Origins {
 			harnessSet[origin.Harness] = true
 		}
-		for _, name := range []string{"claude", "codex"} {
+		for _, name := range harness.Names() {
 			if harnessSet[name] {
 				rule.Harnesses = append(rule.Harnesses, name)
 			}

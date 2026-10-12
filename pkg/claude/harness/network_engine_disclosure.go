@@ -266,6 +266,20 @@ var proxyEngineActivatedSmokes = map[string]map[string][]string{
 	},
 }
 
+// Deliberate gaps stay explicit: adding a registered harness must either cite
+// platform-specific smoke evidence above or explain why it is not activated.
+var proxyEngineUnavailableReasons = map[string]map[string]string{
+	"linux": {
+		CopilotName: "Copilot's private networking contract does not enforce proxy destination rules; use its supported private routed posture",
+		ShellName:   "No shell-specific proxy carriage smoke has activated this target",
+	},
+	"darwin": {
+		GeminiName:  "No Gemini-specific Darwin proxy carriage smoke has activated this target",
+		CopilotName: "Copilot's private networking contract does not enforce proxy destination rules; use its supported private routed posture",
+		ShellName:   "No shell-specific Darwin proxy carriage smoke has activated this target",
+	},
+}
+
 // proxyEngineActivated reports whether this harness's proxy-engine cells have
 // their evidence on this platform. Each platform has its own named smokes;
 // evidence never crosses the platform boundary.

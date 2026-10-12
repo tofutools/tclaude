@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestSandboxGlobalFilesystemRulesMergeHarnessProvenance(t *testing.T) {
@@ -135,4 +137,24 @@ func TestMergeSandboxGlobalFilesystemRulesWriteIncludesRead(t *testing.T) {
 	require.Len(t, got[0].Origins, 2, "both settings remain visible as provenance")
 	assert.Equal(t, "read", got[0].Origins[0].Access)
 	assert.Equal(t, "write", got[0].Origins[1].Access)
+}
+
+func TestRegisteredHarnessGlobalConfigCoverage(t *testing.T) {
+	for _, name := range harness.Names() {
+		reason, declared := sandboxGlobalConfigSupport[name]
+		require.True(t, declared, "declare native global config support for %s", name)
+		if name != harness.DefaultName && name != harness.CodexName {
+			require.NotEmpty(t, reason)
+			require.Equal(t, reason, sandboxGlobalHarnessNotes()[name])
+		}
+	}
+}
+
+func TestMergeSandboxGlobalFilesystemRulesKeepsOtherHarnessProvenance(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	got := mergeSandboxGlobalFilesystemRules(home, []sandboxGlobalFilesystemRuleCandidate{
+		{path: filepath.Join(home, "shared"), access: "read", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "gemini", Access: "read"}},
+	})
+	require.Len(t, got, 1)
+	require.Equal(t, []string{"gemini"}, got[0].Harnesses)
 }

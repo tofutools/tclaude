@@ -317,6 +317,15 @@ func predictSandboxFilesystem(
 				"OpenCode represents directory rules as soft, ordered tool access control; it is not OS containment",
 			)
 		}
+	case harness.GeminiName:
+		return predictedSandboxFeature(tier, harness.AccessPredictionRefused,
+			"Gemini's native Seatbelt profile is fixed and its include-directories flag widens workspace context, not filesystem containment; use tclaude-layer for directory rules")
+	case harness.CopilotName:
+		return predictedSandboxFeature(tier, harness.AccessPredictionRefused,
+			"Copilot's native command sandbox does not OS-confine built-in file tools; use tclaude-layer for sandbox-profile directory rules")
+	case harness.ShellName:
+		return predictedSandboxFeature(tier, harness.AccessPredictionRefused,
+			"shell has no harness-builtin filesystem policy; use tclaude-layer for directory rules")
 	}
 	return predictedSandboxFeature(
 		tier, harness.AccessPredictionRefused,
