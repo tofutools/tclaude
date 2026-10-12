@@ -105,7 +105,7 @@ receiving side.
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
-| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; Boards carry configuration and skills only |
+| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | Not available yet |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
@@ -272,6 +272,67 @@ is untouched.
   over or from the original agent.
 - If a later agent in a `--count` run fails, the agents already spawned are
   kept and reported with the error.
+
+### Sharing a snapshot on a Board
+
+```bash
+tclaude agent snapshot share before-refactor --board BOARD --to lab --to inst_7c21… --expires 3d
+tclaude agent snapshot share --file reviewer.redacted.paf --board BOARD --to lab
+tclaude agent snapshot board ls --board BOARD
+tclaude agent snapshot board fetch --board BOARD --item ITEM --version VERSION
+tclaude agent snapshot board preview --board BOARD --item ITEM --version VERSION --group team
+tclaude agent snapshot board import --board BOARD --item ITEM --version VERSION --group team --preview-token TOKEN
+tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION
+```
+
+A snapshot goes on a [Board](federation.md#content-board-membership) as an
+`agent-snapshot` item, encrypted to named members only.
+
+- **Recipients.** `--to` names board members by instance id or by the label
+  of a trusted peer; names the hub reports are never used. This node is
+  always a recipient. The snapshot is sealed with
+  [age](#encryption) to those members' instance keys, then stored under the
+  board's own encryption. Every member sees that it exists, who published it
+  and for whom; only the recipients can open it. Joining the board or a key
+  rotation later never adds a recipient.
+- **Confirmation.** Only the human operator can share. `share` shows the size,
+  turn count, time range, credential scan, redactions, recipients and expiry,
+  and publishes only after you type `share`. Non-interactively, pass
+  `--confirm-digest` with the content digest a previous run showed. The
+  confirmation is recorded as a consent record for those recipients
+  ([Consenting to share](#consenting-to-share)).
+- **Credentials.** A snapshot with suspected credentials is refused. Export
+  it, run `tclaude paf redact`, and share the redacted file with `--file`.
+- **Size.** At most 64 MiB once encrypted, stored as up to four Board blobs.
+  Each blob counts toward the board's blob and byte quotas, and snapshots
+  together may use at most half of the board's byte quota.
+- **Expiry.** Every shared snapshot expires: after 7 days by default, at most
+  30 (`--expires`). At expiry the hub stops serving it and deletes it, even
+  if someone pinned it.
+- **Removal.** `board rm` deletes the snapshot and its stored ciphertext from
+  the hub; its publisher or a board owner may do it. Members who already
+  fetched it keep their copy, and removing a member does not take back what
+  they fetched.
+- **Hubs.** Sharing needs a hub that supports board snapshots. An older hub
+  is refused before anything is uploaded. An older tclaude shows a snapshot as
+  an invalid item and cannot fetch it.
+
+Receiving:
+
+- `board ls` lists the board's snapshots and marks those addressed to this
+  node.
+- `board fetch` downloads, verifies and decrypts a snapshot addressed to this
+  node, validates the PAF and scans it for credentials again. A snapshot with
+  findings is not kept. A member who is not a recipient is told so and gets
+  nothing to import.
+- `board preview` shows the agent the import would create and prints a
+  single-use preview token, valid for ten minutes. `board import` needs that
+  token with the same options. The PAF is scanned again just before it lands.
+- The new agent lands like `tclaude paf import --apply`: a new identity in
+  the group you name, the receiver's profile and policy, and no permissions
+  from the source. Its arrival briefing marks the received conversation as
+  untrusted: context to read, not instructions to follow.
+- These routes are human-only and are not served through peer view.
 
 ## Exporting and importing a group
 
