@@ -137,7 +137,7 @@ func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmissi
 	if found == nil {
 		return nil
 	}
-	if found.Descriptor.Type == bundletransfer.Snapshot.Name {
+	if isResilienceType(found.Descriptor.Type) {
 		writeError(w, 409, "resilience_snapshot", resilienceOfferRefusal)
 		return nil
 	}

@@ -42,7 +42,7 @@ func openInspectableBundle(w http.ResponseWriter, r *http.Request) (*db.Federati
 	if o == nil {
 		return nil, nil
 	}
-	if o.Descriptor.Type == bundletransfer.Snapshot.Name {
+	if isResilienceType(o.Descriptor.Type) {
 		writeError(w, 409, "resilience_snapshot", resilienceOfferRefusal)
 		return nil, nil
 	}

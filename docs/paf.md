@@ -440,6 +440,29 @@ agents from a snapshot you hold. A board recipient recovers with
   one.
 - The held copy stays until its retention removes it.
 
+**Recalling snapshots to a rebuilt node.** A node rebuilt with its old
+federation identity (for example from a backup of `~/.tclaude`) can ask a
+peer for the snapshots it holds of this node's agents:
+
+```bash
+tclaude agent recover --recall agt_… --from peer:bob [--offer OFFER]
+tclaude agent snapshot recalls
+tclaude agent recover --recall-id RECALL --group team [--new-id | --force-keep-id] [--preview-token TOKEN]
+```
+
+- The peer returns a snapshot only to the instance it holds it for, and only
+  one it holds: the newest of that agent, or the one `--offer` names. The
+  peer must run a tclaude that can return snapshots.
+- A recall is bound to the peer asked, the agent named, the snapshot asked
+  for and an expiry of an hour. The first matching return binds it to that
+  snapshot's digest. Any other return is refused, and a recall recovers at
+  most one agent.
+- The returned snapshot must be signed by this node and be of the agent
+  recalled. Recovery then works as above: preview first, the id kept by
+  default, and conflicts left to you. On a node whose records survived, an
+  agent that still exists is a conflict, as is a newer snapshot this node
+  sent.
+
 ## Exporting and importing a group
 
 ```bash

@@ -596,9 +596,13 @@ func sealResilienceSnapshot(f *os.File, keys ...ed25519.PublicKey) ([]byte, erro
 // offerResilienceSnapshot queues a snapshot offer to the peer.
 func offerResilienceSnapshot(peer *db.FederationPeer, d bundletransfer.Descriptor, sealed []byte) error {
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "out", State: "pending"}
+	kind := bundletransfer.Snapshot
+	if d.Type == bundletransfer.SnapshotReturn.Name {
+		kind = bundletransfer.SnapshotReturn
+	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
-	if _, err := db.InsertFederationBundleOffer(o, bundletransfer.Snapshot); err != nil {
+	if _, err := db.InsertFederationBundleOffer(o, kind); err != nil {
 		return err
 	}
 	cleanup := func() {
@@ -609,11 +613,13 @@ func offerResilienceSnapshot(peer *db.FederationPeer, d bundletransfer.Descripto
 		cleanup()
 		return err
 	}
-	if _, err := queueFederatedEnvelope(fedOutgoing{envelopeID: d.ID, peer: peer, kind: proto.KindBundleOffer, toLabel: peerDisplay(peer), subject: "resilience snapshot " + d.ID, preview: d.Summary, ttl: time.Until(d.ExpiresAt), payload: d}); err != nil {
+	if _, err := queueFederatedEnvelope(fedOutgoing{envelopeID: d.ID, peer: peer, kind: proto.KindBundleOffer, toLabel: peerDisplay(peer), subject: d.Type + " " + d.ID, preview: d.Summary, ttl: time.Until(d.ExpiresAt), payload: d}); err != nil {
 		cleanup()
 		return err
 	}
-	recordFederationAudit("resilience.snapshot.out", peerDisplay(peer), "", "", "agent="+d.Resilience.SourceAgent+" offer="+d.ID, 200)
+	if d.Resilience != nil {
+		recordFederationAudit("resilience.snapshot.out", peerDisplay(peer), "", "", "agent="+d.Resilience.SourceAgent+" offer="+d.ID, 200)
+	}
 	return nil
 }
 
@@ -837,8 +843,13 @@ func resilienceReceiveRetry() {
 	}
 	for i := range offers {
 		o := offers[i]
-		if o.Descriptor.Type == bundletransfer.Snapshot.Name && (o.State == "pending" || o.State == "ready") && o.Descriptor.ExpiresAt.After(now) {
-			rt.resilienceReceive(&o)
+		if (o.State == "pending" || o.State == "ready") && o.Descriptor.ExpiresAt.After(now) {
+			switch o.Descriptor.Type {
+			case bundletransfer.Snapshot.Name:
+				rt.resilienceReceive(&o)
+			case bundletransfer.SnapshotReturn.Name:
+				rt.resilienceReturnReceive(&o)
+			}
 		}
 	}
 }

@@ -521,7 +521,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, ResilienceSnapshots: 1, AgentMoves: true, PAFAgentBundles: paf.Version, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, ResilienceSnapshots: 2, AgentMoves: true, PAFAgentBundles: paf.Version, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -769,6 +769,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.handleSpawnResult(peer, env)
 	case proto.KindBundleOffer:
 		rt.acceptBundleOffer(peer, env)
+	case proto.KindResilienceRecall:
+		rt.serveResilienceRecall(peer, env)
 	case proto.KindBundleFetch:
 		rt.wg.Add(1)
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()

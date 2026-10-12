@@ -1041,8 +1041,11 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 			label = peerDisplay(p)
 		}
 		hint := "\nPreview: tclaude federation offers import " + o.Descriptor.ID + " --peer " + o.Peer
-		if o.Descriptor.Type == bundletransfer.Snapshot.Name {
+		switch o.Descriptor.Type {
+		case bundletransfer.Snapshot.Name:
 			hint = "\nKept encrypted for the sender: tclaude agent snapshot held"
+		case bundletransfer.SnapshotReturn.Name:
+			hint = "\nYour recalled snapshot: tclaude agent recover --recall-id (see tclaude agent snapshot recalls)"
 		}
 		out = append(out, fedInboxJSON{OfferID: o.Descriptor.ID, OfferState: o.State, From: label, Instance: o.Peer, Subject: o.Descriptor.Type + " bundle offer", Body: proto.StripControls(o.Descriptor.Summary) + hint, CreatedAt: o.CreatedAt, Read: o.State != "pending" && o.State != "ready"})
 	}

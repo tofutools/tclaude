@@ -190,6 +190,58 @@ func snapshotPolicyRunCmd() *cobra.Command {
 		}}.ToCobra()
 }
 
+type snapshotRecallsParams struct {
+	JSON bool `long:"json" help:"Print as JSON."`
+}
+
+func snapshotRecallsCmd() *cobra.Command {
+	return boa.CmdT[snapshotRecallsParams]{Use: "recalls", Short: "List this node's recalls of resilience snapshots (human only)",
+		Long: "A recall (tclaude agent recover --recall) asks a peer to return a snapshot it holds of one of this node's\n" +
+			"agents. It is requested, then ready once the snapshot is back, and recovered once landed; an unanswered\n" +
+			"recall expires after an hour.",
+		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotRecallsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSnapshotRecalls(p, os.Stdout, os.Stderr))
+		}}.ToCobra()
+}
+
+func runSnapshotRecalls(p *snapshotRecallsParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var resp struct {
+		Recalls []struct {
+			ID          string    `json:"id"`
+			Peer        string    `json:"peer"`
+			SourceAgent string    `json:"source_agent"`
+			State       string    `json:"state"`
+			TakenAt     time.Time `json:"taken_at"`
+			ExpiresAt   time.Time `json:"expires_at"`
+		} `json:"recalls"`
+	}
+	if err := DaemonGet("/v1/resilience/recalls", &resp); err != nil {
+		fmt.Fprintln(stderr, err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		return printJSON(stdout, resp.Recalls)
+	}
+	if len(resp.Recalls) == 0 {
+		fmt.Fprintln(stdout, "No recalls.")
+		return rcOK
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "RECALL\tAGENT\tPEER\tSTATE\tTAKEN")
+	for _, r := range resp.Recalls {
+		taken := "-"
+		if !r.TakenAt.IsZero() {
+			taken = r.TakenAt.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.ID, r.SourceAgent, r.Peer, termClean(r.State), taken)
+	}
+	_ = tw.Flush()
+	return rcOK
+}
+
 type snapshotHeldParams struct {
 	RemovePeer string `long:"rm-peer" optional:"true" help:"Delete every snapshot kept for this peer (instance id or label)."`
 	JSON       bool   `long:"json" help:"Print as JSON."`

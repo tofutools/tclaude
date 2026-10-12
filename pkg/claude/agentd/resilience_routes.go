@@ -24,6 +24,10 @@ func registerResilienceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/resilience/held/{peer}", handleResilienceHeldRemove)
 	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/preview", handleResilienceRecover("preview"))
 	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/import", handleResilienceRecover("import"))
+	mux.HandleFunc("GET /v1/resilience/recalls", handleResilienceRecalls)
+	mux.HandleFunc("POST /v1/resilience/recalls", handleResilienceRecallCreate)
+	mux.HandleFunc("POST /v1/resilience/recalls/{id}/preview", handleResilienceRecallRecover("preview"))
+	mux.HandleFunc("POST /v1/resilience/recalls/{id}/import", handleResilienceRecallRecover("import"))
 }
 
 type resiliencePolicySetRequest struct {
