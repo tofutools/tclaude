@@ -22,6 +22,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf"
 )
 
+// Bounds on snapshots an agent creates, since only the human removes them.
+const (
+	agentSnapshotMaxRetention = 30 * 24 * time.Hour
+	agentSnapshotLibraryCap   = 200
+)
+
 // Snapshot capture states, as agent.json snapshot.state names them.
 const (
 	snapshotStateIdle             = "idle"
@@ -91,6 +97,19 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, "expires", err.Error())
 		return
+	}
+	if _, human, _ := authedCaller(w, r); !human {
+		// Only the human removes snapshots, so an agent's are bounded: they
+		// expire within agentSnapshotMaxRetention, and an agent cannot grow
+		// the library past agentSnapshotLibraryCap.
+		limit := now.Add(agentSnapshotMaxRetention)
+		if expires == nil || expires.After(limit) {
+			expires = &limit
+		}
+		if list, err := snapshotStore().List(); err == nil && len(list) >= agentSnapshotLibraryCap {
+			writeError(w, 429, "library_full", fmt.Sprintf("the snapshot library holds %d snapshots; only the human can add more", len(list)))
+			return
+		}
 	}
 	// Capture state is read before the history: an idle agent stays a
 	// complete capture; a busy one is captured up to its last complete
@@ -175,6 +194,11 @@ func snapshotExpiry(v string, now time.Time) (*time.Time, error) {
 		if v == "" {
 			return nil, nil
 		}
+		t, err := snapshotExpiry(v, now)
+		if err != nil {
+			return nil, fmt.Errorf("config snapshots.default_retention: %w", err)
+		}
+		return t, nil
 	}
 	if v == "never" {
 		return nil, nil
@@ -214,7 +238,8 @@ func parseRetention(v string) (time.Duration, error) {
 //
 //	GET /v1/snapshots
 func handleSnapshotList(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := authedCaller(w, r); !ok {
+	_, human, ok := authedCaller(w, r)
+	if !ok {
 		return
 	}
 	store := snapshotStore()
@@ -224,6 +249,11 @@ func handleSnapshotList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "snapshots", err.Error())
 		return
 	}
+	if !human {
+		for i := range list {
+			list[i] = agentSnapshotView(list[i])
+		}
+	}
 	writeJSON(w, 200, map[string]any{"snapshots": list})
 }
 
@@ -231,14 +261,31 @@ func handleSnapshotList(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /v1/snapshots/{name}
 func handleSnapshotShow(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := authedCaller(w, r); !ok {
+	_, human, ok := authedCaller(w, r)
+	if !ok {
 		return
 	}
 	meta, _, ok := lookupSnapshot(w, r.PathValue("name"))
 	if !ok {
 		return
 	}
+	if !human {
+		meta = agentSnapshotView(meta)
+	}
 	writeJSON(w, 200, meta)
+}
+
+// agentSnapshotView is what an agent sees of a snapshot it may not be able
+// to export: the free-text note and where in the history credentials were
+// found are left out.
+func agentSnapshotView(m snapshotlib.Meta) snapshotlib.Meta {
+	m.Note = ""
+	findings := make([]paf.Finding, 0, len(m.Findings))
+	for _, f := range m.Findings {
+		findings = append(findings, paf.Finding{Kind: f.Kind, Count: f.Count})
+	}
+	m.Findings = findings
+	return m
 }
 
 func lookupSnapshot(w http.ResponseWriter, name string) (snapshotlib.Meta, string, bool) {
@@ -268,6 +315,9 @@ func lookupSnapshot(w http.ResponseWriter, name string) (snapshotlib.Meta, strin
 //
 //	GET /v1/snapshots/{name}/export
 func handleSnapshotExport(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := authedCaller(w, r); !ok {
+		return
+	}
 	meta, path, ok := lookupSnapshot(w, r.PathValue("name"))
 	if !ok {
 		return

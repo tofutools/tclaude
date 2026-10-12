@@ -234,7 +234,10 @@ tclaude agent snapshot prune
   created and by `snapshot prune`. Removal and pruning are ordered with
   creation under one lock, so retention never races a create.
 - **Who may.** Creating a snapshot needs `agent.bundle.export` on the agent,
-  as an export does. Listing and showing need only an identified caller.
+  as an export does. Because only the human removes snapshots, an agent's
+  snapshots expire within 30 days, and an agent cannot add to a library of
+  200 or more. Listing and showing need only an identified caller; agents
+  see neither the note nor where in the history findings are.
   Exporting a snapshot's PAF needs the human or `agent.bundle.export` on the
   snapshotted agent. Removing and pruning are human-only.
 - **Credentials.** A snapshot stays on this node, so scan findings are

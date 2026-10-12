@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/snapshotlib"
 	"github.com/tofutools/tclaude/pkg/paf"
 )
@@ -112,4 +113,22 @@ func TestSnapshotLibraryFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &meta))
 	assert.True(t, snapshotlib.ValidName(meta.Name), meta.Name)
+
+	// An agent's snapshots are bounded and it sees less of them.
+	require.NoError(t, db.GrantAgentPermission(other, agentd.PermAgentBundleExport, "test"))
+	var body bytes.Buffer
+	require.NoError(t, json.NewEncoder(&body).Encode(map[string]any{"agent": source, "name": "by-agent", "note": "private note", "expires": "never", "no_history": true}))
+	rec = serve(agentd.AsAgentPeer(httptest.NewRequest(http.MethodPost, "/v1/snapshots", &body), other))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &meta))
+	require.NotNil(t, meta.ExpiresAt, "an agent's snapshot always expires")
+	assert.WithinDuration(t, time.Now().Add(30*24*time.Hour), *meta.ExpiresAt, time.Minute)
+	rec = asAgent(other, http.MethodGet, "/v1/snapshots/by-agent")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var seen snapshotlib.Meta
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &seen))
+	assert.Empty(t, seen.Note)
+	rec = human(http.MethodGet, "/v1/snapshots/by-agent", nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &meta))
+	assert.Equal(t, "private note", meta.Note)
 }
