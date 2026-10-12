@@ -33,6 +33,23 @@ func adminCmd() *cobra.Command {
 			}
 			fmt.Fprintln(os.Stdout, "Granted hub.exec. Scripts still require the hub-local accept_remote_scripts switch; they run with the hub service user's full authority.")
 		}}.ToCobra(),
+
+		boa.CmdT[resetParams]{Use: "rotate-claim", Short: "Host-only: replace an unredeemed claim token without changing admins", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *resetParams, _ *cobra.Command, _ []string) {
+			if err := validateClaimOutput(p.PrintClaimToken); err != nil {
+				fail(err)
+			}
+			st, err := p.open()
+			if err != nil {
+				fail(err)
+			}
+			defer func() { _ = st.Close() }()
+			token, err := st.RotateAdminClaim(time.Now())
+			if err != nil {
+				fail(err)
+			}
+			fmt.Fprintln(os.Stdout, "Outstanding claim token rotated; existing admins unchanged.")
+			printClaimOutput(os.Stdout, token, st.ClaimPath(), p.PrintClaimToken)
+		}}.ToCobra(),
 		boa.CmdT[resetParams]{Use: "reset", Short: "Break-glass: remove all admins and issue a new private claim token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *resetParams, _ *cobra.Command, _ []string) {
 			if err := validateClaimOutput(p.PrintClaimToken); err != nil {
 				fail(err)

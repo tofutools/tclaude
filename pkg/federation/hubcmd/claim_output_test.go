@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -31,7 +32,7 @@ func TestHubClaimOutputModes(t *testing.T) {
 		require.NoError(t, validateClaimOutput(mode))
 	}
 	require.Error(t, validateClaimOutput("sometimes"))
-	for _, args := range [][]string{{"serve"}, {"admin", "reset"}} {
+	for _, args := range [][]string{{"serve"}, {"admin", "reset"}, {"admin", "rotate-claim"}} {
 		cmd, _, err := RootCmd().Find(args)
 		require.NoError(t, err)
 		flag := cmd.Flags().Lookup("print-claim-token")
@@ -71,6 +72,9 @@ func TestHubClaimResetCommandHelper(t *testing.T) {
 	}
 	cmd := RootCmd()
 	args := []string{"admin", "reset"}
+	if os.Getenv("TCLAUDE_TEST_CLAIM_ACTION") == "rotate-claim" {
+		args = []string{"admin", "rotate-claim"}
+	}
 	if os.Getenv("TCLAUDE_TEST_CLAIM_ACTION") == "serve" {
 		args = []string{"serve", "--listen", "127.0.0.1:0"}
 	}
@@ -144,6 +148,42 @@ func TestHubClaimServeRedirectedOutput(t *testing.T) {
 			} else {
 				require.NotContains(t, output.String(), "tchac_")
 			}
+		})
+	}
+}
+
+func TestHubClaimRotateRedirectedOutput(t *testing.T) {
+	for _, mode := range []string{"auto", "always", "never", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			root := testutil.CanonicalTempDir(t)
+			path := filepath.Join(root, "hub.sqlite")
+			st, err := hub.OpenStore(path)
+			require.NoError(t, err)
+			old, err := st.PrepareAdminClaim(false, time.Now())
+			require.NoError(t, err)
+			require.NoError(t, st.Close())
+			cmd := exec.Command(os.Args[0], "-test.run=^TestHubClaimResetCommandHelper$")
+			cmd.Env = append(os.Environ(), "TCLAUDE_TEST_CLAIM_RESET=1", "TCLAUDE_TEST_CLAIM_ACTION=rotate-claim", "TCLAUDE_TEST_CLAIM_DB="+path, "TCLAUDE_TEST_CLAIM_MODE="+mode)
+			output, err := cmd.CombinedOutput()
+			token, readErr := os.ReadFile(filepath.Join(root, "admin-claim.token"))
+			require.NoError(t, readErr)
+			require.NotContains(t, string(output), old)
+			if mode == "invalid" {
+				require.Error(t, err)
+				require.Equal(t, old, string(bytes.TrimSpace(token)))
+				return
+			}
+			require.NoError(t, err)
+			require.NotEqual(t, old, string(bytes.TrimSpace(token)))
+			require.Contains(t, string(output), "sudo cat --")
+			if mode == "always" {
+				require.Contains(t, string(output), string(bytes.TrimSpace(token)))
+			} else {
+				require.NotContains(t, string(output), "tchac_")
+			}
+			info, err := os.Stat(filepath.Join(root, "admin-claim.token"))
+			require.NoError(t, err)
+			require.Equal(t, os.FileMode(0600), info.Mode().Perm())
 		})
 	}
 }
