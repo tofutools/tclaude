@@ -8,8 +8,7 @@ when they are done.
 
 **You need:** [Your first agent](first-agent.md) completed, with the `hello`
 group pointing at a git repository with at least one commit on `main` (or
-`master`). The dialog fetches the base branch before cutting a worktree; if
-your repository has no remote, untick **Fetch latest worktree base**.
+`master`).
 
 ## 1. Start an agent on a new branch
 
@@ -44,14 +43,17 @@ request, its row's **Branch** column shows PR and CI pills.
 
 When a branch has been merged, retire its agent with the bin button. The
 retire dialog offers **Also delete the git worktree + branch**, ticked by
-default. It force-deletes the branch and any uncommitted changes in the
-worktree, so retire only after merging, or untick it. The main checkout, and
-worktrees another agent still uses, are never removed.
+default. It removes the worktree directory, including any uncommitted
+changes in it. It deletes the branch only if the branch is merged; an
+unmerged branch is kept, and the result says how many commits it holds. A
+squash-merged branch counts as unmerged. The main checkout, and worktrees
+another agent still uses, are never removed.
 
 For leftovers, such as worktrees from agents you retired without deleting,
 open the group's **⚙** menu and choose **🧹 cleanup worktrees…**. It lists
-the stale worktrees in the group's repository and removes the ones you pick,
-together with their branches unless you untick that.
+the stale worktrees in the group's repository and removes the ones you pick.
+It also force-deletes their branches, merged or not, unless you untick
+**Also delete the feature branch**.
 
 !!! info "Go deeper"
     [Spawning and lifecycle → Spawning an agent](../spawning-and-lifecycle.md#spawning-an-agent)

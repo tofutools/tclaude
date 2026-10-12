@@ -43,7 +43,8 @@ successor at her next clean point, then reincarnates. An optional **Focus hint**
 tells her what the handoff should cover. Click **Ask agent**. (**Force
 reincarnate now** is for an agent that is stuck: it skips the handoff.)
 
-The replaced session is kept: **▾ view** → **show replaced generations**
+The successor keeps the name `alice`. The replaced session is kept as
+`alice-x`: **▾ view** → **show replaced generations**
 lists it.
 
 ## 3. Change model in place
@@ -65,8 +66,9 @@ translates her conversation, and the preview says what the history keeps
 and loses.
 
 Click **Morph at next idle turn**. If `alice` is busy, the morph waits until
-she is idle (within 30 minutes, or the request lapses). Tick **now** to stop
-her at once instead.
+she is idle (within 30 minutes, or the request lapses), and her row shows a
+**⇢ morph** badge beside the state pill. Tick **now** to stop her at once
+instead.
 
 !!! info "Go deeper"
     [Spawning and lifecycle → morph](../spawning-and-lifecycle.md#morph)
