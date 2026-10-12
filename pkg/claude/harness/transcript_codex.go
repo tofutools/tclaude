@@ -207,7 +207,7 @@ func codexDecodeItem(t *transcript.Transcript, item codexItem, at time.Time) int
 	case "agent_message":
 		var content []codexContent
 		_ = json.Unmarshal(item.Content, &content)
-		e := transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Time: at, Author: item.Author}
+		e := transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginPeer, Time: at, Author: item.Author}
 		for _, c := range content {
 			switch c.Type {
 			case "input_text", "output_text":
@@ -235,17 +235,18 @@ func codexMarkSummary(t *transcript.Transcript, summary string) {
 	}
 	for i := range t.Entries {
 		e := &t.Entries[i]
-		if e.Role != transcript.RoleUser || e.Origin != transcript.OriginHuman {
+		if e.Role != transcript.RoleUser || (e.Origin != transcript.OriginHuman && e.Origin != transcript.OriginSystem) {
 			continue
 		}
 		for j := range e.Blocks {
 			if e.Blocks[j].Kind == transcript.BlockText && strings.Contains(e.Blocks[j].Text, summary) {
 				e.Blocks[j] = transcript.Block{Kind: transcript.BlockSummary, Text: e.Blocks[j].Text}
+				e.Origin = transcript.OriginSystem
 				return
 			}
 		}
 	}
-	t.Entries = append([]transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{{Kind: transcript.BlockSummary, Text: summary}}}}, t.Entries...)
+	t.Entries = append([]transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginSystem, Blocks: []transcript.Block{{Kind: transcript.BlockSummary, Text: summary}}}}, t.Entries...)
 }
 
 func codexImage(url string) transcript.Block {

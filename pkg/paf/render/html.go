@@ -83,13 +83,7 @@ func factsHTML(facts [][2]string) string {
 
 func writeEntryHTML(w *bufio.Writer, n int, en transcript.Entry) {
 	e := html.EscapeString
-	heading := string(en.Role)
-	if en.Origin == transcript.OriginTool {
-		heading = "tool results"
-	}
-	if en.Author != "" {
-		heading += " — " + en.Author
-	}
+	heading := en.Heading()
 	class := "entry " + e(string(en.Role))
 	fmt.Fprintf(w, "<article class=\"%s\" id=\"entry-%d\"><h4>%d. %s", class, n, n, e(heading))
 	if !en.Time.IsZero() {

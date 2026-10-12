@@ -1066,11 +1066,22 @@ Every following line is an entry, in conversation order:
 {"type": "entry", "id": "e1", "role": "user", "origin": "human", "time": "2026-10-11T19:00:00Z", "blocks": [{"kind": "text", "text": "Review PR 123."}]}
 ```
 
-- `role` is `user` or `assistant`. `origin` is `human`, `agent` or `tool`.
-  Tool results travel as `user` entries with origin `tool`, as in every native
-  format.
+- `role` is `user` or `assistant`.
+- `origin` says who produced the entry:
+  - `human`: text the operator typed, and nothing else;
+  - `agent`: the agent itself;
+  - `tool`: tool results, which travel as `user` entries as in every native
+    format;
+  - `system`: text a harness or orchestrator injected, such as compaction
+    summaries and tclaude notices;
+  - `peer`: another agent's message, with `author` naming it.
+
+  `origin` is an open set. A reader treats an origin it does not know as
+  untrusted input that is not the operator's, and when it lands the
+  conversation it labels such text so the model does not take it as the
+  operator's instructions. tclaude does the same for `peer` text.
 - `model` names the model that produced an assistant entry. `author` names a
-  non-primary speaker, such as a sub-agent.
+  non-primary speaker, such as another agent or a sub-agent.
 - `blocks` have a `kind`:
 
 | Kind | Fields |
@@ -1422,7 +1433,8 @@ is best effort rather than a guarantee, and any break is marked clearly.
 - **Open enumerations** may gain values in a minor version, and readers
   accept unknown values. These are block `kind`, JSON Lines `type`, loss
   `kind` and `severity`, lineage `op`, boundary `kind`, redaction `kind`,
-  audience `kind`, `sensitivity`, snapshot `state`, tool `kind`, `signer.kind`
+  audience `kind`, `sensitivity`, snapshot `state`, tool `kind`, entry
+  `origin` (with the reading rule above), `signer.kind`
   and signature `alg`. The schemas list the known values without restricting
   them. A reader renders an unknown block kind or line type as a visible
   "unsupported content" placeholder that keeps its `text` when present, and
@@ -1430,8 +1442,8 @@ is best effort rather than a guarantee, and any break is marked clearly.
   value lists a feature in `requires`.
 - **Closed enumerations** change only in a major version, or in a minor
   version that sets `min_reader_version`: `format`, `kind`
-  (`agent`, `group`), entry `role` (`user`, `assistant`) and `origin`
-  (`human`, `agent`, `tool`), and the transcript `scope`.
+  (`agent`, `group`), entry `role` (`user`, `assistant`), and the
+  transcript `scope`.
 - **`requires`** names features without which the content would be
   misunderstood, not merely incomplete (for example, a context stored as a
   delta against an earlier snapshot). A reader that does not know a required

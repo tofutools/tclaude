@@ -40,13 +40,7 @@ func WriteMarkdownEntries(t *Transcript, w io.Writer, level int) error {
 func writeMarkdownEntries(bw *bufio.Writer, t *Transcript, level int) {
 	hashes := strings.Repeat("#", max(level, 1))
 	for i, e := range t.Entries {
-		heading := string(e.Role)
-		if e.Origin == OriginTool {
-			heading = "tool results"
-		}
-		if e.Author != "" {
-			heading += " — " + e.Author
-		}
+		heading := e.Heading()
 		fmt.Fprintf(bw, "\n<a id=\"entry-%d\"></a>\n\n%s %d. %s", i+1, hashes, i+1, heading)
 		if !e.Time.IsZero() {
 			fmt.Fprintf(bw, " (%s)", e.Time.UTC().Format("2006-01-02 15:04:05Z"))

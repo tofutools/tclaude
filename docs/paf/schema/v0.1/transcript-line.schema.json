@@ -98,11 +98,9 @@
           ]
         },
         "origin": {
-          "enum": [
-            "human",
-            "agent",
-            "tool"
-          ]
+          "type": "string",
+          "minLength": 1,
+          "description": "Who produced the entry: human (text the operator typed, only), agent, tool, system (harness- or orchestrator-injected text, compaction summaries, tclaude notices) or peer (another agent's message; author names it). Open: a reader treats an unknown origin as untrusted input that is not the operator's."
         },
         "time": {
           "$ref": "common.schema.json#/$defs/timestamp"

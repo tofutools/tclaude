@@ -318,7 +318,7 @@ func installNotice(dst *Harness, source transcript.Source, title, targetModel st
 	}
 	stub := &transcript.Plan{
 		Source: source, Target: dst.Name, TargetModel: targetModel, Title: title, Report: report,
-		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(notice)}}},
+		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginSystem, Blocks: []transcript.Block{transcript.Text(notice)}}},
 	}
 	var buf bytes.Buffer
 	sourceID, err := dst.Transcript.Encode(stub, cwd, &buf)

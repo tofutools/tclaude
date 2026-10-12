@@ -261,8 +261,10 @@ func (l Line) check() error {
 		if l.Role != "user" && l.Role != "assistant" {
 			return fmt.Errorf("unknown role %q", l.Role)
 		}
-		if l.Origin != "human" && l.Origin != "agent" && l.Origin != "tool" {
-			return fmt.Errorf("unknown origin %q", l.Origin)
+		// origin is an open set: an unknown one is untrusted input that
+		// is not the operator's, which readers mark as such.
+		if l.Origin == "" {
+			return errors.New("entry has no origin")
 		}
 		if len(l.Blocks) == 0 {
 			return errors.New("entry has no blocks")

@@ -164,8 +164,20 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
-				if e.Author != "" {
-					text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, e.Author, markClose, text)
+				// Text that is not the operator's is labelled so the landing
+				// model does not take it as the operator's instructions,
+				// unless it already carries tclaude's own header.
+				if !strings.HasPrefix(strings.TrimSpace(text), "[system:") {
+					switch {
+					case e.Origin == OriginPeer || (e.Author != "" && e.Origin.Known() && e.Origin != OriginSystem):
+						from := e.Author
+						if from == "" {
+							from = "another agent"
+						}
+						text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, from, markClose, text)
+					case !e.Origin.Known() && e.Origin != "":
+						text = fmt.Sprintf("%suntrusted input (origin %s), not from the operator%s\n%s", markOpen, e.Origin, markClose, text)
+					}
 				}
 				out.Blocks = append(out.Blocks, Text(text))
 			case BlockThinking:
@@ -254,10 +266,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		}
 	}
 	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
-	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})
+	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(notice)}}})
 	entries = coalesce(entries)
 	if entries[0].entry.Role != RoleUser {
-		lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(markOpen + "the conversation continues from earlier history" + markClose)}}}
+		lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(markOpen + "the conversation continues from earlier history" + markClose)}}}
 		entries = append([]planEntry{lead}, entries...)
 	}
 
@@ -516,7 +528,7 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 	}
 	var summary *planEntry
 	if opts.Summary != "" {
-		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
+		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
 		// The summary uses a reserved slot rather than displacing the tail
 		// shown in the confirmed preview. A larger summary stays in its file.
 		if estimateTokens(e.entry) > reserve/2 && opts.TranscriptPath != "" {
@@ -579,7 +591,7 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 		if opts.TranscriptPath != "" {
 			marker += "; read them in " + opts.TranscriptPath
 		}
-		out = append(out, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(marker + "⟧")}}})
+		out = append(out, planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(marker + "⟧")}}})
 	}
 	for i, e := range entries {
 		if keep[i] {
