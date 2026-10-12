@@ -36,8 +36,8 @@ func (h *Hub) cleanupStaleAdmissions(self string, p adminParams, now time.Time) 
 		protected[a.Instance] = true
 	}
 	h.mu.Lock()
-	for id := range h.conns {
-		protected[id] = true
+	for _, connection := range h.conns {
+		protected[connection.id] = true
 	}
 	h.mu.Unlock()
 	if p.Apply {
@@ -52,7 +52,22 @@ func (h *Hub) cleanupStaleAdmissions(self string, p adminParams, now time.Time) 
 				skipped = append(skipped, id)
 				continue
 			}
+			// Serialize the connected check against both fleet and board registration.
+			h.mu.Lock()
+			connected := false
+			for _, connection := range h.conns {
+				if connection.id == id {
+					connected = true
+					break
+				}
+			}
+			if connected {
+				h.mu.Unlock()
+				skipped = append(skipped, id)
+				continue
+			}
 			changed, e := h.store.revoke(id, cutoff)
+			h.mu.Unlock()
 			if e != nil {
 				return nil, e
 			}

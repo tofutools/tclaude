@@ -13,8 +13,8 @@ import (
 )
 
 type hubStaleParams struct {
-	Days    int  `long:"days" short:"-" default:"30" help:"Remove admissions not seen for this many days (admins and this node excluded)"`
-	Preview bool `long:"preview" short:"-" help:"Only print the candidate list; do not ask to revoke"`
+	Days    int  `long:"days" default:"30" help:"Remove admissions not seen for this many days (admins and this node excluded)"`
+	Preview bool `long:"preview" help:"Only print the candidate list; do not ask to revoke"`
 }
 type hubStalePreview struct {
 	Days      int       `json:"days"`

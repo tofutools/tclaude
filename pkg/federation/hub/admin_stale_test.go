@@ -28,7 +28,8 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 	_, err = st.db.Exec(`UPDATE instances SET last_seen='',admitted_at=? WHERE instance_id=?`, ts(now), ids["never_seen"].ID())
 	require.NoError(t, err)
 	require.NoError(t, st.RecordSeen(admin.ID(), admin.Pub, "admin", "test", now.Add(-45*24*time.Hour)))
-	h.conns[ids["online"].ID()] = &conn{}
+	online := &conn{id: ids["online"].ID(), boardOnly: true, nonce: "board-test"}
+	h.conns[online.registryKey()] = online
 	preview, err := h.cleanupStaleAdmissions(admin.ID(), adminParams{}, now)
 	require.NoError(t, err)
 	b, err := json.Marshal(preview)
@@ -65,4 +66,46 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 	_, err = h.cleanupStaleAdmissions(admin.ID(), adminParams{Days: -1}, now)
 	requireAdminCode(t, err, "days")
 	require.Equal(t, "hub.admissions.manage", adminMethodCapability["admissions.cleanup"])
+}
+
+func TestHubStaleDisconnectKeepsProtectionUntilActivitySaved(t *testing.T) {
+	for _, boardOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fleet", true: "board"}[boardOnly], func(t *testing.T) {
+			st, id, _ := adminTestStore(t)
+			old := time.Now().Add(-60 * 24 * time.Hour)
+			require.NoError(t, st.RecordSeen(id.ID(), id.Pub, "original name", "original version", old))
+			h, err := New(st, Config{})
+			require.NoError(t, err)
+			h.closed = true // No directory broadcasts during this isolated lifecycle check.
+			c := &conn{id: id.ID(), pub: id.Pub, name: "original name", version: "original version", boardOnly: boardOnly, nonce: "fixture"}
+			c.once.Do(func() {}) // Socket already closed, as at the end of the read loop.
+			h.conns[c.registryKey()] = c
+			st.db.SetMaxOpenConns(1)
+			tx, err := st.db.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			waits := st.db.Stats().WaitCount
+			done := make(chan struct{})
+			go func() { h.unregister(c); close(done) }()
+			require.Eventually(t, func() bool { return st.db.Stats().WaitCount > waits }, time.Second, time.Millisecond)
+			h.mu.Lock()
+			registered := h.conns[c.registryKey()] == c
+			h.mu.Unlock()
+			require.True(t, registered, "do not expose stale last_seen while disconnect activity is still being written")
+			require.NoError(t, tx.Commit())
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("disconnect did not finish")
+			}
+			row, err := st.Get(id.ID())
+			require.NoError(t, err)
+			require.True(t, row.LastSeen.After(old.Add(24*time.Hour)))
+			require.Equal(t, "original name", row.Name)
+			require.Equal(t, "original version", row.Version)
+			changed, err := st.revoke(id.ID(), time.Now().Add(-30*24*time.Hour))
+			require.NoError(t, err)
+			require.False(t, changed)
+		})
+	}
 }
