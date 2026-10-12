@@ -810,3 +810,22 @@ func withoutReinjections(t *testing.T, convID string) []*db.AgentMessage {
 	}
 	return out
 }
+
+func TestGeminiNativeSelectorMatchesDirectAndBrokeredNormalization(t *testing.T) {
+	group := standingOrderFixture(t, harness.GeminiName)
+	insertOrder(t, group, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.HookSelectors = []hookevents.Selector{{Harness: "gemini", Event: "BeforeAgent"}}
+	})
+	input, err := DecodeHookCallbackInput([]byte(`{"session_id":"conv-1","hook_event_name":"BeforeAgent","prompt":"fix it"}`))
+	require.NoError(t, err)
+	require.Len(t, observe(input), 1, "direct selector uses native event")
+	// The broker serializes HookCallbackInput; the internal native field is
+	// omitted, but the recorded Gemini identity must restore its vocabulary.
+	encoded, err := json.Marshal(input)
+	require.NoError(t, err)
+	var brokered HookCallbackInput
+	require.NoError(t, json.Unmarshal(encoded, &brokered))
+	require.Empty(t, brokered.NativeHookEvent)
+	require.Len(t, observe(brokered), 1, "brokered selector uses native event")
+}

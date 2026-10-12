@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 )
 
@@ -615,6 +616,17 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	}
 	if ev.NativeEvent == "" {
 		ev.NativeEvent = strings.TrimSpace(input.HookEventName)
+		// The broker carries the normalized hook name, while NativeHookEvent
+		// is internal-only. Recover Gemini's original vocabulary using the
+		// recorded harness identity so sandboxed selectors match too.
+		if ev.Harness == harness.GeminiName {
+			for native, normalized := range geminiHookEventNames {
+				if ev.NativeEvent == normalized {
+					ev.NativeEvent = native
+					break
+				}
+			}
+		}
 	}
 	// An empty SessionStart source means a cold start; the harnesses spell it
 	// "startup" when they spell it at all. Normalization lives in the
