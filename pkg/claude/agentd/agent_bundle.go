@@ -927,8 +927,13 @@ func saveLandedHistory(spawned agent.SpawnResponse, l *historyLanding, g *db.Age
 		slog.Warn("import: save full history", "agent", agentID, "error", err)
 		return
 	}
-	body := fmt.Sprintf("Your imported conversation was cut by about %d%% to fit %s's context window: the pinned start, compaction summaries and the newest turns are what you see. The whole conversation is saved at %s (Markdown) and %s (PAF context, JSON lines). Read the parts you need from there rather than assuming what was in them.",
-		l.cutPercent(), landingModelLabel(mustHarness(l.Harness), l.Model), filepath.Join(dir, "transcript.md"), filepath.Join(dir, "transcript.jsonl"))
+	saved := filepath.Join(dir, "transcript.md") + " (Markdown)"
+	// The PAF context copy is best effort; name it only when it was written.
+	if _, err := os.Lstat(filepath.Join(dir, "transcript.jsonl")); err == nil {
+		saved += " and " + filepath.Join(dir, "transcript.jsonl") + " (PAF context, JSON lines)"
+	}
+	body := fmt.Sprintf("Your imported conversation was cut by about %d%% to fit %s's context window: the pinned start, compaction summaries and the newest turns are what you see. The whole conversation is saved at %s. Read the parts you need from there rather than assuming what was in them.",
+		l.cutPercent(), landingModelLabel(mustHarness(l.Harness), l.Model), saved)
 	var groupID int64
 	if g != nil {
 		groupID = g.ID

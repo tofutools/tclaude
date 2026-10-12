@@ -206,7 +206,10 @@ Every translation produces a loss report (counts and categories only, never
 transcript content) and keeps the full, unclipped transcript as a Markdown
 file beside it. Clipping and omission markers point the target agent at that
 file. The same full transcript is also kept as `transcript.jsonl`, a PAF
-context file, with inline images and documents saved under `context-media/`.
+context file. Inline images and documents it references are the translation's
+own saved attachments, or, for those the translation dropped, files under
+`context-media/`. This copy is best effort: if it cannot be written, the
+translation goes ahead without it.
 
 If the translated history cannot be installed natively, the target instead
 gets a native conversation of one turn that points the agent at the history

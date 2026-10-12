@@ -397,6 +397,20 @@ func (p *Plan) WriteMedia() error {
 	return nil
 }
 
+// MediaPath returns the file WriteMedia writes data to, when data is one of
+// the plan's externalized attachments (the same bytes, not a copy), or "".
+func (p *Plan) MediaPath(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	for _, m := range p.pendingMedia {
+		if len(m.data) == len(data) && &m.data[0] == &data[0] {
+			return m.path
+		}
+	}
+	return ""
+}
+
 // EnsureRealDir creates dir (its parent must exist) or accepts it only when
 // it already is a real directory, never a symlink.
 func EnsureRealDir(dir string) error {

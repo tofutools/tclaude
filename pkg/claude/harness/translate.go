@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"os"
 	"path/filepath"
@@ -360,7 +361,8 @@ func WriteHistoryArtifacts(t *transcript.Transcript, dir string) error {
 	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
-	return writeContextArtifact(t, dir)
+	writeContextArtifactBestEffort(t, dir, nil)
+	return nil
 }
 
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
@@ -374,25 +376,42 @@ func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, 
 	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
-	if err := writeContextArtifact(t, dir); err != nil {
+	if err := plan.WriteMedia(); err != nil {
 		return err
 	}
-	return plan.WriteMedia()
+	writeContextArtifactBestEffort(t, dir, plan.MediaPath)
+	return nil
+}
+
+// writeContextArtifactBestEffort writes transcript.jsonl beside the
+// readable transcript.md. It is an extra copy, so a failure only logs: the
+// morph or landing that wrote the artifacts goes on without it.
+func writeContextArtifactBestEffort(t *transcript.Transcript, dir string, written func([]byte) string) {
+	if err := writeContextArtifact(t, dir, written); err != nil {
+		slog.Warn("transcript.jsonl context artifact not written", "dir", dir, "error", err)
+		_ = os.RemoveAll(filepath.Join(dir, "context-media"))
+	}
 }
 
 var contextMediaExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "application/pdf": ".pdf"}
 
 // writeContextArtifact writes the full source transcript as a PAF context
 // file, transcript.jsonl, with inline media stored under context-media/ and
-// referenced by path. The loss counts it adds stay on a copy, so the
-// translation's own report is unchanged.
-func writeContextArtifact(t *transcript.Transcript, dir string) error {
+// referenced by path. Media the translation already wrote (written returns
+// its path) is referenced there rather than copied again. The loss counts it
+// adds stay on a copy, so the translation's own report is unchanged.
+func writeContextArtifact(t *transcript.Transcript, dir string, written func([]byte) string) error {
 	cp := *t
 	cp.Losses = &transcript.LossReport{}
 	mediaDir := filepath.Join(dir, "context-media")
 	n := 0
 	var buf bytes.Buffer
 	err := paf.WriteContextFile(&buf, paf.ScopeFull, &cp, func(m *transcript.Media) (string, error) {
+		if written != nil {
+			if path := written(m.Data); path != "" {
+				return path, nil
+			}
+		}
 		if n == 0 {
 			if err := transcript.EnsureRealDir(mediaDir); err != nil {
 				return "", err
