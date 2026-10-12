@@ -111,6 +111,9 @@ warning. Model and effort are remembered by the harness itself.
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ use tclaude-layer |
+| Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy |
+| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no shell carriage smoke |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ❌ |

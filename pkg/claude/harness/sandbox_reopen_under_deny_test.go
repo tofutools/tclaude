@@ -312,3 +312,19 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 	assert.Contains(t, string(output), "tclaude-production-split-ok")
 	t.Logf("production split policy verified; exact executable=%s reopen-required=%t", capability.ExecutablePath, capability.RequiresExecutableReopen)
 }
+
+func TestRegisteredHarnessReopenCoverage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installSuccessfulSplitProbe(t, false)
+	supported := map[string]string{DefaultName: ClaudeSandboxOn, CodexName: SandboxManagedProfile, OpenCodeName: OpenCodeSandboxAccessControl}
+	for _, name := range Names() {
+		err := ValidateSandboxReopenUnderDeny(name, supported[name], denyShape(t))
+		if mode, ok := supported[name]; ok {
+			require.NotEmpty(t, mode)
+			require.NoError(t, err)
+			continue
+		}
+		assertCapabilityKind(t, err, SandboxCapabilityReopenUnderDeny)
+		require.ErrorContains(t, err, "tclaude-layer", "explicit unsupported case must provide its remedy for %s", name)
+	}
+}
