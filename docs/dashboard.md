@@ -679,7 +679,9 @@ keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
 send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
 onto another node's group opens the same dialog on Move, pre-filled. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
-carries over. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
+carries over. Until this node is connected to a hub with a linked peer, **move
+to…** and **teleport to…** stay in the menu greyed out, saying why (as the
+node chips do); connect under ⚙ Fleet → Hub. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
 `tclaude agent morph`, `tclaude agent teleport`.
 
 Cloning on this node has one entry: **send elsewhere → clone…**, whose
