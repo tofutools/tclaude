@@ -17,7 +17,7 @@ on.
 To wake every stopped agent in a group at once, use the green power button
 under the group's name.
 
-Stopped agents are shown by default. If a group hides them, the **▾ view**
+Stopped agents are shown by default. If you have hidden them, the **▾ view**
 menu at the top of **Groups** has **show offline**.
 
 ## 2. Bring back a retired agent
@@ -35,8 +35,9 @@ him. His old permissions do not come back.
 
 ## 3. Turn a past conversation into an agent
 
-Conversations you had outside the dashboard, for example with bare `tclaude`
-in a terminal, are not agents. **▾ view** → **show conversations** lists the
+Conversations you had outside any group are not agents: for example a
+`tclaude` session in a directory that no group uses. (A session started in a
+group's directory joins that group automatically.) **▾ view** → **show conversations** lists the
 recent ones in a **Conversations** block. **promote** turns one into an
 agent, which you can then drag onto a group and wake like `bob`.
 

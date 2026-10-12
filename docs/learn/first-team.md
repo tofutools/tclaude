@@ -26,7 +26,8 @@ installed.
 ## 2. Get them talking
 
 Give `alice` a task that needs `bob`. Open the `hello` group's **⚙** menu,
-next to the group name, and choose **✉ message**. Tick `alice` and write:
+next to the group name, and choose **✉ message**. Every member starts ticked;
+untick `bob` so only `alice` gets it, and write:
 
 > Ask your teammate bob, with tclaude agent message, what this project's main
 > entry point is. When bob replies, tell me his answer.
