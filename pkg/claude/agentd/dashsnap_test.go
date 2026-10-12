@@ -1499,6 +1499,15 @@ setTimeout(function(){
 			SettleMS: 700,
 		},
 		{
+			Key:      "paf-group-export",
+			Title:    "PAF — export a group",
+			Caption:  "The group export dialog defaults to a group .paf; the legacy .zip stays available for an older tclaude.",
+			Width:    1280,
+			Height:   800,
+			JS:       pafGroupExportDashSnapJS(),
+			SettleMS: 500,
+		},
+		{
 			Key:      "management-sandbox-import-preview",
 			Title:    "Management — review a sandbox-profile import",
 			Caption:  "The normalized import preview exposes exact policy rows, local portability warnings, collision status, and the resulting import count before commit.",
@@ -4835,6 +4844,24 @@ func pafAgentImportCutDashSnapJS() string {
 
 // pafSnapshotSpawnDashSnapJS opens the snapshot library on one snapshot and
 // its spawn panel.
+func pafGroupExportDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var html = (await import('htm')).default.bind(preact.h);
+  var dialog = await import('/static/js/paf-dialogs.js');
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${dialog.GroupExportDialog} descriptor=${{ group: 'team' }} state=${{ closeDialog: function(){} }} actions=${{}}
+    confirmDiscard=${function(){ return Promise.resolve(true); }} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#group-export-paf') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#group-export-paf') || !document.querySelector('#group-export-paf').checked) throw new Error('group export does not default to .paf');
+  if (!/Download \.paf/.test(document.querySelector('#group-export-download').textContent)) throw new Error('group export button does not offer .paf');
+})();`
+}
+
 func pafSnapshotSpawnDashSnapJS() string {
 	return `return (async function(){
   var preact = await import('preact');
