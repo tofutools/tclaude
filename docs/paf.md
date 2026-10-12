@@ -176,8 +176,10 @@ tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --model gpt-5.5
 ```
 
 `history_landing` in the preview has three possible values:
-- **native** on the same harness, with nothing lost;
-- **translated** on another harness, listing what does not carry over;
+- **native** when the history fits as it is: same harness, and a window
+  large enough;
+- **translated** when it moves to another harness or must be cut to fit,
+  listing what does not carry over;
 - **none**, meaning the agent would import as configuration only.
 
 A model with a smaller window works the same way:
@@ -252,6 +254,10 @@ destination, then ask it to run `tclaude agent teleport laptop --group helpers`:
 tclaude agent permissions grant trial-1 self.teleport --scope peer=laptop
 ```
 
+With only the `agents.receive` grant, the teleport arrives on `laptop` as an
+ordinary offer. Accept it with `federation offers import` as in step 3.
+Automatic landing needs extra setup on the receiver.
+
 See [Moving an agent](federation.md#moving-an-agent) and
 [Teleport yourself to another node](federation.md#teleport-yourself-to-another-node).
 
@@ -268,6 +274,8 @@ tclaude agent groups retire lab
 tclaude agent groups archive lab
 tclaude agent snapshot rm scout-v1
 ```
+
+On `laptop`, retire the moved agents too if you no longer need them.
 
 ## Landing a PAF
 
