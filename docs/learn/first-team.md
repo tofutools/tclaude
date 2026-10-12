@@ -100,6 +100,9 @@ In the dashboard, the `hello` group now shows both agents with a live
 status. Open the **Messages** tab to see alice's question and bob's reply
 arrive as mail.
 
+<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+![The dashboard's Messages tab with the hello group selected. The list shows alice's question to bob and bob's reply, and the reader shows bob's answer about the project's entry point.](../assets/learn-dashboard-messages.png)
+
 From the terminal you can see the same:
 
 ```bash
