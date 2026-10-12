@@ -16,7 +16,7 @@ import (
 
 func materializedExtension(t *testing.T) string {
 	t.Helper()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	path, err := harness.MaterializePiExtension()
 	require.NoError(t, err)
 	return path
@@ -94,4 +94,93 @@ func TestPiSessionIdentityFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"second"`, "the resumed turn lands in the original session")
 	assert.Equal(t, 1, strings.Count(string(raw), `"type":"session"`), "no fork: one session header")
+}
+
+// The version gate must accept the pinned binary's own --version output.
+func TestPiVersionGateAcceptsPinnedBinary(t *testing.T) {
+	w := NewWorld(t)
+	require.NoError(t, harness.CheckPiVersion(w.Binary))
+}
+
+// Everything else PiSim feeds the flow tests, driven headlessly through pi's
+// RPC mode: a turn, a manual compaction, /clone and /new rotating the session,
+// an aborted turn, slash text that is a model turn, and the end of the session.
+func TestPiExtensionLifecycleFidelity(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	promptsDir := filepath.Join(w.Project, ".pi", "prompts")
+	require.NoError(t, os.MkdirAll(promptsDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(promptsDir, "greet.md"), []byte("Say hello\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(w.AgentDir, "trust.json"),
+		[]byte("{\n  "+strconvQuote(w.Project)+": true\n}\n"), 0o600))
+	id := uuid.NewString()
+	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
+
+	turn := func(message string) {
+		t.Helper()
+		require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": message})["success"])
+		rpc.AwaitEvent("agent_settled")
+	}
+	// A turn with a tool call leaves history older than what compaction
+	// keeps verbatim.
+	first := "first turn: run TOOL"
+	turn(first)
+	compacted := rpc.Send(map[string]any{"type": "compact"})
+	require.Equalf(t, true, compacted["success"], "compact: %v", compacted)
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "clone"})["success"])
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "new_session"})["success"])
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "SLOW turn"})["success"])
+	rpc.AwaitEvent("agent_start")
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "abort"})["success"])
+	rpc.AwaitEvent("agent_settled")
+	turn("/greet")
+	rpc.Close()
+
+	got := w.RecordedPayloads()
+	var events []string
+	for _, p := range got {
+		events = append(events, p["hook_event_name"].(string))
+	}
+	want := []struct {
+		event  string
+		fields map[string]any
+	}{
+		{"SessionStart", map[string]any{"source": "startup"}},
+		{"UserPromptSubmit", map[string]any{"prompt": first}},
+		{"PreToolUse", map[string]any{"tool_name": "bash", "tool_input": map[string]any{"command": ToolCommand}}},
+		{"PostToolUse", map[string]any{"tool_name": "bash"}},
+		{"Stop", nil},
+		{"PreCompact", map[string]any{"trigger": "manual"}},
+		{"PostCompact", map[string]any{"trigger": "manual"}},
+		{"SessionEnd", map[string]any{"reason": "clear"}},
+		{"SessionStart", map[string]any{"source": "clear"}},
+		{"SessionEnd", map[string]any{"reason": "clear"}},
+		{"SessionStart", map[string]any{"source": "clear"}},
+		{"UserPromptSubmit", map[string]any{"prompt": "SLOW turn"}},
+		{"Stop", nil},
+		{"UserPromptSubmit", map[string]any{"prompt": "/greet"}},
+		{"Stop", nil},
+		{"SessionEnd", map[string]any{"reason": "prompt_input_exit"}},
+	}
+	require.Lenf(t, got, len(want), "events: %v", events)
+	ids := map[string]bool{}
+	for i, step := range want {
+		recorded := got[i]
+		delete(recorded, "tclaude_context")
+		convID, _ := recorded["session_id"].(string)
+		transcript, _ := recorded["transcript_path"].(string)
+		ids[convID] = true
+		assert.Truef(t, strings.HasSuffix(transcript, "_"+convID+".jsonl"), "%s: transcript %s for %s", step.event, transcript, convID)
+		expected := normalize(t, testharness.PiHookPayload(convID, transcript, w.Project, MockModel, step.event, step.fields))
+		assert.Equalf(t, expected, recorded, "payload %d (%s)", i, step.event)
+	}
+	assert.Equal(t, id, got[0]["session_id"], "the preset id is the first session")
+	assert.Len(t, ids, 3, "/clone and /new each move to a new session id")
+	assert.Equal(t, got[7]["session_id"], got[0]["session_id"], "SessionEnd names the session being left")
+	assert.NotEqual(t, got[8]["session_id"], got[7]["session_id"], "SessionStart names the session entered")
+}
+
+func strconvQuote(s string) string {
+	raw, _ := json.Marshal(s)
+	return string(raw)
 }

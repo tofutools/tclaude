@@ -133,6 +133,9 @@ func TestPiStatus_CloneRotatesConversation(t *testing.T) {
 		}
 	}
 	assert.Equal(t, sim.ConvID, tracked, "the session row follows the pane to the cloned conversation")
+	assert.Equal(t, "pi-worker", sim.Name(), "tclaude restores the agent's title with pi's own /name")
+	assert.NotEqual(t, session.StatusWorking, piMemberStatus(t, "crew", sim.ConvID),
+		"restoring the title is not a model turn")
 
 	typeInto(sim, "continue in the clone")
 	assert.Equal(t, session.StatusWorking, piMemberStatus(t, "crew", sim.ConvID))

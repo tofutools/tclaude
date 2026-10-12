@@ -56,6 +56,12 @@ type PiSim struct {
 	compactions int
 	sessionID   string // the tclaude session row id (TCLAUDE_SESSION_ID)
 	onRotate    func(old string, sim *PiSim)
+	// dispatching counts hook deliveries in progress. tclaude may type into
+	// the pane from inside a hook (the title it restores after a session
+	// switch); real pi reads that input independently of the callback, so a
+	// line submitted meanwhile is deferred until the delivery returns.
+	dispatching int
+	deferred    []string
 }
 
 // PiLaunch is one parsed `pi` invocation.
@@ -359,8 +365,21 @@ func (p *PiSim) hookOutput(event string, fields map[string]any) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	p.mu.Lock()
+	p.dispatching++
+	p.mu.Unlock()
 	var out bytes.Buffer
 	err = session.DispatchHookEvent(context.Background(), in, sessionID, session.LocalHookAmbient(), &out)
+	p.mu.Lock()
+	p.dispatching--
+	var lines []string
+	if p.dispatching == 0 {
+		lines, p.deferred = p.deferred, nil
+	}
+	p.mu.Unlock()
+	for _, line := range lines {
+		p.submit(line)
+	}
 	return out.String(), err
 }
 
@@ -484,6 +503,11 @@ func (p *PiSim) Receive(text string) {
 	p.ccPresses = 0
 	line := strings.TrimSpace(p.buf.String())
 	p.buf.Reset()
+	if p.dispatching > 0 {
+		p.deferred = append(p.deferred, line)
+		p.mu.Unlock()
+		return
+	}
 	p.mu.Unlock()
 	p.submit(line)
 }
@@ -505,9 +529,9 @@ func (p *PiSim) submit(line string) {
 		_ = p.hook("PostCompact", map[string]any{"trigger": "manual"})
 	case command == "/clone", command == "/new":
 		p.rotate(command == "/clone")
-	case strings.HasPrefix(line, "/"):
-		// Another of pi's own commands: no model turn, no event.
 	default:
+		// Any other slash text (a prompt template, a skill) is a model turn,
+		// as is plain text; pi's other built-ins are never sent by tclaude.
 		p.submitPrompt(line)
 	}
 }

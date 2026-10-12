@@ -10,14 +10,18 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // pi's live status comes from tclaude's own pi extension (piextension/
 // tclaude-pi.ts), not from installed hooks: pi has no hook configuration, and
 // tclaude never writes into ~/.pi. The extension is embedded in the binary,
-// written read-only under tclaude's cache directory at a path named by its
-// content hash, checked byte-for-byte before every launch, and loaded with
-// `pi -e <path>`. It runs the hook callback named by PiHookBinEnvVar.
+// written read-only under tclaude's private data directory (denied to
+// sandboxed agents, so a confined agent cannot swap the code the next
+// unconfined pi will run) at a path named by its content hash, checked
+// byte-for-byte before every launch, and loaded with `pi -e <path>`. It runs
+// the hook callback named by PiHookBinEnvVar.
 
 //go:embed piextension/tclaude-pi.ts
 var piExtensionSource []byte
@@ -33,11 +37,11 @@ func PiExtensionSource() []byte { return bytes.Clone(piExtensionSource) }
 
 // piExtensionCacheDir is a variable so tests can point it at a temp dir.
 var piExtensionCacheDir = func() (string, error) {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
+	dir := common.TclaudeDataDir()
+	if dir == "" {
+		return "", errors.New("cannot resolve tclaude's data directory")
 	}
-	return filepath.Join(dir, "tclaude", "pi-extension"), nil
+	return filepath.Join(dir, "pi-extension"), nil
 }
 
 // MaterializePiExtension returns the path of the embedded extension on disk,
@@ -53,6 +57,13 @@ func MaterializePiExtension() (string, error) {
 	sum := sha256.Sum256(piExtensionSource)
 	dir := filepath.Join(root, hex.EncodeToString(sum[:8]))
 	path := filepath.Join(dir, piExtensionFile)
+	// The hash directory itself must be a real directory: a symlink there
+	// would point the verified path somewhere else.
+	if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
+		if err := os.Remove(dir); err != nil {
+			return "", fmt.Errorf("pi extension: replace %s: %w", dir, err)
+		}
+	}
 	if current, err := readNoFollow(path); err == nil && bytes.Equal(current, piExtensionSource) {
 		return path, nil
 	}

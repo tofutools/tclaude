@@ -41,8 +41,12 @@ func init() {
 		// pi has no sandbox of any kind; its documentation delegates isolation
 		// to containers. The catalog's single mode records that honestly, and
 		// tclaude's own layer is the boundary. See pi_sandbox.go.
-		Sandbox:                       piSandbox{},
-		TclaudeLayerMode:              PiSandboxOff,
+		Sandbox: piSandbox{},
+		// No single-wall mode yet: the launch needs the extension and pi's
+		// runtime mounted inside tclaude's sandbox first, so a tclaude-layer
+		// launch fails closed (TclaudeLayerHarnessBuiltinMode) and the dialog
+		// does not offer it.
+		TclaudeLayerMode:              "",
 		BuiltinOSSandbox:              false,
 		BuiltinOSSandboxAbsenceReason: PiBuiltinOSSandboxAbsenceReason,
 

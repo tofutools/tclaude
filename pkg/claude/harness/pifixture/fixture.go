@@ -78,6 +78,12 @@ func NewWorld(t *testing.T) *World {
 	if err := os.WriteFile(filepath.Join(w.AgentDir, "models.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Keep almost nothing verbatim, so even a one-turn session has history
+	// to compact.
+	if err := os.WriteFile(filepath.Join(w.AgentDir, "settings.json"),
+		[]byte(`{"compaction":{"keepRecentTokens":50}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	// One JSON document per callback, newline-terminated by the extension.
 	script := "#!/bin/sh\n[ \"$1 $2\" = \"session hook-callback\" ] || exit 64\ncat >> " + shellQuote(w.Payloads) + "\n"
 	if err := os.WriteFile(w.Recorder, []byte(script), 0o700); err != nil {
@@ -190,6 +196,15 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 			"choices": []map[string]any{{"index": 0, "delta": delta, "finish_reason": finish}},
 		}))
 	}
+	if last.Role == "user" && strings.Contains(string(last.Content), "SLOW") {
+		// Hold the request open until the client gives up (an abort) or a
+		// generous bound passes.
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+	}
 	if last.Role == "user" && len(body.Tools) > 0 && strings.Contains(string(last.Content), "TOOL") {
 		chunk(map[string]any{"role": "assistant", "content": "Running a command."}, nil)
 		chunk(map[string]any{"tool_calls": []map[string]any{{
@@ -198,7 +213,9 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 		}}}, nil)
 		chunk(map[string]any{}, "tool_calls")
 	} else {
-		chunk(map[string]any{"role": "assistant", "content": "Done."}, nil)
+		// Long enough that a short session still has history older than what
+		// compaction keeps verbatim.
+		chunk(map[string]any{"role": "assistant", "content": "Done. " + strings.Repeat("This is the mock reply. ", 20)}, nil)
 		chunk(map[string]any{}, "stop")
 	}
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]any{
@@ -212,4 +229,116 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 func mustJSON(v any) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)
+}
+
+// RPC is pi running in `--mode rpc`: JSON commands on stdin, responses and
+// events on stdout.
+type RPC struct {
+	t      *testing.T
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	lines  chan map[string]any
+	nextID int
+	// backlog holds lines read while waiting for something else, so an
+	// event that arrives before a command's response is not lost.
+	backlog []map[string]any
+}
+
+// StartRPC launches pi in RPC mode from dir with the given extra arguments.
+func (w *World) StartRPC(dir string, args ...string) *RPC {
+	w.t.Helper()
+	cmd := exec.Command(w.Binary, append([]string{"--mode", "rpc"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = w.Env()
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		w.t.Fatal(err)
+	}
+	r := &RPC{t: w.t, cmd: cmd, stdin: stdin, lines: make(chan map[string]any, 1024)}
+	go func() {
+		defer close(r.lines)
+		dec := json.NewDecoder(stdout)
+		for {
+			var line map[string]any
+			if err := dec.Decode(&line); err != nil {
+				return
+			}
+			r.lines <- line
+		}
+	}()
+	w.t.Cleanup(func() {
+		if r.cmd.ProcessState == nil {
+			_ = r.cmd.Process.Kill()
+			_ = r.cmd.Wait()
+		}
+	})
+	return r
+}
+
+// Send issues one command and returns its response.
+func (r *RPC) Send(command map[string]any) map[string]any {
+	r.t.Helper()
+	r.nextID++
+	id := fmt.Sprintf("req-%d", r.nextID)
+	command["id"] = id
+	raw, _ := json.Marshal(command)
+	if _, err := r.stdin.Write(append(raw, '\n')); err != nil {
+		r.t.Fatalf("send %v: %v", command, err)
+	}
+	return r.Await(func(line map[string]any) bool { return line["type"] == "response" && line["id"] == id })
+}
+
+// Await returns the first unconsumed line matching match, failing after a
+// bound. Lines it passes over stay available to later calls.
+func (r *RPC) Await(match func(map[string]any) bool) map[string]any {
+	r.t.Helper()
+	for i, line := range r.backlog {
+		if match(line) {
+			r.backlog = append(r.backlog[:i], r.backlog[i+1:]...)
+			return line
+		}
+	}
+	deadline := time.After(60 * time.Second)
+	for {
+		select {
+		case line, ok := <-r.lines:
+			if !ok {
+				r.t.Fatal("pi exited while a reply was awaited")
+			}
+			if match(line) {
+				return line
+			}
+			r.backlog = append(r.backlog, line)
+		case <-deadline:
+			r.t.Fatal("timed out waiting for pi")
+		}
+	}
+}
+
+// AwaitEvent returns the next event of the given type.
+func (r *RPC) AwaitEvent(eventType string) map[string]any {
+	r.t.Helper()
+	return r.Await(func(line map[string]any) bool { return line["type"] == eventType })
+}
+
+// Close ends the session the way an RPC client does, by closing stdin, and
+// waits for pi to exit.
+func (r *RPC) Close() {
+	r.t.Helper()
+	_ = r.stdin.Close()
+	done := make(chan error, 1)
+	go func() { done <- r.cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		_ = r.cmd.Process.Kill()
+		r.t.Fatal("pi did not exit after stdin closed")
+	}
 }

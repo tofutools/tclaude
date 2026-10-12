@@ -25,6 +25,9 @@ const HOOK_BIN = process.env.TCLAUDE_PI_HOOK_BIN ?? "";
 const CALLBACK_TIMEOUT_MS = 5_000;
 // How long shutdown waits for earlier events before sending SessionEnd.
 const SHUTDOWN_FLUSH_MS = 3_000;
+// How long a threshold compaction waits for tclaude's verdict before going
+// ahead: the answer is advice, never a reason to stall the turn.
+const PRECOMPACT_DECISION_MS = 2_000;
 const MAX_FIELD_BYTES = 32 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -98,6 +101,17 @@ function deliver(payload: Payload): Promise<string> {
 		} catch {
 			finish();
 		}
+	});
+}
+
+// within resolves to p's value, or to "" once ms have passed.
+function within(p: Promise<string>, ms: number): Promise<string> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<string>((resolve) => {
+		timer = setTimeout(() => resolve(""), ms);
+	});
+	return Promise.race([p, late]).finally(() => {
+		if (timer) clearTimeout(timer);
 	});
 }
 
@@ -195,16 +209,27 @@ function compactTrigger(reason: string): string {
 	return reason === "manual" ? "manual" : "auto";
 }
 
+// The session last announced. pi can deliver session_start twice for one
+// session switch (observed in RPC mode), and may load this module afresh for
+// the new session's runtime, so the record lives on globalThis.
+const announced: { id: string } = ((globalThis as any).__tclaudePiAnnounced ??= { id: "" });
+
 export default function tclaudePi(pi: any): void {
 	pi.on("session_start", (event: any, ctx: any) => {
+		let id = "";
+		try {
+			id = ctx?.sessionManager?.getSessionId?.() ?? "";
+		} catch {}
+		if (id !== "" && id === announced.id && event?.reason !== "startup") return;
+		announced.id = id;
 		emit("SessionStart", ctx, { source: START_SOURCE[event?.reason] ?? "startup" });
 	});
 
+	// pi's own commands (/name, /compact, /new, ...) never reach "input";
+	// slash text that does (a prompt template, a skill, an unknown command) is
+	// a real turn for the model.
 	pi.on("input", (event: any, ctx: any) => {
-		// A slash command is pi's own, not a prompt to the model.
-		const text = typeof event?.text === "string" ? event.text : "";
-		if (text.trimStart().startsWith("/")) return;
-		emit("UserPromptSubmit", ctx, { prompt: text });
+		emit("UserPromptSubmit", ctx, { prompt: typeof event?.text === "string" ? event.text : "" });
 	});
 
 	pi.on("tool_execution_start", (event: any, ctx: any) => {
@@ -231,10 +256,12 @@ export default function tclaudePi(pi: any): void {
 
 	pi.on("session_before_compact", async (event: any, ctx: any) => {
 		const reason = event?.reason ?? "manual";
-		const out = await emit("PreCompact", ctx, { trigger: compactTrigger(reason) });
-		// tclaude may refuse an early automatic compaction. An overflow
-		// compaction is never refused: without it the turn cannot continue.
+		const pending = emit("PreCompact", ctx, { trigger: compactTrigger(reason) });
+		// tclaude may refuse an early automatic compaction, so only that one
+		// waits for its answer, briefly. A manual compaction is the user's
+		// own, and an overflow compaction must run for the turn to continue.
 		if (reason !== "threshold") return;
+		const out = await within(pending, PRECOMPACT_DECISION_MS);
 		try {
 			const decision = JSON.parse(out.trim() || "{}");
 			if (decision?.decision === "block") return { cancel: true };

@@ -111,3 +111,35 @@ func TestPiSpawnerLoadsStatusExtension(t *testing.T) {
 		t.Fatalf("command:\n got %s\nwant %s", got, want)
 	}
 }
+
+func TestMaterializePiExtensionReplacesSymlinkedHashDir(t *testing.T) {
+	root := withPiExtensionCache(t)
+	path, err := MaterializePiExtension()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, piExtensionFile), PiExtensionSource(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := MaterializePiExtension()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(filepath.Dir(got)); err != nil || !info.IsDir() || filepath.Dir(got) != dir {
+		t.Fatalf("hash directory under %s is still a symlink: %v %v", root, info, err)
+	}
+}
