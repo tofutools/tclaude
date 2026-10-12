@@ -833,16 +833,10 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 type bundleNoLaunchContextKey struct{}
 
 // landSpawnOffline finishes an enrolled, history-installed spawn without
-// starting a session. It records the conversation's resume profile so that
-// resume starts the agent on its landing harness in its working directory,
-// and names the conversation as a launch would.
-func landSpawnOffline(g *db.AgentGroup, p spawnParams, h *harness.Harness, convID string, msgID int64, actorCreated bool) (*spawnOutcome, *spawnFailure) {
-	if err := db.SetConversationResumeProfile(convID, db.ConversationResumeProfile{
-		Version: db.RelaunchProfileVersion, Harness: h.Name, Cwd: p.Cwd,
-	}); err != nil {
-		rollbackSpawnEnrollment(g, convID, msgID, actorCreated)
-		return nil, &spawnFailure{http.StatusInternalServerError, "io", "record resume profile: " + err.Error()}
-	}
+// starting a session. The conversation has no resume profile until resume
+// rebuilds it from the harness's own store, as for a group import member;
+// the agent's relaunch profile was bound at enrollment.
+func landSpawnOffline(p spawnParams, h *harness.Harness, convID string) (*spawnOutcome, *spawnFailure) {
 	// Resume never pre-trusts, so keep the launch's trust_dir promise now:
 	// otherwise the resumed pane stops on the trust dialog, and a Copilot API
 	// drive refuses to resume at all.

@@ -7304,7 +7304,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
 	}
 	if p.NoLaunch {
-		return landSpawnOffline(g, p, spawnHarness, preConvID, preMsgID, preActorCreated)
+		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
 	// A Linux route-capable group must launch the namespace helper with a
 	// pre-enrolled identity. If the launch shape cannot prove that identity
