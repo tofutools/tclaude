@@ -168,6 +168,9 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "snapshot", err.Error())
 		return
 	}
+	if req.Summary != "" {
+		dropExportSummary(req.Summary)
+	}
 	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
 	meta, err = store.Create(meta, func(w io.Writer) error { _, err := io.Copy(w, archive); return err })
 	switch {

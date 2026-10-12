@@ -149,8 +149,10 @@ func submitExportSummary(agentID, body string) bool {
 	return false
 }
 
-// takeExportSummary hands an export the summary it asked for, once. The
-// request must be the caller's own and for the agent being exported.
+// takeExportSummary hands an export the summary it asked for. The request
+// must be the caller's own and for the agent being exported. It stays until
+// the export succeeds and calls dropExportSummary, so a refused export (for
+// example over suspected credentials) can be retried without asking again.
 func takeExportSummary(id, caller, conv string) (string, error) {
 	exportSummaries.Lock()
 	defer exportSummaries.Unlock()
@@ -162,6 +164,12 @@ func takeExportSummary(id, caller, conv string) (string, error) {
 	if strings.TrimSpace(s.Body) == "" {
 		return "", fmt.Errorf("the agent has not written its summary yet")
 	}
-	delete(exportSummaries.byID, id)
 	return s.Body, nil
+}
+
+// dropExportSummary forgets a summary its export has carried.
+func dropExportSummary(id string) {
+	exportSummaries.Lock()
+	delete(exportSummaries.byID, id)
+	exportSummaries.Unlock()
 }

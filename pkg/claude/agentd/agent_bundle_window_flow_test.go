@@ -59,7 +59,7 @@ func TestAgentImportOntoSmallerWindowCarriesSummary(t *testing.T) {
 	f := newFlow(t)
 	codexHome := testutil.CanonicalTempDir(t)
 	t.Setenv("CODEX_HOME", codexHome)
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-5.5\"\nmodel_context_window = 6000\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-5.5\"\nmodel_context_window = 20000\n"), 0o600))
 	f.HaveGroup("receiver")
 	const source = "0f0e0d0c-0b0a-4908-8706-050403020c01"
 	cwd := testutil.CanonicalTempDir(t)
@@ -78,7 +78,9 @@ func TestAgentImportOntoSmallerWindowCarriesSummary(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, inbox)
 	assert.Contains(t, inbox[0].Body, "tclaude agent morph-handoff")
-	const summary = "SUMMARY: we refactored the billing module; next step is the migration."
+	// A realistic summary runs to a few kilobytes; the tail is what fits
+	// beside it.
+	summary := "SUMMARY: we refactored the billing module; next step is the migration. " + strings.Repeat("Decision notes and file paths. ", 100)
 	sub := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/morph/handoff", map[string]any{"body": summary}), source)
 	rec = testharness.Serve(f.Mux, sub)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -109,7 +111,7 @@ func TestAgentImportOntoSmallerWindowCarriesSummary(t *testing.T) {
 	applied := importAgentArchive(t, f, raw, query)
 	require.True(t, applied.Applied)
 	text := historyText(t, mustGetHarness(t, harness.CodexName), applied.Spawn.ConvID, dest)
-	assert.Contains(t, text, summary, "the summary stands in for the cut history")
+	assert.Contains(t, text, "SUMMARY: we refactored the billing module", "the summary stands in for the cut history")
 	assert.Contains(t, text, morphSecret, "the pinned start is kept")
 
 	msgs, err := db.ListAgentMessagesForConv(applied.Spawn.ConvID, 20)
@@ -150,4 +152,32 @@ func TestAgentImportBudgetsNativeHistory(t *testing.T) {
 	preview := importAgentArchive(t, f, rec.Body.Bytes(), url.Values{"cwd": {testutil.CanonicalTempDir(t)}, "model": {model}})
 	assert.Equal(t, "translated", preview.Landing.Rung)
 	assert.Contains(t, strings.Join(preview.Warnings, "\n"), "exceeds")
+}
+
+// A summary too large for the landing's budget is left out rather than
+// pushing the landing over it: the conversation still lands, trimmed.
+func TestAgentImportLeavesOutOversizedSummary(t *testing.T) {
+	f := newFlow(t)
+	codexHome := testutil.CanonicalTempDir(t)
+	t.Setenv("CODEX_HOME", codexHome)
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("model = \"gpt-5.5\"\nmodel_context_window = 20000\n"), 0o600))
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020c03"
+	cwd := testutil.CanonicalTempDir(t)
+	seedLongClaudeConversation(t, f, source, "oversize-src", cwd, 30, 1000)
+	f.HaveEnrolledAgent(source)
+	rec := profileReq(t, f, http.MethodPost, "/v1/agent-bundle/summary", map[string]any{"agent": source})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var asked struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &asked))
+	sub := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/morph/handoff", map[string]any{"body": strings.Repeat("an oversized summary line. ", 1200)}), source)
+	rec = testharness.Serve(f.Mux, sub)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&format=paf&summary="+asked.ID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	preview := importAgentArchive(t, f, rec.Body.Bytes(), url.Values{"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {testutil.CanonicalTempDir(t)}})
+	assert.Equal(t, "translated", preview.Landing.Rung)
+	assert.Contains(t, strings.Join(preview.Warnings, "\n"), "summary is too large")
 }

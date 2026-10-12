@@ -523,6 +523,9 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 			e.entry.Blocks = []Block{Text("⟦Read the source-written summary in " + filepath.Join(filepath.Dir(opts.TranscriptPath), "summary.md") + " before continuing; it is too large to inline safely.⟧")}
 		}
 		summary = &e
+		// Its tokens count against the budget: the tail is what fits
+		// beside it, so a long summary never overflows the landing.
+		used += estimateTokens(e.entry)
 	}
 	// Keep the newest complete human-turn groups that fit after the pins.
 	keep := map[int]bool{}

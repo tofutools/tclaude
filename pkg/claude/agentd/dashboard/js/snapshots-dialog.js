@@ -83,11 +83,12 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
   const [cwd, setCwd] = useState('');
   const [harness, setHarness] = useState('');
   const [model, setModel] = useState('');
+  const [confirmCut, setConfirmCut] = useState(false);
   const [busy, setBusy] = useState(false);
   const spawn = async () => {
     setBusy(true);
     try {
-      const res = await actions.snapshots.spawn(snap.name, { group, count: Number(count) || 1, name: name.trim(), cwd: cwd.trim(), harness, model });
+      const res = await actions.snapshots.spawn(snap.name, { group, count: Number(count) || 1, name: name.trim(), cwd: cwd.trim(), harness, model, ...(confirmCut ? { confirm_history_loss: true } : {}) });
       onDone(`Spawned ${(res.spawned || []).length} agent${(res.spawned || []).length === 1 ? '' : 's'} from ${snap.name} into ${group}`);
     } catch (e) {
       const partial = e.body?.result?.spawned?.length;
@@ -109,6 +110,8 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
       <select id="snapshot-spawn-model" value=${model} onChange=${(e) => setModel(e.currentTarget.value)}>
         <option value="">(model: default)</option>${modelsFor(snapshot, harness).map((m) => html`<option key=${m} value=${m}>${m}</option>`)}</select>
     </span></div>
+    <label class="paf-check"><input type="checkbox" id="snapshot-spawn-confirm-loss" checked=${confirmCut} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} />
+      <span>Allow cutting the conversation<span class="paf-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
     <div class="paf-row-buttons"><button type="button" id="snapshot-spawn-submit" class="primary" disabled=${busy || !group} onClick=${spawn}>${busy ? 'Spawning…' : 'Spawn'}</button></div>
   </div>`;
 }

@@ -190,7 +190,9 @@ guess. The preview's
 the conversation takes:
 
 - **native** when the PAF carries a native history in the landing harness's
-  format and it fits the landing model's context budget;
+  format and, when it lands on a model other than the one it ran on, it fits
+  that model's context budget. A native history that does not fit, and that
+  no trimmed translation fits either, still lands as it is, with a warning;
 - **translated** otherwise: the neutral context, or the native history
   decoded by tclaude's reader for its harness, is translated for the landing
   harness and budgeted to the landing model's context window, with the
@@ -217,9 +219,10 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
 - **The budget.** The carried conversation may fill 60% of the landing
   window (`agent.morph.history_budget_percent`, as for a morph), here about
   120k tokens; the rest is headroom so the agent does not compact on its
-  first turn. A native history is installed as it is only when it fits that
-  budget. This one does not, so it lands translated and trimmed instead, and
-  the preview says so.
+  first turn. A native history landing on a different model is installed as
+  it is only when it fits that budget. This one does not, so it lands
+  translated and trimmed instead, and the preview says so. A fork or recover
+  onto the model the agent ran on keeps its native history unchecked.
 - **What is kept.** The original task and the latest instructions are
   pinned, as are the compaction summaries the harness wrote when it
   compacted. Then come the newest complete turns that fit. Long tool
@@ -233,11 +236,13 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
   - `--skip-history` to import the agent without its conversation.
 
   `agent spawn --from-snapshot`, `snapshot board import` and `agent
-  recover` take `--confirm-history-loss` too. Group import shows the cut
-  per member in its dry run.
+  recover` take `--confirm-history-loss` too; the dashboard's import and
+  snapshot spawn have a checkbox for it. Group import shows the cut per
+  member in its dry run but neither asks for confirmation nor saves the full
+  history beside each member.
 - **Where the full history is.** It is never lost. It stays in the PAF,
-  which `tclaude paf render` reads whole. It is also saved beside the landed
-  agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
+  which `tclaude paf render` reads whole. When an agent import cuts it, it
+  is also saved beside the landed agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
   its morph artifact directory, and the agent gets an inbox message naming
   both, so it can read what was cut instead of guessing.
 - **A better result.** A model with a larger window keeps more. Or export
@@ -252,11 +257,14 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
   work: the goal, decisions, completed work, open issues and next steps. The
   agent submits it with `tclaude agent morph-handoff`, as a morph's source
   does. The PAF carries it as `context/handoff.md`. A landing that has to cut
-  then keeps the pinned start, that summary and the newest turns. Asking
+  then keeps the pinned start, that summary and the newest turns that fit
+  beside it; a summary too large for the budget is left out, with a
+  warning, and stays in the PAF. Asking
   costs the agent a turn, so it is opt-in and never happens on its own. The
   export waits up to `--summary-wait` (default 10 minutes) and is not made
-  without the summary. The summary is scanned for credentials like the
-  conversation, and an agent cannot ask for its own.
+  without the summary. An export's summary is scanned for credentials like
+  the conversation; a snapshot's is scanned with the rest of the archive
+  when it is shared or imported. An agent cannot ask for its own.
 
 ## Snapshots
 

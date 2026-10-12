@@ -435,6 +435,9 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
+	if id := r.URL.Query().Get("summary"); id != "" {
+		dropExportSummary(id)
+	}
 	if format == agentArchivePAF {
 		w.Header().Set("Content-Type", paf.MediaType)
 		w.Header().Set("Content-Disposition", `attachment; filename="agent.paf"`)
@@ -691,7 +694,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if landingModel == "" && !crossHarness && d.Origin != nil {
 		landingModel = d.Origin.Model
 	}
-	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct, Summary: handoff})
+	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct && (d.Origin == nil || landingModel != d.Origin.Model), Summary: handoff})
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return

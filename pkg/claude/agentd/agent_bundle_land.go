@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
@@ -82,6 +83,9 @@ func planHistoryLanding(b *agentbundle.Bundle, dst *harness.Harness, model, cwd 
 		return l, nil, nil
 	}
 	var warnings []string
+	// fitsNative is a native history the budget turned away; it still lands
+	// as it is when translating it cannot produce anything that fits.
+	var fitsNative *bundleHistoryLaunch
 	if native != nil && dst.SupportsHistoryTransfer() && native.Format == dst.History.Format() {
 		if err := validateBundleHistory(dst, b); err != nil {
 			return nil, nil, err
@@ -96,6 +100,11 @@ func planHistoryLanding(b *agentbundle.Bundle, dst *harness.Harness, model, cwd 
 			return l, nil, nil
 		}
 		warnings = append(warnings, over)
+		fitsNative = &bundleHistoryLaunch{Raw: b.Transcript, Path: b.TranscriptPath, SourceID: native.SourceConvID, Format: native.Format}
+	}
+	asNative := func(why string) (*historyLanding, []string, error) {
+		l.Rung, l.history, l.Losses = landingNative, fitsNative, nil
+		return l, append(slices.DeleteFunc(warnings, func(w string) bool { return strings.HasPrefix(w, "the native history (about") }), "the native history exceeds the "+landingModelLabel(dst, model)+" context budget, but "+why+", so it lands as it is and the harness compacts it"), nil
 	}
 	if !dst.SupportsTranscript() {
 		return l, append(warnings, dst.DisplayName+" cannot resume imported history; importing config only"), nil
@@ -115,14 +124,25 @@ func planHistoryLanding(b *agentbundle.Bundle, dst *harness.Harness, model, cwd 
 	if err == nil && plan.Report.DroppedPercent > 0 && strings.TrimSpace(o.Summary) != "" {
 		// The agent's own summary of its earlier work stands in for the
 		// part that is cut, as a morph's source-written summary does.
-		opts.Policy.Summary = o.Summary
-		plan, err = harness.PlanTranscript(t, dst, opts)
+		sopts := opts
+		sopts.Policy.Summary = o.Summary
+		if splan, serr := harness.PlanTranscript(t, dst, sopts); serr == nil && splan.Report.CarriedEstimatedTokens <= splan.Report.BudgetTokens {
+			plan, opts = splan, sopts
+		} else {
+			warnings = append(warnings, "the agent's summary is too large to carry inside the context budget, so it is left out; it stays in the file as context/handoff.md")
+		}
 	}
 	if err != nil {
+		if fitsNative != nil {
+			return asNative("it could not be planned for translation (" + err.Error() + ")")
+		}
 		return l, append(warnings, err.Error()+"; importing config only"), nil
 	}
 	l.Losses = plan.Report
 	if plan.Report.CarriedEstimatedTokens > plan.Report.BudgetTokens {
+		if fitsNative != nil {
+			return asNative("even a trimmed translation does not fit")
+		}
 		return l, append(warnings, fmt.Sprintf("the conversation does not fit the %s context budget even after trimming; importing config only. Read it with `tclaude paf render`.", dst.DisplayName)), nil
 	}
 	if cwd == "" {
@@ -149,6 +169,9 @@ func planHistoryLanding(b *agentbundle.Bundle, dst *harness.Harness, model, cwd 
 	}
 	if err != nil {
 		cleanup()
+		if fitsNative != nil {
+			return asNative("it could not be translated (" + err.Error() + ")")
+		}
 		return l, append(warnings, "the conversation could not be translated for "+dst.DisplayName+" ("+err.Error()+"); importing config only"), nil
 	}
 	plan.Report.Fallback = "native"
