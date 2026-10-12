@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const SNAPSHOT = {
@@ -118,6 +119,12 @@ test('sharing on a Board reviews first and needs the typed confirmation; a flagg
   await settle();
   assert.deepEqual(calls.find((c) => c[0] === 'redact'), ['redact', { mask_flagged: true, paths_to_placeholders: true }, false]);
   assert.match(host.querySelector('#snapshot-share-review').textContent, /a redacted copy[\s\S]*12 turns[\s\S]*To: inst_bob/);
+  await tick(host.querySelector('#snapshot-share-to [data-instance="inst_carol"]'), true);
+  assertAbsent(host.querySelector('#snapshot-share-review'), 'changing the recipients voids the review');
+  await tick(host.querySelector('#snapshot-share-to [data-instance="inst_carol"]'), false);
+  host.querySelector('#snapshot-share-review-btn').click();
+  await settle();
+  assert.match(host.querySelector('#snapshot-share-review').textContent, /a redacted copy[\s\S]*To: inst_bob/, 'the redacted copy is reused');
   const submit = host.querySelector('#snapshot-share-submit');
   assert.equal(submit.disabled, true, 'waits for the typed confirmation');
   await input(host.querySelector('#snapshot-share-confirm'), 'share');

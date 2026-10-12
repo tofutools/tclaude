@@ -143,10 +143,19 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
     fleet.boardMembers(board).then((rows) => { if (live) setMembers(rows || []); }, () => { if (live) setMembers([]); });
     return () => { live = false; };
   }, [board]);
-  const params = (digest = '') => ({ snapshot: snap.name, name: redacted ? snap.name : '', to, expires, digest, blob: redacted });
+  // Consent covers exactly what was reviewed: a review records the
+  // recipients and expiry it was built from and the share sends those, and a
+  // review that returns after the choices changed is dropped.
+  const choices = useRef(0);
+  const changed = () => { choices.current += 1; setReview(null); };
+  const reviewed = async (sent) => {
+    const seq = choices.current;
+    const result = await actions.snapshots.share(board, sent);
+    if (seq === choices.current) { setReview({ ...result, sent }); setTyped(''); }
+  };
   const doReview = async () => {
     setBusy('review');
-    try { setReview(await actions.snapshots.share(board, params())); setTyped(''); } catch (e) {
+    try { await reviewed(redacted ? { snapshot: '', name: snap.name, to, expires, digest: '', blob: redacted } : { snapshot: snap.name, name: '', to, expires, digest: '', blob: null }); } catch (e) {
       if (e.status === 422 && e.body?.code === 'flagged_credentials') setReview({ flagged: true });
       else onError(message(e));
     } finally { setBusy(''); }
@@ -157,35 +166,34 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
       const blob = await actions.snapshots.exportBlob(snap.name);
       const copy = await actions.redactPAF(blob, { mask_flagged: true, paths_to_placeholders: true }, false);
       setRedacted(copy);
-      setReview(await actions.snapshots.share(board, { snapshot: '', name: snap.name, to, expires, blob: copy }));
-      setTyped('');
+      await reviewed({ snapshot: '', name: snap.name, to, expires, digest: '', blob: copy });
     } catch (e) { onError(message(e)); } finally { setBusy(''); }
   };
   const publish = async () => {
     setBusy('share');
     try {
-      await actions.snapshots.share(board, params(review.summary.content_digest));
+      await actions.snapshots.share(board, { ...review.sent, digest: review.summary.content_digest });
       onDone(`Shared ${snap.name} on the board with ${review.recipients.length} recipient${review.recipients.length === 1 ? '' : 's'}`);
     } catch (e) { onError(message(e)); } finally { setBusy(''); }
   };
-  const toggle = (id, on) => { setTo(on ? [...to, id] : to.filter((x) => x !== id)); setReview(null); };
+  const toggle = (id, on) => { setTo(on ? [...to, id] : to.filter((x) => x !== id)); changed(); };
   const s = review?.summary;
   return html`<div class="snap-panel" id="snapshot-share">
     <div class="paf-sec">Share ${snap.name} on a Board</div>
     ${boards && !boards.length ? html`<div class="paf-hint">This node is on no Board. Join or create one in ⚙ Fleet → Boards.</div>` : html`
-    <${Field} label="Board"><select id="snapshot-share-board" value=${board} onChange=${(e) => setBoard(e.currentTarget.value)}>
+    <${Field} label="Board"><select id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
       ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}</select></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">
       ${members.length === 0 ? html`<span class="paf-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
-        <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
+        <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
         <span>${m.label || m.name || m.instance}</span></label>`)}
       <span class="paf-hint">Only these members can open it; every member sees that it exists. This node is always a recipient.</span></span></div>
-    <${Field} label="Expires"><select id="snapshot-share-expires" value=${expires} onChange=${(e) => { setExpires(e.currentTarget.value); setReview(null); }}>
+    <${Field} label="Expires"><select id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>
       ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}</select></${Field}>
     ${review?.flagged && html`<div class="paf-findings" id="snapshot-share-flagged">⚠ This snapshot has suspected credentials, so it cannot go on a board as it is.
       <div class="paf-row-buttons"><button type="button" id="snapshot-share-redact" disabled=${!!busy} onClick=${redactThenReview}>${busy === 'redact' ? 'Redacting…' : 'Redact a copy and review'}</button></div></div>`}
     ${s && html`<div class="paf-box" id="snapshot-share-review">
-      <b>You are about to share${redacted ? ' a redacted copy' : ''}</b>
+      <b>You are about to share${review.sent?.blob ? ' a redacted copy' : ''}</b>
       <div>${bytesText(s.bytes)} · ${s.turns} turn${s.turns === 1 ? '' : 's'}${s.from ? ` · ${new Date(s.from).toLocaleString()} → ${new Date(s.to).toLocaleString()}` : ''}</div>
       <div>To: ${review.recipients.join(', ')}</div>
       <div>Expires ${new Date(review.expires_at).toLocaleString()}; the hub deletes it then, even if pinned.</div>
