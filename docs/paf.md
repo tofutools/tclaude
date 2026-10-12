@@ -360,6 +360,44 @@ prepared it for a wider audience.
   recalled, and an expiry cannot force another implementation to delete its
   copy.
 
+### Redacting a PAF
+
+`tclaude paf redact` writes a redacted copy of a PAF, or a legacy agent
+bundle or group export, and `--preview` shows what it would change without
+writing anything:
+
+```bash
+tclaude paf redact reviewer.paf --mask-flagged --paths-to-placeholders --preview
+tclaude paf redact reviewer.paf --mask-flagged --stub-tool-results -o reviewer.redacted.paf
+```
+
+| Flag | Redaction | What it does |
+|---|---|---|
+| `--mask-flagged` | `mask_spans` | Replaces every span the scan flags with `[REDACTED:<kind>]`. A PEM private key is masked from its header to its `END` line. |
+| `--stub-tool-results` | `stub_tool_results` | Replaces tool results older than the last `--keep-turns` human turns (default 3) with a stub, and drops their media. |
+| `--drop-media` | `drop_media` | Replaces images and documents with a stub. |
+| `--drop-reasoning` | `drop_reasoning` | Removes thinking blocks and provider reasoning state. |
+| `--drop-native` | `drop_native` | Drops the native blob only. |
+| `--paths-to-placeholders` | `paths_to_placeholders` | Replaces recorded placeholder paths, each working directory and worktree, the home directory above them and the user name it is named after with `${PROJECT}`, `${HOME}` and `${USER}`. A path matches only as a whole path, the user name only as a whole word, and a user name shorter than four characters is left alone. Agent keys are identifiers and are kept as they are. |
+
+The copy is a new file:
+
+- Every redaction drops the native blob. An agent whose history exists only as
+  a native blob first gets a neutral context decoded from it, so its history
+  survives as the redacted context.
+- Extension data other than tclaude's own, unknown context line types, and
+  files that are neither JSON nor text are dropped and recorded as
+  `drop_unredactable`.
+- A thinking block whose text a redaction changed loses its reasoning
+  signature, which no longer matches the text.
+- The scan is redone on the output and recorded in `privacy.json` with the
+  applied redactions. Each agent's loss report gets a `redacted` item per
+  redaction applied to it, with the redaction kind as `detail`.
+- Sensitivity, audience and retention carry over. Consent records and
+  signatures do not: the copy is signed by this node when it has a
+  federation identity.
+- Rewriting needs every required feature and extension, as import does.
+
 ### Checklist before sharing an agent
 
 1. Ask whether the receiver needs the history at all. A definition-only PAF
@@ -696,7 +734,11 @@ root `privacy.json` records:
 - `scan`: the scanner name and version, when it ran, and `findings`
   (`kind`, `count`, up to three `locations`), plus `allowed: true` when a
   human explicitly allowed findings.
-- `redactions`: applied redactions as `{kind, count, detail}`.
+- `redactions`: applied redactions as `{kind, count, detail}`. Kinds are an
+  open set; tclaude writes `mask_spans`, `stub_tool_results`, `drop_media`,
+  `drop_reasoning`, `drop_native`, `paths_to_placeholders` and
+  `drop_unredactable` (content dropped because it could not be rewritten
+  safely).
 - `consent`: human confirmations, each with `by`, `at`, `audience` and
   `content_digest`.
 - `retention`: `expires_at`.
