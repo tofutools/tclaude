@@ -450,7 +450,8 @@ survives if this node is lost.
   hours apart. `policy ls` shows the error; after three failures in a row
   you are told once, and again only after a snapshot succeeds and fails again.
 - **The peer.** It must run a tclaude that advertises resilience snapshots
-  and grant this node `snapshots.receive`:
+  and grant this node `snapshots.receive`, even when it trusts this node as
+  unrestricted:
 
   ```bash
   tclaude federation grant alice snapshots.receive

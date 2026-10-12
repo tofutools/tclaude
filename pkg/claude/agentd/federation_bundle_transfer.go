@@ -92,7 +92,9 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 		// No standing grant: only an answer to this node's own recall.
 		return resilienceRecallAdmits(peer, d)
 	}
-	if db.FederationPeerUnrestricted(peer) {
+	// Custody stores another node's data with no operator step, so it
+	// takes the explicit grant even from an unrestricted peer.
+	if kind.Name != bundletransfer.Snapshot.Name && db.FederationPeerUnrestricted(peer) {
 		return true
 	}
 	grants, err := db.ListEffectiveFederationPeerGrants(peer)

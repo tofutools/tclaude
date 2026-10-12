@@ -1024,7 +1024,9 @@ spawn authority. These commands operate on local files and do not contact peers.
 
 A peer's [resilience policy](paf.md#resilience-snapshots) sends encrypted
 snapshots of its agents to this node for safekeeping. Accept them by granting
-the peer-only, unscoped `snapshots.receive` permission:
+the peer-only, unscoped `snapshots.receive` permission. Custody takes no
+operator step per snapshot, so even an unrestricted peer needs this explicit
+grant:
 
 ```bash
 tclaude federation grant alice snapshots.receive

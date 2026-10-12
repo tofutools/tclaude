@@ -82,6 +82,15 @@ func TestResilience_PeerHoldsSnapshotsUnderGrantWithRetention(t *testing.T) {
 	denied := fedSendSnapshot(t, p, fedSealed(t, "one"), now, 2)
 	require.Equal(t, proto.AckRefused, fedAckFor(t, p, denied.ID).Status)
 
+	// Unrestricted trust does not imply custody: it takes the explicit grant.
+	peer, err := db.GetFederationPeer(p.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	require.True(t, db.FederationPeerUnrestricted(p.id.ID()))
+	denied = fedSendSnapshot(t, p, fedSealed(t, "one"), now.Add(-3*time.Hour), 2)
+	require.Equal(t, proto.AckRefused, fedAckFor(t, p, denied.ID).Status)
+
 	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "snapshots.receive"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 
