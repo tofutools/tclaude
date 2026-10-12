@@ -25,7 +25,17 @@ const HOOK_BIN = process.env.TCLAUDE_PI_HOOK_BIN ?? "";
 // tclaude's auto-compaction window in tokens, when the agent pins one. pi
 // compacts on its own only near the model's full window; this compacts
 // earlier, between runs. pi's own threshold stays the backstop.
-const AUTO_COMPACT_TOKENS = Number.parseInt(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "", 10) || 0;
+// tclaude exports a canonical token count; anything else (a unit suffix from
+// the operator's own shell, a value outside tclaude's bounds) is ignored, as
+// tclaude's hook ignores it, so the compaction and the meter agree.
+const AUTO_COMPACT_TOKENS = pinnedWindow(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "");
+
+function pinnedWindow(raw: string): number {
+	const value = raw.trim();
+	if (!/^[0-9]+$/.test(value)) return 0;
+	const tokens = Number(value);
+	return tokens >= 10_000 && tokens <= 10_000_000 ? tokens : 0;
+}
 const CALLBACK_TIMEOUT_MS = 5_000;
 // How long shutdown waits for earlier events before sending SessionEnd.
 const SHUTDOWN_FLUSH_MS = 3_000;

@@ -41,6 +41,13 @@ func persistPiHookTelemetry(state *SessionState, input HookCallbackInput, amb Ho
 	if state.ConvID != "" && input.ConvID != "" && input.ConvID != state.ConvID {
 		return
 	}
+	// pi's `provider/model` is both what the dashboard shows and what a
+	// relaunch passes back to `--model`, as Codex's slug is.
+	if input.Model != "" {
+		if err := db.UpdateSessionModelSlug(state.ID, input.Model); err != nil {
+			slog.Warn("pi: failed to update session model", "session_id", state.ID, "error", err, "module", "hooks")
+		}
+	}
 	if c := input.PiContext; c != nil && c.ContextWindow != nil && *c.ContextWindow > 0 {
 		window := *c.ContextWindow
 		var tokens int64

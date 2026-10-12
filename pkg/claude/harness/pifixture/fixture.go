@@ -237,7 +237,7 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]any{
 		"id": "c1", "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": "mock-1",
 		"choices": []any{},
-		"usage":   map[string]any{"prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230},
+		"usage":   map[string]any{"prompt_tokens": 12000, "completion_tokens": 30, "total_tokens": 12030},
 	}))
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }

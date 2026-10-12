@@ -95,7 +95,7 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | pi | Shell |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | pi (experimental) | Shell |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No: not yet bound | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ | ✅ spawn only |
@@ -772,10 +772,15 @@ sandbox there.
 Gemini has no counterpart for remote control, fast mode, a command-backed
 status line, or tclaude's task runner.
 
-## pi
+## pi (experimental)
 
 [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`,
-1.1.0 or newer) is selected with `--harness pi`.
+1.1.0 or newer) is registered but **experimental**: tclaude launches it only
+after you opt in. Opt in with `"experimental_harnesses": ["pi"]` in
+`~/.tclaude/data/config.json` (or `TCLAUDE_EXPERIMENTAL_HARNESSES=pi` in the
+daemon's environment). Until then pi is hidden from the spawn dialog and every
+launch path refuses it. It stays experimental until a launch inside tclaude's
+sandbox works end to end.
 
 **What works.** Spawn and resume (`--session-id`, and resume by session file
 so a pane never stops on pi's fork prompt), model and thinking level
@@ -806,7 +811,10 @@ titles them by pi's session name, and follows the session tree the way pi does:
 the current branch, from the newest compaction on. Clone, agent bundles and
 federation carry the session file as is under a new id; a cross-harness morph
 translates it, and a morph to pi needs a `provider/model`, since pi resumes
-with the model its history names.
+with the model its history names. The translation is budgeted to the model's
+context window: the window `models.json` declares for a custom model, else the
+one pi last reported for it, else an assumed 32k; history that does not fit
+needs the same confirmation as any other morph.
 
 **Context meter and cost.** The extension reports pi's own context usage and
 what the session has spent, priced from pi's model catalog, on every event.

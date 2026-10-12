@@ -290,7 +290,7 @@ func (s *piSession) Context() (entries []*piEntry, compacted int) {
 			kept = true
 		}
 		if kept {
-			if !(e.Type == "message" && e.Message != nil && e.Message.Role == "system") {
+			if e.Type != "message" || e.Message == nil || e.Message.Role != "system" {
 				entries = append(entries, e)
 			}
 		} else if e.Type == "message" && e.Message != nil && e.Message.Role != "system" {

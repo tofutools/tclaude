@@ -16,6 +16,7 @@ import (
 // reaches the pane, and the meter measures against it, as for Claude Code.
 func TestPiTelemetry_ContextMeterAndCost(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-metered", "auto_compact_window": "32k"})
@@ -45,6 +46,7 @@ func TestPiTelemetry_ContextMeterAndCost(t *testing.T) {
 // what they would have cost, so it is recorded as what-if cost.
 func TestPiTelemetry_SubscriptionCostIsWhatIf(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-subscribed"})

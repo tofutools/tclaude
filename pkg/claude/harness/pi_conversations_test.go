@@ -137,6 +137,8 @@ func TestPiHistoryImportRemintsAndResumesInReceiverStore(t *testing.T) {
 	assert.Equal(t, id, session.Header.ID)
 	assert.Equal(t, cwd, session.Header.Cwd)
 	assert.Empty(t, session.Header.ParentSession, "the sender's parent link is dropped")
+	assert.Greater(t, session.Header.Timestamp, "2026-10-01T10:00:00.000Z",
+		"the session starts at the import, so the extension does not count the copied spend again")
 	assert.Contains(t, string(got), "keep this text /sender/proj verbatim", "message text is untouched")
 	row, err := db.GetConvIndex(id)
 	require.NoError(t, err)

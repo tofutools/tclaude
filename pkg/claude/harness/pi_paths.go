@@ -146,3 +146,38 @@ func piFindSessionFile(sessionsDir, id string) string {
 	sort.Strings(matches)
 	return matches[0]
 }
+
+// piConfiguredModelWindow is the context window models.json in pi's agent
+// directory declares for a `provider/model`: a custom provider's own limit,
+// which is what pi measures that model against. 0 when it declares none.
+func piConfiguredModelWindow(getenv func(string) string, model string) int64 {
+	provider, id, ok := strings.Cut(model, "/")
+	if !ok || provider == "" || id == "" {
+		return 0
+	}
+	agentDir, err := piAgentDir(getenv)
+	if err != nil {
+		return 0
+	}
+	raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
+	if err != nil {
+		return 0
+	}
+	var config struct {
+		Providers map[string]struct {
+			Models []struct {
+				ID            string `json:"id"`
+				ContextWindow int64  `json:"contextWindow"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if json.Unmarshal(raw, &config) != nil {
+		return 0
+	}
+	for _, m := range config.Providers[provider].Models {
+		if m.ID == id && m.ContextWindow > 0 && m.ContextWindow <= 10_000_000 {
+			return m.ContextWindow
+		}
+	}
+	return 0
+}

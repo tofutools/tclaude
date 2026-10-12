@@ -3061,3 +3061,25 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// ObservedModelContextWindow returns the context window a harness last
+// reported for a model, from the newest session row that ran it with a
+// populated snapshot: a window the harness itself measured, for a model
+// tclaude has no catalog of. 0 when no session has reported one.
+func ObservedModelContextWindow(harnessName, modelID string) (int64, error) {
+	if harnessName == "" || modelID == "" {
+		return 0, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var window int64
+	err = db.QueryRow(`SELECT context_window_size FROM sessions
+		WHERE harness = ? AND model_id = ? AND context_window_size > 0
+		ORDER BY updated_at DESC LIMIT 1`, harnessName, modelID).Scan(&window)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return window, err
+}

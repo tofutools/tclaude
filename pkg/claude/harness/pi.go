@@ -15,6 +15,14 @@ func init() {
 		Name:        PiName,
 		DisplayName: "pi",
 
+		// pi is registered but EXPERIMENTAL: it cannot be spawned until the
+		// operator opts in (see ExperimentalHarnessEnabled), and spawn
+		// surfaces leave it out of their default lists. It stays that way
+		// until a launch under tclaude's sandbox works end to end (the
+		// tclaude-layer mode below fails closed today), so a pi offered in
+		// the spawn dialog is never a dead end.
+		Experimental: true,
+
 		Spawn:  piSpawner{},
 		Models: piModels{},
 		// Conversations are pi's session files; a transfer carries one as

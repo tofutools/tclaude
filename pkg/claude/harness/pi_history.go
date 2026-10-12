@@ -18,7 +18,8 @@ import (
 // piHistory transfers a pi session file as it is: the header, then the entry
 // tree. An import remints the session id and rewrites the header's cwd to the
 // receiver's; entry ids are scoped to their file and need no remint. The
-// parent-session link names a file on the sender's machine and is dropped.
+// parent-session link names a file on the sender's machine and is dropped, and
+// the header's start time becomes the import's.
 // Settings, credentials, extensions and the agent directory are never part of
 // a transfer.
 type piHistory struct{}
@@ -111,6 +112,10 @@ func rewritePiHistory(r io.Reader, source, target, cwd string, out io.Writer) er
 			if target != "" {
 				geminiHistoryPutString(rec, "id", target)
 				geminiHistoryPutString(rec, "cwd", cwd)
+				// The session starts now, as pi's own /clone stamps it:
+				// the extension counts spend from the header's time on,
+				// so the copied history's spend stays with its source.
+				geminiHistoryPutString(rec, "timestamp", rfc3339ms(time.Now()))
 				delete(rec, "parentSession")
 				var err error
 				if raw, err = json.Marshal(rec); err != nil {

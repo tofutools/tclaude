@@ -16,6 +16,7 @@ import (
 // both conversations are listed with their names.
 func TestPiConversations_CloneCarriesHistory(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})

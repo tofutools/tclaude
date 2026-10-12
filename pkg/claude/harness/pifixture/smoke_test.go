@@ -235,8 +235,8 @@ func TestPiLandedTranscriptResumes(t *testing.T) {
 func TestPiExtensionReportsSpendAndCompactsAtPinnedWindow(t *testing.T) {
 	w := NewWorld(t)
 	ext := materializedExtension(t)
-	// One response puts ~1230 tokens in context (the mock's usage).
-	w.ExtraEnv = []string{harness.AutoCompactWindowEnvVar + "=1000"}
+	// One response puts ~12k tokens in context (the mock's usage).
+	w.ExtraEnv = []string{harness.AutoCompactWindowEnvVar + "=10000"}
 	id := uuid.NewString()
 	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
 	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
@@ -263,8 +263,43 @@ func TestPiExtensionReportsSpendAndCompactsAtPinnedWindow(t *testing.T) {
 	spend, ok := byEvent["Stop"]["tclaude_usage"].(map[string]any)
 	require.True(t, ok, "Stop carries no tclaude_usage: %v", byEvent["Stop"])
 	assert.EqualValues(t, 2, spend["calls"])
-	assert.EqualValues(t, 2400, spend["input_tokens"])
+	assert.EqualValues(t, 24000, spend["input_tokens"])
 	assert.EqualValues(t, 60, spend["output_tokens"])
-	assert.InDelta(t, 0.00252, spend["cost_usd"], 1e-9)
+	assert.InDelta(t, 0.02412, spend["cost_usd"], 1e-9)
 	assert.Equal(t, false, spend["subscription"], "an API key is billed per token")
+}
+
+// A session tclaude copies (clone, agent bundle, federation) starts at the
+// import: its copied history's spend stays with the source, and the copy
+// reports only its own.
+func TestPiImportedSessionReportsOnlyItsOwnSpend(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	t.Setenv(harness.PiAgentDirEnvVar, w.AgentDir)
+	t.Setenv(harness.PiSessionDirEnvVar, "")
+
+	source := uuid.NewString()
+	out, err := w.Run(w.Project, "-p", "first", "--session-id", source, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	pi := harness.MustGet(harness.PiName)
+	raw, err := pi.History.Export(source, w.Project)
+	require.NoError(t, err)
+	id, cleanup, err := pi.History.Import(raw, source, w.Project)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	out, err = w.Run(w.Project, "-p", "second", "--session-id", id, "--extension", ext, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	var stop map[string]any
+	for _, p := range w.RecordedPayloads() {
+		if p["hook_event_name"] == "Stop" {
+			stop = p
+		}
+	}
+	require.NotNil(t, stop)
+	spend, ok := stop["tclaude_usage"].(map[string]any)
+	require.True(t, ok, "Stop carries no tclaude_usage: %v", stop)
+	assert.EqualValues(t, 1, spend["calls"], "only the copy's own response")
 }
