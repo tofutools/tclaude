@@ -176,3 +176,38 @@ func TestBoardSnapshotStreamChecksExpiryAfterThrottle(t *testing.T) {
 	require.Zero(t, n)
 	require.Empty(t, output.Bytes(), "expiry crossing the throttle boundary must release no ciphertext")
 }
+
+// A hub downgraded to a release without snapshots sweeps an expired blob
+// with a plain DELETE on board_blobs. The snapshot rows that reference it
+// cascade, so the sweep, and the hub's startup, still succeed.
+func TestBoardSnapshotBlobSurvivesOldHubSweep(t *testing.T) {
+	path := filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite")
+	now := time.Now().UTC().Truncate(time.Second)
+	s, e := OpenStoreWithClock(path, func() time.Time { return now })
+	require.NoError(t, e)
+	defer func() { require.NoError(t, s.Close()) }()
+	id, e := proto.NewIdentity()
+	require.NoError(t, e)
+	board := proto.NewEnvelopeID()
+	_, e = s.db.Exec(`INSERT INTO boards(id,name,epoch,quota_bytes,created_at) VALUES(?,'b',1,1048576,?)`, board, ts(now))
+	require.NoError(t, e)
+	_, e = s.db.Exec(`INSERT INTO board_members(board,instance,role,pub,key_proof) VALUES(?,?,'owner',?,?)`, board, id.ID(), id.Pub, make([]byte, 32))
+	require.NoError(t, e)
+	data := bytes.Repeat([]byte("c"), int(proto.BoardContentOverhead)+64)
+	sum := sha256.Sum256(data)
+	blob := proto.NewEnvelopeID()
+	require.NoError(t, s.StoreBoardSnapshotBlob(id.ID(), board, blob, hex.EncodeToString(sum[:]), int64(len(data)), now.Add(time.Hour), bytes.NewReader(data)))
+	_, e = s.db.Exec(`INSERT INTO board_snapshot_versions VALUES(?,'item','v1',1,'{}',?,?,?)`, board, id.ID(), snapshotTS(now.Add(time.Hour)), ts(now))
+	require.NoError(t, e)
+	_, e = s.db.Exec(`INSERT INTO board_snapshot_chunks VALUES(?,'item','v1',?)`, board, blob)
+	require.NoError(t, e)
+
+	// The old hub's sweep: a plain DELETE, knowing nothing of snapshots.
+	_, e = s.db.Exec(`DELETE FROM board_blobs WHERE board=? AND id=?`, board, blob)
+	require.NoError(t, e)
+	var chunks, problems int
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM board_snapshot_chunks WHERE board=?`, board).Scan(&chunks))
+	require.Zero(t, chunks)
+	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&problems))
+	require.Zero(t, problems)
+}

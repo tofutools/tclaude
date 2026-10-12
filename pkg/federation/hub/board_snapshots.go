@@ -11,10 +11,12 @@ import (
 )
 
 // Additive tables deliberately leave the existing receipt/schema untouched.
+// Every key that reaches board_blobs cascades, so an older hub that knows
+// nothing of snapshots can still delete an expired blob in its sweep.
 const boardSnapshotSchema = `
 CREATE TABLE IF NOT EXISTS board_snapshot_blobs(board TEXT NOT NULL,blob TEXT NOT NULL,publisher TEXT NOT NULL,expires_at TEXT NOT NULL,PRIMARY KEY(board,blob),FOREIGN KEY(board,blob) REFERENCES board_blobs(board,id) ON DELETE CASCADE) STRICT;
 CREATE TABLE IF NOT EXISTS board_snapshot_versions(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,item TEXT NOT NULL,version TEXT NOT NULL,seq INTEGER NOT NULL,body TEXT NOT NULL,publisher TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(board,item,version),UNIQUE(board,item,seq)) STRICT;
-CREATE TABLE IF NOT EXISTS board_snapshot_chunks(board TEXT NOT NULL,item TEXT NOT NULL,version TEXT NOT NULL,blob TEXT NOT NULL,PRIMARY KEY(board,blob),FOREIGN KEY(board,item,version) REFERENCES board_snapshot_versions(board,item,version) ON DELETE CASCADE,FOREIGN KEY(board,blob) REFERENCES board_snapshot_blobs(board,blob)) STRICT;
+CREATE TABLE IF NOT EXISTS board_snapshot_chunks(board TEXT NOT NULL,item TEXT NOT NULL,version TEXT NOT NULL,blob TEXT NOT NULL,PRIMARY KEY(board,blob),FOREIGN KEY(board,item,version) REFERENCES board_snapshot_versions(board,item,version) ON DELETE CASCADE,FOREIGN KEY(board,blob) REFERENCES board_snapshot_blobs(board,blob) ON DELETE CASCADE) STRICT;
 CREATE TABLE IF NOT EXISTS board_snapshot_pins(board TEXT NOT NULL,instance TEXT NOT NULL,item TEXT NOT NULL,version TEXT NOT NULL,PRIMARY KEY(board,instance,item),FOREIGN KEY(board,item,version) REFERENCES board_snapshot_versions(board,item,version) ON DELETE CASCADE) STRICT;
 CREATE TABLE IF NOT EXISTS board_snapshot_deleted(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,item TEXT NOT NULL,version TEXT NOT NULL,publisher TEXT NOT NULL,PRIMARY KEY(board,item,version)) STRICT;
 CREATE TABLE IF NOT EXISTS board_snapshot_cleanup(board TEXT NOT NULL,item TEXT NOT NULL,version TEXT NOT NULL,blob TEXT NOT NULL,PRIMARY KEY(board,blob),FOREIGN KEY(board,item,version) REFERENCES board_snapshot_deleted(board,item,version) ON DELETE CASCADE) STRICT;
