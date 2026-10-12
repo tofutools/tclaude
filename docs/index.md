@@ -24,6 +24,10 @@ permissions, audit, spawning, and mail. The daemon is fail-closed — there is
 no path around it. For the mental model behind sessions, conversations,
 agents, and the daemon, read [Architecture](architecture.md).
 
+!!! tip "New here?"
+    Follow the [Learn](learn/index.md) path: short hands-on tutorials from
+    your first session onward. The rest of these docs are reference.
+
 ## Start with the workflow you need
 
 | Goal | Start here |
