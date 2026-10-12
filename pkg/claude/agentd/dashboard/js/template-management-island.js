@@ -986,7 +986,9 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       id: 'group-import-modal',
       labelledby: 'group-import-title',
       onClose: state.closeDialog,
-      onSubmitHotkey: ready && !busy ? submit : null,
+      // The hotkey takes the primary action: offline, or start when offline
+      // is not possible for this agent.
+      onSubmitHotkey: ready && !busy ? () => submit(!!offlineBlocker) : null,
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
