@@ -1122,7 +1122,10 @@ so neither keeps the conversation readable on its own.
 `scope` is `effective` for `transcript.jsonl`. `full.jsonl` uses the same
 line schema with scope `full`. It may also contain `boundary` lines
 (`kind`: `compaction`, `clear`, `rewind` or `branch`) marking where the
-effective context diverges from the full history.
+effective context diverges from the full history. A boundary may name a
+`parent`: the `id` of the entry the history continues from after it, so a
+reader can rebuild the branches. Without `parent`, the history continues
+from the entry just before the boundary.
 
 ### Context: losses.json
 

@@ -47,6 +47,9 @@ type Line struct {
 
 	// boundary
 	Kind string `json:"kind,omitempty"`
+	// Parent is the id of the entry the history continues from after a
+	// boundary, when that is not the entry just before it.
+	Parent string `json:"parent,omitempty"`
 
 	Extensions Extensions `json:"extensions,omitempty"`
 

@@ -68,6 +68,10 @@
           "type": "string",
           "description": "Open set. Known: compaction, clear, rewind, branch."
         },
+        "parent": {
+          "type": "string",
+          "description": "Optional: the id of the entry the history continues from after this boundary, so a reader can rebuild branches. Absent means the entry just before the boundary."
+        },
         "time": {
           "$ref": "common.schema.json#/$defs/timestamp"
         },
