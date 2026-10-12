@@ -35,7 +35,9 @@ function RedactPanel({ actions, source, filename, onDone }) {
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const set = (key) => (value) => { setOpts({ ...opts, [key]: value }); setReport(null); };
+  const [ack, setAck] = useState(false);
+  const set = (key) => (value) => { setOpts({ ...opts, [key]: value }); setReport(null); setAck(false); };
+  const stillFlagged = (report?.findings || []).length > 0;
   const run = async (preview) => {
     setBusy(preview ? 'preview' : 'download');
     setError('');
@@ -57,13 +59,14 @@ function RedactPanel({ actions, source, filename, onDone }) {
     ${report && html`<div class="paf-report" id="paf-redact-report">
       ${redactionText(report).map((line) => html`<div key=${line}>✓ ${line}</div>`)}
       ${(report.findings || []).length
-        ? html`<${FindingsPanel} findings=${report.findings} title="Still flagged after redaction" />`
+        ? html`<${FindingsPanel} findings=${report.findings} title="Still flagged after redaction" />
+          <${Check} id="paf-redact-ack" checked=${ack} onChange=${setAck}>Download anyway; I have checked the remaining findings</${Check}>`
         : html`<div class="paf-ok">✓ No suspected credentials remain.</div>`}
     </div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="paf-row-buttons">
       <button type="button" id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}</button>
-      <button type="button" id="paf-redact-download" class="primary" disabled=${!!busy || !report} title=${report ? '' : 'Preview the redaction first'}
+      <button type="button" id="paf-redact-download" class="primary" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
         onClick=${() => run(false)}>${busy === 'download' ? 'Redacting…' : '⤓ Download redacted .paf'}</button>
     </div>
   </div>`;

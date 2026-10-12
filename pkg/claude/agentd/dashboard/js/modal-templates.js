@@ -1,4 +1,5 @@
 import { refuseInPeerView } from './peer-view-guard.js';
+import { bindPAFDrop } from './paf-drop.js';
 // Compatibility entry points and shared readback helpers for the Preact-owned
 // template/group management feature. The feature owns all dialog rendering and
 // state; callers elsewhere in the dashboard retain these small stable APIs.
@@ -79,25 +80,9 @@ export function openGroupExport(group) {
 
 export function bindGroupImportModal() {
   document.querySelector('#group-import-open')?.addEventListener('click', () => openGroupImport());
-  bindPAFDrop();
+  bindPAFDrop({ open: openGroupImport, refuse: () => refuseInPeerView('Import') });
 }
 
-// A .paf or .zip dropped onto the page opens the same import preview. Only
-// file drags are taken; agent and group drag-and-drop are left alone.
-function bindPAFDrop() {
-  const isFileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
-  document.addEventListener('dragover', (event) => {
-    if (isFileDrag(event)) event.preventDefault();
-  });
-  document.addEventListener('drop', (event) => {
-    if (!isFileDrag(event)) return;
-    const file = [...(event.dataTransfer?.files || [])].find((f) => /\.(paf|zip)$/i.test(f.name));
-    if (!file) return;
-    event.preventDefault();
-    if (refuseInPeerView('Import')) return;
-    openGroupImport(file);
-  });
-}
 
 const SCRIBE_NAME = 'circle-scribe';
 const SCRIBE_SLUGS = ['templates.manage'];

@@ -615,8 +615,9 @@ export function createManagementActions({
   }
   // openGroupImport opens the one ⤒ import… dialog; file preloads a
   // dropped .paf or .zip.
+  let importKey = 0;
   function openGroupImport(file = null) {
-    state.openDialog({ kind: 'group-import', file });
+    state.openDialog({ kind: 'group-import', file, key: ++importKey });
   }
   function openGroupContext(name) {
     const group = (getSnapshot()?.groups || []).find(
