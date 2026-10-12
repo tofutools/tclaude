@@ -398,6 +398,49 @@ The copy is a new file:
   federation identity.
 - Rewriting needs every required feature and extension, as import does.
 
+### Consenting to share
+
+`tclaude paf consent` records your confirmation that a PAF may go to an
+audience:
+
+```bash
+tclaude paf consent reviewer.paf --audience recipients --recipient inst_7c21 -o reviewer.paf
+```
+
+It first shows what would be shared, then asks you to confirm:
+
+- the size and number of agents;
+- the conversation's human turn count and time range;
+- this node's own credential scan, not the producer's recorded one;
+- the redactions already applied;
+- the content digest.
+
+Without a terminal, review the summary and pass `--yes`. The audience is
+`self`, `recipients` (with one or more `--recipient` instance ids), `board`
+(with `--board`) or `public`.
+
+The consent record (`by`, `at`, `audience`, `content_digest`) is added to
+`privacy.json`, and the audience and sensitivity are set to match. Every
+consent record in a file is for its `privacy.audience`. The content entries
+are copied byte for byte and the file is re-signed by this node. Any later
+change to the content makes the consent stale. Redacting produces new
+content, so consent never carries over to a redacted copy.
+
+- **Bound to what you reviewed.** The daemon refuses the request when the
+  file's content digest is not the one the summary showed you, for example
+  because it was rewritten while you were reading.
+- **Earlier records are kept only when this node vouches for them.** The
+  summary lists any consent the file already carries. Those records are kept
+  only when this node signed the file and they are for the same audience.
+  Records anyone else wrote are dropped rather than re-signed.
+- **Only the human operator can consent.** The daemon refuses the request
+  from an agent, so an agent can never consent on its own authority.
+  tclaude records the confirmer as `operator`.
+
+A consent record is only as trustworthy as the signature over the manifest.
+`tclaude paf inspect` shows each consent as current, as stale, or as
+unverified when no signature from this node or a known peer covers it.
+
 ### Checklist before sharing an agent
 
 1. Ask whether the receiver needs the history at all. A definition-only PAF
