@@ -5056,7 +5056,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, 409, "managed_instructions", managedErr.Error())
 			return
 		}
-		if len(managed) != 0 {
+		if p.Harness != harness.ShellName && len(managed) != 0 {
 			writeError(w, 409, "managed_instructions", "one-shot runs with managed instructions are not supported yet; use an ordinary worker")
 			return
 		}

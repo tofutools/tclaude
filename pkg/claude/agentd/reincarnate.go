@@ -339,13 +339,14 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //
 // Writes the JSON response (or error) directly to w.
 func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, sudoGrantID int64, body reincarnateBody, relatedEventID string) {
+	launchLock := resumeLaunchLock(target)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	if err := refuseManagedContinuation(target); err != nil {
 		writeError(w, http.StatusConflict, "managed_instructions", err.Error())
 		return
 	}
-	launchLock := resumeLaunchLock(target)
-	launchLock.Lock()
-	defer launchLock.Unlock()
+
 	actor, actorErr := db.GetAgentByConv(target)
 	if actorErr != nil {
 		writeError(w, http.StatusInternalServerError, "io", "resolve target agent: "+actorErr.Error())
