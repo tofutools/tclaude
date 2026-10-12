@@ -453,3 +453,31 @@ test('a blocking confirmation stays up, disabled and spinning, until its action 
     'the dialog comes down once the action settles');
   await mounted.unmount();
 });
+
+test('Codex snapshot usage renders with a saved cost mode and switches to percentage', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { Usage }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const pref = 'tclaude.dash.headerUsageMode.codex';
+  dashPrefs.setItem(pref, 'cost');
+  t.after(() => dashPrefs.removeItem(pref));
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${Usage} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { usage: {
+    codex: { available: true, five_hour: { pct: 27, remaining: '2h' } },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'openai', total_cost_usd: 2.75 }],
+  } }));
+  assert.match(mounted.container.textContent, /Codex:/);
+  assert.equal(mounted.container.querySelector('.ucost-amt').textContent, '$2.75');
+  const percent = [...mounted.container.querySelectorAll('.usage-unit-switch button')]
+    .find((button) => button.textContent === '%');
+  await harness.act(() => percent.click());
+  assert.match(mounted.container.textContent, /27%/);
+  assert.equal(dashPrefs.getItem(pref), 'usage');
+  await mounted.unmount();
+});
