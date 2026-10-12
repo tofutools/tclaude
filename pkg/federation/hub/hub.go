@@ -44,6 +44,8 @@ type Config struct {
 	// store, so admin CLI edits (revoke, spaces) take effect on live
 	// connections.
 	PolicyRefresh time.Duration
+	// BoardSweepInterval reclaims expired ciphertext; reads enforce TTL immediately.
+	BoardSweepInterval time.Duration
 	// HelloTimeout bounds the challenge/hello handshake.
 	HelloTimeout time.Duration
 	// IdentityRotationWindow detects competing successors before admission.
@@ -62,6 +64,9 @@ type Config struct {
 }
 
 func (c *Config) defaults() {
+	if c.BoardSweepInterval <= 0 {
+		c.BoardSweepInterval = time.Minute
+	}
 	if c.MaxConnections <= 0 {
 		c.MaxConnections = 1024
 	}
@@ -176,6 +181,8 @@ func New(store *Store, cfg Config) (*Hub, error) {
 	}
 	h.wg.Add(1)
 	go h.refreshLoop()
+	h.wg.Add(1)
+	go h.boardSweepLoop()
 	return h, nil
 }
 
@@ -723,5 +730,21 @@ func ListenAndServe(ctx context.Context, srv *http.Server, h *Hub, certFile, key
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return srv.Shutdown(sctx)
+	}
+}
+
+func (h *Hub) boardSweepLoop() {
+	defer h.wg.Done()
+	ticker := time.NewTicker(h.config().BoardSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.stop:
+			return
+		case <-ticker.C:
+			if err := h.store.SweepBoardBlobs(); err != nil {
+				h.log.Warn("board ciphertext cleanup failed", "error", err)
+			}
+		}
 	}
 }

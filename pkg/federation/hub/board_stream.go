@@ -94,7 +94,7 @@ func (h *Hub) serveBoardBlob(c *conn) {
 	}()
 	limited := &boardBandwidth{rw: conn, lim: lim, done: transferCtx.Done()}
 	if req.Method == "blobs.put" {
-		e = h.store.StoreBoardBlob(c.id, p.Board, p.Blob, p.Digest, p.Bytes, limited)
+		e = h.store.storeBoardBlob(c.id, p.Board, p.Blob, p.Digest, p.Bytes, limited, p.Kind, p.ExpiresAt)
 		status := 200
 		code := ""
 		if e != nil {
@@ -130,9 +130,10 @@ func (h *Hub) serveBoardBlob(c *conn) {
 }
 
 type boardBandwidth struct {
-	rw   io.ReadWriter
-	lim  *byteLimiter
-	done <-chan struct{}
+	rw          io.ReadWriter
+	lim         *byteLimiter
+	done        <-chan struct{}
+	beforeWrite func() error
 }
 
 func (b *boardBandwidth) Read(p []byte) (int, error) {
@@ -154,6 +155,13 @@ func (b *boardBandwidth) Write(p []byte) (int, error) {
 		}
 		if !b.lim.wait(n, b.done) {
 			return written, errors.New("board stream closed")
+		}
+		// Recheck hard expiry after the bandwidth wait, immediately before
+		// releasing a buffered record to the authenticated stream.
+		if b.beforeWrite != nil {
+			if err := b.beforeWrite(); err != nil {
+				return written, err
+			}
 		}
 		m, e := b.rw.Write(p[:n])
 		written += m
