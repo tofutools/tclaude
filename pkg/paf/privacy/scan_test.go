@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/paf"
 )
 
@@ -108,4 +109,8 @@ func TestChunksScanOverlongLines(t *testing.T) {
 	f := c.Findings()
 	require.Len(t, f, 1)
 	assert.GreaterOrEqual(t, f[0].Count, 3)
+}
+
+func TestHighEntropyKindMatchesBundleV1Filter(t *testing.T) {
+	assert.Equal(t, KindHighEntropy, agentbundle.AdvisoryHighEntropy)
 }

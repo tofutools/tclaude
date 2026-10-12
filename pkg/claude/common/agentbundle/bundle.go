@@ -83,6 +83,21 @@ type Finding struct {
 	Count     int      `json:"count"`
 	Locations []string `json:"locations"`
 }
+// AdvisoryHighEntropy is the PAF scanner's advisory finding kind (a
+// random-looking token). Releases that only read bundle v1 treat every
+// finding as a suspected credential, so a v1 manifest never carries it.
+const AdvisoryHighEntropy = "high-entropy-string"
+
+func v1Findings(fs []Finding) []Finding {
+	var out []Finding
+	for _, f := range fs {
+		if f.Kind != AdvisoryHighEntropy {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 type Manifest struct {
 	MailLedger     bool                       `json:"mail_ledger,omitempty"`
 	Placeholders   []configbundle.Placeholder `json:"placeholders,omitempty"`
@@ -175,7 +190,9 @@ func (b *Bundle) EncodeTo(out io.Writer) error {
 	if err := b.Validate(); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(b.Manifest, "", "  ")
+	m := b.Manifest
+	m.Findings = v1Findings(m.Findings)
+	raw, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
