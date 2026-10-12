@@ -72,7 +72,7 @@ func TestManagedInstructionMaterializeRegisteredBytesOnly(t *testing.T) {
 
 func TestManagedInstructionImportExactDirectory(t *testing.T) {
 	root := testutil.CanonicalTempDir(t)
-	skill := filepath.Join(root, "release-skill")
+	skill := filepath.Join(root, ".release-skill")
 	require.NoError(t, os.MkdirAll(skill, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("Release fixture"), 0600))
 	raw, err := Import("skill", "release", skill)
