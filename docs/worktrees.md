@@ -1,5 +1,8 @@
 # Worktrees
 
+!!! tip "New to tclaude?"
+    The tutorial [Work on branches in parallel](learn/parallel-worktrees.md) walks through worktrees step by step.
+
 Git worktrees give each branch its own checkout directory, and `tclaude
 worktree` pairs that with sessions: one worktree per branch, one coding
 session per worktree, so parallel work never fights over a single checkout.
@@ -123,16 +126,6 @@ creates the worktree with that conversation copied into it.
 
 ## Example workflow
 
-```bash
-tclaude worktree add feat/auth-refactor
-# ... work in the new session ...
-
-# Urgent bug? Second worktree, second session, no stashing
-tclaude worktree add fix/critical-bug --from-branch main
-
-tclaude worktree switch feat/auth-refactor
-tclaude worktree switch fix/critical-bug
-
-tclaude worktree rm fix/critical-bug -D
-tclaude worktree ls
-```
+The tutorial [Work on branches in parallel](learn/parallel-worktrees.md)
+walks through a feature and an urgent fix side by side, switching between
+them, and cleaning up.

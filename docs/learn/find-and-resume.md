@@ -111,4 +111,4 @@ tclaude ask -n "new topic: summarize the README"
 - `tclaude ask` answers quick questions without a session, and keeps a thread
   per terminal and directory.
 
-**Next:** [Your first agent team](first-team.md).
+**Next:** [Work on branches in parallel](parallel-worktrees.md).
