@@ -111,6 +111,12 @@ func init() {
 		// that was not handed one, so even a plain interactive session is
 		// known by its conversation id from the start, before any hook fires.
 		LaunchEnrollment: true,
+		PresetSessionID:  PresetSessionIDUUID,
+		// Nothing would report the id Gemini mints for itself before its
+		// first hook, so `session new` mints one for a fresh launch; and a
+		// full UUID plus cwd is all `gemini --resume` needs.
+		MintFreshSessionID:       true,
+		ResumeFullIDWithoutStore: true,
 
 		// Gemini CLI is an Ink TUI that renders its own scroll-back (it has a
 		// dedicated copy mode and mouse handling), so tmux mouse mode would

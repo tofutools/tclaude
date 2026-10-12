@@ -70,6 +70,7 @@ func init() {
 		// /rename), and a positional first-turn prompt — so the daemon can
 		// spawn it fully enrolled and skip the post-connect tmux injection.
 		LaunchEnrollment: true,
+		PresetSessionID:  PresetSessionIDUUID,
 		// Claude Code's Bash tool takes `run_in_background: true` and hands
 		// the caller a backgroundTaskId, so tclaude can keep a per-session
 		// ledger of the shells still running and badge an agent that only

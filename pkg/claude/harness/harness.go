@@ -198,6 +198,23 @@ type Harness struct {
 	// the welcome through prompt_async. Codex leaves this false because its id
 	// only appears after the first turn.
 	LaunchEnrollment bool
+	// PresetSessionID declares whether, and in which shape, `session new
+	// --session-id` may pin the conversation id before the pane starts. The
+	// zero value refuses an explicit id. See PresetSessionIDKind.
+	PresetSessionID PresetSessionIDKind
+	// MintFreshSessionID marks a harness for which `session new` mints a UUID
+	// for a fresh launch that was not handed one, so even a plain interactive
+	// session is known by its conversation id before any hook fires. Gemini
+	// CLI sets it: nothing else would report the id it mints for itself.
+	// Meaningful only with PresetSessionIDUUID.
+	MintFreshSessionID bool
+	// ResumeFullIDWithoutStore marks a harness that can resume from a full
+	// conversation UUID plus the launch cwd alone, without its ConvStore
+	// resolving the id first. Managed relaunches always carry both, and must
+	// not depend on tclaude's reading of a store that cannot yet see a
+	// conversation whose first turn never landed. The store is still consulted
+	// first when there is one. Gemini CLI sets it.
+	ResumeFullIDWithoutStore bool
 	// CommandInput marks a pseudo-harness whose InitialPrompt is executable
 	// command text rather than a conversational turn. Callers must never send
 	// inbox nudges or lifecycle handoff prose into such a pane.

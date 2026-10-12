@@ -158,6 +158,7 @@ func init() {
 		// is the Claude Code shape, not the Codex one, so SeedsFirstTurn stays
 		// false — the id does not depend on a turn having run.
 		LaunchEnrollment: true,
+		PresetSessionID:  PresetSessionIDUUID,
 
 		// Copilot renders its own scroll-back: mouse support is ON by default
 		// and the CLI captures the wheel to scroll its own timeline. Enabling
