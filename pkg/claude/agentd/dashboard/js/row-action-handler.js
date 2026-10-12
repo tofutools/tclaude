@@ -13,7 +13,7 @@ import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
   openPermEditModal, openSudoGrantModal,
 } from './message-access-dialog-controller.js';
-import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport } from './modal-templates.js';
+import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport, openSnapshots } from './modal-templates.js';
 import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
 } from './links-controller.js';
@@ -647,6 +647,12 @@ export async function handleRowAction(action) {
         // Agent ⚙ → export (PAF)…: a dialog with the history choices and
         // the credential scan, then a file download (tcl-jkmitn).
         openAgentExport({ agent, label });
+        return;
+      }
+      case 'snapshot-agent': {
+        // Agent ⚙ → snapshot…: the Snapshots view with this agent preset
+        // in its create panel (tcl-3hjdm1).
+        openSnapshots({ agent });
         return;
       }
       case 'reincarnate': {

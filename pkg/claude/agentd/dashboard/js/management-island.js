@@ -27,6 +27,7 @@ import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { AgentExportDialog, GroupExportDialog } from './paf-dialogs.js';
+import { SnapshotsDialog } from './snapshots-dialog.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
@@ -2247,7 +2248,7 @@ function contextFeatureSummary(features) {
   return [trimmed ? `${trimmed} trimmed` : '', kept ? `${kept} kept` : ''].filter(Boolean).join(' · ');
 }
 
-function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
+function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const descriptor = state.dialog.value;
   switch (descriptor?.kind) {
     case 'profile-editor':
@@ -2276,6 +2277,8 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
       return html`<${GroupImportDialog} key=${descriptor.key || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} initialFile=${descriptor.file || null}/>`;
     case 'paf-export':
       return html`<${AgentExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'snapshots':
+      return html`<${SnapshotsDialog} key=${descriptor.agent || ''} descriptor=${descriptor} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard}/>`;
     case 'group-export':
       return html`<${GroupExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-context':
@@ -2298,7 +2301,7 @@ function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePer
   return html`<${TemplateManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
     <${TemplateEditorSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>
     <${ManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
-    <${DialogSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>
+    <${DialogSlot} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>
     <${SandboxDiffSlot} state=${state}/>`;
 }
 
@@ -2314,7 +2317,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openTemplateImport: actions.openTemplateImport, openTemplateStarters: actions.openTemplateStarters,
     openTemplateDeploy: actions.openTemplateDeploy,
     openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext,
-    openAgentExport: actions.openAgentExport, openGroupExport: actions.openGroupExport,
+    openAgentExport: actions.openAgentExport, openGroupExport: actions.openGroupExport, openSnapshots: actions.openSnapshots,
   };
   const unregister = registerManagementController(controller);
   render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>` , host);

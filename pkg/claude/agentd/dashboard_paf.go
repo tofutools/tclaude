@@ -15,7 +15,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
-// Dashboard twins of the PAF routes (export, import, redact). The browser
+// Dashboard twins of the PAF routes (export, import, redact, publish,
+// snapshots). The browser
 // cannot reach the daemon socket, so each /api route checks the dashboard
 // cookie and hands the shared /v1 handler a synthetic human caller; the
 // handlers keep their own permission checks. None is served to peer view.
@@ -23,6 +24,18 @@ func registerDashboardPAFRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent-bundle/export", dashboardPAFRoute(handleAgentBundleExport))
 	mux.HandleFunc("POST /api/agent-bundle/import", dashboardPAFRoute(handleAgentBundleImport))
 	mux.HandleFunc("POST /api/paf/redact", dashboardPAFRoute(handlePAFRedact))
+	mux.HandleFunc("POST /api/paf/publish", dashboardPAFRoute(handlePAFPublish))
+
+	// The snapshot library (4d) and the resilience policy status (5a,
+	// read-only here: setting a policy stays on the CLI for now).
+	mux.HandleFunc("GET /api/snapshots", dashboardPAFRoute(handleSnapshotList))
+	mux.HandleFunc("POST /api/snapshots", dashboardPAFRoute(handleSnapshotCreate))
+	mux.HandleFunc("POST /api/snapshots/prune", dashboardPAFRoute(handleSnapshotPrune))
+	mux.HandleFunc("GET /api/snapshots/{name}", dashboardPAFRoute(handleSnapshotShow))
+	mux.HandleFunc("DELETE /api/snapshots/{name}", dashboardPAFRoute(handleSnapshotRemove))
+	mux.HandleFunc("GET /api/snapshots/{name}/export", dashboardPAFRoute(handleSnapshotExport))
+	mux.HandleFunc("POST /api/snapshots/{name}/spawn", dashboardPAFRoute(handleSnapshotSpawn))
+	mux.HandleFunc("GET /api/resilience/policies", dashboardPAFRoute(handleResiliencePolicies))
 }
 
 func dashboardPAFRoute(next http.HandlerFunc) http.HandlerFunc {

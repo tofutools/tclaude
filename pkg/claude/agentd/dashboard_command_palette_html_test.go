@@ -311,6 +311,7 @@ func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
 		run    string
 	}{
 		{"group-import-open", "wiz('Import an agent or group…', 'Unseal a party archive…')", "run: () => openGroupImport()"},
+		{"snapshots-open", "wiz('Snapshots…', 'Captured familiars…')", "run: () => openSnapshots()"},
 		{"cleanup-all-open", "wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…')", "run: () => openCleanupModal({ mode: 'agents' })"},
 		{"delete-retired-open", "wiz('Delete retired agents…', 'Dispel banished familiars…')", "run: () => openDeleteRetiredPreview()"},
 		{"profiles-manage-open", "wiz('Manage spawn profiles…', 'Manage familiar patterns…')", "run: () => openProfilesManageModal()"},
