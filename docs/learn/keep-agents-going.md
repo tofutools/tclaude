@@ -30,16 +30,18 @@ Two actions in an agent's **⚙** menu make a new session from an old one:
   Use it when the context is full of things the agent no longer needs.
 
 Open `alice`'s **⚙** menu and choose **clone…** under **send elsewhere**.
-Pick your own node, marked **(this node)**, and the clone dialog opens.
+Pick your own node, marked **(this node)**, and click **Clone here…**. The
+clone dialog opens.
 Leave **Copy conversation history** ticked, give it a **Follow-up** such as
-`List the project's dependencies.`, and click **Clone**. `alice-c-1` appears next to `alice`. Retire it with its bin button
+`List the project's dependencies.`, and click **Clone**. `alice-c-1` appears
+next to `alice`. Retire it with its bin button
 when you are done.
 
 Now choose **reincarnate** in `alice`'s **⚙** menu. Keep the recommended
 **Ask the agent to reincarnate itself**: `alice` writes a handoff for her
-successor at her next clean point, then reincarnates. **Focus hint** tells
-her what the handoff should cover. **Force reincarnate now** is for an agent
-that is stuck: it skips the handoff.
+successor at her next clean point, then reincarnates. An optional **Focus hint**
+tells her what the handoff should cover. Click **Ask agent**. (**Force
+reincarnate now** is for an agent that is stuck: it skips the handoff.)
 
 The replaced session is kept: **▾ view** → **show replaced generations**
 lists it.
@@ -52,8 +54,8 @@ dashboard morphs into a **spawn profile**, a saved set of launch settings,
 so first save one:
 
 1. Open the spawn dialog on `hello`, pick another **Model** (for example
-   Sonnet), and click **Save as profile…**. Name it `sonnet`, then cancel the
-   dialog.
+   Sonnet), and click **Save as profile…**. The profile editor opens:
+   name it `sonnet` and save it, then cancel the spawn dialog.
 2. Open `alice`'s **⚙** menu → **morph…**, and pick `sonnet` under
    **Profile**.
 
@@ -63,8 +65,8 @@ translates her conversation, and the preview says what the history keeps
 and loses.
 
 Click **Morph at next idle turn**. If `alice` is busy, the morph waits until
-she is idle, and her row shows it as pending. Tick **now** to stop her at
-once instead.
+she is idle (within 30 minutes, or the request lapses). Tick **now** to stop
+her at once instead.
 
 !!! info "Go deeper"
     [Spawning and lifecycle → morph](../spawning-and-lifecycle.md#morph)
