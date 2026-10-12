@@ -843,6 +843,14 @@ func landSpawnOffline(g *db.AgentGroup, p spawnParams, h *harness.Harness, convI
 		rollbackSpawnEnrollment(g, convID, msgID, actorCreated)
 		return nil, &spawnFailure{http.StatusInternalServerError, "io", "record resume profile: " + err.Error()}
 	}
+	// Resume never pre-trusts, so keep the launch's trust_dir promise now:
+	// otherwise the resumed pane stops on the trust dialog, and a Copilot API
+	// drive refuses to resume at all.
+	if p.TrustDir {
+		if err := trustAgentDirectory(h, convID, p.Cwd); err != nil {
+			slog.Warn("import: could not pre-trust the offline agent's directory", "harness", h.Name, "cwd", p.Cwd, "error", err)
+		}
+	}
 	if p.Name != "" && isValidRenameTitle(p.Name) {
 		if err := db.SetConvIndexCustomTitle(convID, p.Name, h.Name); err != nil {
 			slog.Warn("import: offline landing title not recorded", "conv", short8(convID), "error", err)

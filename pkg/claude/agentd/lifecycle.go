@@ -5105,13 +5105,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"conv_id":      outcome.ConvID,
 		"label":        outcome.Label,
 		"tmux_session": outcome.TmuxSession,
-		"attach_cmd":   "tclaude session attach " + outcome.Label,
 		// Echo the fully-resolved launch shape + per-field provenance so the
 		// caller can see WHERE harness/model/effort came from — the TCL-304
 		// mistake-preventer for a blank spawn silently inheriting a default
 		// profile's vendor. Values come from executeSpawn's final params so the
 		// echo remains truthful even if a default profile changed mid-request.
 		"resolved": resolvedLaunch,
+	}
+	if outcome.Label != "" {
+		// An offline landing has no session to attach to.
+		resp["attach_cmd"] = "tclaude session attach " + outcome.Label
 	}
 	// Lead with the spawned actor's stable id. Pending Codex spawns reserve it
 	// before their harness conv-id materialises; inline spawns resolve it from
