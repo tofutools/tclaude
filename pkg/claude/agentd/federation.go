@@ -188,6 +188,9 @@ type fedRuntime struct {
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 
+	// Serialize complete passes, including send-result writes, with explicit flushes.
+	outboxMu sync.Mutex
+
 	inbound chan fedInbound
 	kick    chan struct{}
 
@@ -1131,6 +1134,8 @@ func (rt *fedRuntime) outboxLoop(ctx context.Context) {
 }
 
 func (rt *fedRuntime) flushOutbox(ctx context.Context) {
+	rt.outboxMu.Lock()
+	defer rt.outboxMu.Unlock()
 	if rt.cl.Status().State != client.StateConnected {
 		return
 	}

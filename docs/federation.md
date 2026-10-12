@@ -65,6 +65,15 @@ spontaneous agent send. Trust alone grants no group access.
 
 `tclaude-hub` is a separate binary, included in the release archives, or
 built with `go install github.com/tofutools/tclaude/cmd/tclaude-hub@latest`.
+
+The full command tree is also available as **`tclaude hub ...`**: for example,
+`tclaude hub serve`, `tclaude hub admin rotate-claim`, and `tclaude hub invite`.
+Replace the `tclaude-hub` prefix in any command below with `tclaude hub` to use
+the main binary. Both forms share the same flags, database, authorization and
+script guardian. The standalone binary remains available for existing services.
+When running `tclaude hub serve --supervised`, hub updates replace the serving
+`tclaude` executable and keep the `hub` prefix when restarting its worker;
+`tclaude-hub serve --supervised` continues to update the standalone executable.
 Run it anywhere every instance can reach: a team server, a cloud VM, or one
 of your own machines.
 
@@ -3252,11 +3261,11 @@ are local human-only, and peers cannot proxy them. The hub must already admit th
 claiming instance, either through its normal admission list or a hub invite.
 
 On an unclaimed hub, `tclaude-hub serve` writes a one-use claim token to
-`admin-claim.token` next to the hub database with mode `0600`. Startup and
-`tclaude-hub admin reset` print the private file path and a shell-quoted
+`admin-claim.token` next to the hub database with mode `0600`. Startup,
+`tclaude-hub admin rotate-claim`, and `tclaude-hub admin reset` print the private file path and a shell-quoted
 `sudo cat -- 'PATH'` command to retrieve it on the hub host.
 
-Both commands accept `--print-claim-token=auto|always|never` (default `auto`).
+These commands accept `--print-claim-token=auto|always|never` (default `auto`).
 Auto prints the token only when **both stdout and stderr are terminals**.
 Never prints only private-file guidance. Always explicitly forces the token
 into the output, including redirected output: **under systemd this puts the
@@ -3278,8 +3287,19 @@ A remote admin can delegate it only if it already holds that capability.
 Removing the last admitted admin with `hub.admins.manage`, stripping that
 capability, revoking its admission, or recovering its lost key is refused. If all
 admin keys are lost, the hub host can run the shell-only command
-`tclaude-hub admin reset --db PATH` to clear admin authority and create a fresh
+`tclaude hub admin reset --db PATH` (or `tclaude-hub admin reset --db PATH`)
+to clear admin authority and create a fresh
 claim. There is no remote reset endpoint.
+
+To replace a leaked or unwanted **unredeemed** claim without clearing admins,
+run `tclaude hub admin rotate-claim --db PATH` (equivalently,
+`tclaude-hub admin rotate-claim --db PATH`) on the hub host. It immediately
+invalidates the old claim, writes a fresh private token valid for 24 hours, and
+uses the same `--print-claim-token` output rule. Expired unredeemed claims can
+also be rotated. If the claim was redeemed, admins already exist, or no claim
+was prepared, rotation refuses without changing admin authority. It cannot add
+another administrator; use an existing admin to delegate access. There is no
+remote rotation endpoint.
 
 Commands (all return JSON):
 

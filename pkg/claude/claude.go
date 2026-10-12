@@ -29,6 +29,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/usage"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/hubcmd"
 )
 
 // Cmd returns the claude subcommand for use in other binaries.
@@ -68,6 +69,7 @@ func Cmd() *cobra.Command {
 	}
 	subCmds = append(subCmds,
 		agentd.Cmd(),
+		hubcmd.Cmd(),
 		memoryfiles.Cmd(),
 		processcmd.Cmd(),
 		dbcmd.Cmd(),

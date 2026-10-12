@@ -26,7 +26,7 @@ func (h *Hub) initUpdate() error {
 	if err != nil {
 		return err
 	}
-	binary, err := selfupdate.DiscoverBinary("tclaude-hub", path)
+	binary, err := hubupdate.DiscoverServingBinary(path)
 	if err != nil {
 		binary = selfupdate.Binary{Name: "tclaude-hub", Path: path, Version: h.cfg.Version, Method: "unknown"}
 	}

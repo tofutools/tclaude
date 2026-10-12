@@ -32,7 +32,7 @@ func serveSupervised(p *serveParams) error {
 	if err != nil {
 		return err
 	}
-	binary, err := selfupdate.DiscoverBinary("tclaude-hub", exe)
+	binary, err := hubupdate.DiscoverServingBinary(exe)
 	if err != nil {
 		return err
 	}

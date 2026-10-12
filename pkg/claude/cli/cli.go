@@ -1,7 +1,7 @@
 // Package cli holds the process-level entry sequence and root-command
 // wiring shared by every tclaude binary. The repository ships more than one
-// binary — the full `tclaude` CLI and the standalone `tclaude-agentd` daemon
-// — and both need the same probe dispatch, logging setup, version stamping,
+// binary — the full `tclaude` CLI and standalone daemon/hub executables
+// — and all need the same probe dispatch, logging setup, version stamping,
 // legacy-state relocation and terminal preference handling. Keeping that here
 // means the binaries duplicate behaviour without duplicating source.
 package cli
@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/common/harnesspath"
+	"github.com/tofutools/tclaude/pkg/federation/hub"
 )
 
 // Main runs a tclaude binary end to end and never returns: it dispatches
@@ -32,6 +33,10 @@ import (
 // version is the value stamped into the binary's own main.version at build
 // time via -ldflags; it is empty for a plain `go build`.
 func Main(version string, newRoot func() *cobra.Command) {
+	// Hub scripts re-exec whichever binary serves the hub. Dispatch their
+	// private guardian before logging, config/state work, or command construction.
+	// Ordinary invocations incur only the guardian's argv comparison.
+	hub.RunExecGuardian()
 	buildversion.SetStampedVersion(version)
 	if len(os.Args) == 2 && os.Args[1] == "--tclaude-build-info" {
 		_ = json.NewEncoder(os.Stdout).Encode(buildversion.BuildInfo())
