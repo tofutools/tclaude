@@ -31,8 +31,10 @@ tclaude paf export scout --history --file scout.paf
 
 `--history` includes the conversation. It travels twice: as the harness's own
 native history, for a lossless resume on the same harness, and as a
-harness-neutral copy that any harness can land. The export refuses if the
-conversation contains text that looks like a credential.
+harness-neutral copy that any harness can land. If the conversation
+contains text that looks like a credential, the export refuses and says
+where. Check the finding, then export without `--history`, or with
+`--allow-flagged` if you are sure the file stays with you.
 
 !!! info "Go deeper"
     [PAF → Exporting and importing an agent](../paf.md#exporting-and-importing-an-agent)
@@ -62,16 +64,19 @@ Importing creates a **new** agent from the file. It gets a new identity; the
 file records who the agent was, never what it may do here. Import previews
 first and changes nothing until you add `--apply`.
 
-Preview a landing on another harness:
+Preview a landing on another harness you have installed, here Codex. Name
+the landing model too, so tclaude can fit the conversation to its context
+window:
 
 ```bash
-tclaude paf import --file scout.paf --cwd "$PWD" --harness codex
+tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --model gpt-5.5
 ```
 
 Look at `history_landing` in the preview. On the same harness the
 conversation lands **native**, with nothing lost. On another harness it lands
 **translated**: the preview lists what does not carry over, such as the old
-model's reasoning.
+model's reasoning. **none** means the conversation cannot land there, and
+the agent would import as configuration only.
 
 Landing on a model with a smaller context window works the same way:
 
@@ -88,7 +93,8 @@ fits easily, so you will most likely see no cut at all.
 Land it for real:
 
 ```bash
-tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --group lab --name scout-codex --apply
+tclaude paf import --file scout.paf --cwd "$PWD" --harness codex --model gpt-5.5 \
+  --group lab --name scout-codex --apply
 ```
 
 The new agent, `scout-codex`, joins `lab` and continues from the imported
@@ -129,10 +135,19 @@ how you try two approaches from the same starting point.
 
 This step needs two tclaude instances linked through a hub. If you have not
 set that up, [Federation setup](../federation-setup.md) walks through it;
-skip this step until then. Below, the other machine is the trusted peer
-`laptop`, and it has a group called `helpers`.
+skip this step until then. Below, this machine is the peer `desktop`, the
+other machine is the trusted peer `laptop`, and `laptop` has a group called
+`helpers`.
 
-Move `scout`, as the operator:
+First, on `laptop`, allow `desktop` to send agents into `helpers`. The setup
+walkthrough uses restricted trust, which needs this grant; with unrestricted
+trust you can skip it:
+
+```bash
+tclaude federation grant desktop agents.receive --scope group=helpers
+```
+
+Then, on `desktop`, move `scout`:
 
 ```bash
 tclaude federation move-agent scout laptop --group helpers
@@ -149,14 +164,15 @@ tclaude federation offers import OFFER_ID --cwd ~/code/my-project --apply
 Once the agent runs on `laptop`, the source retires `scout`. Until then the
 source keeps running, and `tclaude federation moves ls` shows the progress.
 
-An agent can also move itself with `tclaude agent teleport`. It needs a
-grant scoped to the destination:
+Instead of moving an agent yourself, you can let an agent move itself with
+`tclaude agent teleport`. Try it with `trial-1` from step 5. Grant it
+teleport rights scoped to the destination:
 
 ```bash
-tclaude agent permissions grant scout self.teleport --scope peer=laptop
+tclaude agent permissions grant trial-1 self.teleport --scope peer=laptop
 ```
 
-Then ask `scout` to run `tclaude agent teleport laptop --group helpers`.
+Then ask `trial-1` to run `tclaude agent teleport laptop --group helpers`.
 
 !!! info "Go deeper"
     [Federation → Moving an agent](../federation.md#moving-an-agent) and
