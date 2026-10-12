@@ -188,9 +188,9 @@ tclaude setup --check --harness codex
 ## First session
 
 Run bare `tclaude` in a project directory to start your default harness in a
-session (`tclaude --harness codex` picks another). The tutorial
-[Your first session](learn/first-session.md) walks through starting,
-detaching, watching and reattaching; [Sessions](sessions.md) is the reference.
+session (`tclaude --harness codex` picks another). [Sessions](sessions.md) covers starting, detaching, watching and
+reattaching. To work from the dashboard instead, follow the
+[Learn path](learn/index.md).
 
 ## Quick questions from the shell
 
