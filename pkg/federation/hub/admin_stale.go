@@ -39,6 +39,13 @@ func (h *Hub) cleanupStaleAdmissions(self string, p adminParams, now time.Time) 
 	for _, connection := range h.conns {
 		protected[connection.id] = true
 	}
+	if h.streams != nil {
+		for id, sessions := range h.streams.sessions {
+			if len(sessions) > 0 {
+				protected[id] = true
+			}
+		}
+	}
 	h.mu.Unlock()
 	if p.Apply {
 		removed, skipped := []string{}, []string{}
@@ -60,6 +67,9 @@ func (h *Hub) cleanupStaleAdmissions(self string, p adminParams, now time.Time) 
 					connected = true
 					break
 				}
+			}
+			if h.streams != nil && len(h.streams.sessions[id]) > 0 {
+				connected = true
 			}
 			if connected {
 				h.mu.Unlock()

@@ -276,6 +276,8 @@ func (s *streamSession) keepalive() {
 
 func (h *Hub) dropStream(s *streamSession) {
 	s.close()
+	// Publish final activity before removing stale-cleanup protection.
+	_ = h.store.RecordActivity(s.id, time.Now())
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := h.streamsLocked()

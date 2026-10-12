@@ -559,7 +559,7 @@ func (h *Hub) unregister(c *conn) {
 	// cleanup must not see an offline slot with a long-running session's old
 	// last_seen value. Board-only activity must not rewrite fleet metadata.
 	if c.boardOnly {
-		_, _ = h.store.db.Exec(`UPDATE instances SET last_seen=? WHERE instance_id=?`, ts(time.Now()), c.id)
+		_ = h.store.RecordActivity(c.id, time.Now())
 	} else {
 		_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
 	}

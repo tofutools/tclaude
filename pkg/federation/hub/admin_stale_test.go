@@ -16,7 +16,7 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 	h, err := New(st, Config{})
 	require.NoError(t, err)
 	ids := map[string]*proto.Identity{}
-	for _, name := range []string{"old", "reconnected", "promoted", "never_seen", "recent", "online", "already_revoked"} {
+	for _, name := range []string{"old", "reconnected", "promoted", "never_seen", "recent", "online", "stream", "already_revoked"} {
 		id, e := proto.NewIdentity()
 		require.NoError(t, e)
 		ids[name] = id
@@ -30,6 +30,7 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 	require.NoError(t, st.RecordSeen(admin.ID(), admin.Pub, "admin", "test", now.Add(-45*24*time.Hour)))
 	online := &conn{id: ids["online"].ID(), boardOnly: true, nonce: "board-test"}
 	h.conns[online.registryKey()] = online
+	h.streams = &streamState{sessions: map[string]map[*streamSession]bool{ids["stream"].ID(): {&streamSession{id: ids["stream"].ID()}: true}}}
 	preview, err := h.cleanupStaleAdmissions(admin.ID(), adminParams{}, now)
 	require.NoError(t, err)
 	b, err := json.Marshal(preview)
@@ -52,7 +53,7 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 	require.NoError(t, st.RecordSeen(ids["reconnected"].ID(), ids["reconnected"].Pub, "reconnected", "test", now))
 	require.NoError(t, st.SetAdmin(ids["promoted"].ID(), admin.ID(), []string{"hub.health.read"}))
 	// Even explicit IDs in the bulk API cannot opt admins or the current node in.
-	selected = append(selected, admin.ID(), ids["recent"].ID(), ids["online"].ID())
+	selected = append(selected, admin.ID(), ids["recent"].ID(), ids["online"].ID(), ids["stream"].ID())
 	result, err := h.cleanupStaleAdmissions(admin.ID(), adminParams{Days: 30, Apply: true, Cutoff: plan.Cutoff, Instances: selected}, now.Add(time.Minute))
 	require.NoError(t, err)
 	require.Equal(t, []string{ids["old"].ID()}, result.(map[string]any)["revoked"])
@@ -69,8 +70,9 @@ func TestHubStaleAdmissionsPreviewAndRecheck(t *testing.T) {
 }
 
 func TestHubStaleDisconnectKeepsProtectionUntilActivitySaved(t *testing.T) {
-	for _, boardOnly := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fleet", true: "board"}[boardOnly], func(t *testing.T) {
+	for _, kind := range []string{"fleet", "board", "stream"} {
+		t.Run(kind, func(t *testing.T) {
+			boardOnly := kind == "board"
 			st, id, _ := adminTestStore(t)
 			old := time.Now().Add(-60 * 24 * time.Hour)
 			require.NoError(t, st.RecordSeen(id.ID(), id.Pub, "original name", "original version", old))
@@ -80,16 +82,32 @@ func TestHubStaleDisconnectKeepsProtectionUntilActivitySaved(t *testing.T) {
 			c := &conn{id: id.ID(), pub: id.Pub, name: "original name", version: "original version", boardOnly: boardOnly, nonce: "fixture"}
 			c.once.Do(func() {}) // Socket already closed, as at the end of the read loop.
 			h.conns[c.registryKey()] = c
+			stream := &streamSession{id: id.ID(), sid: "fixture"}
+			stream.once.Do(func() {})
+			if kind == "stream" {
+				delete(h.conns, c.registryKey())
+				h.streams = &streamState{sessions: map[string]map[*streamSession]bool{id.ID(): {stream: true}}}
+			}
 			st.db.SetMaxOpenConns(1)
 			tx, err := st.db.Begin()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			waits := st.db.Stats().WaitCount
 			done := make(chan struct{})
-			go func() { h.unregister(c); close(done) }()
+			go func() {
+				if kind == "stream" {
+					h.dropStream(stream)
+				} else {
+					h.unregister(c)
+				}
+				close(done)
+			}()
 			require.Eventually(t, func() bool { return st.db.Stats().WaitCount > waits }, time.Second, time.Millisecond)
 			h.mu.Lock()
 			registered := h.conns[c.registryKey()] == c
+			if kind == "stream" {
+				registered = len(h.streams.sessions[id.ID()]) > 0
+			}
 			h.mu.Unlock()
 			require.True(t, registered, "do not expose stale last_seen while disconnect activity is still being written")
 			require.NoError(t, tx.Commit())

@@ -238,6 +238,13 @@ func (s *Store) RecordSeen(instanceID string, pub []byte, name, version string, 
 	return err
 }
 
+// RecordActivity updates fleet activity without rewriting identity metadata.
+// Board-only members without fleet admission are deliberately unaffected.
+func (s *Store) RecordActivity(instanceID string, at time.Time) error {
+	_, err := s.db.Exec(`UPDATE instances SET last_seen=? WHERE instance_id=?`, ts(at), instanceID)
+	return err
+}
+
 // Get returns one instance, or nil when unknown.
 func (s *Store) Get(instanceID string) (*Instance, error) {
 	all, err := s.list(`WHERE instance_id=?`, instanceID)
