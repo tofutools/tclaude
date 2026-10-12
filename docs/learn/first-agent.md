@@ -42,8 +42,8 @@ another harness, pick it under **Harness**. Click **Spawn**.
 **Auto focus** is on by default, so the agent's terminal opens in the
 **Terminals** tab. The first time a harness runs in a directory, it asks
 whether you trust it. Answer in that terminal. Until you do, the agent waits
-in the **Pending** list in **Groups**; its **focus** button opens the same
-terminal.
+in the **Pending spawns** list in **Groups**; its **focus** button opens the
+same terminal.
 
 !!! info "Go deeper"
     [Dashboard → The spawn dialog](../dashboard.md#the-spawn-dialog) lists
