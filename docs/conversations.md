@@ -1,5 +1,9 @@
 # Conversations
 
+!!! tip "New to tclaude?"
+    Start with the tutorial [Find and resume your work](learn/find-and-resume.md).
+
+
 A conversation is the durable transcript behind a session, plus tclaude's
 index entry for it. Sessions are live tmux processes; conversations persist
 in each harness's own store and outlive the session that produced them. A

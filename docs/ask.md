@@ -1,5 +1,9 @@
 # Ask
 
+!!! tip "New to tclaude?"
+    The tutorial [Find and resume your work](learn/find-and-resume.md#4-ask-a-quick-question-without-a-session) walks through a first ask.
+
+
 `tclaude ask` puts a one-shot question to a coding harness without creating
 a tmux session or taking over your terminal. It prints the answer, exits
 with the harness's status, and keeps a resumable thread for the next

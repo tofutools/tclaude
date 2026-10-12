@@ -36,6 +36,10 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Learn:
+      - Learning path: learn/index.md
+      - Your first session: learn/first-session.md
+      - Find and resume your work: learn/find-and-resume.md
   - Architecture: architecture.md
   - Everyday use:
       - Harnesses: harnesses.md
