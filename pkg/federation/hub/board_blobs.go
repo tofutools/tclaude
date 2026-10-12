@@ -52,6 +52,18 @@ func (s *Store) boardBlobRoot(board string) (*os.Root, error) {
 // Pending uploads consume the same quota as ready blobs. The final authority
 // check ensures removal/freeze during the upload refuses publication.
 func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, source io.Reader) error {
+	return s.storeBoardBlob(instance, board, id, digest, size, source, "", time.Time{})
+}
+
+// StoreBoardSnapshotBlob reserves both quotas before accepting ciphertext.
+func (s *Store) StoreBoardSnapshotBlob(instance, board, id, digest string, size int64, expiry time.Time, source io.Reader) error {
+	return s.storeBoardBlob(instance, board, id, digest, size, source, "agent-snapshot", expiry)
+}
+func (s *Store) storeBoardBlob(instance, board, id, digest string, size int64, source io.Reader, kind string, expiry time.Time) error {
+	if kind != "" && (kind != "agent-snapshot" || !snapshotExpiryValid(expiry, s.now()) || size <= proto.BoardContentOverhead || size > proto.MaxBoardItemBytes+proto.BoardContentOverhead) {
+		return adminErr(400, "board_snapshot", "invalid snapshot reservation")
+	}
+
 	if !proto.ValidStreamID(board) || !proto.ValidStreamID(id) || size <= 0 || size > proto.MaxBoardItemBytes+64 {
 		return adminErr(400, "blob", "invalid board ciphertext descriptor")
 	}
@@ -78,8 +90,20 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if size > quota-used || count >= versions {
 		return adminErr(409, "board_quota", "board ciphertext quota reached")
 	}
-	if _, err = tx.Exec(`INSERT INTO board_blobs VALUES(?,?,?,?,'pending',?,0)`, board, id, size, digest, ts(time.Now().Add(time.Hour))); err != nil {
+	if _, err = tx.Exec(`INSERT INTO board_blobs VALUES(?,?,?,?,'pending',?,0)`, board, id, size, digest, ts(s.now().Add(time.Hour))); err != nil {
 		return adminErr(409, "blob_exists", "blob already exists or upload in progress")
+	}
+	if kind == "agent-snapshot" {
+		var snapshotUsed int64
+		if err = tx.QueryRow(`SELECT coalesce(sum(x.bytes),0) FROM board_blobs x JOIN board_snapshot_blobs c ON c.board=x.board AND c.blob=x.id WHERE x.board=?`, board).Scan(&snapshotUsed); err != nil {
+			return err
+		}
+		if size > quota/2-snapshotUsed {
+			return adminErr(409, "board_snapshot_quota", "snapshot ciphertext sub-quota reached")
+		}
+		if _, err = tx.Exec(`INSERT INTO board_snapshot_blobs VALUES(?,?,?,?)`, board, id, instance, snapshotTS(expiry)); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
@@ -128,6 +152,13 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if err = tx.QueryRow(`SELECT count(*) FROM boards b JOIN board_members m ON m.board=b.id WHERE b.id=? AND m.instance=? AND m.role IN ('owner','publisher') AND b.frozen=0`, board, instance).Scan(&authority); err != nil {
 		return err
 	}
+	var reserved int
+	if err = tx.QueryRow(`SELECT count(*) FROM board_blobs WHERE board=? AND id=? AND state='pending' AND expires_at>?`, board, id, ts(s.now())).Scan(&reserved); err != nil {
+		return err
+	}
+	if reserved != 1 || (kind == "agent-snapshot" && !expiry.After(s.now())) {
+		return adminErr(409, "board_blob", "upload reservation expired")
+	}
 	if authority != 1 {
 		return adminErr(403, "board_publish", "publisher removed or board frozen during upload")
 	}
@@ -136,7 +167,11 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if err = root.Rename(temp, id); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`UPDATE board_blobs SET state='ready',expires_at=? WHERE board=? AND id=? AND state='pending'`, ts(time.Now().Add(30*24*time.Hour)), board, id); err != nil {
+	readyExpiry := s.now().Add(30 * 24 * time.Hour)
+	if kind == "agent-snapshot" {
+		readyExpiry = expiry
+	}
+	if _, err = tx.Exec(`UPDATE board_blobs SET state='ready',expires_at=? WHERE board=? AND id=? AND state='pending'`, ts(readyExpiry), board, id); err != nil {
 		_ = root.Remove(id)
 		return err
 	}
@@ -153,7 +188,7 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 	}
 	var size int64
 	var digest string
-	if err := s.db.QueryRow(`SELECT x.bytes,x.digest FROM board_blobs x JOIN board_members m ON m.board=x.board WHERE x.board=? AND x.id=? AND x.state='ready' AND m.instance=? AND (x.pinned=1 OR x.expires_at>?)`, board, id, instance, ts(time.Now())).Scan(&size, &digest); err != nil {
+	if err := s.db.QueryRow(`SELECT x.bytes,x.digest FROM board_blobs x JOIN board_members m ON m.board=x.board WHERE x.board=? AND x.id=? AND x.state='ready' AND m.instance=? AND (x.pinned=1 OR x.expires_at>? OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at>?)) AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?) AND NOT EXISTS(SELECT 1 FROM board_snapshot_cleanup d WHERE d.board=x.board AND d.blob=x.id)`, board, id, instance, ts(s.now()), snapshotTS(s.now()), snapshotTS(s.now())).Scan(&size, &digest); err != nil {
 		return adminErr(404, "blob_unknown", "blob not available")
 	}
 	root, err := s.boardBlobRoot(board)
@@ -185,7 +220,7 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 		return err
 	}
 	var authorized int
-	if e := s.db.QueryRow(`SELECT count(*) FROM board_members WHERE board=? AND instance=?`, board, instance).Scan(&authorized); e != nil {
+	if e := s.db.QueryRow(`SELECT count(*) FROM board_members m JOIN board_blobs x ON x.board=m.board WHERE m.board=? AND m.instance=? AND x.id=? AND x.state='ready' AND (x.pinned=1 OR x.expires_at>? OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at>?)) AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?) AND NOT EXISTS(SELECT 1 FROM board_snapshot_cleanup d WHERE d.board=x.board AND d.blob=x.id)`, board, instance, id, ts(s.now()), snapshotTS(s.now()), snapshotTS(s.now())).Scan(&authorized); e != nil {
 		return e
 	}
 	if authorized != 1 {
@@ -200,7 +235,10 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 // uploads. Only expired reservations and hour-old orphans are removed; another
 // live hub process may still be using fresh files in the same state directory.
 func (s *Store) SweepBoardBlobs() error {
-	rows, err := s.db.Query(`SELECT board,id FROM board_blobs WHERE pinned=0 AND expires_at<=?`, ts(time.Now()))
+	if err := s.expireSnapshots(); err != nil {
+		return err
+	}
+	rows, err := s.db.Query(`SELECT x.board,x.id FROM board_blobs x WHERE (x.pinned=0 AND x.expires_at<=? AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id)) OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?)`, ts(s.now()), snapshotTS(s.now()))
 	if err != nil {
 		return err
 	}
@@ -280,7 +318,7 @@ func (s *Store) SweepBoardBlobs() error {
 					_ = child.Close()
 					return e
 				}
-				if time.Since(info.ModTime()) < time.Hour {
+				if s.now().Sub(info.ModTime()) < time.Hour {
 					continue
 				}
 				if err = child.Remove(entry.Name()); err != nil {

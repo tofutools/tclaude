@@ -24,8 +24,9 @@ const DefaultSpace = "default"
 // that scope their visibility, and single-use invites. The hub never stores
 // messages.
 type Store struct {
-	db   *sql.DB
-	path string
+	db    *sql.DB
+	path  string
+	clock func() time.Time
 }
 
 // Instance is one admitted (or revoked) instance.
@@ -51,7 +52,14 @@ type Invite struct {
 }
 
 // OpenStore opens (creating) the hub database at path.
-func OpenStore(path string) (*Store, error) {
+func OpenStore(path string) (*Store, error) { return OpenStoreWithClock(path, time.Now) }
+
+// OpenStoreWithClock controls storage lifetimes, without changing signed RPC
+// authentication deadlines or network timeouts.
+func OpenStoreWithClock(path string, now func() time.Time) (*Store, error) {
+	if now == nil {
+		now = time.Now
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -61,11 +69,11 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + adminSchema + boardSchema + boardBlobSchema + boardItemSchema); err != nil {
+	if _, err := db.Exec(schema + adminSchema + boardSchema + boardBlobSchema + boardItemSchema + boardSnapshotSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("hub schema: %w", err)
 	}
-	return &Store{db: db, path: path}, nil
+	return &Store{db: db, path: path, clock: now}, nil
 }
 
 const schema = `
@@ -401,4 +409,11 @@ func randHex(n int) string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+func (s *Store) now() time.Time {
+	if s.clock == nil {
+		return time.Now().UTC()
+	}
+	return s.clock().UTC()
 }

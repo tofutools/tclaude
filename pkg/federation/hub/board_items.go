@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS board_versions(board TEXT NOT NULL REFERENCES boards(
 CREATE TABLE IF NOT EXISTS board_pins(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,instance TEXT NOT NULL,item TEXT NOT NULL,version TEXT NOT NULL,PRIMARY KEY(board,instance,item),FOREIGN KEY(board,item,version) REFERENCES board_versions(board,item,version) ON DELETE CASCADE) STRICT;
 `
 
-func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board) (any, error) {
+func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board, now time.Time) (any, error) {
 	switch method {
 	case "items.publish":
 		if b.Frozen || (b.Role != "owner" && b.Role != "publisher") {
@@ -26,8 +26,22 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		}
 		var digest string
 		var size int64
-		if e := tx.QueryRow(`SELECT digest,bytes FROM board_blobs WHERE board=? AND id=? AND state='ready' AND (pinned=1 OR expires_at>?)`, b.ID, v.Blob, ts(time.Now())).Scan(&digest, &size); e != nil || digest != v.SHA256 || size != v.Bytes {
+		if e := tx.QueryRow(`SELECT digest,bytes FROM board_blobs WHERE board=? AND id=? AND state='ready' AND (pinned=1 OR expires_at>?)`, b.ID, v.Blob, ts(now)).Scan(&digest, &size); e != nil || digest != v.SHA256 || size != v.Bytes {
 			return nil, adminErr(409, "board_blob", "verified ciphertext upload required")
+		}
+		var snapshot int
+		if e := tx.QueryRow(`SELECT count(*) FROM board_snapshot_versions WHERE board=? AND item=?`, b.ID, v.Item).Scan(&snapshot); e != nil {
+			return nil, e
+		}
+		if snapshot > 0 {
+			return nil, adminErr(409, "board_version", "item belongs to a snapshot")
+		}
+		var classified int
+		if e := tx.QueryRow(`SELECT count(*) FROM board_snapshot_blobs WHERE board=? AND blob=?`, b.ID, v.Blob).Scan(&classified); e != nil {
+			return nil, e
+		}
+		if classified > 0 {
+			return nil, adminErr(409, "board_blob", "snapshot chunks cannot be published as legacy items")
 		}
 		var previous string
 		var seq int64
@@ -49,13 +63,13 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		if int64(len(raw)) > b.QuotaBytes-used {
 			return nil, adminErr(409, "board_quota", "board storage quota reached")
 		}
-		if _, e = tx.Exec(`INSERT INTO board_versions VALUES(?,?,?,?,?,?,?)`, b.ID, v.Item, v.Version, v.Blob, seq+1, string(raw), ts(time.Now())); e != nil {
+		if _, e = tx.Exec(`INSERT INTO board_versions VALUES(?,?,?,?,?,?,?)`, b.ID, v.Item, v.Version, v.Blob, seq+1, string(raw), ts(now)); e != nil {
 			return nil, adminErr(409, "board_version", "version or blob already published")
 		}
 		return v, nil
 	case "items.list", "items.versions":
 		query := `SELECT v.body,v.created_at,v.seq FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`
-		args := []any{b.ID, ts(time.Now())}
+		args := []any{b.ID, ts(now)}
 		if method == "items.list" {
 			query += ` AND v.item>? AND v.seq=(SELECT max(latest.seq) FROM board_versions latest WHERE latest.board=v.board AND latest.item=v.item) ORDER BY v.item LIMIT 9`
 			args = append(args, p.Cursor)
@@ -106,7 +120,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		return map[string]any{key: entries, "next_cursor": cursor, "catalog_metadata": catalog}, nil
 	case "items.get":
 		var raw string
-		e := tx.QueryRow(`SELECT v.body FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND v.item=? AND v.version=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`, b.ID, p.Item, p.VersionID, ts(time.Now())).Scan(&raw)
+		e := tx.QueryRow(`SELECT v.body FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND v.item=? AND v.version=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`, b.ID, p.Item, p.VersionID, ts(now)).Scan(&raw)
 		if errors.Is(e, sql.ErrNoRows) {
 			return nil, adminErr(404, "board_version", "board version expired or unknown")
 		}
@@ -116,7 +130,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		return json.RawMessage(raw), nil
 	case "pins.set":
 		var blob string
-		if e := tx.QueryRow(`SELECT v.blob FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND v.item=? AND v.version=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`, b.ID, p.Item, p.VersionID, ts(time.Now())).Scan(&blob); e != nil {
+		if e := tx.QueryRow(`SELECT v.blob FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND v.item=? AND v.version=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`, b.ID, p.Item, p.VersionID, ts(now)).Scan(&blob); e != nil {
 			return nil, adminErr(404, "board_version", "unknown version to pin")
 		}
 		if _, e := tx.Exec(`INSERT INTO board_pins VALUES(?,?,?,?) ON CONFLICT(board,instance,item) DO UPDATE SET version=excluded.version`, b.ID, instance, p.Item, p.VersionID); e != nil {

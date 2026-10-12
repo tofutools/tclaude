@@ -94,7 +94,7 @@ func (h *Hub) serveBoardBlob(c *conn) {
 	}()
 	limited := &boardBandwidth{rw: conn, lim: lim, done: transferCtx.Done()}
 	if req.Method == "blobs.put" {
-		e = h.store.StoreBoardBlob(c.id, p.Board, p.Blob, p.Digest, p.Bytes, limited)
+		e = h.store.storeBoardBlob(c.id, p.Board, p.Blob, p.Digest, p.Bytes, limited, p.Kind, p.ExpiresAt)
 		status := 200
 		code := ""
 		if e != nil {

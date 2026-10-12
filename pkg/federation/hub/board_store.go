@@ -20,14 +20,15 @@ CREATE TABLE IF NOT EXISTS board_replay(instance TEXT NOT NULL,id TEXT NOT NULL,
 `
 
 type Board struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`
-	Epoch       int64  `json:"epoch"`
-	Frozen      bool   `json:"frozen"`
-	QuotaBytes  int64  `json:"quota_bytes"`
-	MaxMembers  int64  `json:"max_members"`
-	MaxVersions int64  `json:"max_versions"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Role         string   `json:"role"`
+	Epoch        int64    `json:"epoch"`
+	Frozen       bool     `json:"frozen"`
+	QuotaBytes   int64    `json:"quota_bytes"`
+	MaxMembers   int64    `json:"max_members"`
+	MaxVersions  int64    `json:"max_versions"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 type BoardMember struct {
 	Instance string `json:"instance"`
@@ -36,26 +37,30 @@ type BoardMember struct {
 	Proof    []byte `json:"key_proof"`
 }
 type boardParams struct {
-	Blob       string                     `json:"blob"`
-	Digest     string                     `json:"digest"`
-	Bytes      int64                      `json:"bytes"`
-	Key        []byte                     `json:"key"`
-	Item       string                     `json:"item"`
-	VersionID  string                     `json:"version_id"`
-	Version    *proto.BoardItemVersion    `json:"version"`
-	Board      string                     `json:"board"`
-	Name       string                     `json:"name"`
-	Instance   string                     `json:"instance"`
-	Role       string                     `json:"role"`
-	Token      string                     `json:"token"`
-	TokenID    string                     `json:"token_id"`
-	TTLSeconds int64                      `json:"ttl_seconds"`
-	Epoch      int64                      `json:"epoch"`
-	KeyPackage string                     `json:"key_package"`
-	Proofs     map[string][]byte          `json:"key_proofs"`
-	Envelopes  map[string]json.RawMessage `json:"envelopes"`
-	Cursor     string                     `json:"cursor"`
-	MaxEntries int                        `json:"max_entries"`
+	Kind             string                      `json:"kind"`
+	ExpiresAt        time.Time                   `json:"expires_at"`
+	Snapshot         *proto.BoardSnapshotVersion `json:"snapshot"`
+	IncludeSnapshots bool                        `json:"include_snapshots"`
+	Blob             string                      `json:"blob"`
+	Digest           string                      `json:"digest"`
+	Bytes            int64                       `json:"bytes"`
+	Key              []byte                      `json:"key"`
+	Item             string                      `json:"item"`
+	VersionID        string                      `json:"version_id"`
+	Version          *proto.BoardItemVersion     `json:"version"`
+	Board            string                      `json:"board"`
+	Name             string                      `json:"name"`
+	Instance         string                      `json:"instance"`
+	Role             string                      `json:"role"`
+	Token            string                      `json:"token"`
+	TokenID          string                      `json:"token_id"`
+	TTLSeconds       int64                       `json:"ttl_seconds"`
+	Epoch            int64                       `json:"epoch"`
+	KeyPackage       string                      `json:"key_package"`
+	Proofs           map[string][]byte           `json:"key_proofs"`
+	Envelopes        map[string]json.RawMessage  `json:"envelopes"`
+	Cursor           string                      `json:"cursor"`
+	MaxEntries       int                         `json:"max_entries"`
 }
 
 func boardHash(token string) string {
@@ -115,6 +120,9 @@ func (s *Store) redeemBoardInvite(token, instance string, pub []byte, now time.T
 }
 
 func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, canCreate bool) (any, error) {
+	if r.Method == "boards.capabilities" {
+		return boardSnapshotCapabilities(), nil
+	}
 	var p boardParams
 	if err := json.Unmarshal(r.Payload, &p); err != nil {
 		return nil, adminErr(400, "invalid_arg", "invalid board payload")
@@ -197,6 +205,10 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 		owner := b.Role == "owner"
 		switch r.Method {
 		case "blobs.put", "blobs.get":
+			if p.Kind != "" && (p.Kind != "agent-snapshot" || (r.Method == "blobs.put" && !snapshotExpiryValid(p.ExpiresAt, s.now()))) {
+				return nil, adminErr(400, "board_snapshot", "invalid snapshot upload expiry or kind")
+			}
+
 			if !proto.ValidStreamID(p.Blob) || p.Bytes < 1 || p.Bytes > proto.MaxBoardItemBytes+64 || len(p.Key) != 32 {
 				return nil, adminErr(400, "blob", "invalid blob stream descriptor")
 			}
@@ -205,7 +217,21 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 			}
 			body = map[string]any{"ok": true}
 		case "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list":
-			body, err = boardItemsCall(tx, instance, r.Method, p, b)
+			if p.IncludeSnapshots && (r.Method == "items.list" || r.Method == "items.versions" || r.Method == "pins.list") {
+				body, err = s.boardSnapshotCombinedCall(tx, instance, r.Method, p, b)
+			} else if r.Method == "pins.set" {
+				var snapshot int
+				err = tx.QueryRow(`SELECT count(*) FROM board_snapshot_versions WHERE board=? AND item=? AND version=?`, b.ID, p.Item, p.VersionID).Scan(&snapshot)
+				if err == nil && snapshot > 0 {
+					body, err = s.boardSnapshotsCall(tx, instance, r.Method, p, b)
+				} else if err == nil {
+					body, err = boardItemsCall(tx, instance, r.Method, p, b, s.now())
+				}
+			} else {
+				body, err = boardItemsCall(tx, instance, r.Method, p, b, s.now())
+			}
+		case "snapshots.publish", "snapshots.get", "items.delete":
+			body, err = s.boardSnapshotsCall(tx, instance, r.Method, p, b)
 		case "boards.delete":
 			if !owner {
 				return nil, adminErr(403, "board_owner", "only an owner can delete a board")
@@ -213,6 +239,7 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 			_, err = tx.Exec(`DELETE FROM boards WHERE id=?`, p.Board)
 			body = map[string]any{"ok": true}
 		case "boards.get":
+			b.Capabilities = []string{proto.BoardSnapshotsCapability}
 			body = b
 		case "members.list":
 			rows, e := tx.Query(`SELECT instance,role,pub,key_proof FROM board_members WHERE board=? AND instance>? ORDER BY instance LIMIT 101`, p.Board, p.Cursor)
@@ -469,6 +496,11 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 			return nil, adminErr(503, "board_cleanup", "board deleted but ciphertext cleanup failed: "+err.Error())
 		}
 	}
+	if r.Method == "items.delete" {
+		if err = s.cleanupSnapshotDeletions(p.Board, p.Item, p.VersionID); err != nil {
+			return nil, adminErr(503, "board_cleanup", "snapshot revoked but ciphertext cleanup failed: "+err.Error())
+		}
+	}
 	return body, nil
 }
 
@@ -476,6 +508,6 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 // otherwise repeated rotations could bypass the blob quota indefinitely.
 func boardStorageUsed(tx *sql.Tx, board string) (int64, error) {
 	var used int64
-	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(CAST(key_package AS BLOB))),0) FROM board_invites WHERE board=?)+(SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM board_versions WHERE board=?)`, board, board, board, board).Scan(&used)
+	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(CAST(key_package AS BLOB))),0) FROM board_invites WHERE board=?)+(SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM board_versions WHERE board=?)+(SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM board_snapshot_versions WHERE board=?)`, board, board, board, board, board).Scan(&used)
 	return used, err
 }
