@@ -43,7 +43,7 @@ func Cmd() *cobra.Command {
 			"bundles; they run locally, need no daemon, harness, model or network, and\n" +
 			"never change the file. See docs/paf.md.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd()},
+		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), agent.PAFConsentCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd()},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
 			_ = cmd.Help()
 		},

@@ -398,6 +398,39 @@ The copy is a new file:
   federation identity.
 - Rewriting needs every required feature and extension, as import does.
 
+### Consenting to share
+
+`tclaude paf consent` records your confirmation that a PAF may go to an
+audience:
+
+```bash
+tclaude paf consent reviewer.paf --audience recipients --recipient inst_7c21 -o reviewer.paf
+```
+
+It first shows what would be shared, then asks you to confirm:
+
+- the size and number of agents;
+- the conversation's human turn count and time range;
+- this node's own credential scan, not the producer's recorded one;
+- the redactions already applied;
+- the content digest.
+
+Without a terminal, review the summary and pass `--yes`. The audience is
+`self`, `recipients` (with one or more `--recipient` instance ids), `board`
+(with `--board`) or `public`.
+
+The consent record (`by`, `at`, `audience`, `content_digest`) is added to
+`privacy.json`. The audience and sensitivity are set to match. Every content
+entry is copied byte for byte, and the file is re-signed by this node.
+Because of that, earlier consent for the same content stays valid, and any
+change to the content makes a consent stale. `tclaude paf inspect` shows each
+consent and whether it is still current. Redacting produces new content, so
+consent never carries over to a redacted copy.
+
+Only the human operator can consent. The daemon refuses the request from an
+agent, so an agent can never consent on its own authority. tclaude records
+the confirmer as `operator`.
+
 ### Checklist before sharing an agent
 
 1. Ask whether the receiver needs the history at all. A definition-only PAF

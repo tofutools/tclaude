@@ -101,6 +101,16 @@ type PrivacySummary struct {
 	Audience    string        `json:"audience,omitempty"`
 	Findings    []paf.Finding `json:"findings,omitempty"`
 	Redactions  int           `json:"redactions,omitempty"`
+	Consent     []ConsentLine `json:"consent,omitempty"`
+}
+
+// ConsentLine is one consent record. Current is true when it binds the
+// archive's content as it is now.
+type ConsentLine struct {
+	Audience string    `json:"audience"`
+	By       string    `json:"by"`
+	At       time.Time `json:"at"`
+	Current  bool      `json:"current"`
 }
 
 // Summarize describes a verified archive. source names the file's own
@@ -156,6 +166,10 @@ func Summarize(a *paf.Archive, source string) Summary {
 		}
 		if p.Scan != nil {
 			ps.Findings = p.Scan.Findings
+		}
+		digest := paf.ContentDigest(m.Entries)
+		for _, c := range p.Consent {
+			ps.Consent = append(ps.Consent, ConsentLine{Audience: c.Audience, By: c.By, At: c.At, Current: c.ContentDigest == digest})
 		}
 		s.Privacy = ps
 	}

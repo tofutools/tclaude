@@ -127,6 +127,13 @@ func archiveFacts(s Summary) [][2]string {
 		if len(parts) > 0 {
 			f = append(f, [2]string{"Privacy", strings.Join(parts, "; ")})
 		}
+		for _, c := range p.Consent {
+			state := "current"
+			if !c.Current {
+				state = "stale: the content changed after consent"
+			}
+			f = append(f, [2]string{"Consent", fmt.Sprintf("%s by %s at %s (%s)", c.Audience, c.By, c.At.Format(time.RFC3339), state)})
+		}
 	}
 	return f
 }
