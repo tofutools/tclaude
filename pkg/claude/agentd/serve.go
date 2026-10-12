@@ -1380,6 +1380,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/snapshots/{name}/export", handleSnapshotExport)
 	mux.HandleFunc("POST /v1/snapshots/{name}/spawn", handleSnapshotSpawn)
 	mux.HandleFunc("POST /v1/paf/consent", handlePAFConsent)
+	mux.HandleFunc("POST /v1/paf/publish", handlePAFPublish)
 	mux.HandleFunc("GET /v1/config-bundle/export", handleConfigBundleExport)
 	mux.HandleFunc("POST /v1/config-bundle/import", handleConfigBundleImport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)

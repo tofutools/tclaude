@@ -59,6 +59,8 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude agent snapshot share":                   "board to",
 		"claude agent snapshot board":                   "board",
 		"claude paf consent":                            "out audience",
+		"claude paf publish":                            "out",
+		"claude agent snapshot publish":                 "out",
 		"claude paf encrypt":                            "out to",
 		"claude paf decrypt":                            "out",
 		"claude agent groups import":                    "into",

@@ -106,7 +106,7 @@ receiving side.
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
-| **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | Not available yet |
+| **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
@@ -597,6 +597,11 @@ unverified when no signature from this node or a known peer covers it.
 
 ### Publishing
 
+```bash
+tclaude agent snapshot publish before-refactor --drop-reasoning -o reviewer.public.paf
+tclaude paf publish reviewer.paf --stub-tool-results --keep-turns 5 -o reviewer.public.paf
+```
+
 Publishing produces a PAF meant for anyone to read. Beyond the sharing
 defaults, a published PAF:
 
@@ -617,6 +622,33 @@ defaults, a published PAF:
 The output is a file. tclaude runs no public index or registry; publish it
 wherever you publish other artifacts, with a licence of your choosing (see
 `definition.license`).
+
+How tclaude publishes:
+
+- Only the human operator can publish; agents are refused. You see the
+  redactions, the placeholders and the summary of what remains (size, turns,
+  time range, scan), then type `publish`. Non-interactively, pass
+  `--confirm-digest` with the content digest a previous run showed. Your
+  consent is recorded for a `public` audience, naming `publisher` rather
+  than you.
+- Credentials the scan flags are masked. If the scan still finds any in the
+  redacted copy, nothing is published.
+- Identity goes in two steps: the identifying fields are cleared, and the
+  ids and the instance name are also replaced with `[REDACTED:identity]`
+  wherever they appear in text, such as an agent name derived from its
+  conversation id. The source must hold exactly one agent.
+- Optional extra redactions: `--stub-tool-results` (with `--keep-turns`),
+  `--drop-media` and `--drop-reasoning`.
+- The publisher key is created on first use under
+  `~/.tclaude/data/paf/publisher.key`, separate from the federation key.
+  Every publication from this node is signed with it (`signer.kind`:
+  `publisher`, `key_id` `pub_…`), so readers can link your publications to
+  each other but not to your node. Delete the file to start a new
+  pseudonym.
+- What is not removed: the conversation text itself, apart from the
+  credentials, paths and ids above. Names, hostnames, URLs, customer details
+  or anything else you discussed are published as written. Read the
+  redacted copy with `tclaude paf render` before you share it.
 
 ### Receiving a PAF
 
