@@ -35,6 +35,18 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 	if name == bundletransfer.Config.Name {
 		return fedBundleKind{Type: bundletransfer.Config, Validate: validateOfferedConfig}, true
 	}
+	if name == bundletransfer.Snapshot.Name {
+		// Opaque custody: only the envelope shape is checked; a snapshot
+		// is never decoded or imported here.
+		return fedBundleKind{Type: bundletransfer.Snapshot, Validate: validResilienceSnapshot, ValidateFile: func(f *os.File) error {
+			head := make([]byte, 64)
+			n, err := io.ReadFull(f, head)
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return err
+			}
+			return validResilienceSnapshot(head[:n])
+		}}, true
+	}
 	if name == bundletransfer.Agent.Name {
 		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
 			b, err := decodeAgentArchive(f)
@@ -198,6 +210,15 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 	// The durable offer itself appears in federation inbox and offers listings;
 	// no prompt/content from it is delivered to an agent.
 	recordFederationAudit("federation.bundle.in", peerDisplay(peer), "", "", d.Type+" offer "+d.ID, 200)
+	if d.Type == bundletransfer.Snapshot.Name {
+		// Custody needs no operator step: the snapshots.receive grant is
+		// the operator's standing decision. It runs after the ack.
+		stored := o
+		if len(d.Inline) > 0 {
+			stored.State = "ready"
+		}
+		defer func() { go rt.resilienceReceive(&stored) }()
+	}
 	if teleport != nil {
 		recordFederationAudit("teleport.receive", peer.InstanceID, teleport.Intent.SourceAgent, d.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s state=%s", d.ID, teleport.Intent.Chain, len(teleport.Intent.Hops), teleport.Credentials, teleport.State), 200)
 	}

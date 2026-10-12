@@ -42,6 +42,10 @@ func openInspectableBundle(w http.ResponseWriter, r *http.Request) (*db.Federati
 	if o == nil {
 		return nil, nil
 	}
+	if o.Descriptor.Type == bundletransfer.Snapshot.Name {
+		writeError(w, 409, "resilience_snapshot", resilienceOfferRefusal)
+		return nil, nil
+	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
 	current, err := db.GetFederationBundleOffer("in", o.Peer, o.Descriptor.ID)

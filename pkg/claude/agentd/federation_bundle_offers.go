@@ -137,6 +137,10 @@ func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmissi
 	if found == nil {
 		return nil
 	}
+	if found.Descriptor.Type == bundletransfer.Snapshot.Name {
+		writeError(w, 409, "resilience_snapshot", resilienceOfferRefusal)
+		return nil
+	}
 	if found.State != "pending" && found.State != "ready" {
 		writeError(w, 409, "offer_state", "offer is "+found.State)
 		return nil

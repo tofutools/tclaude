@@ -224,11 +224,14 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	PeerProposals       bool `json:"peer_proposals,omitempty"`
-	AgentBundleChunks   bool `json:"agent_bundle_chunks,omitempty"`
-	RequesterPays       int  `json:"requester_pays,omitempty"`
-	TeleportBackups     bool `json:"teleport_backups,omitempty"`
-	AgentTeleports      int  `json:"agent_teleports,omitempty"`
+	PeerProposals     bool `json:"peer_proposals,omitempty"`
+	AgentBundleChunks bool `json:"agent_bundle_chunks,omitempty"`
+	RequesterPays     int  `json:"requester_pays,omitempty"`
+	TeleportBackups   bool `json:"teleport_backups,omitempty"`
+	AgentTeleports    int  `json:"agent_teleports,omitempty"`
+	// ResilienceSnapshots is the resilience snapshot custody version this
+	// node accepts (bundle type "snapshot"); 0 means none.
+	ResilienceSnapshots int  `json:"resilience_snapshots,omitempty"`
 	JobOutput           bool `json:"job_output,omitempty"`
 	DirectAgentMoves    bool `json:"direct_agent_moves,omitempty"`
 	HomeRoutedMail      bool `json:"home_routed_mail,omitempty"`
