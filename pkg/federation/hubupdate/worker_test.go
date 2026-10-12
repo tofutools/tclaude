@@ -38,6 +38,7 @@ func TestPrivateGuardianWorkerGenerationAndReadiness(t *testing.T) {
 	}
 }
 func TestWorkerArgumentsPreserveHostSettings(t *testing.T) {
+	require.Equal(t, []string{"hub", "serve", "--db", "/host/hub.sqlite", "--supervised=false", "--guardian-worker=true"}, WorkerArgs([]string{"hub", "serve", "--db", "/host/hub.sqlite"}))
 	require.Equal(t, []string{"serve", "--supervised", "--db", "/host/hub.sqlite", "--accept-remote-scripts=false", "--supervised=false", "--guardian-worker=true"}, WorkerArgs([]string{"serve", "--supervised", "--db", "/host/hub.sqlite", "--accept-remote-scripts=false"}))
 }
 
