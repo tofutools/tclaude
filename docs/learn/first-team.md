@@ -72,7 +72,7 @@ Start with these:
 You can also rename an agent by clicking its name in the row.
 
 The rest of the menu (clone, reincarnate, morph, snapshot, schedule) manages
-an agent's lifecycle; see [Lifecycle verbs](../spawning-and-lifecycle.md#lifecycle-verbs).
+an agent's lifecycle. [Keep agents going](keep-agents-going.md) covers it.
 
 !!! info "Go deeper"
     [Dashboard → The member row](../dashboard.md#the-member-row) and

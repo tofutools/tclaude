@@ -79,5 +79,4 @@ tclaude ask "what does the main function in this project do?"
   (**promote**).
 - The CLI searches inside conversations: `tclaude conv search`.
 
-**Next:** keep your agents running smoothly in long tasks:
-[Spawning and lifecycle → Lifecycle verbs](../spawning-and-lifecycle.md#lifecycle-verbs).
+**Next:** [Keep agents going](keep-agents-going.md).
