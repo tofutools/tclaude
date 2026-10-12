@@ -18,9 +18,55 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Classify the PR diff
+        id: diff
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 scripts/ci/test_docs_only.py
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          docs_only=$(python3 scripts/ci/docs-only.py "$BASE_SHA")
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  docs:
+    name: mkdocs --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Install mkdocs-material
+        run: pip install mkdocs-material
+      - name: Build docs (strict)
+        run: mkdocs build --strict
+
+  learn-commands:
+    name: Learn commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Validate Learn commands and flags
+        run: go test ./pkg/claude -run '^TestLearnDocsCommandsResolve$' -count=1
+
   # golangci-lint is platform-independent, so run it once on a single runner
   # rather than duplicating it across the test matrix.
   lint:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -38,6 +84,8 @@ jobs:
           version: v2.13.2
 
   sandbox-v2-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Sandbox v2 bubblewrap smoke
     runs-on: ubuntu-latest
     steps:
@@ -750,6 +798,8 @@ jobs:
           fi
 
   sandbox-v2-seatbelt-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Sandbox v2 Seatbelt smoke
     runs-on: macos-latest
     steps:
@@ -900,6 +950,8 @@ jobs:
           fi
 
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
@@ -991,6 +1043,8 @@ jobs:
   # every token variable from the child environment so a regression back into
   # an auth dependency fails here instead of passing on a logged-in machine.
   copilot-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Copilot CLI smoke
     runs-on: ubuntu-latest
     steps:
@@ -1094,6 +1148,8 @@ jobs:
   # fork, hook install, folder trust and approval rendering, checked against
   # what the pinned binary actually writes and accepts. Credential-free.
   gemini-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Gemini CLI smoke
     runs-on: ubuntu-latest
     steps:
@@ -1157,6 +1213,8 @@ jobs:
   # a review, not a workflow merge. Keep this job generic: if a change here is
   # ever needed to add a smoke, that belongs in the entrypoint instead.
   filtered-proxy-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Filtered-network proxy smoke (${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -1272,6 +1330,8 @@ jobs:
   # change here is ever needed to add a scenario, that belongs in the entrypoint
   # instead.
   proxy-posture-e2e:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: Proxy posture end-to-end
     runs-on: ubuntu-latest
     steps:
@@ -1300,3 +1360,29 @@ jobs:
         env:
           SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
         run: scripts/proxy-posture-e2e/run.sh
+
+  # Require this gate in merge tooling: a skipped code job is never evidence.
+  ci-complete:
+    name: CI complete
+    if: always()
+    needs: [changes, docs, learn-commands, lint, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke, test, copilot-smoke, gemini-smoke, filtered-proxy-smoke, proxy-posture-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the checks for this change
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          checks = json.loads(os.environ["NEEDS_JSON"])
+          for name in ("changes", "docs", "learn-commands"):
+              assert checks[name]["result"] == "success", (name, checks[name]["result"])
+          docs_only = checks["changes"]["outputs"].get("docs_only")
+          assert docs_only in ("true", "false"), docs_only
+          for name, check in checks.items():
+              if name in ("changes", "docs", "learn-commands"):
+                  continue
+              expected = "skipped" if docs_only == "true" else "success"
+              assert check["result"] == expected, (name, check["result"], expected)
+          PY
