@@ -1,7 +1,7 @@
 # Ask
 
 !!! tip "New to tclaude?"
-    The tutorial [Find and resume your work](learn/find-and-resume.md#4-ask-a-quick-question-without-a-session) walks through a first ask.
+    Start with the [Learn path](learn/index.md). [Find and resume your work](learn/find-and-resume.md#from-the-terminal) shows ask next to the conversation commands.
 
 
 `tclaude ask` puts a one-shot question to a coding harness without creating

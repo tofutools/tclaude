@@ -33,10 +33,11 @@ want it.
 |---|---|---|---|
 | 1 | [Get started](get-started.md) | Install tclaude, start its daemon, and open the dashboard | 10 min |
 | 2 | [Your first agent](first-agent.md) | Create a group, start an agent, watch it, open its terminal and message it | 15 min |
-| 3 | [Your first agent team](first-team.md) | Spawn two agents into a group and watch them message each other | 20 min |
-| 4 | [Tour the dashboard](dashboard-tour.md) | Read your agents' mail and manage them from the ⚙ menu | 15 min |
-| 5 | [Find and resume your work](find-and-resume.md) | Find a past conversation and pick it up again | 10 min |
-| 6 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 3 | 45 min |
+| 3 | [Your first agent team](first-team.md) | Add a second agent, watch the two message each other, read their mail, and manage them from the ⚙ menu | 20 min |
+| 4 | [Find and resume your work](find-and-resume.md) | Wake stopped agents, bring back retired ones, and turn past conversations into agents | 10 min |
+| 5 | [Keep agents going](keep-agents-going.md) | Watch an agent's context, clone or reincarnate it, and change its model in place | 20 min |
+| 6 | [Work in parallel with worktrees](parallel-worktrees.md) | Start agents on their own branches and checkouts, and clean up after merging | 15 min |
+| 7 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 3 | 45 min |
 
 The last step is optional and more advanced: it needs a second machine,
 and it uses [permissions](../permissions-and-audit.md) the earlier steps did

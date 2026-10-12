@@ -14,7 +14,7 @@
 tclaude() {
     # Check if this is a worktree switch command
     # Matches: tclaude worktree (switch|s|checkout|c) <target>
-    if [[ $# -ge 4 && "$1" == "worktree" && "$2" =~ ^(switch|s|checkout|c)$ ]]; then
+    if [[ $# -ge 3 && "$1" == "worktree" && "$2" =~ ^(switch|s|checkout|c)$ ]]; then
         local dir
         dir=$(command tclaude "$@" 2>&1)
         local status_code=$?

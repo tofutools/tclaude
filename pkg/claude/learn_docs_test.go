@@ -13,9 +13,10 @@ import (
 
 // TestLearnDocsCommandsResolve keeps the Learn tutorials honest: every
 // `tclaude …` command in a fenced bash block under docs/learn/ must name a
-// real subcommand and only real flags. Nothing is executed — each line is
-// resolved against the live Cobra tree — so a renamed command or flag fails
-// here instead of in a new user's terminal.
+// real subcommand, only real flags, and an accepted number of arguments.
+// Nothing is executed — each line is resolved against the live Cobra tree —
+// so a renamed command or flag fails here instead of in a new user's
+// terminal.
 func TestLearnDocsCommandsResolve(t *testing.T) {
 	pages, err := filepath.Glob(filepath.Join("..", "..", "docs", "learn", "*.md"))
 	if err != nil || len(pages) == 0 {
@@ -153,9 +154,15 @@ func checkLearnCommand(root *cobra.Command, args []string) string {
 	// "<arg>" or "[arg]") does not take one, so that word is a typo. The root
 	// accepts arbitrary args (passthrough to the harness), but no tutorial
 	// gives it one, so a stray word there is a misspelled command.
+	positionals := positionalArgs(cmd, rest)
 	if cmd.HasSubCommands() && (cmd == root || !strings.ContainsAny(cmd.Use, "<[")) {
-		if word := firstPositional(cmd, rest); word != "" {
-			return "unknown subcommand " + word + " of " + cmd.CommandPath()
+		if len(positionals) > 0 {
+			return "unknown subcommand " + positionals[0] + " of " + cmd.CommandPath()
+		}
+	}
+	if cmd != root {
+		if err := cmd.ValidateArgs(positionals); err != nil {
+			return "bad arguments for " + cmd.CommandPath() + ": " + err.Error()
 		}
 	}
 	for _, a := range rest {
@@ -179,16 +186,18 @@ func checkLearnCommand(root *cobra.Command, args []string) string {
 	return ""
 }
 
-// firstPositional returns the first argument that is neither a flag nor the
-// value of a preceding flag that takes one.
-func firstPositional(cmd *cobra.Command, args []string) string {
+// positionalArgs returns the arguments that are neither flags nor the value
+// of a preceding flag that takes one.
+func positionalArgs(cmd *cobra.Command, args []string) []string {
+	var out []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			return ""
+			return append(out, args[i+1:]...)
 		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
-			return a
+			out = append(out, a)
+			continue
 		}
 		if strings.Contains(a, "=") {
 			continue
@@ -209,5 +218,5 @@ func firstPositional(cmd *cobra.Command, args []string) string {
 			i++ // the flag consumes the next word as its value
 		}
 	}
-	return ""
+	return out
 }

@@ -41,8 +41,9 @@ nav:
       - Get started: learn/get-started.md
       - Your first agent: learn/first-agent.md
       - Your first agent team: learn/first-team.md
-      - Tour the dashboard: learn/dashboard-tour.md
       - Find and resume your work: learn/find-and-resume.md
+      - Keep agents going: learn/keep-agents-going.md
+      - Work in parallel with worktrees: learn/parallel-worktrees.md
       - Link two machines: federation-setup.md
   - Architecture: architecture.md
   - Everyday use:

@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Regenerates every image used by the Learn tutorials (docs/learn/) and
-# installs them into docs/assets/. The images come from gated Go tests that
-# render real tclaude views from fake data (no real names, paths, hosts or
-# costs) and screenshot them with a local headless Chrome:
+# installs them into docs/assets/. The images come from a gated Go test that
+# renders the real dashboard from fake data (no real names, paths, hosts or
+# costs) and screenshots it with a local headless Chrome:
 #
 #   pkg/claude/agentd   TestLearnShots  dashboard (dashsnap)
-#   pkg/claude/session  TestLearnShots  tclaude session watch
-#   pkg/claude/conv     TestLearnShots  tclaude conv watch
 #
 # Usage: scripts/docs/learn-images.sh
 # Needs Google Chrome or Chromium. Uses oxipng or optipng when installed.
@@ -27,13 +25,13 @@ export TCLAUDE_DOCSHOTS=1
 export TZ=UTC
 
 cd "$root"
-go test ./pkg/claude/agentd/ ./pkg/claude/session/ ./pkg/claude/conv/ \
+go test ./pkg/claude/agentd/ \
   -run '^TestLearnShots$' -count=1 -timeout 600s
 
 shopt -s nullglob
 pngs=("$out"/learn-*.png)
-if (( ${#pngs[@]} != 6 )); then
-  echo "expected 6 images in $out, got ${#pngs[@]}: is Chrome installed? (the generators skip without it)" >&2
+if (( ${#pngs[@]} != 5 )); then
+  echo "expected 5 images in $out, got ${#pngs[@]}: is Chrome installed? (the generator skips without it)" >&2
   exit 1
 fi
 for png in "${pngs[@]}"; do
