@@ -318,9 +318,9 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
       : list.length === 0 ? html`<div class="empty" id="snapshots-empty">No snapshots yet. Take one here, from an agent's ⚙ menu, or with <code>tclaude agent snapshot create</code>.</div>`
       : html`<table class="paf-member-table" id="snapshots-list"><thead><tr><th>Name</th><th>Agent</th><th>Harness</th><th>Taken</th><th>Size</th><th>Expires</th><th></th></tr></thead><tbody>
         ${list.map((snap) => html`<tr key=${snap.name} data-snapshot=${snap.name} class=${p?.snap?.name === snap.name ? 'active' : ''}>
-          <td><b>${snap.name}</b>${snap.note && html`<div class="paf-hint">${snap.note}</div>`}</td>
-          <td>${snap.agent_name}</td>
-          <td>${[snap.harness, snap.model].filter(Boolean).join(' · ')}${!snap.history ? html`<div class="paf-hint">no history</div>` : ''}</td>
+          <td><div class="snap-trunc" title=${snap.name}><b>${snap.name}</b></div>${snap.note && html`<div class="paf-hint snap-trunc" title=${snap.note}>${snap.note}</div>`}</td>
+          <td><div class="snap-trunc" title=${snap.agent_name}>${snap.agent_name}</div></td>
+          <td><div class="snap-trunc" title=${[snap.harness, snap.model].filter(Boolean).join(' · ')}>${[snap.harness, snap.model].filter(Boolean).join(' · ')}</div>${!snap.history ? html`<div class="paf-hint">no history</div>` : ''}</td>
           <td title=${snap.created_at}>${when(snap.created_at)}${snap.state === 'last_complete_turn' ? html`<div class="paf-hint">last complete turn</div>` : ''}</td>
           <td>${bytesText(snap.bytes)}</td>
           <td>${snap.expires_at ? when(snap.expires_at) : 'never'}</td>

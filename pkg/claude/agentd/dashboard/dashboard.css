@@ -8657,9 +8657,13 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-member-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
 .paf-member-table th { text-align: left; color: #7d8590; font-weight: normal; border-bottom: 1px solid #2a3340; padding: 3px 6px; }
 .paf-member-table td { border-bottom: 1px solid #1c2128; padding: 4px 6px; vertical-align: top; }
-#paf-export-modal, #group-import-modal { max-width: 760px; }
+/* The id names the overlay; size the dialog inside it, so the backdrop
+   still covers the whole viewport. */
+#paf-export-modal .cron-create-modal, #group-import-modal .cron-create-modal { max-width: 760px; }
 /* Snapshots view (tcl-3hjdm1): library table with inline panels. */
-#snapshots-modal { min-width: 720px; max-width: 920px; max-height: 90vh; overflow-y: auto; }
+#snapshots-modal .cron-create-modal { width: min(920px, 94vw); max-width: 920px; max-height: 90vh; overflow-y: auto; }
+.snap-trunc { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-trunc.paf-hint { max-width: 190px; }
 .snap-toolbar { display: flex; gap: 8px; margin: 6px 0; }
 .snap-panel { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 8px 11px; margin: 8px 0; }
 .snap-acts { white-space: nowrap; text-align: right; }

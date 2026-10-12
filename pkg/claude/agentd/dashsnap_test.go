@@ -4794,16 +4794,14 @@ func dashSnapSize(v string) (int, int, error) {
 	return width, height, nil
 }
 
-// pafAgentImportCutDashSnapJS renders the agent import preview for a landing
-// that cuts about three quarters of the conversation, with the confirmation
-// checkbox ticked.
+// pafAgentImportCutDashSnapJS opens the real ⤒ import dialog on an agent PAF
+// whose landing cuts about three quarters of the conversation, and ticks the
+// confirmation checkbox the import buttons wait on.
 func pafAgentImportCutDashSnapJS() string {
 	return `return (async function(){
   var preact = await import('preact');
-  var hooks = await import('preact/hooks');
   var html = (await import('htm')).default.bind(preact.h);
-  var overlay = await import('/static/js/management-overlay.js');
-  var paf = await import('/static/js/paf-dialogs.js');
+  var dialog = await import('/static/js/template-management-island.js');
   var preview = {
     agent: { name: 'big-agent', role: 'dev', harness: 'claude' },
     history: true,
@@ -4814,21 +4812,24 @@ func pafAgentImportCutDashSnapJS() string {
     warnings: ['landing on Codex CLI gpt-5.5 cuts about 74% of the conversation to fit its context budget: the pinned start, compaction summaries and the newest turns are kept, with the agent\'s own summary standing in for the rest. The full history stays in the PAF and is saved beside the agent.',
       'Cutting 74% of the conversation needs confirmation: --confirm-history-loss.']
   };
-  function Host() {
-    var st = hooks.useState({ name: '', group: '', cwd: '', keepPaths: false, harness: 'codex', model: 'gpt-5.5', confirmHistoryLoss: true });
-    var g = overlay.useGuardedOverlayClose();
-    return html` + "`" + `<${overlay.ManagementOverlay} id="paf-import-snap" labelledby="paf-import-snap-title" onClose=${function(){}} dirty=${false} blocked=${false} confirmDiscard=${function(){ return Promise.resolve(true); }} registerClose=${g.registerClose}>
-      <h3 id="paf-import-snap-title">⤒ Import</h3>
-      <${paf.AgentImportPreview} preview=${preview} choices=${st[0]} setChoices=${st[1]} /></${overlay.ManagementOverlay}>` + "`" + `;
-  }
+  var actions = {
+    inspectGroupImport: function(){ return Promise.reject(new Error('not a group PAF')); },
+    importAgentPAF: function(){ return Promise.resolve(preview); },
+    importGroup: function(){ return Promise.reject(new Error('dashsnap: no import')); }
+  };
+  var file = new File(['PK'], 'big-agent.paf', { type: 'application/vnd.tclaude.paf+zip' });
   var root = document.createElement('div');
   document.body.appendChild(root);
-  preact.render(html` + "`" + `<${Host} />` + "`" + `, root);
+  preact.render(html` + "`" + `<${dialog.GroupImportDialog} state=${{ closeDialog: function(){} }} actions=${actions}
+    confirmDiscard=${function(){ return Promise.resolve(true); }} initialFile=${file} />` + "`" + `, root);
   var deadline = Date.now() + 3000;
   while (!document.querySelector('#agent-import-confirm-loss') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
-  if (!document.querySelector('#agent-import-confirm-loss')) throw new Error('history-cut checkbox did not render');
+  var box = document.querySelector('#agent-import-confirm-loss input') || document.querySelector('input#agent-import-confirm-loss');
+  if (!box) throw new Error('history-cut checkbox did not render');
+  box.click();
+  if (!document.querySelector('#group-import-modal .modal-buttons')) throw new Error('import dialog buttons did not render');
 })();`
 }
 
