@@ -768,19 +768,25 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 	}
 	// Make room from one listing, newest first: expired copies and this
 	// agent's copies beyond keep-1 go first, then the peer's oldest copies
-	// until the new one fits.
-	var kept []heldSnapshot
+	// until the new one fits. Only expired copies go at once; the others are
+	// removed after the replacement is written, so a failed or interrupted
+	// write never costs the last acknowledged backup.
+	var kept, evict []heldSnapshot
 	var total int64
 	agents := map[string]bool{}
 	n := 0
 	for _, h := range listHeld(o.Peer) {
+		if h.Offer == d.ID {
+			// A resend of this offer: the write below replaces it.
+			continue
+		}
 		if !now.Before(h.ExpiresAt) {
 			removeHeld(h)
 			continue
 		}
 		if h.SourceAgent == r.SourceAgent {
 			if n++; n > r.Keep-1 {
-				removeHeld(h)
+				evict = append(evict, h)
 				continue
 			}
 		}
@@ -793,7 +799,7 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 	}
 	for len(kept) > 0 && total+d.Bytes > resilienceHeldPeerBytes {
 		oldest := kept[len(kept)-1]
-		removeHeld(oldest)
+		evict = append(evict, oldest)
 		total -= oldest.Bytes
 		kept = kept[:len(kept)-1]
 	}
@@ -805,12 +811,17 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 	if err != nil {
 		return err
 	}
-	if err = writeSpoolFile(strings.TrimSuffix(path, ".paf.age")+".json", meta); err != nil {
+	// The ciphertext first: the metadata is what lists a held snapshot, so
+	// it appears only once both are synced in place.
+	if err = writeSpoolFile(path, raw); err != nil {
 		return err
 	}
-	if err = writeSpoolFile(path, raw); err != nil {
-		_ = os.Remove(strings.TrimSuffix(path, ".paf.age") + ".json")
+	if err = writeSpoolFile(strings.TrimSuffix(path, ".paf.age")+".json", meta); err != nil {
+		_ = os.Remove(path)
 		return err
+	}
+	for _, h := range evict {
+		removeHeld(h)
 	}
 	_ = fedBundleSpool().Remove("in", o.Peer, d.ID)
 	if err = db.SetFederationBundleOfferState("in", o.Peer, d.ID, "applied", ""); err != nil {

@@ -29,8 +29,18 @@ const resilienceSource = "agt_bobsource00000000000000000"
 
 func fedSendSnapshot(t *testing.T, p *fedPeer, raw []byte, takenAt time.Time, keep int) bundletransfer.Descriptor {
 	t.Helper()
+	return fedSendSnapshotWith(t, p, raw, takenAt, keep, nil)
+}
+
+// fedSendSnapshotWith runs before, when set, between building the offer and
+// sending it.
+func fedSendSnapshotWith(t *testing.T, p *fedPeer, raw []byte, takenAt time.Time, keep int, before func(bundletransfer.Descriptor)) bundletransfer.Descriptor {
+	t.Helper()
 	d := bundletransfer.New(bundletransfer.Snapshot, raw, "Resilience snapshot", time.Now().Add(time.Hour))
 	d.Resilience = &bundletransfer.ResilienceIntent{SourceAgent: resilienceSource, AgentName: "worker", Harness: "claude", TakenAt: takenAt, Keep: keep, MaxAgeDays: 7}
+	if before != nil {
+		before(d)
+	}
 	env := p.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
 	env.From.Agent = ""
 	env.ID = d.ID
@@ -132,6 +142,36 @@ func TestResilience_PeerHoldsSnapshotsUnderGrantWithRetention(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"removed":2`)
 	require.Empty(t, fedHeld(t, f).Held)
+}
+
+// A replacement that cannot be written leaves the last acknowledged backup
+// in place: with keep 1 the old copy goes only once the new one is kept.
+func TestResilience_FailedReplacementKeepsPreviousSnapshot(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "snapshots.receive"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+
+	first := fedSendSnapshot(t, p, fedSealed(t, "one"), now.Add(-time.Hour), 1)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, first.ID).Status)
+	fedEventually(t, "first snapshot held", func() bool { return len(fedHeld(t, f).Held) == 1 })
+
+	// The replacement's ciphertext path is taken by a directory, so its
+	// final rename fails.
+	second := fedSendSnapshotWith(t, p, fedSealed(t, "two"), now, 1, func(d bundletransfer.Descriptor) {
+		blocker := filepath.Join(config.DataDir(), "resilience", "held", p.id.ID(), resilienceSource, d.ID+".paf.age", "x")
+		require.NoError(t, os.MkdirAll(blocker, 0o700))
+	})
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, second.ID).Status)
+	fedEventually(t, "replacement received", func() bool {
+		o, _ := db.GetFederationBundleOffer("in", p.id.ID(), second.ID)
+		return o != nil && o.State == "ready"
+	})
+	require.Never(t, func() bool {
+		h := fedHeld(t, f).Held
+		return len(h) != 1 || h[0].Offer != first.ID
+	}, time.Second, 50*time.Millisecond, "the previous snapshot stays held")
 }
 
 type resiliencePoliciesView struct {
