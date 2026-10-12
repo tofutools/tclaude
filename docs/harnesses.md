@@ -105,6 +105,9 @@ warning. Model and effort are remembered by the harness itself.
 | [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
+| Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ no model |
+| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ no hook source |
+| Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no model |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
 | Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ |

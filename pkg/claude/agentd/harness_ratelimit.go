@@ -158,6 +158,10 @@ func harnessUsageWindows(harnessName string, idleTimeout time.Duration, now time
 		return codexUsageWindows(now)
 	case harness.CopilotName:
 		return copilotUsageWindows(idleTimeout, now)
+	case harness.GeminiName, harness.OpenCodeName, harness.ShellName:
+		// Gemini account quota is not persisted in its session usage log.
+		// OpenCode has no single account quota; shell has no model.
+		return nil
 	}
 	return nil
 }

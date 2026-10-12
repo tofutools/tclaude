@@ -51,7 +51,15 @@ func (c Capability) Supported() bool { return c.Status != StatusUnsupported }
 
 // KnownHarnesses are the harnesses capability is reported for. Ordered so
 // rendered output is stable.
-var KnownHarnesses = []string{harness.DefaultName, harness.CodexName, harness.OpenCodeName}
+var KnownHarnesses = func() []string {
+	var names []string
+	for _, name := range harness.Names() {
+		if name != harness.ShellName {
+			names = append(names, name)
+		}
+	}
+	return names
+}()
 
 // CapabilityFor reports what harnessName can do with an order requiring the
 // given timing on the given trigger event.
@@ -74,6 +82,9 @@ var KnownHarnesses = []string{harness.DefaultName, harness.CodexName, harness.Op
 // Guessing upward would mean promising a timing guarantee tclaude has never
 // tested on that harness.
 func CapabilityFor(timing, event, harnessName string) Capability {
+	if harnessName == harness.ShellName {
+		return Capability{Status: StatusUnsupported, Transport: db.StandingTransportNone, Detail: "shell has no hook event source for standing orders"}
+	}
 	actionTrigger := false
 	openCodeQueuedAction := false
 	switch event {

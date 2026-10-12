@@ -20,6 +20,7 @@ func decodeGeminiHookForTest(t *testing.T, raw string) HookCallbackInput {
 func TestNormalizeGeminiHookEvent(t *testing.T) {
 	in := decodeGeminiHookForTest(t, `{"session_id":"s","cwd":"/w","hook_event_name":"BeforeAgent","prompt":"fix it"}`)
 	assert.Equal(t, "UserPromptSubmit", in.HookEventName)
+	assert.Equal(t, "BeforeAgent", in.NativeHookEvent)
 	assert.Equal(t, "fix it", in.Prompt)
 
 	in = decodeGeminiHookForTest(t, `{"session_id":"s","hook_event_name":"AfterAgent","prompt":"p","prompt_response":"done","stop_hook_active":false}`)
@@ -51,5 +52,6 @@ func TestNormalizeGeminiHookEvent(t *testing.T) {
 func TestNormalizeGeminiBeforeTool(t *testing.T) {
 	in := decodeGeminiHookForTest(t, `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"write_file"}`)
 	assert.Equal(t, "PreToolUse", in.HookEventName)
+	assert.Equal(t, "BeforeTool", in.NativeHookEvent)
 	assert.Equal(t, "write_file", in.ToolName)
 }

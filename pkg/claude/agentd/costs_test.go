@@ -80,11 +80,12 @@ func TestDashboardAPICostsAreAttributedAndSortedByProvider(t *testing.T) {
 		{SessionID: "a", ConvID: "a", Day: "2026-08-13", Harness: "claude", CostUSD: 1.25},
 		{SessionID: "b", ConvID: "b", Day: "2026-08-13", Harness: "codex", CostUSD: 2.50},
 		{SessionID: "c", ConvID: "c", Day: "2026-08-12", Harness: "opencode", Model: "google/gemini-2.5-pro", CostUSD: 3.75},
+		{SessionID: "d", ConvID: "d", Day: "2026-08-13", Harness: "gemini", Model: "gemini-3-flash", CostUSD: 1.00},
 	}
 
 	assert.Equal(t, []dashboardAPICost{
 		{Provider: "anthropic", TotalCostUSD: 1.25, TodayCostUSD: 1.25},
-		{Provider: "google", TotalCostUSD: 3.75},
+		{Provider: "google", TotalCostUSD: 4.75, TodayCostUSD: 1.00},
 		{Provider: "openai", TotalCostUSD: 2.50, TodayCostUSD: 2.50},
 	}, dashboardAPICostsFromRows(rows, now))
 }

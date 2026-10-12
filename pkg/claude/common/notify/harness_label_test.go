@@ -8,7 +8,7 @@ import (
 
 // The banner title must name the session's harness so a Codex agent's
 // notification reads "Codex: …" rather than the historical "Claude: …".
-// Unknown/empty harnesses keep the Claude default (the task runner and
+// Empty harnesses keep the Claude default (the task runner and
 // rate-limit warnings go through Send, which passes "").
 func TestNotificationTitle_HarnessAttribution(t *testing.T) {
 	tests := []struct {
@@ -23,7 +23,10 @@ func TestNotificationTitle_HarnessAttribution(t *testing.T) {
 		{"shell exited", "shell", "Exited", "Shell: Exited"},
 		{"claude explicit", "claude", "Working", "Claude: Working"},
 		{"empty defaults to claude", "", "Working", "Claude: Working"},
-		{"unknown defaults to claude", "gemini", "Idle", "Claude: Idle"},
+		{"gemini idle", "gemini", "Idle", "Gemini: Idle"},
+		{"copilot idle", "copilot", "Idle", "Copilot: Idle"},
+		{"opencode idle", "opencode", "Idle", "OpenCode: Idle"},
+		{"unknown neutral label", "unknown", "Idle", "tclaude: Idle"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,7 +40,7 @@ func TestHarnessLabel(t *testing.T) {
 	assert.Equal(t, "Shell", harnessLabel("shell"))
 	assert.Equal(t, "Claude", harnessLabel("claude"))
 	assert.Equal(t, "Claude", harnessLabel(""), "empty harness keeps the historical Claude default")
-	assert.Equal(t, "Claude", harnessLabel("something-else"))
+	assert.Equal(t, "tclaude", harnessLabel("something-else"))
 }
 
 func TestFormatStatus_AgentRecoveryTransitions(t *testing.T) {

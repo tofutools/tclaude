@@ -50,6 +50,10 @@ sampled history. Check the forecast's status before using its rate or ETA.
 Forecasts need at least three samples over thirty minutes and pause when stale.
 These quotas and forecasts describe shared account usage, not just the caller.
 Coverage warnings identify OpenCode activity lacking recent native readings.
+Gemini session logs expose tokens and context usage, but no account-wide quota
+windows are captured by tclaude. Gemini spawns therefore have no quota gate;
+check the CLI’s `/model` quota display. Gemini what-if costs are grouped under
+`google`, using recorded model token counts and list pricing.
 
 ## Costs
 
