@@ -24,6 +24,7 @@ const (
 	RedactDropReasoning   = "drop_reasoning"
 	RedactDropNative      = "drop_native"
 	RedactPaths           = "paths_to_placeholders"
+	RedactStripIdentity   = "strip_identity"
 	// RedactDropUnknown records content a redaction cannot rewrite safely
 	// and dropped instead: extension data this tool does not understand,
 	// unknown context lines, binary agent files.
@@ -37,6 +38,7 @@ const LossRedacted = "redacted"
 const (
 	stubToolResult = "[tool result removed by redaction]"
 	stubMedia      = "[media removed by redaction]"
+	stubIdentity   = "[REDACTED:identity]"
 )
 
 // NativeDecoder decodes a native history blob into the neutral transcript.
@@ -61,6 +63,13 @@ type RedactOptions struct {
 	// directory, recorded placeholder paths and the user name with
 	// ${NAME} placeholders, and records the names without their values.
 	PathsToPlaceholders bool
+	// StripIdentity removes what identifies the agent, its node and its
+	// conversations: agent and instance ids, the agent and conversation
+	// titles, conversation ids (agent.json, transcript headers, lineage
+	// sources), group memberships and media path hints. Extension data is
+	// dropped, since it can carry identifiers this tool cannot tell
+	// apart. It applies to one-agent PAFs only.
+	StripIdentity bool
 
 	// Native decodes a native blob for an agent with no context file, so
 	// its history survives the drop. Without it such history is dropped.
@@ -72,7 +81,7 @@ type RedactOptions struct {
 }
 
 func (o RedactOptions) any() bool {
-	return o.MaskFlagged || o.StubToolResults || o.DropMedia || o.DropReasoning || o.DropNative || o.PathsToPlaceholders
+	return o.MaskFlagged || o.StubToolResults || o.DropMedia || o.DropReasoning || o.DropNative || o.PathsToPlaceholders || o.StripIdentity
 }
 
 // RedactReport says what a redaction changed. It holds counts, kinds and
@@ -97,6 +106,9 @@ func Redact(a *paf.Archive, out io.Writer, opts RedactOptions, producer paf.Prod
 	if opts.MaxAttachmentBytes <= 0 {
 		opts.MaxAttachmentBytes = 64 << 20
 	}
+	if opts.StripIdentity && (a.Manifest.Kind != paf.KindAgent || len(a.Manifest.Agents) != 1) {
+		return nil, errors.New("strip_identity applies to a PAF of one agent")
+	}
 	r := &redactor{
 		a:       a,
 		opts:    opts,
@@ -106,10 +118,13 @@ func Redact(a *paf.Archive, out io.Writer, opts RedactOptions, producer paf.Prod
 		masked:  map[string]int{},
 		dropped: map[string]bool{},
 		refs:    map[string]string{},
-		keepExt: a.UnderstandsExtension(paf.ExtTclaude),
+		keepExt: a.UnderstandsExtension(paf.ExtTclaude) && !opts.StripIdentity,
 	}
 	if opts.PathsToPlaceholders {
 		r.paths = pathPlaceholders(a)
+	}
+	if opts.StripIdentity {
+		r.idents = identifiers(a)
 	}
 	return r.run(producer, keys)
 }
@@ -129,6 +144,9 @@ type redactor struct {
 	// refs maps source attachment references to rewritten ones.
 	refs    map[string]string
 	paths   []placeholder
+	// idents are the identifiers strip_identity removes wherever they
+	// appear in text, longest first.
+	idents  []string
 	keepExt bool
 }
 
@@ -212,6 +230,7 @@ func (r *redactor) report() *RedactReport {
 	}
 	rep.Placeholders = names
 	add(RedactPaths, r.counts[RedactPaths], strings.Join(names, ", "))
+	add(RedactStripIdentity, r.counts[RedactStripIdentity], "agent name, agent, instance and conversation ids and titles, groups, repository and task, media paths")
 	var dropped []string
 	for d := range r.dropped {
 		dropped = append(dropped, d)
@@ -265,7 +284,86 @@ func (r *redactor) text(s string, structural bool) string {
 		s, n = replacePaths(s, r.paths)
 		r.count(RedactPaths, n)
 	}
+	for _, id := range r.idents {
+		if n := strings.Count(s, id); n > 0 {
+			s = strings.ReplaceAll(s, id, stubIdentity)
+			r.count(RedactStripIdentity, n)
+		}
+	}
 	return s
+}
+
+// minIdentLen keeps short values (a harness name, "main") from being
+// treated as identifiers.
+const minIdentLen = 6
+
+// identifiers collects the ids and names strip_identity removes: the
+// agent, instance and conversation ids, the instance name and the
+// conversation ids its lineage and contexts record.
+func identifiers(a *paf.Archive) []string {
+	seen := map[string]bool{}
+	add := func(v string) {
+		if len(v) >= minIdentLen {
+			seen[v] = true
+		}
+	}
+	for _, key := range a.Manifest.Agents {
+		ag, ok := a.Agent(key)
+		if !ok {
+			continue
+		}
+		add(ag.ID)
+		add(ag.Title)
+		// The name is usually the conversation title; a name that is
+		// just the role stays readable in the text.
+		if ag.Name != ag.Definition.Role {
+			add(ag.Name)
+		}
+		for _, g := range ag.Groups {
+			add(g.Name)
+		}
+		if ag.Instance != nil {
+			add(ag.Instance.ID)
+			add(ag.Instance.Name)
+		}
+		if ag.Conversation != nil {
+			add(ag.Conversation.ID)
+			add(ag.Conversation.Title)
+		}
+		for _, l := range ag.Lineage {
+			if l.From != nil {
+				add(l.From.Instance)
+				add(l.From.Agent)
+				add(l.From.Conversation)
+			}
+		}
+		if ag.Native != nil {
+			add(ag.Native.SourceConvID)
+		}
+		for _, scope := range []string{paf.ScopeEffective, paf.ScopeFull} {
+			if !a.HasContext(key, scope) {
+				continue
+			}
+			if cr, closer, err := a.Context(key, scope); err == nil {
+				if cr.Header.Source != nil {
+					add(cr.Header.Source.ConvID)
+					add(cr.Header.Source.Title)
+				}
+				_ = closer.Close()
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	slices.SortFunc(out, func(x, y string) int {
+		if len(x) != len(y) {
+			return len(y) - len(x)
+		}
+		return strings.Compare(x, y)
+	})
+	return out
 }
 
 func sumCounts(m map[string]int) int {
@@ -461,7 +559,7 @@ func (r *redactor) file(e paf.Entry) error {
 			out.Write(b)
 			out.WriteByte('\n')
 		}
-		return r.writeFile(e.Path, e.MediaType, out.Bytes())
+		return r.writeFile(r.outPath(e.Path), e.MediaType, out.Bytes())
 	case strings.HasSuffix(e.Path, ".json") || e.MediaType == "application/json":
 		v, err := decodeJSON(data)
 		if err != nil {
@@ -472,9 +570,9 @@ func (r *redactor) file(e paf.Entry) error {
 		if err != nil {
 			return err
 		}
-		return r.writeFile(e.Path, e.MediaType, b)
+		return r.writeFile(r.outPath(e.Path), e.MediaType, b)
 	case looksText(data):
-		return r.writeFile(e.Path, e.MediaType, []byte(r.text(string(data), false)))
+		return r.writeFile(r.outPath(e.Path), e.MediaType, []byte(r.text(string(data), false)))
 	}
 	r.drop(e.Path)
 	return nil
@@ -508,8 +606,11 @@ func (r *redactor) agent(key string) error {
 	if err := r.doc(srcEnv, &env); err != nil {
 		return err
 	}
+	if r.opts.StripIdentity {
+		r.stripAgent(&ag, &env)
+	}
 	r.placeholders(&env)
-	if err := r.w.AddAgent(key, ag, env); err != nil {
+	if err := r.w.AddAgent(r.outKey(key), ag, env); err != nil {
 		return err
 	}
 	r.scanAgentJSON(key, ag, env)
@@ -566,12 +667,88 @@ func (r *redactor) agent(key string) error {
 	return nil
 }
 
+// strippedName is the agent's name and key in a PAF with its identity
+// stripped: tclaude names an agent after its conversation title.
+const strippedName = "agent"
+
+// outKey is the agent key an agent is written under.
+func (r *redactor) outKey(key string) string {
+	if r.opts.StripIdentity {
+		return strippedName
+	}
+	return key
+}
+
+// outPath maps an agent entry's path to its output agent key.
+func (r *redactor) outPath(path string) string {
+	if !r.opts.StripIdentity {
+		return path
+	}
+	for _, key := range r.a.Manifest.Agents {
+		if rest, ok := strings.CutPrefix(path, paf.AgentPath(key, "")); ok {
+			return paf.AgentPath(strippedName, rest)
+		}
+	}
+	return path
+}
+
+// stripAgent removes the agent's identifying fields: its ids, its name and
+// titles (tclaude names an agent after its conversation's title), its
+// node, groups, lineage sources, and the repository and task it worked on.
+func (r *redactor) stripAgent(ag *paf.Agent, env *paf.Environment) {
+	n := 0
+	blank := func(s *string) {
+		if *s != "" {
+			*s = ""
+			n++
+		}
+	}
+	blank(&ag.ID)
+	blank(&ag.Title)
+	if ag.Name != strippedName {
+		ag.Name = strippedName
+		n++
+	}
+	if ag.Definition.Task != nil {
+		ag.Definition.Task = nil
+		n++
+	}
+	if ws := env.Workspace; ws != nil {
+		blank(&ws.RepoURL)
+		blank(&ws.Branch)
+		blank(&ws.Commit)
+		blank(&ws.Worktree)
+	}
+	if ag.Instance != nil {
+		ag.Instance = nil
+		n++
+	}
+	if ag.Conversation != nil {
+		blank(&ag.Conversation.ID)
+		blank(&ag.Conversation.Title)
+		if ag.Conversation.Harness == "" {
+			ag.Conversation = nil
+		}
+	}
+	if len(ag.Groups) > 0 {
+		n += len(ag.Groups)
+		ag.Groups = nil
+	}
+	for i := range ag.Lineage {
+		if ag.Lineage[i].From != nil {
+			ag.Lineage[i].From = nil
+			n++
+		}
+	}
+	r.count(RedactStripIdentity, n)
+}
+
 func (r *redactor) scanAgentJSON(key string, ag paf.Agent, env paf.Environment) {
 	if raw, err := json.Marshal(ag); err == nil {
-		r.scan.JSON(raw, paf.AgentPath(key, "agent.json"))
+		r.scan.JSON(raw, paf.AgentPath(r.outKey(key), "agent.json"))
 	}
 	if raw, err := json.Marshal(env); err == nil {
-		r.scan.JSON(raw, paf.AgentPath(key, "environment.json"))
+		r.scan.JSON(raw, paf.AgentPath(r.outKey(key), "environment.json"))
 	}
 }
 
@@ -632,7 +809,7 @@ func (r *redactor) losses(key string, src *paf.Losses) error {
 			l.Items = append(l.Items, paf.LossItem{Kind: LossRedacted, Severity: k.severity, Count: n, Detail: k.kind})
 		}
 	}
-	return r.writeJSON(paf.AgentPath(key, "context/losses.json"), l)
+	return r.writeJSON(paf.AgentPath(r.outKey(key), "context/losses.json"), l)
 }
 
 // --- context ---
@@ -675,6 +852,10 @@ func (r *redactor) context(a *paf.Archive, key, scope string) error {
 	h.Cwd = r.text(h.Cwd, false)
 	h.Title = r.text(h.Title, false)
 	h.ConvID = r.text(h.ConvID, true)
+	if r.opts.StripIdentity && (h.ConvID != "" || h.Title != "") {
+		h.ConvID, h.Title = "", ""
+		r.count(RedactStripIdentity, 1)
+	}
 	h.Extensions = r.exts(h.Extensions)
 
 	var buf bytes.Buffer
@@ -703,7 +884,7 @@ func (r *redactor) context(a *paf.Archive, key, scope string) error {
 	if scope == paf.ScopeFull {
 		name = "full.jsonl"
 	}
-	return r.writeFile(paf.AgentPath(key, "context/"+name), "application/jsonl", buf.Bytes())
+	return r.writeFile(paf.AgentPath(r.outKey(key), "context/"+name), "application/jsonl", buf.Bytes())
 }
 
 // entry redacts one entry line in place and reports whether it still has
@@ -775,6 +956,10 @@ func (r *redactor) media(a *paf.Archive, ms []paf.Media) []paf.Media {
 		m.Extensions = r.exts(m.Extensions)
 		m.Name = r.text(m.Name, false)
 		m.Path = r.text(m.Path, false)
+		if r.opts.StripIdentity && m.Path != "" {
+			m.Path = ""
+			r.count(RedactStripIdentity, 1)
+		}
 		m.URL = r.text(m.URL, false)
 		if m.Attachment != "" {
 			ref, ok := r.attachment(a, m.Attachment, m.MediaType)

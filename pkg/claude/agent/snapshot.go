@@ -27,7 +27,7 @@ func snapshotCmd() *cobra.Command {
 			"See docs/paf.md.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			snapshotCreateCmd(), snapshotListCmd(), snapshotShowCmd(), snapshotRemoveCmd(), snapshotExportCmd(), snapshotPruneCmd(),
+			snapshotCreateCmd(), snapshotListCmd(), snapshotShowCmd(), snapshotRemoveCmd(), snapshotExportCmd(), snapshotPruneCmd(), snapshotPublishCmd(),
 			snapshotShareCmd(), snapshotBoardCmd(),
 		}}.ToCobra()
 }
