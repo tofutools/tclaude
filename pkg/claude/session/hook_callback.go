@@ -449,7 +449,7 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	// the name onto the actor's pending_name (so the dashboard shows it at
 	// once); inject /rename so the new conversation also regains a real
 	// customTitle turn — durable, visible in CC's own UI, and on every other
-	// surface.
+	// surface. A harness with no in-pane rename keeps just pending_name.
 	restoreClearedTitle(state.TmuxSession, carriedName, clearedTitleRenameCommand(state.Harness))
 	return true
 }
@@ -537,19 +537,13 @@ var clearInjectReadyDelay = 1 * time.Second
 // from .jsonl files) or pending_name (stored even when invalid by
 // lifecycle.go) — neither is pre-checked by the strict gate, so the
 // gate runs here.
-// clearedTitleRenameCommand is the in-pane rename the harness declares (pi's
-// is /name). A harness that declares none keeps the historical /rename.
-func clearedTitleRenameCommand(harnessName string) string {
-	if h, ok := harness.Get(harnessName); ok && h.Life != nil {
-		if command := h.Life.RenameCommand(); command != "" {
-			return command
-		}
-	}
-	return "/rename"
-}
-
+//
+// renameCommand is the harness's declared in-pane rename; empty means it has
+// none and nothing is typed. Typing `/rename` into such a pane is not
+// harmless: Gemini CLI hands an unrecognized slash line to the model as a
+// prompt.
 func restoreClearedTitle(tmuxSession, title, renameCommand string) {
-	if tmuxSession == "" || title == "" {
+	if tmuxSession == "" || title == "" || renameCommand == "" {
 		return
 	}
 	if !isValidRenameTitle(title) {
@@ -571,6 +565,21 @@ func restoreClearedTitle(tmuxSession, title, renameCommand string) {
 		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
 			"error", err, "module", "hooks")
 	}
+}
+
+// clearedTitleRenameCommand is the in-pane rename the harness declares
+// (Claude Code's /rename, pi's /name), or "" when it declares none (Codex,
+// Gemini, OpenCode). A session row that names no registered harness predates
+// the harness column and is Claude Code's.
+func clearedTitleRenameCommand(harnessName string) string {
+	h, ok := harness.Get(harnessName)
+	if !ok {
+		return "/rename"
+	}
+	if !h.SupportsRename() {
+		return ""
+	}
+	return h.Life.RenameCommand()
 }
 
 // waitClearInjectPaneReady polls IsTmuxSessionAlive on tmuxSession
