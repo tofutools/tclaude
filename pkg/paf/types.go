@@ -364,7 +364,10 @@ type Losses struct {
 	LandingRung            string     `json:"landing_rung,omitempty"`
 	Fallback               string     `json:"fallback,omitempty"`
 	Items                  []LossItem `json:"items"`
-	Extensions             Extensions `json:"extensions,omitempty"`
+	// Prior are the reports of earlier translations of the same
+	// conversation, oldest first.
+	Prior      []Losses   `json:"prior,omitempty"`
+	Extensions Extensions `json:"extensions,omitempty"`
 }
 
 type LossItem struct {

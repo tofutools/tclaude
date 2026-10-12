@@ -653,3 +653,17 @@ func TestNegotiateVersion(t *testing.T) {
 	assert.Empty(t, NegotiateVersion([]string{"9.0"}))
 	assert.Empty(t, NegotiateVersion(nil))
 }
+
+// Earlier loss reports travel in prior rather than being overwritten.
+func TestLossesKeepPrior(t *testing.T) {
+	raw := rewrite(t, writeSample(t, nil), func(f map[string][]byte) {
+		f[AgentPath("w", "context/losses.json")] = []byte(`{"source":"codex","target":"claude","items":[],"prior":[{"source":"claude","target":"codex","dropped_percent":40,"kept_percent":60,"items":[{"kind":"truncated_for_budget","severity":"warn","count":3}]}]}`)
+		remanifest(t, f, nil)
+	})
+	a, err := open(t, raw, PurposeImport)
+	require.NoError(t, err)
+	l, ok := a.Losses("w")
+	require.True(t, ok)
+	require.Len(t, l.Prior, 1)
+	assert.Equal(t, 40, l.Prior[0].DroppedPercent)
+}

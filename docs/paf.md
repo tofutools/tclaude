@@ -921,9 +921,16 @@ must enforce these rules and refuse an archive that breaks them:
   segments, a leading `/`, backslashes or empty segments.
 - Entries are regular files. Directory entries are ignored, and symlinks or
   other special files are refused.
-- Sizes are bounded: tclaude defaults to 1 MiB for each JSON metadata entry,
-  256 MiB for a single JSON Lines record and 2 GiB for the archive (configurable
-  per node). Readers check both compressed and uncompressed sizes.
+- Sizes are bounded. Every reader **must** accept at least 1 MiB for each
+  JSON metadata entry, 16 MiB for a single JSON Lines record, 10,000
+  entries and 1 GiB of uncompressed content; a writer that wants its file
+  read everywhere stays within these. A reader may accept more: tclaude
+  defaults to 1 MiB, 256 MiB, 100,000 entries and 2 GiB (configurable per
+  node). Readers check both compressed and uncompressed sizes.
+- ZIP64 is allowed and readers must support it: an archive with more than
+  65,535 entries needs it. Readers bound the entry count the central
+  directory declares by what it can actually hold before allocating
+  anything, and refuse a mismatch.
 - An entry is data. A reader never writes an entry to a path derived from its
   name.
 
@@ -1035,13 +1042,23 @@ receiver, never an instruction:
   details go in an extension on the `environment.json` object itself, not on
   the layer (tclaude writes `extensions.tclaude.sandbox`).
 - `workspace`: `cwd`, `repo_url`, `branch`, `commit`, `dirty`, `worktree`.
-- `placeholders`: named path placeholders the importer remaps. Fields
-  elsewhere in the environment and definition may contain `${NAME}`. Each
-  placeholder has a `name`, the source-side `original` value (omitted when
-  paths were redacted) and an optional `description`. Placeholders are
-  substituted only in the definition and environment. Transcript and native
-  content is history and is never rewritten on import, so a `${NAME}` there
-  is either redaction output (recorded in `privacy.json`) or literal text.
+- `placeholders`: named path placeholders the importer remaps. Each has a
+  `name`, the source-side `original` value (omitted when paths were
+  redacted) and an optional `description`. Substitution follows these
+  rules:
+  - A token is `${NAME}`, where `NAME` is one or more of `A-Z`, `a-z`, `0-9`
+    and `_`.
+  - Tokens are substituted only inside JSON string values (never keys or
+    JSON syntax) of `agent.json` and `environment.json`, including their
+    extension data.
+  - `HOME` always resolves to the importing user's home directory. Any other
+    name resolves only when `placeholders` declares it; an undeclared token
+    is reported to the importer as unresolved rather than guessed.
+  - There is no escape sequence in 0.1, so writers must not put literal
+    `${NAME}` text in those fields.
+  - Transcript and native content is history and is never rewritten on
+    import, so a `${NAME}` there is either redaction output (recorded in
+    `privacy.json`) or literal text.
 - `skills`: skills the agent knew, by `name`, `source` and optional `version`
   or `sha256`. These are references, never payloads.
 - `tools`: tools available to the agent: `name`, `kind` (`builtin`, `mcp`,
@@ -1093,10 +1110,14 @@ Every following line is an entry, in conversation order:
 | `media` | `media` |
 | `summary` | `text`: a compaction summary standing in for earlier history |
 
-A media item has a `media_type` and exactly one of `attachment`
-(`sha256:<hex>`, naming `attachments/<hex>`), `url` or `path`. A `path` is a
-hint about where the file lived on the source machine, not a reference into
-the archive. A `name` is optional.
+A media item has exactly one of `attachment` (`sha256:<hex>`, naming
+`attachments/<hex>`), `url` or `path`. A `path` is a hint about where the
+file lived on the source machine, not a reference into the archive.
+`media_type` is optional but writers should set it; a reader that needs it
+and finds none sniffs the bytes or treats the item as an opaque file. A
+`name` is optional. Writers should embed media as attachments rather than
+`url` or `path`: a URL may stop resolving and a path names another machine,
+so neither keeps the conversation readable on its own.
 
 `scope` is `effective` for `transcript.jsonl`. `full.jsonl` uses the same
 line schema with scope `full`. It may also contain `boundary` lines
@@ -1116,7 +1137,19 @@ loss report of whatever produced the context. It records:
   (rung `translated`), *not* a byte-for-byte install.
   `context_file` maps to `context_file`, and `handoff` maps to
   `context_file` with an agent-written handoff;
-- an `items` list of `{kind, severity, count, detail}`.
+- an `items` list of `{kind, severity, count, detail}`;
+- `source` and `target`: the harness the conversation was decoded from and,
+  when the report describes a landing or translation, the harness it was
+  written for;
+- `dropped_percent` and `kept_percent`: the share of source entries left out
+  and carried. They are whole percentages that sum to 100 when both are
+  present, with `dropped_percent` rounded up so that any loss shows;
+- `prior`: the reports of earlier translations of the same conversation,
+  oldest first, so successive morphs and imports add a report rather than
+  overwrite the last one. Each item has the fields of `losses.json` itself,
+  without its own `prior`. A writer that replaces a context with a new
+  translation moves the old report into `prior`; tclaude keeps `prior` when
+  it rewrites a PAF, for example when redacting.
 
 Loss kinds include:
 
@@ -1174,8 +1207,8 @@ root `privacy.json` records:
   human explicitly allowed findings.
 - `redactions`: applied redactions as `{kind, count, detail}`. Kinds are an
   open set; tclaude writes `mask_spans`, `stub_tool_results`, `drop_media`,
-  `drop_reasoning`, `drop_native`, `paths_to_placeholders` and
-  `drop_unredactable` (content dropped because it could not be rewritten
+  `drop_reasoning`, `drop_native`, `paths_to_placeholders`, `strip_identity`
+  and `drop_unredactable` (content dropped because it could not be rewritten
   safely).
 - `consent`: human confirmations, each with `by`, `at`, `audience` and
   `content_digest`.
@@ -1183,7 +1216,12 @@ root `privacy.json` records:
 
 The `content_digest` binds consent to content without a circular hash. It is
 the lowercase hex SHA-256 of the lines `<sha256>  <path>\n` for every manifest
-entry except `privacy.json`, sorted by path in byte order.
+entry except `privacy.json`, sorted by path in byte order. It covers the
+content of every entry, and so all extension data inside entries and every
+`ext/` entry. It does not cover `manifest.json` itself, so the manifest's own
+`extensions` object and other manifest fields are outside it; a signature
+covers those. Content that consent must bind belongs in an entry, not in
+the manifest's extensions.
 
 ### Signatures
 
@@ -1202,7 +1240,12 @@ Each file under `signatures/` is a detached signature over the exact bytes of
 ```
 
 The signed message is the ASCII string `paf-manifest-signature-v1\n` followed
-by the lowercase hex SHA-256 of `manifest.json`. tclaude signs with the
+by the lowercase hex SHA-256 of `manifest.json`. `public_key` and `signature`
+are standard base64 with padding (RFC 4648 section 4, not the URL-safe
+alphabet). `key_id` is a label of 1 to 128 characters from `A-Z`, `a-z`,
+`0-9`, `.`, `_` and `-`, chosen by the signer and not derived from the key:
+tclaude uses the instance id for an instance key and `pub_` plus the first
+16 hex digits of the SHA-256 of the public key for a publisher key. tclaude signs with the
 producing instance's federation key; a published PAF uses a pseudonymous
 publisher key instead (`signer.kind`: `publisher`). Verifying a signature
 proves the manifest, and so every hashed entry, is unchanged since signing.
@@ -1292,6 +1335,15 @@ mechanisms.
 
 When in doubt, a new field starts in an extension. Promoting it to the base
 later is a minor version change; demoting a base field is a major one.
+
+PAF does not carry, by design:
+
+- tool definitions and their schemas: the landing harness brings its own
+  tools, and a tool is named only by reference;
+- system prompts and instruction files (`CLAUDE.md`, `AGENTS.md` and the
+  like): they belong to the workspace or the harness, not to the agent, and
+  the landing harness loads its own. The agent's own role guidance and
+  startup context travel in `agent.json`.
 
 ### Declaring an extension
 
@@ -1456,6 +1508,25 @@ is best effort rather than a guarantee, and any break is marked clearly.
   is handled like an unknown `requires` feature. Any other unknown extension
   is ignored.
 - Writers stamp the lowest version that expresses the content.
+
+### requires and extensions_required
+
+`requires` names base-format features a reader must support, and
+`extensions_required` names vendor extensions that change the meaning of
+base data. Either belongs on a file only when a reader that ignored it would
+silently produce a wrong result, not merely a poorer one. For example:
+
+- the context is stored as a delta against an earlier snapshot (a `requires`
+  feature): read on its own, it looks like a short conversation;
+- the context is encoded or encrypted inside an extension, and the base
+  context is a placeholder;
+- the real history lives in an extension, and the base holds only a stub.
+
+Writers should almost never set either. tclaude's own extension never does:
+everything in it is additional, and a reader that ignores it loses only
+tclaude-specific state. A reader refuses to import, resume or rewrite a file
+that lists something it does not know, but can still inspect and render it,
+with a warning.
 
 The schemas for version 0.1 live under `docs/paf/schema/v0.1/`, and their
 `$id`s include `v0.1`. They allow unknown properties, so they validate later

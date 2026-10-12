@@ -64,7 +64,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "description": "Open set. Known: mask_spans, stub_tool_results, drop_media, drop_reasoning, drop_native, paths_to_placeholders, strip_identity."
+            "description": "Open set. Known: mask_spans, stub_tool_results, drop_media, drop_reasoning, drop_native, paths_to_placeholders, strip_identity, drop_unredactable."
           },
           "count": {
             "type": "integer",
