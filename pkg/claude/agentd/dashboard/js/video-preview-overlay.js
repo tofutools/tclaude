@@ -51,6 +51,35 @@ function PlayerState({ state }) {
   return null;
 }
 
+// VideoPoster is the thumbnail frame. A <video preload="metadata"> left
+// mounted keeps its ranged request open for as long as the page lives, and the
+// dashboard is plain HTTP/1.1 with a handful of connections per host: a list of
+// video messages would starve the snapshot poll. So the frame is copied onto a
+// canvas as soon as it decodes and the <video> is dropped, which aborts its
+// request. The #t fragment asks for the frame just past zero, since some
+// encoders open on a black frame.
+function VideoPoster({ href }) {
+  const [poster, setPoster] = useState(null);
+  const [failed, setFailed] = useState(false);
+  if (poster) return html`<img class="human-attachment-preview-thumb video-preview-poster" src=${poster} alt="" />`;
+  if (failed) return html`<span class="human-attachment-preview-thumb video-preview-poster" aria-hidden="true"></span>`;
+  return html`<video class="human-attachment-preview-thumb" src=${`${href}#t=0.1`}
+    preload="metadata" muted playsInline tabIndex="-1" aria-hidden="true"
+    onLoadedData=${(event) => {
+      const video = event.currentTarget;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        setPoster(canvas.toDataURL('image/jpeg', 0.8));
+      } catch {
+        setFailed(true);
+      }
+    }}
+    onError=${() => setFailed(true)}></video>`;
+}
+
 // VideoAttachmentPreview is the video counterpart of ImageAttachmentPreview:
 // a poster-frame thumbnail in the attachment card that opens a modal player.
 // Playback is the browser's native <video> element, so the formats it plays
@@ -112,15 +141,10 @@ export function VideoAttachmentPreview({ messageID, attachment, surface = 'attac
     formatDuration(meta?.duration),
   ].filter(Boolean).join(' · ');
 
-  // The #t fragment asks for the frame just past zero: some encoders open on
-  // a black frame, and a media fragment is how a poster is had without
-  // decoding anything server-side. preload="metadata" keeps the thumbnail to
-  // a few ranged reads rather than the whole file.
   return html`<${Fragment}>
     <button type="button" class="human-attachment-preview-trigger video-preview-trigger"
       onClick=${() => setOpen(true)} aria-label=${`Play ${filename}`}>
-      <video class="human-attachment-preview-thumb" src=${`${href}#t=0.1`}
-        preload="metadata" muted playsInline tabIndex="-1" aria-hidden="true"></video>
+      <${VideoPoster} href=${href} />
       <span class="video-preview-play" aria-hidden="true">▶</span>
       <span class="human-attachment-preview-label">Play</span>
     </button>
