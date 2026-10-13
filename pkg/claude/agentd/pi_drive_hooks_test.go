@@ -11,3 +11,9 @@ func SetPiDriveTimingsForTest(poll, grace, ack, connect time.Duration) func() {
 		piDrivePollWait, piDriveConnectedGrace, piDriveAckTimeout, piDriveConnectTimeout = prevPoll, prevGrace, prevAck, prevConnect
 	}
 }
+
+// PiDriveConnectedForTest reports whether the daemon counts convID's pi drive
+// channel as connected, so a test can wait for an extension's first poll.
+func PiDriveConnectedForTest(convID string) bool {
+	return piDrives.connected(convID)
+}

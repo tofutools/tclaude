@@ -47,6 +47,11 @@ func startPiDriveExtension(t *testing.T, f *testharness.Flow, sim *testharness.P
 	e := &piDriveExtension{t: t, f: f, sim: sim, conv: conv, cancel: cancel, done: make(chan struct{})}
 	go e.loop(ctx)
 	t.Cleanup(e.stop)
+	// The loop polls from its own goroutine; until its first poll lands the
+	// daemon counts the channel as down, and a stop or rename issued in that
+	// window fails rather than waiting for it.
+	require.Eventually(t, func() bool { return agentd.PiDriveConnectedForTest(conv) },
+		5*time.Second, 5*time.Millisecond, "the pi drive extension connects")
 	return e
 }
 
