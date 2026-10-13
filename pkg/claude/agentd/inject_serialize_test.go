@@ -33,6 +33,10 @@ type commandRecordingTmux struct {
 }
 
 func (r *commandRecordingTmux) Command(args ...string) *exec.Cmd {
+	// Read-only guard probes are not part of the input sequence asserted below.
+	if args[0] == "capture-pane" {
+		return exec.Command("true")
+	}
 	r.mu.Lock()
 	r.commands = append(r.commands, append([]string(nil), args...))
 	r.mu.Unlock()
@@ -94,6 +98,9 @@ func TestInjectBracketedTextAndSubmit_SingleLineUsesBracketedPaste(t *testing.T)
 }
 
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {
+	if args[0] != "send-keys" {
+		return exec.Command("true")
+	}
 	last := args[len(args)-1]
 	r.mu.Lock()
 	r.keys = append(r.keys, last)
@@ -278,7 +285,7 @@ type barrierTmux struct {
 }
 
 func (b *barrierTmux) Command(args ...string) *exec.Cmd {
-	if b.onText != nil && args[len(args)-1] != "Enter" {
+	if b.onText != nil && args[0] == "send-keys" && args[len(args)-1] != "Enter" {
 		b.onText()
 	}
 	return exec.Command("true")
