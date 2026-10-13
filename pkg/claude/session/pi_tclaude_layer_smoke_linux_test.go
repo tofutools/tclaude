@@ -111,7 +111,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 			mock.Command = strings.Join([]string{
 				"cat " + q(decoy) + " >/dev/null 2>&1 && echo decoy_$((6*7))",
 				"printf '{}' > \"$PI_CODING_AGENT_DIR/auth.json\" && echo walledauth_$((6*7))",
-				"printf '{}' > " + q(filepath.Join(agentDir, "auth.json")) + " 2>/dev/null && echo auth_$((6*7))",
+				"printf '{}' > " + q(filepath.Join(agentDir, "auth.json")) + " 2>/dev/null && echo hostauth_$((6*7))",
 				"echo x >> " + q(filepath.Join(agentDir, "models.json")) + " 2>/dev/null && echo models_$((6*7))",
 				"printf '{}' > " + q(filepath.Join(agentDir, "mcp.json")) + " 2>/dev/null && echo mcp_$((6*7))",
 				"echo x >> \"$PI_CODING_AGENT_DIR/settings.json\" 2>/dev/null && echo settings_$((6*7))",
@@ -174,7 +174,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 			result := mock.LastMessages()
 			assert.Contains(t, result, "probe_42", "the probe ran inside the sandbox")
 			assert.Contains(t, result, "walledauth_42", "the walled auth.json copy is writable, so a refresh lands")
-			for _, marker := range []string{"decoy_42", "auth_42", "models_42", "mcp_42", "settings_42", "extensions_42"} {
+			for _, marker := range []string{"decoy_42", "hostauth_42", "models_42", "mcp_42", "settings_42", "extensions_42"} {
 				assert.NotContains(t, result, marker)
 			}
 			raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
