@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -4444,20 +4445,34 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 // from_conv IN / to_conv IN multi-index OR. A search already scans, so it
 // keeps the single-query form.
 func CountMailbox(f MailboxFilter) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
 	if len(f.ExcludeConvs) > 0 && !f.HasSearch() {
-		scope := f
-		scope.ExcludeConvs = nil
-		total, err := countMailboxWhere(scope.where())
+		// One read transaction so a concurrent insert can't land between the
+		// two counts and skew (or even negate) the difference.
+		tx, err := d.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 		if err != nil {
 			return 0, err
 		}
-		excluded, err := countMailboxWhere(f.excludedWhere())
+		defer func() { _ = tx.Rollback() }()
+		scope := f
+		scope.ExcludeConvs = nil
+		where, args := scope.where()
+		total, err := countMailboxWhere(tx, where, args)
+		if err != nil {
+			return 0, err
+		}
+		where, args = f.excludedWhere()
+		excluded, err := countMailboxWhere(tx, where, args)
 		if err != nil {
 			return 0, err
 		}
 		return total - excluded, nil
 	}
-	return countMailboxWhere(f.where())
+	where, args := f.where()
+	return countMailboxWhere(d, where, args)
 }
 
 // excludedWhere selects the rows of f's scope (ExcludeConvs ignored) that
@@ -4488,17 +4503,13 @@ func (f MailboxFilter) excludedWhere() (string, []any) {
 	return clause, args
 }
 
-func countMailboxWhere(where string, args []any) (int, error) {
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	q := `SELECT COUNT(*) FROM agent_messages`
+func countMailboxWhere(q dbExecQuerier, where string, args []any) (int, error) {
+	query := `SELECT COUNT(*) FROM agent_messages`
 	if where != "" {
-		q += " WHERE " + where
+		query += " WHERE " + where
 	}
 	var n int
-	if err := d.QueryRow(q, args...).Scan(&n); err != nil {
+	if err := q.QueryRow(query, args...).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
