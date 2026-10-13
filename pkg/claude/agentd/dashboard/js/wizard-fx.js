@@ -354,7 +354,7 @@ export function wizardSummon() {
 // ─── Enter-wizard-mode banner ────────────────────────────────────────────
 // The "It's wizard time!" the whole theme is named for: flipping *into* wizard
 // mode from another theme — via the +W hotkey, the palette's "Switch to wizard
-// theme" command, or the header cycle regular→slop→wizard — flashes the same
+// theme" command, or the header cycle regular→wizard — flashes the same
 // banner + arcane shower as a summon. Unlike wizardSummon()'s random spell
 // quote this is one fixed line: entering the mode is a single event with a
 // single greeting, where each summon wants variety, so no rotation here.

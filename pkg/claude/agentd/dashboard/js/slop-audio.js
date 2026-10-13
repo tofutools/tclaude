@@ -256,8 +256,8 @@ export function bindSlopAudio() {
   });
 
   // Leaving slop suspends the ctx so nothing can make noise on the plain
-  // dashboard; re-entering (always via a click on the header icon, so a
-  // valid gesture) resumes it lazily when sound is enabled.
+  // dashboard; re-entering (via the hotkey or palette command, both user
+  // gestures) resumes it lazily when sound is enabled.
   document.addEventListener('tclaude:slop', (e) => {
     const active = !!(e.detail && e.detail.active);
     if (!active) {
