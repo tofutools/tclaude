@@ -395,7 +395,14 @@ const TERMINAL_CHOICES = Object.freeze([
 function TerminalChoice({ choice, index, onPick, autofocus }) {
   return html`
     <button type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
-      onClick=${(event) => onPick(choice.act, event.ctrlKey || event.metaKey)}>
+      onClick=${(event) => onPick(choice.act, event.ctrlKey || event.metaKey)}
+      onContextMenu=${(event) => {
+        // macOS turns Ctrl-click into contextmenu rather than click; honour
+        // it as the background open the hint promises.
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        onPick(choice.act, true);
+      }}>
       <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
       <span class="term-choice-body">
         <span class="term-choice-title"><${Words} plain=${choice.title} wizard=${choice.wizardTitle} /></span>

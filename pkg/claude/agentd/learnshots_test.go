@@ -145,7 +145,7 @@ hideDragHint();`
   var gear = row.querySelector('.cog-glyph');
   if (!gear) throw new Error('no ⚙ on alice');
   gear.closest('button').click();
-  await waitFor('[role="menuitem"], button', 'web window');
+  await waitFor('[role="menuitem"], button', 'terminals & windows');
   // The menu is longer than the page; crop below its everyday items.
   document.querySelector('footer').style.display = 'none';
 })();`,

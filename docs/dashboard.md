@@ -279,9 +279,9 @@ updates do not move rows. Titles come from GitHub; newly discovered PRs show
 
 Row actions:
 
-- **term** / **web term** — a fresh shell in the agent's directory, native or
-  in-browser.
-- **open window** / **web window** — attach to the agent's live harness TUI.
+- **terminals & windows…** (⚙ menu) — a dialog with four options: attach to
+  the agent's live harness TUI, or open a fresh shell in its directory, each
+  as a native window or in the browser.
 - **👁 focus** — jump to the agent's web pane by default, or its native window
   when `dashboard.default_terminal` is `"native"`; the crossed-eye variant
   hides the native window (detaches the tmux client; the agent keeps running).

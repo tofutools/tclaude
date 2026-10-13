@@ -102,7 +102,7 @@ are merged. She retires them herself.
 You can manage any agent yourself too. In **Groups**, open an agent's **⚙**
 menu:
 
-![alice's ⚙ menu open in the Groups view. It lists view messages, term, web term, open window and web window at the top, then edit, permissions and more.](../assets/learn-dashboard-agent-menu.png)
+![alice's ⚙ menu open in the Groups view. It lists view messages, terminals & windows and summary at the top, then edit, permissions and more.](../assets/learn-dashboard-agent-menu.png)
 
 Start with these:
 

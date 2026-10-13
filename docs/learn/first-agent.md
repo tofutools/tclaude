@@ -119,8 +119,9 @@ tclaude agent spawn hello --name alice \
 covers the spawn options.
 
 !!! note "Native terminal windows"
-    The agent's **⚙** menu also has **term**, **web term**, **open window**
-    and **web window**. They are for people who run agents in native terminal
+    The agent's **⚙** menu also has **terminals & windows…**, which opens
+    native or browser terminals on the agent's live session or in its
+    directory. It is for people who run agents in native terminal
     windows (`dashboard.default_terminal` set to `"native"`) and sometimes
     want a browser terminal. See
     [Zooming into a terminal](../dashboard.md#zooming-into-a-terminal).
