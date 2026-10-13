@@ -99,18 +99,18 @@ warning. Model and effort are remembered by the harness itself.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No: not yet bound | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ | ✅ spawn only |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ not yet | ❌ |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ✅ live-streamed | ❌ |
 | Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
 | Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
 | [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys only | ⚠️ durable inbox only; never injected into the shell |
-| Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ not yet | ❌ no model |
+| Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ✅ read-only-tools ephemeral one-shot | ❌ no model |
 | Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ not yet exercised | ❌ no hook source |
 | Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no single account quota | ❌ no model |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ✅ in-pane `/name` | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ✅ continues a copy | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ (extension feeds the context meter) | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -811,6 +811,15 @@ Codex `on-request`) may spawn a pi child in it. `read-only` exposes only
 launch is refused unless tclaude's own sandbox wraps it (`--sandbox-impl
 tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
 **Allow launch with unenforced rules** in the dashboard spawn dialog.
+
+**One-shots.** [`tclaude ask`](ask.md) runs `pi --print` (streamed through
+`pi --mode json` on a terminal) limited to pi's read-only tools, and an
+interactive ask loads the permission extension. A fresh thread is
+`--session-id`, a follow-up resumes the same session file. Automatic session
+naming is an unpersisted (`--no-session`) read-only one-shot. A séance
+continues a copy of the predecessor's session file under its recorded
+posture, inside tclaude's sandbox when the generation ran there, and
+removes the copy afterwards.
 
 **Inside tclaude's sandbox** pi runs against a walled copy of its agent
 directory, not your own (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). pi runs

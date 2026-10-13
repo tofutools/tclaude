@@ -132,9 +132,6 @@ var autoNameUnsupported = map[string]string{
 	harness.CopilotName:  "Copilot has no tested host-control sandbox posture for unattended naming",
 	harness.OpenCodeName: "OpenCode has no tested host-control sandbox posture for unattended naming",
 	harness.ShellName:    "shell has no model",
-	// Not inherent: pi can launch with no acting tools. P6 adds pi's one-shot
-	// ask path, and auto-naming with it.
-	harness.PiName: "pi auto-naming waits for its one-shot ask path (until P6)",
 }
 
 func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
@@ -157,6 +154,10 @@ func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
 	case harness.CodexName:
 		posture.HarnessBuiltinMode = harness.SandboxReadOnly
 		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, "")
+	case harness.PiName:
+		// pi's read-only tools: no shell and no writes, so nothing can act,
+		// and an ephemeral turn (`--no-session`) leaves no conversation.
+		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, harness.PiApprovalReadOnly)
 	default:
 		slog.Warn("automatic naming posture is undeclared", "harness", h.Name, "module", "agentd")
 		return

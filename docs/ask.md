@@ -7,9 +7,9 @@
 `tclaude ask` puts a one-shot question to a coding harness without creating
 a tmux session or taking over your terminal. It prints the answer, exits
 with the harness's status, and keeps a resumable thread for the next
-question from the same terminal and directory. All five agent harnesses —
-Claude Code, Codex CLI, OpenCode, Copilot CLI, and Gemini CLI — have an ask
-surface.
+question from the same terminal and directory. All six agent harnesses —
+Claude Code, Codex CLI, OpenCode, Copilot CLI, Gemini CLI, and pi — have an
+ask surface.
 
 ![Piped input and a follow-up on the same per-terminal thread](assets/term-ask.png)
 
@@ -105,8 +105,14 @@ workspace:
 - **Gemini** print runs headless `gemini --prompt`, buffered. Like Copilot,
   headless Gemini denies any tool call that would need approval. Gemini
   refuses to run headless in a directory it does not trust.
+- **pi** print runs `pi --print`, or streams through `pi --mode json` on a
+  terminal. pi itself never asks before a tool call, so tclaude limits a
+  capture to pi's read-only tools (`read`, `grep`, `find`, `ls`): no shell
+  and no file writes. An interactive pi ask instead loads tclaude's
+  permission extension, so you approve each tool call that is not read-only
+  in the pane.
 
-Codex, Copilot, and Gemini write verbose transcripts to stderr; tclaude hides them by
+Codex, Copilot, Gemini, and pi write verbose output to stderr; tclaude hides them by
 default and keeps only the answer on stdout. `-v/--verbose` shows the
 transcript, and a failure always reveals it so auth or model errors are not
 swallowed.

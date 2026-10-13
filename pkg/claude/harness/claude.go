@@ -321,16 +321,42 @@ func (claudeAsker) NoisyCaptureStderr() bool { return false }
 // this filter in only then (a piped or captured stdout keeps the buffered path)
 // and resolves the smooth flag from --no-smoothing / TCLAUDE_ASK_SMOOTH.
 func (claudeAsker) StreamFilter(w io.Writer, smooth bool, status StreamStatus) io.Writer {
+	return newPacedStreamFilter(w, smooth, status, decodeClaudeStreamLine)
+}
+
+// newPacedStreamFilter is the stream filter shared by every StreamAsker: decode
+// reads one line of the harness's event stream, and the filter renders it
+// (claudeStreamFilter).
+func newPacedStreamFilter(w io.Writer, smooth bool, status StreamStatus, decode streamLineDecoder) *claudeStreamFilter {
 	f := &claudeStreamFilter{
 		out:    w,
 		smooth: smooth,
 		status: status,
+		decode: decode,
 		clock:  time.Now,
 		sleep:  time.Sleep,
 	}
 	f.cond = sync.NewCond(&f.mu)
 	return f
 }
+
+// streamLineKind is what one line of a harness's event stream means to the
+// filter.
+type streamLineKind uint8
+
+const (
+	streamLineIgnored streamLineKind = iota
+	// streamLineSection starts a new visible text section.
+	streamLineSection
+	// streamLineDelta carries visible text to append.
+	streamLineDelta
+	// streamLineResult carries the turn's final answer or error, shown only
+	// when nothing streamed.
+	streamLineResult
+)
+
+// streamLineDecoder reads one complete line of a harness's event stream.
+type streamLineDecoder func(line []byte) (streamLineKind, string)
 
 // claudeStreamEvent is the slice of Claude Code's stream-json event schema this
 // filter cares about. Each stdout line is one such JSON object. The visible
@@ -407,7 +433,8 @@ type claudeStreamFilter struct {
 	smooth bool
 	status StreamStatus // optional "working…" indicator; nil = none
 
-	buf []byte // incomplete trailing line carried between Write calls (guarded by mu)
+	buf    []byte            // incomplete trailing line carried between Write calls (guarded by mu)
+	decode streamLineDecoder // the harness's event format; nil is Claude Code's
 
 	mu          sync.Mutex
 	cond        *sync.Cond
@@ -459,29 +486,48 @@ func (f *claudeStreamFilter) consumeLocked(line []byte) {
 	if len(line) == 0 {
 		return
 	}
+	decode := f.decode
+	if decode == nil {
+		decode = decodeClaudeStreamLine
+	}
+	kind, text := decode(line)
+	switch kind {
+	case streamLineSection:
+		f.startTextSectionLocked()
+	case streamLineDelta:
+		f.emitLocked(text)
+	case streamLineResult:
+		// The final answer (or, on failure, the error message). Kept only as a
+		// fallback: on a normal turn the same text already streamed as deltas,
+		// so Flush ignores it; it's surfaced only when nothing streamed, so an
+		// error or a delta-less stream is never silent.
+		f.finalResult = text
+	}
+}
+
+// decodeClaudeStreamLine reads one line of Claude Code's stream-json
+// (claudeStreamEvent).
+func decodeClaudeStreamLine(line []byte) (streamLineKind, string) {
 	var ev claudeStreamEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
-		return
+		return streamLineIgnored, ""
 	}
 	switch ev.Type {
 	case "stream_event":
 		switch ev.Event.Type {
 		case "content_block_start":
 			if ev.Event.ContentBlock.Type == "text" {
-				f.startTextSectionLocked()
+				return streamLineSection, ""
 			}
 		case "content_block_delta":
 			if ev.Event.Delta.Type == "text_delta" {
-				f.emitLocked(ev.Event.Delta.Text)
+				return streamLineDelta, ev.Event.Delta.Text
 			}
 		}
 	case "result":
-		// The final answer (or, on failure, the error message). Kept only as a
-		// fallback: on a normal turn the same text already streamed as deltas,
-		// so Flush ignores it; it's surfaced only when nothing streamed, so an
-		// error or a delta-less stream is never silent.
-		f.finalResult = ev.Result
+		return streamLineResult, ev.Result
 	}
+	return streamLineIgnored, ""
 }
 
 // emitLocked forwards one delta's visible text. In smooth mode it ENQUEUES the

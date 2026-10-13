@@ -85,9 +85,15 @@ func (p nodeCLIPackage) resolve() (NodeLaunchExecutable, error) {
 // entry point. The token is located rather than assumed first: the asker's
 // argv may lead with an `env K=V…` prefix carrying the sandbox mode.
 func (executable GeminiLaunchExecutable) SpliceArgv(argv []string) ([]string, error) {
-	at := slices.Index(argv, "gemini")
+	return executable.SpliceBinary(argv, "gemini")
+}
+
+// SpliceBinary replaces the bare binary name in a one-shot argv with the
+// frozen entry point, as SpliceArgv does for Gemini.
+func (executable NodeLaunchExecutable) SpliceBinary(argv []string, binary string) ([]string, error) {
+	at := slices.Index(argv, binary)
 	if at < 0 {
-		return nil, fmt.Errorf("gemini one-shot argv has no gemini binary")
+		return nil, fmt.Errorf("%s one-shot argv has no %s binary", binary, binary)
 	}
 	entry := []string{executable.Path}
 	if executable.Interpreter != "" {

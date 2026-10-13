@@ -3,7 +3,9 @@ package pifixture
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -369,4 +371,50 @@ func TestPiPermissionExtensionAsksBeforeActing(t *testing.T) {
 	result = w.Mock.LastMessages()
 	assert.NotContains(t, result, "unasked_42")
 	assert.Contains(t, result, "no human can answer")
+}
+
+// `tclaude ask --harness pi`: the asker's argv runs against the real pi, a
+// buffered capture prints the answer, a streamed one renders the JSONL event
+// stream through the asker's filter, and the second ask continues the thread
+// the first one minted.
+func TestPiAskBufferedStreamedAndResumed(t *testing.T) {
+	w := NewWorld(t)
+	t.Setenv(harness.PiAgentDirEnvVar, w.AgentDir)
+	h := harness.MustGet(harness.PiName)
+	require.True(t, h.PreMintsAskConvID())
+	stream, ok := h.Ask.(harness.StreamAsker)
+	require.True(t, ok, "pi streams its answers")
+	id := uuid.NewString()
+
+	run := func(spec harness.AskSpec) (stdout string) {
+		t.Helper()
+		argv := h.Ask.BuildAskArgv(spec)
+		require.Equal(t, "pi", argv[0])
+		cmd := exec.Command(w.Binary, argv[1:]...)
+		cmd.Dir = w.Project
+		cmd.Env = w.Env()
+		var out, errOut strings.Builder
+		var sink io.Writer = &out
+		if spec.Stream {
+			sink = stream.StreamFilter(&out, false, nil)
+		}
+		cmd.Stdout = sink
+		cmd.Stderr = &errOut
+		require.NoError(t, cmd.Run(), "pi ask failed: %s", errOut.String())
+		if flusher, ok := sink.(harness.AskStreamFlusher); ok {
+			require.NoError(t, flusher.Flush())
+		}
+		return out.String()
+	}
+
+	answer := run(harness.AskSpec{Print: true, SessionID: id, Model: MockModel, Prompt: "first question: what is the secret?"})
+	assert.Contains(t, answer, "This is the mock reply.")
+
+	streamed := run(harness.AskSpec{Print: true, Stream: true, ResumeID: id, Model: MockModel, Prompt: "second question"})
+	assert.Contains(t, streamed, "This is the mock reply.")
+	assert.NotContains(t, streamed, `"type"`, "only the answer's text, never the event stream")
+	assert.Contains(t, w.Mock.LastMessages(), "first question: what is the secret?", "the second ask continues the first one's thread")
+
+	matches, _ := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
+	assert.Len(t, matches, 1, "both asks wrote one conversation")
 }

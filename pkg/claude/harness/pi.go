@@ -20,10 +20,14 @@ func init() {
 		// Conversations are pi's session files; a transfer carries one as
 		// is, and the transcript codec translates it for a cross-harness
 		// morph. See pi_convstore.go, pi_history.go and transcript_pi.go.
-		Convs:             piConvStore{},
-		History:           piHistory{},
-		Transcript:        piTranscript{},
-		StatusExtension:   MaterializePiExtension,
+		Convs:           piConvStore{},
+		History:         piHistory{},
+		Transcript:      piTranscript{},
+		StatusExtension: MaterializePiExtension,
+		// `tclaude ask`, auto-naming and the séance; see pi_asker.go. A
+		// generation recorded under tclaude's sandbox replays inside it.
+		Ask:               piAsker{},
+		OneShotReplay:     OneShotReplayTclaudeLayer,
 		ConfinedApprovals: []string{PiApprovalAuto},
 		CheckVersion:      CheckPiVersion,
 		// The model's provider names one endpoint; see pi_model_transport.go.
@@ -44,17 +48,17 @@ func init() {
 		// to containers. The catalog's single mode records that honestly, and
 		// tclaude's own layer is the boundary. See pi_sandbox.go.
 		Sandbox: piSandbox{},
-		// tclaude's sandbox is the single wall: pi's agent directory is its
-		// writable state root, with a read-only floor over the settings,
-		// models, extensions and other code pi loads (see
-		// harnessConfigFloorCatalog), and the extension and pi's runtime are
-		// mounted read-only.
+		// tclaude's sandbox is the single wall: pi runs against tclaude's
+		// walled copy of its agent directory, the operator's is read-only
+		// apart from its session store (pi_walled_agent.go), and the
+		// extension and pi's runtime are mounted read-only.
 		TclaudeLayerMode:              PiSandboxOff,
 		BuiltinOSSandbox:              false,
 		BuiltinOSSandboxAbsenceReason: PiBuiltinOSSandboxAbsenceReason,
 
 		// pi never asks before a tool call. The catalog names that posture
-		// (`auto`) and a narrower read-only tool set. See pi_approval.go.
+		// (`auto`), tclaude's human-gated permission extension (`ask`) and a
+		// read-only tool set. See pi_approval.go.
 		Approval: piApproval{},
 
 		// A working directory with project-local pi resources (.pi/settings.json,
