@@ -47,7 +47,7 @@ test('an agent tab carries the Groups ⚙ menu next to its status light; a plain
   assert.equal(gear.previousElementSibling.classList.contains('mux-tab-status'), true, 'it sits next to the status light');
   assert.equal(s.tab('shell').querySelector('.mux-tab-gear'), null, 'a plain shell has no ⚙');
   const menu = gear.querySelector('.action-menu');
-  assert.ok(menu.querySelector('[data-act="term"][data-agent="agt_one"]'), 'the same row menu items');
+  assert.ok(menu.querySelector('[data-act="terminal-chooser"][data-agent="agt_one"]'), 'the same row menu items');
   assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['move', 'teleport', 'clone', 'morph']);
   assert.equal(menu.querySelector('[data-act="remove-member"]'), null, 'agent level: no group to remove it from');
 
@@ -88,7 +88,7 @@ test('without a hub, local terminal gear shows move/teleport greyed out with the
   assert.deepEqual(items.map((b) => b.disabled), [true, true, false, false]);
   assert.match(items[0].title, /Connect this node to a tclaude hub \(Fleet → Hub\) to move or teleport agents/);
   assert.equal(items[1].title, items[0].title);
-  assert.ok(menu.querySelector('[data-act="term"]'));
+  assert.ok(menu.querySelector('[data-act="terminal-chooser"]'));
 });
 
 test('connected to a hub with no linked node, move/teleport say a peer is needed', async (t) => {
