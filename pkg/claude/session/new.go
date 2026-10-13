@@ -1784,9 +1784,11 @@ func runNew(params *NewParams) error {
 			); noProxyNotice != nil {
 				notices = append(notices, *noProxyNotice)
 			}
-			networkFiltered = plannedNetworkPosture == sandboxpolicy.NetworkFiltered
-			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
+			// Private routed open is default-accept: no destination list to
+			// resolve a route against, and nothing for pi to stay offline for.
+			networkFiltered = plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network)
+			if networkFiltered {
 				var resolveModelErr error
 				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
 					h,

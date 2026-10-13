@@ -26,8 +26,9 @@ import (
 // namespace. pi answers a mock provider's tool call with its own bash tool,
 // so the probes run as the agent would: the agent directory's auth.json is
 // writable, the read-only floor holds over models.json, settings.json and
-// extensions/, a path outside the grants is invisible, and pi persists the
-// session it was launched with.
+// extensions/, a path outside the grants is invisible, pi persists the
+// session it was launched with, and tclaude's status extension loads from its
+// read-only mount and reaches the hook callback.
 func TestPiTclaudeLayerSmoke(t *testing.T) {
 	if os.Getenv(filteredGatewaySmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_FILTERED_NETWORK_SMOKE=1 on the executing Linux CI boundary")
@@ -40,6 +41,8 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 	require.NoError(t, err)
 	resolved, err := harness.ResolvePiLaunchExecutable()
 	require.NoError(t, err, "the CI job installs the pinned pi")
+	extension, err := harness.MaterializePiExtension()
+	require.NoError(t, err)
 
 	previousRelay := tclaudeLayerRelayPrefix
 	tclaudeLayerRelayPrefix = func() string {
@@ -77,6 +80,13 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				require.NoError(t, os.MkdirAll(dir, 0o700))
 			}
 			require.NoError(t, os.WriteFile(decoy, []byte("secret"), 0o600))
+			// The hook callback the extension runs, standing in for tclaude:
+			// it records each payload in the workspace, which the wall leaves
+			// writable.
+			payloads := filepath.Join(workDir, "payloads.jsonl")
+			recorder := filepath.Join(workDir, "hook-recorder")
+			require.NoError(t, os.WriteFile(recorder, []byte("#!/bin/sh\n[ \"$1 $2\" = \"session hook-callback\" ] || exit 64\ncat >> "+
+				clcommon.ShellQuoteArg(payloads)+"\n"), 0o700))
 
 			mock := pifixture.NewMockAt(t, tc.providerAddress+":0")
 			models := `{"providers":{"mock":{"baseUrl":"` + mock.URL + `/v1","api":"openai-completions",` +
@@ -109,6 +119,8 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				ApprovalPolicy:        harness.PiApprovalAuto,
 				ExecutablePath:        resolved.Path,
 				ExecutableInterpreter: resolved.Interpreter,
+				StatusExtensionPath:   extension,
+				TclaudeExecutable:     recorder,
 				// One turn, then exit: the smoke needs no pane.
 				ExtraArgs:     []string{"--print"},
 				InitialPrompt: "TOOL: run the probe",
@@ -128,7 +140,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				Snapshot:         &snapshot,
 				StateRoot:        agentDir,
 				Environment:      environment,
-				HarnessReadPaths: resolved.ReadPaths,
+				HarnessReadPaths: append(append([]string(nil), resolved.ReadPaths...), filepath.Dir(extension)),
 			})
 			require.NoError(t, err)
 			wrapped, err := WrapTclaudeLayerSpec(bwrapBinary, spec, commandLine)
@@ -169,6 +181,9 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				return nil
 			})
 			assert.NotEmpty(t, sessionFile, "pi persisted the session it was launched with")
+			recorded, err := os.ReadFile(payloads)
+			require.NoError(t, err, "the status extension must load inside the wall and run the hook callback:\n%s", out)
+			assert.Contains(t, string(recorded), sessionID, "the extension reports the launched session")
 		})
 	}
 }

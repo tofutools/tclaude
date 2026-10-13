@@ -762,6 +762,18 @@ cannot `send-keys` at tclaude's tmux server.
   so an empty `~/.gemini/.env` would hide the operator's `~/.env`. To close
   the hole, create the files you care about yourself; once present, they are
   bound read-only.
+- **pi's `auth.json` stays writable, and pi runs command-valued keys.** An
+  OAuth login refreshes its tokens into `auth.json`, so the floor leaves it
+  writable. pi also accepts an `api_key` credential whose key starts with `!`
+  and runs it as a shell command to obtain the key. A walled pi agent can
+  therefore plant a command there that the operator's next unsandboxed `pi`
+  runs (and that `tclaude harness credentials push pi` would copy). The same
+  holds for `models.json` and `settings.json` when they do not exist yet:
+  like every floor entry, a missing file is not materialized, and an agent
+  can create one with a command-valued `apiKey` or a package to load. Create
+  `models.json` and `settings.json` yourself to have them bound read-only,
+  and inspect `auth.json` before using pi outside the wall after a walled
+  agent has run.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue

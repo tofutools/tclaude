@@ -785,9 +785,10 @@ your own `~/.pi/agent`: its providers, logins, settings and telemetry choice.
 tclaude passes no credentials into pi.
 
 **Live status needs no setup.** pi has no hook configuration, so tclaude ships
-a small pi extension inside its binary, writes it read-only under its private
-data directory (`~/.tclaude/data/pi-extension`, which sandboxed agents cannot
-reach), and loads it per launch with `--extension`. It reports turns, tools,
+a small pi extension inside its binary, writes it read-only under
+`~/.tclaude/pi-extension` (checked byte for byte before every launch, and
+mounted read-only inside tclaude's sandbox), and loads it per launch with
+`--extension`. It reports turns, tools,
 dialogs, compaction, `/clone`/`/new` session switches and exit to tclaude the
 way other harnesses' hooks do. Nothing is written to `~/.pi`, and a slow or
 missing tclaude never stalls pi.
@@ -803,8 +804,9 @@ tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
 **Inside tclaude's sandbox** pi's agent directory (`$PI_CODING_AGENT_DIR`, else
 `~/.pi/agent`) is its writable state: sessions, `auth.json` (so an OAuth login
 can refresh) and pi's lock files. What pi loads as configuration or code is
-read-only inside the wall, so a sandboxed agent cannot change what the next,
-possibly unsandboxed, pi runs: `settings.json`, `models.json`,
+read-only inside the wall, so that a sandboxed agent cannot change what the
+next, possibly unsandboxed, pi runs (with one known gap: `auth.json`, see
+[the residual holes](sandboxing.md)): `settings.json`, `models.json`,
 `models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, the
 `AGENTS`/`CLAUDE`/`SYSTEM` prompt files, and `extensions/`, `skills/`,
 `prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/` and `tools/`.

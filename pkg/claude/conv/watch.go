@@ -2610,7 +2610,11 @@ func resumeLaunchCmdWithStackedProof(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
+		// As in `session new`: private routed open is default-accept, so it
+		// has no route to resolve; resolving it here refused resumes of
+		// launches the spawn admitted.
+		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+			!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
 			networkFiltered = true
 			// pi resumes with the model its session records, so that is
 			// the route to resolve; the others resolve from config alone.
