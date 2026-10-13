@@ -1012,3 +1012,21 @@ func TestCodexAppServerBootstrapDrainWaitsForFinalWrite(t *testing.T) {
 	}
 	require.True(t, finalWrite(), "drain must include the failure-state write")
 }
+
+// Preserve the version-proof budget failure explicitly instead of relying on
+// an unrelated preflight fixture to wait fifteen seconds during teardown.
+func TestCodexAppServerVersionProofHonorsExpiredBudget(t *testing.T) {
+	resetTestDB(t)
+	const generation = "expired-proof-budget"
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: generation, LaunchID: "warming-launch", AgentID: "agent",
+		SocketPath: filepath.Join(testutil.CanonicalTempDir(t), "app.sock"),
+		State:      db.CodexAppServerWarming,
+	}))
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	version, err := waitForCodexAppServerVersion(ctx, generation)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, version, "a missing exact-version proof must never be invented")
+	assert.Contains(t, err.Error(), "wait for exact Codex version proof")
+}
