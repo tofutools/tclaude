@@ -14,7 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestSSHWorkaroundAppliesToEveryPacketLayerHarness(t *testing.T) {
+func TestSSHWorkaroundAppliesToEveryTclaudeLayerHarness(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the SSH workaround is Linux-only")
 	}
@@ -36,6 +36,9 @@ func TestSSHWorkaroundAppliesToEveryPacketLayerHarness(t *testing.T) {
 		Engine: sandboxpolicy.NetworkEnginePacket,
 		Allow:  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
 	}
+	// No network rules at all: an open launch deploys no filtering engine, but
+	// rootless bubblewrap still leaves host root unmapped.
+	open := sandboxpolicy.EmptySnapshot()
 
 	for _, harnessName := range []string{
 		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
@@ -49,14 +52,23 @@ func TestSSHWorkaroundAppliesToEveryPacketLayerHarness(t *testing.T) {
 			assert.True(t, codexSSHWorkaroundApplies(
 				harnessName, harness.SandboxDangerFull,
 				string(implementation), &ordinary), harnessName+" "+string(implementation))
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &proxy), harnessName+" "+string(implementation)+" proxy")
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &open), harnessName+" "+string(implementation)+" open")
 		}
 	}
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
-		string(sandboxpolicy.ImplementationTclaudeLayer), &proxy))
+		string(sandboxpolicy.ImplementationTclaudeLayer), nil), "no frozen sandbox, nothing to apply")
 	assert.False(t, codexSSHWorkaroundApplies(
-		harness.CodexName, harness.SandboxDangerFull,
-		string(sandboxpolicy.ImplementationStacked), &proxy))
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationOff), &open))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationResourceOnly), &open))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))

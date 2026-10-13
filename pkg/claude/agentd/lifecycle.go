@@ -4726,7 +4726,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		h.Name, harnessBuiltinMode, body.SandboxImplementation, &effectiveSandbox) {
 		sshWorkaround = false
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
-			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's packet sandbox")
+			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's sandbox")
 	}
 	// Persist the resolved posture in the audit request as an explicit boolean,
 	// including the default-on case and an operator's opt-out.
