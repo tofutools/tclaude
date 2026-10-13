@@ -71,7 +71,21 @@ export function createUsageHubState({
     return tab === 'usage' && (subview.value === name || subview.value === 'overview');
   }
 
-  return Object.freeze({ requested, halves, subview, location, view, select, applyLocation, shown, polling });
+  // open brings a view up from outside the tab (the header's cost link, the
+  // command palette) as ONE history step: with the view chosen first, the
+  // nav click records the hub's location; already on the tab, the switch is
+  // announced like a subnav click.
+  function open(name, doc = globalThis.document) {
+    if (!USAGE_SUBVIEWS.includes(name)) return false;
+    const changed = select(name);
+    const nav = doc?.querySelector('nav [data-tab="usage"]');
+    if (!nav) return false;
+    if (!nav.classList.contains('active')) nav.click();
+    else if (changed) doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: location.value } }));
+    return true;
+  }
+
+  return Object.freeze({ requested, halves, subview, location, view, select, applyLocation, shown, polling, open });
 }
 
 export const usageHubState = createUsageHubState();

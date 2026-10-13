@@ -50,9 +50,9 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	// The token links to the Usage tab's Costs view: shell-island.js tags it,
 	// the Usage hub selects Costs and delegates the switch to the nav button.
 	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-view link")
-	must(`state.select('costs');`, "Usage hub selects its Costs view on a token click")
-	must(`const nav = document.querySelector('nav [data-tab="usage"]');`,
-		"Usage hub opens the tab via the nav button on a token click")
+	must(`[data-goto-tab="costs"]')) state.open('costs');`, "Usage hub opens its Costs view on a token click")
+	must(`const nav = doc?.querySelector('nav [data-tab="usage"]');`,
+		"Usage hub opens the tab via the nav button")
 
 	// The no-data state is unchanged: neither windows nor cost → n/a.
 	must("'usage: n/a'", "graceful n/a fallback still present")

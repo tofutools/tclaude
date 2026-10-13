@@ -82,7 +82,8 @@ test('Usage hub Overview summarises both halves and subtab clicks announce one n
   const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
     quotaState=${quotaState} costsState=${costsState} />`);
   const tabs = [...mounted.container.querySelectorAll('.usage-subtab')];
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Overview', 'Quota', 'Costs']);
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Overview', 'Quota2 windows', 'Costs$4.00 mtd'],
+    'Quota and Costs carry their at-a-glance badges');
   assert.deepEqual(tabs.map((tab) => tab.getAttribute('href')), ['/usage', '/usage/quota', '/usage/costs']);
   assert.equal(section.getAttribute('data-subview'), 'overview');
 
@@ -92,7 +93,15 @@ test('Usage hub Overview summarises both halves and subtab clicks announce one n
   assert.match(text, /Claude 5 hour window/, 'next quota wall names the window');
   assert.equal(mounted.container.querySelectorAll('.usage-ov-quota').length, 2);
   const agents = [...mounted.container.querySelectorAll('.usage-ov-agents tbody tr')].map((row) => row.textContent);
-  assert.deepEqual(agents, ['alpha$3.00', 'beta$1.00'], 'top agents fold their day slices together');
+  assert.deepEqual(agents.map((row) => row.replace(/\s+/g, ' ').trim()), ['alphaagt_a$3.00', 'betaagt_b$1.00'],
+    'top agents fold their day slices together and keep their ids');
+  assert.match(text, /⚠ limit in 1h · 2h without quota/, 'compact quota status names the gap without quota');
+  assert.match(text, /✓ resets before the limit/);
+  assert.match(text, /in 1h.*Claude 5 hour window · 2h without quota/, 'next wall says how long the window goes dry');
+  const bars = mounted.container.querySelectorAll('.usage-ov-chart rect.bar');
+  assert.equal(bars.length, 3, 'one bar segment per provider and day');
+  assert.ok([...bars].every((bar) => /cost-seg-h\d/.test(bar.getAttribute('class'))), 'bars use the Costs provider palette');
+  assert.match(mounted.container.querySelector('.usage-ov-legend').textContent, /claude.*codex/);
 
   const navigated = [];
   const onNav = (event) => navigated.push(event.detail.location);
@@ -133,6 +142,29 @@ test('Usage hub with one half shows it directly and gates the other on a body cl
   await harness.act(() => { ctx.snapshot.value = { usage_tab_visible: false, cost_tab_visible: false }; });
   assert.equal(body.contains('hide-usage-tab'), true, 'the tab hides only when both halves are off');
   await mounted.unmount();
+});
+
+test('Usage hub open() is one navigation from outside or inside the tab', async (t) => {
+  const ctx = await setup(t, { usage_tab_visible: true, cost_tab_visible: true });
+  const { harness, state } = ctx;
+  harness.document.body.insertAdjacentHTML('beforeend', '<nav><a data-tab="usage"></a></nav>');
+  const nav = harness.document.querySelector('nav [data-tab="usage"]');
+  let clicks = 0;
+  nav.addEventListener('click', () => { clicks += 1; nav.classList.add('active'); });
+  const navigated = [];
+  const onNav = (event) => navigated.push(event.detail.location);
+  harness.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => harness.document.removeEventListener('tclaude:navigated', onNav));
+  assert.equal(state.open('costs', harness.document), true);
+  assert.equal(clicks, 1, 'off the tab: the nav click records the location');
+  assert.deepEqual(navigated, []);
+  assert.equal(state.subview.value, 'costs');
+  state.open('quota', harness.document);
+  assert.equal(clicks, 1);
+  assert.deepEqual(navigated, [{ tab: 'usage', subtab: 'quota' }], 'on the tab: announced like a subnav click');
+  state.open('quota', harness.document);
+  assert.equal(navigated.length, 1, 'already there: nothing to record');
+  assert.equal(state.open('nope', harness.document), false);
 });
 
 test('pure Overview helpers', async (t) => {

@@ -1,11 +1,13 @@
 import { h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { isModifiedClick } from './helpers.js';
+import { isModifiedClick, shortAgentId } from './helpers.js';
 import { isWizardActive } from './slop.js';
-import { COST_SPANS, dayKey, fmtExactUSD, fmtUSD } from './costs-model.js';
 import {
-  formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView,
+  COST_SPANS, costProviderLabel, dayKey, fmtExactUSD, fmtUSD, niceCeil, providerSegmentClass,
+} from './costs-model.js';
+import {
+  formatUsageDuration, formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView,
   usageProviderLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
 import { usageLocation } from './usage-hub-state.js';
@@ -84,7 +86,9 @@ export function topCostAgents(rows, limit = 5) {
   const byAgent = new Map();
   for (const row of rows || []) {
     const key = row.agent_id || row.conv_id;
-    const entry = byAgent.get(key) || { key, title: row.title || '(unknown)', cost: 0, whatIf: false };
+    const entry = byAgent.get(key) || {
+      key, title: row.title || '(unknown)', agentID: row.agent_id, convID: row.conv_id, cost: 0, whatIf: false,
+    };
     entry.cost += row.cost_usd || 0;
     entry.whatIf ||= row.cost_kind === 'what_if' || row.cost_kind === 'mixed';
     byAgent.set(key, entry);
@@ -99,9 +103,49 @@ export function todaySpend(costs, now = new Date()) {
   const key = dayKey(now);
   const day = (costs.narrowed?.days || []).find((item) => item.day === key);
   if (!day) return null;
-  const agents = new Set((costs.rows || []).filter((row) => row.day === key)
-    .map((row) => row.agent_id || row.conv_id));
-  return { cost: day.cost_usd || 0, agents: agents.size };
+  const top = topCostAgents((costs.rows || []).filter((row) => row.day === key), Infinity);
+  return { cost: day.cost_usd || 0, agents: top.length, top: top[0] || null };
+}
+
+// gapBeforeReset is how long a window predicted to hit its limit before it
+// resets stays without quota; '' when the forecast does not say.
+export function gapBeforeReset(forecast) {
+  if (forecast?.status !== 'before_reset') return '';
+  const gap = new Date(forecast.reset_at).getTime() - new Date(forecast.hits_limit_at).getTime();
+  return Number.isFinite(gap) && gap > 0 ? formatUsageDuration(gap) : '';
+}
+
+// quotaStatusLine is the compact card's one-line prediction. The full
+// sentence (and its rate) stays on the Quota view.
+export function quotaStatusLine(item, wizard = false) {
+  const w = (plain, wizardly) => (wizard ? wizardly : plain);
+  const forecast = item.forecast;
+  if (item.status === 'limit') return w('⚠ limit reached', '⚠ the reserves are spent');
+  if (item.status === 'before_reset' || item.status === 'projected') {
+    const gap = gapBeforeReset(forecast);
+    return `⚠ ${w('limit', 'dry')} ${formatUsageTime(forecast.hits_limit_at, item.now)}${gap ? ` · ${gap} ${w('without quota', 'without mana')}` : ''}`;
+  }
+  if (item.status === 'after_reset' || item.status === 'flat') return `✓ ${w('resets before the limit', 'the reserves hold')}`;
+  return item.view.headline.replace(/^(Prediction|Prophecy): /, '');
+}
+
+// spendDays splits each day of the shown span by provider, in the Costs
+// view's provider palette, so the Overview's bars read like its stacks.
+export function spendDays(costs) {
+  const providers = costs.providers || [];
+  const agents = costs.narrowed?.agents || [];
+  return (costs.narrowed?.days || []).map((day) => {
+    const byProvider = new Map();
+    for (const agent of agents) {
+      if (agent.day !== day.day || !(agent.cost_usd > 0)) continue;
+      const provider = costProviderLabel(agent);
+      byProvider.set(provider, (byProvider.get(provider) || 0) + agent.cost_usd);
+    }
+    const segments = [...byProvider].map(([provider, cost]) => ({
+      provider, cost, className: providerSegmentClass(provider, providers),
+    })).sort((a, b) => providers.indexOf(a.provider) - providers.indexOf(b.provider));
+    return { day: day.day, cost: day.cost_usd || 0, whatIf: day.cost_kind === 'what_if', segments };
+  });
 }
 
 // ---- Views -----------------------------------------------------------------
@@ -148,7 +192,7 @@ function QuotaCard({ item, wizard, onOpen }) {
     </div>
     <span class="usage-ov-meta">${item.reset || (latest ? formatUsageTime(latest.at, item.now) : '')}</span>
     <${Sparkline} points=${item.points} forecast=${item.forecast} now=${item.now} />
-    <span class=${`usage-ov-status ${tone}`}>${item.view.headline.replace(/^(Prediction|Prophecy): /, '')}</span>
+    <span class=${`usage-ov-status ${tone}`} title=${item.view.headline}>${quotaStatusLine(item, wizard)}</span>
   </a>`;
 }
 
@@ -161,31 +205,51 @@ function Kpi({ label, value, meta, tone = '', onOpen, href }) {
 }
 
 function SpendChart({ costs }) {
-  const days = costs.narrowed?.days || [];
+  const days = spendDays(costs);
   const W = 720;
   const H = 150;
   if (!days.length) return html`<div class="usage-ov-chart empty">No days in span.</div>`;
   const future = costs.projection?.future || [];
   const slots = days.length + future.length;
   let running = 0;
-  const cumulative = days.map((day) => (running += day.cost_usd || 0));
-  const top = Math.max(running, costs.projection?.total || 0, ...days.map((day) => day.cost_usd || 0)) || 1;
+  const cumulative = days.map((day) => (running += day.cost));
+  // Two scales, as in the mock: the bars read the day-to-day pace, the line
+  // the running total and where the projection lands. The legend names both.
+  const dailyTop = niceCeil(Math.max(...days.map((day) => day.cost))) || 1;
+  const totalTop = Math.max(running, costs.projection?.total || 0) || 1;
   const bw = W / slots;
-  const y = (value) => H - (value / top) * (H - 6);
-  const line = cumulative.map((value, index) => `${(index + 0.5) * bw},${y(value)}`).join(' ');
-  return html`<div class="usage-ov-chart" role="img"
-    aria-label=${`${spanLabel(costs)} spend ${fmtExactUSD(running)}${costs.projection ? `, projected ${fmtExactUSD(costs.projection.total)}` : ''}`}>
-    <svg viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-      ${days.map((day, index) => {
-        const height = H - y(day.cost_usd || 0);
-        return height > 0 && html`<rect key=${day.day} class=${`bar ${day.cost_kind === 'what_if' ? 'what-if' : ''}`}
-          x=${index * bw + bw * 0.15} y=${H - height} width=${bw * 0.7} height=${height}>
-          <title>${day.day}: ${fmtExactUSD(day.cost_usd || 0)}</title></rect>`;
-      })}
-      <polyline class="cumulative" points=${line} />
-      ${costs.projection && html`<line class="projection" x1=${(days.length - 0.5) * bw} y1=${y(running)}
-        x2=${W - bw / 2} y2=${y(costs.projection.total)} />`}
-    </svg>
+  const yDaily = (value) => (value / dailyTop) * (H - 4);
+  const yTotal = (value) => H - (value / totalTop) * (H - 6);
+  const line = cumulative.map((value, index) => `${(index + 0.5) * bw},${yTotal(value)}`).join(' ');
+  const providers = [...new Set(days.flatMap((day) => day.segments.map((segment) => segment.provider)))];
+  return html`<div class="usage-ov-chart-wrap">
+    <div class="usage-ov-chart" role="img"
+      aria-label=${`${spanLabel(costs)} spend ${fmtExactUSD(running)}${costs.projection ? `, projected ${fmtExactUSD(costs.projection.total)}` : ''}`}>
+      <svg viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        ${days.map((day, index) => {
+          let top = H;
+          return html`<g key=${day.day} class=${day.whatIf ? 'what-if' : ''}>
+            <title>${day.day}: ${fmtExactUSD(day.cost)}${day.segments.length > 1
+              ? ` (${day.segments.map((segment) => `${segment.provider} ${fmtUSD(segment.cost)}`).join(', ')})` : ''}</title>
+            ${day.segments.map((segment) => {
+              const height = yDaily(segment.cost);
+              top -= height;
+              return html`<rect key=${segment.provider} class=${`bar ${segment.className}`}
+                x=${index * bw + bw * 0.15} y=${top} width=${bw * 0.7} height=${height} />`;
+            })}
+          </g>`;
+        })}
+        <polyline class="cumulative" points=${line} />
+        ${costs.projection && html`<line class="projection" x1=${(days.length - 0.5) * bw} y1=${yTotal(running)}
+          x2=${W - bw / 2} y2=${yTotal(costs.projection.total)} />`}
+      </svg>
+    </div>
+    <div class="usage-ov-legend">
+      ${providers.map((provider) => html`<span key=${provider}><i class=${`swatch ${providerSegmentClass(provider, costs.providers || [])}`}></i>${provider}</span>`)}
+      <span>bars: daily, up to ${fmtUSD(dailyTop)}</span>
+      <span><i class="line"></i>accumulated ${fmtUSD(running)}</span>
+      ${costs.projection && html`<span><i class="line dashed"></i>projected ~${fmtUSD(costs.projection.total)}</span>`}
+    </div>
   </div>`;
 }
 
@@ -211,19 +275,23 @@ function Overview({ quota, costs, wizard, open }) {
       <${Kpi} label=${w('Spend today', 'Spent today')} href="/usage/costs" onOpen=${goCosts}
         value=${!costsLoaded ? '…' : today ? fmtUSD(today.cost) : '—'}
         meta=${!costsLoaded ? '' : today
-          ? `${today.agents} agent${today.agents === 1 ? '' : 's'} active`
+          ? `${today.agents} agent${today.agents === 1 ? '' : 's'}${today.top ? ` · top: ${today.top.title} ${fmtUSD(today.top.cost)}` : ''}`
           : `not in ${spanLabel(costs)}`} />
       <${Kpi} label=${w('Next quota wall', 'Next dry spell')} href="/usage/quota" onOpen=${goQuota}
         tone=${wall ? 'danger' : 'good'}
         value=${!quotaLoaded ? '…' : wall ? (wall.status === 'limit' ? w('now', 'now') : formatUsageTime(wall.forecast.hits_limit_at, wall.now)) : w('none', 'none')}
         meta=${!quotaLoaded ? '' : wall
-          ? `${usageProviderLabel(wall.series.provider)} ${usageWindowScopeLabel(wall.series, wizard)}`
+          ? `${usageProviderLabel(wall.series.provider)} ${usageWindowScopeLabel(wall.series, wizard)}${gapBeforeReset(wall.forecast)
+            ? ` · ${gapBeforeReset(wall.forecast)} ${w('without quota', 'without mana')}` : ''}`
           : w('no window predicted to run out', 'every reserve holds')} />
       <${Kpi} label=${w('Windows at risk', 'Reserves at risk')} href="/usage/quota" onOpen=${goQuota}
         tone=${atRisk ? 'warn' : 'good'}
         value=${quotaLoaded ? `${atRisk} / ${summaries.length}` : '…'}
         meta=${quotaLoaded ? w('predicted to hit the limit before reset', 'foretold to run dry before replenishment') : ''} />
     </div>
+    ${quotaLoaded && quota.payload?.coverage_warnings?.length > 0 && html`<a class="usage-ov-coverage" href="/usage/quota"
+      onClick=${goQuota} role="status">⚠ ${w('Some quota graphs may be incomplete or stale (OpenCode activity has no native quota history) — see Quota',
+        'Some reserves may be misread (OpenCode channels unseen) — see Reserves')}.</a>`}
     <h3 class="usage-ov-heading">${w('Quota', 'Reserves')}
       <a href="/usage/quota" onClick=${goQuota}>${w('full forecasts', 'full prophecies')} ›</a></h3>
     ${quota.request.phase === 'error' && !quotaLoaded
@@ -243,7 +311,8 @@ function Overview({ quota, costs, wizard, open }) {
           <table class="usage-ov-agents">
             <thead><tr><th>${w('Top agents', 'Top spenders')}</th><th>${w('Cost', 'Gold')}</th></tr></thead>
             <tbody>${top.length
-              ? top.map((agent) => html`<tr key=${agent.key}><td><span class="rowname">${agent.title}</span></td>
+              ? top.map((agent) => html`<tr key=${agent.key}><td><span class="rowname">${agent.title}</span>
+                <span class="id">${shortAgentId(agent.agentID, agent.convID)}</span></td>
                 <td class="cost">${agent.whatIf ? '≈' : ''}${fmtUSD(agent.cost)}</td></tr>`)
               : html`<tr><td colspan="2" class="muted">No spend in this span.</td></tr>`}</tbody>
           </table>
@@ -253,14 +322,26 @@ function Overview({ quota, costs, wizard, open }) {
   </div>`;
 }
 
-function Subnav({ current, wizard, open }) {
+function subtabMeta(name, quota, costs) {
+  if (name === 'quota' && quota.request.hasLoaded) {
+    const count = quota.series.length;
+    return count ? `${count} window${count === 1 ? '' : 's'}` : '';
+  }
+  if (name === 'costs' && costs.request.hasLoaded && costs.narrowed) {
+    return `${fmtUSD(costs.narrowed.total_usd)}${costs.span === 'month' ? ' mtd' : ''}`;
+  }
+  return '';
+}
+
+function Subnav({ current, wizard, open, quota, costs }) {
   return html`<nav class="usage-subnav" aria-label="Usage views">
     ${['overview', 'quota', 'costs'].map((name) => {
       const loc = usageLocation(name);
       const href = loc.subtab ? `/usage/${loc.subtab}` : '/usage';
       return html`<a key=${name} class=${`usage-subtab${current.subview === name ? ' active' : ''}`} href=${href}
         data-usage-subtab=${name} aria-current=${current.subview === name ? 'page' : undefined}
-        onClick=${open(name)}>${SUBVIEW_LABELS[name][wizard ? 1 : 0]}</a>`;
+        onClick=${open(name)}>${SUBVIEW_LABELS[name][wizard ? 1 : 0]}${subtabMeta(name, quota, costs)
+          && html`<span class="usage-subtab-meta">${subtabMeta(name, quota, costs)}</span>`}</a>`;
     })}
   </nav>`;
 }
@@ -292,7 +373,8 @@ export function UsageHubApp({ state, quotaState, costsState }) {
     document.querySelector('#tab-usage')?.setAttribute('data-subview', current.subview);
   }, [current.subview]);
   return html`<div class="usage-hub">
-    ${current.showSubnav && html`<${Subnav} current=${current} wizard=${wizard} open=${open} />`}
+    ${current.showSubnav && html`<${Subnav} current=${current} wizard=${wizard} open=${open}
+      quota=${quotaState.view.value} costs=${costsState.view.value} />`}
     ${current.subview === 'overview' && html`<${Overview} quota=${quotaState.view.value}
       costs=${costsState.view.value} wizard=${wizard} open=${open} />`}
   </div>`;
@@ -305,12 +387,7 @@ export function mountUsageHubIsland({ host, state, quotaState, costsState, regis
   // The header's cost figures link here: land on the Costs view as one
   // history step (the nav click records the hub's location).
   const gotoCosts = (event) => {
-    if (!event.target.closest?.('[data-goto-tab="costs"]')) return;
-    state.select('costs');
-    const nav = document.querySelector('nav [data-tab="usage"]');
-    if (nav?.classList.contains('active')) {
-      document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: state.location.value } }));
-    } else nav?.click();
+    if (event.target.closest?.('[data-goto-tab="costs"]')) state.open('costs');
   };
   document.addEventListener('tclaude:restore-location', restore);
   document.addEventListener('click', gotoCosts);

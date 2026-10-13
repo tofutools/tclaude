@@ -43,6 +43,7 @@ import { openGitRepositories } from './git-repositories-controller.js';
 // ends), Enter runs it, typing filters.
 
 import { $, $$ } from './helpers.js';
+import { featureState } from './feature-state-registry.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
   openWindowModal,
@@ -593,6 +594,25 @@ export function buildCommands(snapshot) {
         + ' scry peer gaze behold chamber vision',
       run: () => btn.click(),
     });
+  }
+  // The Usage tab's Quota and Costs views were tabs of their own: keep them
+  // one command away (and findable as "costs") rather than behind Usage.
+  const usageBtn = $('nav [data-tab="usage"]');
+  const usageHub = featureState('usage-hub');
+  if (usageHub && usageBtn && usageBtn.offsetParent !== null && usageBtn.getAttribute('aria-disabled') !== 'true') {
+    for (const [view, plain, wizardly, words] of [
+      ['quota', 'Quota', 'Reserves', 'quota limits forecast subscription window reserves mana'],
+      ['costs', 'Costs', 'Coffers', 'costs spend money billing dollars coffers gold'],
+    ]) {
+      if (document.body.classList.contains(`hide-usage-${view}`)) continue;
+      cmds.push({
+        peerView: 'tab', tab: 'usage', icon: wiz('⤢', '🪞'),
+        label: wiz(`Go to Usage › ${plain}`, `Scry the ${wizardly}`),
+        hint: wiz('switch tab', 'peer into this chamber of the Tower'),
+        keywords: `tab navigate go open usage ${words}`,
+        run: () => usageHub.open(view),
+      });
+    }
   }
   // Fleet administration has no visible tab before the first peer is
   // trusted (the Skynet bar appears with the fleet), so it is reached here.

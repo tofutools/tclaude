@@ -9815,9 +9815,10 @@ body.hide-usage-costs #costs-root { display: none; }
 }
 .usage-subtab:hover { color: #d4d4d4; }
 .usage-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.usage-subtab-meta { margin-left: 7px; color: #6e7681; font-size: 11px; font-weight: 400; }
 .usage-overview .empty { margin: 0; }
 .usage-ov-kpis, .usage-ov-quota-grid {
-  display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 .usage-ov-card {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px;
@@ -9853,8 +9854,24 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-spend { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
 .usage-ov-chart { height: 170px; padding: 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; }
 .usage-ov-chart svg { width: 100%; height: 100%; display: block; }
-.usage-ov-chart .bar { fill: rgba(63, 185, 80, .55); }
-.usage-ov-chart .bar.what-if { fill: rgba(88, 166, 255, .5); }
+/* The Costs view's provider palette (.cost-seg-hN), as SVG fills. */
+.usage-ov-chart .bar.cost-seg-h0, .usage-ov-legend .cost-seg-h0 { fill: #6e9c7d; background: #6e9c7d; }
+.usage-ov-chart .bar.cost-seg-h1, .usage-ov-legend .cost-seg-h1 { fill: #6a8fd0; background: #6a8fd0; }
+.usage-ov-chart .bar.cost-seg-h2, .usage-ov-legend .cost-seg-h2 { fill: #b58cd6; background: #b58cd6; }
+.usage-ov-chart .bar.cost-seg-h3, .usage-ov-legend .cost-seg-h3 { fill: #d0a860; background: #d0a860; }
+.usage-ov-chart .bar.cost-seg-h4, .usage-ov-legend .cost-seg-h4 { fill: #5bb0a5; background: #5bb0a5; }
+.usage-ov-chart .bar.cost-seg-h5, .usage-ov-legend .cost-seg-h5 { fill: #cf8a8a; background: #cf8a8a; }
+.usage-ov-chart .what-if .bar { fill-opacity: .55; }
+.usage-ov-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: #7d8590; font-size: 11px; }
+.usage-ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.usage-ov-legend .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.usage-ov-legend .line { display: inline-block; width: 14px; border-top: 2px solid #d4d4d4; }
+.usage-ov-legend .line.dashed { border-top-style: dashed; opacity: .7; }
+.usage-ov-agents .id { color: #6e7681; font-family: ui-monospace, monospace; font-size: 11px; margin-left: 4px; }
+.usage-ov-coverage {
+  display: block; margin: 12px 0 0; padding: 8px 12px; border: 1px solid rgba(210, 153, 34, .45);
+  border-radius: 6px; color: #d29922; font-size: 12px; text-decoration: none;
+}
 .usage-ov-chart .cumulative { fill: none; stroke: #d4d4d4; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .usage-ov-chart .projection { stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
 .usage-ov-agents { width: 100%; border-collapse: collapse; border: 1px solid #2a3340; border-radius: 7px; }
