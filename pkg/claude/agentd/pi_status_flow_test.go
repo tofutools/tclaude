@@ -7,16 +7,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
-
-// optInPi enables the experimental pi harness for one test.
-func optInPi(t *testing.T) {
-	t.Helper()
-	t.Cleanup(harness.SetExperimentalHarnessEnabledForTest(harness.PiName, true))
-}
 
 func spawnPi(t *testing.T, f *testharness.Flow, group string, body map[string]any) (
 	testharness.SpawnResp, *testharness.PiSim,
@@ -28,8 +23,8 @@ func spawnPi(t *testing.T, f *testharness.Flow, group string, body map[string]an
 		resp = f.AsHuman().SpawnWith(group, body)
 		require.Equalf(t, http.StatusOK, resp.Code, "pi spawn body=%s", resp.Raw)
 	} else {
-		// pi's default auto posture runs unconfined until tclaude's sandbox
-		// supports pi, so the human authorizes it in the dashboard dialog.
+		// Outside tclaude's sandbox pi's default auto posture runs
+		// unconfined, so the human authorizes it in the dashboard dialog.
 		body["allow_unenforced_sandbox"] = true
 		served := testharness.Serve(agentd.BuildDashboardHandlerForTest(), dashboardOverrideRequest(
 			t, http.MethodPost, "/api/groups/"+group+"/spawn", body))
@@ -58,7 +53,6 @@ func typeInto(sim *testharness.PiSim, text string) {
 // a whole turn: prompt, tool, a confirmation dialog, and the settled reply.
 func TestPiStatus_TurnLifecycle(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{
@@ -90,7 +84,6 @@ func TestPiStatus_TurnLifecycle(t *testing.T) {
 // idle pane leaves it idle.
 func TestPiStatus_AbortAndCompact(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -113,7 +106,6 @@ func TestPiStatus_AbortAndCompact(t *testing.T) {
 // the new conversation, as it does for Claude Code's /clear.
 func TestPiStatus_CloneRotatesConversation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -145,7 +137,6 @@ func TestPiStatus_CloneRotatesConversation(t *testing.T) {
 // session ending.
 func TestPiStatus_SoftStopQuits(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -154,10 +145,14 @@ func TestPiStatus_SoftStopQuits(t *testing.T) {
 	assert.False(t, sim.IsAlive(), "the soft stop must quit the pane")
 }
 
-// pi is experimental: without the operator's opt-in the daemon refuses the
-// spawn, and says how to opt in.
-func TestPiSpawn_RequiresExperimentalOptIn(t *testing.T) {
+// An experimental harness needs the operator's opt-in: without it the daemon
+// refuses the spawn, and says how to opt in. No registered harness is
+// experimental today; pi, the last to graduate, stands in.
+func TestSpawn_ExperimentalHarnessRequiresOptIn(t *testing.T) {
 	t.Setenv(harness.ExperimentalHarnessesEnvVar, "")
+	standIn := *harness.MustGet(harness.PiName)
+	standIn.Experimental = true
+	t.Cleanup(harness.RegisterForTest(&standIn))
 	t.Cleanup(harness.SetExperimentalHarnessEnabledForTest(harness.PiName, false))
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -171,7 +166,6 @@ func TestPiSpawn_RequiresExperimentalOptIn(t *testing.T) {
 // inside tclaude's sandbox or with the human's explicit allowance; read-only
 // acts on nothing and needs neither.
 func TestPiSpawn_AutoNeedsConfinementOrHumanAllowance(t *testing.T) {
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 
@@ -185,4 +179,34 @@ func TestPiSpawn_AutoNeedsConfinementOrHumanAllowance(t *testing.T) {
 
 	_, sim = spawnPi(t, f, "crew", map[string]any{"name": "pi-allowed"})
 	assert.Equal(t, "", sim.Launch().Tools, "auto exposes pi's full tool set")
+}
+
+// tclaude's sandbox is pi's boundary: inside it the default auto posture
+// launches without the human's allowance, pi's own mode is the recorded `off`,
+// and a resume relaunches under the same wall.
+func TestPiSpawn_TclaudeLayerConfinesAuto(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnPi(t, f, "crew", map[string]any{
+		"name":                   "pi-walled",
+		"approval":               harness.PiApprovalAuto,
+		"sandbox_implementation": "tclaude-layer",
+	})
+	assert.Equal(t, "", sim.Launch().Tools, "auto exposes pi's full tool set")
+	assert.True(t, sim.Launch().LoadsStatusExtension())
+	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "tclaude-layer", got)
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
+
+	row, err := db.LoadSession(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, harness.PiSandboxOff, row.HarnessBuiltinMode)
+
+	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
+	require.Equal(t, http.StatusOK, f.Resume(resp.ConvID).Code)
+	relaunched := f.World.Pis.GetByConvID(resp.ConvID)
+	require.NotNil(t, relaunched)
+	assert.True(t, relaunched.Launch().LoadsStatusExtension(), "a resume keeps the status extension")
 }

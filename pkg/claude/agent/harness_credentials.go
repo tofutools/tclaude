@@ -18,7 +18,7 @@ import (
 )
 
 type credentialParams struct {
-	Harness      string `pos:"true" help:"Harness name; push accepts a comma-separated chosen set (claude,codex,opencode,gemini)"`
+	Harness      string `pos:"true" help:"Harness name; push accepts a comma-separated chosen set (claude,codex,opencode,gemini,pi)"`
 	Node         string `long:"node" optional:"true" help:"Trusted peer label/ID; omit for local backup/restore"`
 	ConfirmShare bool   `long:"confirm-share" help:"Confirm that remote agents will act as you with these providers"`
 	Backup       string `long:"backup" optional:"true" help:"Restore a specific backup ID; omit for newest matching backup"`
@@ -43,7 +43,7 @@ func runCredentialOperation(action string, p *credentialParams, stdout, stderr i
 	seen := map[string]bool{}
 	for _, name := range names {
 		switch name {
-		case "claude", "codex", "opencode", "gemini":
+		case "claude", "codex", "opencode", "gemini", "pi":
 		default:
 			fmt.Fprintln(stderr, "Error: file credentials unsupported for this harness; use its login flow")
 			return rcInvalidArg

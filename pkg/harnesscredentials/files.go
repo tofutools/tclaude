@@ -75,6 +75,14 @@ func location(home, name string, receiving bool) (string, []string, error) {
 			home = configured
 		}
 		return filepath.Join(home, ".gemini"), []string{"oauth_creds.json", "google_accounts.json"}, nil
+	case "pi":
+		// pi's API keys and OAuth logins, where this node's pi reads them;
+		// models.json is configuration and stays with each node.
+		dir := os.Getenv("PI_CODING_AGENT_DIR")
+		if dir == "" {
+			dir = filepath.Join(home, ".pi", "agent")
+		}
+		return dir, []string{"auth.json"}, nil
 	default:
 		return "", nil, fmt.Errorf("file credential copy unsupported for this harness; use its login flow (keychains and environment secrets are not copied)")
 	}
@@ -358,14 +366,14 @@ func Presence(home, name string) *bool {
 // StandardSecretPaths is the relative credential-path inventory used by file
 // sharing guards. Keep it next to the credential capture locations.
 func StandardSecretPaths() []string {
-	return []string{".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json", ".gemini/oauth_creds.json", ".gemini/google_accounts.json"}
+	return []string{".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json", ".gemini/oauth_creds.json", ".gemini/google_accounts.json", ".pi/agent/auth.json"}
 }
 
 // ConfiguredSecretPaths includes operator-selected credential locations, which
 // may lie inside a project despite not having a standard harness directory name.
 func ConfiguredSecretPaths(home string) []string {
 	var paths []string
-	for _, name := range []string{"claude", "codex", "opencode", "gemini"} {
+	for _, name := range []string{"claude", "codex", "opencode", "gemini", "pi"} {
 		for _, receiving := range []bool{false, true} {
 			dir, files, err := location(home, name, receiving)
 			if err != nil {

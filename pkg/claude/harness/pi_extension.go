@@ -17,11 +17,14 @@ import (
 // pi's live status comes from tclaude's own pi extension (piextension/
 // tclaude-pi.ts), not from installed hooks: pi has no hook configuration, and
 // tclaude never writes into ~/.pi. The extension is embedded in the binary,
-// written read-only under tclaude's private data directory (denied to
-// sandboxed agents, so a confined agent cannot swap the code the next
-// unconfined pi will run) at a path named by its content hash, checked
-// byte-for-byte before every launch, and loaded with `pi -e <path>`. It runs
-// the hook callback named by PiHookBinEnvVar.
+// written read-only under ~/.tclaude/pi-extension at a path named by its
+// content hash, checked byte-for-byte before every launch, and loaded with
+// `pi -e <path>`. It runs the hook callback named by PiHookBinEnvVar.
+//
+// Not under the private data directory: tclaude's sandbox hides that from the
+// pane, and the pane is where pi loads the extension. tclaude's sandbox mounts
+// the hash directory read-only, and the per-launch check replaces a file that
+// differs before pi reads it.
 
 //go:embed piextension/tclaude-pi.ts
 var piExtensionSource []byte
@@ -37,9 +40,9 @@ func PiExtensionSource() []byte { return bytes.Clone(piExtensionSource) }
 
 // piExtensionCacheDir is a variable so tests can point it at a temp dir.
 var piExtensionCacheDir = func() (string, error) {
-	dir := common.TclaudeDataDir()
+	dir := common.TclaudeDir()
 	if dir == "" {
-		return "", errors.New("cannot resolve tclaude's data directory")
+		return "", errors.New("cannot resolve tclaude's directory")
 	}
 	return filepath.Join(dir, "pi-extension"), nil
 }

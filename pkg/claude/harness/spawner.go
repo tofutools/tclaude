@@ -77,6 +77,11 @@ type SpawnSpec struct {
 	// per-launch shell_environment_policy.set overrides. Other harnesses ignore
 	// the field because their command environments inherit EnvExports directly.
 	ShellEnvironment map[string]string
+	// NetworkFiltered reports a launch under a filtered network. A harness
+	// that would otherwise start traffic of its own outside the model route
+	// (version checks, telemetry, tool downloads) turns it off; pi exports
+	// PiFilteredNetworkEnv.
+	NetworkFiltered bool
 	// RuntimeHTTPProxyEnvironment emits compile-time Codex argument slots which
 	// the gateway bootstrap fills after binding its per-launch endpoints.
 	RuntimeHTTPProxyEnvironment bool

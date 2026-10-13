@@ -84,7 +84,7 @@ var sandboxGlobalConfigSupport = map[string]string{
 	harness.CopilotName:  "Copilot's native global sandbox confines commands rather than built-in file edits; use a tclaude-layer profile for OS path rules",
 	harness.OpenCodeName: "OpenCode global permissions are soft tool controls rather than an OS filesystem baseline; use a tclaude-layer profile for OS path rules",
 	harness.ShellName:    "Shell has no harness-global sandbox policy; use a tclaude-layer profile",
-	harness.PiName:       "pi has no sandbox and no global sandbox policy, and tclaude-layer does not support pi yet",
+	harness.PiName:       "pi has no sandbox and no global sandbox policy; use a tclaude-layer profile",
 }
 
 func sandboxGlobalHarnessNotes() map[string]string {

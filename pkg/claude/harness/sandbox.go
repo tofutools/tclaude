@@ -117,6 +117,8 @@ func SandboxOffMode(h *Harness) (string, error) {
 		mode = CopilotSandboxOff
 	case GeminiName:
 		mode = GeminiSandboxOff
+	case PiName:
+		mode = PiSandboxOff
 	case ShellName:
 		mode = ShellSandboxOff
 	default:

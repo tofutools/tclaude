@@ -79,7 +79,7 @@ network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
 supported with tclaude’s sandbox alone on Linux for Claude Code, Codex,
-OpenCode, Copilot, and Gemini CLI launches, and refuses elsewhere rather than falling back. A private
+OpenCode, Copilot, Gemini CLI and pi launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
@@ -314,6 +314,31 @@ Unlike the other harnesses' routes, these were read from the Gemini CLI
 source rather than observed on an authenticated run. A wrong guess fails
 closed: the wall denies the traffic. The first browser sign-in, telemetry,
 web tools and MCP servers need their own destinations.
+
+## pi
+
+pi launches are enforced by the Linux packet gateway; the proxy engine is not
+yet offered for pi. tclaude resolves the model route from the model's provider
+(`--model provider/id`, else `defaultProvider` in pi's `settings.json`, and on
+resume the model the session records) and checks it against the authored list:
+`anthropic` needs `net-anthropic`, `openai` needs `net-openai-codex`,
+`openai-codex` (ChatGPT sign-in) needs `net-openai-chatgpt`, and `google` needs
+`net-google-gemini-api`. The other reviewed providers (`openrouter`, `xai`,
+`groq`, `mistral`, `deepseek`, `cerebras`, `together`, `fireworks`, `zai`,
+`moonshotai`, `huggingface`) need an allow row for their API host, and a
+provider with a `baseUrl` in pi's `models.json` needs that endpoint.
+
+The launch is refused, with a reason, when the provider is none of these (an
+extension's provider, Bedrock, Vertex, Azure, GitHub Copilot), when no
+provider can be read, when the project's `.pi/settings.json` picks a different
+default provider, or when pi's settings set `httpProxy`.
+
+A filtered pi launch runs offline: tclaude exports `PI_OFFLINE=1`,
+`PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0`, so pi makes no version check,
+catalog refresh, install-telemetry call or `fd`/`rg` download, and the model
+route is the only destination it needs. Like the other harnesses' routes,
+these were read from pi's source at 1.1.0. Web tools, MCP servers and a first
+`/login` need their own destinations.
 
 ## Troubleshooting
 

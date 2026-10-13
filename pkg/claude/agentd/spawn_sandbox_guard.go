@@ -132,6 +132,8 @@ func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
 		offMode = harness.CopilotSandboxOff
 	case harness.GeminiName:
 		offMode = harness.GeminiSandboxOff
+	case harness.PiName:
+		offMode = harness.PiSandboxOff
 	default:
 		return ""
 	}
@@ -315,6 +317,10 @@ func sandboxProfileCapabilityFailure(
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			reason + ", so it cannot represent sandbox profile filesystem rules; " + remedy + ", or a sandbox profile without filesystem rules"}
+	case harness.PiName:
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			fmt.Sprintf("pi has no sandbox of its own, so it cannot represent sandbox profile rules; use tclaude’s sandbox (sandbox implementation %q)",
+				sandboxpolicy.ImplementationTclaudeLayer)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
@@ -862,7 +868,17 @@ func geminiProvenLineageLaunch(s spawnLineageSandbox) bool {
 // They delegate, and are delegated to, as one class — the outer wall is the
 // whole of the containment either way.
 func walledOffLineageLaunch(s spawnLineageSandbox) bool {
-	return copilotProvenLineageLaunch(s) || geminiProvenLineageLaunch(s)
+	return copilotProvenLineageLaunch(s) || geminiProvenLineageLaunch(s) || piProvenLineageLaunch(s)
+}
+
+// piProvenLineageLaunch is pi's single confined launch: tclaude's own wall
+// around a harness with no sandbox at all. pi's only mode, `off`, asserts
+// nothing, so the implementation alone separates a walled pi from an
+// unconfined one.
+func piProvenLineageLaunch(s spawnLineageSandbox) bool {
+	return s.Harness == harness.PiName &&
+		s.HarnessBuiltinMode == harness.PiSandboxOff &&
+		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
 // lineageConfinementMode maps a launch — either side of the relation — onto the
@@ -983,6 +999,11 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		// gated at normalization so the parent arms that return true for every
 		// child cannot admit an unconfined Gemini.
 		if geminiProvenLineageLaunch(s) {
+			return s, true
+		}
+	case harness.PiName:
+		// The same one admitted pair: pi confines nothing itself.
+		if piProvenLineageLaunch(s) {
 			return s, true
 		}
 	case harness.ShellName:

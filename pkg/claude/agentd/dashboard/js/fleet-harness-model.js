@@ -3,12 +3,12 @@
 // update or credential operation there means.
 
 // HARNESS_ORDER is the column order when no node has answered yet.
-export const HARNESS_ORDER = Object.freeze(['claude', 'codex', 'opencode', 'copilot', 'gemini']);
+export const HARNESS_ORDER = Object.freeze(['claude', 'codex', 'opencode', 'copilot', 'gemini', 'pi']);
 
 // CREDENTIAL_FILE_HARNESSES keep their login in files the daemon can copy,
 // back up and restore; others (Copilot, keychain or environment logins) need
 // a login on the node itself.
-export const CREDENTIAL_FILE_HARNESSES = Object.freeze(['claude', 'codex', 'gemini', 'opencode']);
+export const CREDENTIAL_FILE_HARNESSES = Object.freeze(['claude', 'codex', 'gemini', 'opencode', 'pi']);
 
 // SHARE_WARNING is repeated wherever credentials leave this node.
 export const SHARE_WARNING = 'Agents on the target node will act as you with this provider: anything they do is billed to and attributed to your account.';

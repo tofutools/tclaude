@@ -30,7 +30,7 @@ func decodeCredentialRequest(r *http.Request, peer bool) (credentialRequest, err
 		return req, fmt.Errorf("invalid credential request")
 	}
 	switch req.Harness {
-	case "claude", "codex", "gemini", "opencode":
+	case "claude", "codex", "gemini", "opencode", "pi":
 	default:
 		return req, fmt.Errorf("file credentials unsupported for this harness; use its login flow")
 	}

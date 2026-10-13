@@ -115,15 +115,10 @@ func ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode string, gran
 		return &SandboxCapabilityError{Harness: OpenCodeName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"OpenCode has no tclaude OS containment; it can reopen a path beneath a deny (%s) only in soft access-control mode %q, while sandbox %q does not render directory rules",
 			detail, OpenCodeSandboxAccessControl, harnessBuiltinMode)}
-	case GeminiName, CopilotName, ShellName:
+	case GeminiName, CopilotName, ShellName, PiName:
 		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"%s's harness-builtin sandbox cannot render narrower path grants beneath a deny (%s); use --sandbox-impl tclaude-layer to enforce this profile",
 			harnessName, detail)}
-	case PiName:
-		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
-			"pi has no sandbox of its own, so it cannot render narrower path grants beneath a deny (%s); "+
-				"only --sandbox-impl tclaude-layer could enforce this profile, and pi does not support it yet",
-			detail)}
 	default:
 		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"harness %q cannot reopen a path beneath a deny (%s)", harnessName, detail)}

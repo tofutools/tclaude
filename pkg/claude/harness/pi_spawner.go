@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"sort"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -94,9 +95,30 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 	for i, a := range args {
 		quoted[i] = clcommon.ShellQuoteArg(a)
 	}
-	cmd := spec.EnvExports + prefix + spec.PreLaunchScript + binary
+	// Under a filtered network pi runs offline, and that goes last before the
+	// binary so neither the forwarded exports nor a pre-launch script can
+	// turn it back on.
+	cmd := spec.EnvExports + prefix + spec.PreLaunchScript + piFilteredNetworkPrefix(spec.NetworkFiltered) + binary
 	if len(quoted) > 0 {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	return cmd
+}
+
+// piFilteredNetworkPrefix exports PiFilteredNetworkEnv for a filtered launch.
+func piFilteredNetworkPrefix(filtered bool) string {
+	if !filtered {
+		return ""
+	}
+	env := PiFilteredNetworkEnv()
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := ""
+	for _, name := range names {
+		out += "export " + name + "=" + clcommon.ShellQuoteArg(env[name]) + "; "
+	}
+	return out
 }

@@ -1503,6 +1503,11 @@ func buildHarnessCatalog() []dashboardHarness {
 			dh.ProfileRecommendedApproval = harness.OpenCodeApprovalAllowTools
 			dh.ProfileRecommendedSandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
 		}
+		if h.Name == harness.PiName {
+			// pi has no sandbox of its own and never asks before a tool
+			// call, so tclaude's sandbox is what makes its auto posture safe.
+			dh.ProfileRecommendedSandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		}
 		if h.Name == harness.CodexName {
 			if registryErr := codexNativeRegistryReadiness(); registryErr == nil {
 				dh.CodexNativeRegistryReady = true

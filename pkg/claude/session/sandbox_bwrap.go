@@ -2794,6 +2794,10 @@ const (
 	tclaudeLayerConstructedRootTclaudePath = "/.tclaude/bin/tclaude"
 )
 
+// TclaudeLayerConstructedRootTclaudePath is where a constructed root puts the
+// tclaude CLI, for a resume that hands it to an in-pane extension.
+const TclaudeLayerConstructedRootTclaudePath = tclaudeLayerConstructedRootTclaudePath
+
 // tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
 // renderer runs inside a Go test executable but must project the separately
 // built tclaude CLI. Production always resolves the active CLI through the
@@ -3323,6 +3327,15 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 			return root, nil
 		}
 		return filepath.Join(home, ".gemini"), nil
+	case harness.PiName:
+		// pi's agent directory ($PI_CODING_AGENT_DIR, else ~/.pi/agent): its
+		// sessions and lock files, under the read-only floor of
+		// harnessConfigFloorCatalog (which covers auth.json). A session directory that settings move
+		// outside it is a separate requirement (piLayerPathRequirements).
+		if root := harness.PiAgentDir(); root != "" {
+			return root, nil
+		}
+		return filepath.Join(home, ".pi", "agent"), nil
 	case harness.ShellName:
 		// Shell has no native state directory; keep a dedicated writable root
 		// for the shared tclaude-layer launch contract rather than borrowing a

@@ -29,6 +29,7 @@ var recipes = []Recipe{
 	{"opencode", "opencode-ai", "latest", "npm install -g opencode-ai@latest", "opencode upgrade", "https://opencode.ai/docs/"},
 	{"copilot", "@github/copilot", "latest", "npm install -g @github/copilot@latest", "npm install -g @github/copilot@latest", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"},
 	{"gemini", "@google/gemini-cli", "latest", "npm install -g @google/gemini-cli@latest", "npm install -g @google/gemini-cli@latest", "https://geminicli.com/docs/get-started/installation/"},
+	{"pi", "@earendil-works/pi-coding-agent", "latest", "npm install -g @earendil-works/pi-coding-agent@latest", "npm install -g @earendil-works/pi-coding-agent@latest", "https://github.com/earendil-works/pi"},
 }
 
 func Recipes() []Recipe { return append([]Recipe{}, recipes...) }

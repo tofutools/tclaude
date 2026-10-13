@@ -755,15 +755,17 @@ func (s *simSpawner) startPi(args clcommon.SpawnArgs, label, cwd, cmd string, ex
 	s.w.RecordSpawnSandboxImplementation(sim.ConvID, args.SandboxImplementation)
 	s.w.RecordSpawnSandboxPolicy(sim.ConvID, args.EffectiveSandbox)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                    label,
-		TmuxSession:           label,
-		ConvID:                sim.ConvID,
-		Cwd:                   cwd,
-		Status:                "running",
-		Harness:               piHarnessName,
-		SandboxImplementation: args.SandboxImplementation,
-		EffectiveSandbox:      args.EffectiveSandbox,
-		ApprovalPolicy:        args.Approval,
+		ID:                       label,
+		TmuxSession:              label,
+		ConvID:                   sim.ConvID,
+		Cwd:                      cwd,
+		Status:                   "running",
+		Harness:                  piHarnessName,
+		SandboxImplementation:    args.SandboxImplementation,
+		HarnessBuiltinMode:       launchHarnessBuiltinMode(piHarnessName, args.Sandbox, args.SandboxImplementation),
+		HarnessBuiltinModeSource: args.SandboxChosenBy,
+		EffectiveSandbox:         args.EffectiveSandbox,
+		ApprovalPolicy:           args.Approval,
 	}); err != nil {
 		return err
 	}

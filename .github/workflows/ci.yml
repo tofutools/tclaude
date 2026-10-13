@@ -181,6 +181,11 @@ jobs:
           npm install --global @github/copilot@1.0.77
           copilot --version
 
+      - name: Install pinned pi smoke binary
+        run: |
+          npm install --global @earendil-works/pi-coding-agent@1.1.0
+          pi --version
+
       - name: Install pinned stacked sandbox engines
         shell: bash
         run: |
@@ -480,7 +485,7 @@ jobs:
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
           go test ./pkg/claude/session \
-            -run '^(TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke|TestCopilotTclaudeLayerNetworkSmoke)$' \
+            -run '^(TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke|TestCopilotTclaudeLayerNetworkSmoke|TestPiTclaudeLayerSmoke)$' \
             -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
@@ -502,6 +507,16 @@ jobs:
               echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestCopilotTclaudeLayerNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestPiTclaudeLayerSmoke ' "$smoke_log"; then
+            {
+              echo "### pi tclaude-layer smoke did not complete"
+              echo
+              echo "The real production pi spawner did not pass inside both the host-network constructed root and the private routed namespace."
+              echo "tclaude's sandbox is pi's only boundary, so its state-directory grants and read-only floor rest on this explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPiTclaudeLayerSmoke did not report an explicit pass"
             exit 1
           fi
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSSmoke ' "$smoke_log"; then

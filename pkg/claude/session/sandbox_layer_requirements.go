@@ -40,9 +40,35 @@ func tclaudeLayerHarnessRequirements(
 			return nil, err
 		}
 		return harness.CopilotLayerPathRequirements(baseline)
+	case harness.PiName:
+		return piLayerPathRequirements(cwd, stateRoot)
 	default:
 		return nil, nil
 	}
+}
+
+// piLayerPathRequirements declares pi's session store when its environment or
+// settings move it out of the agent directory, the state root: pi writes
+// every turn there.
+func piLayerPathRequirements(cwd, stateRoot string) ([]harness.LayerPathRequirement, error) {
+	dir, err := harness.PiSessionsDir(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pi's session directory: %w", err)
+	}
+	dir, err = canonicalTclaudeLayerStatePath(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pi's session directory: %w", err)
+	}
+	if sandboxpolicy.PathContainsOrEqual(stateRoot, dir) {
+		return nil, nil
+	}
+	return []harness.LayerPathRequirement{{
+		Path:      dir,
+		Kind:      harness.LayerPathDirectory,
+		Access:    harness.LayerPathWrite,
+		MayCreate: true,
+		Source:    "pi session directory",
+	}}, nil
 }
 
 // openCodeLayerPathRequirements declares the OpenCode launch requirements:

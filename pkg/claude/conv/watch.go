@@ -2597,6 +2597,7 @@ func resumeLaunchCmdWithStackedProof(
 		effectiveSandbox.Effective.AccessNotices = append(
 			[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
 	}
+	networkFiltered := false
 	if outerLayer {
 		resolvedModel := harness.ResolvedModelTransport{}
 		plannedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
@@ -2609,10 +2610,22 @@ func resumeLaunchCmdWithStackedProof(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
+		// As in `session new`: private routed open is default-accept, so it
+		// has no route to resolve; resolving it here refused resumes of
+		// launches the spawn admitted.
+		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+			!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
+			networkFiltered = true
+			// pi resumes with the model its session records, so that is
+			// the route to resolve; the others resolve from config alone.
+			resumeModel := ""
+			if h.Name == harness.PiName {
+				resumeModel = harness.PiSessionModel(convID, resumeCwd)
+			}
 			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
 				h,
 				session.ModelTransportLaunchContext{
+					Model:       resumeModel,
 					Cwd:         resumeCwd,
 					Environment: effectiveProfile.Environment,
 					ExtraArgs:   extraArgs,
@@ -2799,6 +2812,26 @@ func resumeLaunchCmdWithStackedProof(
 		ContextFeatures: contextFeatures,
 		// Rides the spec, not the env: the refusal is a `--settings` payload.
 		PeerMessaging: peerMessaging,
+		// pi runs offline under a filtered network, as `session new` launched it.
+		NetworkFiltered: networkFiltered,
+	}
+	if outerLayer && h.Name == harness.PiName {
+		// As in `session new`: an expired login cannot refresh inside the
+		// wall, where pi's auth.json is read-only.
+		if _, err := harness.PiWalledLoginCheck(harness.PiSessionModel(convID, resumeCwd), time.Now()); err != nil {
+			return "", "", nil, err
+		}
+	}
+	// The status extension is a launch flag, not installed config: a resume
+	// that dropped it would leave the agent without live status.
+	statusExtensionDir := ""
+	if h.StatusExtension != nil {
+		if path, extErr := h.StatusExtension(); extErr != nil {
+			slog.Warn("status extension unavailable on resume", "harness", h.Name, "error", extErr, "module", "conv")
+		} else {
+			spec.StatusExtensionPath = path
+			statusExtensionDir = filepath.Dir(path)
+		}
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
@@ -2886,6 +2919,24 @@ func resumeLaunchCmdWithStackedProof(
 			spec.ExecutablePath = resolved.Path
 			spec.ExecutableInterpreter = resolved.Interpreter
 			harnessReadPaths = resolved.ReadPaths
+		}
+		if !stacked && h.Name == harness.PiName && runtime.GOOS == "linux" &&
+			root == sandboxpolicy.RootConstructed {
+			resolved, resolveErr := harness.ResolvePiLaunchExecutable()
+			if resolveErr != nil {
+				return "", "", nil, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
+			}
+			spec.ExecutablePath = resolved.Path
+			spec.ExecutableInterpreter = resolved.Interpreter
+			harnessReadPaths = resolved.ReadPaths
+		}
+		if statusExtensionDir != "" {
+			// As in `session new`: mounted read-only, and reaching tclaude
+			// where the sandbox puts it.
+			harnessReadPaths = append(harnessReadPaths, statusExtensionDir)
+			if root == sandboxpolicy.RootConstructed {
+				spec.TclaudeExecutable = session.TclaudeLayerConstructedRootTclaudePath
+			}
 		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,

@@ -326,6 +326,9 @@ func predictSandboxFilesystem(
 	case harness.ShellName:
 		return predictedSandboxFeature(tier, harness.AccessPredictionRefused,
 			"shell has no harness-builtin filesystem policy; use tclaude-layer for directory rules")
+	case harness.PiName:
+		return predictedSandboxFeature(tier, harness.AccessPredictionRefused,
+			"pi has no sandbox of its own; use tclaude-layer for directory rules")
 	}
 	return predictedSandboxFeature(
 		tier, harness.AccessPredictionRefused,
