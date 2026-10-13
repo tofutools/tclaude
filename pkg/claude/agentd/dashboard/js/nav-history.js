@@ -78,6 +78,16 @@ function usageSubtabAvailable(subtab) {
   return !document.body.classList.contains(`hide-usage-${subtab}`);
 }
 
+// staleFallback is where an unavailable location lands. A Usage view whose
+// half is off falls back to the tab itself while the tab is still up (the hub
+// then shows the remaining half), so an old /costs bookmark lands the same way
+// whether or not the hub has applied its gates yet; everything else falls
+// back to the default tab.
+function staleFallback(loc) {
+  if (loc.tab === 'usage' && tabAvailable('usage')) return normalizeLocation({ tab: 'usage' });
+  return normalizeLocation({ tab: DEFAULT_TAB });
+}
+
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
@@ -378,7 +388,7 @@ function onPopstate(e) {
     && !(current(stack).tab === DEFAULT_TAB && !current(stack).subtab)
     && !pendingTerminalAttach(current(stack))
     && !pendingMapLoad(current(stack))) {
-    stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
+    stack = replaceCurrent(stack, staleFallback(current(stack)));
   }
   activate(current(stack));
   // Re-stamp the current entry with the fresh full stack (heals stale/partial
@@ -432,7 +442,7 @@ export function initNavHistory() {
     && !(loc.tab === DEFAULT_TAB && !loc.subtab)
     && !pendingTerminalAttach(loc)
     && !pendingMapLoad(loc)) {
-    loc = normalizeLocation({ tab: DEFAULT_TAB });
+    loc = staleFallback(loc);
     stack = initialState(loc);
   }
 
