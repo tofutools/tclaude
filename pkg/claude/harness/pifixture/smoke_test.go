@@ -436,7 +436,8 @@ func TestPiAskBufferedStreamedAndResumed(t *testing.T) {
 // A managed launch's skills and rules, registered as the production spawner
 // renders them: the managed skill shadows a same-named skill in the shared
 // ~/.agents/skills root, another ambient skill still loads, and the rules are
-// in the system prompt before and after a compaction.
+// in the system prompt before and after a compaction, beside the operator's
+// own APPEND_SYSTEM.md.
 func TestPiManagedSkillsShadowAmbientAndRulesSurviveCompaction(t *testing.T) {
 	w := NewWorld(t)
 	home := filepath.Dir(w.AgentDir)
@@ -452,15 +453,20 @@ func TestPiManagedSkillsShadowAmbientAndRulesSurviveCompaction(t *testing.T) {
 	managed := filepath.Join(home, "tclaude-managed-fixture")
 	skill(filepath.Join(managed, "skills"), "review", "MANAGED-REVIEW-SKILL")
 	require.NoError(t, os.WriteFile(filepath.Join(managed, "RULES.md"), []byte("MANAGED-RULE-PINEAPPLE"), 0o400))
+	require.NoError(t, os.WriteFile(filepath.Join(w.AgentDir, "APPEND_SYSTEM.md"), []byte("OPERATOR-APPEND-MANGO"), 0o600))
 
 	id := uuid.NewString()
 	launch, err := testharness.ParsePiLaunch(harness.MustGet(harness.PiName).Spawn.BuildCommand(harness.SpawnSpec{
 		SessionID:               id,
 		ApprovalPolicy:          harness.PiApprovalAuto,
+		StatusExtensionPath:     materializedExtension(t),
+		TclaudeExecutable:       w.Recorder,
 		ManagedInstructionsRoot: managed,
 	}))
 	require.NoError(t, err)
-	require.Equal(t, []string{managed}, launch.Extensions)
+	require.Len(t, launch.Extensions, 2)
+	require.Equal(t, managed, launch.Extensions[1])
+	w.ExtraEnv = append(w.ExtraEnv, harness.PiManagedRulesEnvVar+"="+launch.Env[harness.PiManagedRulesEnvVar])
 	args := []string{"--session-id", launch.SessionID, "--model", MockModel}
 	for _, extension := range launch.Extensions {
 		args = append(args, "--extension", extension)
@@ -481,6 +487,7 @@ func TestPiManagedSkillsShadowAmbientAndRulesSurviveCompaction(t *testing.T) {
 		assert.NotContains(t, sent, "AMBIENT-REVIEW-SKILL", "%s: it shadows the ambient one", when)
 		assert.Contains(t, sent, "AMBIENT-DEPLOY-SKILL", "%s: other ambient skills still load", when)
 		assert.Contains(t, sent, "MANAGED-RULE-PINEAPPLE", "%s: the rules are in the system prompt", when)
+		assert.Contains(t, sent, "OPERATOR-APPEND-MANGO", "%s: the operator's APPEND_SYSTEM.md still loads", when)
 	}
 	check(turn("first turn: run TOOL"), "before compaction")
 	compacted := rpc.Send(map[string]any{"type": "compact"})

@@ -42,12 +42,15 @@ func TestPiAskerArgv(t *testing.T) {
 			LaunchPosture: &SpawnSpec{ApprovalPolicy: policy}})
 		assert.Equal(t, wantTools, strings.Contains(strings.Join(argv, " "), "--tools read,grep,find,ls"), "posture %q: %v", policy, argv)
 		assert.Contains(t, argv, "--no-session", "a fresh ephemeral turn is not persisted")
+		assert.Contains(t, argv, "--no-approve", "a brokered one-shot ignores project-local resources")
 	}
+	assert.NotContains(t, a.BuildAskArgv(AskSpec{Print: true, Prompt: "q"}), "--no-approve",
+		"the operator's own ask keeps their project trust")
 
 	assert.Nil(t, a.BuildAskArgv(AskSpec{Print: true, Ephemeral: true, ResumeID: "c1", Prompt: "q"}),
 		"an ephemeral resume without its copy fails closed")
 	assert.Equal(t,
-		[]string{"pi", "--print", "--session", "/tmp/copy.jsonl", "--", "q"},
+		[]string{"pi", "--print", "--session", "/tmp/copy.jsonl", "--no-approve", "--", "q"},
 		a.BuildAskArgv(AskSpec{Print: true, Ephemeral: true, ResumeID: "c1", ResumeFile: "/tmp/copy.jsonl", Prompt: "q",
 			LaunchPosture: &SpawnSpec{ApprovalPolicy: PiApprovalAuto}}))
 }
@@ -106,4 +109,41 @@ func TestPiAskerEphemeralResumeCopiesTheSession(t *testing.T) {
 
 	_, _, err = piAsker{}.PrepareEphemeralResume("bbbb2222-0000-4000-8000-00000000000b")
 	assert.Error(t, err)
+}
+
+// The session store is writable to a walled pi. A session file planted as a
+// symlink (or hard link) to a file the sandbox hides is refused rather than
+// copied into the store, and a seance directory planted as a symlink out of
+// the store cannot steer where the copy is written.
+func TestPiAskerEphemeralResumeRefusesPlantedLinks(t *testing.T) {
+	agentDir := piTestAgentDir(t)
+	cwd := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "id_ed25519")
+	require.NoError(t, os.WriteFile(secret, []byte("SECRET"), 0o600))
+
+	const linked = "cccc3333-0000-4000-8000-00000000000c"
+	planted := piWriteSession(t, agentDir, cwd, linked, piHeader(linked, cwd))
+	require.NoError(t, os.Remove(planted))
+	require.NoError(t, os.Symlink(secret, planted))
+	_, _, err := piAsker{}.PrepareEphemeralResume(linked)
+	assert.Error(t, err, "a symlinked session file is not copied")
+
+	const hard = "dddd4444-0000-4000-8000-00000000000d"
+	planted = piWriteSession(t, agentDir, cwd, hard, piHeader(hard, cwd))
+	require.NoError(t, os.Remove(planted))
+	require.NoError(t, os.Link(secret, planted))
+	_, _, err = piAsker{}.PrepareEphemeralResume(hard)
+	assert.Error(t, err, "a hard-linked session file is not copied")
+
+	const id = "eeee5555-0000-4000-8000-00000000000e"
+	piWriteSession(t, agentDir, cwd, id, piHeader(id, cwd))
+	outside := t.TempDir()
+	seance := filepath.Join(agentDir, "sessions", piSeanceDirName)
+	require.NoError(t, os.RemoveAll(seance))
+	require.NoError(t, os.Symlink(outside, seance))
+	_, _, err = piAsker{}.PrepareEphemeralResume(id)
+	assert.Error(t, err, "a seance directory linked out of the store is refused")
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing was written outside the store")
 }

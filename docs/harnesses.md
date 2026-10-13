@@ -958,7 +958,7 @@ are re-injected after compaction/clear from the frozen launch snapshot.
 | OpenCode | Agent-private SKILL.md paths in the briefing |
 | Copilot | Agent-private SKILL.md paths in the briefing |
 | Gemini | Agent-private SKILL.md paths in the briefing |
-| pi | Native per launch: the launch directory as a command-line package (`--extension`), so a managed skill shadows a same-named ambient one; rules appended with `--append-system-prompt`, which survives compaction |
+| pi | Native per launch: the launch directory as a command-line package (`--extension`), so a managed skill shadows a same-named ambient one; rules appended to the system prompt by tclaude's pi extension every turn, so they survive compaction and pi still loads the operator's `APPEND_SYSTEM.md` |
 
 The fallback lists instructions to read on demand; it does not claim native
 slash-command registration. See [Managed skills and rules](agents-and-groups.md#managed-skills-and-rules).

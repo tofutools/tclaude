@@ -18,6 +18,7 @@
 // Keep it dependency-free: pi loads it with jiti, outside any project.
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 export const TCLAUDE_PI_EXTENSION_VERSION = 3;
 
@@ -35,6 +36,20 @@ function pinnedWindow(raw: string): number {
 	if (!/^[0-9]+$/.test(value)) return 0;
 	const tokens = Number(value);
 	return tokens >= 10_000 && tokens <= 10_000_000 ? tokens : 0;
+}
+// A managed launch's rules (RULES.md, which tclaude wrote read-only for this
+// launch), appended to the system prompt on every turn, so they survive a
+// compaction. pi's own --append-system-prompt would switch off its discovery
+// of the operator's APPEND_SYSTEM.md, so tclaude uses this instead.
+const MANAGED_RULES = managedRules(process.env.TCLAUDE_PI_MANAGED_RULES ?? "");
+
+function managedRules(path: string): string {
+	if (!path) return "";
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "";
+	}
 }
 const CALLBACK_TIMEOUT_MS = 5_000;
 // How long shutdown waits for earlier events before sending SessionEnd.
@@ -306,6 +321,18 @@ export default function tclaudePi(pi: any): void {
 		announced.id = id;
 		emit("SessionStart", ctx, { source: START_SOURCE[event?.reason] ?? "startup" });
 		showStatus(ctx);
+	});
+
+	pi.on("before_agent_start", (event: any) => {
+		if (!MANAGED_RULES) return;
+		try {
+			const options = event?.systemPromptOptions;
+			if (!options) return;
+			const appended = typeof options.appendSystemPrompt === "string" ? options.appendSystemPrompt.trim() : "";
+			options.appendSystemPrompt = appended ? `${appended}\n\n${MANAGED_RULES}` : MANAGED_RULES;
+		} catch {
+			// The briefing still carries the rules.
+		}
 	});
 
 	// pi's own commands (/name, /compact, /new, ...) never reach "input";

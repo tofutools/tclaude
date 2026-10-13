@@ -87,7 +87,7 @@ func (geminiAsker) PrepareEphemeralResume(convID string) (string, func(), error)
 }
 
 func copyGeminiSessionFile(source, target string) error {
-	in, err := os.Open(source)
+	in, err := openSeanceSource(source)
 	if err != nil {
 		return err
 	}

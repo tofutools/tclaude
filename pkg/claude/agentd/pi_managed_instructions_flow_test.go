@@ -18,8 +18,8 @@ import (
 // TestPiManagedSkillsAndRulesRegisterPerLaunch: a pi agent's managed skills
 // and rules are registered on its own launch line, the launch directory as a
 // command-line package (so a managed skill shadows an ambient one of the same
-// name) and RULES.md appended to the system prompt, after tclaude's status
-// extension. Nothing is written to pi's or the shared skill roots, and a
+// name) after tclaude's status extension, which appends RULES.md to the
+// system prompt. Nothing is written to pi's or the shared skill roots, and a
 // library change reaches the agent at its next launch, not the running one.
 func TestPiManagedSkillsAndRulesRegisterPerLaunch(t *testing.T) {
 	f := newFlow(t)
@@ -85,6 +85,8 @@ func piManagedLaunch(t *testing.T, f *testharness.Flow, agentID, convID string) 
 	require.Len(t, launch.Extensions, 2, "status extension, then the managed package: %+v", launch)
 	assert.True(t, launch.LoadsStatusExtension())
 	assert.Equal(t, snapshot.Root, launch.Extensions[1])
-	assert.Equal(t, []string{filepath.Join(snapshot.Root, "RULES.md")}, launch.AppendSystemPrompt)
+	assert.Equal(t, filepath.Join(snapshot.Root, "RULES.md"), launch.Env[harness.PiManagedRulesEnvVar],
+		"the status extension appends the rules")
+	assert.Empty(t, launch.AppendSystemPrompt, "--append-system-prompt would hide the operator's APPEND_SYSTEM.md")
 	return snapshot
 }

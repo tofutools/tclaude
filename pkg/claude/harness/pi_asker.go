@@ -1,13 +1,16 @@
 package harness
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // piAsker builds the `pi` argv for a one-shot `tclaude ask` turn. Like every
@@ -28,6 +31,9 @@ import (
 //     resume is `--session <file>`, the session file resolved as the spawner
 //     resolves it, since by id pi offers to fork a session another working
 //     directory owns.
+//
+// A brokered replay also ignores project-local resources (`--no-approve`):
+// see BuildAskArgv.
 //
 // pi never asks before a tool call, so the posture is tclaude's to set:
 //
@@ -82,6 +88,14 @@ func (piAsker) BuildAskArgv(spec AskSpec) []string {
 	}
 	if spec.Effort != "" {
 		argv = append(argv, "--thinking", spec.Effort)
+	}
+	if spec.LaunchPosture != nil {
+		// A brokered one-shot (a séance, auto-naming) is the daemon's run,
+		// started at an agent's request in the agent's own directory. pi's
+		// project trust there is the operator's, so without this a project
+		// extension the agent wrote would run as the operator, read-only
+		// tools or not.
+		argv = append(argv, "--no-approve")
 	}
 	argv = append(argv, piAskPostureArgs(spec)...)
 	if spec.Prompt != "" {
@@ -197,35 +211,63 @@ func (piAsker) PrepareEphemeralResume(convID string) (string, func(), error) {
 	if err != nil {
 		return "", noop, err
 	}
-	parent := filepath.Join(agentDir, "sessions", piSeanceDirName)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	sessions := filepath.Join(agentDir, "sessions")
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return "", noop, err
 	}
-	// The session store is writable to a walled pi, which could plant this
-	// directory as a symlink to steer where the daemon writes.
-	if info, err := os.Lstat(parent); err != nil || !info.IsDir() {
-		return "", noop, fmt.Errorf("pi: %s is not a plain directory", parent)
-	}
-	dir, err := os.MkdirTemp(parent, "resume-")
+	// The session store is writable to a walled pi, which could plant the
+	// copy's directories as symlinks to steer where the daemon writes or
+	// deletes. Every step goes through a root on the store, which refuses a
+	// path that leaves it.
+	store, err := os.OpenRoot(sessions)
 	if err != nil {
 		return "", noop, err
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	copyPath := filepath.Join(dir, filepath.Base(source))
-	if err := copyPiSessionFile(source, copyPath); err != nil {
+	defer func() { _ = store.Close() }()
+	if err := store.Mkdir(piSeanceDirName, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return "", noop, err
+	}
+	dir := filepath.Join(piSeanceDirName, "resume-"+rand.Text())
+	if err := store.Mkdir(dir, 0o700); err != nil {
+		return "", noop, err
+	}
+	cleanup := func() {
+		if store, err := os.OpenRoot(sessions); err == nil {
+			_ = store.RemoveAll(dir)
+			_ = store.Close()
+		}
+	}
+	copyName := filepath.Join(dir, filepath.Base(source))
+	if err := copyPiSessionFile(source, store, copyName); err != nil {
 		cleanup()
 		return "", noop, err
 	}
-	return copyPath, cleanup, nil
+	return filepath.Join(sessions, copyName), cleanup, nil
 }
 
-func copyPiSessionFile(source, target string) error {
-	in, err := os.Open(source)
+// openSeanceSource opens a session file a séance copies: a regular file with
+// one link, never a symlink or hard link an agent planted in a store it can
+// write, to have the daemon copy a file the sandbox hides out into the store.
+func openSeanceSource(path string) (*os.File, error) {
+	file, info, err := openRegularFile(path, false)
+	if err != nil {
+		return nil, err
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok && uint64(stat.Nlink) != 1 {
+		_ = file.Close()
+		return nil, fmt.Errorf("session file %s has %d links", path, stat.Nlink)
+	}
+	return file, nil
+}
+
+// copyPiSessionFile copies the session file into the store.
+func copyPiSessionFile(source string, store *os.Root, target string) error {
+	in, err := openSeanceSource(source)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	out, err := store.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
@@ -233,5 +275,5 @@ func copyPiSessionFile(source, target string) error {
 		_ = out.Close()
 		return err
 	}
-	return errors.Join(out.Close())
+	return out.Close()
 }

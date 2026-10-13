@@ -40,7 +40,10 @@ var piPermissionExtensionSource []byte
 
 const (
 	// PiHookBinEnvVar carries the absolute tclaude path the extension runs.
-	PiHookBinEnvVar           = "TCLAUDE_PI_HOOK_BIN"
+	PiHookBinEnvVar = "TCLAUDE_PI_HOOK_BIN"
+	// PiManagedRulesEnvVar names a managed launch's RULES.md, which the
+	// status extension appends to the system prompt.
+	PiManagedRulesEnvVar      = "TCLAUDE_PI_MANAGED_RULES"
 	piExtensionFile           = "tclaude-pi.ts"
 	piPermissionExtensionFile = "tclaude-pi-permissions.ts"
 )
@@ -139,33 +142,45 @@ func materializePiExtensionFile(dir, name string, source []byte) error {
 	return nil
 }
 
-// readNoFollow reads a regular file, refusing a symlink in its place.
-func readNoFollow(path string) ([]byte, error) {
-	return readRegularFile(path, false, 1<<20)
-}
-
-// readRegularFile reads at most limit bytes of a regular file, following a
-// final symlink only when follow is set. It opens before it checks, so the
-// file it reads is the one it checked, and opens non-blocking, so a FIFO put
-// in its place fails the check instead of hanging the read.
-func readRegularFile(path string, follow bool, limit int64) ([]byte, error) {
+// openRegularFile opens a regular file for reading, following a final
+// symlink only when follow is set. It opens before it checks, so the file
+// it returns is the one it checked, and opens non-blocking, so a FIFO put in
+// its place fails the check instead of hanging.
+func openRegularFile(path string, follow bool) (*os.File, fs.FileInfo, error) {
 	flags := syscall.O_RDONLY | syscall.O_NONBLOCK | syscall.O_CLOEXEC
 	if !follow {
 		flags |= syscall.O_NOFOLLOW
 	}
 	fd, err := syscall.Open(path, flags, 0)
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: path, Err: err}
+		return nil, nil, &fs.PathError{Op: "open", Path: path, Err: err}
 	}
 	file := os.NewFile(uintptr(fd), path)
-	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, nil, &fs.PathError{Op: "open", Path: path, Err: errors.New("not a regular file")}
+	}
+	return file, info, nil
+}
+
+// readNoFollow reads a regular file, refusing a symlink in its place.
+func readNoFollow(path string) ([]byte, error) {
+	return readRegularFile(path, false, 1<<20)
+}
+
+// readRegularFile reads at most limit bytes of a regular file
+// (openRegularFile).
+func readRegularFile(path string, follow bool, limit int64) ([]byte, error) {
+	file, info, err := openRegularFile(path, follow)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, &fs.PathError{Op: "read", Path: path, Err: errors.New("not a regular file")}
-	}
+	defer func() { _ = file.Close() }()
 	if info.Size() > limit {
 		return nil, &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("larger than %d bytes", limit)}
 	}
