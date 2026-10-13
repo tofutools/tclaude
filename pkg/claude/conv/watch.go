@@ -2816,11 +2816,13 @@ func resumeLaunchCmdWithStackedProof(
 		NetworkFiltered: networkFiltered,
 	}
 	if outerLayer && h.Name == harness.PiName {
-		// As in `session new`: an expired login cannot refresh inside the
-		// wall, where pi's auth.json is read-only.
-		if _, err := harness.PiWalledLoginCheck(harness.PiSessionModel(convID, resumeCwd), time.Now()); err != nil {
+		// As in `session new`: a walled pi runs against tclaude's walled
+		// agent directory, rebuilt from the operator's for this launch.
+		walled, err := harness.PreparePiWalledAgentDir(convID)
+		if err != nil {
 			return "", "", nil, err
 		}
+		spec.HarnessStateDir = walled
 	}
 	// The status extension is a launch flag, not installed config: a resume
 	// that dropped it would leave the agent without live status.
@@ -2940,6 +2942,7 @@ func resumeLaunchCmdWithStackedProof(
 		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
+			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
 			GitWriteDirs:     tclaudeLayerContractWriteDirs,
 			Snapshot:         effectiveSandbox,

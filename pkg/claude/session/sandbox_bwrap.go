@@ -3328,14 +3328,18 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		}
 		return filepath.Join(home, ".gemini"), nil
 	case harness.PiName:
-		// pi's agent directory ($PI_CODING_AGENT_DIR, else ~/.pi/agent): its
-		// sessions and lock files, under the read-only floor of
-		// harnessConfigFloorCatalog (which covers auth.json). A session directory that settings move
-		// outside it is a separate requirement (piLayerPathRequirements).
-		if root := harness.PiAgentDir(); root != "" {
-			return root, nil
+		// A pi launch passes its own walled agent directory, one per
+		// conversation (harness.PreparePiWalledAgentDir), as the state root.
+		// Without one (a plan preview) this names the directory holding the
+		// walled directories for the operator's agent directory
+		// ($PI_CODING_AGENT_DIR, else ~/.pi/agent). The operator's
+		// directory is a read-only requirement and its session store a
+		// writable one (piLayerPathRequirements).
+		host := harness.PiAgentDir()
+		if host == "" {
+			host = filepath.Join(home, ".pi", "agent")
 		}
-		return filepath.Join(home, ".pi", "agent"), nil
+		return harness.PiWalledAgentDir(host, "")
 	case harness.ShellName:
 		// Shell has no native state directory; keep a dedicated writable root
 		// for the shared tclaude-layer launch contract rather than borrowing a

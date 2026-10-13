@@ -2328,15 +2328,18 @@ func runNew(params *NewParams) error {
 		InitialPrompt:                  params.InitialPrompt,
 	}
 	if outerLayer && h.Name == harness.PiName {
-		// pi's auth.json is read-only inside the wall, so an expired OAuth
-		// login could not refresh there: say so now, not on the first call.
-		notice, err := harness.PiWalledLoginCheck(model, time.Now())
+		// A walled pi runs against tclaude's walled agent directory, never
+		// the operator's (pi_walled_agent.go), and one of its own: the
+		// directory is keyed by the conversation it launches.
+		conversation := spawnSpec.ResumeID
+		if conversation == "" {
+			conversation = spawnSpec.SessionID
+		}
+		walled, err := harness.PreparePiWalledAgentDir(conversation)
 		if err != nil {
 			return err
 		}
-		if notice != "" {
-			fmt.Fprintf(os.Stderr, "Note: %s\n", notice)
-		}
+		spawnSpec.HarnessStateDir = walled
 	}
 	if h.StatusExtension != nil {
 		// The extension is the harness's only status channel. Failing to
@@ -2409,6 +2412,7 @@ func runNew(params *NewParams) error {
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
+			StateRoot:        spawnSpec.HarnessStateDir,
 			Cwd:              cwd,
 			GitWriteDirs:     launchGitWriteDirs,
 			Snapshot:         launchSandbox,

@@ -82,6 +82,12 @@ type SpawnSpec struct {
 	// (version checks, telemetry, tool downloads) turns it off; pi exports
 	// PiFilteredNetworkEnv.
 	NetworkFiltered bool
+
+	// HarnessStateDir is the harness state directory a launch inside
+	// tclaude's sandbox runs against instead of the operator's own. pi
+	// exports it as PI_CODING_AGENT_DIR (pi_walled_agent.go); "" leaves the
+	// harness's own default.
+	HarnessStateDir string
 	// RuntimeHTTPProxyEnvironment emits compile-time Codex argument slots which
 	// the gateway bootstrap fills after binding its per-launch endpoints.
 	RuntimeHTTPProxyEnvironment bool
