@@ -804,6 +804,16 @@ button.tool:hover { border-color: #58a6ff; }
   padding: 0 8px 5px; line-height: 1.35;
 }
 
+/* "Show more" closes the server-paged agent list: a quiet full-width text
+   button in the section-help voice, so it reads as list chrome, not a folder. */
+.mailbox-load-more {
+  display: block; width: 100%; margin: 2px 0 6px; padding: 5px 8px;
+  background: none; border: 1px dashed #30363d; border-radius: 6px;
+  color: #8b949e; font: inherit; font-size: 11px; text-align: center; cursor: pointer;
+}
+.mailbox-load-more:hover:not(:disabled) { color: #c9d1d9; border-color: #484f58; }
+.mailbox-load-more:disabled { cursor: default; opacity: .6; }
+
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
    the row and tag it so it reads as demoted, not a live agent. Empty-mailbox
    folders (shown only when their own toggle is on) get the same dim — their

@@ -57,7 +57,6 @@ export function createMailState(initial) {
     ...initial,
     mailboxes: initial.mailboxes || [],
     messages: initial.messages || [],
-    prevGenIds: initial.prevGenIds || new Set(),
     selectedMsgs: initial.selectedMsgs || new Set(),
     selectedBoxes: initial.selectedBoxes || new Set(),
   };
@@ -69,7 +68,17 @@ export function createMailState(initial) {
     payload: mailboxPayload,
     retainPayloadOnRefresh: true,
     retainPayloadOnError: true,
-    onCommit: (payload) => { data.mailboxes = payload.mailboxes || []; touch(); },
+    onCommit: (payload) => {
+      data.mailboxes = payload.mailboxes || [];
+      // The roster is server-paged: these describe the whole filtered agent
+      // list and the open folder, not just the page in mailboxes.
+      data.agentsTotal = payload.agents_total || 0;
+      data.agentsUnread = payload.agents_unread || 0;
+      data.selectedMailbox = payload.selected_mailbox || null;
+      data.selectedValid = payload.selected_valid !== false;
+      data.selectedFor = payload.selected ?? null;
+      touch();
+    },
   });
   const messageRequest = createRequestLifecycle({
     payload: messagePayload,
@@ -90,7 +99,6 @@ export function createMailState(initial) {
       ...data,
       selectedMsgs: new Set(data.selectedMsgs),
       selectedBoxes: new Set(data.selectedBoxes),
-      prevGenIds: new Set(data.prevGenIds),
       mailboxRequest: mailboxRequest.request.value,
       messageRequest: messageRequest.request.value,
     };

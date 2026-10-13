@@ -25,15 +25,22 @@
 //                             (include_empty, server-side, roster only).
 //                             Predecessor ("previous") generations of an
 //                             actor — past conv-ids left behind by a
-//                             reincarnate / Claude Code /clear, recovered
-//                             from the snapshot's replaced[] (the same
-//                             source the Groups tab uses) — are hidden from
-//                             the agent listing, flat AND nested, until the
-//                             #mail-show-prev-gens footer toggle opts them
-//                             in. Purely a client-side roster filter: it
+//                             reincarnate / Claude Code /clear — are hidden
+//                             from the agent listing, flat AND nested, until
+//                             the #mail-show-prev-gens footer toggle opts
+//                             them in (hide_prev_gens, server-side). It
 //                             hides only the left-pane folders, never any
 //                             message — the "all" firehose still counts a
 //                             predecessor's traffic.
+//
+//                             The roster is server-paged: the flat agent
+//                             list is one newest-activity-first page
+//                             (agents_limit, grown by "show more"), the
+//                             filter box is applied server-side to agent
+//                             folders, and an expanded group's member
+//                             folders arrive embedded in its row
+//                             (member_boxes). A folded agent section with no
+//                             filter fetches only its totals.
 //   list    (#mail-list)    → the selected folder's messages, newest
 //                             first, filtered by #filter-messages. Each
 //                             row has a select checkbox and a delete
@@ -76,7 +83,6 @@ import { initMailResize } from './mail-resize.js';
 import { lastSnapshot } from './dashboard.js';
 import { proposalTurn } from './proposals-model.js';
 import { confirmModal, toast } from './refresh.js';
-import { fetchListFull } from './list-paging.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { humanNotificationTargetPage } from './human-notification-attention.js';
 import {
@@ -161,6 +167,10 @@ const DEFAULT_PAGE_SIZE = 50;
 // typist fires one query, not one per character.
 const SEARCH_DEBOUNCE_MS = 220;
 
+// AGENTS_PAGE is how many agent folders the sidebar's flat list asks for at
+// a time; "show more" grows the request by another page.
+const AGENTS_PAGE = 100;
+
 function initialPageSize() {
   const n = parseInt(dashPrefs.getItem(PAGE_SIZE_KEY) || '', 10);
   return PAGE_SIZES.includes(n) ? n : DEFAULT_PAGE_SIZE;
@@ -203,13 +213,20 @@ export const mailState = createMailState({
   // Sticky so the operator's choice survives a reload.
   showEmpty: dashPrefs.getItem(SHOW_EMPTY_KEY) === '1',
   // showPrevGens governs whether predecessor-generation folders appear in
-  // the agent listing. Client-side roster filter (no server param) — the
-  // sidebar paint reads it; the snapshot's replaced[] names the convs.
-  // Sticky so the operator's choice survives a reload.
+  // the agent listing (hide_prev_gens on the roster fetch when off). Sticky
+  // so the operator's choice survives a reload.
   showPrevGens: dashPrefs.getItem(SHOW_PREV_GENS_KEY) === '1',
-  // The set of predecessor-generation conv-ids, kept warm from /api/replaced
-  // (the snapshot no longer ships the full replaced[]). See loadPrevGenIds.
-  prevGenIds: new Set(),
+  // Server-paged roster: agentsLimit is the flat agent page size requested;
+  // agentsTotal / agentsUnread describe every matching agent folder;
+  // selectedMailbox is the open agent folder's entry (sent even when it is
+  // off the page) and selectedValid whether it is still visible under the
+  // retired / empty / previous-generation toggles.
+  agentsLimit: AGENTS_PAGE,
+  agentsTotal: 0,
+  agentsUnread: 0,
+  selectedMailbox: null,
+  selectedValid: true,
+  boxTimer: null,
   messages: [],
   selectedMsgId: null,
   selectedMsgs: new Set(),
@@ -242,11 +259,32 @@ function currentSearch() {
   return (mail.messageQuery || '').trim();
 }
 
+// setBoxQuery stores the sidebar filter and, debounced, re-fetches the
+// roster: agent folders are filtered server-side (the client holds only a
+// page of them), while the few pinned / group rows filter on paint.
 function setBoxQuery(value) {
   mail.boxQuery = String(value ?? '');
   if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
   else dashPrefs.removeItem(BOX_FILTER_KEY);
+  mail.agentsLimit = AGENTS_PAGE;
   paintSidebar();
+  if (mail.boxTimer) clearTimeout(mail.boxTimer);
+  mail.boxTimer = setTimeout(() => { mail.boxTimer = null; refreshRoster(); }, SEARCH_DEBOUNCE_MS);
+}
+
+// refreshRoster re-fetches just the sidebar roster and repaints — for
+// sidebar-only changes (filter, expand, show more, prev-gen toggle).
+async function refreshRoster() {
+  await loadMailboxes();
+  pruneSelections();
+  paintMail();
+}
+
+// loadMoreAgents grows the flat agent page by AGENTS_PAGE.
+function loadMoreAgents() {
+  if (mail.busy) return;
+  mail.agentsLimit += AGENTS_PAGE;
+  refreshRoster();
 }
 
 function setMessageQuery(value) {
@@ -308,16 +346,38 @@ function senderOnline(fromAgent, fromConv, snap) {
     : onlineConvs(snap).has(fromConv);
 }
 
-// prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
-// generations of a still-existing actor — a reincarnate / Claude Code
-// /clear advanced the actor's live pointer and left these behind (JOH-26).
-// The full set now comes from /api/replaced (the snapshot only ships one
-// page); loadPrevGenIds keeps mail.prevGenIds warm while the Messages tab is
-// open. Returns an empty Set until that first fetch lands — fail-open, showing
-// every folder until we actually know which are stale (matching the prior
-// snapshot-derived behaviour).
+// rosterAgentBoxes lists every agent folder entry the roster response
+// carries: the flat page, the expanded groups' nested members, and the
+// selected folder.
+function rosterAgentBoxes() {
+  const out = [];
+  for (const mb of mail.mailboxes) {
+    if (mb.kind === 'agent') out.push(mb);
+    if (mb.kind === 'group') out.push(...(mb.member_boxes || []));
+  }
+  if (mail.selectedMailbox) out.push(mail.selectedMailbox);
+  return out;
+}
+
+// findMailbox looks a folder up across everything the roster carries — the
+// flat agent page alone no longer holds every folder.
+function findMailbox(id) {
+  return mail.mailboxes.find(x => x.id === id) || rosterAgentBoxes().find(x => x.id === id);
+}
+
+// prevGenConvSet is the set of loaded conv-ids that are PREDECESSOR
+// (replaced) generations of a still-existing actor — a reincarnate / Claude
+// Code /clear advanced the actor's live pointer and left these behind
+// (JOH-26). The server flags them (prev_gen) and, while the toggle is off,
+// leaves them out of the roster entirely.
 function prevGenConvSet() {
-  return mail.prevGenIds || new Set();
+  return new Set(rosterAgentBoxes().filter(mb => mb.prev_gen).map(mb => mb.id));
+}
+
+// expandedGroupNames lists the group rows the operator has expanded, so the
+// roster fetch can embed their member folders.
+function expandedGroupNames() {
+  return mail.mailboxes.filter(mb => mb.kind === 'group' && isGroupExpanded(mb.title)).map(mb => mb.title);
 }
 
 // --- data loading ---------------------------------------------------
@@ -328,6 +388,15 @@ async function loadMailboxes() {
     const params = new URLSearchParams();
     if (mail.showRetired) params.set('include_retired', '1');
     if (mail.showEmpty) params.set('include_empty', '1');
+    if (!mail.showPrevGens) params.set('hide_prev_gens', '1');
+    const q = (mail.boxQuery || '').trim();
+    if (q) params.set('q', q);
+    // A folded agent section with no filter shows only its count and unread
+    // badge, so it needs the totals but no folders.
+    const showAgents = !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0;
+    params.set('agents_limit', String(showAgents ? mail.agentsLimit : 0));
+    for (const name of expandedGroupNames()) params.append('expand', name);
+    if (mail.selected) params.set('selected', mail.selected);
     const qs = params.toString();
     const r = await fetch(`/api/mailboxes${qs ? '?' + qs : ''}`, { credentials: 'same-origin' });
     if (!r.ok) throw new Error((await r.text()) || `mailboxes request failed (${r.status})`);
@@ -336,27 +405,6 @@ async function loadMailboxes() {
   } catch (error) {
     mailState.mailboxRequest.failRequest(token, error);
   }
-}
-
-// prevGenFetchedAt throttles the full /api/replaced pull (see loadPrevGenIds).
-let prevGenFetchedAt = 0;
-
-// loadPrevGenIds keeps mail.prevGenIds (the predecessor-generation conv-ids the
-// "hide previous generations" folder filter uses) warm. Predecessor convs only
-// change on reincarnate / /clear, and the full replaced list would be heavy to
-// pull every 2s — so this fetches at most every 15s while the tab is open
-// (force=true on a mutation, which can change the set immediately). Keeps the
-// last set on a transient failure.
-async function loadPrevGenIds(force) {
-  // Gate on prevGenFetchedAt (have we fetched at all), NOT on prevGenIds.size —
-  // an empty replaced set is the common "nothing reincarnated yet" case, and
-  // gating on .size there would defeat the throttle and refetch every 2s.
-  if (!force && prevGenFetchedAt && Date.now() - prevGenFetchedAt < 15000) return;
-  try {
-    const rows = await fetchListFull('replaced');
-    mail.prevGenIds = new Set(rows.map(r => r.conv_id).filter(Boolean));
-    prevGenFetchedAt = Date.now();
-  } catch { /* keep the last cached set */ }
 }
 
 async function loadMessages() {
@@ -414,7 +462,7 @@ async function loadMail() {
   if (mail.inflight || mail.busy) return;
   mail.inflight = true;
   try {
-    await Promise.all([loadMailboxes(), loadMessages(), loadPrevGenIds()]);
+    await Promise.all([loadMailboxes(), loadMessages()]);
     pruneSelections();
     paintMail();
   } finally {
@@ -427,7 +475,7 @@ async function loadMail() {
 // than waiting up to 2s for the next tick.
 async function reloadMail() {
   if (mail.busy) return;
-  await Promise.all([loadMailboxes(), loadMessages(), loadPrevGenIds(true)]);
+  await Promise.all([loadMailboxes(), loadMessages()]);
   pruneSelections();
   paintMail();
 }
@@ -440,43 +488,33 @@ async function reloadMail() {
 // batched delete no-ops it server-side — and folder / search changes
 // clear the set outright.
 function pruneSelections() {
-  const agentIds = new Set(
-    mail.mailboxes.filter(mb => mb.kind === 'agent').map(mb => mb.id));
-  // While "show previous generations" is off, predecessor folders have no
-  // visible row but DO stay in the server roster (the filter is client-side),
-  // so the agentIds check alone won't drop a wipe selection on one. Compute the
-  // hidden-predecessor set once and use it both to prune those box selections
-  // and to snap an open predecessor folder below.
-  const hiddenPrev = mail.showPrevGens ? null : prevGenConvSet();
+  // A ticked folder that left the loaded roster is dropped — e.g. it was
+  // wiped, retired / reincarnated out of view (hide_prev_gens), or fell off
+  // the loaded page — so the wipe-bar count (and a wipe) never covers a row
+  // the operator can no longer see.
+  const agentIds = new Set(rosterAgentBoxes().map(mb => mb.id));
   for (const c of [...mail.selectedBoxes]) {
-    // Drop a checked mailbox that left the roster, OR a predecessor that is
-    // currently hidden — e.g. a live agent ticked for wipe that then
-    // reincarnated / cleared on a background refresh, entering replaced[]:
-    // leaving it checked would let the wipe-bar count (and a wipe touch) a row
-    // the operator can no longer see. The live-refresh twin of
-    // setShowPrevGens's toggle-time cleanup.
-    if (!agentIds.has(c) || (hiddenPrev && hiddenPrev.has(c))) mail.selectedBoxes.delete(c);
+    if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
   }
   // Snap an orphaned folder selection back to the firehose: if the open
-  // folder (agent OR group) is no longer in the roster — e.g. a retired
-  // conv persisted as the selection while retired agents are hidden (the
-  // initial-load twin of setShowRetired's toggle-time snap), a deleted
-  // agent, or a renamed/deleted group — leaving it selected would show its
-  // mail with no matching sidebar row. Checked against the WHOLE roster
-  // (not just agentIds) so a valid group folder is kept. Guarded on a
-  // loaded roster (the pinned all / human folders mean a real roster always
-  // has entries) so a transient empty fetch can't bounce a valid selection;
-  // clearMessages lets the next load fill in the firehose.
+  // folder (agent OR group) is no longer shown — e.g. a retired conv
+  // persisted as the selection while retired agents are hidden (the
+  // initial-load twin of setShowRetired's toggle-time snap), a hidden
+  // predecessor generation, a deleted agent, or a renamed/deleted group —
+  // leaving it selected would show its mail with no matching sidebar row.
+  // Guarded on a loaded roster (the pinned all / human folders mean a real
+  // roster always has entries) so a transient empty fetch can't bounce a
+  // valid selection; clearMessages lets the next load fill in the firehose.
   //
-  // A predecessor folder still lives in the server roster (the prev-gens
-  // filter is client-side), so it stays a "valid" folder — but while "show
-  // previous generations" is off it has no visible sidebar row, so a
-  // persisted / deep-linked selection on one would strand the same way. Treat
-  // a hidden predecessor as not-visible here (the initial-load twin of
-  // setShowPrevGens's toggle-time snap). Reuses the hiddenPrev set computed
-  // above (null when the toggle is on — nothing is hidden).
-  const hiddenPrevGen = !!hiddenPrev && hiddenPrev.has(mail.selected);
-  const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected) && !hiddenPrevGen;
+  // The roster is paged, so an agent folder's visibility comes from the
+  // server: selected_valid says whether the folder named in the request's
+  // selected param is still shown under the retired / empty / previous-
+  // generation toggles, regardless of filter and page. It only speaks for
+  // that folder — after a switch it is unknown until the next roster fetch,
+  // and an unknown folder is kept. Group folders are all in the response.
+  const validFolder = mail.selected.startsWith(GROUP_PREFIX)
+    ? mail.mailboxes.some(mb => mb.id === mail.selected)
+    : mail.selectedFor !== mail.selected || mail.selectedValid;
   if (mail.mailboxes.length
       && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID && mail.selected !== ACCESS_ID
       && !validFolder) {
@@ -581,7 +619,7 @@ function setPageSize(n) {
 // folder, per the current roster. Used to decide whether hiding retired
 // folders would strand the selection.
 function isSelectedRetired() {
-  const mb = mail.mailboxes.find(x => x.id === mail.selected);
+  const mb = findMailbox(mail.selected);
   return !!(mb && mb.retired);
 }
 
@@ -621,14 +659,14 @@ function isGroupExpanded(name) {
 
 // toggleGroupExpand flips a group row's expand state, persists it (a set
 // '1' / removeItem pair, like the other sticky sidebar toggles), and
-// repaints the sidebar so the nested member folders appear / vanish. Pure
-// view state — no server round-trip; the roster already carries each
-// group's member_convs.
+// re-fetches the roster so an expanded group's member folders arrive
+// embedded in its row (the roster only carries them for expanded groups).
 function toggleGroupExpand(name) {
   if (!name) return;
   if (isGroupExpanded(name)) dashPrefs.removeItem(GROUP_EXPAND_PREFIX + name);
   else dashPrefs.setItem(GROUP_EXPAND_PREFIX + name, '1');
   paintSidebar();
+  refreshRoster();
 }
 
 // isAgentsExpanded reports whether the flat "All agent mailboxes" section is
@@ -641,7 +679,8 @@ function isAgentsExpanded() {
 // (set '1' / removeItem, like the other sticky sidebar toggles), and repaints.
 // Folding also drops any pending bulk-wipe selection: the checkboxes that
 // drive it are about to vanish, so leaving the wipe bar counting now-hidden
-// rows would be a trap. Pure view state — no server round-trip.
+// rows would be a trap. Expanding fetches the first page of agent folders
+// (a folded section only carries its totals); folding resets the page.
 function toggleAgentsExpand() {
   if (isAgentsExpanded()) {
     dashPrefs.removeItem(AGENTS_EXPAND_KEY);
@@ -649,14 +688,16 @@ function toggleAgentsExpand() {
   } else {
     dashPrefs.setItem(AGENTS_EXPAND_KEY, '1');
   }
+  mail.agentsLimit = AGENTS_PAGE;
   paintSidebar();
+  refreshRoster();
 }
 
 // isSelectedEmpty reports whether the open folder is an empty-mailbox
 // agent folder (total 0), per the current roster. Used to decide whether
 // hiding empty folders would strand the selection.
 function isSelectedEmpty() {
-  const mb = mail.mailboxes.find(x => x.id === mail.selected);
+  const mb = findMailbox(mail.selected);
   return !!(mb && mb.kind === 'agent' && !mb.total);
 }
 
@@ -682,14 +723,12 @@ function setShowEmpty(on) {
   reloadMail();
 }
 
-// setShowPrevGens flips the "show previous generations" toggle and persists
-// it. Unlike setShowRetired / setShowEmpty this is a pure client-side roster
-// filter — the predecessor convs are already in the cached roster + snapshot,
-// so there is no server param to re-fetch; it just repaints. When hiding
-// predecessor folders it first drops any from the wipe selection (so the
-// wipe-bar count can't reference a row that's no longer visible) and snaps a
-// predecessor folder that happens to be open back to the firehose — the same
-// stranding guard the other two toggles apply.
+// setShowPrevGens flips the "show previous generations" toggle, persists it,
+// and re-fetches the roster (hide_prev_gens). When hiding predecessor
+// folders it first drops any from the wipe selection (so the wipe-bar count
+// can't reference a row that's no longer visible) and snaps a predecessor
+// folder that happens to be open back to the firehose — the same stranding
+// guard the other two toggles apply.
 function setShowPrevGens(on) {
   if (on === mail.showPrevGens || mail.busy) return;
   mail.showPrevGens = on;
@@ -706,37 +745,36 @@ function setShowPrevGens(on) {
       mail.selectedMsgs.clear();
       mail.page = 1;
       dashPrefs.setItem(SELECTED_KEY, ALL_ID);
-      // The open folder changed (predecessor → firehose), so its messages
-      // must be re-fetched; loadMessages repaints when it lands.
-      loadMessages().then(() => { pruneSelections(); paintMail(); });
-      mailState.touch();
-      return;
     }
   }
-  paintMail();
+  mailState.touch();
+  reloadMail();
 }
 
+// mailboxView shapes the sidebar. Pinned and group rows (few, all in the
+// response) are filtered here; agent folders, flat and nested, arrive
+// already filtered and paged by the server, so they are shown as sent.
 function mailboxView() {
   const q = (mail.boxQuery || '').toLowerCase();
-  const boxes = mail.mailboxes.filter(mb => mailboxMatchesFilter(mb, q));
-  const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
+  const pinned = mail.mailboxes.filter(mb => (mb.kind === 'all' || mb.kind === 'human') && mailboxMatchesFilter(mb, q));
   const access = accessRequestsMailbox();
   if (mailboxMatchesFilter(access, q)) pinned.push(access);
-  const groups = boxes.filter(mb => mb.kind === 'group');
-  const prevGens = prevGenConvSet();
-  const agents = boxes.filter(mb => mb.kind === 'agent' && (mail.showPrevGens || !prevGens.has(mb.id)));
-  const agentByID = new Map(agents.map(mb => [mb.id, mb]));
+  const groups = mail.mailboxes.filter(mb => mb.kind === 'group' && mailboxMatchesFilter(mb, q));
+  const agents = mail.mailboxes.filter(mb => mb.kind === 'agent');
   return {
-    empty: boxes.length === 0,
+    empty: pinned.length === 0 && groups.length === 0 && mail.agentsTotal === 0,
     hasRoster: mail.mailboxes.length > 0,
     pinned,
     groups: groups.map(group => ({
       mailbox: group,
       expanded: isGroupExpanded(group.title),
-      members: (group.member_convs || []).map(id => agentByID.get(id)).filter(Boolean),
+      members: group.member_boxes || [],
     })),
     agents,
-    prevGens,
+    agentsTotal: mail.agentsTotal,
+    agentsUnread: mail.agentsUnread,
+    moreAgents: Math.max(0, mail.agentsTotal - agents.length),
+    prevGens: prevGenConvSet(),
     filtering: !!q,
     agentsExpanded: !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0,
   };
@@ -1626,7 +1664,7 @@ async function wipeSelectedMailboxes() {
   const convs = [...mail.selectedBoxes];
   if (!convs.length) return;
   const names = convs.map(c => {
-    const mb = mail.mailboxes.find(x => x.id === c);
+    const mb = findMailbox(c);
     return (mb && (mb.title || mb.short)) || shortId(c);
   });
   const confirmed = await confirmModal({
@@ -1743,7 +1781,7 @@ export const mailController = Object.freeze({
   openHumanNotifications,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
-  toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,
+  toggleGroupExpand, toggleAgentsExpand, loadMoreAgents, toggleBoxSelection, clearBoxSelection,
   wipeSelectedMailboxes,
   messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
   msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,

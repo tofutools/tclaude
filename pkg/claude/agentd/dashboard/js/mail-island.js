@@ -141,7 +141,9 @@ function MailSidebar({ current, controller }) {
     return html`<aside class="mail-sidebar" id="mail-sidebar"><div class="empty">${model.hasRoster
       ? 'No mailboxes match the filter.' : 'No mailboxes.'}</div></aside>`;
   }
-  const agentUnread = model.agentsExpanded ? 0 : model.agents.reduce((sum, mailbox) => sum + (mailbox.unread || 0), 0);
+  // The flat agent list is server-paged, so its count and folded unread
+  // badge come from the roster's totals, not the loaded page.
+  const agentUnread = model.agentsExpanded ? 0 : model.agentsUnread;
   // ↑/↓ walk the folders in painted order — pinned, then each group with its
   // expanded members, then the agent folders. Section headings and expand
   // carets are not folders, so they are simply not on the path.
@@ -165,18 +167,21 @@ function MailSidebar({ current, controller }) {
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
         : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
     </${Fragment}>`)}
-    ${model.agents.length > 0 && (model.filtering
+    ${model.agentsTotal > 0 && (model.filtering
       ? html`<div class="mailbox-section">${wizard ? 'The Rookery' : 'All agent mailboxes'}</div>`
       : html`<button type="button" class=${`mailbox-section mailbox-section-toggle${agentUnread ? ' has-unread' : ''}`}
           aria-expanded=${String(model.agentsExpanded)}
           title=${model.agentsExpanded ? 'Collapse the agent list' : 'Expand the agent list'}
           onClick=${controller.toggleAgentsExpand}><span class="mailbox-section-caret">${model.agentsExpanded ? '▾' : '▸'}</span>
-          ${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agents.length})
+          ${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})
           ${agentUnread > 0 && html` <span class="mailbox-unread">${agentUnread > 99 ? '99+' : agentUnread}</span>`}</button>`)}
-    ${model.agents.length > 0 && model.agentsExpanded && html`<${Fragment}>
+    ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
       <div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
+      ${model.moreAgents > 0 && html`<button type="button" class="mailbox-load-more" disabled=${current.busy}
+        title="Load the next page of agent mailboxes"
+        onClick=${controller.loadMoreAgents}>Show more · ${model.agents.length} of ${model.agentsTotal}</button>`}
     </${Fragment}>`}
   </aside>`;
 }

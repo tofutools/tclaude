@@ -4512,36 +4512,6 @@ func CountMailbox(f MailboxFilter) (int, error) {
 	return n, nil
 }
 
-// DistinctAgentMessageConvs returns every conv-id that appears as a
-// sender or recipient in agent_messages. Small — bounded by the number
-// of agents that ever exchanged mail, not the message count — so the
-// dashboard can resolve each one's display title in Go and decide which
-// match the mailbox search box (feeding MailboxFilter.TitleConvs)
-// without a conv_index join.
-func DistinctAgentMessageConvs() ([]string, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Query(`SELECT from_conv FROM agent_messages WHERE from_conv != ''
-		UNION
-		SELECT to_conv FROM agent_messages WHERE to_conv != ''`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
 // DeleteAgentMessagesByIDs hard-deletes the listed agent_messages rows
 // unconditionally — the dashboard operator's authority (cookie + Origin)
 // stands in for the per-conv party check DeleteAgentMessageByID enforces
