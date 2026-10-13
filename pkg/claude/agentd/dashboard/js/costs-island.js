@@ -514,22 +514,16 @@ export function CostsApp({ state, actions }) {
     if (!current.snapshotLoaded) return;
     document.body.classList.toggle('hide-costs', !current.visible);
     document.body.classList.toggle('cost-whatif', current.whatIfEnabled);
-    if (!current.visible && current.activeTab === 'costs') document.querySelector('nav [data-tab="groups"]')?.click();
-  }, [current.snapshotLoaded, current.visible, current.whatIfEnabled, current.activeTab]);
+  }, [current.snapshotLoaded, current.visible, current.whatIfEnabled]);
+  // Leaving a hidden view and the header's cost links are the Usage hub's
+  // (usage-hub-island.js); this island only keeps its own data fresh.
   useEffect(() => {
-    if (!current.active) return undefined;
+    if (!current.polling) return undefined;
     void actions.load();
     void actions.loadFactor();
     const timer = setInterval(() => void actions.load(), 60_000);
     return () => clearInterval(timer);
-  }, [current.active]);
-  useEffect(() => {
-    const onClick = (event) => {
-      if (event.target.closest?.('[data-goto-tab="costs"]')) document.querySelector('nav [data-tab="costs"]')?.click();
-    };
-    document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
-  }, []);
+  }, [current.polling]);
   // The WHAT-IF caveat leads the tab: it qualifies every figure below it,
   // including the totals in the header, so it has to be read before them.
   // (htm drops the whitespace around a newline, hence the explicit ${' '}

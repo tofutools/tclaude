@@ -374,7 +374,8 @@ func handleDashboardStatic() http.Handler {
 // (handleDashboardTerminals, registered for both /terminals and the
 // /terminals/<agent-id> subtree), not because it is unroutable — it is a
 // bookmarkable location like any other tab. Vegas is a conditional soundtrack
-// tab that is not URL-routed at all.
+// tab that is not URL-routed at all. "costs" is a retired tab kept so old
+// /costs bookmarks still load the SPA, whose router heals them to /usage/costs.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,

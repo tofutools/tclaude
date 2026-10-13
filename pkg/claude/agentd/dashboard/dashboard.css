@@ -9787,21 +9787,93 @@ nav [data-tab="vegas"] { display: none; }
 body.slop nav [data-tab="vegas"],
 body.vegas nav [data-tab="vegas"] { display: flex; }
 
-/* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
-   cost_tab_visible is false — a subscription account with no real spend that
-   hasn't opted into the WHAT-IF view. The nav button AND the section are
-   hidden so the tab vanishes entirely (refresh.js also falls the active tab
-   back to Groups if Costs was showing). The 💲 cost toggle hides too — there's
-   nothing to toggle when no cost data exists. */
-body.hide-costs nav [data-tab="costs"],
-body.hide-costs #tab-costs { display: none; }
+/* Costs auto-hide. body.hide-costs is set by costs-island.js when the
+   server's cost_tab_visible is false — a subscription account with no real
+   spend that hasn't opted into the WHAT-IF view. The 💲 cost toggle hides —
+   there's nothing to toggle when no cost data exists. The Usage tab's Costs
+   view is gated by the hub's own body.hide-usage-costs below. */
 body.hide-costs #groups-cost-toggle { display: none; }
 
-/* Usage-history auto-hide. A cache row is enough to keep the tab visible even
-   between live quota windows; accounts without subscription readings never
-   see an empty destination. */
+/* Usage tab: Overview / Quota / Costs. usage-hub-island.js sets data-subview
+   on the section (one host at a time; absent = hub failed to load, show both
+   halves) and mirrors each half's server gate onto body.hide-usage-quota /
+   body.hide-usage-costs. The tab itself hides only when both halves are off:
+   accounts with neither quota readings nor costs never see an empty
+   destination. */
 body.hide-usage-tab nav [data-tab="usage"],
 body.hide-usage-tab #tab-usage { display: none; }
+#tab-usage[data-subview]:not([data-subview="quota"]) #usage-root,
+#tab-usage[data-subview]:not([data-subview="costs"]) #costs-root,
+body.hide-usage-quota #usage-root,
+body.hide-usage-costs #costs-root { display: none; }
+.usage-subnav {
+  display: inline-flex; gap: 2px; margin: 0 0 16px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
+}
+.usage-subtab {
+  color: #7d8590; font-size: 13px; padding: 6px 16px; border-radius: 4px; text-decoration: none;
+}
+.usage-subtab:hover { color: #d4d4d4; }
+.usage-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.usage-overview .empty { margin: 0; }
+.usage-ov-kpis, .usage-ov-quota-grid {
+  display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.usage-ov-card {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 7px;
+  color: inherit; text-decoration: none;
+}
+.usage-ov-card:hover { border-color: #58a6ff; }
+.usage-ov-card.danger, .usage-ov-card.at-risk { border-color: rgba(248, 81, 73, .55); }
+.usage-ov-value { font-size: 22px; font-weight: 600; color: #d4d4d4; line-height: 1.2; }
+.usage-ov-card.money .usage-ov-value { color: #3fb950; }
+.usage-ov-card.danger .usage-ov-value { color: #f85149; }
+.usage-ov-card.warn .usage-ov-value { color: #d29922; }
+.usage-ov-meta { color: #7d8590; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-ov-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.usage-ov-window { display: block; font-size: 14px; font-weight: 600; }
+.usage-ov-pct { font-size: 20px; font-weight: 600; color: #d4d4d4; }
+.usage-ov-spark { width: 100%; height: 40px; margin: 6px 0 2px; }
+.usage-ov-spark.empty { border-top: 1px dashed #2a3340; }
+.usage-ov-spark .limit { stroke: rgba(248, 81, 73, .35); stroke-width: 1; }
+.usage-ov-spark .reset { stroke: #a371f7; stroke-dasharray: 3 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-ov-spark .observed { fill: none; stroke: #58a6ff; stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+.usage-ov-spark .forecast { stroke: #e3a341; stroke-dasharray: 4 3; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.usage-ov-status { font-size: 12px; font-weight: 600; color: #8b949e; }
+.usage-ov-status.danger { color: #f85149; }
+.usage-ov-status.warn { color: #d29922; }
+.usage-ov-status.good { color: #3fb950; }
+.usage-ov-heading {
+  display: flex; align-items: baseline; gap: 12px; margin: 22px 0 10px;
+  color: #8b949e; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+}
+.usage-ov-heading a { color: #58a6ff; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; }
+.usage-ov-heading a:hover { text-decoration: underline; }
+.usage-ov-spend { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
+.usage-ov-chart { height: 170px; padding: 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; }
+.usage-ov-chart svg { width: 100%; height: 100%; display: block; }
+.usage-ov-chart .bar { fill: rgba(63, 185, 80, .55); }
+.usage-ov-chart .bar.what-if { fill: rgba(88, 166, 255, .5); }
+.usage-ov-chart .cumulative { fill: none; stroke: #d4d4d4; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-ov-chart .projection { stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
+.usage-ov-agents { width: 100%; border-collapse: collapse; border: 1px solid #2a3340; border-radius: 7px; }
+.usage-ov-agents th { text-align: left; color: #8b949e; font-size: 11px; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid #2a3340; }
+.usage-ov-agents td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
+.usage-ov-agents td.cost { color: #3fb950; text-align: right; white-space: nowrap; }
+.usage-ov-agents th:last-child { text-align: right; }
+.usage-ov-note { color: #7d8590; font-size: 12px; margin: 10px 0 0; }
+@media (max-width: 760px) {
+  .usage-ov-spend { grid-template-columns: 1fr; }
+}
+body.wizard .usage-subtab { color: #b39ddb; }
+body.wizard .usage-subtab:hover { color: #f3e6c0; }
+body.wizard .usage-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+body.wizard .usage-ov-card { background: #140f28; border-color: #3a2a63; }
+body.wizard .usage-ov-chart, body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
 
 /* Plugins-tab auto-hide. body.hide-plugins is set by refresh.js when the
    server's plugins_tab_visible is false — no plugins installed, no broken

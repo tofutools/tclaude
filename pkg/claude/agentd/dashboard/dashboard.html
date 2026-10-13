@@ -299,8 +299,7 @@
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔧</span> <span class="tab-title">Contraptions</span></span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
-  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📈</span> <span class="tab-title">Reserves</span></span></a>
-  <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Coffers</span></span></a>
+  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
   <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
   <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕯</span> <span class="tab-title">Runes</span></span></a>
   <a data-tab="debug" href="/debug" title="Debug — daemon self-diagnostics: dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Debug</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🧪</span> <span class="tab-title">Alchemy</span></span></a>
@@ -486,20 +485,19 @@
       </details>
     </div>
   </section>
-  <!-- Costs tab — per-day API cost bar chart (with a month projection
-       on the "This month" span, weekday-based by default or per-day when
-       "include weekends" is on) followed by a per-agent breakdown.
-       Rendered by costs.js from /api/costs, fetched on tab activation /
-       span change rather than the 2s snapshot tick. -->
-  <section id="tab-costs">
-    <!-- Preact exclusively owns Costs controls, summaries, factor editing and
-         table. costs-chart.js owns the imperative chart below that boundary. -->
-    <div id="costs-root"></div>
-  </section>
-  <!-- Subscription quota history and post-reset forecasts. Preact owns the
-       cards and declarative SVG line charts inside this stable feature host. -->
+  <!-- Usage tab — three views under one nav tab (usage-hub-island.js owns
+       the subnav, the Overview, and data-subview on this section, which CSS
+       uses to show one host at a time):
+         Overview  /usage         spend + quota at a glance
+         Quota     /usage/quota   subscription quota history and forecasts
+         Costs     /usage/costs   real and WHAT-IF spend (formerly /costs)
+       Each host is its own Preact island; costs-chart.js owns the imperative
+       chart inside the Costs host. Without the hub (asset failure) the
+       section has no data-subview and both halves stay visible. -->
   <section id="tab-usage">
+    <div id="usage-hub-root"></div>
     <div id="usage-root"></div>
+    <div id="costs-root"></div>
   </section>
   <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
        refresh, and stable keyed command rows inside this feature host. -->

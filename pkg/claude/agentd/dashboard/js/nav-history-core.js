@@ -40,7 +40,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'vegas',
+  'access', 'messages', 'usage', 'audit', 'logs', 'debug', 'config', 'vegas',
   'map',
   'fleet-admin',
 ]);
@@ -50,6 +50,8 @@ export const KNOWN_TABS = new Set([
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor.
+//   - Usage: the quota forecasts and the costs views; the bare tab is the
+//     Overview that summarises both.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -57,6 +59,15 @@ export const KNOWN_SUBTABS = {
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
+  usage: new Set(['quota', 'costs']),
+};
+
+// TAB_ALIASES maps retired top-level tabs onto the location that replaced
+// them, so an old bookmark, a persisted history stack, or a ?tab= link keeps
+// landing on the same view. Costs became the Usage tab's costs subtab; toPath
+// emits the new path, so init/popstate heals the address bar in place.
+const TAB_ALIASES = {
+  costs: { tab: 'usage', subtab: 'costs' },
 };
 
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
@@ -86,6 +97,7 @@ export function defaultLocation() {
 // are OMITTED (not set to undefined) so structural equality via locEquals and
 // JSON round-trips stay stable. An unknown tab collapses to the default.
 export function normalizeLocation(loc) {
+  if (loc && Object.hasOwn(TAB_ALIASES, loc.tab)) loc = TAB_ALIASES[loc.tab];
   const tab = loc && KNOWN_TABS.has(loc.tab) ? loc.tab : DEFAULT_TAB;
   const out = { tab };
   const subs = KNOWN_SUBTABS[tab];

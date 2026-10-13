@@ -31,11 +31,11 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must("≈${fmtUSD(virtualCost)}", "WHAT-IF cost is prefixed ≈ to read as an estimate")
 
 	// CSS: the WHAT-IF span is hidden unless body.cost-whatif; the 💲 toggle
-	// suppresses the badge; the Costs nav button + section hide on body.hide-costs.
+	// suppresses the badge; the Usage tab's Costs view hides on body.hide-usage-costs.
 	must("body.cost-whatif .agent-harness .harness-cost-whatif", "WHAT-IF cost shows only in WHAT-IF mode")
 	must("body.agent-cost-hidden .agent-harness .harness-cost", "the 💲 toggle hides the per-agent cost badge")
-	must(`body.hide-costs nav [data-tab="costs"]`, "the Costs nav button hides when there's nothing to show")
-	must("body.hide-costs #tab-costs", "the Costs section hides alongside its nav button")
+	must("body.hide-usage-costs #costs-root", "the Costs view hides when there's nothing to show")
+	must(`body.hide-usage-tab nav [data-tab="usage"]`, "the Usage tab hides when neither half has anything to show")
 	must(".cost-whatif-banner", "the WHAT-IF banner has a style rule")
 
 	// dashboard.html: the banner, the Config-tab opt-in checkbox, the toggle.

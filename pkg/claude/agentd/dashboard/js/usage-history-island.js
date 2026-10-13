@@ -121,7 +121,7 @@ function UsageSeriesCard({
   const scope = usageScopeLabel(series, wizard);
   const sampled = latest ? `${w('sampled', 'scried')} ${formatUsageTime(latest.at, now)}` : w('no sample', 'no reading');
   const reset = latest?.resets_at ? formatUsageResetCountdown(latest.resets_at, now, wizard) : '';
-  return html`<article class="usage-series-card">
+  return html`<article class="usage-series-card" data-series-key=${usageSeriesKeyOf(series)}>
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
@@ -201,17 +201,13 @@ export function UsageHistoryApp({ state, actions }) {
   const current = state.view.value;
   const wizard = useWizardTheme();
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
+  // Tab and subtab visibility belong to the Usage hub (usage-hub-island.js).
   useEffect(() => {
-    if (!current.snapshotLoaded) return;
-    document.body.classList.toggle('hide-usage-tab', !current.visible);
-    if (!current.visible && current.activeTab === 'usage') document.querySelector('nav [data-tab="groups"]')?.click();
-  }, [current.snapshotLoaded, current.visible, current.activeTab]);
-  useEffect(() => {
-    if (!current.active) return undefined;
+    if (!current.polling) return undefined;
     void actions.load();
     const timer = setInterval(() => void actions.load(), 60_000);
     return () => clearInterval(timer);
-  }, [current.active]);
+  }, [current.polling]);
   const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
   const setDefaultSpan = (hours) => { if (state.setDefaultHours(hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);

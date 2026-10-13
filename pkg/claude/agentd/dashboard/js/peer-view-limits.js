@@ -14,8 +14,9 @@ import { shellToast } from './shell-state.js';
 // them. Groups is the snapshot itself; the map is this operator's own fleet
 // view, and Terminals holds this browser's own terminals (a peer's agent
 // opens there through this node's federation bridge). A tab absent here has
-// no peer route at all.
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+// no peer route at all. Usage is gated on costs: its Costs view is the only
+// half a peer serves (the quota history is this node's own accounts).
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
@@ -83,7 +84,7 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
 function tabLabel(tab) {
-  return tab === 'costs' ? 'costs' : tab === 'audit' ? 'its audit log' : `the ${tab} tab`;
+  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'audit' ? 'its audit log' : `the ${tab} tab`;
 }
 
 export function limitHint(state, what, node) {

@@ -33,7 +33,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
+  'messages', 'usage', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -70,9 +70,18 @@ function groupsRouteMapAvailable() {
   return !document.body.classList.contains('hide-groups-route-map');
 }
 
+// The Usage tab's quota and costs subtabs are gated independently (a
+// subscription with no quota history, costs disabled in config); the usage hub
+// island mirrors each onto a body class, so a bookmarked /usage/costs whose
+// half is off falls back like any other stale target.
+function usageSubtabAvailable(subtab) {
+  return !document.body.classList.contains(`hide-usage-${subtab}`);
+}
+
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
-    && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable());
+    && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
+    && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
 // pendingTerminalAttach reports whether `loc` is a terminals deep link that is
@@ -118,6 +127,11 @@ function activeLocationFromDOM() {
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'jobs') {
     const island = featureState('jobs');
+    if (island) return normalizeLocation(island.location.value);
+  } else if (tab === 'usage') {
+    // Overview / Quota / Costs is island state (a signal, not an active class
+    // the DOM could be trusted to have committed yet), so ask the island.
+    const island = featureState('usage-hub');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'terminals') {
     // Which terminal is being viewed is island state the DOM never spells out
@@ -166,6 +180,12 @@ function requestJobsLocation(loc) {
   }));
 }
 
+function requestUsageLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 function requestGroupsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
@@ -197,6 +217,10 @@ function activate(loc) {
       requestTerminalsLocation(loc);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
+    } else if (loc.tab === 'usage') {
+      // Always sent, bare /usage included: Back from /usage/costs to /usage
+      // must return the island to its Overview.
+      requestUsageLocation(loc);
     } else if (loc.tab === 'groups') {
       // Bare Groups is already the default Members view on boot. Avoid
       // broadcasting a synthetic restore for stale-target fallback (for
@@ -391,8 +415,10 @@ export function initNavHistory() {
     // canonical /<tab>).
     loc = urlLoc;
     if (loc.tab === DEFAULT_TAB) {
+      // A retired tab (?tab=costs) resolves through the core's aliases first.
       const legacyTab = new URLSearchParams(window.location.search).get('tab');
-      if (legacyTab && ROUTABLE_TABS.has(legacyTab)) loc = normalizeLocation({ tab: legacyTab });
+      const legacy = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
+      if (legacy && ROUTABLE_TABS.has(legacy.tab)) loc = legacy;
     }
     stack = initialState(loc);
   }

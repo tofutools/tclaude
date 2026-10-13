@@ -158,16 +158,36 @@ test('a stray third segment under terminals is dropped', () => {
 test('a tab-level selection is refused on tabs that cannot show one', () => {
   // Only terminals has a tab-level selection; elsewhere a bare tab + selection
   // is meaningless and must not survive normalization into the URL.
-  assert.deepEqual(normalizeLocation({ tab: 'costs', selection: 'x' }), { tab: 'costs' });
+  assert.deepEqual(normalizeLocation({ tab: 'audit', selection: 'x' }), { tab: 'audit' });
   assert.deepEqual(normalizeLocation({ tab: 'groups', selection: 'x' }), { tab: 'groups' });
-  // /costs/x parses its second segment as a subtab, which costs does not have.
-  assert.deepEqual(fromPath('/costs/x'), { tab: 'costs' });
+  // /audit/x parses its second segment as a subtab, which audit does not have.
+  assert.deepEqual(fromPath('/audit/x'), { tab: 'audit' });
 });
 
-test('toPath / fromPath round-trip includes the Usage tab', () => {
+test('toPath / fromPath round-trip the Usage tab and its subtabs', () => {
   const usage = { tab: 'usage' };
   assert.equal(toPath(usage), '/usage');
   assert.deepEqual(fromPath('/usage'), usage);
+  for (const subtab of ['quota', 'costs']) {
+    const loc = { tab: 'usage', subtab };
+    assert.equal(toPath(loc), `/usage/${subtab}`);
+    assert.deepEqual(fromPath(`/usage/${subtab}`), loc);
+  }
+  // An unknown Usage view degrades to the Overview.
+  assert.deepEqual(fromPath('/usage/nope'), usage);
+  assert.ok(!locEquals({ tab: 'usage' }, { tab: 'usage', subtab: 'costs' }), 'Overview and Costs are distinct entries');
+});
+
+test('the retired Costs tab heals to the Usage tab costs view', () => {
+  // Old bookmarks, ?tab=costs links, and persisted history stacks all name the
+  // retired tab; each must land on the same view and serialize to the new path.
+  assert.deepEqual(fromPath('/costs'), { tab: 'usage', subtab: 'costs' });
+  assert.deepEqual(fromPath('/costs/x'), { tab: 'usage', subtab: 'costs' });
+  assert.deepEqual(normalizeLocation({ tab: 'costs' }), { tab: 'usage', subtab: 'costs' });
+  assert.equal(toPath({ tab: 'costs' }), '/usage/costs');
+  const revived = reviveState(serializeStack(push(initialState(groups), { tab: 'costs' })), fromPath('/usage/costs'));
+  assert.ok(revived, 'a stack persisted before the merge revives on the healed URL');
+  assert.deepEqual(current(revived), { tab: 'usage', subtab: 'costs' });
 });
 
 test('go() jumps to an absolute index and clamps-ignores out-of-range', () => {

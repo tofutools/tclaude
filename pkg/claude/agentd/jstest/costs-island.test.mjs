@@ -22,8 +22,8 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
-  const activeTab = harness.signals.signal('costs');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  const activeTab = harness.signals.signal('usage');
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, payload());
@@ -41,7 +41,7 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assertSameNode(harness.document.body.querySelector('.cost-tip'), tooltip, 'snapshot refresh preserves the open chart tooltip');
   await harness.act(() => { activeTab.value = 'groups'; });
   assertAbsent(harness.document.body.querySelector('.cost-tip'), 'leaving Costs removes its body-level tooltip');
-  await harness.act(() => { activeTab.value = 'costs'; });
+  await harness.act(() => { activeTab.value = 'usage'; });
 
   const row = mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"]');
   const id = row.querySelector('.id');
@@ -195,7 +195,7 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   ]);
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
   const activeTab = harness.signals.signal('groups');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage });
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, payload());
@@ -255,8 +255,8 @@ test('Costs island keeps its cross-line word gaps and leads with the WHAT-IF cav
     model: 'opus', cost_usd: 1, real_cost_usd: 1, cost_kind: 'real', continued: true,
   });
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
-  const activeTab = harness.signals.signal('costs');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  const activeTab = harness.signals.signal('usage');
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, chained);
@@ -299,8 +299,8 @@ test('Costs rows carry an accurate, banner-linked WHAT-IF marker', async (t) => 
     model: 'opus', cost_usd: 0, cost_kind: '',
   });
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
-  const activeTab = harness.signals.signal('costs');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  const activeTab = harness.signals.signal('usage');
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, mixed);
@@ -362,8 +362,8 @@ test('Costs banner shows for row kinds that carry no split fields', async (t) =>
     }],
   };
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
-  const activeTab = harness.signals.signal('costs');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  const activeTab = harness.signals.signal('usage');
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, legacy);
@@ -392,8 +392,8 @@ test('Copilot WHAT-IF tooltips identify native credits and subscription value', 
     title: 'Copilot', harness: 'copilot', model: 'gpt-5', cost_usd: 0.43,
     what_if_cost_usd: 0.43, virtual_cost_credits: 43, cost_kind: 'what_if' }];
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
-  const activeTab = harness.signals.signal('costs');
-  const state = createCostsState({ snapshot, activeTab, prefs: storage });
+  const activeTab = harness.signals.signal('usage');
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot, activeTab, prefs: storage });
   state.initialize();
   state.beginRequest(1);
   state.commitRequest(1, copilot);
@@ -416,7 +416,7 @@ test('Multiplier popover edits harnesses with reset buttons before aligned input
   const [{ createCostsState }, { CostsApp }] = await Promise.all([
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
-  const state = createCostsState({ snapshot: harness.signals.signal({ cost_tab_visible: true }), activeTab: harness.signals.signal('groups'), prefs: storage });
+  const state = createCostsState({ subview: harness.signals.signal('costs'), snapshot: harness.signals.signal({ cost_tab_visible: true }), activeTab: harness.signals.signal('groups'), prefs: storage });
   state.commitFactor(state.beginFactor(''), { loaded: true, raw: '2', overrides: { claude: '1.2', codex: '1' } });
   const saves = [];
   const actions = {
