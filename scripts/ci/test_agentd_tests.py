@@ -23,7 +23,7 @@ while not (root / ("other" if side=="domain" else "domain")).exists():
         sys.exit(1)
     time.sleep(.005)
 names = ["TestDashboardNewFeature", "TestFederationMail", "TestLifecycle",
-         "TestFutureFeature", "ExampleCLI", "FuzzParser"]
+         "TestFutureFeature", "TestSpawnNewHarness", "ExampleCLI", "FuzzParser"]
 selected = [name for name in names if bool(re.match(pattern, name)) == (flag=="-run")]
 (root / (side+".names")).write_text("\n".join(selected))
 failed = False
@@ -62,7 +62,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertFalse(domain & other)
         self.assertEqual(domain | other, {"TestDashboardNewFeature", "TestFederationMail",
-                         "TestLifecycle", "TestFutureFeature", "ExampleCLI", "FuzzParser"})
+                         "TestLifecycle", "TestFutureFeature", "TestSpawnNewHarness", "ExampleCLI", "FuzzParser"})
 
     def test_failure_names_and_assertions_are_reported_by_side(self):
         for name in ("TestFederationMail", "TestLifecycle"):
