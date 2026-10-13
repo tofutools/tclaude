@@ -75,7 +75,11 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
     'mode-specific tokens remain inside the fixed data region');
   const buttons = () => [...mounted.container.querySelectorAll('.usage-unit-switch button')];
   assert.match(mounted.container.textContent, /38%/);
+  assert.equal(mounted.container.querySelector('.uwhatif'), null, 'usage mode is not an estimate');
   await harness.act(() => buttons()[1].click());
+  const marker = mounted.container.querySelector('.usrc .uwhatif');
+  assert.equal(marker?.textContent, '?', 'cost mode marks the row WHAT-IF compactly');
+  assert.match(marker.getAttribute('title'), /WHAT-IF estimate/, 'the tooltip explains the estimate');
   assert.equal(buttons()[1].textContent, '≈$', 'the selector identifies WHAT-IF dollar mode');
   assert.equal(mounted.container.querySelector('.ucost-amt').textContent, '$1.75',
     'the value does not repeat the selector approximation mark');

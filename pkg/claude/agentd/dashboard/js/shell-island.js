@@ -10,6 +10,7 @@ import {
   globalActivityView,
   messagesBadgeView,
   usageView,
+  WHAT_IF_HINT,
 } from './shell-model.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
@@ -80,7 +81,8 @@ function Usage({ state }) {
                   aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
               </span>` : null}
             </span>
-            <span class="usrc">${line.label}</span>
+            <span class="usrc">${line.label}${line.whatIf ? html`<span class="uwhatif" title=${WHAT_IF_HINT}
+              aria-label=${WHAT_IF_HINT}>?</span>` : null}</span>
           </span>
           <span class="usage-values">
             ${line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`)}

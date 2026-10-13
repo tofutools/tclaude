@@ -58,6 +58,11 @@ function unitsToken(key, win) {
   };
 }
 
+// WHAT_IF_HINT explains the ? marker a usage line carries while it shows a
+// WHAT-IF estimate rather than real spend; the label itself stays short.
+export const WHAT_IF_HINT = 'WHAT-IF estimate: this usage priced at pay-per-token list rates. '
+  + 'It is not a real charge (subscription or sign-in usage is not billed per token).';
+
 function providerLabel(provider) {
   if (provider === 'anthropic') return 'Anthropic';
   if (provider === 'openai') return 'OpenAI';
@@ -116,7 +121,7 @@ export function usageView(usage, modes = {}) {
     const canCost = tokens.length > 0 && !!usage?.what_if_enabled;
     const mode = canCost && modes[key] === 'cost' ? 'cost' : 'usage';
     return {
-      key, label, mode, modes: canCost ? ['usage', 'cost'] : [],
+      key, label, mode, modes: canCost ? ['usage', 'cost'] : [], whatIf: mode === 'cost',
       tokens: mode === 'cost'
         ? [costToken(`${key}-whatif`, estimate.today_cost_usd, estimate.total_cost_usd)]
         : tokens,
@@ -152,6 +157,7 @@ export function usageView(usage, modes = {}) {
     const mode = availableModes.includes(modes.copilot) ? modes.copilot : 'usage';
     lines.push({
       key: 'copilot', label: 'Copilot:', mode, modes: availableModes.length > 1 ? availableModes : [],
+      whatIf: mode === 'cost',
       tokens: mode === 'units' ? [unitsToken('copilot-monthly-units', copilotUsage.monthly)]
         : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd)]
         : copilot,
@@ -168,8 +174,8 @@ export function usageView(usage, modes = {}) {
   if (usage?.what_if_enabled) for (const [provider, estimate] of whatIfCosts) {
     if (withQuota.has(provider) || !(Number(estimate.total_cost_usd) > 0)) continue;
     lines.push({
-      key: `whatif-${provider}`, label: `${providerLabel(provider)} WHAT-IF:`,
-      mode: 'cost', modes: [],
+      key: `whatif-${provider}`, label: `${providerLabel(provider)}:`,
+      mode: 'cost', modes: [], whatIf: true,
       tokens: [costToken(`whatif-cost-${provider}`, estimate.today_cost_usd, estimate.total_cost_usd)],
     });
   }
