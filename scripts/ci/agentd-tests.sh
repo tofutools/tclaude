@@ -3,10 +3,11 @@
 # processes concurrently on the same runner. Plain go test remains unchanged.
 set -euo pipefail
 
-# UI/federation and lifecycle flows form one domain, balanced from measured
-# timings. -skip gives the other process its exact complement, including
+# UI/federation, lifecycle, pi and real-Git flows form one domain. The latter
+# two balance macOS's slower subprocess fixtures without overloading Linux.
+# -skip gives the other process its exact complement, including
 # examples and fuzz seeds; new tests need no manually maintained list.
-domain='^Test(Dashboard|Federation|Peer|Operator|Spawn|Morph|Clone|Reincarnate)'
+domain='^Test(Dashboard|Federation|Peer|Operator|Spawn|Morph|Clone|Reincarnate|Pi|RealGit)'
 for arg in "$@"; do
   case "$arg" in
     -run*|-skip*|-list*|-coverprofile*)

@@ -163,6 +163,9 @@ func TestCodexPendingSweeperPreservesResolvedDriveAndProvenance(t *testing.T) {
 			f := newFlow(t)
 			t.Cleanup(agentd.SetInjectSettleDelayForTest(0))
 			t.Cleanup(agentd.SetAwaitCodexAppServerReadyForTest(func(string) bool { return true }))
+			// Drain post-init before restoring this readiness stub, including when
+			// an assertion aborts the subtest. newFlow's earlier cleanup runs later.
+			t.Cleanup(agentd.WaitForBackgroundForTest)
 			group := f.HaveGroup("pending-drive")
 			convID := "019ec113-1000-7000-8000-" + fmt.Sprintf("%012d", len(tc.name))
 			label := "pending-drive-" + strings.ReplaceAll(tc.name, "-", "_")
@@ -177,6 +180,7 @@ func TestCodexPendingSweeperPreservesResolvedDriveAndProvenance(t *testing.T) {
 			}))
 
 			agentd.RunPendingSpawnSweepForTest()
+			agentd.WaitForBackgroundForTest()
 
 			posture, err := db.RecordedLaunchPostureForConv(convID)
 			require.NoError(t, err)
@@ -188,7 +192,6 @@ func TestCodexPendingSweeperPreservesResolvedDriveAndProvenance(t *testing.T) {
 			require.NotNil(t, posture.CodexStateRoot)
 			assert.Equal(t, stateRoot, *posture.CodexStateRoot)
 			if tc.selected {
-				time.Sleep(20 * time.Millisecond)
 				for _, sent := range f.World.Tmux.Sent() {
 					assert.NotEqual(t, tmux+":0.0", sent.Target,
 						"a ready runtime must never be followed by a false posture and pane delivery")

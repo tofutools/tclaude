@@ -1,0 +1,21 @@
+name: Clean closed PR caches
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # Never check out or execute PR code with a write token.
+      - name: Delete caches owned by this closed PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh cache delete --all --ref "refs/pull/$PR_NUMBER/merge" --succeed-on-no-caches
