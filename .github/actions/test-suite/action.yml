@@ -134,6 +134,7 @@ runs:
         # inside this same job; the runner reports each side's failures separately.
         if [ "${{ inputs.shard }}" = agentd ]; then
           python3 scripts/ci/test_agentd_tests.py
+          export TCLAUDE_AGENTD_TEST_LOG_DIR="$RUNNER_TEMP/agentd-test-logs"
           scripts/ci/agentd-tests.sh $race $timeout
           exit 0
         fi
@@ -145,3 +146,12 @@ runs:
         else
           go test $race $timeout $pkgs
         fi
+
+    - name: Upload agentd test timings
+      if: always() && inputs.shard == 'agentd'
+      uses: actions/upload-artifact@v7
+      with:
+        name: agentd-test-logs-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}
+        path: ${{ runner.temp }}/agentd-test-logs/*.json
+        retention-days: 7
+        if-no-files-found: ignore
