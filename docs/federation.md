@@ -1174,7 +1174,7 @@ tclaude federation share-agent reviewer bob --group reviewers --history
 
 The default shares configuration only. `--history` includes the native
 conversation when the harness supports `HistoryTransfer` (currently Claude
-Code, Codex, OpenCode, Gemini and pi); other harnesses warn and share configuration only. The original
+Code, Codex, OpenCode, Copilot, Gemini and pi); other harnesses warn and share configuration only. The original
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
