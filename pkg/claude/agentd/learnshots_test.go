@@ -154,7 +154,7 @@ hideDragHint();`
 	}, {
 		Key:     "learn-dashboard-resume",
 		Title:   "Learn — Retired and Conversations",
-		Caption: "find-and-resume steps 2 and 3.",
+		Caption: "keep-agents-going step 6.",
 		JS: showGroups + `return (async function(){
   var view = await waitFor('button', '▾ view');
   view.click();
@@ -320,7 +320,7 @@ func seedLearnTeam(t *testing.T, f *testharness.Flow) {
 	seedLearnSession(t, f, plain)
 	f.HaveEnrolledAgent(plain.conv)
 
-	// find-and-resume: bob after "Your first agent team" retired him (a
+	// keep-agents-going: bob after "Run a team through a lead" retired him (a
 	// separate conversation from the live bob above), and a conversation
 	// started from the shell that never became an agent.
 	retired := "1ea40000-0000-4000-8000-0000000b0b01"
