@@ -77,9 +77,10 @@ wizard themes (or via `slop.vegas_in_regular_mode`).
 The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
 Contraptions, Wards, Missives, Reserves, Coffers, Chronicle, Runes, Alchemy,
 Almanac, The Tavern) and the **slop** theme goes full casino; both are
-re-skins of the same dashboard, not different feature sets. Cycle themes with
-the header icon (Ctrl/⌘+Alt+Shift+S toggles slop, the same chord with W
-toggles wizard), or force one with `?slop=1` / `?wizard=1`.
+re-skins of the same dashboard, not different feature sets. The header icon
+toggles regular ↔ wizard; the slop theme is unfinished and left out of that
+cycle, but Ctrl/⌘+Alt+Shift+S still toggles it (the same chord with W toggles
+wizard), or force one with `?slop=1` / `?wizard=1`.
 
 ## Groups — the home view
 

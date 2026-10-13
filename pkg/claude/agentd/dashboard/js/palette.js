@@ -504,8 +504,8 @@ export function buildCommands(snapshot) {
   }
 
   // 3) Theme toggles — regular, slop (🎰) and wizard (🧙). Each command
-  //    toggles ONE re-skin on or off (the header 🤝/🎰/🧙 icon cycles all
-  //    three). Labelled by the DESTINATION so each reads as an action, not a
+  //    toggles ONE re-skin on or off (the header icon cycles only
+  //    regular ↔ wizard; slop is reached via this, its hotkey or ?slop=1). Labelled by the DESTINATION so each reads as an action, not a
   //    state: "Switch to slop theme" when off, "Switch off slop theme" when
   //    it's the active one. slop and wizard are mutually exclusive, so at
   //    most one shows an "off" label at a time.

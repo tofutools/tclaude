@@ -9557,8 +9557,8 @@ body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 
   0%, 100% { transform: rotate(-6deg); }
   50%      { transform: rotate(6deg); }
 }
-/* The header icon is the easter-egg toggle: click it to flip slop
-   mode on or off (see js/slop.js). `cursor: pointer` is the only
+/* The header icon is the easter-egg toggle: click it to cycle the
+   dashboard theme, regular ↔ wizard (see js/slop.js). `cursor: pointer` is the only
    affordance — discoverable to anyone who hovers, silent otherwise.
    In slop mode the icon also jiggles; the button keeps the animation
    isolated to the mark so the rest of the h1 stays still. */
