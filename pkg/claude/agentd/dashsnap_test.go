@@ -1844,7 +1844,8 @@ setTimeout(function(){
 				{Kind: "move-to-at", JS: `return window.__edgeDrop.drop;`, Steps: 6},
 				// Drag-time connection feedback hit-tests every frame; baseline
 				// them so only pointerup's own hit test is asserted below.
-				{Kind: "eval", JS: `window.__edgeDrop.beforeUp=window.__edgeDrop.hitTests;window.__edgeDrop.lastHit=null;`},
+				{Kind: "eval", JS: `return new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(function(){
+  window.__edgeDrop.beforeUp=window.__edgeDrop.hitTests;window.__edgeDrop.lastHit=null;resolve(true);});});});`},
 				{Kind: "mouse-up"},
 				{Kind: "eval", JS: `var state=window.__edgeDrop,chooser=document.querySelector('.process-node-chooser');
   if(state.hitTests!==state.beforeUp+1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG (hitTests='+state.hitTests+', beforeUp='+state.beforeUp+', lastHit='+(state.lastHit&&state.lastHit.outerHTML.slice(0,120))+')');
