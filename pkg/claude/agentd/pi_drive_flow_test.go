@@ -173,9 +173,17 @@ func TestPiDrive_DeliversEverythingWithoutSendKeys(t *testing.T) {
 	assert.Equal(t, "pi-renamed", sim.Name())
 
 	f.AssertSoftStopped(f.Stop(resp.ConvID, false))
-	assert.False(t, sim.IsAlive(), "the soft stop shuts pi down over the drive")
+	// An exit counts as delivered once the extension's poll takes it (pi
+	// shuts down running it, so it is never acknowledged); the extension
+	// runs it just after.
+	require.Eventually(t, func() bool { return !sim.IsAlive() }, 5*time.Second, 10*time.Millisecond,
+		"the soft stop shuts pi down over the drive")
 
 	assert.Empty(t, sentToSession(f, resp.TmuxSession), "a pi on the drive never receives keystrokes")
+	require.Eventually(t, func() bool {
+		ran := strings.Join(ext.ran(), " ")
+		return strings.Contains(ran, "exit")
+	}, 5*time.Second, 10*time.Millisecond)
 	assert.Subset(t, ext.ran(), []string{"rename", "message", "compact", "exit"})
 
 	profile, err := db.RecordedLaunchPostureForConv(resp.ConvID)
