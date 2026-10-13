@@ -100,7 +100,7 @@ func directHostState(req renderRequest) renderFacts {
 		Owned:         owned,
 		WorkspaceConv: workspaceConv,
 		PinnedWindow:  resolved,
-		SandboxOff:    temporarySandboxOff(workspaceConv),
+		SandboxOff:    sandboxOff(owned, workspaceConv),
 	}
 
 	writes := renderWrites{

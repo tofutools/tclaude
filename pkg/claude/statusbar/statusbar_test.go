@@ -121,6 +121,34 @@ func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
 	assert.False(t, temporarySandboxOff(newConv), "clearing the override must drop the badge")
 }
 
+// TestLaunchUnconfinedRaisesBadge pins that an agent LAUNCHED without an OS
+// sandbox shows ⚠ SB-OFF, not only one under the temporary dashboard unlock.
+func TestLaunchUnconfinedRaisesBadge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	now := time.Now()
+	for _, tc := range []struct {
+		id, state, implementation string
+		want                      bool
+	}{
+		{"sb-builtin-off", "off", "harness-builtin", true},
+		{"sb-impl-off", "off", "off", true},
+		{"sb-resource-only", "", "resource-only", true},
+		{"sb-builtin-on", "on", "harness-builtin", false},
+		{"sb-tclaude-layer", "on", "tclaude-layer", false},
+		{"sb-unknown", "", "", false},
+	} {
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID: tc.id, ConvID: "conv-" + tc.id, Status: "idle", Harness: "claude",
+			OSSandboxState: tc.state, SandboxImplementation: tc.implementation,
+			CreatedAt: now, UpdatedAt: now,
+		}))
+		assert.Equal(t, tc.want, sandboxOff(tc.id, "conv-"+tc.id), tc.id)
+	}
+	assert.False(t, sandboxOff("", ""), "no session row means no badge")
+}
+
 // TestStatusLineInput_ParsesModelID pins the model.id field path — the
 // full model ID the documented schema carries alongside display_name.
 // Model inheritance on reincarnate/clone/resume hinges on persisting

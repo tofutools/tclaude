@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -320,10 +321,36 @@ func updateUsageCacheFromRender(input StatusLineInput) {
 	usageapi.UpdateFromStatusLine(fh, sd, sds)
 }
 
+// sandboxOff is the boolean behind the ⚠ SB-OFF badge: the pane runs with
+// no OS sandbox, either because its launch recorded an unconfined verdict or
+// because the agent is under the reversible dashboard unlock. The badge text
+// itself is rendered pane-side so the brokered response carries a fact rather
+// than terminal escapes.
+func sandboxOff(sessionID, convID string) bool {
+	return launchUnconfined(sessionID) || temporarySandboxOff(convID)
+}
+
+// launchUnconfined reports whether the pane's own session row recorded a
+// launch with no OS confinement: an implementation that omits it (off,
+// resource-only), or a harness-builtin launch whose resolved verdict is off.
+// An unknown or unreadable row reads as confined, so the badge never guesses.
+func launchUnconfined(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	row, err := db.LoadSession(sessionID)
+	if err != nil || row == nil {
+		return false
+	}
+	if row.OSSandboxState == "off" {
+		return true
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(row.SandboxImplementation)
+	return err == nil && implementation.OmitsOSConfinement()
+}
+
 // temporarySandboxOff reports the reversible sandbox override for the
-// agent behind a conversation generation. It is the boolean behind the
-// ⚠ SB-OFF badge; the badge text itself is rendered pane-side so the
-// brokered response carries a fact rather than terminal escapes.
+// agent behind a conversation generation.
 func temporarySandboxOff(convID string) bool {
 	agentID, err := db.AgentIDForConv(strings.TrimSpace(convID))
 	if err != nil || agentID == "" {
