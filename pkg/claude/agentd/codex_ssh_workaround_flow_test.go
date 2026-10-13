@@ -154,7 +154,7 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 
 }
 
-func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testing.T) {
+func TestTclaudeLayerSSHWorkaroundCoversEveryHarnessAndNetworkPosture(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the SSH workaround is Linux-only")
 	}
@@ -263,13 +263,39 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 
+	// Rootless bubblewrap leaves host root unmapped on every network posture,
+	// so a proxy-filtered launch needs the private config too.
 	proxy := spawn("proxy", harness.DefaultName, "caller-id-proxy")
 	require.Equalf(t, http.StatusOK, proxy.Code, "body=%s", proxy.Raw)
 	snapshot, ok = f.World.SpawnSandboxPolicy(proxy.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
-	assert.NotContains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
-	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+
+	// And so does an open-network launch, which deploys no filtering engine.
+	open := spawn("open", harness.DefaultName, "")
+	require.Equalf(t, http.StatusOK, open.Code, "body=%s", open.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(open.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+	// Birth stores the opt-in, not the activation, and a resume recomputes the
+	// activation from it: an agent born under a daemon that left the workaround
+	// dormant for this posture gets it on its first restart under this one.
+	openDurable, err := db.AgentRelaunchProfileForConv(open.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, openDurable)
+	require.NotNil(t, openDurable.SSHWorkaround)
+	assert.True(t, *openDurable.SSHWorkaround)
+	f.MarkOffline(open.TmuxSession)
+	resumedOpen := f.AsHuman().Resume(open.ConvID)
+	require.Equalf(t, http.StatusOK, resumedOpen.Code, "body=%s", resumedOpen.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(open.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 
 	f.MarkOffline(caller.TmuxSession)
 	resumed := f.AsHuman().Resume(caller.ConvID)
@@ -296,12 +322,12 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 	snapshot, ok = f.World.SpawnSandboxPolicy(changed.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
-	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 	durable, err = db.AgentRelaunchProfileForConv(changed.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, durable)
 	require.NotNil(t, durable.SSHWorkaround)
-	assert.True(t, *durable.SSHWorkaround, "proxy activation must not erase the durable opt-in")
+	assert.True(t, *durable.SSHWorkaround, "an engine change keeps the durable opt-in")
 
 	profile, err = db.GetSandboxProfile("caller-id-packet")
 	require.NoError(t, err)

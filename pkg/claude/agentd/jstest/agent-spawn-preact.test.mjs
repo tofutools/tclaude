@@ -1607,7 +1607,7 @@ test('SSH workaround covers managed Codex and every tclaude sandbox layer harnes
   const layered = { ...raw, name: 'layered-codex', sandboxImpl: 'tclaude-layer' };
   assert.equal(model.spawnCapabilityView(layered, context).sshWorkaroundAvailable, true);
   assert.equal(model.buildSpawnRequest(layered, context, null, []).body.ssh_workaround, true,
-    'the daemon applies the enabled workaround only when the packet sandbox needs it');
+    'the daemon applies the enabled workaround only when the tclaude sandbox needs it');
 
   const claude = model.selectSpawnHarness(initial, 'claude', context);
   assert.equal(model.spawnCapabilityView(claude, context).showSSHWorkaround, true);

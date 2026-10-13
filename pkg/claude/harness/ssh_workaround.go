@@ -7,7 +7,7 @@ import (
 
 // CanSSHWorkaround reports whether tclaude can give this harness an
 // ownership-safe SSH client configuration. Every harness can encounter the
-// ownership translation in tclaude's Linux packet sandbox; launch-time
+// ownership translation in tclaude's Linux sandbox layer; launch-time
 // applicability still limits the historical harness-builtin case to Codex's
 // managed sandbox.
 func (h *Harness) CanSSHWorkaround() bool {

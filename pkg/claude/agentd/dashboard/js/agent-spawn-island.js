@@ -1405,7 +1405,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         </div>
       </div>`}
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
-      title="Use an agent-owned SSH client config when the launch needs it. It activates only for the Codex managed sandbox or tclaude packet filtering, and overrides Git core.sshCommand.">
+      title="Use an agent-owned SSH client config when the launch needs it. It activates only for the Codex managed sandbox or tclaude's sandbox layer, and overrides Git core.sshCommand.">
       <input id="agent-spawn-ssh-workaround" type="checkbox"
         checked=${draft.sshWorkaround}
         disabled=${busy}

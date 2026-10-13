@@ -38,9 +38,13 @@ func codexSSHSource() sandboxpolicy.ProfileSource {
 
 // codexSSHWorkaroundApplies reports whether this launch exposes the ownership
 // translation the private SSH config exists to avoid. Codex's managed native
-// sandbox has always needed the workaround. Every harness in tclaude's packet
-// sandbox needs it: both namespace-root and caller-identity mappings leave host
-// root unmapped, so root-owned SSH drop-ins appear as nobody:nogroup.
+// sandbox has always needed the workaround. Every harness in tclaude's own
+// sandbox layer needs it, whatever the network posture: rootless bubblewrap
+// runs the workload in a user namespace that maps only the invoking ids (or
+// maps them to namespace root), never host root, so root-owned SSH drop-ins
+// appear as nobody:nogroup and OpenSSH refuses them. That holds for an open,
+// isolated, proxy-filtered or packet-filtered launch alike, not only the
+// packet engine's explicit --unshare-user.
 func codexSSHWorkaroundApplies(
 	harnessName, harnessBuiltinMode, sandboxImplementation string,
 	snapshot *sandboxpolicy.Snapshot,
@@ -56,15 +60,7 @@ func codexSSHWorkaroundApplies(
 		return harnessName == harness.CodexName &&
 			harnessBuiltinMode == harness.SandboxManagedProfile
 	}
-	if !implementation.UsesTclaudeLayer() || snapshot == nil {
-		return false
-	}
-	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
-	if err != nil {
-		return false
-	}
-	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
-	return err == nil && engine == sandboxpolicy.NetworkEnginePacket
+	return implementation.UsesTclaudeLayer() && snapshot != nil
 }
 
 func sshWorkaroundImplementationEligible(
