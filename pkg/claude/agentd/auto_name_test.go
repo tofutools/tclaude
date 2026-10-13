@@ -38,6 +38,37 @@ func TestRunAutoNameRefinesFallbackWithContainedOneShot(t *testing.T) {
 	assert.Equal(t, "repair-session-naming", actor.PendingName)
 }
 
+// pi names a session in an ephemeral one-shot limited to its read-only tools:
+// nothing it does can act, and it leaves no conversation behind.
+func TestRunAutoNameNamesAPiSessionWithAReadOnlyEphemeralOneShot(t *testing.T) {
+	setupTestDB(t)
+	agentID, _, err := db.EnsureAgentForConv("conv-auto-name-pi", "session-start")
+	require.NoError(t, err)
+	fallback := session.FreeFloatingAgentName(time.Date(2026, 7, 28, 12, 17, 33, 0, time.UTC), agentID)
+	require.NoError(t, db.SetAgentPendingName(agentID, fallback))
+
+	oldRunner := runAutoNameHarness
+	t.Cleanup(func() { runAutoNameHarness = oldRunner })
+	var gotPlan SeanceExecPlan
+	runAutoNameHarness = func(_ context.Context, plan SeanceExecPlan) SeanceExecResult {
+		gotPlan = plan
+		return SeanceExecResult{Stdout: "tidy-pi-session-names\n", Started: true}
+	}
+
+	runAutoName(agentID, "conv-auto-name-pi", harness.PiName, t.TempDir(), fallback, "tidy session names")
+
+	require.NotEmpty(t, gotPlan.Argv)
+	assert.Equal(t, "pi", gotPlan.Argv[0])
+	joined := strings.Join(gotPlan.Argv, " ")
+	assert.Contains(t, joined, "--print")
+	assert.Contains(t, joined, "--no-session", "an ephemeral turn leaves no conversation")
+	assert.Contains(t, joined, "--tools read,grep,find,ls", "only read-only tools")
+	assert.NotContains(t, joined, "--extension")
+	actor, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "tidy-pi-session-names", actor.PendingName)
+}
+
 func TestRunAutoNameRejectsMalformedOutputAndPreservesExplicitRename(t *testing.T) {
 	setupTestDB(t)
 	agentID, _, err := db.EnsureAgentForConv("conv-auto-name", "session-start")
@@ -121,7 +152,7 @@ func TestAutoNameHarnessCoverageAndUnsupportedNoCall(t *testing.T) {
 		return SeanceExecResult{}
 	}
 	for _, name := range harness.Names() {
-		if name == harness.DefaultName || name == harness.CodexName {
+		if name == harness.DefaultName || name == harness.CodexName || name == harness.PiName {
 			continue
 		}
 		require.NotEmpty(t, autoNameUnsupported[name], "declare an unattended naming posture or reason for %s", name)

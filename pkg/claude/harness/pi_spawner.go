@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -24,6 +26,8 @@ import (
 //     which runs the hook callback at $TCLAUDE_PI_HOOK_BIN, and under the
 //     `ask` posture its permission extension too. Explicit extensions load
 //     even under a pass-through `--no-extensions`.
+//   - A managed launch's skills and rules are registered per launch
+//     (piManagedInstructions).
 //   - Positional arguments after `--` are messages: the first turn is
 //     submitted at launch and the TUI stays open. A message starting with `@`
 //     would be read as a file to attach, which is pi's own syntax.
@@ -69,6 +73,10 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 			prefix = "export " + PiHookBinEnvVar + "=" + clcommon.ShellQuoteArg(spec.TclaudeExecutable) + "; "
 		}
 	}
+	managedArgs, managedRules := piManagedInstructions(spec.ManagedInstructionsRoot, spec.StatusExtensionPath != "")
+	if managedRules != "" {
+		prefix += "export " + PiManagedRulesEnvVar + "=" + clcommon.ShellQuoteArg(managedRules) + "; "
+	}
 	if spec.ResumeID != "" {
 		session := spec.ResumeID
 		if path := piSessionFileLookup(spec.Cwd, spec.ResumeID); path != "" {
@@ -98,6 +106,7 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 			args = append(args, "--tools", strings.Join(piReadOnlyTools, ","))
 		}
 	}
+	args = append(args, managedArgs...)
 	args = append(args, spec.ExtraArgs...)
 	if spec.InitialPrompt != "" {
 		args = append(args, "--", spec.InitialPrompt)
@@ -115,6 +124,42 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	return cmd
+}
+
+// piManagedInstructionArgs registers a managed launch's skills and rules for
+// this launch only, never in pi's own configuration:
+//
+//   - Skills: the launch directory is loaded as a local pi package (its
+//     conventional `skills/` directory; it holds no `extensions/`). pi loads a
+//     command-line package's skills before its ambient roots and keeps the
+//     first skill of a name, so a managed skill shadows a same-named one in
+//     ~/.agents/skills or a project, while every other ambient skill, project
+//     trust and the operator's packages stay as they are. `--skill` would not
+//     do: pi loads those after the ambient roots, so the ambient skill wins.
+//   - Rules: RULES.md is appended to the system prompt, which pi rebuilds
+//     every turn, so the rules survive a compaction. The status extension
+//     appends it (rulesFile, exported as PiManagedRulesEnvVar): pi's own
+//     `--append-system-prompt` would switch off its discovery of the
+//     operator's APPEND_SYSTEM.md. A launch without the extension falls back
+//     to the flag, the rules mattering more than that file. pi reads the
+//     flag's argument as a file only when one exists, so RULES.md is used
+//     only when it is a regular file.
+func piManagedInstructions(root string, extension bool) (args []string, rulesFile string) {
+	if root == "" {
+		return nil, ""
+	}
+	if info, err := os.Stat(filepath.Join(root, "skills")); err == nil && info.IsDir() {
+		args = append(args, "--extension", root)
+	}
+	rules := filepath.Join(root, "RULES.md")
+	if info, err := os.Stat(rules); err == nil && info.Mode().IsRegular() {
+		if extension {
+			rulesFile = rules
+		} else {
+			args = append(args, "--append-system-prompt", rules)
+		}
+	}
+	return args, rulesFile
 }
 
 // piWalledAgentDirPrefix points a walled launch at its walled agent

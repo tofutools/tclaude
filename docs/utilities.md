@@ -43,6 +43,15 @@ durable rollout `token_count` events rather than from the footer, so the
 dashboard's Codex context figures work whether or not the curated items are
 installed.
 
+### pi: extension footer segment
+
+pi has no command-backed status line either. tclaude's per-launch pi extension
+adds a `tclaude` segment to pi's own footer with `ctx.ui.setStatus`. When the
+agent pins an [`--auto-compact-window`](#auto-compact-window), the segment shows
+the context measured against that window, as the dashboard meter does (pi's
+footer measures the model's full window); it says `no live status` when the
+extension cannot reach tclaude.
+
 OpenCode shows only its own TUI status, and Copilot CLI and Gemini CLI have
 no tclaude status line; see the [capability matrix](harnesses.md#capability-matrix).
 

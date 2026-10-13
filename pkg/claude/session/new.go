@@ -2327,6 +2327,10 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
+	if h.Name == harness.PiName {
+		// Verified above; pi registers its skills and rules natively.
+		spawnSpec.ManagedInstructionsRoot = params.ManagedInstructionsRoot
+	}
 	if outerLayer && h.Name == harness.PiName {
 		// A walled pi runs against tclaude's walled agent directory, never
 		// the operator's (pi_walled_agent.go), and one of its own: the

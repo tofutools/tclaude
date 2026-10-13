@@ -1,7 +1,8 @@
 ---
 name: agent-coord
 description: >-
-  Coordinate with other tclaude-managed Claude Code or Codex CLI conversations
+  Coordinate with other tclaude-managed agent conversations, whatever their
+  harness (Claude Code, Codex CLI, OpenCode, Copilot CLI, Gemini CLI or pi),
   via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human
   starts it; you don't). Use when you've been put in a group with peer agents
   and need to look them up, send them messages, or read messages they sent you.
@@ -463,7 +464,7 @@ generates no approval request for the reviewer to decide.
 The agent skills (this one, `agent-rename`, …) are bundled into the
 `tclaude` binary. Materialise them under the supported user skill roots
 (`~/.claude/skills/<name>/` for Claude Code, shared
-`~/.agents/skills/<name>/` for Codex, Gemini, Copilot and OpenCode, and
+`~/.agents/skills/<name>/` for Codex, Gemini, Copilot, OpenCode and pi, and
 `$CODEX_HOME/skills/<name>/` for Codex CLI) with:
 
 ```bash

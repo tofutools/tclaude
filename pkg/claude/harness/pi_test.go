@@ -39,6 +39,44 @@ func TestPiSpawnerOmitsUnset(t *testing.T) {
 	}
 }
 
+// A managed launch registers its skills as a command-line package, after
+// tclaude's own extensions and before pass-through args, and hands its rules
+// to the status extension, or to --append-system-prompt without one; a part
+// the launch does not have is left out.
+func TestPiSpawnerRegistersManagedInstructions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "skills", "review"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spec := SpawnSpec{
+		SessionID:               "id",
+		ApprovalPolicy:          PiApprovalAuto,
+		StatusExtensionPath:     "/ext/tclaude-pi.ts",
+		ManagedInstructionsRoot: root,
+		ExtraArgs:               []string{"--verbose"},
+	}
+	want := "pi --extension /ext/tclaude-pi.ts --session-id id --extension " + root + " --verbose"
+	if got := (piSpawner{}).BuildCommand(spec); got != want {
+		t.Fatalf("skills only:\n got %s\nwant %s", got, want)
+	}
+	rules := filepath.Join(root, "RULES.md")
+	if err := os.WriteFile(rules, []byte("rule"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	want = "export " + PiManagedRulesEnvVar + "=" + rules + "; pi --extension /ext/tclaude-pi.ts --session-id id --extension " + root + " --verbose"
+	if got := (piSpawner{}).BuildCommand(spec); got != want {
+		t.Fatalf("skills and rules:\n got %s\nwant %s", got, want)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "skills")); err != nil {
+		t.Fatal(err)
+	}
+	spec.StatusExtensionPath = ""
+	want = "pi --session-id id --append-system-prompt " + rules + " --verbose"
+	if got := (piSpawner{}).BuildCommand(spec); got != want {
+		t.Fatalf("rules only, no extension:\n got %s\nwant %s", got, want)
+	}
+}
+
 func TestPiSpawnerResumeUsesSessionFile(t *testing.T) {
 	withPiSessionLookup(t, func(cwd, id string) string {
 		if cwd == "/work" && id == "abc" {

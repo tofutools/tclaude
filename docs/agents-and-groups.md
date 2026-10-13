@@ -412,8 +412,10 @@ Each managed agent launch gets a private instruction directory with read-only
 files and an explicit sandbox read grant. The tclaude sandbox mounts it read-only;
 harness-native enforcement follows that harness's filesystem policy. Claude
 Code loads its skills as the `tclaude-managed` plugin when the installed CLI
-supports `--plugin-dir`; all harnesses receive skill paths in their startup
-briefing as on-demand instructions. Rules are included in the briefing and
+supports `--plugin-dir`. pi loads the launch directory as a command-line package,
+so a managed skill shadows a same-named ambient one, and appends the rules to its
+system prompt. All harnesses receive skill paths in their startup briefing as
+on-demand instructions. Rules are included in the briefing and
 re-applied after compaction or clear. The launch snapshot stays frozen even when
 the library changes. Group context opt-outs do not remove managed operator rules.
 

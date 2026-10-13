@@ -69,17 +69,19 @@ type PiSim struct {
 
 // PiLaunch is one parsed `pi` invocation.
 type PiLaunch struct {
-	Binary        string
-	Env           map[string]string
-	Extensions    []string
-	SessionID     string
-	Session       string // --session: a session file path or id
-	Name          string
-	Model         string
-	Thinking      string
-	Tools         string
-	InitialPrompt string
-	Extra         []string
+	Binary     string
+	Env        map[string]string
+	Extensions []string
+	SessionID  string
+	Session    string // --session: a session file path or id
+	Name       string
+	Model      string
+	Thinking   string
+	Tools      string
+	// AppendSystemPrompt holds each --append-system-prompt, in order.
+	AppendSystemPrompt []string
+	InitialPrompt      string
+	Extra              []string
 }
 
 // LoadsStatusExtension reports whether the launch loads an extension and
@@ -150,6 +152,13 @@ func ParsePiLaunch(cmd string) (PiLaunch, error) {
 				return PiLaunch{}, err
 			}
 			launch.Extensions = append(launch.Extensions, v)
+			continue
+		case "--append-system-prompt":
+			v, err := value()
+			if err != nil {
+				return PiLaunch{}, err
+			}
+			launch.AppendSystemPrompt = append(launch.AppendSystemPrompt, v)
 			continue
 		case "--session-id":
 			target = &launch.SessionID
@@ -719,6 +728,7 @@ func (s *simSpawner) spawnNewPi(args clcommon.SpawnArgs) error {
 	cmd, err := piBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, SessionID: args.SessionID, Name: args.Name, Model: args.Model,
 		Effort: args.Effort, InitialPrompt: args.InitialPrompt, ApprovalPolicy: args.Approval,
+		ManagedInstructionsRoot: args.ManagedInstructionsRoot,
 	})
 	if err != nil {
 		return err
@@ -732,6 +742,7 @@ func (s *simSpawner) spawnResumePi(args clcommon.SpawnArgs) error {
 	cmd, err := piBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, ResumeID: args.ConvID, Model: args.Model, Effort: args.Effort,
 		InitialPrompt: args.InitialPrompt, ApprovalPolicy: args.Approval,
+		ManagedInstructionsRoot: args.ManagedInstructionsRoot,
 	})
 	if err != nil {
 		return err

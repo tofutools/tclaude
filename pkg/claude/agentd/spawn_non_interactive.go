@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -388,6 +390,19 @@ func wrapOneShotWithTclaudeLayer(
 		GitWriteDirs:     append([]string(nil), gitWriteDirs...),
 		HarnessReadPaths: harnessReadPaths,
 	}
+	var piEnv []string
+	if h.Name == harness.PiName {
+		// As a pane launch: pi runs against a walled agent directory of its
+		// own, never the operator's. A one-shot is keyed by an id of its
+		// own, so it never shares one with a running agent, and the daemon
+		// removes it once nothing has a session under that id.
+		walled, err := harness.PreparePiWalledAgentDir(uuid.NewString())
+		if err != nil {
+			return "", err
+		}
+		input.StateRoot = walled
+		piEnv = append(piEnv, harness.PiAgentDirEnvVar+"="+walled)
+	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(input)
 	if err != nil {
 		return "", err
@@ -399,6 +414,36 @@ func wrapOneShotWithTclaudeLayer(
 	root, err := session.TclaudeLayerRootPosture(posture, spec.Effective)
 	if err != nil {
 		return "", err
+	}
+	if h.Name == harness.PiName {
+		axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(spec.Effective)
+		if err != nil {
+			return "", err
+		}
+		// Under a filtered network pi runs offline, as the pane launch does
+		// (piFilteredNetworkPrefix).
+		if posture == sandboxpolicy.NetworkFiltered && !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
+			for name, value := range harness.PiFilteredNetworkEnv() {
+				piEnv = append(piEnv, name+"="+value)
+			}
+			sort.Strings(piEnv[1:])
+		}
+		if runtime.GOOS == "linux" && root == sandboxpolicy.RootConstructed {
+			// pi is a Node CLI, absent from a constructed root unless started
+			// by absolute path with its runtime mounted.
+			resolved, err := harness.ResolvePiLaunchExecutable()
+			if err != nil {
+				return "", fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", err)
+			}
+			if argv, err = resolved.SpliceBinary(argv, "pi"); err != nil {
+				return "", err
+			}
+			input.HarnessReadPaths = append(input.HarnessReadPaths, resolved.ReadPaths...)
+			if spec, err = session.BuildTclaudeLayerLaunchSpec(input); err != nil {
+				return "", err
+			}
+		}
+		argv = slices.Concat([]string{"env"}, piEnv, argv)
 	}
 	if h.Name == harness.GeminiName && runtime.GOOS == "linux" && root == sandboxpolicy.RootConstructed {
 		// Only a constructed root needs this: a host-inherited one still sees
