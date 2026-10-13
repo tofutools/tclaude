@@ -69,7 +69,14 @@ func compactDashboardSource(value string) string {
 	}, value)
 }
 
+// Embedded assets are immutable for this test binary. Normalize them once;
+// each assertion still searches the same complete source with the same rules.
+var compactDashboardAssets = compactDashboardSource(dashboardAssets)
+
 func dashboardSourceContains(source, needle string) bool {
+	if source == dashboardAssets {
+		return strings.Contains(compactDashboardAssets, compactDashboardSource(needle))
+	}
 	return strings.Contains(compactDashboardSource(source), compactDashboardSource(needle))
 }
 

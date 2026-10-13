@@ -29,6 +29,11 @@ import (
 // original LiveSpawner / LiveTmux at end of test.
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
+	// Real hub traffic still runs through production workers. Poll promptly in
+	// fixtures instead of paying seconds per observed transition; lease/TTL and
+	// acknowledgement deadlines retain their production values. Federation
+	// fixtures stop their runtimes before this earlier cleanup restores cadence.
+	t.Cleanup(agentd.SetFederationPollIntervalForTest(50 * time.Millisecond))
 	agentd.ResetDeliveryDebounceForTest()
 
 	// The pending approval registry is a package global; reset it so a prior

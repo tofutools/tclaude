@@ -828,6 +828,16 @@ func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T
 			require.NoError(t, err)
 			require.Empty(t, rows, "test setup must prune every process-history row")
 
+			if tc.harnessName == harness.CodexName {
+				// The recording spawner does not launch Codex, whose real resume
+				// has this native thread row. Supply it so post-init title writes
+				// can finish instead of exhausting the 30-second missing-row retry.
+				home, err := os.UserHomeDir()
+				require.NoError(t, err)
+				cx := testharness.NewCodexSim(t, home, cwd)
+				cx.ConvID = convID
+				require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{Cwd: cwd}))
+			}
 			res := resumeOneConv(convID)
 			require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 			assert.Equal(t, physicalCwd, rec.cwd)

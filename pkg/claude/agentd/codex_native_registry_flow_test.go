@@ -15,6 +15,9 @@ import (
 )
 
 func TestCodexNativeRegistryPreflightIsStructuredAndScoped(t *testing.T) {
+	// This test records the preflight boundary, not a live app-server. Both
+	// launch and post-init observe the same simulated ready server.
+	t.Cleanup(agentd.SetAwaitCodexAppServerReadyForTest(func(string) bool { return true }))
 	t.Cleanup(agentd.SetAwaitCodexAppServerLaunchReadyForTest(func(string, string) bool { return true }))
 	var readinessCalls atomic.Int32
 	restore := agentd.SetCodexNativeRegistryReadinessForTest(func() error {
