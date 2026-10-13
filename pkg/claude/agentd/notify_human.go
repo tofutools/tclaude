@@ -744,7 +744,8 @@ type dashboardHumanMessage struct {
 // URL is the download route for this exact file; Previewable is the daemon's
 // verdict (raster image, content-sniff confirmed) on whether the dashboard may
 // render it inline instead of only offering a download. Markdown is the
-// equivalent verdict for the Markdown document viewer.
+// equivalent verdict for the Markdown document viewer, and Video for the
+// in-dashboard video player.
 type dashboardHumanMessageAttachment struct {
 	ID          int64  `json:"id"`
 	Filename    string `json:"filename"`
@@ -753,6 +754,7 @@ type dashboardHumanMessageAttachment struct {
 	URL         string `json:"url"`
 	Previewable bool   `json:"previewable,omitempty"`
 	Markdown    bool   `json:"markdown,omitempty"`
+	Video       bool   `json:"video,omitempty"`
 }
 
 func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAttachment) *dashboardHumanMessageAttachment {
@@ -767,6 +769,7 @@ func dashboardHumanMessageAttachmentView(messageID int64, a *db.HumanMessageAtta
 		URL:         humanMessageAttachmentURL(messageID, a.ID),
 		Previewable: humanMessageAttachmentPreviewable(a),
 		Markdown:    humanMessageAttachmentMarkdown(a),
+		Video:       humanMessageAttachmentVideoType(a) != "",
 	}
 }
 
@@ -944,6 +947,106 @@ var markdownHumanAttachmentExtensions = map[string]struct{}{
 	".mkdn":     {},
 }
 
+// humanMessageAttachmentVideoType is the daemon's verdict on whether the
+// dashboard should offer its video player for this file, returned as the
+// container's media type ("" means no). Like the image verdict it is decided
+// from the bytes, not the agent-supplied Content-Type, which for a .mp4 is
+// often application/octet-stream: Go's built-in extension table has no video
+// entries, so the sender's type depends on the host's MIME database.
+//
+// Only the container is checked. Whether the browser has a decoder for the
+// codec inside is something only the browser knows, so the player falls back
+// to its own "can't play this" state and the download stays either way.
+func humanMessageAttachmentVideoType(a *db.HumanMessageAttachment) string {
+	if a == nil || !declaresVideo(a) {
+		return ""
+	}
+	cacheKey := humanMessageAttachmentVideoCacheKey(a.StoragePath)
+	humanMessageAttachmentVideoCache.Lock()
+	videoType, ok := humanMessageAttachmentVideoCache.entries[cacheKey]
+	humanMessageAttachmentVideoCache.Unlock()
+	if ok {
+		return videoType
+	}
+
+	// Same caching contract as the image probe: one completed sniff serves
+	// every later dashboard poll.
+	f, err := os.Open(a.StoragePath)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	var header [16]byte
+	n, err := io.ReadFull(f, header[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return ""
+	}
+	videoType = sniffVideoContainer(header[:n])
+	humanMessageAttachmentVideoCache.Lock()
+	if len(humanMessageAttachmentVideoCache.entries) >= maxHumanMessageAttachmentPreviewCacheEntries {
+		for key := range humanMessageAttachmentVideoCache.entries {
+			delete(humanMessageAttachmentVideoCache.entries, key)
+			break
+		}
+	}
+	humanMessageAttachmentVideoCache.entries[cacheKey] = videoType
+	humanMessageAttachmentVideoCache.Unlock()
+	return videoType
+}
+
+// declaresVideo reports whether the attachment presents itself as a video, by
+// media type or by filename extension; either alone is enough, for the reason
+// given on humanMessageAttachmentVideoType.
+func declaresVideo(a *db.HumanMessageAttachment) bool {
+	if mediaType, _, err := mime.ParseMediaType(a.ContentType); err == nil && strings.HasPrefix(mediaType, "video/") {
+		return true
+	}
+	_, ok := videoHumanAttachmentExtensions[strings.ToLower(filepath.Ext(a.Filename))]
+	return ok
+}
+
+var videoHumanAttachmentExtensions = map[string]struct{}{
+	".m4v":  {},
+	".mov":  {},
+	".mp4":  {},
+	".ogv":  {},
+	".webm": {},
+}
+
+// sniffVideoContainer maps a file header to the media type of the HTML5 video
+// container it starts with, or "" when it is not one the dashboard offers.
+func sniffVideoContainer(header []byte) string {
+	switch {
+	case len(header) >= 12 && bytes.Equal(header[4:8], []byte("ftyp")):
+		// ISO-BMFF. The same box opens AVIF and HEIF stills, which are not
+		// videos; QuickTime's own brand gets its own type.
+		switch string(header[8:12]) {
+		case "avif", "avis", "heic", "heix", "mif1", "msf1":
+			return ""
+		case "qt  ":
+			return "video/quicktime"
+		}
+		return "video/mp4"
+	case len(header) >= 4 && bytes.Equal(header[:4], []byte{0x1a, 0x45, 0xdf, 0xa3}):
+		// EBML: WebM, or Matroska, which Chromium plays through the same path.
+		return "video/webm"
+	case len(header) >= 4 && bytes.Equal(header[:4], []byte("OggS")):
+		return "video/ogg"
+	}
+	return ""
+}
+
+// The video verdict is a media type rather than a bool, so it keeps a cache
+// of its own beside the shared boolean preview cache.
+var humanMessageAttachmentVideoCache = struct {
+	sync.Mutex
+	entries map[string]string
+}{entries: make(map[string]string)}
+
+func humanMessageAttachmentVideoCacheKey(storagePath string) string {
+	return storagePath + "\x00#video"
+}
+
 // humanMessageAttachmentMarkdownCacheKey shares the preview cache with the
 // image probe. The discriminator cannot collide with an image key, whose second
 // field is always a parsed media type.
@@ -1106,15 +1209,19 @@ func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Reques
 	defer func() { _ = f.Close() }()
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
 	w.Header().Set("Content-Disposition", disposition)
-	w.Header().Set("Content-Type", a.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(a.SizeBytes, 10))
+	contentType := a.ContentType
+	if videoType := humanMessageAttachmentVideoType(a); videoType != "" {
+		// A confirmed video is served as its sniffed container type, so the
+		// player gets e.g. video/mp4 even when the sender labelled the file
+		// application/octet-stream. nosniff then cannot get in the way.
+		contentType = videoType
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.Method == http.MethodHead {
-		return
-	}
-	if _, err := io.Copy(w, f); err != nil {
-		slog.Warn("human message attachment: stream failed", "message", messageID, "error", err)
-	}
+	// ServeContent answers Range requests (and HEAD), which the dashboard's
+	// video player needs to seek without downloading the whole file first.
+	// A zero modtime keeps it from emitting Last-Modified validators.
+	http.ServeContent(w, r, "", time.Time{}, f)
 }
 
 // parseHumanMessageAttachmentPath returns the message id and, for the explicit

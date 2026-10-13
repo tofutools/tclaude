@@ -13,6 +13,7 @@ import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
+import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
@@ -447,6 +448,7 @@ function HumanAttachment({ message }) {
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
     <div class="mail-attachment" key=${attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
+      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
       <span class="mail-attachment-label">Agent file</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>

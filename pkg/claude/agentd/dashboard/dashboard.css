@@ -1634,6 +1634,19 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .mail-attachment > .human-attachment-preview-trigger {
   flex: 0 0 100%; order: -1;
 }
+/* Video attachments reuse the image thumbnail card; the poster frame is the
+   <video> element itself, so it must not take pointer events from the button.
+   The play badge sits centred over it. */
+.video-preview-trigger video { pointer-events: none; background: #000; }
+.video-preview-play {
+  position: absolute; left: 50%; top: 50%; display: grid; place-items: center;
+  width: 44px; height: 44px; padding-left: 3px; border-radius: 50%;
+  background: rgba(13, 17, 23, .78); color: #f0f6fc; font-size: 18px;
+  border: 1px solid rgba(240, 246, 252, .35);
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.video-preview-trigger:hover .video-preview-play,
+.video-preview-trigger:focus-visible .video-preview-play { border-color: #58a6ff; color: #dbeafe; }
 
 /* Shared corner grip for the resizable attachment viewers (dialog-resize.js).
    It is absolutely positioned against the dialog, so it lands on the same
@@ -1725,6 +1738,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   -webkit-user-drag: none; user-select: none;
 }
 .image-preview-image[data-sized="true"] { max-width: none; max-height: none; }
+/* The video player letterboxes on black rather than the image checkerboard:
+   a video has no transparency to reveal. */
+.video-preview-stage { padding: 0; background: #000; }
+.video-preview-video {
+  display: block; flex: 1 1 auto; min-width: 0; min-height: 0;
+  width: 100%; height: 100%; object-fit: contain; background: #000;
+}
 .image-preview-state {
   position: absolute; z-index: 1; left: 50%; top: 50%;
   display: flex; flex-direction: column; gap: 5px; max-width: min(420px, calc(100% - 40px));
