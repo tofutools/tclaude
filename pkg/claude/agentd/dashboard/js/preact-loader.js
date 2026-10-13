@@ -404,10 +404,12 @@ export async function mountUsageHubFeature() {
   return mountFeatureIsland({
     name: 'usage-hub', label: 'Usage', hosts: [host], failureClass: 'usage-hub-error',
     load: async () => {
-      const [{ mountUsageHubIsland }, { usageHubState }, { usageHistoryState }, { costsState }] = await Promise.all([
-        import('./usage-hub-island.js'), import('./usage-hub-state.js'),
-        import('./usage-history-state.js'), import('./costs-state.js'),
-      ]);
+      const islandModule = import('./usage-hub-island.js');
+      const stateModule = import('./usage-hub-state.js');
+      const quotaStateModule = import('./usage-history-state.js');
+      const costsStateModule = import('./costs-state.js');
+      const [{ mountUsageHubIsland }, { usageHubState }, { usageHistoryState }, { costsState }] =
+        await Promise.all([islandModule, stateModule, quotaStateModule, costsStateModule]);
       return {
         state: usageHubState,
         mount: (registerCleanup) => mountUsageHubIsland({
