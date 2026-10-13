@@ -34,6 +34,11 @@ type Runner func(args ...string) error
 // Options selects the command boundary and timing policy for one injection.
 // Zero values use the production defaults.
 type Options struct {
+	// AnswerHumanInput is reserved for an explicit operator-authorized dialog
+	// answer (agentd auto-permit). Lifecycle/message injection never sets it.
+	AnswerHumanInput bool
+	// CapturePane optionally checks a known modal UI before an async hook lands.
+	CapturePane    func(target string) (string, error)
 	Run            Runner
 	SettleDelay    time.Duration
 	SettleDelaySet bool
@@ -120,7 +125,39 @@ func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget s
 		return fmt.Errorf("%w after %s", ErrLockTimeout, opts.LockTimeout)
 	}
 	defer func() { _ = fileLock.Unlock() }()
-	return fn(opts.Run, exactTarget)
+	run := func(args ...string) error {
+		if len(args) > 0 && (args[0] == "send-keys" || args[0] == "paste-buffer") && !opts.AnswerHumanInput && !cancelOnlyKeys(args) {
+			if err := CheckHumanInput(lockTarget); err != nil {
+				return err
+			}
+			if opts.CapturePane != nil {
+				screen, err := opts.CapturePane(exactTarget)
+				if err != nil {
+					return fmt.Errorf("check pane input: %w", err)
+				}
+				if ScreenAwaitsHumanInput(screen) {
+					return ErrAwaitingHumanInput
+				}
+			}
+		}
+		return opts.Run(args...)
+	}
+	return fn(run, exactTarget)
+}
+
+// A signal-only cancellation cannot accept a dialog's default selection.
+// Keep stop/interrupt usable while human input is pending; text and Enter
+// always pass the shared guard, including after a soft-exit prefix.
+func cancelOnlyKeys(args []string) bool {
+	if len(args) < 4 || args[0] != "send-keys" || args[1] != "-t" {
+		return false
+	}
+	for _, key := range args[3:] {
+		if key != "C-c" && key != "Escape" {
+			return false
+		}
+	}
+	return true
 }
 
 // ExactInputTarget canonicalizes an input target to its exact form: tmux
@@ -163,6 +200,7 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 				return fmt.Errorf("set-buffer text: %w", err)
 			}
 			if err := run("paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", target); err != nil {
+				_ = run("delete-buffer", "-b", buffer)
 				return fmt.Errorf("paste-buffer text: %w", err)
 			}
 		} else if err := run("send-keys", "-l", "-t", target, text); err != nil {
@@ -173,6 +211,8 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 			return fmt.Errorf("send-keys submit: %w", err)
 		}
 		time.Sleep(opts.SettleDelay)
+		// The first Enter already submitted. A dialog raised by that turn
+		// suppresses this workaround Enter, but must not cause full-text retry.
 		_ = run("send-keys", "-t", target, "Enter")
 		return nil
 	})

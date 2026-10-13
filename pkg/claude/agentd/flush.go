@@ -452,11 +452,11 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		}
 		return true
 	}
+	// The shared pane-input guard rechecks persisted status after the pane
+	// locks and before every submit, including the hook-lag screen check.
 	// This recheck belongs to the exact row selected for injection: the
 	// pre-claim gate may have observed a different live session, or this pane
-	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window
-	// remains while we wait for the pane lock; closing that would require the
-	// injection primitive itself to understand persisted session status.
+	// may have entered a human-input dialog meanwhile.
 	if err := injectBracketedTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		if standingOrderOrigin != nil {
 			_ = db.CancelPendingStandingOrderTurnOrigin(

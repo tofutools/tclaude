@@ -2196,3 +2196,15 @@ func SetFederationReconnectBackoffForTest(backoff time.Duration) func() {
 	newFederationClient = func(opts client.Options) (*client.Client, error) { opts.MaxBackoff = backoff; return previous(opts) }
 	return func() { newFederationClient = previous }
 }
+
+// SetPaneInputWaitForTest exposes the retry boundary without real sleeps.
+func SetPaneInputWaitForTest(wait func()) func() {
+	old := waitPaneInputRetry
+	waitPaneInputRetry = wait
+	return func() { waitPaneInputRetry = old }
+}
+
+// RunSpawnPostInitForTest exercises the production asynchronous title path.
+func RunSpawnPostInitForTest(convID, name string) {
+	runSpawnPostInit(convID, name, "", "", "", 0, false, "", "", "", "", true)
+}

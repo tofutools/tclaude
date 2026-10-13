@@ -195,9 +195,10 @@ func pressAutoPermitAccept(convID string, accept session.AutoPermitAccept, toolN
 		return
 	}
 	if err := paneinput.SendKeys(target, paneinput.Options{
-		Run:         runTmuxCommand,
-		LockTimeout: paneInjectLockTimeout,
-		LockID:      target,
+		Run:              runTmuxCommand,
+		AnswerHumanInput: true, // Explicit operator auto-permit authorization above.
+		LockTimeout:      paneInjectLockTimeout,
+		LockID:           target,
 	}, accept.Keys...); err != nil {
 		slog.Warn("auto-permit: accept keystroke failed", "error", err,
 			"tool", toolName, "tmux", row.TmuxSession, "conv", convID, "module", "agentd")
