@@ -2327,6 +2327,17 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
+	if outerLayer && h.Name == harness.PiName {
+		// pi's auth.json is read-only inside the wall, so an expired OAuth
+		// login could not refresh there: say so now, not on the first call.
+		notice, err := harness.PiWalledLoginCheck(model, time.Now())
+		if err != nil {
+			return err
+		}
+		if notice != "" {
+			fmt.Fprintf(os.Stderr, "Note: %s\n", notice)
+		}
+	}
 	if h.StatusExtension != nil {
 		// The extension is the harness's only status channel. Failing to
 		// write it costs live status, not the launch: say so plainly.

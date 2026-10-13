@@ -2815,6 +2815,13 @@ func resumeLaunchCmdWithStackedProof(
 		// pi runs offline under a filtered network, as `session new` launched it.
 		NetworkFiltered: networkFiltered,
 	}
+	if outerLayer && h.Name == harness.PiName {
+		// As in `session new`: an expired login cannot refresh inside the
+		// wall, where pi's auth.json is read-only.
+		if _, err := harness.PiWalledLoginCheck(harness.PiSessionModel(convID, resumeCwd), time.Now()); err != nil {
+			return "", "", nil, err
+		}
+	}
 	// The status extension is a launch flag, not installed config: a resume
 	// that dropped it would leave the agent without live status.
 	statusExtensionDir := ""

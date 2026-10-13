@@ -266,16 +266,18 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			assert.Contains(t, paths, tc.want)
 		})
 	}
-	// pi's sessions and its OAuth login stay writable: the agent lives in
-	// the one and refreshes the other.
+	// pi runs a `!`-prefixed api_key as a shell command, so its auth.json is
+	// floored like code; its sessions stay writable.
 	piRoot := filepath.Join(home, ".pi", "agent")
 	require.NoError(t, os.WriteFile(filepath.Join(piRoot, "auth.json"), nil, 0o600))
 	piEntries, err := harnessConfigFloorCatalog(harness.PiName, piRoot)
 	require.NoError(t, err)
+	piPaths := make([]string, 0, len(piEntries))
 	for _, entry := range piEntries {
-		assert.NotContains(t, []string{filepath.Join(piRoot, "auth.json"), filepath.Join(piRoot, "sessions")},
-			entry.Path)
+		piPaths = append(piPaths, entry.Path)
 	}
+	assert.Contains(t, piPaths, filepath.Join(piRoot, "auth.json"))
+	assert.NotContains(t, piPaths, filepath.Join(piRoot, "sessions"))
 	_, err = harnessConfigFloorCatalog("nonesuch", filepath.Join(home, ".claude"))
 	assert.Error(t, err)
 }

@@ -3329,8 +3329,8 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		return filepath.Join(home, ".gemini"), nil
 	case harness.PiName:
 		// pi's agent directory ($PI_CODING_AGENT_DIR, else ~/.pi/agent): its
-		// sessions, auth.json and trust.json, under the read-only floor of
-		// harnessConfigFloorCatalog. A session directory that settings move
+		// sessions and lock files, under the read-only floor of
+		// harnessConfigFloorCatalog (which covers auth.json). A session directory that settings move
 		// outside it is a separate requirement (piLayerPathRequirements).
 		if root := harness.PiAgentDir(); root != "" {
 			return root, nil

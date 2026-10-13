@@ -802,18 +802,25 @@ tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
 **Allow launch with unenforced rules** in the dashboard spawn dialog.
 
 **Inside tclaude's sandbox** pi's agent directory (`$PI_CODING_AGENT_DIR`, else
-`~/.pi/agent`) is its writable state: sessions, `auth.json` (so an OAuth login
-can refresh) and pi's lock files. What pi loads as configuration or code is
-read-only inside the wall, so that a sandboxed agent cannot change what the
-next, possibly unsandboxed, pi runs (with one known gap: `auth.json`, see
-[the residual holes](sandboxing.md)): `settings.json`, `models.json`,
+`~/.pi/agent`) is its writable state: sessions and pi's lock files. What pi
+loads as configuration or code is read-only inside the wall, so that a
+sandboxed agent cannot change what the next, possibly unsandboxed, pi runs:
+`auth.json` (pi runs an API key that starts with `!` as a shell command),
+`settings.json`, `models.json`,
 `models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, the
 `AGENTS`/`CLAUDE`/`SYSTEM` prompt files, and `extensions/`, `skills/`,
 `prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/` and `tools/`.
 pi therefore cannot download its managed `fd` and `rg` from inside the wall;
 install them on the host (or run pi once outside it) and `find`/`grep` use
 them. A session directory your settings move out of the agent directory is
-granted too. Other harnesses' homes are not. In a constructed root (such as
+granted too. Other harnesses' homes are not.
+
+Because `auth.json` is read-only, an OAuth login (ChatGPT, say) cannot refresh
+inside the wall. A launch whose login has already expired is refused, with
+what to do: run pi once outside the sandbox to refresh it, or use an API key.
+A live login is noted at launch with its expiry time; once it passes, the
+agent's model calls fail until you refresh it outside. Refreshing inside the
+sandbox is tracked as tcl-lpbxag. In a constructed root (such as
 a filtered network on Linux) tclaude mounts the `pi` package and its Node
 runtime read-only, wherever they are installed.
 

@@ -172,11 +172,17 @@ func harnessConfigFloorCatalog(
 		//     loads, and git/, npm/ and node_modules/ the code of installed pi
 		//     packages; bin/ and tools/ hold executables pi runs (the managed
 		//     fd and rg).
-		// NOT floored: sessions/, auth.json (an OAuth login refreshes it),
-		// crashes.json and tmp/.
+		//   - auth.json is floored too, though an OAuth refresh writes it:
+		//     pi runs an api_key credential whose key starts with `!` as a
+		//     shell command, so a writable auth.json would let a walled agent
+		//     plant a command the next unsandboxed pi runs. A walled launch
+		//     with an expired login is refused instead
+		//     (harness.PiWalledLoginCheck); tcl-lpbxag tracks a launch-scoped
+		//     copy that lets the refresh land.
+		// NOT floored: sessions/, crashes.json and tmp/.
 		dirs = under("extensions", "skills", "prompts", "themes", "git", "npm",
 			"node_modules", "bin", "tools")
-		files = under("settings.json", "models.json", "models-store.json", "mcp.json",
+		files = under("settings.json", "models.json", "models-store.json", "auth.json", "mcp.json",
 			"trust.json", "keybindings.json", "AGENTS.override.md", "AGENTS.md", "AGENTS.MD",
 			"CLAUDE.md", "CLAUDE.MD", "SYSTEM.md", "APPEND_SYSTEM.md")
 	case harness.OpenCodeName:

@@ -329,7 +329,7 @@ bubblewrap and Seatbelt.
 | codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
 | gemini | `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `settings.json`, `.env`, `trustedFolders.json`, `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md` |
-| pi | `extensions/`, `skills/`, `prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/`, `tools/`, `settings.json`, `models.json`, `models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`, `APPEND_SYSTEM.md` (sessions and `auth.json` stay writable) |
+| pi | `extensions/`, `skills/`, `prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/`, `tools/`, `settings.json`, `models.json`, `models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`, `auth.json` (sessions stay writable) |
 | opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
 Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
@@ -762,18 +762,16 @@ cannot `send-keys` at tclaude's tmux server.
   so an empty `~/.gemini/.env` would hide the operator's `~/.env`. To close
   the hole, create the files you care about yourself; once present, they are
   bound read-only.
-- **pi's `auth.json` stays writable, and pi runs command-valued keys.** An
-  OAuth login refreshes its tokens into `auth.json`, so the floor leaves it
-  writable. pi also accepts an `api_key` credential whose key starts with `!`
-  and runs it as a shell command to obtain the key. A walled pi agent can
-  therefore plant a command there that the operator's next unsandboxed `pi`
-  runs (and that `tclaude harness credentials push pi` would copy). The same
-  holds for `models.json` and `settings.json` when they do not exist yet:
-  like every floor entry, a missing file is not materialized, and an agent
-  can create one with a command-valued `apiKey` or a package to load. Create
-  `models.json` and `settings.json` yourself to have them bound read-only,
-  and inspect `auth.json` before using pi outside the wall after a walled
-  agent has run.
+- **pi's floor protects only the files that already exist.** pi runs an
+  `api_key` credential or `apiKey` that starts with `!` as a shell command, so
+  `auth.json`, `models.json` and `settings.json` are floored like code (and an
+  OAuth login therefore cannot refresh inside the wall; see
+  [pi](harnesses.md#pi)). Like every floor entry, a missing file is not
+  materialized: a walled agent can create a missing `models.json`,
+  `settings.json` or `auth.json` with a command-valued key or a package to
+  load, which the operator's next unsandboxed `pi` honours. Create those
+  files yourself (an empty `{}` is enough) to have them bound read-only.
+  tcl-3bah39 tracks closing this inside the wall.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue

@@ -24,9 +24,9 @@ import (
 // string, with the launch executable resolved as `session new` resolves it,
 // in a constructed root on the host network and in the private routed
 // namespace. pi answers a mock provider's tool call with its own bash tool,
-// so the probes run as the agent would: the agent directory's auth.json is
-// writable, the read-only floor holds over models.json, settings.json and
-// extensions/, a path outside the grants is invisible, pi persists the
+// so the probes run as the agent would: the read-only floor holds over
+// auth.json (pi runs a `!`-prefixed key as a command), models.json,
+// settings.json and extensions/, a path outside the grants is invisible, pi persists the
 // session it was launched with, and tclaude's status extension loads from its
 // read-only mount and reaches the hook callback.
 func TestPiTclaudeLayerSmoke(t *testing.T) {
@@ -94,7 +94,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				`"maxTokens":4096,"reasoning":false,"input":["text"]}]}}}`
 			settings := `{"defaultProvider":"mock"}`
 			for name, content := range map[string]string{
-				"models.json": models, "settings.json": settings, "auth.json": `{"stale":true}`,
+				"models.json": models, "settings.json": settings, "auth.json": piSmokeAuth,
 			} {
 				require.NoError(t, os.WriteFile(filepath.Join(agentDir, name), []byte(content), 0o600))
 			}
@@ -164,13 +164,15 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 
 			result := mock.LastMessages()
 			assert.Contains(t, result, "probe_42", "the probe ran inside the sandbox")
-			assert.Contains(t, result, "auth_42", "pi's login stays writable, so a token refresh lands")
-			for _, marker := range []string{"decoy_42", "models_42", "settings_42", "extensions_42"} {
+			for _, marker := range []string{"decoy_42", "auth_42", "models_42", "settings_42", "extensions_42"} {
 				assert.NotContains(t, result, marker)
 			}
 			raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
 			require.NoError(t, err)
 			assert.Equal(t, models, string(raw), "the floor kept models.json read-only")
+			raw, err = os.ReadFile(filepath.Join(agentDir, "auth.json"))
+			require.NoError(t, err)
+			assert.Equal(t, piSmokeAuth, string(raw), "the floor kept auth.json read-only")
 			assert.NoDirExists(t, filepath.Join(agentDir, "extensions", "planted"))
 
 			var sessionFile string
@@ -187,6 +189,9 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 		})
 	}
 }
+
+// piSmokeAuth is a valid auth.json the probe's overwrite would change.
+const piSmokeAuth = `{"unused":{"type":"api_key","key":"unused"}}`
 
 func newPiTclaudeLayerSmokeRoot(t *testing.T) string {
 	t.Helper()
