@@ -286,14 +286,26 @@ func TestFederationLandingRecoversUndispatchedCheckout(t *testing.T) {
 			var reply landingFlowReply
 			testharness.DecodeJSON(t, rec, &reply)
 			reserved := db.NewAgentID()
-			require.NoError(t, db.ReserveFederationBundleImport(fh.peer.id.ID(), d.ID, reserved))
 			root := filepath.Dir(reply.Landing.Cwd)
 			require.NoError(t, os.MkdirAll(root, 0700))
 			marker := filepath.Join(root, "partial")
 			require.NoError(t, os.WriteFile(marker, []byte("interrupted preparation"), 0600))
+			label := ""
 			if dispatched {
-				require.NoError(t, db.SetFederationBundleLaunchLabel(reserved, "uncertain-worker"))
+				label = "uncertain-worker"
 			}
+			// Construct the crash snapshot atomically after creating its files.
+			// Live recovery must not see a dispatched reservation before its label,
+			// or an undispatched reservation before the marker exists.
+			store, err := db.Open()
+			require.NoError(t, err)
+			result, err := store.Exec(`UPDATE federation_bundle_offers SET import_agent=?, import_label=?
+				WHERE direction='in' AND peer=? AND id=? AND state='ready' AND import_agent=''`,
+				reserved, label, fh.peer.id.ID(), d.ID)
+			require.NoError(t, err)
+			rows, err := result.RowsAffected()
+			require.NoError(t, err)
+			require.EqualValues(t, 1, rows)
 			// The real list route runs daemon recovery; simulate its durable crash state
 			// without killing the test process or replacing the import implementation.
 			rec = fedHuman(t, fh.f, http.MethodGet, "/v1/federation/bundle-offers?direction=in", nil)

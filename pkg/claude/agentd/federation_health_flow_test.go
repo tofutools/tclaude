@@ -26,7 +26,9 @@ func TestFederation_FleetHealthWatchConfigurationAndMetadata(t *testing.T) {
 	rec := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/nodes/health?peer=bob", nil)
 	require.Equal(t, 200, rec.Code)
 	require.NotContains(t, rec.Body.String(), `"resources":true`)
-	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/nodes/health?peer=bob", map[string]any{"resources": true, "debounce_seconds": 1})
+	// This watcher tests the injected disk sample. Presence transitions can
+	// legitimately arrive first while the live peer is connecting.
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/nodes/health?peer=bob", map[string]any{"presence": false, "resources": true, "debounce_seconds": 1})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/nodes/health?peer=bob", map[string]any{"disk_free_percent": 101})
 	require.Equal(t, 400, rec.Code)
