@@ -1200,20 +1200,17 @@ function renderConfigNotice(messages) {
 
 // ===================================================================
 // Settings search — filters individual setting rows by a title-OR-content
-// match. Rows, cards and panels are resolved LIVE from the DOM (every
+// match. Rows, cards and panels are resolved LIVE from the DOM
+// in applyConfigFilter (every
 // .cfg-row inside a .cfg-section inside a [data-cfg-panel]), so a setting
 // added to the markup is searchable automatically — there is no hardcoded
 // list to keep in sync. While a query is active the layout shows every
 // panel with a match (data-cfg-searching on #cfg-layout) and the rail shows
 // per-panel hit counts. A card whose heading matches keeps all its rows; a
-// panel whose title matches keeps all its cards. Hiding a row never affects
+// panel whose title (not its lede) matches keeps all its cards. Hiding a row never affects
 // Save: assembleConfig reads fields by id regardless of visibility, so a
 // filtered-out setting still round-trips.
 // ===================================================================
-function cfgFilterBlocks() {
-  return $$('#tab-config [data-cfg-panel] .cfg-section');
-}
-
 // cfgSearchText is the haystack for one node: its text (titles, summaries,
 // the folded "More…" guidance, config keys and <option> labels) plus input
 // placeholders and <option>/<datalist> values — so a term like "ghostty" or
@@ -1251,8 +1248,10 @@ function applyConfigFilter() {
   setFlag(layout, 'data-cfg-searching', terms.length > 0);
   let shown = 0;
   $$('#tab-config [data-cfg-panel]').forEach(panel => {
-    const panelHead = panel.querySelector('.cfg-panel-head');
-    const panelMatch = terms.length > 0 && !!panelHead && cfgMatches(panelHead, terms);
+    // Only the panel title counts — its lede mentions many settings' topics
+    // and would otherwise turn a term search into a whole-panel match.
+    const panelTitle = panel.querySelector('.cfg-panel-head h2');
+    const panelMatch = terms.length > 0 && !!panelTitle && cfgMatches(panelTitle, terms);
     let panelHits = 0;
     panel.querySelectorAll('.cfg-section').forEach(section => {
       const head = section.querySelector(':scope > h3');

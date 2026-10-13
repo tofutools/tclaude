@@ -788,6 +788,15 @@ test('Config search filters individual settings across panels', async (t) => {
   await search('rate limits');
   assert.equal(rowFor('cfg-ratelimit-7d').hidden, false);
 
+  // A term that only appears in a panel's lede still matches per setting.
+  await search('token');
+  assert.equal(rowFor('cfg-agent-persisttoken').hidden, false);
+  assert.equal(rowFor('cfg-agent-dashboardport').hidden, true);
+
+  // A matching panel title keeps the whole panel.
+  await search('experimental');
+  assert.equal(rowFor('cfg-feature-triggers').hidden, false);
+
   await search('zzzz-nothing');
   assert.equal(root.querySelector('#cfg-filter-empty').hidden, false);
 

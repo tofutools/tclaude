@@ -32,15 +32,14 @@ func TestDashboardHTML_ConfigSectionFilter(t *testing.T) {
 
 	// Config adapter: the filter is implemented and wired through its disposer.
 	must("function applyConfigFilter(", "the filter apply fn is defined")
-	must("function cfgFilterBlocks(", "the live section resolver is defined")
 	must("function cfgSearchText(", "the title+content haystack builder is defined")
 	must("if (id === 'cfg-filter') applyConfigFilter();", "the Preact search input drives the filter")
 
 	// The auto-pickup guarantee: sections are resolved live by class, not
 	// from a hardcoded name list. This selector is the contract — a new
 	// .cfg-section is filtered with no JS change.
-	must("$$('#tab-config [data-cfg-panel] .cfg-section')",
-		"cards are resolved live from the DOM (no hardcoded section list)")
+	must("$$('#tab-config [data-cfg-panel]')",
+		"panels are resolved live from the DOM (no hardcoded section list)")
 	must("panel.querySelectorAll('.cfg-section')", "the filter walks every card of every panel")
 	must("section.querySelectorAll('.cfg-row')", "the filter matches individual setting rows")
 	must("'data-cfg-searching'", "search mode shows every panel with a match")
