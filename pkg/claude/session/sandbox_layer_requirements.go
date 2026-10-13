@@ -80,7 +80,11 @@ func piLayerPathRequirements(cwd, stateRoot string) ([]harness.LayerPathRequirem
 			Kind:      harness.LayerPathDirectory,
 			Access:    harness.LayerPathWrite,
 			MayCreate: true,
-			Source:    "pi session directory",
+			// A grant, not only contract state: launch grants mount
+			// most-specific last, so the session store stays writable under
+			// the read-only agent directory around it.
+			PolicyGrant: true,
+			Source:      "pi session directory",
 		})
 	}
 	return requirements, nil
