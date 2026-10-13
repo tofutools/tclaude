@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -217,4 +218,34 @@ func TestPiTranscriptEncodeResumesAsLinearBranch(t *testing.T) {
 		}
 	}
 	assert.True(t, strings.Contains(buf.String(), `"type":"image"`), "images stay inline")
+}
+
+func TestPiColdRenamePreservesOversizedLeaf(t *testing.T) {
+	agentDir := piTestAgentDir(t)
+	cwd := testutil.CanonicalTempDir(t)
+	path := piWriteSession(t, agentDir, cwd, fixturePi, piHeader(fixturePi, cwd),
+		piMsg("u1", nil, obj{"role": "user", "content": "original task"}),
+		piMsg("huge", "u1", obj{"role": "toolResult", "content": strings.Repeat("x", copilotEventLineLimit+100)}))
+	require.NoError(t, (piConvStore{}).SetTitle(fixturePi, "cold-name"))
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	parsed, err := decodePiSession(bytes.NewReader(raw))
+	require.NoError(t, err)
+	leaf := parsed.Entries[len(parsed.Entries)-1]
+	require.Equal(t, "huge", leaf.parent(), "rename must retain pi's actual final entry as parent")
+	require.Len(t, parsed.Branch(), 3, "the original task and huge result remain on the branch")
+}
+
+func TestPiOldSessionVersionsRefuseUntilNativeMigration(t *testing.T) {
+	for _, version := range []int{1, 2, 4} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			header := piHeader(fixturePi, "/work")
+			header["version"] = version
+			raw := jsonl(t, header, piMsg("u1", nil, obj{"role": "user", "content": "old task"}))
+			_, err := readPiSession(bytes.NewReader(raw))
+			require.ErrorContains(t, err, "reopen it in pi")
+			_, err = decodePiSession(bytes.NewReader(raw))
+			require.ErrorContains(t, err, "reopen it in pi")
+		})
+	}
 }

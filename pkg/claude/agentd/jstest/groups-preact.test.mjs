@@ -1530,3 +1530,20 @@ test('a pending morph shows on the row beside the state pill', async (t) => {
   assert.equal(host.querySelector('[data-morph-pending]'), null);
   await none.unmount();
 });
+
+test('missing extension status has a diagnostic badge only while online', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { StatePill } = await harness.importDashboardModule('js/groups-member-table.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const warning = 'pi reported no status within 30s; check its extension and hook executable';
+  const mounted = await harness.mount(harness.html`<${StatePill} state=${{ status: 'running', status_warning: warning }} online=${true} conv="c1" />`, host);
+  assert.match(host.textContent, /⚠ status missing/);
+  assert.ok([...host.querySelectorAll('[title]')].some((node) => node.title === warning));
+  await mounted.unmount();
+  const healthy = await harness.mount(harness.html`<${StatePill} state=${{ status: 'idle' }} online=${true} conv="c1" />`, host);
+  assert.doesNotMatch(host.textContent, /status missing/);
+  await healthy.unmount();
+  const offline = await harness.mount(harness.html`<${StatePill} state=${{ status: 'exited', status_warning: warning }} online=${false} conv="c1" />`, host);
+  assert.doesNotMatch(host.textContent, /status missing/);
+  await offline.unmount();
+});

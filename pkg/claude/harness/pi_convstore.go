@@ -361,7 +361,7 @@ func (s piConvStore) SetTitle(convID, title string) error {
 	if err != nil {
 		return err
 	}
-	session, err := readPiSession(strings.NewReader(string(raw)))
+	session, err := decodePiSession(strings.NewReader(string(raw)))
 	if err != nil {
 		return fmt.Errorf("pi SetTitle: %w", err)
 	}

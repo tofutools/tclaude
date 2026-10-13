@@ -183,6 +183,7 @@ type sessionReaper struct {
 	notify                reaperNotify
 	idleNotify            reaperNotify
 	pendingIdle           map[string]pendingIdleNotification
+	statusExtensionWarned map[string]time.Time
 }
 
 func newSessionReaper() *sessionReaper {
@@ -529,6 +530,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if st.Status != session.StatusExited {
 			delete(r.deadPaneRecordFailure, st.ID)
 			aliveNow[st.ID] = true
+			r.warnMissingStatusExtension(st, now)
 			r.reconcileBackgroundIdle(st, now)
 			// A live session is a running agent — enroll it so every
 			// terminal-launched conversation surfaces on the dashboard
@@ -642,6 +644,11 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			r.notify(st, prevStatus)
 		}
 	}
+	for id := range r.statusExtensionWarned {
+		if !aliveNow[id] {
+			delete(r.statusExtensionWarned, id)
+		}
+	}
 	r.aliveLastTick = aliveNow
 	r.seeded = true
 	return reaped
@@ -674,6 +681,11 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // capability — an unknown/unrecorded harness keeps the historical Claude
 // treatment rather than silently going quiet.
 func reaperFallbackExitReason(h string) string {
+	// pi's status extension reports graceful session_shutdown as SessionEnd.
+	// A missing end callback follows the same abnormal-death fallback as Claude.
+	if h == harness.PiName {
+		return unexpectedExitReason
+	}
 	if h == harness.CodexName || h == harness.OpenCodeName ||
 		h == harness.CopilotName || h == harness.GeminiName ||
 		h == session.ShellHarnessName {

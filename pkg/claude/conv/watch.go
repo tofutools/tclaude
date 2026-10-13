@@ -3542,6 +3542,7 @@ func createSessionForConv(conv *SessionEntry) error {
 			return session.StackedEngineBindingRefusal(h, err)
 		}
 	}
+	launchStarted := time.Now()
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
@@ -3599,11 +3600,11 @@ func createSessionForConv(conv *SessionEntry) error {
 		ApprovalPolicy:           approvalPolicy,
 		ApprovalAutoReview:       autoReview,
 		AskUserQuestionTimeout:   askTimeout,
-		Created:                  time.Now(),
+		Created:                  launchStarted,
 		Updated:                  time.Now(),
 	}
 
-	if err := session.SaveSessionState(state); err != nil {
+	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
 	// resumeLaunchCmd already applied these to the pane's environment; this

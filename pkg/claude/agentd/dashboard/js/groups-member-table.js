@@ -592,6 +592,7 @@ export function StatePill({ state, online, conv, waking }) {
     <${SlopMachine} state=${state} online=${online} conv=${conv} />
     <${WizardPill} state=${state} online=${online} conv=${conv} />
     <${MorphPendingBadge} pending=${state?.pending_morph} />
+    ${online && state?.status_warning ? html`<span class="state-pill state-awaiting" title=${state.status_warning} aria-label=${state.status_warning}>⚠ status missing</span>` : null}
   </span>`;
 }
 

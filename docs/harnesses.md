@@ -890,6 +890,14 @@ context window: the window `models.json` declares for a custom model, else the
 one pi last reported for it, else an assumed 32k; history that does not fit
 needs the same confirmation as any other morph.
 
+For pi, tclaude reads version 3 session files. Reopen older version 1/2 files
+in pi first so pi migrates them; tclaude refuses unsupported versions rather
+than silently dropping their history. A live extension-backed pane that sends
+no status hooks within 30 seconds shows **⚠ status missing** in the dashboard.
+Check the loaded tclaude extension, extension API compatibility and configured
+hook executable (for pi, `TCLAUDE_PI_HOOK_BIN`). The warning clears when a valid
+hook arrives; the daemon logs it once per launch.
+
 **Context meter and cost.** The extension reports pi's own context usage and
 what the session has spent, priced from pi's model catalog, on every event.
 Under a subscription login (ChatGPT, GitHub Copilot) that price is only what

@@ -454,7 +454,19 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	// once); inject /rename so the new conversation also regains a real
 	// customTitle turn — durable, visible in CC's own UI, and on every other
 	// surface. A harness with no in-pane rename keeps just pending_name.
-	restoreClearedTitle(state.TmuxSession, carriedName, clearedTitleRenameCommand(state.Harness))
+	h, registered := harness.Get(state.Harness)
+	if registered && !h.SupportsRename() && h.SupportsConvs() && carriedName != "" {
+		// Native title-store writes are not pane input. They also work for
+		// harnesses that cannot restore a title through an in-pane command.
+		if err := h.Convs.SetTitle(newConv, carriedName); err != nil {
+			slog.Warn("clear-migrate: title-store restoration failed; retaining actor title fallback",
+				"conv", newConv, "harness", h.Name, "error", err)
+		} else if err := db.SetConvIndexCustomTitle(newConv, carriedName, h.Name); err != nil {
+			slog.Warn("clear-migrate: title cache restoration failed", "conv", newConv, "error", err)
+		}
+	} else {
+		restoreClearedTitle(state.TmuxSession, carriedName, clearedTitleRenameCommand(state.Harness))
+	}
 	return true
 }
 

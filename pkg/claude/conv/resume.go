@@ -294,6 +294,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 			return 1
 		}
 	}
+	launchStarted := time.Now()
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
@@ -354,11 +355,11 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		ApprovalPolicy:           approvalPolicy,
 		ApprovalAutoReview:       autoReview,
 		AskUserQuestionTimeout:   askTimeout,
-		Created:                  time.Now(),
+		Created:                  launchStarted,
 		Updated:                  time.Now(),
 	}
 
-	if err := session.SaveSessionState(state); err != nil {
+	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
 		fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
 		return 1
 	}

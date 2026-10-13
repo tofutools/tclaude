@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -194,6 +195,9 @@ func (s *piSession) add(line []byte, found *bool) error {
 	if !*found {
 		if e.Type != piSessionHeaderType || e.ID == "" {
 			return errPiNoHeader
+		}
+		if e.Version != piSessionVersion {
+			return fmt.Errorf("unsupported pi session version %d; reopen it in pi to migrate before using tclaude", e.Version)
 		}
 		s.Header, *found = e, true
 		return nil
