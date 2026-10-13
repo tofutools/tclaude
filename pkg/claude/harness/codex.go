@@ -18,9 +18,9 @@ const CodexName = "codex"
 // (`tclaude ask` one-shot turns via `codex exec` / the TUI — JOH-252; see
 // codex_asker.go), the HookInstaller (JOH-157/158), and a Lifecycle for
 // Codex's in-pane controls.
-// Rename stays out-of-band: Codex has no `/rename`-style command, so
-// SupportsRename folds to false and agentd routes a Codex rename through
-// ConvStore.SetTitle.
+// Codex supports /rename, but tclaude deliberately keeps its established
+// out-of-band title-store path (and the typed app-server rename when selected).
+// SupportsRename therefore stays false: renaming needs no TUI keystrokes.
 func init() {
 	Register(&Harness{
 		Name:                      CodexName,
@@ -82,8 +82,8 @@ func init() {
 
 // codexLifecycle names Codex CLI's in-pane control slash commands. Codex
 // exposes `/compact` for context summarisation and `/quit` for soft-exit.
-// RenameCommand is empty because Codex has no in-pane rename; titles live in
-// its threads state DB, reached via ConvStore.SetTitle. RemoteControlCommand
+// RenameCommand stays empty because tclaude uses Codex's threads title store
+// or the selected app-server RPC instead of its /rename TUI command. RemoteControlCommand
 // is empty because Codex has no built-in remote-access feature (JOH-254).
 // The tokens are compile-time constants — never interpolate user input into
 // them (the tmux pane is an injection sink).

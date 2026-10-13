@@ -20,6 +20,7 @@ import (
 // must stay reasonless (no spurious "Exited" banner).
 func TestReaperFallbackExitReason(t *testing.T) {
 	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason("claude"))
+	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason(harness.PiName), "pi reports graceful SessionEnd; a missing callback is abnormal")
 	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason(""), "unknown harness is treated like Claude")
 	assert.Equal(t, "", reaperFallbackExitReason("opencode"),
 		"a deliberate attach-client exit is normal; the server-loss branch stamps crashes explicitly")

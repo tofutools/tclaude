@@ -978,3 +978,12 @@ are re-injected after compaction/clear from the frozen launch snapshot.
 
 The fallback lists instructions to read on demand; it does not claim native
 slash-command registration. See [Managed skills and rules](agents-and-groups.md#managed-skills-and-rules).
+
+
+For pi, tclaude reads version 3 session files. Reopen older version 1/2 files
+in pi first so pi migrates them; tclaude refuses unsupported versions rather
+than silently dropping their history. A live extension-backed pane that sends
+no status hooks within 30 seconds shows **⚠ status missing** in the dashboard.
+Check the loaded tclaude extension, extension API compatibility and configured
+hook executable (for pi, `TCLAUDE_PI_HOOK_BIN`). The warning clears when a valid
+hook arrives; the daemon logs it once per launch.

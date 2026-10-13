@@ -495,3 +495,67 @@ func TestPiManagedSkillsShadowAmbientAndRulesSurviveCompaction(t *testing.T) {
 	check(turn("after the compaction"), "after compaction")
 	rpc.Close()
 }
+
+// A refused pinned-window compaction must retain the history and emit only
+// PreCompact(auto), never claim a completed compaction to the daemon.
+func TestPiThresholdCompactionRefusal(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	w.ExtraEnv = []string{harness.AutoCompactWindowEnvVar + "=10000"}
+	recorder := "#!/bin/sh\n[ \"$1 $2\" = \"session hook-callback\" ] || exit 64\ncat >> " + shellQuote(w.Payloads) + "\nprintf '%s\\n' '{\"decision\":\"block\"}'\n"
+	require.NoError(t, os.WriteFile(w.Recorder, []byte(recorder), 0o700))
+	id := uuid.NewString()
+	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
+	rpc.AwaitEvent("agent_settled")
+	rpc.AwaitEvent("compaction_end")
+	rpc.Close()
+	pre := 0
+	for _, payload := range w.RecordedPayloads() {
+		switch payload["hook_event_name"] {
+		case "PreCompact":
+			pre++
+			require.Equal(t, "auto", payload["trigger"])
+		case "PostCompact":
+			t.Fatal("refused compaction emitted PostCompact")
+		}
+	}
+	require.Equal(t, 1, pre, "the hook must actually receive the threshold decision")
+	files, err := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	raw, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"type":"compaction"`)
+}
+
+func TestPiSelectDialogReportsElicitation(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	probe := filepath.Join(w.Project, "select-probe.ts")
+	require.NoError(t, os.WriteFile(probe, []byte(`export default function(pi: any) {
+ pi.registerCommand("test-select", {handler: async (_args: string, ctx: any) => {
+  await ctx.ui.select("Pick a color", ["red", "blue"]);
+ }});
+}
+`), 0o600))
+	rpc := w.StartRPC(w.Project, "--session-id", uuid.NewString(), "--extension", ext, "--extension", probe, "--model", MockModel)
+	// Extension commands acknowledge after their handler completes; send
+	// without waiting so the test can answer the dialog first.
+	rpc.Reply(map[string]any{"type": "prompt", "message": "/test-select"})
+	dialog := rpc.Await(func(line map[string]any) bool {
+		return line["type"] == "extension_ui_request" && line["method"] == "select"
+	})
+	rpc.Reply(map[string]any{"type": "extension_ui_response", "id": dialog["id"], "value": "red"})
+	ack := rpc.Await(func(line map[string]any) bool { return line["type"] == "response" && line["command"] == "prompt" })
+	require.Equal(t, true, ack["success"])
+	rpc.Close()
+	var notification map[string]any
+	for _, payload := range w.RecordedPayloads() {
+		if payload["hook_event_name"] == "Notification" {
+			notification = payload
+		}
+	}
+	require.NotNil(t, notification, "the real select must report a UI prompt")
+	require.Equal(t, "elicitation_dialog", notification["notification_type"])
+}

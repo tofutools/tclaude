@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/testutil"
 	"maps"
 	"os"
 	"path/filepath"
@@ -1660,4 +1661,37 @@ func TestClearedTitleRenameCommand(t *testing.T) {
 	} {
 		assert.Equal(t, want, clearedTitleRenameCommand(name), "harness %q", name)
 	}
+}
+
+type clearTitleStore struct {
+	harness.ConvStore
+	conv, title string
+}
+
+func (s *clearTitleStore) SetTitle(conv, title string) error {
+	s.conv, s.title = conv, title
+	return nil
+}
+
+func TestMigrateClearedIdentityRestoresTitleStore(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	const oldConv = "11111111-1111-1111-1111-111111111111"
+	const newConv = "22222222-2222-2222-2222-222222222222"
+	require.NoError(t, db.SetConvIndexCustomTitle(oldConv, "carried-title", harness.CodexName))
+	mustEnsureAgent(t, oldConv)
+	descriptor := *harness.MustGet(harness.CodexName)
+	store := &clearTitleStore{ConvStore: descriptor.Convs}
+	descriptor.Convs = store
+	t.Cleanup(harness.RegisterForTest(&descriptor))
+	oldTimeout := clearIndexCatchupTimeout
+	clearIndexCatchupTimeout = 0
+	t.Cleanup(func() { clearIndexCatchupTimeout = oldTimeout })
+	require.True(t, migrateClearedIdentity(&SessionState{ConvID: oldConv, Harness: harness.CodexName}, newConv))
+	require.Equal(t, newConv, store.conv)
+	require.Equal(t, "carried-title", store.title)
+	row, err := db.GetConvIndex(newConv)
+	require.NoError(t, err)
+	require.Equal(t, "carried-title", row.CustomTitle)
 }

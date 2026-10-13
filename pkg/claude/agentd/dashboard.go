@@ -2056,6 +2056,7 @@ func sandboxProfileRefs(snapshot *sandboxpolicy.Snapshot) []sandboxProfileRef {
 type agentState struct {
 	Status        string `json:"status,omitempty"`
 	StatusDetail  string `json:"status_detail,omitempty"`
+	StatusWarning string `json:"status_warning,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
 	// TemporaryHarnessBuiltinMode is the reversible operator override currently
 	// applied to this stable agent. It remains visible while the session is
@@ -2509,6 +2510,7 @@ func stateForConvInSessionsBatched(
 	// ledger with a non-zero count is a row last written by a pre-ledger
 	// hook binary — surface its raw count rather than hiding real work.
 	if alive {
+		out.StatusWarning = statusExtensionWarning(pick.Harness, pick.CreatedAt, pick.LastHook, time.Now())
 		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
 			for id := range codexInterruptedSubagents {
 				delete(set, id)
