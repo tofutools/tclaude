@@ -129,19 +129,23 @@ func TestLaunchUnconfinedRaisesBadge(t *testing.T) {
 	t.Cleanup(db.ResetForTest)
 	now := time.Now()
 	for _, tc := range []struct {
-		id, state, implementation string
-		want                      bool
+		id, harnessName, mode, state, implementation string
+		want                                         bool
 	}{
-		{"sb-builtin-off", "off", "harness-builtin", true},
-		{"sb-impl-off", "off", "off", true},
-		{"sb-resource-only", "", "resource-only", true},
-		{"sb-builtin-on", "on", "harness-builtin", false},
-		{"sb-tclaude-layer", "on", "tclaude-layer", false},
-		{"sb-unknown", "", "", false},
+		{"sb-builtin-off", "claude", "off", "off", "harness-builtin", true},
+		{"sb-impl-off", "claude", "off", "off", "off", true},
+		{"sb-resource-only", "claude", "off", "", "resource-only", true},
+		{"sb-builtin-on", "claude", "on", "on", "harness-builtin", false},
+		{"sb-tclaude-layer", "claude", "off", "on", "tclaude-layer", false},
+		{"sb-unknown", "claude", "", "", "", false},
+		{"sb-codex-danger", "codex", "danger-full-access", "", "harness-builtin", true},
+		{"sb-codex-workspace", "codex", "workspace-write", "", "harness-builtin", false},
+		{"sb-codex-layer", "codex", "danger-full-access", "on", "tclaude-layer", false},
 	} {
 		require.NoError(t, db.SaveSession(&db.SessionRow{
-			ID: tc.id, ConvID: "conv-" + tc.id, Status: "idle", Harness: "claude",
-			OSSandboxState: tc.state, SandboxImplementation: tc.implementation,
+			ID: tc.id, ConvID: "conv-" + tc.id, Status: "idle", Harness: tc.harnessName,
+			HarnessBuiltinMode: tc.mode,
+			OSSandboxState:     tc.state, SandboxImplementation: tc.implementation,
 			CreatedAt: now, UpdatedAt: now,
 		}))
 		assert.Equal(t, tc.want, sandboxOff(tc.id, "conv-"+tc.id), tc.id)

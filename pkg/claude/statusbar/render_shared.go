@@ -332,7 +332,8 @@ func sandboxOff(sessionID, convID string) bool {
 
 // launchUnconfined reports whether the pane's own session row recorded a
 // launch with no OS confinement: an implementation that omits it (off,
-// resource-only), or a harness-builtin launch whose resolved verdict is off.
+// resource-only), or a harness-builtin launch whose resolved verdict or mode
+// is off.
 // An unknown or unreadable row reads as confined, so the badge never guesses.
 func launchUnconfined(sessionID string) bool {
 	if sessionID == "" {
@@ -346,7 +347,25 @@ func launchUnconfined(sessionID string) bool {
 		return true
 	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(row.SandboxImplementation)
-	return err == nil && implementation.OmitsOSConfinement()
+	if err != nil {
+		return false
+	}
+	if implementation.OmitsOSConfinement() {
+		return true
+	}
+	if implementation != sandboxpolicy.ImplementationHarnessBuiltin {
+		return false
+	}
+	// Only Claude Code records an os_sandbox_state verdict; every other
+	// harness states its posture through its mode, so a harness-builtin
+	// launch in that harness's own off mode (Codex danger-full-access, …)
+	// is unconfined too.
+	h, err := harness.ResolveSpawnable(row.Harness)
+	if err != nil {
+		return false
+	}
+	offMode, err := harness.SandboxOffMode(h)
+	return err == nil && strings.TrimSpace(row.HarnessBuiltinMode) == offMode
 }
 
 // temporarySandboxOff reports the reversible sandbox override for the
