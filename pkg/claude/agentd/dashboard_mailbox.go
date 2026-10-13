@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -186,8 +187,9 @@ type dashboardMailbox struct {
 
 // Roster agent paging. The sidebar's flat agent list is one newest-activity
 // -first page of agents_limit folders; the client asks for more as the
-// operator scrolls ("load more"). maxRosterAgents caps a hand-crafted
-// request.
+// operator scrolls ("load more"). maxRosterAgents caps an explicit request.
+// A request without agents_limit gets every folder, as before paging: the
+// fused federation view (and peers on older builds) read the whole roster.
 const (
 	defaultRosterAgents = 100
 	maxRosterAgents     = 2000
@@ -235,7 +237,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	includeEmpty := mailboxIncludeEmpty(r)
 	hidePrevGens := isTruthy(qv.Get("hide_prev_gens"))
 	filter := strings.ToLower(strings.TrimSpace(qv.Get("q")))
-	agentsLimit := min(max(atoiOr(qv.Get("agents_limit"), defaultRosterAgents), 0), maxRosterAgents)
+	agentsLimit := math.MaxInt
+	if qv.Has("agents_limit") {
+		agentsLimit = min(max(atoiOr(qv.Get("agents_limit"), defaultRosterAgents), 0), maxRosterAgents)
+	}
 	selected := qv.Get("selected")
 	expanded := map[string]bool{}
 	for _, name := range qv["expand"] {

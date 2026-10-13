@@ -375,9 +375,14 @@ function prevGenConvSet() {
 }
 
 // expandedGroupNames lists the group rows the operator has expanded, so the
-// roster fetch can embed their member folders.
+// roster fetch can embed their member folders. It reads the persisted
+// expand prefs rather than the loaded roster, so the very first fetch
+// already carries them; a stale name for a deleted group is ignored
+// server-side.
 function expandedGroupNames() {
-  return mail.mailboxes.filter(mb => mb.kind === 'group' && isGroupExpanded(mb.title)).map(mb => mb.title);
+  return dashPrefs.keysWithPrefix(GROUP_EXPAND_PREFIX)
+    .filter(k => dashPrefs.getItem(k) === '1')
+    .map(k => k.slice(GROUP_EXPAND_PREFIX.length));
 }
 
 // --- data loading ---------------------------------------------------
@@ -488,13 +493,19 @@ async function reloadMail() {
 // batched delete no-ops it server-side — and folder / search changes
 // clear the set outright.
 function pruneSelections() {
-  // A ticked folder that left the loaded roster is dropped — e.g. it was
-  // wiped, retired / reincarnated out of view (hide_prev_gens), or fell off
-  // the loaded page — so the wipe-bar count (and a wipe) never covers a row
-  // the operator can no longer see.
-  const agentIds = new Set(rosterAgentBoxes().map(mb => mb.id));
-  for (const c of [...mail.selectedBoxes]) {
-    if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
+  // A ticked folder that left the roster is dropped — e.g. it was wiped, or
+  // retired / reincarnated out of view (hide_prev_gens) — so the wipe-bar
+  // count (and a wipe) never covers a row the toggles now hide. The roster
+  // is paged and filtered server-side, so absence only proves that when the
+  // loaded list is the whole unfiltered set; a tick merely filtered out by
+  // the sidebar text or pushed past the loaded page is kept, as it was when
+  // filtering ran in the browser.
+  const loaded = rosterAgentBoxes();
+  if (!(mail.boxQuery || '').trim() && loaded.length >= mail.agentsTotal) {
+    const agentIds = new Set(loaded.map(mb => mb.id));
+    for (const c of [...mail.selectedBoxes]) {
+      if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
+    }
   }
   // Snap an orphaned folder selection back to the firehose: if the open
   // folder (agent OR group) is no longer shown — e.g. a retired conv
@@ -755,7 +766,7 @@ function setShowPrevGens(on) {
 // response) are filtered here; agent folders, flat and nested, arrive
 // already filtered and paged by the server, so they are shown as sent.
 function mailboxView() {
-  const q = (mail.boxQuery || '').toLowerCase();
+  const q = (mail.boxQuery || '').trim().toLowerCase();
   const pinned = mail.mailboxes.filter(mb => (mb.kind === 'all' || mb.kind === 'human') && mailboxMatchesFilter(mb, q));
   const access = accessRequestsMailbox();
   if (mailboxMatchesFilter(access, q)) pinned.push(access);

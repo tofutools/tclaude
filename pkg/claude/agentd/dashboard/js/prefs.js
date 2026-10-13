@@ -124,6 +124,10 @@ const dashPrefs = {
     const v = cache[key];
     return v === undefined ? null : v;
   },
+  // keysWithPrefix lists the cached keys that start with prefix.
+  keysWithPrefix(prefix) {
+    return Object.keys(cache).filter(k => k.startsWith(prefix));
+  },
   // setItem stringifies (localStorage does too), updates the cache, and
   // queues a debounced write-through.
   setItem(key, value) {

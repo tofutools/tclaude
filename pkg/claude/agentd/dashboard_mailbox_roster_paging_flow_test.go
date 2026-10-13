@@ -98,7 +98,8 @@ func seedRoster(t *testing.T, f *testharness.Flow) []string {
 }
 
 // Scenario: the flat agent list is a newest-activity-first page; the totals
-// describe every folder, and agents_limit=0 returns totals only.
+// describe every folder, agents_limit=0 returns totals only, and a request
+// without agents_limit gets the whole list.
 func TestDashboardMailboxes_PagesAgentFolders(t *testing.T) {
 	f := newFlow(t)
 	convs := seedRoster(t, f)
@@ -109,6 +110,9 @@ func TestDashboardMailboxes_PagesAgentFolders(t *testing.T) {
 		"newest activity first: agent 4 sent the last message and agent 0 received it (same instant, conv-id tiebreak)")
 	assert.Equal(t, 5, r.AgentsTotal)
 	assert.Equal(t, 4, r.AgentsUnread, "agent 0's four unread received messages count, page or not")
+
+	r = getRoster(t, dash, url.Values{})
+	assert.Len(t, r.agentIDs(), 5, "without agents_limit (fused view, older peers) every folder is returned")
 
 	r = getRoster(t, dash, url.Values{"agents_limit": {"0"}})
 	assert.Empty(t, r.agentIDs(), "a folded section asks for totals only")
