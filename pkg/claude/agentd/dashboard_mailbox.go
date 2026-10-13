@@ -114,24 +114,19 @@ func mailboxIncludeEmpty(r *http.Request) bool {
 }
 
 // retiredAgentConvs returns the set of conv-ids whose agent enrollment
-// has been retired, both as a membership set (for the roster's skip /
-// mark decision) and as a slice (for MailboxFilter.ExcludeConvs). A nil
-// error with empty results is the common case (no retired agents).
-func retiredAgentConvs() (map[string]struct{}, []string, error) {
-	rows, err := db.ListRetiredAgents()
+// has been retired, for the roster's skip / mark decision. Message queries
+// never take this set — they exclude retired traffic in SQL
+// (MailboxFilter.ExcludeRetired), so it never becomes a bound id list.
+func retiredAgentConvs() (map[string]struct{}, error) {
+	ids, err := db.ListRetiredConvIDs()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	set := make(map[string]struct{}, len(rows))
-	ids := make([]string, 0, len(rows))
-	for _, e := range rows {
-		if e.CurrentConvID == "" {
-			continue
-		}
-		set[e.CurrentConvID] = struct{}{}
-		ids = append(ids, e.CurrentConvID)
+	set := make(map[string]struct{}, len(ids))
+	for _, c := range ids {
+		set[c] = struct{}{}
 	}
-	return set, ids, nil
+	return set, nil
 }
 
 func registerDashboardMailboxRoutes(mux *http.ServeMux) {
@@ -192,7 +187,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 
 	includeRetired := mailboxIncludeRetired(r)
 	includeEmpty := mailboxIncludeEmpty(r)
-	retiredSet, retiredIDs, err := retiredAgentConvs()
+	retiredSet, err := retiredAgentConvs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -231,10 +226,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// the count must match the filtered firehose, so it counts the same
 	// excluded scope rather than the raw row total.
 	allTotal := 0
-	if includeRetired || len(retiredIDs) == 0 {
+	if includeRetired || len(retiredSet) == 0 {
 		allTotal, _ = db.CountAgentMessages()
 	} else {
-		allTotal, _ = db.CountMailbox(db.MailboxFilter{ExcludeConvs: retiredIDs})
+		allTotal, _ = db.CountMailbox(db.MailboxFilter{ExcludeRetired: true})
 	}
 	mailboxes = append(mailboxes, dashboardMailbox{
 		ID:    allMailboxID,
@@ -256,7 +251,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		LastAt: latestHumanMessageAt(humanMsgs),
 	})
 
-	agentBoxes := make([]dashboardMailbox, 0, len(convSet))
+	// Pick the visible folders first, then resolve their titles, agent ids
+	// and liveness in one batched read per table — per-conv point queries
+	// made the roster O(agents) round trips on every 2s refresh.
+	visible := make([]string, 0, len(convSet))
 	for conv := range convSet {
 		_, retired := retiredSet[conv]
 		// Retired agents are hidden unless the operator opted in; when
@@ -264,7 +262,6 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		if retired && !includeRetired {
 			continue
 		}
-		c := counts[conv]
 		// Agents with an empty mailbox (neither sent nor received any mail)
 		// are hidden unless the operator opted in. A conv with any mail is in
 		// counts, so an empty mailbox here only ever comes from the
@@ -272,10 +269,20 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		// a folder that actually holds messages. No firehose/badge
 		// reconciliation is needed (unlike retired): an empty mailbox owns no
 		// rows, so excluding it changes nothing the "all" view counts.
-		if c.In == 0 && c.Out == 0 && !includeEmpty {
+		if c := counts[conv]; c.In == 0 && c.Out == 0 && !includeEmpty {
 			continue
 		}
-		title := agent.CachedTitle(conv)
+		visible = append(visible, conv)
+	}
+	convIndex, _ := db.GetConvIndexBatch(visible)
+	convAgents, _ := db.AgentsByConv(visible)
+	sessions, _ := db.FindSessionsByConvIDs(visible)
+
+	agentBoxes := make([]dashboardMailbox, 0, len(visible))
+	for _, conv := range visible {
+		_, retired := retiredSet[conv]
+		c := counts[conv]
+		title := agent.CachedTitleFromParts(convIndex[conv], convAgents[conv].PendingName)
 		if title == agent.UnknownTitle {
 			title = ""
 		}
@@ -284,8 +291,8 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 			Kind:    "agent",
 			Title:   title,
 			Short:   agent.ShortID(conv),
-			AgentID: peerAgentID(conv),
-			Online:  isConvOnlineIn(conv, aliveSessions),
+			AgentID: convAgents[conv].AgentID,
+			Online:  isConvOnlineInSessions(sessions[conv], aliveSessions),
 			Retired: retired,
 			Groups:  groupsByConv[conv],
 			In:      c.In,
@@ -312,7 +319,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// When opted in, buildGroupMailboxes also nests retired ex-members back
 	// under their former group (retire unjoined them, so they're gone from the
 	// live membership) using each group's message history.
-	groupBoxes := buildGroupMailboxes(retiredSet, retiredIDs, includeRetired)
+	groupBoxes := buildGroupMailboxes(retiredSet, includeRetired)
 
 	// Sort agent mailboxes by recency — newest mail on top, the way a mail
 	// client lists folders by last activity — then by title, then conv-id
@@ -479,16 +486,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// operator opened it on purpose, so they see all of its mail. A
 		// lookup error fails the request (matches the roster handler)
 		// rather than silently falling open to the unfiltered firehose.
-		var exclude []string
-		if !mailboxIncludeRetired(r) {
-			_, ids, err := retiredAgentConvs()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-			exclude = ids
-		}
-		p, err := agentMailboxPage("", q, page, pageSize, exclude)
+		p, err := agentMailboxPage("", q, page, pageSize, !mailboxIncludeRetired(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -512,27 +510,13 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such group: "+name)
 			return
 		}
-		members, err := groupMemberConvs(g.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
 		// Hide retired members' traffic unless the operator opted in — the
 		// same exclude the "all" firehose applies, so a member's DM to a
 		// retired agent (and a retired sender's channel post) drops while a
 		// current member's traffic and channel posts survive. A lookup error
 		// fails the request (matches the all branch) rather than silently
 		// falling open to the unfiltered group scope.
-		var exclude []string
-		if !mailboxIncludeRetired(r) {
-			_, ids, err := retiredAgentConvs()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", err.Error())
-				return
-			}
-			exclude = ids
-		}
-		p, err := groupMailboxPage(members, g.ID, q, page, pageSize, exclude)
+		p, err := groupMailboxPage(g.ID, q, page, pageSize, !mailboxIncludeRetired(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -545,7 +529,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := agentMailboxPage(id, q, page, pageSize, nil)
+	p, err := agentMailboxPage(id, q, page, pageSize, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -576,35 +560,6 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 	head["total"] = p.Total
 	head["total_unfiltered"] = p.TotalUnfiltered
 	writeJSON(w, http.StatusOK, head)
-}
-
-// resolveMailboxSearch turns the search box text into the two id-sets
-// MailboxFilter can't derive from agent_messages alone: convs whose
-// resolved display title contains q (matched the same way the reading
-// pane renders from_title/to_title — via the dashboard's cache-backed
-// title helper over the small set of convs that appear in any message),
-// and groups whose name contains q. Returns (nil, nil) for an empty query.
-func resolveMailboxSearch(q string) (titleConvs []string, groupIDs []int64) {
-	if q == "" {
-		return nil, nil
-	}
-	lq := strings.ToLower(q)
-	if convs, err := db.DistinctAgentMessageConvs(); err == nil {
-		for _, c := range convs {
-			t := mailboxDisplayTitle(c)
-			if t != "" && strings.Contains(strings.ToLower(t), lq) {
-				titleConvs = append(titleConvs, c)
-			}
-		}
-	}
-	if gs, err := db.ListAgentGroups(); err == nil {
-		for _, g := range gs {
-			if strings.Contains(strings.ToLower(g.Name), lq) {
-				groupIDs = append(groupIDs, g.ID)
-			}
-		}
-	}
-	return titleConvs, groupIDs
 }
 
 // humanMailboxMessages maps the human_messages snapshot into the shared
@@ -781,29 +736,28 @@ func directionFor(forConv string, m *db.AgentMessage) string {
 // the "all" firehose when forConv == ""), server-filtered by q. The scope
 // predicate `(to_conv = ? OR from_conv = ?)` returns each row once, so the
 // self-addressed row that the old two-query merge had to dedup is handled
-// for free. excludeConvs drops rows touching those convs (the "all"
-// firehose passes retired agents here when the operator hasn't opted in;
-// a specific folder passes nil). Counts: total = rows matching q within
+// for free. excludeRetired drops rows touching retired agents (the "all"
+// firehose sets it when the operator hasn't opted in; a specific folder
+// never does). Counts: total = rows matching q within
 // that scope, totalUnfiltered = rows in the (still exclude-scoped) folder
 // regardless of q — so the pager and the search count both reflect the
 // same hidden-retired view.
-func agentMailboxPage(forConv, q string, page, pageSize int, excludeConvs []string) (mailboxPage, error) {
-	scope := db.MailboxFilter{ForConv: forConv, ExcludeConvs: excludeConvs}
+func agentMailboxPage(forConv, q string, page, pageSize int, excludeRetired bool) (mailboxPage, error) {
+	scope := db.MailboxFilter{ForConv: forConv, ExcludeRetired: excludeRetired}
 	return mailboxPageForScope(scope, forConv, q, page, pageSize)
 }
 
 // groupMailboxPage builds one newest-first page of a GROUP folder — all
 // traffic touching any current member (sender or recipient) plus the
-// group's own multicasts (see MailboxFilter.ScopeConvs / ScopeGroupID).
+// group's own multicasts (see MailboxFilter.ScopeGroupID).
 // Like the "all" firehose it has no single self to be relative to, so
-// every row renders from→to (forConv == ""). excludeConvs drops retired
-// members' traffic exactly as the "all" firehose does (the caller passes
-// the retired conv-ids unless the operator opted into "show retired"): a
-// member's DM to a retired agent disappears, and a channel multicast
-// survives unless its own sender is retired. Passing nil shows the whole
-// scope (the opted-in case).
-func groupMailboxPage(members []string, groupID int64, q string, page, pageSize int, excludeConvs []string) (mailboxPage, error) {
-	scope := db.MailboxFilter{ScopeConvs: members, ScopeGroupID: groupID, ExcludeConvs: excludeConvs}
+// every row renders from→to (forConv == ""). excludeRetired drops retired
+// members' traffic exactly as the "all" firehose does (the caller sets it
+// unless the operator opted into "show retired"): a member's DM to a
+// retired agent disappears, and a channel multicast survives unless its own
+// sender is retired. false shows the whole scope (the opted-in case).
+func groupMailboxPage(groupID int64, q string, page, pageSize int, excludeRetired bool) (mailboxPage, error) {
+	scope := db.MailboxFilter{ScopeGroupID: groupID, ExcludeRetired: excludeRetired}
 	return mailboxPageForScope(scope, "", q, page, pageSize)
 }
 
@@ -823,7 +777,6 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 	total := totalUnfiltered
 	if q != "" {
 		filter.Text = q
-		filter.TitleConvs, filter.GroupIDs = resolveMailboxSearch(q)
 		if total, err = db.CountMailbox(filter); err != nil {
 			return mailboxPage{}, err
 		}
@@ -870,10 +823,10 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 // (groups are few and human-curated). A lookup failure for one group skips
 // just that group rather than failing the whole roster.
 //
-// retiredIDs (the retired-agent conv-ids) and includeRetired together
+// retiredSet (the retired-agent conv-ids) and includeRetired together
 // govern two retired-aware adjustments:
-//   - The badge total: when the operator hasn't opted in, retiredIDs scopes
-//     out retired members' traffic — the roster twin of the group folder's
+//   - The badge total: when the operator hasn't opted in, retired members'
+//     traffic is excluded — the roster twin of the group folder's
 //     own exclude (groupMailboxPage), so the badge matches the folder it
 //     labels. When opted in nothing is excluded and the whole scope counts.
 //   - The nested member list: when the operator HAS opted in, MemberConvs is
@@ -883,14 +836,10 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 //     every group, so a retired ex-member is gone from the live membership
 //     (groupMemberConvs) and would otherwise never nest even though its flat
 //     agent folder is shown. Members stays the *current* member count.
-func buildGroupMailboxes(retiredSet map[string]struct{}, retiredIDs []string, includeRetired bool) []dashboardMailbox {
+func buildGroupMailboxes(retiredSet map[string]struct{}, includeRetired bool) []dashboardMailbox {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil
-	}
-	var excludeConvs []string
-	if !includeRetired {
-		excludeConvs = retiredIDs
 	}
 	out := make([]dashboardMailbox, 0, len(groups))
 	for _, g := range groups {
@@ -907,7 +856,7 @@ func buildGroupMailboxes(retiredSet map[string]struct{}, retiredIDs []string, in
 		if err != nil {
 			continue
 		}
-		total, err := db.CountMailbox(db.MailboxFilter{ScopeConvs: members, ScopeGroupID: g.ID, ExcludeConvs: excludeConvs})
+		total, err := db.CountMailbox(db.MailboxFilter{ScopeGroupID: g.ID, ExcludeRetired: !includeRetired})
 		if err != nil {
 			continue
 		}

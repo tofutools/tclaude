@@ -43,12 +43,10 @@ func assertNoTableScan(t *testing.T, plan string) {
 // the page cache on each 2s dashboard refresh.
 func TestMailboxQueriesUseIndexes(t *testing.T) {
 	setupTestDB(t)
-	excl := []string{"conv-retired-1", "conv-retired-2"}
-
 	for name, f := range map[string]MailboxFilter{
 		"agent folder":         {ForConv: "conv-a"},
-		"group folder":         {ScopeConvs: []string{"conv-a", "conv-b"}, ScopeGroupID: 7},
-		"group folder exclude": {ScopeConvs: []string{"conv-a", "conv-b"}, ScopeGroupID: 7, ExcludeConvs: excl},
+		"group folder":         {ScopeGroupID: 7},
+		"group folder exclude": {ScopeGroupID: 7, ExcludeRetired: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			where, args := f.where()
@@ -56,6 +54,13 @@ func TestMailboxQueriesUseIndexes(t *testing.T) {
 			assertNoTableScan(t, queryPlan(t, "SELECT id FROM agent_messages WHERE "+where+" ORDER BY id DESC LIMIT 50", args...))
 		})
 	}
+
+	// The unscoped firehose pages in rowid order and stops at the page;
+	// only its count has to stay off the table.
+	t.Run("all firehose exclude count", func(t *testing.T) {
+		where, args := MailboxFilter{ExcludeRetired: true}.where()
+		assertNoTableScan(t, queryPlan(t, "SELECT COUNT(*) FROM agent_messages WHERE "+where, args...))
+	})
 
 	t.Run("roster tallies", func(t *testing.T) {
 		assertNoTableScan(t, queryPlan(t, `SELECT to_conv, COUNT(*),

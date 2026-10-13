@@ -377,11 +377,13 @@ CREATE INDEX idx_agent_messages_regular_agent_backlog
 CREATE INDEX idx_agent_messages_regular_conv_backlog
 			ON agent_messages(to_conv, regular_send, processed_at);
 
-CREATE INDEX idx_agent_messages_from_conv ON agent_messages(from_conv, created_at);
-
 CREATE INDEX idx_agent_messages_group ON agent_messages(group_id);
 
 CREATE INDEX idx_agent_messages_to_conv_read ON agent_messages(to_conv, created_at, read_at);
+
+CREATE INDEX idx_agent_messages_parties ON agent_messages(from_conv, to_conv, created_at);
+
+CREATE INDEX idx_agent_messages_handoff ON agent_messages(id) WHERE subject = 'reincarnation handoff';
 
 CREATE TABLE "agent_transfer_log" (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
