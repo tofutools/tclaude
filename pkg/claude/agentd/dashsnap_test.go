@@ -1842,9 +1842,12 @@ setTimeout(function(){
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down-at", JS: `var r=document.querySelector('.process-node-ports[data-node-id="ship"] .process-port-in').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`},
 				{Kind: "move-to-at", JS: `return window.__edgeDrop.drop;`, Steps: 6},
+				// Drag-time connection feedback hit-tests every frame; baseline
+				// them so only pointerup's own hit test is asserted below.
+				{Kind: "eval", JS: `window.__edgeDrop.beforeUp=window.__edgeDrop.hitTests;window.__edgeDrop.lastHit=null;`},
 				{Kind: "mouse-up"},
 				{Kind: "eval", JS: `var state=window.__edgeDrop,chooser=document.querySelector('.process-node-chooser');
-  if(state.hitTests<1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG (hitTests='+state.hitTests+', lastHit='+(state.lastHit&&state.lastHit.outerHTML.slice(0,120))+')');
+  if(state.hitTests!==state.beforeUp+1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG (hitTests='+state.hitTests+', beforeUp='+state.beforeUp+', lastHit='+(state.lastHit&&state.lastHit.outerHTML.slice(0,120))+')');
   if(!chooser) throw new Error('trusted empty-canvas pointerup did not open the chooser');
   var end=chooser.querySelector('[data-command-id="process.create.end"]');
   if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing connections')) throw new Error('input direction did not clearly disable End');
