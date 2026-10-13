@@ -23,6 +23,9 @@ inputs:
   race:
     description: Set to 'true' to run with -race (roughly triples wall time).
     default: 'false'
+  save-build-cache:
+    description: Save bounded agentd/sandbox build snapshots (main release pushes only).
+    default: 'false'
   diff-base:
     description: >-
       Git revision to grade the shard against. When set, the shard runs only
@@ -40,6 +43,33 @@ runs:
       uses: actions/setup-go@v7
       with:
         go-version-file: go.mod
+
+    - name: Resolve shard build cache
+      if: inputs.shard == 'agentd' || inputs.shard == 'sandbox'
+      id: build-cache
+      shell: bash
+      env:
+        SHARD: ${{ inputs.shard }}
+        PLATFORM: ${{ runner.os }}-${{ runner.arch }}
+        RACE: ${{ inputs.race }}
+        MODULES: ${{ hashFiles('go.mod', 'go.sum') }}
+      run: |
+        python3 scripts/ci/test_build_cache.py
+        echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+        prefix="gobuild-tests-v1-$PLATFORM-$SHARD-"
+        compatible="$prefix$(go env GOVERSION)-$MODULES-race$RACE-"
+        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        echo "compatible=$compatible" >> "$GITHUB_OUTPUT"
+        echo "key=$compatible$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+    - name: Restore shard build cache
+      if: inputs.shard == 'agentd' || inputs.shard == 'sandbox'
+      id: restore-build-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.GOCACHE }}
+        key: ${{ steps.build-cache.outputs.key }}
+        restore-keys: ${{ steps.build-cache.outputs.compatible }}
 
     # The dashboard's JS is unit-tested with Node's built-in test runner.
     # Only `all`, `agentd` (process_graph_node_test.go), and `jstest` need it;
@@ -155,3 +185,33 @@ runs:
         path: ${{ runner.temp }}/agentd-test-logs/*.json
         retention-days: 7
         if-no-files-found: ignore
+
+    # PRs only restore. Each main release saves one new snapshot per heavy
+    # shard/platform and then prunes its predecessor; the module cache stays
+    # under setup-go's existing policy. Reserve room before any parallel saves.
+    - name: Check build cache budget
+      if: success() && inputs.save-build-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.key != '' && steps.restore-build-cache.outputs.cache-hit != 'true'
+      id: cache-budget
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}
+        CACHE_KEY: ${{ steps.build-cache.outputs.key }}
+      run: python3 scripts/ci/build-cache.py prepare "$CACHE_PREFIX" "$CACHE_KEY"
+
+    - name: Save shard build cache
+      if: success() && steps.cache-budget.outputs.save == 'true'
+      id: save-build-cache
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.GOCACHE }}
+        key: ${{ steps.build-cache.outputs.key }}
+
+    - name: Prune previous shard build cache
+      if: success() && steps.cache-budget.outputs.save == 'true' && steps.save-build-cache.outcome == 'success'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}
+        CACHE_KEY: ${{ steps.build-cache.outputs.key }}
+      run: python3 scripts/ci/build-cache.py prune "$CACHE_PREFIX" "$CACHE_KEY"

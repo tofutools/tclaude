@@ -1,0 +1,47 @@
+name: Clean closed PR caches
+
+on:
+  pull_request_target:
+    types: [closed]
+  # A PR may close while CI still runs; its cache post-steps can recreate
+  # entries after the close-event cleanup. Sweep again after those saves.
+  workflow_run:
+    workflows: [CI, Group-route feasibility]
+    types: [completed]
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # Never check out or execute PR code with a write token.
+      - name: Delete caches owned by this closed PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            gh cache delete --all --ref "refs/pull/$PR_NUMBER/merge" --succeed-on-no-caches
+          else
+            # Use only numeric PR IDs from the trusted workflow event. Read
+            # state from GitHub; neither branch names nor PR code are executed.
+            numbers=$(jq -r '.workflow_run.pull_requests[].number' "$GITHUB_EVENT_PATH")
+            if [ -z "$numbers" ]; then
+              # Fork runs can omit associated PRs. Find only numeric PR-owned
+              # cache refs and still verify each PR is closed before deletion.
+              refs=$(gh api "repos/$GH_REPO/actions/caches?per_page=100" --paginate --jq '.actions_caches[].ref')
+              numbers=$(printf '%s\n' "$refs" | sed -n 's#^refs/pull/\([0-9][0-9]*\)/merge$#\1#p' | sort -u)
+            fi
+            printf '%s\n' "$numbers" |
+            while read -r number; do
+              case "$number" in '') continue ;; *[!0-9]*) exit 1 ;; esac
+              state=$(gh api "repos/$GH_REPO/pulls/$number" --jq .state)
+              if [ "$state" = closed ]; then
+                gh cache delete --all --ref "refs/pull/$number/merge" --succeed-on-no-caches
+              fi
+            done
+          fi

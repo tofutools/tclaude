@@ -895,6 +895,9 @@ jobs:
 
   test:
     name: Test
+    permissions:
+      contents: read
+      actions: write # Prune only this job's bounded main build snapshots.
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -917,6 +920,7 @@ jobs:
         with:
           shard: ${{ matrix.shard }}
           race: ${{ vars.RUN_RACE }}
+          save-build-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
   # Version generation only computes the next number (read-only); it runs in
   # parallel with test/lint/build. The git tag is pushed later, by the release
