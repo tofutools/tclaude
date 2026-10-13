@@ -2345,6 +2345,10 @@ func runNew(params *NewParams) error {
 		// The extension is the harness's only status channel. Failing to
 		// write it costs live status, not the launch: say so plainly.
 		path, err := h.StatusExtension()
+		if err != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
+			// ask's gate is the permission extension written beside it.
+			return fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", err)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
 			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")

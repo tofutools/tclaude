@@ -339,6 +339,16 @@ func (r *RPC) Send(command map[string]any) map[string]any {
 	return r.Await(func(line map[string]any) bool { return line["type"] == "response" && line["id"] == id })
 }
 
+// Reply writes one line that expects no response, such as an answer to an
+// extension dialog (extension_ui_response).
+func (r *RPC) Reply(line map[string]any) {
+	r.t.Helper()
+	raw, _ := json.Marshal(line)
+	if _, err := r.stdin.Write(append(raw, '\n')); err != nil {
+		r.t.Fatalf("reply %v: %v", line, err)
+	}
+}
+
 // Await returns the first unconsumed line matching match, failing after a
 // bound. Lines it passes over stay available to later calls.
 func (r *RPC) Await(match func(map[string]any) bool) map[string]any {

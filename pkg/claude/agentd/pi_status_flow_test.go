@@ -210,3 +210,60 @@ func TestPiSpawn_TclaudeLayerConfinesAuto(t *testing.T) {
 	require.NotNil(t, relaunched)
 	assert.True(t, relaunched.Launch().LoadsStatusExtension(), "a resume keeps the status extension")
 }
+
+// The ask posture is human-gated, so a parent that itself asks a human
+// (Claude default, Codex on-request) may spawn a pi child in it. The child's
+// launch loads tclaude's permission extension, its dialog shows on the
+// dashboard as a permission wait, and the approved tool runs. The extension's
+// own behavior, a declined call reaching the model as blocked included, is
+// proved against the real pi (pifixture).
+func TestPiAsk_NarrowParentSpawnsAHumanGatedChild(t *testing.T) {
+	for _, parent := range []struct {
+		name, harnessName, policy string
+		// Codex on-request already runs sandboxed commands unasked, so it
+		// may delegate auto too; Claude default may not.
+		mintsAuto bool
+	}{
+		{"claude-default", harness.DefaultName, "default", false},
+		{"codex-on-request", harness.CodexName, harness.ApprovalOnRequest, true},
+	} {
+		t.Run(parent.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			const parentConv = "pi-ask-parent-0000-aaaa-bbbb-cccccccccccc"
+			haveSpawnCapableApprovalParent(t, f, "crew", parentConv, parent.harnessName, parent.policy, false)
+			resp := f.AsAgent(parentConv).SpawnWith("crew", map[string]any{
+				"name":            "pi-asker",
+				"harness":         harness.PiName,
+				"approval":        harness.PiApprovalAsk,
+				"initial_message": "start work",
+				// An agent's pi child runs inside tclaude's sandbox.
+				"sandbox_implementation": "tclaude-layer",
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "pi spawn body=%s", resp.Raw)
+			sim := f.World.Pis.GetByConvID(resp.ConvID)
+			require.NotNil(t, sim)
+			launch := sim.Launch()
+			assert.True(t, launch.LoadsPermissionExtension(), "ask loads the permission extension: %+v", launch)
+			assert.Equal(t, "", launch.Tools, "ask keeps pi's tools and asks before using them")
+
+			assert.Equal(t, session.StatusWorking, piMemberStatus(t, "crew", resp.ConvID))
+			require.NoError(t, sim.OpenDialog("confirm", "Allow bash?"))
+			assert.Equal(t, session.StatusAwaitingPermission, piMemberStatus(t, "crew", resp.ConvID))
+			require.NoError(t, sim.UseTool("bash", map[string]any{"command": "go test ./..."}))
+			assert.Equal(t, session.StatusWorking, piMemberStatus(t, "crew", resp.ConvID),
+				"the approved tool runs")
+
+			if parent.mintsAuto {
+				return
+			}
+			refused := f.AsAgent(parentConv).SpawnWith("crew", map[string]any{
+				"name": "pi-unasked", "harness": harness.PiName, "approval": harness.PiApprovalAuto,
+				"sandbox_implementation": "tclaude-layer",
+			})
+			assert.Equal(t, http.StatusForbidden, refused.Code, "body=%s", refused.Raw)
+			assert.Contains(t, string(refused.Raw), `pass \"ask\"`, "the refusal names the posture this parent can delegate")
+		})
+	}
+}

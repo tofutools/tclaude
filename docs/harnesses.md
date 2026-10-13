@@ -794,9 +794,20 @@ way other harnesses' hooks do. Nothing is written to `~/.pi`, and a slow or
 missing tclaude never stalls pi.
 
 **Approval and sandboxing.** pi has no approval prompts and no sandbox of its
-own; its posture is the tool set it exposes. `auto` (the default) runs every
-tool, including shell commands, unattended. `read-only` exposes only `read`,
-`grep`, `find` and `ls`. Because nothing else confines `auto`, a fresh `auto`
+own. `auto` (the default) runs every tool, including shell commands,
+unattended. `ask` loads a second tclaude extension, written read-only beside
+the status one, that asks you in the pane before every tool call that is not
+read-only: pi's `read`, `grep`, `find` and `ls`, and MCP tools whose server
+marks them read-only, run unasked; shell commands, edits and everything else
+open a confirmation showing the call's arguments (control characters shown, never obeyed). The pane shows as awaiting
+permission until you answer, in the pane or the dashboard's terminal. A
+declined call is blocked, and the model is told so. With no one to ask (pi's
+print mode), such a call is blocked. `ask` gates tool calls, not code pi
+itself loads: an extension in the workspace's `.pi/extensions` runs when pi
+starts, so approve a write there as you would approve running it. `ask` is a
+human-gated posture: an agent that itself asks a human (Claude `default`,
+Codex `on-request`) may spawn a pi child in it. `read-only` exposes only
+`read`, `grep`, `find` and `ls`. Because nothing else confines `auto`, a fresh `auto`
 launch is refused unless tclaude's own sandbox wraps it (`--sandbox-impl
 tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
 **Allow launch with unenforced rules** in the dashboard spawn dialog.

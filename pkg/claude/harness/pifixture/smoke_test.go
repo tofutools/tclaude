@@ -303,3 +303,70 @@ func TestPiImportedSessionReportsOnlyItsOwnSpend(t *testing.T) {
 	require.True(t, ok, "Stop carries no tclaude_usage: %v", stop)
 	assert.EqualValues(t, 1, spend["calls"], "only the copy's own response")
 }
+
+// Under the ask posture, tclaude's permission extension asks before pi runs a
+// tool that is not read-only: an approved call runs, a declined one reaches
+// the model as blocked, the open dialog reports a permission prompt to
+// tclaude, and with no human to ask the call is blocked unasked.
+func TestPiPermissionExtensionAsksBeforeActing(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	permissions := harness.PiPermissionExtensionPath(ext)
+	id := uuid.NewString()
+	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--extension", permissions, "--model", MockModel)
+
+	confirm := func() map[string]any {
+		t.Helper()
+		return rpc.Await(func(line map[string]any) bool {
+			return line["type"] == "extension_ui_request" && line["method"] == "confirm"
+		})
+	}
+	// Each marker is computed by the shell, so the command text the mock
+	// echoes back can never satisfy an assertion on its own.
+	w.Mock.Command = "echo approved_$((6*7))"
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
+	request := confirm()
+	assert.Contains(t, request["title"], "bash")
+	assert.Contains(t, request["message"], "echo approved_", "the human sees the command")
+	rpc.Reply(map[string]any{"type": "extension_ui_response", "id": request["id"], "confirmed": true})
+	rpc.AwaitEvent("agent_settled")
+	assert.Contains(t, w.Mock.LastMessages(), "approved_42", "the approved command ran")
+
+	w.Mock.Command = "echo declined_$((6*7))"
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "TOOL again"})["success"])
+	request = confirm()
+	rpc.Reply(map[string]any{"type": "extension_ui_response", "id": request["id"], "confirmed": false})
+	rpc.AwaitEvent("agent_settled")
+	result := w.Mock.LastMessages()
+	assert.NotContains(t, result, "declined_42", "the declined command did not run")
+	assert.Contains(t, result, "the human did not approve bash", "the model is told why")
+
+	// Terminal escapes in the command are shown, never obeyed, so the
+	// dialog cannot be made to read as a different command.
+	w.Mock.Command = "echo \x1b[8mhidden \u202eevil"
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "TOOL once more"})["success"])
+	request = confirm()
+	message, _ := request["message"].(string)
+	assert.NotContains(t, message, "\x1b")
+	assert.NotContains(t, message, "\u202e")
+	assert.Contains(t, message, `\u001b[8mhidden`)
+	assert.Contains(t, message, `\u202eevil`)
+	rpc.Reply(map[string]any{"type": "extension_ui_response", "id": request["id"], "confirmed": false})
+	rpc.AwaitEvent("agent_settled")
+	rpc.Close()
+
+	var prompts int
+	for _, payload := range w.RecordedPayloads() {
+		if payload["hook_event_name"] == "Notification" && payload["notification_type"] == "permission_prompt" {
+			prompts++
+		}
+	}
+	assert.Equal(t, 3, prompts, "each open dialog reports a permission prompt")
+
+	w.Mock.Command = "echo unasked_$((6*7))"
+	_, err := w.Run(w.Project, "-p", "TOOL in print mode", "--extension", permissions, "--model", MockModel)
+	require.NoError(t, err)
+	result = w.Mock.LastMessages()
+	assert.NotContains(t, result, "unasked_42")
+	assert.Contains(t, result, "no human can answer")
+}

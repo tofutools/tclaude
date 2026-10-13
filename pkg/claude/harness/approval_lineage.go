@@ -117,9 +117,9 @@ func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoRev
 		if strings.TrimSpace(childPolicy) != PiApprovalAuto {
 			return ""
 		}
-		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview, PiName, PiApprovalReadOnly, false) {
-			return fmt.Sprintf("%q runs every pi tool, including shell commands, with no prompt; pass %q for a child limited to reading",
-				PiApprovalAuto, PiApprovalReadOnly)
+		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview, PiName, PiApprovalAsk, false) {
+			return fmt.Sprintf("%q runs every pi tool, including shell commands, with no prompt; pass %q for a child whose tool calls a human approves, or %q for one limited to reading",
+				PiApprovalAuto, PiApprovalAsk, PiApprovalReadOnly)
 		}
 		return fmt.Sprintf("%q runs every pi tool, including shell commands, with no prompt, and can only be minted by a parent that already holds that capability, or by a human",
 			PiApprovalAuto)
@@ -414,14 +414,18 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 			return approvalLineagePosture{}
 		}
 	case PiName:
-		// pi has no approval prompts and no reviewer: its posture is the tool
-		// set it exposes.
+		// pi has no approval prompts of its own and no reviewer: its posture
+		// is the tool set it exposes, or tclaude's permission extension.
 		if autoReview {
 			return approvalLineagePosture{}
 		}
 		switch policy {
 		case PiApprovalReadOnly:
 			// Only read, grep, find and ls exist: nothing can act.
+			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
+		case PiApprovalAsk:
+			// Everything that is not read-only asks a human first, as under
+			// Gemini `default` or OpenCode `ask`.
 			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
 		case PiApprovalAuto:
 			// Every tool runs unattended, as under Gemini `yolo`. "InSandbox"

@@ -189,6 +189,12 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"pi read-only can mint gemini default", PiName, PiApprovalReadOnly, false, GeminiName, GeminiApprovalDefault, false, true},
 		{"pi with auto-review is malformed", PiName, PiApprovalAuto, true, PiName, PiApprovalReadOnly, false, false},
 		{"blank pi policy fails closed", PiName, "", false, PiName, PiApprovalReadOnly, false, false},
+		{"claude default can mint pi ask", DefaultName, claudePermDefault, false, PiName, PiApprovalAsk, false, true},
+		{"codex on-request can mint pi ask", CodexName, ApprovalOnRequest, false, PiName, PiApprovalAsk, false, true},
+		{"pi ask cannot mint pi auto", PiName, PiApprovalAsk, false, PiName, PiApprovalAuto, false, false},
+		{"pi ask can mint pi ask", PiName, PiApprovalAsk, false, PiName, PiApprovalAsk, false, true},
+		{"pi ask can mint claude default", PiName, PiApprovalAsk, false, DefaultName, claudePermDefault, false, true},
+		{"pi ask cannot mint claude auto", PiName, PiApprovalAsk, false, DefaultName, claudePermAuto, false, false},
 		{"gemini inherit parent cannot mint gemini yolo", GeminiName, GeminiApprovalInherit, false, GeminiName, GeminiApprovalYolo, false, false},
 		{"legacy blank gemini child fails closed", DefaultName, claudePermBypass, false, GeminiName, "", false, false},
 		{"gemini auto-review child is malformed", DefaultName, claudePermBypass, false, GeminiName, GeminiApprovalDefault, true, false},
@@ -347,8 +353,8 @@ func TestCopilotApprovalLineageDenialHint(t *testing.T) {
 
 func TestPiApprovalLineageDenialHint(t *testing.T) {
 	hint := ApprovalLineageDenialHint(DefaultName, claudePermDefault, false, PiName, PiApprovalAuto)
-	if !strings.Contains(hint, `"read-only"`) {
-		t.Fatalf("a parent that can delegate read-only should be pointed at it: %q", hint)
+	if !strings.Contains(hint, `"ask"`) || !strings.Contains(hint, `"read-only"`) {
+		t.Fatalf("a parent that can delegate ask and read-only should be pointed at them: %q", hint)
 	}
 	hint = ApprovalLineageDenialHint(PiName, "", false, PiName, PiApprovalAuto)
 	if !strings.Contains(hint, "or by a human") || strings.Contains(hint, "pass") {
