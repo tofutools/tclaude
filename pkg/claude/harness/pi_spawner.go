@@ -21,8 +21,9 @@ import (
 //   - `--name`, `--model`, `--thinking` set the session name, model and
 //     thinking level.
 //   - `--extension <path>` loads tclaude's status extension (pi_extension.go),
-//     which runs the hook callback at $TCLAUDE_PI_HOOK_BIN. Explicit
-//     extensions load even under a pass-through `--no-extensions`.
+//     which runs the hook callback at $TCLAUDE_PI_HOOK_BIN, and under the
+//     `ask` posture its permission extension too. Explicit extensions load
+//     even under a pass-through `--no-extensions`.
 //   - Positional arguments after `--` are messages: the first turn is
 //     submitted at launch and the TUI stays open. A message starting with `@`
 //     would be read as a file to attach, which is pi's own syntax.
@@ -87,6 +88,16 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 		args = append(args, "--thinking", spec.Effort)
 	}
 	args = append(args, piApprovalArgs(spec.ApprovalPolicy)...)
+	if strings.TrimSpace(spec.ApprovalPolicy) == PiApprovalAsk {
+		// ask is the permission extension beside the status extension. A
+		// launch without one cannot ask, so it gets the read-only tool set
+		// instead: never more than the human would have approved.
+		if spec.StatusExtensionPath != "" {
+			args = append(args, "--extension", PiPermissionExtensionPath(spec.StatusExtensionPath))
+		} else {
+			args = append(args, "--tools", strings.Join(piReadOnlyTools, ","))
+		}
+	}
 	args = append(args, spec.ExtraArgs...)
 	if spec.InitialPrompt != "" {
 		args = append(args, "--", spec.InitialPrompt)

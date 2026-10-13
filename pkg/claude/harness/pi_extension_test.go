@@ -143,3 +143,41 @@ func TestMaterializePiExtensionReplacesSymlinkedHashDir(t *testing.T) {
 		t.Fatalf("hash directory under %s is still a symlink: %v %v", root, info, err)
 	}
 }
+
+// The ask posture's permission extension is written read-only beside the
+// status extension, so tclaude's sandbox mounts both through one directory.
+func TestMaterializePiExtensionWritesThePermissionExtension(t *testing.T) {
+	withPiExtensionCache(t)
+	status, err := MaterializePiExtension()
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := PiPermissionExtensionPath(status)
+	got, err := os.ReadFile(permissions)
+	if err != nil || !bytes.Equal(got, piPermissionExtensionSource) {
+		t.Fatalf("permission extension = %q, %v", got, err)
+	}
+	info, err := os.Stat(permissions)
+	if err != nil || info.Mode().Perm() != 0o444 {
+		t.Fatalf("permission extension mode = %v, %v", info, err)
+	}
+}
+
+// ask loads the permission extension; a launch with no extension to load
+// falls back to the read-only tool set rather than run tools unasked.
+func TestPiSpawnerAskLoadsThePermissionExtension(t *testing.T) {
+	cmd := piSpawner{}.BuildCommand(SpawnSpec{ApprovalPolicy: PiApprovalAsk, StatusExtensionPath: "/ext/h/tclaude-pi.ts"})
+	if !strings.Contains(cmd, "--extension /ext/h/tclaude-pi-permissions.ts") {
+		t.Fatalf("ask does not load the permission extension: %s", cmd)
+	}
+	if strings.Contains(cmd, "--tools") {
+		t.Fatalf("ask keeps pi's tools: %s", cmd)
+	}
+	cmd = piSpawner{}.BuildCommand(SpawnSpec{ApprovalPolicy: PiApprovalAsk})
+	if !strings.Contains(cmd, "--tools read,grep,find,ls") {
+		t.Fatalf("ask without an extension must fall back to read-only: %s", cmd)
+	}
+	if cmd := (piSpawner{}).BuildCommand(SpawnSpec{ApprovalPolicy: PiApprovalAuto, StatusExtensionPath: "/ext/h/tclaude-pi.ts"}); strings.Contains(cmd, "permissions") {
+		t.Fatalf("auto loads the permission extension: %s", cmd)
+	}
+}

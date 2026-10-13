@@ -2826,7 +2826,10 @@ func resumeLaunchCmdWithStackedProof(
 	// that dropped it would leave the agent without live status.
 	statusExtensionDir := ""
 	if h.StatusExtension != nil {
-		if path, extErr := h.StatusExtension(); extErr != nil {
+		if path, extErr := h.StatusExtension(); extErr != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
+			// ask's gate is the permission extension written beside it.
+			return "", "", nil, fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", extErr)
+		} else if extErr != nil {
 			slog.Warn("status extension unavailable on resume", "harness", h.Name, "error", extErr, "module", "conv")
 		} else {
 			spec.StatusExtensionPath = path

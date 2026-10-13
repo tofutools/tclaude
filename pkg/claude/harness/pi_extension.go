@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -29,11 +30,32 @@ import (
 //go:embed piextension/tclaude-pi.ts
 var piExtensionSource []byte
 
+// The `ask` posture's permission extension (pi_approval.go) ships the same
+// way, in the same directory: its hash covers both files.
+//
+//go:embed piextension/tclaude-pi-permissions.ts
+var piPermissionExtensionSource []byte
+
 const (
 	// PiHookBinEnvVar carries the absolute tclaude path the extension runs.
-	PiHookBinEnvVar = "TCLAUDE_PI_HOOK_BIN"
-	piExtensionFile = "tclaude-pi.ts"
+	PiHookBinEnvVar           = "TCLAUDE_PI_HOOK_BIN"
+	piExtensionFile           = "tclaude-pi.ts"
+	piPermissionExtensionFile = "tclaude-pi-permissions.ts"
 )
+
+// piExtensionFiles is what the extension directory holds.
+func piExtensionFiles() map[string][]byte {
+	return map[string][]byte{
+		piExtensionFile:           piExtensionSource,
+		piPermissionExtensionFile: piPermissionExtensionSource,
+	}
+}
+
+// PiPermissionExtensionPath is the permission extension materialized next to
+// the status extension at statusExtension (MaterializePiExtension).
+func PiPermissionExtensionPath(statusExtension string) string {
+	return filepath.Join(filepath.Dir(statusExtension), piPermissionExtensionFile)
+}
 
 // PiExtensionSource returns the embedded extension.
 func PiExtensionSource() []byte { return bytes.Clone(piExtensionSource) }
@@ -47,19 +69,29 @@ var piExtensionCacheDir = func() (string, error) {
 	return filepath.Join(dir, "pi-extension"), nil
 }
 
-// MaterializePiExtension returns the path of the embedded extension on disk,
-// writing it first when absent. The file lives in a directory named by the
-// content hash, is read-only, and is verified against the embedded bytes on
-// every call; a file that differs (tampered with, or truncated by a crash) is
-// replaced rather than loaded.
+// MaterializePiExtension returns the path of the embedded status extension
+// on disk, writing the extension files first when absent. They live in a
+// directory named by their content hash, are read-only, and are verified
+// against the embedded bytes on every call; a file that differs (tampered
+// with, or truncated by a crash) is replaced rather than loaded.
 func MaterializePiExtension() (string, error) {
 	root, err := piExtensionCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("pi extension: %w", err)
 	}
-	sum := sha256.Sum256(piExtensionSource)
-	dir := filepath.Join(root, hex.EncodeToString(sum[:8]))
-	path := filepath.Join(dir, piExtensionFile)
+	files := piExtensionFiles()
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	hash := sha256.New()
+	for _, name := range names {
+		sum := sha256.Sum256(files[name])
+		hash.Write([]byte(name))
+		hash.Write(sum[:])
+	}
+	dir := filepath.Join(root, hex.EncodeToString(hash.Sum(nil)[:8]))
 	// The hash directory itself must be a real directory: a symlink there
 	// would point the verified path somewhere else.
 	if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
@@ -67,32 +99,42 @@ func MaterializePiExtension() (string, error) {
 			return "", fmt.Errorf("pi extension: replace %s: %w", dir, err)
 		}
 	}
-	if current, err := readNoFollow(path); err == nil && bytes.Equal(current, piExtensionSource) {
-		return path, nil
+	for _, name := range names {
+		if err := materializePiExtensionFile(dir, name, files[name]); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, piExtensionFile), nil
+}
+
+func materializePiExtensionFile(dir, name string, source []byte) error {
+	path := filepath.Join(dir, name)
+	if current, err := readNoFollow(path); err == nil && bytes.Equal(current, source) {
+		return nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".tclaude-pi-*.ts")
 	if err != nil {
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(piExtensionSource); err != nil {
+	if _, err := tmp.Write(source); err != nil {
 		_ = tmp.Close()
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
 	if err := tmp.Chmod(0o444); err != nil {
 		_ = tmp.Close()
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		return "", fmt.Errorf("pi extension: %w", err)
+		return fmt.Errorf("pi extension: %w", err)
 	}
-	return path, nil
+	return nil
 }
 
 // readNoFollow reads a regular file, refusing a symlink in its place.

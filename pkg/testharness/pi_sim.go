@@ -88,6 +88,17 @@ func (l PiLaunch) LoadsStatusExtension() bool {
 	return len(l.Extensions) > 0 && l.Env[harness.PiHookBinEnvVar] != ""
 }
 
+// LoadsPermissionExtension reports whether the launch loads tclaude's
+// permission extension, the `ask` posture's gate.
+func (l PiLaunch) LoadsPermissionExtension() bool {
+	for _, extension := range l.Extensions {
+		if filepath.Base(extension) == "tclaude-pi-permissions.ts" {
+			return true
+		}
+	}
+	return false
+}
+
 // ParsePiLaunch parses a launch the production spawner produced. It models the
 // options tclaude emits exactly; `--session` with `--session-id` is refused as
 // a launch tclaude must never render.
