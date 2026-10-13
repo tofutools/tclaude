@@ -3,7 +3,6 @@ package agentd
 import (
 	"encoding/json"
 	"log/slog"
-	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -163,37 +162,45 @@ type dashboardMailbox struct {
 	// Members is the current member count of a group folder (kind="group")
 	// — drives the sidebar tooltip. Omitted (0) for agent/human/all.
 	Members int `json:"members,omitempty"`
-	// MemberConvs lists the conv-ids a group folder (kind="group" only)
-	// nests beneath itself when expanded: its current members, plus — when
-	// the operator opted into retired agents (include_retired) — its retired
-	// ex-members recovered from message history (retire unjoined them from
-	// the live membership). Members (above) stays the current member count.
-	// Only sent for the groups the request names in expand (with retired
-	// history it can run to thousands of ids per group); omitted otherwise
-	// and for agent/human/all.
-	MemberConvs []string `json:"member_convs,omitempty"`
-	// MemberBoxes carries the nested agent folders of a group the request
-	// named in expand: the MemberConvs that pass the same retired / empty /
-	// previous-generation / q filters as the flat agent list. Nested rows
-	// come with their group rather than from the paged flat list, so a
-	// member nests whether or not it falls on the current agent page.
-	MemberBoxes []dashboardMailbox `json:"member_boxes,omitempty"`
-	In          int                `json:"in"`
-	Out         int                `json:"out"`
-	Total       int                `json:"total"`
-	Unread      int                `json:"unread"`
-	LastAt      string             `json:"last_at,omitempty"`
+	// memberConvs lists the conv-ids a group folder nests beneath itself
+	// when expanded: its current members, plus — when the operator opted
+	// into retired agents (include_retired) — its retired ex-members
+	// recovered from message history (retire unjoined them from the live
+	// membership). Members (above) stays the current member count. Only
+	// built for the groups the request names in expand; never sent (with
+	// retired history it can run to thousands of ids per group).
+	memberConvs []string
+	// MemberBoxes carries one page of the nested agent folders of a group
+	// the request named in expand: the memberConvs that pass the same
+	// retired / empty / previous-generation / q filters as the flat agent
+	// list, newest activity first, members_limit of them (default
+	// defaultRosterAgents). MembersTotal counts every such folder, so the
+	// sidebar can offer the rest. Nested rows come with their group rather
+	// than from the paged flat list, so a member nests whether or not it
+	// falls on the current agent page.
+	MemberBoxes  []dashboardMailbox `json:"member_boxes,omitempty"`
+	MembersTotal int                `json:"members_total,omitempty"`
+	In           int                `json:"in"`
+	Out          int                `json:"out"`
+	Total        int                `json:"total"`
+	Unread       int                `json:"unread"`
+	LastAt       string             `json:"last_at,omitempty"`
 }
 
 // Roster agent paging. The sidebar's flat agent list is one newest-activity
 // -first page of agents_limit folders; the client asks for more as the
-// operator scrolls ("load more"). maxRosterAgents caps an explicit request.
-// A request without agents_limit gets every folder, as before paging: the
-// fused federation view (and peers on older builds) read the whole roster.
+// operator scrolls ("load more"). An expanded group's nested member list
+// pages the same way (members_limit). maxRosterAgents caps a request.
 const (
 	defaultRosterAgents = 100
 	maxRosterAgents     = 2000
 )
+
+// rosterLimit parses a roster page size: absent or malformed means
+// defaultRosterAgents, clamped to [0, maxRosterAgents].
+func rosterLimit(v string) int {
+	return min(max(atoiOr(v, defaultRosterAgents), 0), maxRosterAgents)
+}
 
 // handleDashboardMailboxes serves GET /api/mailboxes — the sidebar
 // roster. Cookie-authed (dashboard-only).
@@ -209,6 +216,8 @@ const (
 //	agents_limit                     page size of the flat agent list (0 = totals only)
 //	expand                           group name whose member folders to embed
 //	                                 (MemberBoxes); repeatable
+//	members_limit                    "<n>:<group name>": page size of that
+//	                                 expanded group's member folders; repeatable
 //	selected                         the open folder: its agent entry is
 //	                                 returned as selected_mailbox even when it
 //	                                 is off the page
@@ -237,14 +246,17 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	includeEmpty := mailboxIncludeEmpty(r)
 	hidePrevGens := isTruthy(qv.Get("hide_prev_gens"))
 	filter := strings.ToLower(strings.TrimSpace(qv.Get("q")))
-	agentsLimit := math.MaxInt
-	if qv.Has("agents_limit") {
-		agentsLimit = min(max(atoiOr(qv.Get("agents_limit"), defaultRosterAgents), 0), maxRosterAgents)
-	}
+	agentsLimit := rosterLimit(qv.Get("agents_limit"))
 	selected := qv.Get("selected")
 	expanded := map[string]bool{}
 	for _, name := range qv["expand"] {
 		expanded[name] = true
+	}
+	membersLimit := map[string]int{}
+	for _, v := range qv["members_limit"] {
+		if n, name, ok := strings.Cut(v, ":"); ok {
+			membersLimit[name] = rosterLimit(n)
+		}
 	}
 
 	retiredSet, err := retiredAgentConvs()
@@ -341,13 +353,16 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 			agentsUnread += counts[conv].Unread
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		li, lj := counts[candidates[i]].Last, counts[candidates[j]].Last
-		if !li.Equal(lj) {
-			return li.After(lj)
-		}
-		return candidates[i] < candidates[j]
-	})
+	byActivity := func(convs []string) {
+		sort.Slice(convs, func(i, j int) bool {
+			li, lj := counts[convs[i]].Last, counts[convs[j]].Last
+			if !li.Equal(lj) {
+				return li.After(lj)
+			}
+			return convs[i] < convs[j]
+		})
+	}
+	byActivity(candidates)
 	page := candidates[:min(agentsLimit, len(candidates))]
 
 	allTotal, groupTotals, err := db.MailboxRosterTotals(!includeRetired)
@@ -357,31 +372,39 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	groupBoxes := buildGroupMailboxes(groupTotals, retiredSet, includeRetired, expanded)
 
-	// Decorate exactly the agent folders this response carries: the page,
-	// the expanded groups' visible members, and the selected folder.
+	// Each expanded group's nested list: its visible, matching members,
+	// newest activity first, one page of them.
+	memberPages := make([][]string, len(groupBoxes))
 	need := append([]string(nil), page...)
 	for i := range groupBoxes {
-		if !expanded[groupBoxes[i].Title] {
+		g := &groupBoxes[i]
+		if !expanded[g.Title] {
 			continue
 		}
-		for _, conv := range groupBoxes[i].MemberConvs {
+		var shown []string
+		for _, conv := range g.memberConvs {
 			if visible(conv) && matchesFilter(conv) {
-				need = append(need, conv)
+				shown = append(shown, conv)
 			}
 		}
+		byActivity(shown)
+		limit, ok := membersLimit[g.Title]
+		if !ok {
+			limit = defaultRosterAgents
+		}
+		g.MembersTotal = len(shown)
+		memberPages[i] = shown[:min(limit, len(shown))]
+		need = append(need, memberPages[i]...)
 	}
+	// Decorate exactly the agent folders this response carries: the page,
+	// the expanded groups' member pages, and the selected folder.
 	if _, ok := convSet[selected]; ok {
 		need = append(need, selected)
 	}
 	boxes := agentMailboxEntries(need, counts, retiredSet, prevGens, groupsByConv, aliveSessions)
-	for i := range groupBoxes {
-		if !expanded[groupBoxes[i].Title] {
-			continue
-		}
-		for _, conv := range groupBoxes[i].MemberConvs {
-			if mb, ok := boxes[conv]; ok && visible(conv) && matchesFilter(conv) {
-				groupBoxes[i].MemberBoxes = append(groupBoxes[i].MemberBoxes, mb)
-			}
+	for i, convs := range memberPages {
+		for _, conv := range convs {
+			groupBoxes[i].MemberBoxes = append(groupBoxes[i].MemberBoxes, boxes[conv])
 		}
 	}
 
@@ -937,7 +960,7 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 // "view this group's messages" folders. Each carries the distinct row
 // count in the group scope as its Total (totals, from db.MailboxRosterTotals)
 // and its current member count; memberships load in one batch query. Groups
-// named in expanded also carry their member conv-ids (MemberConvs).
+// named in expanded also carry their member conv-ids (memberConvs).
 //
 // retiredSet (the retired-agent conv-ids) and includeRetired together
 // govern two retired-aware adjustments:
@@ -945,7 +968,7 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 //     traffic is excluded — the roster twin of the group folder's
 //     own exclude (groupMailboxPage), so the badge matches the folder it
 //     labels. When opted in nothing is excluded and the whole scope counts.
-//   - The nested member list: when the operator HAS opted in, MemberConvs is
+//   - The nested member list: when the operator HAS opted in, memberConvs is
 //     augmented with the group's retired ex-members (recovered from message
 //     history, db.GroupMessageParticipantsAll) so the sidebar can nest them
 //     under the group they used to belong to. Retire unjoins a member from
@@ -1000,7 +1023,7 @@ func buildGroupMailboxes(totals map[int64]int, retiredSet map[string]struct{}, i
 			Title:       g.Name,
 			Total:       totals[g.ID],
 			Members:     len(members),
-			MemberConvs: memberConvs,
+			memberConvs: memberConvs,
 		})
 	}
 	return out

@@ -84,6 +84,7 @@ function controllerFor(signal, calls, statefulSelection = false) {
         members: [mailbox('conv-a', { title: 'Alpha' }), mailbox('conv-b', { title: 'Beta' })],
       }],
       agents: [mailbox('conv-c', { title: 'Gamma' })],
+      agentsTotal: 1, agentsUnread: 0, moreAgents: 0,
     }),
     messageView: () => {
       const requests = signal.value.accessRequests;

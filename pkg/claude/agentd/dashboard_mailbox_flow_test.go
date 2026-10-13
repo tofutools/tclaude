@@ -41,7 +41,6 @@ type mailboxEntry struct {
 	Retired     bool     `json:"retired"`
 	Groups      []string `json:"groups"`
 	Members     int      `json:"members"`
-	MemberConvs []string `json:"member_convs"`
 	In          int      `json:"in"`
 	Out         int      `json:"out"`
 	Total       int      `json:"total"`
@@ -1420,30 +1419,31 @@ func TestDashboardMailboxes_ListsGroupFolders(t *testing.T) {
 		"group folders precede the per-agent folders")
 }
 
-// Scenario: an expanded group folder carries its current members' conv-ids
-// (member_convs) and folders (member_boxes) so the sidebar can nest them
-// beneath the group row. The list is the current member set — alice + bob;
-// a collapsed group and an agent / human / "all" folder carry none.
-func TestDashboardMailboxes_GroupFolderCarriesMemberConvs(t *testing.T) {
+// Scenario: an expanded group folder carries its current members' folders
+// (member_boxes) so the sidebar can nest them beneath the group row. The
+// list is the current member set — alice + bob; a collapsed group and an
+// agent / human / "all" folder carry none.
+func TestDashboardMailboxes_GroupFolderCarriesMemberBoxes(t *testing.T) {
 	f := newFlow(t)
 	dash, _ := seedGroupMailbox(t, f)
 
 	r := getRoster(t, dash, url.Values{"expand": {"team"}})
 	grp := r.group("team")
 	require.NotNil(t, grp)
-	assert.ElementsMatch(t, []string{mbAlice, mbBob}, grp.MemberConvs,
-		"the expanded group folder lists its current members' conv-ids")
 	assert.ElementsMatch(t, []string{mbAlice, mbBob}, boxIDs(grp.MemberBoxes),
-		"and carries their folders")
+		"the expanded group folder carries its current members' folders")
+	assert.Equal(t, 2, grp.MembersTotal)
 
 	collapsed := getRoster(t, dash, url.Values{}).group("team")
 	require.NotNil(t, collapsed)
-	assert.Empty(t, collapsed.MemberConvs, "a collapsed group carries no member list")
+	assert.Empty(t, collapsed.MemberBoxes, "a collapsed group carries no member list")
 
 	// The nesting payload is group-only — a per-agent folder never carries it.
-	alice := findMailbox(getMailboxes(t, dash), mbAlice)
-	require.NotNil(t, alice)
-	assert.Empty(t, alice.MemberConvs, "an agent folder carries no member_convs")
+	for _, mb := range r.Mailboxes {
+		if mb.Kind == "agent" {
+			assert.Empty(t, mb.MemberBoxes, "an agent folder carries no member_boxes")
+		}
+	}
 }
 
 // Scenario: GET /api/mailbox?id=group:team returns all member traffic plus
@@ -1652,7 +1652,7 @@ func TestDashboardMailboxes_GroupNestsRetiredExMemberWhenOptedIn(t *testing.T) {
 	grp := def.group("team")
 	require.NotNil(t, grp)
 	assert.Equal(t, 2, grp.Members, "alice + bob are the current members")
-	assert.ElementsMatch(t, []string{mbAlice, mbBob}, grp.MemberConvs,
+	assert.ElementsMatch(t, []string{mbAlice, mbBob}, boxIDs(grp.MemberBoxes),
 		"a retired ex-member is absent from the nested list by default")
 	assert.NotContains(t, def.agentIDs(), mbCarol,
 		"the retired ex-member's flat folder is hidden by default")
@@ -1664,9 +1664,8 @@ func TestDashboardMailboxes_GroupNestsRetiredExMemberWhenOptedIn(t *testing.T) {
 	require.NotNil(t, grp)
 	assert.Equal(t, 2, grp.Members,
 		"Members stays the current count — the retired ex-member is not a member")
-	assert.ElementsMatch(t, []string{mbAlice, mbBob, mbCarol}, grp.MemberConvs,
+	assert.ElementsMatch(t, []string{mbAlice, mbBob, mbCarol}, boxIDs(grp.MemberBoxes),
 		"the retired ex-member nests back under its former group when opted in")
-	require.Contains(t, boxIDs(grp.MemberBoxes), mbCarol, "with its folder")
 	assert.Contains(t, opted.agentIDs(), mbCarol, "and shows in the flat list")
 	for _, mb := range grp.MemberBoxes {
 		if mb.ID == mbCarol {

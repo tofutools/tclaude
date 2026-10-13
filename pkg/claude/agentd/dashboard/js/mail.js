@@ -222,6 +222,9 @@ export const mailState = createMailState({
   // off the page) and selectedValid whether it is still visible under the
   // retired / empty / previous-generation toggles.
   agentsLimit: AGENTS_PAGE,
+  // groupLimits holds the member page size of each expanded group the
+  // operator grew with its "Show more" row (name → n); absent = AGENTS_PAGE.
+  groupLimits: new Map(),
   agentsTotal: 0,
   agentsUnread: 0,
   selectedMailbox: null,
@@ -267,6 +270,7 @@ function setBoxQuery(value) {
   if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
   else dashPrefs.removeItem(BOX_FILTER_KEY);
   mail.agentsLimit = AGENTS_PAGE;
+  mail.groupLimits.clear();
   paintSidebar();
   if (mail.boxTimer) clearTimeout(mail.boxTimer);
   mail.boxTimer = setTimeout(() => { mail.boxTimer = null; refreshRoster(); }, SEARCH_DEBOUNCE_MS);
@@ -284,6 +288,13 @@ async function refreshRoster() {
 function loadMoreAgents() {
   if (mail.busy) return;
   mail.agentsLimit += AGENTS_PAGE;
+  refreshRoster();
+}
+
+// loadMoreMembers grows an expanded group's member page by AGENTS_PAGE.
+function loadMoreMembers(name) {
+  if (mail.busy || !name) return;
+  mail.groupLimits.set(name, (mail.groupLimits.get(name) || AGENTS_PAGE) + AGENTS_PAGE);
   refreshRoster();
 }
 
@@ -400,7 +411,10 @@ async function loadMailboxes() {
     // badge, so it needs the totals but no folders.
     const showAgents = !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0;
     params.set('agents_limit', String(showAgents ? mail.agentsLimit : 0));
-    for (const name of expandedGroupNames()) params.append('expand', name);
+    for (const name of expandedGroupNames()) {
+      params.append('expand', name);
+      if (mail.groupLimits.has(name)) params.append('members_limit', `${mail.groupLimits.get(name)}:${name}`);
+    }
     if (mail.selected) params.set('selected', mail.selected);
     const qs = params.toString();
     const r = await fetch(`/api/mailboxes${qs ? '?' + qs : ''}`, { credentials: 'same-origin' });
@@ -676,6 +690,7 @@ function toggleGroupExpand(name) {
   if (!name) return;
   if (isGroupExpanded(name)) dashPrefs.removeItem(GROUP_EXPAND_PREFIX + name);
   else dashPrefs.setItem(GROUP_EXPAND_PREFIX + name, '1');
+  mail.groupLimits.delete(name);
   paintSidebar();
   refreshRoster();
 }
@@ -780,6 +795,7 @@ function mailboxView() {
       mailbox: group,
       expanded: isGroupExpanded(group.title),
       members: group.member_boxes || [],
+      membersTotal: group.members_total || 0,
     })),
     agents,
     agentsTotal: mail.agentsTotal,
@@ -1792,7 +1808,7 @@ export const mailController = Object.freeze({
   openHumanNotifications,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
-  toggleGroupExpand, toggleAgentsExpand, loadMoreAgents, toggleBoxSelection, clearBoxSelection,
+  toggleGroupExpand, toggleAgentsExpand, loadMoreAgents, loadMoreMembers, toggleBoxSelection, clearBoxSelection,
   wipeSelectedMailboxes,
   messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
   msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,

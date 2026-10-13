@@ -166,6 +166,9 @@ function MailSidebar({ current, controller }) {
         ? group.members.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} nested=${true}
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
         : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
+      ${group.expanded && group.membersTotal > group.members.length && html`<button type="button" class="mailbox-load-more nested"
+        disabled=${current.busy} title=${`Load the next page of ${group.mailbox.title}'s member mailboxes`}
+        onClick=${() => controller.loadMoreMembers(group.mailbox.title)}>Show more · ${group.members.length} of ${group.membersTotal}</button>`}
     </${Fragment}>`)}
     ${model.agentsTotal > 0 && (model.filtering
       ? html`<div class="mailbox-section">${wizard ? 'The Rookery' : 'All agent mailboxes'}</div>`

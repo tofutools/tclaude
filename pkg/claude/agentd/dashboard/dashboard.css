@@ -813,6 +813,7 @@ button.tool:hover { border-color: #58a6ff; }
 }
 .mailbox-load-more:hover:not(:disabled) { color: #c9d1d9; border-color: #484f58; }
 .mailbox-load-more:disabled { cursor: default; opacity: .6; }
+.mailbox-load-more.nested { margin-left: 16px; width: calc(100% - 16px); }
 
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
    the row and tag it so it reads as demoted, not a live agent. Empty-mailbox

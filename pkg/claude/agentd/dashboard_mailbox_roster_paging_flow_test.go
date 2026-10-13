@@ -27,8 +27,8 @@ type rosterBox struct {
 	Retired     bool        `json:"retired"`
 	Members     int         `json:"members"`
 	Unread      int         `json:"unread"`
-	MemberConvs []string    `json:"member_convs"`
-	MemberBoxes []rosterBox `json:"member_boxes"`
+	MemberBoxes  []rosterBox `json:"member_boxes"`
+	MembersTotal int         `json:"members_total"`
 }
 
 type rosterResp struct {
@@ -98,8 +98,7 @@ func seedRoster(t *testing.T, f *testharness.Flow) []string {
 }
 
 // Scenario: the flat agent list is a newest-activity-first page; the totals
-// describe every folder, agents_limit=0 returns totals only, and a request
-// without agents_limit gets the whole list.
+// describe every folder, and agents_limit=0 returns totals only.
 func TestDashboardMailboxes_PagesAgentFolders(t *testing.T) {
 	f := newFlow(t)
 	convs := seedRoster(t, f)
@@ -110,9 +109,6 @@ func TestDashboardMailboxes_PagesAgentFolders(t *testing.T) {
 		"newest activity first: agent 4 sent the last message and agent 0 received it (same instant, conv-id tiebreak)")
 	assert.Equal(t, 5, r.AgentsTotal)
 	assert.Equal(t, 4, r.AgentsUnread, "agent 0's four unread received messages count, page or not")
-
-	r = getRoster(t, dash, url.Values{})
-	assert.Len(t, r.agentIDs(), 5, "without agents_limit (fused view, older peers) every folder is returned")
 
 	r = getRoster(t, dash, url.Values{"agents_limit": {"0"}})
 	assert.Empty(t, r.agentIDs(), "a folded section asks for totals only")
@@ -173,7 +169,6 @@ func TestDashboardMailboxes_EmbedsExpandedGroupMembers(t *testing.T) {
 	crew := r.group("crew")
 	require.NotNil(t, crew)
 	assert.Equal(t, 5, crew.Members)
-	assert.Empty(t, crew.MemberConvs, "collapsed: no member list")
 	assert.Empty(t, crew.MemberBoxes, "collapsed: no member folders")
 
 	r = getRoster(t, dash, url.Values{"agents_limit": {"0"}, "expand": {"crew"}, "q": {"crew-2"}})
@@ -182,6 +177,24 @@ func TestDashboardMailboxes_EmbedsExpandedGroupMembers(t *testing.T) {
 	require.Len(t, crew.MemberBoxes, 1, "expanded members obey the filter")
 	assert.Equal(t, convs[2], crew.MemberBoxes[0].ID)
 	assert.Equal(t, "crew-2", crew.MemberBoxes[0].Title)
+}
+
+// Scenario: an expanded group's member folders are paged like the flat
+// list — newest activity first, members_limit ("<n>:<group>") of them, with
+// members_total counting all.
+func TestDashboardMailboxes_PagesExpandedGroupMembers(t *testing.T) {
+	f := newFlow(t)
+	convs := seedRoster(t, f)
+	dash := dashHandlerForTest(t)
+
+	r := getRoster(t, dash, url.Values{"agents_limit": {"0"}, "expand": {"crew"}, "members_limit": {"2:crew"}})
+	crew := r.group("crew")
+	require.NotNil(t, crew)
+	assert.Equal(t, []string{convs[0], convs[4]}, boxIDs(crew.MemberBoxes), "newest activity first")
+	assert.Equal(t, 5, crew.MembersTotal)
+
+	r = getRoster(t, dash, url.Values{"agents_limit": {"0"}, "expand": {"crew"}})
+	assert.Len(t, r.group("crew").MemberBoxes, 5, "default page holds the whole small group")
 }
 
 // Scenario: the open agent folder is described even when it is off the

@@ -10,6 +10,8 @@ test('the model routes reads and actions to the owning node and merges newest fi
   const m = await harness.importDashboardModule('js/fused-mail-model.js');
   assert.equal(m.folderURL(self, 'all'), '/api/mailbox?id=all&page=1&page_size=50');
   assert.equal(m.folderURL(forge, 'group:ops', { q: 'x', size: 500 }), '/api/peer/inst_forge/mailbox?id=group%3Aops&page=1&page_size=200&q=x');
+  assert.equal(m.rosterURL(self), '/api/mailboxes?agents_limit=100');
+  assert.equal(m.rosterURL(forge, 200), '/api/peer/inst_forge/mailboxes?agents_limit=200');
   assert.equal(m.ownerRoutes(self).decide('7'), '/api/access-requests/7/decision');
   assert.equal(m.ownerRoutes(forge).decide('7'), '/api/peer/inst_forge/human-inbox/access/7');
   assert.equal(m.ownerRoutes(lab).message, '/api/peer/inst_lab/operator-message');
@@ -55,7 +57,7 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
     calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
     if (init.method === 'POST') return url.startsWith('/api/peer/inst_lab/') ? fail(403, { error: 'missing message.direct', code: 'permission' }) : ok({ ok: true });
     const base = Object.keys(messages).sort((a, b) => b.length - a.length).find((b) => url.startsWith(b));
-    if (url.endsWith('mailboxes')) return ok({ mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 1, unread: 1 }] });
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 1, unread: 1 }] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [{ id: 'r2', perm: 'agents.spawn', title: 'forge-agent', created_at: '2026-01-02T00:00:00Z' }] });
     return ok({ messages: messages[base], total: 1 });
   };
@@ -122,7 +124,7 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
     calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
     if (init.method === 'POST') return ok({ ok: true });
     if (url.startsWith('/api/peer/inst_forge/') && !forgeTrusted) return fail(403, { error: 'not trusted', code: 'not_trusted' });
-    if (url.endsWith('mailboxes')) return ok({ mailboxes: [] });
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const human = url.includes('id=human');
     const from = url.startsWith('/api/peer/') ? 'forge' : 'desk';
@@ -149,5 +151,49 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   await once();
   assert.deepEqual(subjects(), ['desk human note'], 'a node that withdrew trust keeps nothing on screen');
   assert.match(c.querySelector('.fused-mail-node[data-node="inst_forge"]').textContent, /no longer trusted/);
+  await mounted.unmount(); state.dispose();
+});
+
+test('each node\'s agent folders arrive one server page at a time, with Show more for the rest', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
+  const timers = fakeTimers(); const calls = [];
+  const agent = (i) => ({ id: `conv-${i}`, kind: 'agent', title: `agent-${i}`, total: 1, unread: 0, last_at: `2026-01-01T00:00:${String(59 - i).padStart(2, '0')}Z` });
+  const respond = async (url) => {
+    calls.push(url);
+    const roster = url.match(/\/mailboxes\?agents_limit=(\d+)$/);
+    if (roster) {
+      // forge holds 150 agent folders; this node sends its whole roster and
+      // no total, like a node on an older build.
+      if (!url.startsWith('/api/peer/inst_forge/')) return ok({ mailboxes: [agent(0)] });
+      const n = Math.min(Number(roster[1]), 150);
+      return ok({ mailboxes: Array.from({ length: n }, (_, i) => agent(i)), agents_total: 150 });
+    }
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    return ok({ messages: [], total: 0 });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
+  const forgeRows = () => c.querySelectorAll('.fused-mail-section .mailbox').length;
+  await once();
+  assert.ok(calls.includes('/api/peer/inst_forge/mailboxes?agents_limit=100'), 'a page, not the whole roster');
+  assert.ok(calls.includes('/api/mailboxes?agents_limit=100'));
+  const more = c.querySelector('[data-fused-more="inst_forge"]');
+  assert.ok(more, 'forge has more folders than its page');
+  assert.match(more.textContent, /Show more · 100 of 150/);
+  assert.equal(c.querySelector('[data-fused-more="inst_self"]'), null, 'no total, no Show more');
+  const before = forgeRows();
+
+  calls.length = 0;
+  await harness.act(() => harness.fireEvent(more, 'click'));
+  await once();
+  assert.ok(calls.includes('/api/peer/inst_forge/mailboxes?agents_limit=200'), 'Show more asks forge for a bigger page');
+  assert.ok(calls.includes('/api/mailboxes?agents_limit=100'), 'other nodes keep their page');
+  assert.equal(c.querySelector('[data-fused-more="inst_forge"]'), null, 'every folder shown');
+  assert.equal(forgeRows(), before + 50);
   await mounted.unmount(); state.dispose();
 });
