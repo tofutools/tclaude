@@ -44,5 +44,8 @@
   "opencode/tools/allow": "Allow bash, glob, grep, lsp, task, and skill in every sandbox mode.",
   "opencode/tools/ask": "Ask before bash, glob, grep, lsp, task, or skill runs in every sandbox mode. ⚠ Detached agents can block waiting for a human response.",
   "opencode/tools/deny": "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode.",
+  "pi/approval/auto": "pi's native posture: shell commands and file edits run with no human prompt; pair it with tclaude's sandbox (--sandbox-impl tclaude-layer), which is the only boundary",
+  "pi/approval/read-only": "only pi's read-only tools (read, grep, find, ls): no shell, no file writes",
+  "pi/sandbox/off": "pi has no sandbox of its own; tclaude's sandbox (--sandbox-impl tclaude-layer) is the only boundary",
   "shell/sandbox/off": "No harness-native sandbox. Choose tclaude’s sandbox implementation for OS confinement."
 }
