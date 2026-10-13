@@ -24,11 +24,13 @@ import (
 // string, with the launch executable resolved as `session new` resolves it,
 // in a constructed root on the host network and in the private routed
 // namespace. pi answers a mock provider's tool call with its own bash tool,
-// so the probes run as the agent would: the read-only floor holds over
-// auth.json (pi runs a `!`-prefixed key as a command), models.json,
-// settings.json and extensions/, a path outside the grants is invisible, pi persists the
-// session it was launched with, and tclaude's status extension loads from its
-// read-only mount and reaches the hook callback.
+// so the probes run as the agent would. pi runs against tclaude's walled agent
+// directory: its auth.json copy is writable, while the operator's agent
+// directory stays read-only, existing files and missing ones alike, even
+// through the walled directory's links. A path outside the grants is
+// invisible, pi persists the session it was launched with in the operator's
+// store, and tclaude's status extension loads from its read-only mount and
+// reaches the hook callback.
 func TestPiTclaudeLayerSmoke(t *testing.T) {
 	if os.Getenv(filteredGatewaySmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_FILTERED_NETWORK_SMOKE=1 on the executing Linux CI boundary")
@@ -80,6 +82,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				require.NoError(t, os.MkdirAll(dir, 0o700))
 			}
 			require.NoError(t, os.WriteFile(decoy, []byte("secret"), 0o600))
+			t.Setenv(harness.PiAgentDirEnvVar, agentDir)
 			// The hook callback the extension runs, standing in for tclaude:
 			// it records each payload in the workspace, which the wall leaves
 			// writable.
@@ -98,16 +101,21 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 			} {
 				require.NoError(t, os.WriteFile(filepath.Join(agentDir, name), []byte(content), 0o600))
 			}
+			walled, err := harness.PreparePiWalledAgentDir()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(walled) })
 
 			// Each marker is computed by the shell, so the command text the
 			// mock echoes back can never satisfy an assertion on its own.
 			q := clcommon.ShellQuoteArg
 			mock.Command = strings.Join([]string{
 				"cat " + q(decoy) + " >/dev/null 2>&1 && echo decoy_$((6*7))",
-				"printf '{}' > " + q(filepath.Join(agentDir, "auth.json")) + " && echo auth_$((6*7))",
+				"printf '{}' > \"$PI_CODING_AGENT_DIR/auth.json\" && echo walledauth_$((6*7))",
+				"printf '{}' > " + q(filepath.Join(agentDir, "auth.json")) + " 2>/dev/null && echo auth_$((6*7))",
 				"echo x >> " + q(filepath.Join(agentDir, "models.json")) + " 2>/dev/null && echo models_$((6*7))",
-				"echo x >> " + q(filepath.Join(agentDir, "settings.json")) + " 2>/dev/null && echo settings_$((6*7))",
-				"mkdir " + q(filepath.Join(agentDir, "extensions", "planted")) + " 2>/dev/null && echo extensions_$((6*7))",
+				"printf '{}' > " + q(filepath.Join(agentDir, "mcp.json")) + " 2>/dev/null && echo mcp_$((6*7))",
+				"echo x >> \"$PI_CODING_AGENT_DIR/settings.json\" 2>/dev/null && echo settings_$((6*7))",
+				"mkdir -p \"$PI_CODING_AGENT_DIR/extensions/planted\" 2>/dev/null && echo extensions_$((6*7))",
 				"echo probe_$((6*7))",
 			}, "; ")
 
@@ -121,6 +129,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				ExecutableInterpreter: resolved.Interpreter,
 				StatusExtensionPath:   extension,
 				TclaudeExecutable:     recorder,
+				HarnessStateDir:       walled,
 				// One turn, then exit: the smoke needs no pane.
 				ExtraArgs:     []string{"--print"},
 				InitialPrompt: "TOOL: run the probe",
@@ -138,7 +147,7 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 				HarnessName:      harness.PiName,
 				Cwd:              workDir,
 				Snapshot:         &snapshot,
-				StateRoot:        agentDir,
+				StateRoot:        walled,
 				Environment:      environment,
 				HarnessReadPaths: append(append([]string(nil), resolved.ReadPaths...), filepath.Dir(extension)),
 			})
@@ -164,16 +173,18 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 
 			result := mock.LastMessages()
 			assert.Contains(t, result, "probe_42", "the probe ran inside the sandbox")
-			for _, marker := range []string{"decoy_42", "auth_42", "models_42", "settings_42", "extensions_42"} {
+			assert.Contains(t, result, "walledauth_42", "the walled auth.json copy is writable, so a refresh lands")
+			for _, marker := range []string{"decoy_42", "auth_42", "models_42", "mcp_42", "settings_42", "extensions_42"} {
 				assert.NotContains(t, result, marker)
 			}
 			raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
 			require.NoError(t, err)
-			assert.Equal(t, models, string(raw), "the floor kept models.json read-only")
+			assert.Equal(t, models, string(raw), "models.json stayed read-only")
 			raw, err = os.ReadFile(filepath.Join(agentDir, "auth.json"))
 			require.NoError(t, err)
-			assert.Equal(t, piSmokeAuth, string(raw), "the floor kept auth.json read-only")
-			assert.NoDirExists(t, filepath.Join(agentDir, "extensions", "planted"))
+			assert.Equal(t, piSmokeAuth, string(raw), "the operator's auth.json stayed read-only")
+			assert.NoFileExists(t, filepath.Join(agentDir, "mcp.json"), "a missing config file cannot be created")
+			assert.NoDirExists(t, filepath.Join(agentDir, "extensions"))
 
 			var sessionFile string
 			_ = filepath.WalkDir(filepath.Join(agentDir, "sessions"), func(path string, d os.DirEntry, err error) error {

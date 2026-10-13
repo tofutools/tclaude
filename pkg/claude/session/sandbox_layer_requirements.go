@@ -47,28 +47,43 @@ func tclaudeLayerHarnessRequirements(
 	}
 }
 
-// piLayerPathRequirements declares pi's session store when its environment or
-// settings move it out of the agent directory, the state root: pi writes
-// every turn there.
+// piLayerPathRequirements declares the operator's pi agent directory, which
+// the walled agent directory (the state root) links into: read-only, so
+// nothing a walled agent writes reaches the next unsandboxed pi, apart from
+// pi's session store, which pi writes every turn.
 func piLayerPathRequirements(cwd, stateRoot string) ([]harness.LayerPathRequirement, error) {
-	dir, err := harness.PiSessionsDir(cwd)
+	host := harness.PiAgentDir()
+	if host == "" {
+		return nil, fmt.Errorf("resolve pi's agent directory")
+	}
+	host, err := canonicalTclaudeLayerStatePath(host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pi's agent directory: %w", err)
+	}
+	sessions, err := harness.PiSessionsDir(cwd)
 	if err != nil {
 		return nil, fmt.Errorf("resolve pi's session directory: %w", err)
 	}
-	dir, err = canonicalTclaudeLayerStatePath(dir)
+	sessions, err = canonicalTclaudeLayerStatePath(sessions)
 	if err != nil {
 		return nil, fmt.Errorf("resolve pi's session directory: %w", err)
 	}
-	if sandboxpolicy.PathContainsOrEqual(stateRoot, dir) {
-		return nil, nil
+	requirements := []harness.LayerPathRequirement{{
+		Path:   host,
+		Kind:   harness.LayerPathDirectory,
+		Access: harness.LayerPathRead,
+		Source: "pi agent directory",
+	}}
+	if !sandboxpolicy.PathContainsOrEqual(stateRoot, sessions) {
+		requirements = append(requirements, harness.LayerPathRequirement{
+			Path:      sessions,
+			Kind:      harness.LayerPathDirectory,
+			Access:    harness.LayerPathWrite,
+			MayCreate: true,
+			Source:    "pi session directory",
+		})
 	}
-	return []harness.LayerPathRequirement{{
-		Path:      dir,
-		Kind:      harness.LayerPathDirectory,
-		Access:    harness.LayerPathWrite,
-		MayCreate: true,
-		Source:    "pi session directory",
-	}}, nil
+	return requirements, nil
 }
 
 // openCodeLayerPathRequirements declares the OpenCode launch requirements:

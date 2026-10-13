@@ -801,28 +801,34 @@ launch is refused unless tclaude's own sandbox wraps it (`--sandbox-impl
 tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
 **Allow launch with unenforced rules** in the dashboard spawn dialog.
 
-**Inside tclaude's sandbox** pi's agent directory (`$PI_CODING_AGENT_DIR`, else
-`~/.pi/agent`) is its writable state: sessions and pi's lock files. What pi
-loads as configuration or code is read-only inside the wall, so that a
-sandboxed agent cannot change what the next, possibly unsandboxed, pi runs:
-`auth.json` (pi runs an API key that starts with `!` as a shell command),
-`settings.json`, `models.json`,
-`models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, the
-`AGENTS`/`CLAUDE`/`SYSTEM` prompt files, and `extensions/`, `skills/`,
-`prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/` and `tools/`.
-pi therefore cannot download its managed `fd` and `rg` from inside the wall;
-install them on the host (or run pi once outside it) and `find`/`grep` use
-them. A session directory your settings move out of the agent directory is
-granted too. Other harnesses' homes are not.
+**Inside tclaude's sandbox** pi runs against a walled copy of its agent
+directory, not your own (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). pi runs
+an API key that starts with `!` as a shell command, and `models.json` and
+`settings.json` can name commands and code too, so your agent directory is
+read-only inside the wall, files that exist and files that do not, apart
+from its session store: a sandboxed agent cannot change what the next,
+possibly unsandboxed, pi runs. The walled copy lives under
+`~/.tclaude/pi-agent` and is rebuilt from yours before every walled launch:
 
-Because `auth.json` is read-only, an OAuth login (ChatGPT, say) cannot refresh
-inside the wall. A launch whose login has already expired is refused, with
-what to do: run pi once outside the sandbox to refresh it, or use an API key.
-A live login is noted at launch with its expiry time; once it passes, the
-agent's model calls fail until you refresh it outside. Refreshing inside the
-sandbox is tracked as tcl-lpbxag. In a constructed root (such as
-a filtered network on Linux) tclaude mounts the `pi` package and its Node
-runtime read-only, wherever they are installed.
+- every entry pi reads (`settings.json`, `models.json`, `extensions/`,
+  `skills/`, the prompt files, and so on) is a link to yours, so pi sees your
+  configuration, and a write through a link fails;
+- `sessions` is a link to your session store, which stays writable, so
+  conversations land where tclaude and your own pi find them (a session
+  directory your settings move elsewhere is granted too);
+- `auth.json` is a writable copy of yours, so an OAuth login (ChatGPT, say)
+  refreshes inside the wall. Only a refreshed OAuth login travels back to
+  your `auth.json`: newer, for a provider you are already logged in to, and
+  never an API key. tclaude carries it back before every walled launch and
+  every 30 seconds while the daemon runs, and carries your own newer login
+  into the copy the same way. A `/login` to a new provider inside the wall
+  stays in the copy until the next walled launch rebuilds it.
+
+pi cannot install its managed `fd` and `rg` from inside the wall; install them
+on the host (or run pi once outside it) and `find`/`grep` use them. Other
+harnesses' homes are not visible. In a constructed root (such as a filtered
+network on Linux) tclaude mounts the `pi` package and its Node runtime
+read-only, wherever they are installed.
 
 **Filtered network.** A filtered launch checks the model's route against
 your network rules and refuses, with the missing destination, when they do not

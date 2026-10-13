@@ -2328,15 +2328,13 @@ func runNew(params *NewParams) error {
 		InitialPrompt:                  params.InitialPrompt,
 	}
 	if outerLayer && h.Name == harness.PiName {
-		// pi's auth.json is read-only inside the wall, so an expired OAuth
-		// login could not refresh there: say so now, not on the first call.
-		notice, err := harness.PiWalledLoginCheck(model, time.Now())
+		// A walled pi runs against tclaude's walled agent directory, never
+		// the operator's (pi_walled_agent.go).
+		walled, err := harness.PreparePiWalledAgentDir()
 		if err != nil {
 			return err
 		}
-		if notice != "" {
-			fmt.Fprintf(os.Stderr, "Note: %s\n", notice)
-		}
+		spawnSpec.HarnessStateDir = walled
 	}
 	if h.StatusExtension != nil {
 		// The extension is the harness's only status channel. Failing to
