@@ -15,14 +15,6 @@ func init() {
 		Name:        PiName,
 		DisplayName: "pi",
 
-		// pi is registered but EXPERIMENTAL: it cannot be spawned until the
-		// operator opts in (see ExperimentalHarnessEnabled), and spawn
-		// surfaces leave it out of their default lists. It stays that way
-		// until a launch under tclaude's sandbox works end to end (the
-		// tclaude-layer mode below fails closed today), so a pi offered in
-		// the spawn dialog is never a dead end.
-		Experimental: true,
-
 		Spawn:  piSpawner{},
 		Models: piModels{},
 		// Conversations are pi's session files; a transfer carries one as
@@ -34,7 +26,9 @@ func init() {
 		StatusExtension:   MaterializePiExtension,
 		ConfinedApprovals: []string{PiApprovalAuto},
 		CheckVersion:      CheckPiVersion,
-		Life:              piLifecycle{},
+		// The model's provider names one endpoint; see pi_model_transport.go.
+		ModelTransport: piModelTransport{},
+		Life:           piLifecycle{},
 
 		// `pi --session-id <id>` opens the session with that exact id, creating
 		// it when it does not exist, so the id is known before the pane starts.
@@ -50,11 +44,12 @@ func init() {
 		// to containers. The catalog's single mode records that honestly, and
 		// tclaude's own layer is the boundary. See pi_sandbox.go.
 		Sandbox: piSandbox{},
-		// No single-wall mode yet: the launch needs the extension and pi's
-		// runtime mounted inside tclaude's sandbox first, so a tclaude-layer
-		// launch fails closed (TclaudeLayerHarnessBuiltinMode) and the dialog
-		// does not offer it.
-		TclaudeLayerMode:              "",
+		// tclaude's sandbox is the single wall: pi's agent directory is its
+		// writable state root, with a read-only floor over the settings,
+		// models, extensions and other code pi loads (see
+		// harnessConfigFloorCatalog), and the extension and pi's runtime are
+		// mounted read-only.
+		TclaudeLayerMode:              PiSandboxOff,
 		BuiltinOSSandbox:              false,
 		BuiltinOSSandboxAbsenceReason: PiBuiltinOSSandboxAbsenceReason,
 

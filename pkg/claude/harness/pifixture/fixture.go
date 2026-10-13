@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -149,7 +150,9 @@ func (w *World) RecordedPayloads() []map[string]any {
 // message containing TOOL is answered with one bash tool call; anything else,
 // including a tool result, with a short text reply.
 type Mock struct {
-	URL      string
+	URL string
+	// Command is the command the tool call runs; "" is ToolCommand.
+	Command  string
 	mu       sync.Mutex
 	calls    int
 	messages []string
@@ -158,6 +161,24 @@ type Mock struct {
 func NewMock(t *testing.T) *Mock {
 	m := &Mock{}
 	srv := httptest.NewServer(http.HandlerFunc(m.serve))
+	t.Cleanup(srv.Close)
+	m.URL = srv.URL
+	return m
+}
+
+// NewMockAt is NewMock listening on addr (host:port), for a provider a
+// sandboxed pi reaches over a routed address rather than loopback.
+func NewMockAt(t *testing.T, addr string) *Mock {
+	t.Helper()
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listen %s: %v", addr, err)
+	}
+	m := &Mock{}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(m.serve))
+	_ = srv.Listener.Close()
+	srv.Listener = listener
+	srv.Start()
 	t.Cleanup(srv.Close)
 	m.URL = srv.URL
 	return m
@@ -225,7 +246,7 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 		chunk(map[string]any{"role": "assistant", "content": "Running a command."}, nil)
 		chunk(map[string]any{"tool_calls": []map[string]any{{
 			"index": 0, "id": "call_1", "type": "function",
-			"function": map[string]any{"name": "bash", "arguments": mustJSON(map[string]string{"command": ToolCommand})},
+			"function": map[string]any{"name": "bash", "arguments": mustJSON(map[string]string{"command": m.toolCommand()})},
 		}}}, nil)
 		chunk(map[string]any{}, "tool_calls")
 	} else {
@@ -240,6 +261,13 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 		"usage":   map[string]any{"prompt_tokens": 12000, "completion_tokens": 30, "total_tokens": 12030},
 	}))
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+}
+
+func (m *Mock) toolCommand() string {
+	if m.Command != "" {
+		return m.Command
+	}
+	return ToolCommand
 }
 
 func mustJSON(v any) string {

@@ -123,6 +123,21 @@ func ResolveTclaudeLayerModelTransport(
 			Provider:         authType,
 			ProviderResolved: true,
 		}, nil
+	case harness.PiName:
+		// The model's provider selects pi's endpoint; models.json may move it
+		// (pi_model_transport.go).
+		provider, baseURL, err := harness.PiLaunchModelRoute(
+			func(name string) string { return strings.TrimSpace(environment[name]) },
+			context.Model, context.Cwd)
+		if err != nil {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h, err.Error())
+		}
+		return harness.ResolvedModelTransport{
+			Model:            context.Model,
+			Provider:         provider,
+			BaseURL:          baseURL,
+			ProviderResolved: true,
+		}, nil
 	default:
 		return harness.ResolvedModelTransport{
 			Model: context.Model,

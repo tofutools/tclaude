@@ -608,6 +608,10 @@ func seedScribeDirTrust(harnessName, dir string) {
 		if err := harness.EnsureGeminiDirTrustedForLaunch(nil, "", dir); err != nil {
 			slog.Warn("scribe: pre-trust gemini workdir failed", "dir", dir, "error", err)
 		}
+	case harness.PiName:
+		// Nothing to seed: pi asks for trust only in a directory carrying
+		// project resources (.pi/, .agents/skills), and the daemon-created
+		// scribe dir has none.
 	default:
 		// A harness with no known trust store (or one added later without a
 		// seeding path wired here). Skip rather than guess — the pane may raise

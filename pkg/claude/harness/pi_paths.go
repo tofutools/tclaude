@@ -39,6 +39,22 @@ func piAgentDir(getenv func(string) string) (string, error) {
 	return filepath.Join(home, ".pi", "agent"), nil
 }
 
+// PiAgentDir is pi's agent directory for the ambient environment: its
+// settings, credentials and sessions. "" when no home resolves.
+func PiAgentDir() string {
+	dir, err := piAgentDir(nil)
+	if err != nil || !filepath.IsAbs(dir) {
+		return ""
+	}
+	return dir
+}
+
+// PiSessionsDir is where pi stores sessions for a process started in cwd,
+// under the ambient environment.
+func PiSessionsDir(cwd string) (string, error) {
+	return piSessionsDir(nil, cwd)
+}
+
 // piSessionsDir resolves where pi stores sessions for a process started in cwd.
 func piSessionsDir(getenv func(string) string, cwd string) (string, error) {
 	dir, _, err := piConfiguredSessionsDir(getenv, cwd)

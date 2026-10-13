@@ -91,6 +91,7 @@ type piMessage struct {
 	Content json.RawMessage `json:"content"`
 
 	// assistant
+	API          string   `json:"api"`
 	Provider     string   `json:"provider"`
 	Model        string   `json:"model"`
 	Usage        *piUsage `json:"usage"`

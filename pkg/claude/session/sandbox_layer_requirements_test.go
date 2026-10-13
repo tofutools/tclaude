@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // The fold is the harness-agnostic seam of TCL-1201: every harness's declared
@@ -189,4 +190,29 @@ func TestPrepareTclaudeLayerHarnessStateRefusesExistingNonDirectory(t *testing.T
 			require.ErrorContains(t, err, testCase.want)
 		})
 	}
+}
+
+// pi writes every turn to its session store: inside the agent directory the
+// state root covers it, and a store the environment moves out of it is a
+// writable requirement of its own.
+func TestPiLayerPathRequirementsFollowTheSessionStore(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	cwd := testutil.CanonicalTempDir(t)
+	agentDir := filepath.Join(home, ".pi", "agent")
+	t.Setenv("HOME", home)
+	t.Setenv(harness.PiAgentDirEnvVar, agentDir)
+	t.Setenv(harness.PiSessionDirEnvVar, "")
+
+	got, err := piLayerPathRequirements(cwd, agentDir)
+	require.NoError(t, err)
+	assert.Empty(t, got, "the default store lives in the state root")
+
+	elsewhere := filepath.Join(home, "pi-sessions")
+	t.Setenv(harness.PiSessionDirEnvVar, elsewhere)
+	got, err = piLayerPathRequirements(cwd, agentDir)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, elsewhere, got[0].Path)
+	assert.Equal(t, harness.LayerPathWrite, got[0].Access)
+	assert.True(t, got[0].MayCreate)
 }

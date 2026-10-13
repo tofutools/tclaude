@@ -171,9 +171,17 @@ func TestPiExtraArgs(t *testing.T) {
 	}
 }
 
-func TestPiExperimentalGate(t *testing.T) {
+// No registered harness is experimental today; pi, the last one to graduate,
+// stands in to keep the gate covered.
+func TestExperimentalHarnessGate(t *testing.T) {
 	t.Setenv(ExperimentalHarnessesEnvVar, "")
 	t.Setenv("HOME", t.TempDir())
+	if _, err := ResolveSpawnable(PiName); err != nil {
+		t.Fatalf("pi is no longer experimental: %v", err)
+	}
+	standIn := *MustGet(PiName)
+	standIn.Experimental = true
+	t.Cleanup(RegisterForTest(&standIn))
 	restore := SetExperimentalHarnessEnabledForTest(PiName, false)
 	defer restore()
 	if _, err := ResolveSpawnable(PiName); err == nil || !strings.Contains(err.Error(), "experimental") {

@@ -23,7 +23,6 @@ import (
 func TestMorphOntoPi_BudgetsToTheModelWindowAndConfirmsLoss(t *testing.T) {
 	t.Setenv(session.ResourceDelegationDirEnv, "")
 	t.Setenv("CODEX_HOME", "")
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 

@@ -95,7 +95,7 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | pi (experimental) | Shell |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | pi | Shell |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No: not yet bound | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ | ✅ spawn only |
@@ -116,9 +116,9 @@ warning. Model and effort are remembered by the harness itself.
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ no native sandbox | ❌ use tclaude-layer |
 | Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy | ❌ no native policy |
-| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ | ❌ no shell carriage smoke |
+| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no proxy carriage smoke; filtered launches use the packet gateway | ❌ no shell carriage smoke |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ | ❌ |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ❌ not yet | ✅ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ the only boundary | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ✅ pi's catalog price; what-if under a subscription login | ❌ |
 | Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | — per-launch extension, no setup | ❌ |
@@ -772,15 +772,10 @@ sandbox there.
 Gemini has no counterpart for remote control, fast mode, a command-backed
 status line, or tclaude's task runner.
 
-## pi (experimental)
+## pi
 
 [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`,
-1.1.0 or newer) is registered but **experimental**: tclaude launches it only
-after you opt in. Opt in with `"experimental_harnesses": ["pi"]` in
-`~/.tclaude/data/config.json` (or `TCLAUDE_EXPERIMENTAL_HARNESSES=pi` in the
-daemon's environment). Until then pi is hidden from the spawn dialog and every
-launch path refuses it. It stays experimental until a launch inside tclaude's
-sandbox works end to end.
+1.1.0 or newer) is the open-source coding agent from earendil-works.
 
 **What works.** Spawn and resume (`--session-id`, and resume by session file
 so a pane never stops on pi's fork prompt), model and thinking level
@@ -800,10 +795,44 @@ missing tclaude never stalls pi.
 **Approval and sandboxing.** pi has no approval prompts and no sandbox of its
 own; its posture is the tool set it exposes. `auto` (the default) runs every
 tool, including shell commands, unattended. `read-only` exposes only `read`,
-`grep`, `find` and `ls`. Because nothing confines `auto`, a fresh `auto` launch
-is refused unless tclaude's own sandbox wraps it or the human ticks **Allow
-launch with unenforced rules** in the dashboard spawn dialog. tclaude's sandbox
-does not support pi yet, so that allowance is currently required.
+`grep`, `find` and `ls`. Because nothing else confines `auto`, a fresh `auto`
+launch is refused unless tclaude's own sandbox wraps it (`--sandbox-impl
+tclaude-layer`, which spawn profiles for pi recommend) or the human ticks
+**Allow launch with unenforced rules** in the dashboard spawn dialog.
+
+**Inside tclaude's sandbox** pi's agent directory (`$PI_CODING_AGENT_DIR`, else
+`~/.pi/agent`) is its writable state: sessions, `auth.json` (so an OAuth login
+can refresh) and pi's lock files. What pi loads as configuration or code is
+read-only inside the wall, so a sandboxed agent cannot change what the next,
+possibly unsandboxed, pi runs: `settings.json`, `models.json`,
+`models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, the
+`AGENTS`/`CLAUDE`/`SYSTEM` prompt files, and `extensions/`, `skills/`,
+`prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/` and `tools/`.
+pi therefore cannot download its managed `fd` and `rg` from inside the wall;
+install them on the host (or run pi once outside it) and `find`/`grep` use
+them. A session directory your settings move out of the agent directory is
+granted too. Other harnesses' homes are not. In a constructed root (such as
+a filtered network on Linux) tclaude mounts the `pi` package and its Node
+runtime read-only, wherever they are installed.
+
+**Filtered network.** A filtered launch checks the model's route against
+your network rules and refuses, with the missing destination, when they do not
+allow it. tclaude reads the provider from `--model provider/id` (or, without
+one, the `defaultProvider` in pi's `settings.json`; a resume uses the model the
+session records) and maps it to the provider's host: `anthropic`
+(`net-anthropic`), `openai` (`net-openai-codex`), `openai-codex` (ChatGPT,
+`net-openai-chatgpt`), `google` (`net-google-gemini-api`), and `openrouter`,
+`xai`, `groq`, `mistral`, `deepseek`, `cerebras`, `together`, `fireworks`,
+`zai`, `moonshotai` and `huggingface`, which need an allow row for their API
+host. A provider with a `baseUrl` in `models.json` (a local Ollama, say) needs
+that endpoint. Anything else, such as a provider an extension registers,
+Bedrock, Vertex, Azure or GitHub Copilot, refuses the filtered launch rather
+than guessing, as does an `httpProxy` in pi's settings. The launch also runs pi
+offline (`PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`): no
+version check, catalog refresh, install telemetry or tool download. Outside a
+filtered network tclaude sets none of these and your pi settings decide.
+Filtered pi launches use the packet gateway; the proxy engine is not yet
+offered for pi.
 
 **Conversations.** tclaude lists and searches pi's session files wherever pi
 keeps them (`~/.pi/agent/sessions`, or the `sessionDir` your settings name),
@@ -825,8 +854,7 @@ between runs once the context reaches it; pi's own threshold near the model's
 full window stays the backstop. A cost factor for pi can be set under
 `cost.harness_factors`.
 
-**Not yet.** `ask`, prompt-based name refinement, and tclaude's sandbox are
-still to come.
+**Not yet.** `ask` and prompt-based name refinement are still to come.
 
 ## Related pages
 

@@ -250,6 +250,8 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			filepath.Join(home, ".codex", "config.toml")},
 		{harness.CopilotName, filepath.Join(home, ".copilot"),
 			filepath.Join(home, ".copilot", "config.json")},
+		{harness.PiName, filepath.Join(home, ".pi", "agent"),
+			filepath.Join(home, ".pi", "agent", "models.json")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
 			// File entries are floored only when the host has them.
@@ -263,6 +265,16 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			}
 			assert.Contains(t, paths, tc.want)
 		})
+	}
+	// pi's sessions and its OAuth login stay writable: the agent lives in
+	// the one and refreshes the other.
+	piRoot := filepath.Join(home, ".pi", "agent")
+	require.NoError(t, os.WriteFile(filepath.Join(piRoot, "auth.json"), nil, 0o600))
+	piEntries, err := harnessConfigFloorCatalog(harness.PiName, piRoot)
+	require.NoError(t, err)
+	for _, entry := range piEntries {
+		assert.NotContains(t, []string{filepath.Join(piRoot, "auth.json"), filepath.Join(piRoot, "sessions")},
+			entry.Path)
 	}
 	_, err = harnessConfigFloorCatalog("nonesuch", filepath.Join(home, ".claude"))
 	assert.Error(t, err)

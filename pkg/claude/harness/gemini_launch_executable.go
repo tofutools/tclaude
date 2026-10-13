@@ -24,7 +24,11 @@ import (
 // both on the host and starting `<node> <bundle>` by absolute path removes the
 // shebang's PATH lookup from the sandbox entirely; ReadPaths are the read-only
 // grants that make those paths exist there.
-type GeminiLaunchExecutable struct {
+type GeminiLaunchExecutable = NodeLaunchExecutable
+
+// NodeLaunchExecutable is a Node CLI's entry point frozen on the host: the
+// shape Gemini CLI and pi share (see GeminiLaunchExecutable).
+type NodeLaunchExecutable struct {
 	// Interpreter is the absolute Node executable, or "" when the entry point
 	// is itself a native executable.
 	Interpreter string
@@ -36,17 +40,26 @@ type GeminiLaunchExecutable struct {
 	ReadPaths []string
 }
 
-// geminiPackageName is the npm package the `gemini` bin belongs to.
-const geminiPackageName = "@google/gemini-cli"
+// nodeCLIPackage names one npm-installed Node CLI the resolver below can
+// start by absolute path.
+type nodeCLIPackage struct {
+	// bin is the PATH name, pkg the npm package it belongs to, display the
+	// harness name in refusals.
+	bin, pkg, display string
+	capability        string
+	// searchDepth bounds the walk from the bin to its package.json.
+	searchDepth int
+	// depLimit bounds the hoisted-dependency walk.
+	depLimit int
+}
 
-// geminiPackageSearchDepth bounds the walk from the bin to its package.json;
-// the bin is `bundle/gemini.js`, one level below the package root.
-const geminiPackageSearchDepth = 4
-
-// geminiDependencyLimit bounds the hoisted-dependency walk. Gemini ships as a
-// bundle; only its optional native modules (node-pty and its per-platform
-// builds, keytar) are installed as packages at all.
-const geminiDependencyLimit = 32
+// geminiCLIPackage: the bin is `bundle/gemini.js`, one level below the package
+// root. Gemini ships as a bundle; only its optional native modules (node-pty
+// and its per-platform builds, keytar) are installed as packages at all.
+var geminiCLIPackage = nodeCLIPackage{
+	bin: "gemini", pkg: "@google/gemini-cli", display: "Gemini",
+	capability: geminiLaunchCapability, searchDepth: 4, depLimit: 32,
+}
 
 const geminiLaunchCapability = "gemini_launch_executable"
 
@@ -57,11 +70,15 @@ const geminiLaunchCapability = "gemini_launch_executable"
 // the pane's own PATH, profile environment and pre-launch script, and those
 // must keep choosing the binary there.
 func ResolveGeminiLaunchExecutable() (GeminiLaunchExecutable, error) {
-	entry, err := resolveLaunchExecutable("gemini", geminiLaunchCapability)
+	return geminiCLIPackage.resolve()
+}
+
+func (p nodeCLIPackage) resolve() (NodeLaunchExecutable, error) {
+	entry, err := resolveLaunchExecutable(p.bin, p.capability)
 	if err != nil {
-		return GeminiLaunchExecutable{}, err
+		return NodeLaunchExecutable{}, err
 	}
-	return resolveGeminiLaunchFrom(entry.Path, exec.LookPath)
+	return p.resolveFrom(entry.Path, exec.LookPath)
 }
 
 // SpliceArgv replaces the `gemini` token of a one-shot argv with the resolved
@@ -79,62 +96,69 @@ func (executable GeminiLaunchExecutable) SpliceArgv(argv []string) ([]string, er
 	return slices.Concat(argv[:at], entry, argv[at+1:]), nil
 }
 
-func geminiLaunchRefusal(format string, args ...any) error {
-	return &NestedSandboxCapabilityError{Capability: geminiLaunchCapability, Detail: fmt.Sprintf(format, args...)}
+func (p nodeCLIPackage) refusal(format string, args ...any) error {
+	return &NestedSandboxCapabilityError{Capability: p.capability, Detail: fmt.Sprintf(format, args...)}
 }
 
 func resolveGeminiLaunchFrom(
 	entry string,
 	lookPath func(string) (string, error),
 ) (GeminiLaunchExecutable, error) {
-	interpreterName, native, err := geminiShebangInterpreter(entry)
+	return geminiCLIPackage.resolveFrom(entry, lookPath)
+}
+
+func (p nodeCLIPackage) resolveFrom(
+	entry string,
+	lookPath func(string) (string, error),
+) (NodeLaunchExecutable, error) {
+	interpreterName, native, err := p.shebangInterpreter(entry)
 	if err != nil {
-		return GeminiLaunchExecutable{}, err
+		return NodeLaunchExecutable{}, err
 	}
 	if native {
-		if filepath.Base(entry) != "gemini" {
+		if filepath.Base(entry) != p.bin {
 			// A version-manager shim (mise, Volta) is one binary that picks
 			// the tool from argv[0]; started by its resolved path it would
 			// run as itself.
-			return GeminiLaunchExecutable{}, geminiLaunchRefusal(
-				"`gemini` on PATH resolves to %q, which looks like a version-manager shim; "+
-					"tclaude must start Gemini by its real path inside a constructed root, so put the "+
-					"Node install's own bin directory on PATH (e.g. `mise activate` rather than shims)", entry)
+			return NodeLaunchExecutable{}, p.refusal(
+				"`%s` on PATH resolves to %q, which looks like a version-manager shim; "+
+					"tclaude must start %s by its real path inside a constructed root, so put the "+
+					"Node install's own bin directory on PATH (e.g. `mise activate` rather than shims)", p.bin, entry, p.display)
 		}
-		return GeminiLaunchExecutable{Path: entry, ReadPaths: []string{entry}}, nil
+		return NodeLaunchExecutable{Path: entry, ReadPaths: []string{entry}}, nil
 	}
 	interpreter := interpreterName
 	if !filepath.IsAbs(interpreter) {
 		interpreter, err = lookPath(interpreterName)
 		if err != nil {
-			return GeminiLaunchExecutable{}, geminiLaunchRefusal(
-				"Gemini entry point %q runs under %q, which is not on PATH: %v", entry, interpreterName, err)
+			return NodeLaunchExecutable{}, p.refusal(
+				"%s entry point %q runs under %q, which is not on PATH: %v", p.display, entry, interpreterName, err)
 		}
 	}
-	node, err := inspectExecutableFile(interpreter, interpreterName, geminiLaunchCapability)
+	node, err := inspectExecutableFile(interpreter, interpreterName, p.capability)
 	if err != nil {
-		return GeminiLaunchExecutable{}, err
+		return NodeLaunchExecutable{}, err
 	}
-	root, ok := geminiPackageRoot(entry)
+	root, ok := p.packageRoot(entry)
 	if !ok {
 		// Mounting the bundle's directory instead could expose an arbitrary
 		// directory (~/.local/bin, or the home directory itself).
-		return GeminiLaunchExecutable{}, geminiLaunchRefusal(
-			"Gemini entry point %q is not inside an installed %s package", entry, geminiPackageName)
+		return NodeLaunchExecutable{}, p.refusal(
+			"%s entry point %q is not inside an installed %s package", p.display, entry, p.pkg)
 	}
-	readPaths := append([]string{node.Path, root}, geminiHoistedDependencies(root)...)
-	return GeminiLaunchExecutable{Interpreter: node.Path, Path: entry, ReadPaths: readPaths}, nil
+	readPaths := append([]string{node.Path, root}, p.hoistedDependencies(root)...)
+	return NodeLaunchExecutable{Interpreter: node.Path, Path: entry, ReadPaths: readPaths}, nil
 }
 
-// geminiShebangInterpreter names the Node interpreter entry's `#!` line runs.
+// shebangInterpreter names the Node interpreter entry's `#!` line runs.
 // native reports a file without a `#!` line. `/usr/bin/env node` names node
 // for a PATH lookup; an absolute interpreter is returned as is. Anything else
 // is refused: another interpreter (an asdf or pnpm shell shim), or a shebang
 // that passes the interpreter arguments, which `<node> <bundle>` would drop.
-func geminiShebangInterpreter(entry string) (interpreter string, native bool, err error) {
+func (p nodeCLIPackage) shebangInterpreter(entry string) (interpreter string, native bool, err error) {
 	file, err := os.Open(entry)
 	if err != nil {
-		return "", false, fmt.Errorf("read Gemini entry point %q: %w", entry, err)
+		return "", false, fmt.Errorf("read %s entry point %q: %w", p.display, entry, err)
 	}
 	defer func() { _ = file.Close() }()
 	line, _ := bufio.NewReader(io.LimitReader(file, 512)).ReadString('\n')
@@ -146,21 +170,21 @@ func geminiShebangInterpreter(entry string) (interpreter string, native bool, er
 		fields = fields[1:]
 	}
 	if len(fields) != 1 || !geminiIsNodeName(filepath.Base(fields[0])) {
-		return "", false, geminiLaunchRefusal(
-			"Gemini entry point %q starts with %q; tclaude can only start a Node bundle run as "+
+		return "", false, p.refusal(
+			"%s entry point %q starts with %q; tclaude can only start a Node bundle run as "+
 				"`#!/usr/bin/env node` or `#!/path/to/node` inside a constructed root "+
-				"(a shell shim from asdf or pnpm is not supported there)", entry, strings.TrimSpace(line))
+				"(a shell shim from asdf or pnpm is not supported there)", p.display, entry, strings.TrimSpace(line))
 	}
 	return fields[0], false, nil
 }
 
 func geminiIsNodeName(name string) bool { return name == "node" || name == "nodejs" }
 
-// geminiPackageRoot walks up from the bin to the Gemini package's root.
-func geminiPackageRoot(entry string) (string, bool) {
+// packageRoot walks up from the bin to the package's root.
+func (p nodeCLIPackage) packageRoot(entry string) (string, bool) {
 	dir := filepath.Dir(entry)
-	for range geminiPackageSearchDepth {
-		if name, _, ok := readGeminiPackageManifest(dir); ok && name == geminiPackageName {
+	for range p.searchDepth {
+		if name, _, ok := readGeminiPackageManifest(dir); ok && name == p.pkg {
 			return dir, true
 		}
 		parent := filepath.Dir(dir)
@@ -172,7 +196,7 @@ func geminiPackageRoot(entry string) (string, bool) {
 	return "", false
 }
 
-// geminiHoistedDependencies returns the dependencies npm placed beside the
+// hoistedDependencies returns the dependencies npm placed beside the
 // package in the enclosing node_modules (a local or workspace install) rather
 // than inside it (a global install), following their own dependencies too:
 // node-pty's per-platform build is a dependency of node-pty, not of Gemini.
@@ -180,8 +204,8 @@ func geminiPackageRoot(entry string) (string, bool) {
 // Every returned path is the symlink-resolved directory, and it must stay
 // inside the enclosing node_modules. The names come from installed manifests,
 // so a symlink planted there must not turn into a read grant elsewhere.
-func geminiHoistedDependencies(root string) []string {
-	modules := filepath.Dir(filepath.Dir(root)) // node_modules/@google/gemini-cli
+func (p nodeCLIPackage) hoistedDependencies(root string) []string {
+	modules := filepath.Dir(filepath.Dir(root)) // node_modules/@scope/name
 	if filepath.Base(modules) != "node_modules" {
 		return nil
 	}
@@ -195,7 +219,7 @@ func geminiHoistedDependencies(root string) []string {
 	}
 	seen := map[string]bool{}
 	var out []string
-	for len(queue) > 0 && len(out) < geminiDependencyLimit {
+	for len(queue) > 0 && len(out) < p.depLimit {
 		dep := queue[0]
 		queue = queue[1:]
 		if seen[dep] || !geminiValidPackageName(dep) {

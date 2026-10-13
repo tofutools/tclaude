@@ -272,13 +272,13 @@ var proxyEngineUnavailableReasons = map[string]map[string]string{
 	"linux": {
 		CopilotName: "Copilot's private networking contract does not enforce proxy destination rules; use its supported private routed posture",
 		ShellName:   "No shell-specific proxy carriage smoke has activated this target",
-		PiName:      "pi does not run inside tclaude's sandbox yet, so no pi proxy carriage smoke has activated this target",
+		PiName:      "No pi-specific proxy carriage smoke has activated this target",
 	},
 	"darwin": {
 		GeminiName:  "No Gemini-specific Darwin proxy carriage smoke has activated this target",
 		CopilotName: "Copilot's private networking contract does not enforce proxy destination rules; use its supported private routed posture",
 		ShellName:   "No shell-specific Darwin proxy carriage smoke has activated this target",
-		PiName:      "pi does not run inside tclaude's sandbox yet, so no pi Darwin proxy carriage smoke has activated this target",
+		PiName:      "No pi-specific Darwin proxy carriage smoke has activated this target",
 	},
 }
 

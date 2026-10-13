@@ -102,7 +102,7 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic. Direct `--harness shell` keeps the
 	// lightweight session path; agentd's managed form uses the registered shell
 	// pseudo-harness so profiles and tclaude's sandbox still apply. See shell.go.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | gemini | shell | pi (experimental: opt in with experimental_harnesses). Unset = global profile, then an installed harness (claude preferred)"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | gemini | shell | pi. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
 	// ShellHarnessName in runNew before any harness resolution happens.
@@ -1274,6 +1274,10 @@ func runNew(params *NewParams) error {
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
 	var routeHelper *TclaudeLayerRouteHelper
+	// networkFiltered: the launch runs under a filtered network, so a harness
+	// that can start traffic of its own outside the model route is told not
+	// to (harness.SpawnSpec.NetworkFiltered).
+	networkFiltered := false
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
 			return fmt.Errorf("linux group-route helper requires a pane-authoritative launch with tclaude’s sandbox")
@@ -1780,6 +1784,7 @@ func runNew(params *NewParams) error {
 			); noProxyNotice != nil {
 				notices = append(notices, *noProxyNotice)
 			}
+			networkFiltered = plannedNetworkPosture == sandboxpolicy.NetworkFiltered
 			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
 				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
 				var resolveModelErr error
@@ -2149,6 +2154,17 @@ func runNew(params *NewParams) error {
 		executablePath = resolvedGemini.Path
 		executableInterpreter = resolvedGemini.Interpreter
 		harnessReadPaths = append(harnessReadPaths, resolvedGemini.ReadPaths...)
+	} else if tclaudeLayerOnly && h.Name == harness.PiName && runtime.GOOS == "linux" &&
+		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		// As for Gemini: pi is a Node CLI, absent from a constructed root
+		// unless started by absolute path with its runtime mounted.
+		resolvedPi, resolveErr := harness.ResolvePiLaunchExecutable()
+		if resolveErr != nil {
+			return fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		executablePath = resolvedPi.Path
+		executableInterpreter = resolvedPi.Interpreter
+		harnessReadPaths = append(harnessReadPaths, resolvedPi.ReadPaths...)
 	} else if h.Name == harness.OpenCodeName {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
@@ -2318,8 +2334,19 @@ func runNew(params *NewParams) error {
 			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")
 		} else {
 			spawnSpec.StatusExtensionPath = path
+			if outerLayer {
+				// The extension runs inside the pane, so tclaude's sandbox
+				// mounts it read-only (its directory holds only this
+				// version's file), and it reaches tclaude where the sandbox
+				// puts it.
+				harnessReadPaths = append(harnessReadPaths, filepath.Dir(path))
+				if tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+					spawnSpec.TclaudeExecutable = tclaudeLayerConstructedRootTclaudePath
+				}
+			}
 		}
 	}
+	spawnSpec.NetworkFiltered = networkFiltered
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)
 	}

@@ -155,6 +155,30 @@ func harnessConfigFloorCatalog(
 		dirs = under("extensions", "commands", "skills", "agents", "policies")
 		files = under("settings.json", ".env", "trustedFolders.json",
 			"trusted_hooks.json", "policy_integrity.json", "GEMINI.md")
+	case harness.PiName:
+		// pi's agent directory (docs/configuration.md and config.js at
+		// harness.PiMinimumVersion):
+		//   - settings.json declares packages, resource paths and httpProxy;
+		//     models.json and mcp.json name endpoints and commands pi runs
+		//     (an `!command` apiKey executes at request time);
+		//     models-store.json caches refreshed provider catalogs pi trusts
+		//     on the next start;
+		//   - trust.json pre-answers the project-trust question for the next,
+		//     unsandboxed session;
+		//   - AGENTS*.md / CLAUDE*.md, SYSTEM.md and APPEND_SYSTEM.md are
+		//     injected into every session's prompt; keybindings.json rebinds
+		//     the human's keys;
+		//   - extensions/, skills/, prompts/ and themes/ hold resources pi
+		//     loads, and git/, npm/ and node_modules/ the code of installed pi
+		//     packages; bin/ and tools/ hold executables pi runs (the managed
+		//     fd and rg).
+		// NOT floored: sessions/, auth.json (an OAuth login refreshes it),
+		// crashes.json and tmp/.
+		dirs = under("extensions", "skills", "prompts", "themes", "git", "npm",
+			"node_modules", "bin", "tools")
+		files = under("settings.json", "models.json", "models-store.json", "mcp.json",
+			"trust.json", "keybindings.json", "AGENTS.override.md", "AGENTS.md", "AGENTS.MD",
+			"CLAUDE.md", "CLAUDE.MD", "SYSTEM.md", "APPEND_SYSTEM.md")
 	case harness.OpenCodeName:
 		// Nothing. OpenCode's config surface is ALREADY floored by its own
 		// state management: agentd's layout binds the whole ambient config

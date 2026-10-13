@@ -40,8 +40,8 @@ same layer. The values:
   off inside it (Claude Code mode `off`, Codex `danger-full-access`, Gemini
   CLI `off` via `GEMINI_SANDBOX=false`; Copilot has no off-flag tclaude can
   set, so its configuration is verified instead and an unverifiable posture
-  refuses). Supported for Claude Code, Codex, OpenCode, Copilot, and Gemini
-  CLI, on Linux and macOS. For OpenCode the wrapped process is the
+  refuses; pi has no sandbox to turn off). Supported for Claude Code, Codex,
+  OpenCode, Copilot, Gemini CLI and pi, on Linux and macOS. For OpenCode the wrapped process is the
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
@@ -300,7 +300,8 @@ access controls still apply. Harness-native sandbox policies are unchanged.
 
 Under tclaude’s sandbox the launch contract binds the harness's state root
 read-write — `~/.claude`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`,
-`~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`),
+`~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`), pi's agent directory
+(`$PI_CODING_AGENT_DIR` or `~/.pi/agent`),
 `~/.opencode` plus OpenCode's XDG roots — because that is where the harness
 keeps state it genuinely must write: transcripts, project records, todos,
 history, account/onboarding data. The same tree also holds the harness's
@@ -328,6 +329,7 @@ bubblewrap and Seatbelt.
 | codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
 | gemini | `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `settings.json`, `.env`, `trustedFolders.json`, `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md` |
+| pi | `extensions/`, `skills/`, `prompts/`, `themes/`, `git/`, `npm/`, `node_modules/`, `bin/`, `tools/`, `settings.json`, `models.json`, `models-store.json`, `mcp.json`, `trust.json`, `keybindings.json`, `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`, `APPEND_SYSTEM.md` (sessions and `auth.json` stay writable) |
 | opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
 Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
