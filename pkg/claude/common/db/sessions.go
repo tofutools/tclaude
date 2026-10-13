@@ -252,7 +252,22 @@ func AppendSessionSandboxAccessNotice(sessionID string, notice sandboxpolicy.Acc
 // may write it; SaveSession must leave those columns alone.
 // (migrateV25toV26 already documents this exact hazard — agent_workdir
 // was made its own table specifically to dodge INSERT OR REPLACE.)
-func SaveSession(s *SessionRow) error {
+func SaveSession(s *SessionRow) error { return saveSession(s, false) }
+
+// SaveSessionAfterLaunch records launch metadata without erasing a status hook
+// received while launching. CreatedAt must be captured before starting the pane.
+func SaveSessionAfterLaunch(s *SessionRow) error {
+	if s.CreatedAt.IsZero() {
+		return fmt.Errorf("post-launch session save requires launch start time")
+	}
+	return saveSession(s, true)
+}
+
+func saveSession(s *SessionRow, preserveLaunchHook bool) error {
+	keepHook := "0"
+	if preserveLaunchHook {
+		keepHook = "sessions.last_hook >= excluded.created_at"
+	}
 	db, err := Open()
 	if err != nil {
 		return err
@@ -302,8 +317,8 @@ func SaveSession(s *SessionRow) error {
 			pid = excluded.pid,
 			cwd = excluded.cwd,
 			conv_id = excluded.conv_id,
-			status = excluded.status,
-			status_detail = excluded.status_detail,
+			status = CASE WHEN `+keepHook+` THEN sessions.status ELSE excluded.status END,
+            status_detail = CASE WHEN `+keepHook+` THEN sessions.status_detail ELSE excluded.status_detail END,
 			subagent_count = excluded.subagent_count,
 			subagents_json = excluded.subagents_json,
 			bg_shells_json = excluded.bg_shells_json,
@@ -311,7 +326,7 @@ func SaveSession(s *SessionRow) error {
 			auto_registered = excluded.auto_registered,
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
-			last_hook = excluded.last_hook,
+			last_hook = CASE WHEN `+keepHook+` THEN sessions.last_hook ELSE excluded.last_hook END,
 			harness = excluded.harness,
 			sandbox_mode = excluded.sandbox_mode,
 			sandbox_implementation = excluded.sandbox_implementation,

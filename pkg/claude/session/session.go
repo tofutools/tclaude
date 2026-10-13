@@ -349,6 +349,13 @@ func SaveSessionState(state *SessionState) error {
 	return db.SaveSession(toRow(state))
 }
 
+// SaveSessionStateAfterLaunch preserves any current-launch status hook that
+// arrived before the launcher finished recording its metadata.
+func SaveSessionStateAfterLaunch(state *SessionState) error {
+	state.Updated = time.Now()
+	return db.SaveSessionAfterLaunch(toRow(state))
+}
+
 // SaveSessionStateForLaunch is the one launch-owned session write. Supplying
 // the fresh generation makes row reuse atomically clear predecessor callback
 // and lifecycle-intent authority in the same UPSERT that establishes the new

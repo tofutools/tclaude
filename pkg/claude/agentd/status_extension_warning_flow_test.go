@@ -58,3 +58,25 @@ func TestPiStatusExtensionMissingWarningClearsAfterHook(t *testing.T) {
 	require.Zero(t, reaper.TickAt(created.Add(33*time.Second)))
 	require.Empty(t, warning(), "a late valid hook clears the diagnosis without changing launch state")
 }
+
+// CLI/watch may receive SessionStart before their final metadata write.
+// That ordering must not make a healthy idle pane appear extension-less.
+func TestPiStatusExtensionResumeHookBeforeMetadata(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "resume-pi", "approval": "ask"})
+	require.NotNil(t, sim)
+	row, err := db.FindSessionByConvID(resp.ConvID)
+	require.NoError(t, err)
+	require.False(t, row.LastHook.IsZero())
+	metadata := *row
+	metadata.CreatedAt = row.LastHook.Add(-time.Millisecond)
+	metadata.LastHook = time.Time{}
+	metadata.Status = "idle"
+	require.NoError(t, db.SaveSessionAfterLaunch(&metadata))
+	saved, err := db.LoadSession(row.ID)
+	require.NoError(t, err)
+	require.False(t, saved.LastHook.Before(row.LastHook), "the observed hook or a newer concurrent hook must survive")
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Zero(t, reaper.TickAt(metadata.CreatedAt.Add(time.Minute)))
+}
