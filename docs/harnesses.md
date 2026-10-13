@@ -910,8 +910,8 @@ stay in the inbox and are delivered when it reconnects, and a rename,
 compaction or soft stop fails instead of being typed (a stop still ends the
 pane). Only the pi process itself can hold the channel: a process pi started
 (a tool's shell or script) is refused. The choice is per launch, recorded with
-the agent and kept on resume; a launch without it is told so on its first poll
-and its extension stops asking.
+the agent and kept on resume; a launch without it is told so, and its extension
+stops asking.
 
 **Not yet.** `ask` and prompt-based name refinement are still to come.
 

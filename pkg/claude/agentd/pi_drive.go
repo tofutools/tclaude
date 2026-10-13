@@ -129,18 +129,42 @@ func (r *piDriveRegistry) call(convID string, req piDriveRequest) error {
 	c.wake = make(chan struct{})
 	r.mu.Unlock()
 
-	timer := time.NewTimer(piDriveAckTimeout)
-	defer timer.Stop()
-	select {
-	case a := <-ack:
+	result := func(a piDriveAck) error {
 		if !a.OK {
 			return fmt.Errorf("pi extension: %s %s", req.Op, a.Error)
 		}
 		return nil
-	case <-timer.C:
+	}
+	timer := time.NewTimer(piDriveAckTimeout)
+	defer timer.Stop()
+	// While the request still waits in the queue, a channel that goes quiet
+	// (pi died) withdraws it at once instead of after the whole ack timeout.
+	check := time.NewTicker(piDriveConnectedGrace / 4)
+	defer check.Stop()
+wait:
+	for {
+		select {
+		case a := <-ack:
+			return result(a)
+		case <-timer.C:
+			break wait
+		case <-check.C:
+			r.mu.Lock()
+			quiet := c.polls == 0 && time.Since(c.lastPoll) >= piDriveConnectedGrace
+			r.mu.Unlock()
+			if quiet {
+				break wait
+			}
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	select {
+	case a := <-ack:
+		// Acknowledged as the wait ended.
+		return result(a)
+	default:
+	}
 	delete(c.waiters, req.ID)
 	for i, q := range c.queue {
 		if q.ID == req.ID {

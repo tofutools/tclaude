@@ -300,6 +300,20 @@ function driveSocket(): string {
 	return join(homedir(), ".tclaude", "api", "agentd-socket", "agentd.sock");
 }
 
+// driveHeaders carries the identity claims every tclaude agent command sends:
+// the daemon resolves a launch inside tclaude's sandbox only through the
+// session claim, never from the process tree alone.
+function driveHeaders(data: string): Record<string, string | number> {
+	const headers: Record<string, string | number> = {
+		"content-type": "application/json",
+		"content-length": Buffer.byteLength(data),
+		"x-tclaude-agent-hint": "1",
+	};
+	const session = (process.env.TCLAUDE_SESSION_ID ?? "").trim();
+	if (session) headers["x-tclaude-session-id"] = session;
+	return headers;
+}
+
 type DriveAck = { id: number; ok: boolean; error?: string };
 
 // One drive per pi process, whichever module instance started it; ctx is the
@@ -326,7 +340,7 @@ function drivePoll(): Promise<{ status: number; body: any }> {
 					socketPath: driveSocket(),
 					path: DRIVE_PATH,
 					method: "POST",
-					headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data) },
+					headers: driveHeaders(data),
 					timeout: DRIVE_POLL_TIMEOUT_MS,
 				},
 				(res) => {
@@ -404,31 +418,48 @@ function driveRun(op: any): DriveAck {
 	}
 }
 
+// How long after a first "no drive" the loop asks once more, in case the
+// launch posture was not yet recorded when it first asked.
+const DRIVE_RECHECK_MS = 30_000;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, ms);
+		(timer as any)?.unref?.();
+	});
+}
+
 async function driveLoop(): Promise<void> {
 	let backoff = 500;
+	let noDrive = 0;
 	while (!drive.stopped) {
 		const { status, body } = await drivePoll();
 		if (drive.stopped) return;
 		if (status === 200 && body && typeof body === "object") {
 			if (body.drive !== true) {
-				drive.stopped = true;
-				return;
+				// A launch without the drive: asked twice, then done.
+				if (++noDrive >= 2) {
+					drive.stopped = true;
+					return;
+				}
+				await sleep(DRIVE_RECHECK_MS);
+				continue;
 			}
+			noDrive = 0;
 			backoff = 500;
 			for (const op of Array.isArray(body.requests) ? body.requests : []) {
 				drive.acks.push(driveRun(op));
 			}
 			continue;
 		}
-		if (status === 401 || status === 403 || status === 404 || status === 405) {
-			// Not this process's channel, or a daemon without the drive.
+		if (status === 404 || status === 405) {
+			// A daemon without the drive.
 			drive.stopped = true;
 			return;
 		}
-		await new Promise((resolve) => {
-			const timer = setTimeout(resolve, backoff);
-			(timer as any)?.unref?.();
-		});
+		// Anything else, a refused identity included, may pass (a daemon
+		// restart, a session row not yet written): back off and ask again.
+		await sleep(backoff);
 		backoff = Math.min(backoff * 2, DRIVE_BACKOFF_MAX_MS);
 	}
 }

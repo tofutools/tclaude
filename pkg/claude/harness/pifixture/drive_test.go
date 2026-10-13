@@ -23,6 +23,7 @@ type fakeDrive struct {
 	batches [][]map[string]any
 	acks    []map[string]any
 	polls   int
+	claims  []string
 }
 
 func (d *fakeDrive) serve(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +37,7 @@ func (d *fakeDrive) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	d.mu.Lock()
 	d.polls++
+	d.claims = append(d.claims, r.Header.Get("X-Tclaude-Session-ID")+"|"+r.Header.Get("X-Tclaude-Agent-Hint"))
 	d.acks = append(d.acks, body.Acks...)
 	var batch []map[string]any
 	if len(d.batches) > 0 {
@@ -91,7 +93,7 @@ func TestPiExtensionDriveRunsDaemonRequests(t *testing.T) {
 	w := NewWorld(t)
 	ext := materializedExtension(t)
 	drive := &fakeDrive{}
-	w.ExtraEnv = []string{"TCLAUDE_AGENTD_SOCKET=" + startFakeDrive(t, drive)}
+	w.ExtraEnv = []string{"TCLAUDE_AGENTD_SOCKET=" + startFakeDrive(t, drive), "TCLAUDE_SESSION_ID=spwn-drive"}
 	id := uuid.NewString()
 	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
 
@@ -111,6 +113,13 @@ func TestPiExtensionDriveRunsDaemonRequests(t *testing.T) {
 	for _, id := range []float64{1, 2, 3} {
 		assert.Equal(t, true, drive.ackFor(id)["ok"], "ack %v: %v", id, drive.ackFor(id))
 	}
+	// Every poll carries the session claim the daemon needs to place a
+	// launch inside tclaude's sandbox.
+	drive.mu.Lock()
+	for _, claim := range drive.claims {
+		assert.Equal(t, "spwn-drive|1", claim)
+	}
+	drive.mu.Unlock()
 	state := rpc.Send(map[string]any{"type": "get_state"})
 	assert.Contains(t, mustJSON(state), "drive-named")
 
@@ -132,7 +141,8 @@ func TestPiExtensionDriveRunsDaemonRequests(t *testing.T) {
 	assert.True(t, strings.Contains(string(raw), "drive-named"), "session file lacks the name")
 }
 
-// A launch without the drive is told so on its first poll and stops polling.
+// A launch without the drive is told so and stops polling: it asks once more
+// after 30s (in case its posture was not yet recorded), then never again.
 func TestPiExtensionDriveStopsWhenDaemonSaysNoDrive(t *testing.T) {
 	w := NewWorld(t)
 	ext := materializedExtension(t)
