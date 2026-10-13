@@ -30,6 +30,9 @@ export function apiBase(node) {
 // ROSTER_PAGE is how many agent folders a node's sidebar section asks for
 // at a time; the node pages its roster server-side and reports the total.
 export const ROSTER_PAGE = 100;
+// ROSTER_MAX is the most folders one roster read returns (the server's
+// maxRosterAgents); past it a list is narrowed with the filter, not paged.
+export const ROSTER_MAX = 2000;
 
 // rosterURL addresses one page of a node's sidebar roster. A node on an
 // older build ignores agents_limit and sends its whole roster.

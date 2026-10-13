@@ -190,7 +190,9 @@ type dashboardMailbox struct {
 // Roster agent paging. The sidebar's flat agent list is one newest-activity
 // -first page of agents_limit folders; the client asks for more as the
 // operator scrolls ("load more"). An expanded group's nested member list
-// pages the same way (members_limit). maxRosterAgents caps a request.
+// pages the same way (members_limit). maxRosterAgents caps a request; the
+// dashboard mirrors it as ROSTER_MAX (fused-mail-model.js) to stop offering
+// "Show more" at the cap.
 const (
 	defaultRosterAgents = 100
 	maxRosterAgents     = 2000

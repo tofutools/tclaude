@@ -481,3 +481,21 @@ test('paged sidebar lists offer Show more for the flat agent list and each expan
   assert.deepEqual(calls, ['members:big', 'agents']);
   await mounted.unmount();
 });
+
+test('a paged sidebar list at the roster cap asks for the filter instead of offering Show more', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  const controller = controllerFor(state);
+  const agents = Array.from({ length: 2000 }, (_, i) => ({ id: `conv-${i}`, kind: 'agent', title: `a${i}`, total: 1, unread: 0, in: 1, out: 0 }));
+  controller.mailboxView = () => ({
+    empty: false, hasRoster: true, pinned: state.value.mailboxes, prevGens: new Set(),
+    filtering: false, agentsExpanded: true, groups: [],
+    agents, agentsTotal: 5000, agentsUnread: 0, moreAgents: 3000,
+  });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const sidebar = mounted.container.querySelector('#mail-sidebar');
+  assert.equal(sidebar.querySelector('button.mailbox-load-more'), null, 'no dead Show more at the cap');
+  assert.match(sidebar.querySelector('.mailbox-load-more.capped').textContent, /2000 of 5000 shown · filter to narrow/);
+  await mounted.unmount();
+});

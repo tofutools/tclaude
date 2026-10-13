@@ -18,7 +18,7 @@ import { tickedNodes, withFused } from './skynet-scope.js';
 import { approveConsequence } from './remote-inbox.js';
 import { replySubject } from './peer-mail.js';
 import {
-  FUSED_FOLDERS, PAGE_SIZE, MAX_PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderURL, mergeMessages, mergeRequests,
+  FUSED_FOLDERS, PAGE_SIZE, MAX_PAGE_SIZE, ROSTER_PAGE, ROSTER_MAX, apiBase, canActOnHuman, folderURL, mergeMessages, mergeRequests,
   nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
 } from './fused-mail-model.js';
 
@@ -257,7 +257,8 @@ export function FusedMail({
           return html`<div key=${n.id} class="fused-mail-section"><div class="mailbox-section"><${NodePill} node=${n} /></div>
             ${box({ scope: 'node', node: n.id, id: 'human' }, '📬', 'Human notifications', 0)}
             ${[...groups, ...agents].map((m) => html`<${Fragment} key=${m.id}>${box({ scope: 'node', node: n.id, id: m.id }, m.kind === 'group' ? '👥' : '●', m.title, m.unread)}</${Fragment}>`)}
-            ${moreAgents && html`<button type="button" class="mailbox-load-more" data-fused-more=${n.id}
+            ${moreAgents && agents.length >= ROSTER_MAX && html`<div class="mailbox-load-more capped">${agents.length} of ${total} shown · open ${n.name}'s own Messages to filter</div>`}
+            ${moreAgents && agents.length < ROSTER_MAX && html`<button type="button" class="mailbox-load-more" data-fused-more=${n.id}
               title=${`Load the next page of ${n.name}'s agent mailboxes`}
               onClick=${() => setLimits((cur) => ({ ...cur, [n.id]: (cur[n.id] || ROSTER_PAGE) + ROSTER_PAGE }))}>Show more · ${agents.length} of ${total}</button>`}
           </div>`;
