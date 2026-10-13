@@ -298,6 +298,15 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">On a subscription there's no pay-per-token charge, so hypothetical costs are hidden by default. Enable this to show harness-provided <strong>WHAT-IF</strong> estimates of equivalent pay-per-token pricing, clearly separated from real billed spend. A mixed installation can show real and WHAT-IF rows together; pay-per-token spend is always shown regardless of this setting.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Gemini billing</span>
+        <${ConfigSelect} id="cfg-cost-gemini-billing" aria-label="Gemini billing">
+          <option value="auto">Auto (from Gemini's auth type)</option>
+          <option value="api">API key — real spend</option>
+          <option value="subscription">Google sign-in — WHAT-IF</option>
+        </${ConfigSelect}>
+        <span class="cfg-hint">Gemini CLI records tokens but no price, so tclaude estimates its cost at Gemini API rates. <strong>Auto</strong> reads Gemini's <code>security.auth.selectedType</code>: an API key or Vertex AI is shown as real API spend, a Google sign-in as a <strong>WHAT-IF</strong> estimate. Force a side if auto guesses wrong, e.g. a Google sign-in on a paid Cloud project. The amount is always an estimate, not Google's invoice. Applies to running and resumed sessions; an exited conversation keeps the side it was recorded under. Stored as <code>cost.gemini_billing</code> (auto is omitted).</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">OpenCode legacy long-context cutoff</span>
         <${ConfigInput} type="number" id="cfg-opencode-legacy-long-context-pricing-cutoff" min="1" step="1" placeholder="272000" aria-label="OpenCode legacy long-context pricing cutoff" style="min-width:140px" />
         <span>context tokens per model call</span>

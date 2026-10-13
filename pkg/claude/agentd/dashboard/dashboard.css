@@ -3475,12 +3475,17 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 /* Provider/source label — always present, even with one source. Every label
    starts at the same point; the box still fits the longest normal row
-   ("Anthropic API:") so values retain their stable start as sources change. */
+   ("Anthropic API:") so values retain their stable start as sources change.
+   A WHAT-IF row says so with a compact ? marker (.uwhatif) and a tooltip,
+   never extra label words that would outgrow the box. */
 #usage .usrc {
   display: inline-block;
   color: #7d8590;
   text-align: left;
   width: 14ch; /* "Anthropic API:" */
+}
+#usage .uwhatif {
+  margin-left: 0.5ch; color: #d29922; cursor: help;
 }
 #usage .usage-values { display: inline-flex; align-items: center; gap: 12px; }
 /* Per-field column widths inside each window, worst-case sized so 5h/7d,

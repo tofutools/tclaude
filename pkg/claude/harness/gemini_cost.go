@@ -8,9 +8,10 @@ import (
 // Gemini CLI WHAT-IF cost: what a conversation's model calls would cost at
 // Gemini API pay-per-token rates. Gemini writes no price of its own, so this
 // prices each call's recorded TokensSummary (see gemini_usage.go) against the
-// table below. Like Codex's projection it is hypothetical — a Google sign-in
-// or a Code Assist licence is not billed per token — and the dashboard shows
-// it only behind the cost.show_on_subscription opt-in.
+// table below. On a Google sign-in or a Code Assist licence it is hypothetical,
+// like Codex's projection, and the dashboard shows it only behind the
+// cost.show_on_subscription opt-in; on an API key it estimates real spend.
+// agentd decides which (cost.gemini_billing, gemini_context_refresh.go).
 
 // GeminiModelPrice is one Gemini API pricing tier in USD per 1M tokens.
 type GeminiModelPrice struct {

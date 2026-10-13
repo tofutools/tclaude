@@ -46,6 +46,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   }, { claude: 'cost' });
   assert.deepEqual(switchable.lines[0].modes, ['usage', 'cost']);
   assert.equal(switchable.lines[0].tokens[0].key, 'claude-whatif');
+  assert.equal(switchable.lines[0].whatIf, true, 'the cost mode flags the line with the WHAT-IF marker');
   assert.equal(switchable.lines[0].tokens[0].mtd, '$8.00');
   assert.equal('estimate' in switchable.lines[0].tokens[0], false,
     'the selector owns the WHAT-IF approximation label, not each value');
@@ -58,12 +59,14 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.deepEqual(copilotUnits.lines[0].modes, ['usage', 'cost', 'units']);
   assert.equal(copilotUnits.lines[0].tokens[0].kind, 'units');
   assert.equal(copilotUnits.lines[0].tokens[0].used, 174.6);
+  assert.equal(copilotUnits.lines[0].whatIf, false, 'units are not an estimate');
   const copilotCost = usageView({
     copilot: { available: true, monthly: { pct: 58.2, used_units: 174.6, limit_units: 300 } },
     what_if_enabled: true,
     what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
   }, { copilot: 'cost' });
   assert.equal(copilotCost.lines[0].tokens[0].key, 'copilot-whatif');
+  assert.equal(copilotCost.lines[0].whatIf, true);
   const zeroCost = usageView({
     available: true, five_hour: { pct: 0 }, seven_day: { pct: 0 }, what_if_enabled: true,
   }, { claude: 'cost' });
@@ -479,8 +482,22 @@ test('Google what-if costs remain visible without captured quota windows', async
   const usage = { what_if_enabled: true, what_if_costs: [{ provider: 'google', total_cost_usd: 1.25, today_cost_usd: 0.50 }] };
   const view = usageView(usage);
   assert.equal(view.na, false);
-  assert.deepEqual(view.lines.map((line) => line.label), ['Google WHAT-IF:']);
+  assert.deepEqual(view.lines.map((line) => line.label), ['Google:'],
+    'the label stays short; the ? marker says WHAT-IF');
+  assert.equal(view.lines[0].whatIf, true);
   assert.equal(view.lines[0].tokens[0].kind, 'cost');
   assert.deepEqual(view.lines[0].modes, [], 'no invented quota percentage mode');
   assert.equal(usageView({ ...usage, what_if_enabled: false }).na, true);
+});
+
+test('Copilot what-if and API rows use the short provider name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { usageView } = await harness.importDashboardModule('js/shell-model.js');
+  const view = usageView({
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'github', total_cost_usd: 0.01 }],
+    api_costs: [{ provider: 'github', total_cost_usd: 1.44 }],
+  });
+  assert.deepEqual(view.lines.map((line) => [line.label, !!line.whatIf]),
+    [['Copilot:', true], ['Copilot API:', false]]);
 });

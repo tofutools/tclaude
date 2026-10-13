@@ -2,9 +2,11 @@ package agentd
 
 import (
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -36,10 +38,17 @@ type geminiContextRefreshState struct {
 	// persisted is the projection last written. It advances only on a
 	// successful write, so a failed one is retried on the next refresh.
 	persisted harness.GeminiUsage
-	// persistedCost is the WHAT-IF total last written, and costWritten whether
-	// any was; same retry rule.
-	persistedCost float64
-	costWritten   bool
+	// persistedCost is the cost total last written, persistedWhatIf whether
+	// it went to the WHAT-IF column, and costWritten whether any was; same
+	// retry rule.
+	persistedCost   float64
+	persistedWhatIf bool
+	costWritten     bool
+
+	// authType is the generation's Gemini auth type, read once (authResolved)
+	// from its settings: it decides real versus WHAT-IF under billing "auto".
+	authType     string
+	authResolved bool
 }
 
 var geminiContextRefreshMu struct {
@@ -92,7 +101,7 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 		return
 	}
 	persistGeminiContextSnapshot(sess, state, usage)
-	persistGeminiVirtualCost(sess, state, usage)
+	persistGeminiCost(sess, state, usage)
 }
 
 // persistGeminiContextSnapshot writes the projection when it changed. A file
@@ -118,12 +127,22 @@ func persistGeminiContextSnapshot(sess *db.SessionRow, state *geminiContextRefre
 	}
 }
 
-// persistGeminiVirtualCost writes the conversation's WHAT-IF cost history
-// when the total changed. The rows are replaced across the conversation (a
-// resume keeps the conv id under a new session id), so a resumed generation
-// never double-counts its predecessor's calls.
-func persistGeminiVirtualCost(sess *db.SessionRow, state *geminiContextRefreshState, usage harness.GeminiUsage) {
-	if usage.CostUSD <= 0 || (state.costWritten && usage.CostUSD == state.persistedCost) {
+// persistGeminiCost writes the conversation's cost history when the total or
+// its classification changed. The rows are replaced across the conversation
+// (a resume keeps the conv id under a new session id), so a resumed
+// generation never double-counts its predecessor's calls, and a
+// re-classification moves the whole history between the real and WHAT-IF
+// columns.
+//
+// Gemini records no dollar figure, so the amount is always tclaude's estimate
+// at Gemini API rates; geminiCostIsWhatIf only decides whether that estimate
+// stands for real per-token spend or a hypothetical one.
+func persistGeminiCost(sess *db.SessionRow, state *geminiContextRefreshState, usage harness.GeminiUsage) {
+	if usage.CostUSD <= 0 {
+		return
+	}
+	whatIf := geminiCostIsWhatIf(sess, state)
+	if state.costWritten && usage.CostUSD == state.persistedCost && whatIf == state.persistedWhatIf {
 		return
 	}
 	history := state.follower.CostHistory(time.Now())
@@ -133,16 +152,42 @@ func persistGeminiVirtualCost(sess *db.SessionRow, state *geminiContextRefreshSt
 			Day: day.Day, CostUSD: day.CostUSD, UpdatedAt: day.Observed, Model: day.Model,
 		})
 	}
-	updated, err := db.ReplaceSessionVirtualCostHistoryForGeneration(
-		sess.ID, sess.ConvID, sess.CreatedAt, usage.CostUSD, daily)
+	updated, err := db.ReplaceSessionCostHistoryForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, usage.CostUSD, daily, whatIf)
 	if err != nil {
-		slog.Warn("gemini-usage: failed to persist the what-if cost",
-			"session_id", sess.ID, "model", usage.Model, "error", err, "module", "agentd")
+		slog.Warn("gemini-usage: failed to persist the cost",
+			"session_id", sess.ID, "model", usage.Model, "what_if", whatIf, "error", err, "module", "agentd")
 		return
 	}
 	if updated {
-		state.persistedCost, state.costWritten = usage.CostUSD, true
+		state.persistedCost, state.persistedWhatIf, state.costWritten = usage.CostUSD, whatIf, true
 	}
+}
+
+// geminiCostIsWhatIf classifies a session's cost per cost.gemini_billing.
+// Under "auto" an API-key or Vertex AI session is real spend; a Google
+// sign-in, an unselected or unreadable auth type, or any other type stays
+// WHAT-IF, so tclaude never presents an unconfirmed charge as real.
+func geminiCostIsWhatIf(sess *db.SessionRow, state *geminiContextRefreshState) bool {
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Debug("gemini-usage: config load failed; classifying cost automatically", "error", err)
+	}
+	switch cfg.ResolvedGeminiBilling() {
+	case config.GeminiBillingAPI:
+		return false
+	case config.GeminiBillingSubscription:
+		return true
+	}
+	if !state.authResolved {
+		authType, err := harness.GeminiSelectedAuthType(os.Getenv, sess.Cwd)
+		if err != nil {
+			slog.Debug("gemini-usage: cannot resolve the auth type; cost stays WHAT-IF",
+				"session_id", sess.ID, "error", err, "module", "agentd")
+		}
+		state.authType, state.authResolved = authType, true
+	}
+	return !harness.GeminiAuthBilledPerToken(state.authType)
 }
 
 func claimGeminiContextRefresh(sess *db.SessionRow, now time.Time) (*geminiContextRefreshState, bool) {

@@ -49,6 +49,9 @@ const (
 	// security.auth.selectedType values with a reviewed filtered route.
 	GeminiAuthAPIKey          = "gemini-api-key"
 	GeminiAuthLoginWithGoogle = "oauth-personal"
+	// GeminiAuthVertexAI has no filtered route, but is billed per token like
+	// the API key (see GeminiAuthBilledPerToken).
+	GeminiAuthVertexAI = "vertex-ai"
 
 	// GeminiAPINetworkPack and GeminiLoginNetworkPack are the release-owned
 	// packs covering the two routes, named as the requirement's Template so a
@@ -170,6 +173,37 @@ func ResolveGeminiLaunchAuthType(getenv func(string) string, cwd string) (string
 	default:
 		return "", fmt.Errorf("gemini auth type %q (from %s) has no reviewed filtered-network route; "+
 			"use %q or %q, or use network open", selected, source, GeminiAuthAPIKey, GeminiAuthLoginWithGoogle)
+	}
+}
+
+// GeminiSelectedAuthType returns the security.auth.selectedType a Gemini
+// launch in cwd resolves from its merged settings, "" when none is selected.
+// Unlike ResolveGeminiLaunchAuthType it refuses nothing: it only names the
+// auth type, for callers that classify a session rather than gate its route.
+func GeminiSelectedAuthType(getenv func(string) string, cwd string) (string, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	home := strings.TrimSpace(getenv(GeminiHomeEnvVar))
+	if home == "" {
+		home = strings.TrimSpace(getenv("HOME"))
+	}
+	if home == "" || !filepath.IsAbs(home) {
+		return "", fmt.Errorf("cannot locate the Gemini home: HOME and %s are unset or relative", GeminiHomeEnvVar)
+	}
+	selected, _, err := geminiSelectedAuthType(getenv, home, cwd)
+	return selected, err
+}
+
+// GeminiAuthBilledPerToken reports whether an auth type pays per token: the
+// Gemini API key and Vertex AI do; a Google sign-in (the free tier or a Code
+// Assist licence) and every other type do not, as far as tclaude can tell.
+func GeminiAuthBilledPerToken(authType string) bool {
+	switch authType {
+	case GeminiAuthAPIKey, GeminiAuthVertexAI:
+		return true
+	default:
+		return false
 	}
 }
 

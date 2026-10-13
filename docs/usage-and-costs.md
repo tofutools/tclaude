@@ -52,8 +52,9 @@ These quotas and forecasts describe shared account usage, not just the caller.
 Coverage warnings identify OpenCode activity lacking recent native readings.
 Gemini session logs expose tokens and context usage, but no account-wide quota
 windows are captured by tclaude. Gemini spawns therefore have no quota gate;
-check the CLI’s `/model` quota display. Gemini what-if costs are grouped under
-`google`, using recorded model token counts and list pricing.
+check the CLI’s `/model` quota display. Gemini costs are grouped under
+`google`, using recorded model token counts and list pricing; they count as real
+API spend or what-if per `cost.gemini_billing` (see `docs/harnesses.md`).
 
 ## Costs
 

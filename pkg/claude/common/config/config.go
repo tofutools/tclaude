@@ -1146,12 +1146,40 @@ func (c *Config) ScribeProfileName() string {
 // virtual_cost_usd, clearly flagged as hypothetical and kept distinct from
 // real spend. Default false = hide subscription estimates. Editable from the
 // dashboard's Config tab.
+//
+// GeminiBilling classifies Gemini CLI cost, which tclaude prices itself from
+// the session file's token counts (Gemini records no dollar figure): "auto"
+// (the default, also "") reads Gemini's selected auth type — an API key or
+// Vertex AI is billed per token and shows as real spend, a Google sign-in is
+// shown as a WHAT-IF estimate; "api" and "subscription" force either side.
 type CostConfig struct {
 	EstimateFactor *float64 `json:"estimate_factor,omitempty"`
 	// HarnessFactors replace EstimateFactor for a harness. An explicit 1 is
 	// meaningful: it disables adjustment even when the default is higher.
 	HarnessFactors     map[string]float64 `json:"harness_factors,omitempty"`
 	ShowOnSubscription bool               `json:"show_on_subscription,omitempty"`
+	GeminiBilling      string             `json:"gemini_billing,omitempty"`
+}
+
+// Gemini billing classifications (cost.gemini_billing).
+const (
+	GeminiBillingAuto         = "auto"
+	GeminiBillingAPI          = "api"
+	GeminiBillingSubscription = "subscription"
+)
+
+// ResolvedGeminiBilling returns the configured Gemini billing classification,
+// GeminiBillingAuto when unset or unknown. Nil-safe on the receiver.
+func (c *Config) ResolvedGeminiBilling() string {
+	if c == nil || c.Cost == nil {
+		return GeminiBillingAuto
+	}
+	switch v := strings.TrimSpace(c.Cost.GeminiBilling); v {
+	case GeminiBillingAPI, GeminiBillingSubscription:
+		return v
+	default:
+		return GeminiBillingAuto
+	}
 }
 
 // defaultCostFactor is the no-op multiplier: the displayed cost equals
@@ -1209,7 +1237,7 @@ func ValidCostFactorHarness(name string) bool {
 
 // Empty reports whether the optional cost block can be omitted.
 func (c *CostConfig) Empty() bool {
-	return c == nil || (c.EstimateFactor == nil && len(c.HarnessFactors) == 0 && !c.ShowOnSubscription)
+	return c == nil || (c.EstimateFactor == nil && len(c.HarnessFactors) == 0 && !c.ShowOnSubscription && c.GeminiBilling == "")
 }
 
 // OpenCodeConfig tunes tclaude's OpenCode integration.
@@ -3831,6 +3859,12 @@ func Validate(c *Config) []string {
 	}
 
 	if cc := c.Cost; cc != nil {
+		switch strings.TrimSpace(cc.GeminiBilling) {
+		case "", GeminiBillingAuto, GeminiBillingAPI, GeminiBillingSubscription:
+		default:
+			errs = append(errs, fmt.Sprintf("cost.gemini_billing %q is not one of %q, %q or %q",
+				cc.GeminiBilling, GeminiBillingAuto, GeminiBillingAPI, GeminiBillingSubscription))
+		}
 		for name, f := range cc.HarnessFactors {
 			if !ValidCostFactorHarness(name) {
 				errs = append(errs, fmt.Sprintf("cost.harness_factors.%s: unknown harness", name))

@@ -2,11 +2,14 @@ package agentd_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -317,4 +320,50 @@ func TestGeminiSpawn_WhatIfCostFromTheSessionFile(t *testing.T) {
 	// model with no published rate adds nothing.
 	assert.InDelta(t, 0.15+0.09, row.State.VirtualCostUSD, 1e-9)
 	assert.Zero(t, row.State.CostUSD, "a what-if estimate is never a real charge")
+}
+
+// TestGeminiSpawn_APIKeyCostIsRealSpend: a Gemini whose settings select an API
+// key is billed per token, so its estimate is recorded as real spend, not
+// WHAT-IF.
+func TestGeminiSpawn_APIKeyCostIsRealSpend(t *testing.T) {
+	row := geminiCostRowWith(t, "gemini-api-key", nil)
+	assert.InDelta(t, 0.15+0.09, row.State.CostUSD, 1e-9, "an API key pays per token")
+	assert.Zero(t, row.State.VirtualCostUSD)
+}
+
+// TestGeminiSpawn_BillingSettingOverridesAuthType: cost.gemini_billing forces
+// either side regardless of the auth type Gemini's settings select.
+func TestGeminiSpawn_BillingSettingOverridesAuthType(t *testing.T) {
+	row := geminiCostRowWith(t, "gemini-api-key", &config.CostConfig{
+		GeminiBilling: config.GeminiBillingSubscription, ShowOnSubscription: true,
+	})
+	assert.Zero(t, row.State.CostUSD, "forced subscription keeps an API key's cost WHAT-IF")
+	assert.InDelta(t, 0.15+0.09, row.State.VirtualCostUSD, 1e-9)
+
+	row = geminiCostRowWith(t, "oauth-personal", &config.CostConfig{GeminiBilling: config.GeminiBillingAPI})
+	assert.InDelta(t, 0.15+0.09, row.State.CostUSD, 1e-9, "forced api makes a sign-in's cost real")
+	assert.Zero(t, row.State.VirtualCostUSD)
+}
+
+func geminiCostRowWith(t *testing.T, authType string, cost *config.CostConfig) *dashAgent {
+	t.Helper()
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	geminiDir := testharness.GeminiDirFor(os.Getenv("HOME"))
+	require.NoError(t, os.MkdirAll(geminiDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(geminiDir, "settings.json"),
+		[]byte(`{"security": {"auth": {"selectedType": "`+authType+`"}}}`), 0o600))
+	if cost != nil {
+		require.NoError(t, config.Save(&config.Config{Cost: cost}))
+	}
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "billed-gemini",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReplyWithTokens("first", "gemini-3.5-flash", 100_000, 4_000, 6_000)
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	row := findDashAgent(snap, resp.ConvID)
+	require.NotNil(t, row, "the Gemini agent must be on the dashboard")
+	return row
 }

@@ -36,7 +36,7 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	must("view.multiline ? ' multiline' : ''", "the derived layout toggles the multiline class")
 	must(`<span class="usage-unit-switch-slot">`, "every provider line reserves a leading selector gutter")
 	selector := strings.Index(dashboardAssets, `<span class="usage-unit-switch-slot">`)
-	provider := strings.Index(dashboardAssets, `<span class="usrc">${line.label}</span>`)
+	provider := strings.Index(dashboardAssets, `<span class="usrc">${line.label}`)
 	if selector < 0 || provider < 0 || selector > provider {
 		t.Error("the display-mode selector gutter must precede the provider label")
 	}
