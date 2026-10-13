@@ -366,9 +366,6 @@ CREATE TABLE "agent_messages" (
 			original_to_conv TEXT NOT NULL DEFAULT ''
 		, from_agent TEXT NOT NULL DEFAULT '', to_agent TEXT NOT NULL DEFAULT '', to_recipient_agents TEXT NOT NULL DEFAULT '', cc_recipient_agents TEXT NOT NULL DEFAULT '', pin_gen INTEGER NOT NULL DEFAULT 0, nudge_claimed_at INTEGER, nudge_attempted_at INTEGER, nudge_attempts INTEGER NOT NULL DEFAULT 0, nudge_cancelled_at INTEGER, nudge_cancel_reason TEXT NOT NULL DEFAULT '', regular_send INTEGER NOT NULL DEFAULT 0, started_at INTEGER, processed_at INTEGER, nudge_discarded_at INTEGER) STRICT;
 
-CREATE INDEX idx_agent_messages_to_conv
-			ON agent_messages(to_conv, created_at);
-
 CREATE INDEX idx_agent_messages_parent
 			ON agent_messages(parent_id);
 
@@ -379,6 +376,12 @@ CREATE INDEX idx_agent_messages_regular_agent_backlog
 
 CREATE INDEX idx_agent_messages_regular_conv_backlog
 			ON agent_messages(to_conv, regular_send, processed_at);
+
+CREATE INDEX idx_agent_messages_from_conv ON agent_messages(from_conv, created_at);
+
+CREATE INDEX idx_agent_messages_group ON agent_messages(group_id);
+
+CREATE INDEX idx_agent_messages_to_conv_read ON agent_messages(to_conv, created_at, read_at);
 
 CREATE TABLE "agent_transfer_log" (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
