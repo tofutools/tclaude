@@ -2,8 +2,10 @@ package agentd
 
 import (
 	"errors"
-	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func captureInputPane(target string) (string, error) {
@@ -47,6 +49,23 @@ func injectTextWhenReady(convID, text string) error {
 		sess := aliveSessionForConv(convID)
 		if sess == nil {
 			return errors.New("target pane exited before pending input could be delivered")
+		}
+		// Only legacy spawn welcomes reach this helper. If a relaunch changed
+		// the recorded drive during the wait, abandon the old delivery rather
+		// than typing into a newly managed API conversation.
+		managed := sess.Harness == harness.OpenCodeName || copilotAPIDriven(convID)
+		var selectionErr error
+		if sess.Harness == harness.CodexName {
+			managed, selectionErr = codexAppServerSelected(convID)
+		}
+		if sess.Harness == harness.PiName {
+			managed, selectionErr = piDriveSelected(convID)
+		}
+		if selectionErr != nil {
+			return selectionErr
+		}
+		if managed {
+			return errors.New("target control drive changed while pane input was held; refusing keystroke fallback")
 		}
 		err := injectTextAndSubmit(sess.TmuxSession+":0.0", text)
 		if !errors.Is(err, paneinput.ErrAwaitingHumanInput) {

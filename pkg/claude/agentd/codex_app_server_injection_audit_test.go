@@ -20,12 +20,13 @@ import (
 // not a security boundary; its value is making a newly added injection path an
 // explicit review decision instead of a silent regression.
 var codexAppServerKeystrokeSinkFiles = map[string]string{
-	"handlers.go":        "lifecycle commands route selected Codex conversations to typed RPC before pane input",
-	"flush.go":           "durable inbox nudges route selected Codex conversations to typed RPC and hold on failure",
-	"unread_reminder.go": "unread reminders use the same typed route as their durable inbox nudge",
-	"lifecycle.go":       "spawn welcomes route to typed RPC; process exit deliberately remains signal-key driven because app-server cannot end the TUI process",
-	"remote_control.go":  "gated by CanRemoteControl; Codex has no remote-control lifecycle command",
-	"codex_fast_mode.go": "Codex 0.147 has no stable thread-settings RPC; the exact /fast token remains a TUI command on both drives",
+	"pane_input_guard.go": "legacy spawn welcomes retry only human-input holds; every attempt refuses a selected managed drive",
+	"handlers.go":         "lifecycle commands route selected Codex conversations to typed RPC before pane input",
+	"flush.go":            "durable inbox nudges route selected Codex conversations to typed RPC and hold on failure",
+	"unread_reminder.go":  "unread reminders use the same typed route as their durable inbox nudge",
+	"lifecycle.go":        "spawn welcomes route to typed RPC; process exit deliberately remains signal-key driven because app-server cannot end the TUI process",
+	"remote_control.go":   "gated by CanRemoteControl; Codex has no remote-control lifecycle command",
+	"codex_fast_mode.go":  "Codex 0.147 has no stable thread-settings RPC; the exact /fast token remains a TUI command on both drives",
 }
 
 func TestEveryKeystrokeSinkIsAccountedForAgainstTheCodexAppServerDrive(t *testing.T) {

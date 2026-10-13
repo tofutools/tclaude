@@ -948,6 +948,7 @@ func declaresChannelParam(fn *ast.FuncDecl) bool {
 // is a tripwire on an invariant whose violation is otherwise silent and looks
 // exactly like working code.
 var copilotAPIKeystrokeSinkFiles = map[string]string{
+	"pane_input_guard.go": "legacy spawn welcomes retry only human-input holds; every attempt refuses a selected managed drive",
 	// Converted: the lifecycle-command dispatch takes the Copilot branch first.
 	"handlers.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
 	// Converted: inbox nudges.
