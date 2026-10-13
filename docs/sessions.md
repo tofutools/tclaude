@@ -31,8 +31,8 @@ tclaude session new -C /path/to/project --label review
 tclaude -d
 ```
 
-`--harness` accepts `claude`, `codex`, `opencode`, `copilot`, `gemini`, and
-`shell`.
+`--harness` accepts `claude`, `codex`, `opencode`, `copilot`, `gemini`, `pi`,
+and `shell`.
 When unset, the harness (and model/effort) come from the global default spawn
 profile (dashboard, or `tclaude agent profiles default set`); explicit
 `--harness`, `--model`, or `--effort` flags win per field. Without a global
@@ -47,8 +47,9 @@ flags beyond the basics:
 - `--trust-dir` pre-trusts the launch directory so a detached pane doesn't
   freeze on the harness's trust-folder dialog. It edits that harness's own
   config (Claude Code's `~/.claude.json`, Codex's `~/.codex/config.toml`,
-  Copilot's trusted-folders list, Gemini's `~/.gemini/trustedFolders.json`),
-  so it is opt-in. Applies to Claude Code, Codex, Copilot, and Gemini CLI.
+  Copilot's trusted-folders list, Gemini's `~/.gemini/trustedFolders.json`,
+  pi's `~/.pi/agent/trust.json`), so it is opt-in. Applies to Claude Code,
+  Codex, Copilot, Gemini CLI, and pi.
 - `-w/--wait-for-rate-limit` waits for the 5-hour and 7-day rate-limit
   windows to reset before starting — handy for queueing a session to launch
   when quota returns.

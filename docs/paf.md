@@ -1192,8 +1192,8 @@ Schema: [`environment.schema.json`](paf/schema/v0.1/environment.schema.json). Th
 file holds where and how the agent ran. Every field is a hint for the
 receiver, never an instruction:
 
-- `harness`: `name` (`claude`, `codex`, `opencode`, `copilot`, `gemini`, or
-  another harness's name) and `version`.
+- `harness`: `name` (`claude`, `codex`, `opencode`, `copilot`, `gemini`, `pi`,
+  or another harness's name) and `version`.
 - `model`:
   - the model: `id`, `provider`, `effort`;
   - the window: `context_window_tokens` and its `context_window_source`;

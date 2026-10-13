@@ -73,7 +73,7 @@ Everything else is nil-able, and callers degrade:
 | `Ask`            | `tclaude ask` refuses this harness with a clear message. |
 | `Life`           | No in-pane control commands: rename falls back to `ConvStore.SetTitle`, soft exit becomes a hard tmux kill, compaction and remote control are unavailable. |
 | `Convs`          | No conversation listing/resolve/title (the harness drops out of `conv ls`, search, the dashboard), and no out-of-band rename fallback — a harness with neither `Life.RenameCommand` nor `Convs` cannot be renamed at all. |
-| `Hooks`          | No harness-specific hook installer; setup's harness-agnostic baseline may still cover the harness (Claude Code itself registers no `HookInstaller` and gets its hooks from setup's baseline path). |
+| `Hooks`          | No harness-specific hook installer; setup's harness-agnostic baseline may still cover the harness (Claude Code itself registers no `HookInstaller` and gets its hooks from setup's baseline path). A harness with an extension API can use `StatusExtension` instead. |
 | `Sandbox`        | No launch-time `--sandbox`; an explicit `--sandbox` is rejected (the harness is assumed to configure sandboxing out of band). |
 | `Approval`       | No launch-time approval/permission flag; an explicit one is rejected. |
 | `AskTimeout`     | No AskUserQuestion idle-timeout override; an explicit value is rejected and the dashboard hides the selector. |
@@ -371,6 +371,35 @@ discovery or trust failure so it cannot leave an invisible startup review
 gate. Leave it unimplemented and hooks still install; they just won't carry
 auto-trust.
 
+#### `StatusExtension` — an extension as the hook bridge *(alternative to `Hooks`)*
+
+```go
+StatusExtension func() (string, error) // materialize the bridge, return its path
+```
+
+A harness with no hook configuration but an extension or plugin API (pi is
+the worked example: `pi_extension.go` and `piextension/tclaude-pi.ts`) can
+get live status without touching the user's configuration:
+
+- tclaude embeds the extension in its binary and writes it read-only under
+  its own directory, re-checking the bytes before every launch, so nothing is
+  installed into the harness's home and `tclaude setup` has nothing to do.
+- The spawner loads it per launch from `SpawnSpec.StatusExtensionPath` and
+  exports the absolute tclaude path it calls back
+  (`SpawnSpec.TclaudeExecutable`). Under tclaude's sandbox the launch mounts
+  the extension's directory read-only.
+- The extension turns the harness's own events into the Claude Code-shaped
+  payloads `tclaude session hook-callback` already parses (`SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `Stop`, `PreCompact`, `SessionEnd`, …),
+  so the shared hook path needs no harness branch. Extra telemetry rides
+  along in its own fields (pi's `tclaude_context` and `tclaude_usage`).
+- It must never break the harness: catch everything, run the callback
+  without a shell, bound payloads and timeouts, and deliver events in order.
+  Only an event whose answer matters (PreCompact) waits for it.
+- Once it exists, the same extension is the natural home for other per-launch
+  behaviour the harness has no flag for: pi's `ask` posture gate, managed
+  rules on the system prompt, and tclaude's footer segment.
+
 ### The catalogs — launch-time safety *(optional)*
 
 `SandboxCatalog`, `ApprovalCatalog`, and `AskTimeoutCatalog` share the same
@@ -500,7 +529,7 @@ it there, and keep a broad rename in its own focused PR.
   matrix.
 - **[Architecture](architecture.md)** — where the seam sits in the system.
 - `pkg/claude/harness/` — the contracts and the `claude` / `codex` /
-  `opencode` / `copilot` / `gemini` implementations.
+  `opencode` / `copilot` / `gemini` / `pi` implementations.
 - `pkg/claude/copilotapi/` — the JSON-RPC client for Copilot's embedded
   server, if you are adding a harness with a similar single-process API
   shape.

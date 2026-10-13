@@ -36,7 +36,7 @@ type Config struct {
 	Agent         *AgentConfig     `json:"agent,omitempty"`
 
 	// ExperimentalHarnesses opts in to registered harnesses whose tclaude
-	// support is still incomplete (Harness.Experimental, e.g. "pi"). Such a
+	// support is still incomplete (Harness.Experimental; none today). Such a
 	// harness cannot be spawned and is left out of spawn surfaces' default
 	// lists until it is named here.
 	ExperimentalHarnesses []string `json:"experimental_harnesses,omitempty"`

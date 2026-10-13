@@ -10,11 +10,12 @@ you need to run many agents seriously. Durable sessions, searchable history,
 a fleet dashboard, agent-to-agent mail, teams with identity and permissions,
 sandboxing, and automation, all running on your own machine.
 
-It wraps five harnesses — [Claude Code](https://claude.ai/code),
+It wraps six harnesses — [Claude Code](https://claude.ai/code),
 [OpenAI Codex CLI](https://developers.openai.com/codex/cli),
 [OpenCode](https://opencode.ai),
-[GitHub Copilot CLI](https://github.com/features/copilot/cli), and
-[Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (beta) — behind one
+[GitHub Copilot CLI](https://github.com/features/copilot/cli),
+[Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (beta), and
+[pi](https://github.com/earendil-works/pi) (beta) — behind one
 workflow, so a team can mix vendors and switch as models improve. tclaude is
 MIT-licensed; the models are the only external part.
 

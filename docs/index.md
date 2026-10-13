@@ -10,10 +10,10 @@ permissions with audit, sandboxing, and automation.
 
 *The operations dashboard watching a mixed-harness fleet*
 
-Five harnesses are supported behind one workflow: Claude Code, OpenAI Codex
-CLI, OpenCode, GitHub Copilot CLI, and Google Gemini CLI. Gemini CLI support
-is **beta**: it is new and less battle-tested than the others (see
-[Harnesses](harnesses.md#gemini-cli)). tclaude records the harness on every
+Six harnesses are supported behind one workflow: Claude Code, OpenAI Codex
+CLI, OpenCode, GitHub Copilot CLI, Google Gemini CLI, and pi. Gemini CLI and pi
+support is **beta**: it is new and less battle-tested than the others (see
+[Gemini CLI](harnesses.md#gemini-cli) and [pi](harnesses.md#pi)). tclaude records the harness on every
 conversation, so listings, resume, lifecycle operations, and the dashboard
 route through the correct CLI automatically. Where harnesses expose different
 primitives, tclaude reports the difference instead of pretending the
@@ -144,7 +144,7 @@ The baseline setup (always runs):
 `tclaude setup --harness codex` installs or repairs Codex hooks explicitly
 (useful for scripted installs); the flag accepts any harness with a hook
 installer (`claude`, `codex`, `copilot`, `gemini`). OpenCode has no hook
-installer, and the baseline already installs hooks for every hook-capable
+installer, pi needs none (tclaude loads its own extension per launch), and the baseline already installs hooks for every hook-capable
 harness found on `PATH`. See [Harnesses](harnesses.md) for per-harness setup details.
 
 Optional extras are additive and idempotent:
@@ -205,7 +205,7 @@ tclaude ask --new "start a fresh topic"
 tclaude ask -i "help me refactor this interactively"
 ```
 
-All five harnesses support ask. The [Ask guide](ask.md) covers continuity,
+All six agent harnesses support ask. The [Ask guide](ask.md) covers continuity,
 capture safety, and how the harness is chosen.
 
 ## Operate a fleet

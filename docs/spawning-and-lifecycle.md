@@ -395,7 +395,7 @@ identity (groups and roles, grants) while the original keeps running.
 The sibling is renamed `<title>-c-<N>` and gets a copy of the conversation
 by default (`--no-copy-conv` for a blank-context sibling). The copy works for
 every harness with portable history: Claude Code copies its transcript and
-side files natively, and Codex, OpenCode, Copilot and Gemini go through the
+side files natively, and Codex, OpenCode, Copilot, Gemini and pi go through the
 same history export/import as a cross-node move, landing in the clone's own
 harness state (a private `CODEX_HOME` or OpenCode state included).
 

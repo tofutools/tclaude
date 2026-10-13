@@ -25,8 +25,9 @@ tclaude supports:
 [Claude Code](https://claude.ai/code) (the default),
 [OpenAI Codex CLI](https://developers.openai.com/codex/cli),
 [OpenCode](https://opencode.ai),
-[GitHub Copilot CLI](https://github.com/features/copilot/cli), and
-[Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (beta), plus `shell` for
+[GitHub Copilot CLI](https://github.com/features/copilot/cli),
+[Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (beta), and
+[pi](https://github.com/earendil-works/pi) (beta), plus `shell` for
 model-free command or interactive-shell agents. A group can mix them freely,
 and the same commands drive all of them.
 

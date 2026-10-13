@@ -2,6 +2,8 @@ import { h } from 'preact';
 import htm from 'htm';
 
 const html = htm.bind(h);
+// pi ships no mark tclaude can embed under a reviewed license, so it keeps the
+// text label like any harness without one.
 const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'gemini', 'opencode']);
 
 // These deliberately retain the products' recognizable silhouettes while the

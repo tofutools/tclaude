@@ -158,7 +158,7 @@ export function usageView(usage, modes = {}) {
     });
   }
   // Some harnesses expose token-priced what-if cost without account quota
-  // windows (Gemini and provider-backed OpenCode). Keep those estimates visible
+  // windows (Gemini, pi and provider-backed OpenCode). Keep those estimates visible
   // without inventing a usage percentage or quota switch.
   const withQuota = new Set([
     ...(claude.length ? ['anthropic'] : []),

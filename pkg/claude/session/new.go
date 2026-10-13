@@ -174,7 +174,7 @@ type NewParams struct {
 	// daemon spawn path defaults it to each harness's safe value (Codex: never,
 	// so a detached pane can't deadlock; Claude: inherit, no override). See
 	// JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. Unset = no override (each harness uses its own config)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. Unset = no override (each harness uses its own config)"`
 
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
