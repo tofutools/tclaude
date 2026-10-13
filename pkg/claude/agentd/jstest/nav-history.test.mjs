@@ -120,6 +120,23 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   assert.equal(activitySubtab.value, 'logs');
 });
 
+test('a peer view lands a Logs deep link on Audit and the URL says so', async (t) => {
+  const harness = await createPreactHarness(t);
+  installActivityShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/activity/logs');
+  const previous = globalThis.__tclaudeRemoteNode;
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
+  const [{ initNavHistory }, { activitySubtab }] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/activity-state.js'),
+  ]);
+  initNavHistory();
+  assert.equal(activitySubtab.value, 'audit', 'the daemon log has no peer route');
+  assert.equal(browsing.at(), '/activity/audit?node=inst_forge7', 'boot keeps the corrected location');
+  assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true);
+});
+
 test('a correction replaces the current history entry; a navigation pushes', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);

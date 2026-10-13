@@ -43,6 +43,7 @@ import { openGitRepositories } from './git-repositories-controller.js';
 // ends), Enter runs it, typing filters.
 
 import { $, $$ } from './helpers.js';
+import { setActivitySubtab } from './activity-state.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
   openWindowModal,
@@ -610,9 +611,16 @@ export function buildCommands(snapshot) {
         icon: wiz('⤢', '🪞'), label: wiz(`Go to Activity › ${plain}`, `Scry the Chronicle › ${arcane}`),
         hint: wiz('switch tab', 'peer into this chamber of the Tower'),
         keywords: 'tab navigate go open activity ' + keywords,
+        // From another tab, preselect the view so the one nav click records
+        // a single /activity/<subtab> entry; on Activity, the subtab click
+        // records it.
         run: () => {
-          if (!activityBtn.classList.contains('active')) activityBtn.click();
-          document.querySelector(`#tab-activity .activity-subtab[data-subtab="${subtab}"]`)?.click();
+          if (activityBtn.classList.contains('active')) {
+            document.querySelector(`#tab-activity .activity-subtab[data-subtab="${subtab}"]`)?.click();
+          } else {
+            setActivitySubtab(subtab);
+            activityBtn.click();
+          }
         },
       });
     }

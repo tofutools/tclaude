@@ -430,7 +430,9 @@ export function initNavHistory() {
   // the current history entry so it carries the full stack + a canonical path
   // (a bare "/" stays "/"; "/costs" stays "/costs").
   activate(loc);
-  history.replaceState(serializeStack(stack), '', urlFor(loc));
+  // activate() may have corrected the location in place (a peer view refusing
+  // a tab or subtab), so canonicalise from the stack, not the parsed URL.
+  history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   ready = true;
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
