@@ -3,10 +3,12 @@ package pifixture
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -244,6 +246,18 @@ func TestPiExtensionReportsSpendAndCompactsAtPinnedWindow(t *testing.T) {
 	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
 	rpc.AwaitEvent("agent_settled")
 	rpc.AwaitEvent("compaction_end")
+	// tclaude's footer segment measures the context against the pin: 0 at
+	// startup, ~12k of 10k when the run settles.
+	segment := func(pattern string) {
+		t.Helper()
+		re := regexp.MustCompile(pattern)
+		rpc.Await(func(line map[string]any) bool {
+			return line["type"] == "extension_ui_request" && line["method"] == "setStatus" &&
+				line["statusKey"] == "tclaude" && re.MatchString(fmt.Sprint(line["statusText"]))
+		})
+	}
+	segment(`^tclaude · ctx 0% of 10k$`)
+	segment(`^tclaude · ctx 1[0-9]{2}% of 10k$`)
 	rpc.Close()
 
 	got := w.RecordedPayloads()
@@ -417,4 +431,60 @@ func TestPiAskBufferedStreamedAndResumed(t *testing.T) {
 
 	matches, _ := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
 	assert.Len(t, matches, 1, "both asks wrote one conversation")
+}
+
+// A managed launch's skills and rules, registered as the production spawner
+// renders them: the managed skill shadows a same-named skill in the shared
+// ~/.agents/skills root, another ambient skill still loads, and the rules are
+// in the system prompt before and after a compaction.
+func TestPiManagedSkillsShadowAmbientAndRulesSurviveCompaction(t *testing.T) {
+	w := NewWorld(t)
+	home := filepath.Dir(w.AgentDir)
+	skill := func(root, name, description string) {
+		dir := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"),
+			[]byte("---\nname: "+name+"\ndescription: "+description+"\n---\nFollow the steps.\n"), 0o600))
+	}
+	ambient := filepath.Join(home, ".agents", "skills")
+	skill(ambient, "review", "AMBIENT-REVIEW-SKILL")
+	skill(ambient, "deploy", "AMBIENT-DEPLOY-SKILL")
+	managed := filepath.Join(home, "tclaude-managed-fixture")
+	skill(filepath.Join(managed, "skills"), "review", "MANAGED-REVIEW-SKILL")
+	require.NoError(t, os.WriteFile(filepath.Join(managed, "RULES.md"), []byte("MANAGED-RULE-PINEAPPLE"), 0o400))
+
+	id := uuid.NewString()
+	launch, err := testharness.ParsePiLaunch(harness.MustGet(harness.PiName).Spawn.BuildCommand(harness.SpawnSpec{
+		SessionID:               id,
+		ApprovalPolicy:          harness.PiApprovalAuto,
+		ManagedInstructionsRoot: managed,
+	}))
+	require.NoError(t, err)
+	require.Equal(t, []string{managed}, launch.Extensions)
+	args := []string{"--session-id", launch.SessionID, "--model", MockModel}
+	for _, extension := range launch.Extensions {
+		args = append(args, "--extension", extension)
+	}
+	for _, prompt := range launch.AppendSystemPrompt {
+		args = append(args, "--append-system-prompt", prompt)
+	}
+	rpc := w.StartRPC(w.Project, args...)
+	turn := func(message string) string {
+		t.Helper()
+		require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": message})["success"])
+		rpc.AwaitEvent("agent_settled")
+		return w.Mock.LastMessages()
+	}
+	check := func(sent, when string) {
+		t.Helper()
+		assert.Contains(t, sent, "MANAGED-REVIEW-SKILL", "%s: the managed skill is offered", when)
+		assert.NotContains(t, sent, "AMBIENT-REVIEW-SKILL", "%s: it shadows the ambient one", when)
+		assert.Contains(t, sent, "AMBIENT-DEPLOY-SKILL", "%s: other ambient skills still load", when)
+		assert.Contains(t, sent, "MANAGED-RULE-PINEAPPLE", "%s: the rules are in the system prompt", when)
+	}
+	check(turn("first turn: run TOOL"), "before compaction")
+	compacted := rpc.Send(map[string]any{"type": "compact"})
+	require.Equalf(t, true, compacted["success"], "compact: %v", compacted)
+	check(turn("after the compaction"), "after compaction")
+	rpc.Close()
 }

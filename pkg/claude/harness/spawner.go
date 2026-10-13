@@ -52,6 +52,11 @@ type SpawnSpec struct {
 	// extension (Harness.StatusExtension). Empty launches without it, and
 	// therefore without live status.
 	StatusExtensionPath string
+	// ManagedInstructionsRoot is the launch's verified managed-instructions
+	// directory (managedinstructions.Materialize), for a harness that
+	// registers its skills and rules natively. Only pi reads it; Claude Code
+	// gets `--plugin-dir` from the launcher, and the rest use the briefing.
+	ManagedInstructionsRoot string
 	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
 	// to the command. The caller assembles it (tclaude identity env +
 	// any pass-through), so the Spawner stays agnostic about which vars

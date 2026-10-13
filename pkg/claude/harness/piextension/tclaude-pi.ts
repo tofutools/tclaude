@@ -19,7 +19,7 @@
 
 import { spawn } from "node:child_process";
 
-export const TCLAUDE_PI_EXTENSION_VERSION = 2;
+export const TCLAUDE_PI_EXTENSION_VERSION = 3;
 
 const HOOK_BIN = process.env.TCLAUDE_PI_HOOK_BIN ?? "";
 // tclaude's auto-compaction window in tokens, when the agent pins one. pi
@@ -60,6 +60,33 @@ function warn(ctx: any, message: string): void {
 		ctx?.ui?.notify?.(`tclaude: ${message}; live status is unavailable for this session`, "warning");
 	} catch {
 		// Nothing left to report through.
+	}
+	showStatus(ctx);
+}
+
+// The key of tclaude's segment in pi's footer.
+const STATUS_KEY = "tclaude";
+
+// showStatus renders tclaude's segment in pi's footer: that tclaude manages
+// the pane, and, when the agent pins an auto-compaction window, the context
+// measured against it, as tclaude's dashboard meter and status bar measure it
+// (pi's own footer measures the model's full window).
+function showStatus(ctx: any): void {
+	try {
+		if (!ctx?.hasUI) return;
+		let text = "tclaude";
+		if (!HOOK_BIN || warned) {
+			text += " · no live status";
+		} else if (AUTO_COMPACT_TOKENS > 0) {
+			const tokens = ctx?.getContextUsage?.()?.tokens;
+			if (typeof tokens === "number" && tokens >= 0) {
+				const percent = Math.round((tokens * 100) / AUTO_COMPACT_TOKENS);
+				text += ` · ctx ${percent}% of ${Math.round(AUTO_COMPACT_TOKENS / 1000)}k`;
+			}
+		}
+		ctx.ui.setStatus(STATUS_KEY, text);
+	} catch {
+		// The segment is cosmetic.
 	}
 }
 
@@ -278,6 +305,7 @@ export default function tclaudePi(pi: any): void {
 		if (id !== "" && id === announced.id && event?.reason !== "startup") return;
 		announced.id = id;
 		emit("SessionStart", ctx, { source: START_SOURCE[event?.reason] ?? "startup" });
+		showStatus(ctx);
 	});
 
 	// pi's own commands (/name, /compact, /new, ...) never reach "input";
@@ -307,6 +335,7 @@ export default function tclaudePi(pi: any): void {
 
 	pi.on("agent_settled", (_event: any, ctx: any) => {
 		emit("Stop", ctx);
+		showStatus(ctx);
 		if (AUTO_COMPACT_TOKENS > 0) {
 			try {
 				const tokens = ctx?.getContextUsage?.()?.tokens;
@@ -337,6 +366,7 @@ export default function tclaudePi(pi: any): void {
 
 	pi.on("session_compact", (event: any, ctx: any) => {
 		emit("PostCompact", ctx, { trigger: compactTrigger(event?.reason ?? "manual") });
+		showStatus(ctx);
 	});
 
 	pi.on("session_shutdown", async (event: any, ctx: any) => {

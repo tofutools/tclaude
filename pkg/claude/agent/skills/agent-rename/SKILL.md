@@ -3,8 +3,8 @@ name: agent-rename
 description: >-
   Rename your own tclaude-managed conversation via `tclaude agent rename
   "<title>"`. tclaude agentd applies the harness-specific rename path on your
-  behalf (Claude Code uses `/rename` injection; Codex CLI updates its title
-  store), gated on the `self.rename` permission. Use when the user asks you to
+  behalf (an in-pane `/rename` or `/name` where the harness has one, its
+  title store or server API otherwise), gated on the `self.rename` permission. Use when the user asks you to
   rename the conversation/session/agent, or when you decide to give yourself a
   clearer name (e.g. after taking on a new role in a group). Manager pattern:
   `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent
@@ -17,10 +17,12 @@ description: >-
 
 `tclaude agent rename` asks the local `tclaude agentd` daemon to apply
 the rename through the right mechanism for your harness. For Claude
-Code, the daemon injects `/rename <title>` into your tmux pane because
-the slash command is not callable from a tool. For Codex CLI, the
-daemon updates Codex's title store directly because Codex has no
-in-pane rename command.
+Code and Copilot CLI, the daemon injects `/rename <title>` into your
+tmux pane (pi: `/name <title>`) because the slash command is not
+callable from a tool. For Codex CLI, the daemon updates Codex's title
+store directly because Codex has no in-pane rename command; OpenCode is
+renamed through its server API, and Gemini CLI through a tclaude title
+overlay.
 
 ## Prerequisite: daemon must be running
 
@@ -117,9 +119,9 @@ characters.
 ## What can go wrong
 
 - **Mid-conversation typing can be lost on injection-based harnesses.**
-  For Claude Code the mechanic is literal keystroke injection into
-  your input box: anything you'd typed but not submitted gets
-  prepended to the `/rename` command. Don't rename while you have
+  For Claude Code, Copilot CLI and pi the mechanic is literal keystroke
+  injection into your input box: anything you'd typed but not submitted
+  gets prepended to the rename command. Don't rename while you have
   unsubmitted input in your textarea.
 
 - **No live tmux session.** If the daemon can't find an alive tmux

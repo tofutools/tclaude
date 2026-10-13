@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -24,6 +26,8 @@ import (
 //     which runs the hook callback at $TCLAUDE_PI_HOOK_BIN, and under the
 //     `ask` posture its permission extension too. Explicit extensions load
 //     even under a pass-through `--no-extensions`.
+//   - A managed launch's skills and rules are registered per launch
+//     (piManagedInstructionArgs).
 //   - Positional arguments after `--` are messages: the first turn is
 //     submitted at launch and the TUI stays open. A message starting with `@`
 //     would be read as a file to attach, which is pi's own syntax.
@@ -98,6 +102,7 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 			args = append(args, "--tools", strings.Join(piReadOnlyTools, ","))
 		}
 	}
+	args = append(args, piManagedInstructionArgs(spec.ManagedInstructionsRoot)...)
 	args = append(args, spec.ExtraArgs...)
 	if spec.InitialPrompt != "" {
 		args = append(args, "--", spec.InitialPrompt)
@@ -115,6 +120,34 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	return cmd
+}
+
+// piManagedInstructionArgs registers a managed launch's skills and rules for
+// this launch only, never in pi's own configuration:
+//
+//   - Skills: the launch directory is loaded as a local pi package (its
+//     conventional `skills/` directory; it holds no `extensions/`). pi loads a
+//     command-line package's skills before its ambient roots and keeps the
+//     first skill of a name, so a managed skill shadows a same-named one in
+//     ~/.agents/skills or a project, while every other ambient skill, project
+//     trust and the operator's packages stay as they are. `--skill` would not
+//     do: pi loads those after the ambient roots, so the ambient skill wins.
+//   - Rules: RULES.md is appended to the system prompt, which pi rebuilds
+//     every turn, so the rules survive a compaction. pi reads the argument as
+//     a file only when one exists, so it is passed only for a regular file.
+func piManagedInstructionArgs(root string) []string {
+	if root == "" {
+		return nil
+	}
+	var args []string
+	if info, err := os.Stat(filepath.Join(root, "skills")); err == nil && info.IsDir() {
+		args = append(args, "--extension", root)
+	}
+	rules := filepath.Join(root, "RULES.md")
+	if info, err := os.Stat(rules); err == nil && info.Mode().IsRegular() {
+		args = append(args, "--append-system-prompt", rules)
+	}
+	return args
 }
 
 // piWalledAgentDirPrefix points a walled launch at its walled agent

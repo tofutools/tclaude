@@ -112,7 +112,7 @@ warning. Model and effort are remembered by the harness itself.
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
 | Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ✅ continues a copy | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ (extension feeds the context meter) | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ⚠️ extension footer segment: tclaude's pinned-window context meter | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ no native sandbox | ❌ use tclaude-layer |
 | Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy | ❌ no native policy |
@@ -958,6 +958,7 @@ are re-injected after compaction/clear from the frozen launch snapshot.
 | OpenCode | Agent-private SKILL.md paths in the briefing |
 | Copilot | Agent-private SKILL.md paths in the briefing |
 | Gemini | Agent-private SKILL.md paths in the briefing |
+| pi | Native per launch: the launch directory as a command-line package (`--extension`), so a managed skill shadows a same-named ambient one; rules appended with `--append-system-prompt`, which survives compaction |
 
 The fallback lists instructions to read on demand; it does not claim native
 slash-command registration. See [Managed skills and rules](agents-and-groups.md#managed-skills-and-rules).
