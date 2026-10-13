@@ -451,3 +451,51 @@ test('an incoming link into the peer group reads from our group and offers no ap
   assert.deepEqual([...root.querySelectorAll('.access-reader-actions .access-btn')].map((b) => b.textContent.trim()), ['Decline', 'Approve']);
   await mounted.unmount();
 });
+
+test('paged sidebar lists offer Show more for the flat agent list and each expanded group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  const controller = controllerFor(state);
+  const box = (id) => ({ id, kind: 'agent', title: id, total: 1, unread: 0, in: 1, out: 0 });
+  const calls = [];
+  controller.loadMoreAgents = () => calls.push('agents');
+  controller.loadMoreMembers = (name) => calls.push(`members:${name}`);
+  controller.mailboxView = () => ({
+    empty: false, hasRoster: true, pinned: state.value.mailboxes, prevGens: new Set(),
+    filtering: false, agentsExpanded: true,
+    groups: [
+      { mailbox: { id: 'group:big', kind: 'group', title: 'big', members: 3, total: 3 }, expanded: true,
+        members: [box('conv-a')], membersTotal: 3 },
+      { mailbox: { id: 'group:small', kind: 'group', title: 'small', members: 1, total: 1 }, expanded: true,
+        members: [box('conv-b')], membersTotal: 1 },
+    ],
+    agents: [box('conv-c')], agentsTotal: 4, agentsUnread: 0, moreAgents: 3,
+  });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const buttons = [...mounted.container.querySelectorAll('#mail-sidebar .mailbox-load-more')];
+  assert.deepEqual(buttons.map((b) => b.textContent.trim()), ['Show more · 1 of 3', 'Show more · 1 of 4'],
+    'one under the group with more members, one under the agent list; none under a complete group');
+  assert.ok(buttons[0].classList.contains('nested'));
+  for (const b of buttons) await harness.act(() => harness.fireEvent(b, 'click'));
+  assert.deepEqual(calls, ['members:big', 'agents']);
+  await mounted.unmount();
+});
+
+test('a paged sidebar list at the roster cap asks for the filter instead of offering Show more', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  const controller = controllerFor(state);
+  const agents = Array.from({ length: 2000 }, (_, i) => ({ id: `conv-${i}`, kind: 'agent', title: `a${i}`, total: 1, unread: 0, in: 1, out: 0 }));
+  controller.mailboxView = () => ({
+    empty: false, hasRoster: true, pinned: state.value.mailboxes, prevGens: new Set(),
+    filtering: false, agentsExpanded: true, groups: [],
+    agents, agentsTotal: 5000, agentsUnread: 0, moreAgents: 3000,
+  });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const sidebar = mounted.container.querySelector('#mail-sidebar');
+  assert.equal(sidebar.querySelector('button.mailbox-load-more'), null, 'no dead Show more at the cap');
+  assert.match(sidebar.querySelector('.mailbox-load-more.capped').textContent, /2000 of 5000 shown · filter to narrow/);
+  await mounted.unmount();
+});

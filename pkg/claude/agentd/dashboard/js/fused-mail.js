@@ -18,8 +18,8 @@ import { tickedNodes, withFused } from './skynet-scope.js';
 import { approveConsequence } from './remote-inbox.js';
 import { replySubject } from './peer-mail.js';
 import {
-  FUSED_FOLDERS, PAGE_SIZE, MAX_PAGE_SIZE, apiBase, canActOnHuman, folderURL, mergeMessages, mergeRequests,
-  nodeFolders, ownerRoutes, readFailure, replyTarget,
+  FUSED_FOLDERS, PAGE_SIZE, MAX_PAGE_SIZE, ROSTER_PAGE, ROSTER_MAX, apiBase, canActOnHuman, folderURL, mergeMessages, mergeRequests,
+  nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
 } from './fused-mail-model.js';
 
 const html = htm.bind(h);
@@ -62,13 +62,16 @@ function NodePill({ node }) {
 }
 
 // useFusedMail reads what the selected folder needs from each node.
-function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, timers, now, snapshot, remote, reload }) {
+function useFusedMail({ active, nodes, folder, q, size, limits, fetchImpl, localFetch, timers, now, snapshot, remote, reload }) {
   const [entries, setEntries] = useState({});
   const ref = useRef(entries);
   ref.current = entries;
   const nodesKey = nodes.map((n) => `${n.id}:${n.online}:${n.level}`).join(',');
   // sig names what a page shows; a page read for another folder is never shown.
   const sig = `${folder.scope}:${folder.node || ''}:${folder.id}:${q}:${size}`;
+  // Each node's roster is one server-side page of its agent folders; a grown
+  // page restarts the reads so the larger roster arrives at once.
+  const limitsKey = nodes.map((n) => `${n.id}:${limits[n.id] || ROSTER_PAGE}`).join(',');
   useEffect(() => {
     if (!active || !nodes.length) return undefined;
     let disposed = false;
@@ -94,9 +97,15 @@ function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, t
           const data = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
           commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, at: now() });
         } else {
-          if (mode === 'roster' || ticks % ROSTER_EVERY === 0 || !ref.current[node.id]?.mailboxes) {
-            const roster = await readJSON(fetchFn, `${apiBase(node)}mailboxes`);
-            commit(node.id, { mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [], ...(mode === 'roster' ? { status: null, at: now() } : {}) });
+          const limit = limits[node.id] || ROSTER_PAGE;
+          if (mode === 'roster' || ticks % ROSTER_EVERY === 0 || !ref.current[node.id]?.mailboxes || ref.current[node.id].rosterLimit !== limit) {
+            const roster = await readJSON(fetchFn, rosterURL(node, limit));
+            commit(node.id, {
+              rosterLimit: limit,
+              mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [],
+              agentsTotal: Number.isFinite(roster?.agents_total) ? roster.agents_total : null,
+              ...(mode === 'roster' ? { status: null, at: now() } : {}),
+            });
             // An unrestricted peer's access requests keep the sidebar count
             // current in every folder.
             if (!node.local && canActOnHuman(node)) {
@@ -123,7 +132,7 @@ function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, t
     const all = [...readers, ...nodes.filter((n) => !readers.includes(n))];
     all.forEach((node, i) => schedule(node, staggerOffset(i, all.length, 600)));
     return () => { disposed = true; pending.forEach((t) => timers.clearTimeout(t)); };
-  }, [active, nodesKey, sig, reload]);
+  }, [active, nodesKey, sig, limitsKey, reload]);
   // This node's pending access requests come with the page's own snapshot.
   const local = nodes.find((n) => n.local);
   const localRequests = !remote && local ? (snapshot.value?.access_requests || []) : [];
@@ -196,13 +205,14 @@ export function FusedMail({
   const [size, setSize] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState('');
   const [reload, setReload] = useState(0);
+  const [limits, setLimits] = useState({});
   const acts = useRef(actions);
   if (!acts.current) acts.current = createFusedMailActions({ fetchImpl, localFetch });
   useEffect(() => { const t = timers.setTimeout(() => setQ(query.trim()), 300); return () => timers.clearTimeout(t); }, [query]);
   useEffect(() => { setSize(PAGE_SIZE); setSelected(''); }, [folder.scope, folder.node, folder.id, q]);
   // A node folder whose node is no longer ticked falls back to All.
   useEffect(() => { if (folder.scope === 'node' && !nodes.some((n) => n.id === folder.node)) setFolder({ scope: 'fused', id: 'all' }); }, [nodes.map((n) => n.id).join(',')]);
-  const { entries, sig, localRequests } = useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, timers, now, snapshot, remote, reload });
+  const { entries, sig, localRequests } = useFusedMail({ active, nodes, folder, q, size, limits, fetchImpl, localFetch, timers, now, snapshot, remote, reload });
   if (!current.fused) return null;
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
   const t = now();
@@ -240,9 +250,17 @@ export function FusedMail({
         ${nodes.map((n) => {
           const { groups, agents } = nodeFolders(entries[n.id]?.mailboxes);
           if (!groups.length && !agents.length) return null;
+          // The node sends one page of its agent folders and their total; a
+          // node on an older build sends them all and no total.
+          const total = entries[n.id]?.agentsTotal;
+          const moreAgents = Number.isFinite(total) && total > agents.length;
           return html`<div key=${n.id} class="fused-mail-section"><div class="mailbox-section"><${NodePill} node=${n} /></div>
             ${box({ scope: 'node', node: n.id, id: 'human' }, '📬', 'Human notifications', 0)}
             ${[...groups, ...agents].map((m) => html`<${Fragment} key=${m.id}>${box({ scope: 'node', node: n.id, id: m.id }, m.kind === 'group' ? '👥' : '●', m.title, m.unread)}</${Fragment}>`)}
+            ${moreAgents && agents.length >= ROSTER_MAX && html`<div class="mailbox-load-more capped">${agents.length} of ${total} shown · open ${n.name}'s own Messages to filter</div>`}
+            ${moreAgents && agents.length < ROSTER_MAX && html`<button type="button" class="mailbox-load-more" data-fused-more=${n.id}
+              title=${`Load the next page of ${n.name}'s agent mailboxes`}
+              onClick=${() => setLimits((cur) => ({ ...cur, [n.id]: (cur[n.id] || ROSTER_PAGE) + ROSTER_PAGE }))}>Show more · ${agents.length} of ${total}</button>`}
           </div>`;
         })}
       </aside>

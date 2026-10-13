@@ -14,6 +14,7 @@ import { attachmentHref, bodilessNotice, messageAttachments } from './human-atta
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
+import { ROSTER_MAX } from './fused-mail-model.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './skynet-model.js';
@@ -141,7 +142,9 @@ function MailSidebar({ current, controller }) {
     return html`<aside class="mail-sidebar" id="mail-sidebar"><div class="empty">${model.hasRoster
       ? 'No mailboxes match the filter.' : 'No mailboxes.'}</div></aside>`;
   }
-  const agentUnread = model.agentsExpanded ? 0 : model.agents.reduce((sum, mailbox) => sum + (mailbox.unread || 0), 0);
+  // The flat agent list is server-paged, so its count and folded unread
+  // badge come from the roster's totals, not the loaded page.
+  const agentUnread = model.agentsExpanded ? 0 : model.agentsUnread;
   // ↑/↓ walk the folders in painted order — pinned, then each group with its
   // expanded members, then the agent folders. Section headings and expand
   // carets are not folders, so they are simply not on the path.
@@ -164,21 +167,37 @@ function MailSidebar({ current, controller }) {
         ? group.members.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} nested=${true}
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
         : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
+      ${group.expanded && group.membersTotal > group.members.length && html`<${LoadMore} nested=${true} shown=${group.members.length}
+        total=${group.membersTotal} busy=${current.busy} what=${`${group.mailbox.title}'s member mailboxes`}
+        onMore=${() => controller.loadMoreMembers(group.mailbox.title)} />`}
     </${Fragment}>`)}
-    ${model.agents.length > 0 && (model.filtering
+    ${model.agentsTotal > 0 && (model.filtering
       ? html`<div class="mailbox-section">${wizard ? 'The Rookery' : 'All agent mailboxes'}</div>`
       : html`<button type="button" class=${`mailbox-section mailbox-section-toggle${agentUnread ? ' has-unread' : ''}`}
           aria-expanded=${String(model.agentsExpanded)}
           title=${model.agentsExpanded ? 'Collapse the agent list' : 'Expand the agent list'}
           onClick=${controller.toggleAgentsExpand}><span class="mailbox-section-caret">${model.agentsExpanded ? '▾' : '▸'}</span>
-          ${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agents.length})
+          ${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})
           ${agentUnread > 0 && html` <span class="mailbox-unread">${agentUnread > 99 ? '99+' : agentUnread}</span>`}</button>`)}
-    ${model.agents.length > 0 && model.agentsExpanded && html`<${Fragment}>
+    ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
       <div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
+      ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
+        busy=${current.busy} what="agent mailboxes" onMore=${controller.loadMoreAgents} />`}
     </${Fragment}>`}
   </aside>`;
+}
+
+// LoadMore ends a server-paged folder list: "Show more" for the next page,
+// or — once the list holds the most one roster read returns — a hint to
+// narrow it with the filter instead.
+function LoadMore({ shown, total, busy, what, onMore, nested = false }) {
+  if (shown >= ROSTER_MAX) {
+    return html`<div class=${`mailbox-load-more capped${nested ? ' nested' : ''}`}>${shown} of ${total} shown · filter to narrow</div>`;
+  }
+  return html`<button type="button" class=${`mailbox-load-more${nested ? ' nested' : ''}`} disabled=${busy}
+    title=${`Load the next page of ${what}`} onClick=${onMore}>Show more · ${shown} of ${total}</button>`;
 }
 
 function AccessRow({ request, current, controller }) {
