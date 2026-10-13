@@ -1204,7 +1204,7 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 		return
 	}
 	if newTitle != "" {
-		if !deliverRename(newConv, newTitle) {
+		if !deliverRenameWhenReady(newConv, newTitle) {
 			slog.Warn("reincarnate: rename delivery failed", "conv", newConv, "title", newTitle)
 		}
 		// Gap so the harness has time to process the rename

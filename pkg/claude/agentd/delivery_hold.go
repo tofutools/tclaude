@@ -1,6 +1,6 @@
 package agentd
 
-import "github.com/tofutools/tclaude/pkg/claude/session"
+import "github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 
 // isAwaitingHumanInput reports whether a session status means the pane is
 // blocked on a human decision: an elicitation dialog (awaiting_input) or a
@@ -15,8 +15,7 @@ import "github.com/tofutools/tclaude/pkg/claude/session"
 // like the idle case. StatusExited is irrelevant here — a dead session has
 // no alive pane for the async flush to find in the first place.
 func isAwaitingHumanInput(status string) bool {
-	return status == session.StatusAwaitingInput ||
-		status == session.StatusAwaitingPermission
+	return paneinput.IsAwaitingHumanInput(status)
 }
 
 // deliverablePane reports whether convID has an alive pane we may nudge into

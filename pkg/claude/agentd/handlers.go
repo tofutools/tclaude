@@ -1699,6 +1699,9 @@ func dispatchSlashCommandOn(
 	}
 	target := sess.TmuxSession + ":0.0"
 	if err := injectTextAndSubmit(target, line); err != nil {
+		if errors.Is(err, paneinput.ErrAwaitingHumanInput) {
+			return slashTransportNone, slashFailureBusy
+		}
 		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession, "line", line, "reason", reason)
 		return slashTransportNone, slashFailureNoPane
 	}
@@ -1711,6 +1714,9 @@ func dispatchSlashCommandOn(
 	)
 	if followUp != "" {
 		if err := injectTextAndSubmit(target, followUp); err != nil {
+			if errors.Is(err, paneinput.ErrAwaitingHumanInput) {
+				return slashTransportNone, slashFailureBusy
+			}
 			slog.Warn("slash-command follow-up failed", "error", err, "tmux", sess.TmuxSession)
 			return slashTransportNone, slashFailureNoPane
 		}
@@ -2002,6 +2008,7 @@ func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) 
 	defer mu.Unlock()
 	return paneinput.WithLock(tmuxTarget, paneinput.Options{
 		Run:         runTmuxCommand,
+		CapturePane: captureInputPane,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
 	}, func(run paneinput.Runner, target string) error {
@@ -2028,6 +2035,7 @@ func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBr
 	defer mu.Unlock()
 	return paneinput.InjectTextAndSubmit(tmuxTarget, text, paneinput.Options{
 		Run:                 runTmuxCommand,
+		CapturePane:         captureInputPane,
 		SettleDelay:         injectSettleDelay,
 		SettleDelaySet:      true,
 		LockTimeout:         paneInjectLockTimeout,
@@ -2078,6 +2086,7 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 	defer mu.Unlock()
 	return paneinput.WithLock(tmuxTarget, paneinput.Options{
 		Run:         runTmuxCommand,
+		CapturePane: captureInputPane,
 		LockTimeout: paneInjectLockTimeout,
 	}, func(run paneinput.Runner, target string) error {
 		if err := run("send-keys", "-t", target, toggle); err != nil {
@@ -2243,6 +2252,10 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 		}
 		cacheDeliveredTitle(target, body.Title, harnessForConv(target).Name)
 	} else if !deliverRename(target, body.Title) {
+		if renameInputBlocked(target) {
+			writeError(w, http.StatusConflict, "busy", paneinput.ErrAwaitingHumanInput.Error())
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"could not deliver rename to conv "+short8(target)+" (no live tmux session to inject into, or the harness's title store rejected it)")
 		return
@@ -2506,7 +2519,7 @@ func slashFailureDetail(failure slashFailure, target, slash string) string {
 	case slashFailureStarting:
 		return "target conv " + short8(target) + " selected the Codex app-server drive, but its control channel is still starting; retry shortly"
 	case slashFailureBusy:
-		return "target conv " + short8(target) + " is busy or awaiting human interaction; retry once the Codex thread is idle"
+		return "target conv " + short8(target) + " is busy or awaiting human interaction; retry once the target is idle"
 	case slashFailureUnsupported:
 		return "target conv " + short8(target) + " cannot map " + slash + " to a supported typed control operation"
 	case slashFailureDisconnected:

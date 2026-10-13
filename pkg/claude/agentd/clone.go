@@ -2049,7 +2049,7 @@ func runClonePostInit(newConv, title, target, caller string) {
 				"conv", newConv, "title", title)
 		}
 	} else {
-		if !deliverRename(newConv, title) {
+		if !deliverRenameWhenReady(newConv, title) {
 			slog.Warn("clone: rename delivery failed", "conv", newConv, "title", title)
 		}
 		// Settle gap so CC processes the rename before the handoff

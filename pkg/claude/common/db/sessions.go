@@ -438,6 +438,21 @@ func ListSessions() ([]*SessionRow, error) {
 	return scanSessions(rows)
 }
 
+// LatestSessionStatusForTmux returns the current status of the newest row
+// associated with an exact tmux session. Unmanaged panes return an empty status.
+func LatestSessionStatusForTmux(name string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var status string
+	err = d.QueryRow(`SELECT status FROM sessions WHERE tmux_session = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1`, name).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return status, err
+}
+
 // FindSessionByConvID finds a session by conversation ID using the index.
 // When multiple rows exist for the same conv_id (e.g. auto-register
 // created a new row alongside an old one with a different short id), we

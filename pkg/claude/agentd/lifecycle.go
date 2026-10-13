@@ -9166,7 +9166,6 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"channel; post-init injection abandoned", "conv", convID)
 		return
 	}
-	target := sess.TmuxSession + ":0.0"
 
 	// Apply the agent's name as the conversation title. The two harness
 	// rename styles bracket the welcome injection differently:
@@ -9188,7 +9187,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID, "name", name)
 	}
 	if renameWanted && h.SupportsRename() {
-		if !deliverRenameOn(convID, name, deliveryChannelRouted) {
+		if !deliverRenameWhenReady(convID, name) {
 			slog.Warn("spawn: rename delivery failed",
 				"conv", convID, "name", name)
 		}
@@ -9220,7 +9219,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		case piSelected:
 			err = piDriveMessage(convID, welcome, "followUp")
 		default:
-			err = injectTextAndSubmit(target, welcome)
+			err = injectTextWhenReady(convID, welcome)
 		}
 		if err != nil {
 			slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)

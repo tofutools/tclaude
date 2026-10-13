@@ -9,7 +9,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // unreadReminderInterval is how long a delivered-but-unread message waits
@@ -285,8 +284,7 @@ func earliestDelivered(list []*db.AgentMessage) time.Time {
 // prompt. Working/idle panes are fine: a nudge queues behind an in-flight turn
 // or submits as a fresh prompt, exactly as first delivery does.
 func isTmuxInputBlocked(status string) bool {
-	return status == session.StatusAwaitingPermission ||
-		status == session.StatusAwaitingInput
+	return isAwaitingHumanInput(status)
 }
 
 // unreadReminderText builds the bracketed reminder injected into the
