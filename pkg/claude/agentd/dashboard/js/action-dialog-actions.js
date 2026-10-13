@@ -86,6 +86,7 @@ export function createActionDialogActions({
     openSandboxImpl: state.openSandboxImpl,
     openLaunchTarget: state.openLaunchTarget,
     openTerminalDirectory: state.openTerminalDirectory,
+    openTerminalChooser: state.openTerminalChooser,
     finishChoice: state.finishChoice,
     close: state.close,
     nestModel(group) {

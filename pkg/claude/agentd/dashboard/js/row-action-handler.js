@@ -18,7 +18,7 @@ import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
 } from './links-controller.js';
 import {
-  chooseTerminalDirectory, openAgentExportDialog,
+  chooseTerminalAction, chooseTerminalDirectory, openAgentExportDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
@@ -364,6 +364,21 @@ export async function handleRowAction(action) {
         // Skip the default refresh — detaching a window doesn't
         // change any dashboard state (the agent stays online).
         toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
+        return;
+      }
+      case 'terminal-chooser': {
+        // The ⚙ "terminals & windows…" item: a dialog explains the four ways
+        // to open a terminal on this agent, then the chosen one is dispatched
+        // as its own row action (term / web-term / open-window /
+        // web-open-window) — after the chooser has closed, so a follow-up
+        // dialog such as the which-dir picker can open.
+        const pick = await chooseTerminalAction(label, data.cwd || '');
+        if (!pick) return;
+        await handleRowAction(Object.freeze({
+          ...action,
+          openInBackground: pick.background === true,
+          data: Object.freeze({ ...data, act: pick.act }),
+        }));
         return;
       }
       case 'term': {

@@ -53,6 +53,10 @@ export function chooseTerminalDirectory(label) {
   return requireController().openTerminalDirectory({ label });
 }
 
+export function chooseTerminalAction(label, cwd) {
+  return requireController().openTerminalChooser({ label, cwd });
+}
+
 export function openLaunchTargetDialog({ mode, agent }) {
   return requireController().openLaunchTarget({ mode, agent });
 }

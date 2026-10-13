@@ -939,6 +939,32 @@ func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
 	must("body.wizard #term-modal .modal-buttons button:not(#term-current) {", "Cancel / Launch / Worktree get the tarnished-gold secondary treatment")
 }
 
+// TestDashboardHTML_TerminalChooserModal pins the ⚙ "terminals & windows…"
+// chooser: one menu item replaces the four terminal row actions, its dialog
+// explains each of them in both voices, and its wizard re-skin stays scoped
+// to #term-chooser-modal.
+func TestDashboardHTML_TerminalChooserModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+	must(`act="terminal-chooser"`, "the single terminals menu item")
+	must(`regular="terminals & windows…" wizard="🔮 scrying portals…"`, "the menu item is themed")
+	for _, act := range []string{"open-window", "web-open-window", "term", "web-term"} {
+		must("act: '"+act+"'", "the chooser offers the "+act+" row action")
+	}
+	must(`plain="Terminals & windows" wizard="🔮 Scrying portals"`, "the chooser title has both voices")
+	must("body.wizard #term-chooser-modal .modal {", "the chooser surface is re-skinned, scoped")
+	must("body.wizard #term-chooser-modal .term-choice {", "the chooser cards are re-skinned, scoped")
+	for _, retired := range []string{`act="web-term" regular="web term"`, `act="open-window" regular="open window"`, `act="web-open-window" regular="web window"`} {
+		if dashboardSourceContains(dashboardAssets, retired) {
+			t.Errorf("agent ⚙ menu still carries the separate terminal item %q", retired)
+		}
+	}
+}
+
 // TestDashboardCSS_WizardTermPickerModalScoped guards that the wizard
 // terminal-picker re-skin stays scoped to #term-modal. #term-modal is a generic
 // .modal (like the retire modal), so an unscoped `body.wizard .modal { … }` would

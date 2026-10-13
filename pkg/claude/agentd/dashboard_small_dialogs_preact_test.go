@@ -51,7 +51,7 @@ func TestDashboardSmallDialogsPreactOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"openPresetCloneDialog", "openAgentExportDialog", "chooseTerminalDirectory",
+		"openPresetCloneDialog", "openAgentExportDialog", "chooseTerminalDirectory", "chooseTerminalAction",
 	} {
 		if !strings.Contains(controller, required) {
 			t.Errorf("compatibility controller missing %q", required)
@@ -60,6 +60,7 @@ func TestDashboardSmallDialogsPreactOwnership(t *testing.T) {
 	for _, required := range []string{
 		"openAgentExportDialog(agent, label)",
 		"chooseTerminalDirectory(label)",
+		"chooseTerminalAction(label,",
 	} {
 		if !strings.Contains(rowActions, required) {
 			t.Errorf("row action does not route through Preact controller: %q", required)

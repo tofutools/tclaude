@@ -106,7 +106,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	for _, act := range []string{
 		"add-member", "cron-new", "message-new", "rename-group",
 		"clone-group", "export-group", "cleanup-group", "window-modal-group",
-		"delete-group", "term", "clone", "reincarnate", "edit-member",
+		"delete-group", "terminal-chooser", "clone", "reincarnate", "edit-member",
 		"perm-edit", "sudo-grant",
 		"remove-member", "delete-agent",
 	} {

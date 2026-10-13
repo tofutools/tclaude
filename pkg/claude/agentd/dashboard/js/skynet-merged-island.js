@@ -27,7 +27,8 @@ const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-
 
 // TERMINAL_ACTS open an agent's terminal; on a peer's row they open the peer's
 // agent in the browser terminal (remote-terminal.js), as the peer shares it.
-const TERMINAL_ACTS = new Set(['web-open-window', 'jump']);
+// The ⚙ "terminals & windows…" chooser opens that attach directly there.
+const TERMINAL_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
 const MOVE_MIME = 'application/x-tclaude-fleet-move';
