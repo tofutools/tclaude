@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -4435,81 +4434,18 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 // CountMailbox returns how many agent_messages rows match f — the total
 // the pager divides into pages. Same WHERE as ListMailboxPage, so the two
 // never drift.
-//
-// An ExcludeConvs filter without a search is counted as (scope total) −
-// (excluded rows in scope). The direct form ANDs two NOT IN predicates no
-// index can serve, so even the indexed folder scopes — and always the
-// unscoped "all" firehose, which every roster refresh counts — would scan
-// the whole table, bodies included. Both halves of the subtraction are
-// index-driven: the scope by its own indexes, the excluded rows by a
-// from_conv IN / to_conv IN multi-index OR. A search already scans, so it
-// keeps the single-query form.
 func CountMailbox(f MailboxFilter) (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	if len(f.ExcludeConvs) > 0 && !f.HasSearch() {
-		// One read transaction so a concurrent insert can't land between the
-		// two counts and skew (or even negate) the difference.
-		tx, err := d.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
-		if err != nil {
-			return 0, err
-		}
-		defer func() { _ = tx.Rollback() }()
-		scope := f
-		scope.ExcludeConvs = nil
-		where, args := scope.where()
-		total, err := countMailboxWhere(tx, where, args)
-		if err != nil {
-			return 0, err
-		}
-		where, args = f.excludedWhere()
-		excluded, err := countMailboxWhere(tx, where, args)
-		if err != nil {
-			return 0, err
-		}
-		return total - excluded, nil
-	}
+	q := `SELECT COUNT(*) FROM agent_messages`
 	where, args := f.where()
-	return countMailboxWhere(d, where, args)
-}
-
-// excludedWhere selects the rows of f's scope (ExcludeConvs ignored) that
-// f.where() drops because of ExcludeConvs — the exact complement of the
-// exclude clause, restricted to rows touching an excluded conv so the
-// planner can drive it from the from_conv / to_conv indexes. f must carry a
-// non-empty ExcludeConvs.
-func (f MailboxFilter) excludedWhere() (string, []any) {
-	scope := f
-	scope.ExcludeConvs = nil
-	where, args := scope.where()
-	ph := sqlPlaceholders(len(f.ExcludeConvs))
-	clause := "(from_conv IN (" + ph + ") OR to_conv IN (" + ph + "))" +
-		" AND NOT ((from_conv NOT IN (" + ph + ") OR subject = ?) AND to_conv NOT IN (" + ph + "))"
-	appendConvs := func() {
-		for _, c := range f.ExcludeConvs {
-			args = append(args, c)
-		}
-	}
-	appendConvs() // from_conv IN
-	appendConvs() // to_conv IN
-	appendConvs() // from_conv NOT IN
-	args = append(args, ReincarnationHandoffSubject)
-	appendConvs() // to_conv NOT IN
 	if where != "" {
-		clause = where + " AND " + clause
-	}
-	return clause, args
-}
-
-func countMailboxWhere(q dbExecQuerier, where string, args []any) (int, error) {
-	query := `SELECT COUNT(*) FROM agent_messages`
-	if where != "" {
-		query += " WHERE " + where
+		q += " WHERE " + where
 	}
 	var n int
-	if err := q.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := d.QueryRow(q, args...).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil

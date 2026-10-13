@@ -3,9 +3,7 @@ package db
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,11 +57,6 @@ func TestMailboxQueriesUseIndexes(t *testing.T) {
 		})
 	}
 
-	t.Run("excluded rows of the all firehose", func(t *testing.T) {
-		where, args := MailboxFilter{ExcludeConvs: excl}.excludedWhere()
-		assertNoTableScan(t, queryPlan(t, "SELECT COUNT(*) FROM agent_messages WHERE "+where, args...))
-	})
-
 	t.Run("roster tallies", func(t *testing.T) {
 		assertNoTableScan(t, queryPlan(t, `SELECT to_conv, COUNT(*),
 			SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END), MAX(created_at)
@@ -71,54 +64,4 @@ func TestMailboxQueriesUseIndexes(t *testing.T) {
 		assertNoTableScan(t, queryPlan(t, `SELECT from_conv, COUNT(*), MAX(created_at)
 			FROM agent_messages WHERE from_conv != '' GROUP BY from_conv`))
 	})
-}
-
-// CountMailbox counts an exclude-scoped folder as total − excluded; it
-// must agree with the rows the same filter actually lists, including the
-// reincarnation-handoff carve-out on the sender side.
-func TestCountMailboxExcludeMatchesListing(t *testing.T) {
-	setupTestDB(t)
-	const (
-		live1   = "conv-live-1"
-		live2   = "conv-live-2"
-		retired = "conv-retired"
-	)
-	base := time.Now().Add(-time.Hour)
-	msgs := []AgentMessage{
-		{GroupID: 3, FromConv: live1, ToConv: live2, Subject: "live dm"},
-		{GroupID: 3, FromConv: live2, ToConv: live1, Subject: "live reply"},
-		{GroupID: 3, FromConv: live1, ToConv: retired, Subject: "to retired"},
-		{GroupID: 3, FromConv: retired, ToConv: live1, Subject: "from retired"},
-		{GroupID: 3, FromConv: retired, ToConv: live2, Subject: ReincarnationHandoffSubject},
-		{GroupID: 3, FromConv: retired, ToConv: retired, Subject: ReincarnationHandoffSubject},
-		{GroupID: 3, FromConv: live1, ToConv: "", Subject: "live multicast"},
-		{GroupID: 3, FromConv: retired, ToConv: "", Subject: "retired multicast"},
-		{GroupID: 0, FromConv: live2, ToConv: live2, Subject: "self note"},
-		{GroupID: 4, FromConv: "conv-other", ToConv: retired, Subject: "outsider"},
-	}
-	for i := range msgs {
-		msgs[i].CreatedAt = base.Add(time.Duration(i) * time.Minute)
-		_, err := InsertAgentMessage(&msgs[i])
-		require.NoError(t, err)
-	}
-
-	excl := []string{retired}
-	for name, f := range map[string]MailboxFilter{
-		"all":          {ExcludeConvs: excl},
-		"agent folder": {ForConv: live1, ExcludeConvs: excl},
-		"group folder": {ScopeConvs: []string{live1, live2}, ScopeGroupID: 3, ExcludeConvs: excl},
-		"empty group":  {ScopeGroupID: 4, ExcludeConvs: excl},
-	} {
-		t.Run(name, func(t *testing.T) {
-			rows, err := ListMailboxPage(f, 0, 0)
-			require.NoError(t, err)
-			n, err := CountMailbox(f)
-			require.NoError(t, err)
-			assert.Equal(t, len(rows), n)
-		})
-	}
-
-	n, err := CountMailbox(MailboxFilter{ExcludeConvs: excl})
-	require.NoError(t, err)
-	assert.Equal(t, 5, n, "live traffic plus the handoff to a live successor survive")
 }
