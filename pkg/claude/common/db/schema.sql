@@ -381,7 +381,7 @@ CREATE INDEX idx_agent_messages_group ON agent_messages(group_id);
 
 CREATE INDEX idx_agent_messages_to_conv_read ON agent_messages(to_conv, created_at, read_at);
 
-CREATE INDEX idx_agent_messages_parties ON agent_messages(from_conv, to_conv, created_at);
+CREATE INDEX idx_agent_messages_parties ON agent_messages(from_conv, to_conv, group_id, created_at);
 
 CREATE INDEX idx_agent_messages_handoff ON agent_messages(id) WHERE subject = 'reincarnation handoff';
 

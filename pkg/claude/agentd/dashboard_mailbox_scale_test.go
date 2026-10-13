@@ -27,8 +27,54 @@ func TestDashboardMailboxScale(t *testing.T) {
 	if mode == "" {
 		t.Skip("set TCLAUDE_MAILBOX_SCALE=1 to run the Messages-tab scale benchmark")
 	}
-	nAgents, nMsgs, nGroups, nLive := 100000, 100000, 500, 5000
 	_ = newFlow(t)
+	seedMailboxScale(t)
+	dash := dashHandlerForTest(t)
+	get := func(path string) {
+		st := time.Now()
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, path, nil))
+		if rec.Code != 200 {
+			t.Errorf("%s -> %d %s", path, rec.Code, rec.Body.String()[:min(200, rec.Body.Len())])
+		}
+		t.Logf("%-55s %8v  %7d KB", path, time.Since(st), rec.Body.Len()/1024)
+	}
+	if mode == "roster" {
+		get("/api/mailboxes")
+		get("/api/mailboxes")
+		get("/api/mailboxes")
+		return
+	}
+	get("/api/mailboxes")
+	get("/api/mailboxes")
+	get("/api/mailboxes?include_retired=1")
+	get("/api/mailbox?id=all")
+	get("/api/mailbox?id=all&include_retired=1")
+	get("/api/mailbox?id=all&page=50")
+	get("/api/mailbox?id=human")
+	get("/api/mailbox?id=" + scaleConv(scaleAgents-10))
+	get("/api/mailbox?id=group:group-7")
+	get("/api/mailbox?id=group:group-7&include_retired=1")
+	get("/api/mailbox?id=all&q=zzz")
+	get("/api/mailbox?id=all&q=title")
+}
+
+// Scale fixture shape: agents [0, scaleAgents-scaleLive) are retired.
+const (
+	scaleAgents = 100000
+	scaleMsgs   = 100000
+	scaleGroups = 500
+	scaleLive   = 5000
+)
+
+// scaleConv is the conv-id of scale-fixture agent i.
+func scaleConv(i int) string { return fmt.Sprintf("%08x-aaaa-bbbb-cccc-%012x", i, i) }
+
+// seedMailboxScale bulk-inserts the scale fixture straight into SQLite (the
+// production insert paths would take minutes at this size).
+func seedMailboxScale(t *testing.T) {
+	t.Helper()
+	nAgents, nMsgs, nGroups, nLive := scaleAgents, scaleMsgs, scaleGroups, scaleLive
+	conv := scaleConv
 	d, err := db.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +83,6 @@ func TestDashboardMailboxScale(t *testing.T) {
 	now := time.Now()
 	st := time.Now()
 	tx, _ := d.Begin()
-	conv := func(i int) string { return fmt.Sprintf("%08x-aaaa-bbbb-cccc-%012x", i, i) }
 	for i := 0; i < nAgents; i++ {
 		var retired any
 		if i < nAgents-nLive {
@@ -79,31 +124,4 @@ func TestDashboardMailboxScale(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("seeded in %v", time.Since(st))
-	dash := dashHandlerForTest(t)
-	get := func(path string) {
-		st := time.Now()
-		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, path, nil))
-		if rec.Code != 200 {
-			t.Errorf("%s -> %d %s", path, rec.Code, rec.Body.String()[:min(200, rec.Body.Len())])
-		}
-		t.Logf("%-55s %8v  %7d KB", path, time.Since(st), rec.Body.Len()/1024)
-	}
-	if mode == "roster" {
-		get("/api/mailboxes")
-		get("/api/mailboxes")
-		get("/api/mailboxes")
-		return
-	}
-	get("/api/mailboxes")
-	get("/api/mailboxes")
-	get("/api/mailboxes?include_retired=1")
-	get("/api/mailbox?id=all")
-	get("/api/mailbox?id=all&include_retired=1")
-	get("/api/mailbox?id=all&page=50")
-	get("/api/mailbox?id=human")
-	get("/api/mailbox?id=" + conv(nAgents-10))
-	get("/api/mailbox?id=group:group-7")
-	get("/api/mailbox?id=group:group-7&include_retired=1")
-	get("/api/mailbox?id=all&q=zzz")
-	get("/api/mailbox?id=all&q=title")
 }

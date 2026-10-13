@@ -225,11 +225,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// has no meaning for an aggregate view. When retired agents are hidden
 	// the count must match the filtered firehose, so it counts the same
 	// excluded scope rather than the raw row total.
-	allTotal := 0
-	if includeRetired || len(retiredSet) == 0 {
-		allTotal, _ = db.CountAgentMessages()
-	} else {
-		allTotal, _ = db.CountMailbox(db.MailboxFilter{ExcludeRetired: true})
+	allTotal, groupTotals, err := db.MailboxRosterTotals(!includeRetired)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
 	}
 	mailboxes = append(mailboxes, dashboardMailbox{
 		ID:    allMailboxID,
@@ -319,7 +318,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// When opted in, buildGroupMailboxes also nests retired ex-members back
 	// under their former group (retire unjoined them, so they're gone from the
 	// live membership) using each group's message history.
-	groupBoxes := buildGroupMailboxes(retiredSet, includeRetired)
+	groupBoxes := buildGroupMailboxes(groupTotals, retiredSet, includeRetired)
 
 	// Sort agent mailboxes by recency — newest mail on top, the way a mail
 	// client lists folders by last activity — then by title, then conv-id
@@ -819,8 +818,8 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 
 // buildGroupMailboxes builds one sidebar roster entry per group — the
 // "view this group's messages" folders. Each carries the distinct row
-// count in the group scope as its Total; a per-group CountMailbox is cheap
-// (groups are few and human-curated). A lookup failure for one group skips
+// count in the group scope as its Total, all computed in one pass
+// (db.MailboxRosterTotals). A membership lookup failure for one group skips
 // just that group rather than failing the whole roster.
 //
 // retiredSet (the retired-agent conv-ids) and includeRetired together
@@ -836,7 +835,7 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 //     every group, so a retired ex-member is gone from the live membership
 //     (groupMemberConvs) and would otherwise never nest even though its flat
 //     agent folder is shown. Members stays the *current* member count.
-func buildGroupMailboxes(retiredSet map[string]struct{}, includeRetired bool) []dashboardMailbox {
+func buildGroupMailboxes(totals map[int64]int, retiredSet map[string]struct{}, includeRetired bool) []dashboardMailbox {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil
@@ -856,10 +855,7 @@ func buildGroupMailboxes(retiredSet map[string]struct{}, includeRetired bool) []
 		if err != nil {
 			continue
 		}
-		total, err := db.CountMailbox(db.MailboxFilter{ScopeGroupID: g.ID, ExcludeRetired: !includeRetired})
-		if err != nil {
-			continue
-		}
+		total := totals[g.ID]
 		memberConvs := members
 		if includeRetired && len(retiredSet) > 0 {
 			memberConvs = retiredGroupParticipants(members, g.ID, retiredSet)

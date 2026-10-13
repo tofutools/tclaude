@@ -3,7 +3,9 @@ package db
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,4 +71,62 @@ func TestMailboxQueriesUseIndexes(t *testing.T) {
 		assertNoTableScan(t, queryPlan(t, `SELECT from_conv, COUNT(*), MAX(created_at)
 			FROM agent_messages WHERE from_conv != '' GROUP BY from_conv`))
 	})
+}
+
+// The roster's one-pass badges must count exactly what each aggregate
+// folder lists — member traffic plus the group's channel, each row once —
+// with and without the retired exclude.
+func TestMailboxRosterTotalsMatchFolderCounts(t *testing.T) {
+	setupTestDB(t)
+	const (
+		alice   = "conv-alice"
+		bob     = "conv-bob"
+		carol   = "conv-carol"
+		retired = "conv-retired"
+	)
+	g1, err := CreateAgentGroup("one", "")
+	require.NoError(t, err)
+	g2, err := CreateAgentGroup("two", "")
+	require.NoError(t, err)
+	g3, err := CreateAgentGroup("quiet", "")
+	require.NoError(t, err)
+	for _, m := range []AgentGroupMember{
+		{GroupID: g1, ConvID: alice}, {GroupID: g1, ConvID: bob},
+		{GroupID: g2, ConvID: bob}, {GroupID: g2, ConvID: carol},
+		{GroupID: g2, ConvID: retired},
+	} {
+		require.NoError(t, AddAgentGroupMember(&m))
+	}
+	_, err = RetireAgent(retired, "test", "")
+	require.NoError(t, err)
+
+	base := time.Now().Add(-time.Hour)
+	for i, m := range []AgentMessage{
+		{GroupID: g1, FromConv: alice, ToConv: bob},
+		{GroupID: g2, FromConv: bob, ToConv: carol},
+		{GroupID: g1, FromConv: alice, ToConv: ""},
+		{GroupID: 0, FromConv: bob, ToConv: alice},
+		{GroupID: g2, FromConv: carol, ToConv: retired},
+		{GroupID: g2, FromConv: retired, ToConv: carol, Subject: ReincarnationHandoffSubject},
+		{GroupID: g2, FromConv: retired, ToConv: ""},
+		{GroupID: 0, FromConv: "conv-outsider", ToConv: carol},
+		{GroupID: g1, FromConv: "conv-outsider", ToConv: "conv-other"},
+	} {
+		m.CreatedAt = base.Add(time.Duration(i) * time.Minute)
+		_, err := InsertAgentMessage(&m)
+		require.NoError(t, err)
+	}
+
+	for _, excludeRetired := range []bool{false, true} {
+		all, totals, err := MailboxRosterTotals(excludeRetired)
+		require.NoError(t, err)
+		wantAll, err := CountMailbox(MailboxFilter{ExcludeRetired: excludeRetired})
+		require.NoError(t, err)
+		assert.Equal(t, wantAll, all, "firehose total excludeRetired=%v", excludeRetired)
+		for _, g := range []int64{g1, g2, g3} {
+			want, err := CountMailbox(MailboxFilter{ScopeGroupID: g, ExcludeRetired: excludeRetired})
+			require.NoError(t, err)
+			assert.Equal(t, want, totals[g], "group %d excludeRetired=%v", g, excludeRetired)
+		}
+	}
 }

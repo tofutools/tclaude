@@ -4360,6 +4360,59 @@ func (f MailboxFilter) where() (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
+// MailboxRosterTotals returns the badge totals the Messages-tab roster
+// shows for its aggregate folders, all from one pass over agent_messages:
+// all is the "all" firehose's row count, and groups maps each group id to its
+// group folder's total (a group with no traffic is absent). excludeRetired
+// applies MailboxFilter.ExcludeRetired to both. A group's total counts the
+// same rows a ScopeGroupID folder lists: traffic to or from a current member
+// plus the group's own multicasts, each row once.
+//
+// One CountMailbox per folder would re-run the exclude over the same rows
+// in its own statement for every group on every 2s roster refresh; here the
+// surviving rows are filtered once (over the covering
+// idx_agent_messages_parties index) and fanned out to their groups.
+func MailboxRosterTotals(excludeRetired bool) (all int, groups map[int64]int, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, nil, err
+	}
+	live := `SELECT id, group_id, from_conv, to_conv FROM agent_messages`
+	if where, _ := (MailboxFilter{ExcludeRetired: excludeRetired}).where(); where != "" {
+		live += " WHERE " + where
+	}
+	// Group ids are positive, so the firehose total rides along as g = 0.
+	rows, err := d.Query(`WITH live AS MATERIALIZED (` + live + `),
+		mem AS MATERIALIZED (SELECT m.group_id AS g, ag.current_conv_id AS conv
+			FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+			WHERE ag.current_conv_id != '')
+		SELECT 0, COUNT(*) FROM live
+		UNION ALL
+		SELECT g, COUNT(DISTINCT id) FROM (
+			SELECT group_id AS g, id FROM live WHERE group_id != 0
+			UNION ALL SELECT mem.g, live.id FROM live JOIN mem ON mem.conv = live.from_conv
+			UNION ALL SELECT mem.g, live.id FROM live JOIN mem ON mem.conv = live.to_conv
+		) GROUP BY g`)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	groups = map[int64]int{}
+	for rows.Next() {
+		var g int64
+		var n int
+		if err := rows.Scan(&g, &n); err != nil {
+			return 0, nil, err
+		}
+		if g == 0 {
+			all = n
+		} else {
+			groups[g] = n
+		}
+	}
+	return all, groups, rows.Err()
+}
+
 // sqlPlaceholders returns "?, ?, …" with n placeholders (n >= 1).
 func sqlPlaceholders(n int) string {
 	if n <= 0 {

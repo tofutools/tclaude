@@ -6,10 +6,12 @@ import "database/sql"
 // retired-agent exclude (MailboxFilter.ExcludeRetired), which the "all"
 // firehose and every group badge apply by default:
 //
-//   - from_conv, to_conv, created_at replaces from_conv, created_at: same
-//     leading columns for the sender lookups and sent-side tally, and the
-//     exclude's from_conv / to_conv NOT IN test can run over this index
-//     instead of the message rows.
+//   - from_conv, to_conv, group_id, created_at replaces from_conv,
+//     created_at: same leading column for the sender lookups, still covering
+//     the sent-side tally, and it carries every column the exclude and the
+//     roster's one-pass totals (MailboxRosterTotals) read, so that pass scans
+//     this index instead of the message rows. Scanning in from_conv order
+//     also keeps the per-row retired lookups on hot pages.
 //   - a partial index of the reincarnation handoffs, the exclude's carve-out,
 //     so testing it never reads message rows either.
 //
@@ -17,7 +19,7 @@ import "database/sql"
 // fixtures that carry an old schema without it.
 func migrateV256toV257(d *sql.DB) error {
 	stmts := `
-CREATE INDEX IF NOT EXISTS idx_agent_messages_parties ON agent_messages(from_conv, to_conv, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_parties ON agent_messages(from_conv, to_conv, group_id, created_at);
 DROP INDEX IF EXISTS idx_agent_messages_from_conv;
 CREATE INDEX IF NOT EXISTS idx_agent_messages_handoff ON agent_messages(id) WHERE subject = '` + ReincarnationHandoffSubject + `';`
 	if ok, err := tableExists(d, "agent_messages"); err != nil {
