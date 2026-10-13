@@ -181,3 +181,33 @@ func TestGeminiFilteredNetworkUsesThePacketGateway(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, row.NetworkList, "the gateway is Linux-only")
 }
+
+func TestGeminiSelectedAuthTypeClassifiesBilling(t *testing.T) {
+	home := t.TempDir()
+	getenv := func(key string) string {
+		switch key {
+		case "HOME":
+			return home
+		case geminiSystemSettingsEnvVar:
+			return filepath.Join(home, "no-system-settings.json")
+		}
+		return ""
+	}
+	selected, err := GeminiSelectedAuthType(getenv, "")
+	require.NoError(t, err)
+	assert.Empty(t, selected)
+	assert.False(t, GeminiAuthBilledPerToken(selected), "an unknown auth type is never real spend")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".gemini"), 0o755))
+	settings := filepath.Join(home, ".gemini", "settings.json")
+	for authType, billed := range map[string]bool{
+		GeminiAuthAPIKey: true, GeminiAuthVertexAI: true, GeminiAuthLoginWithGoogle: false,
+	} {
+		require.NoError(t, os.WriteFile(settings,
+			[]byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o600))
+		selected, err := GeminiSelectedAuthType(getenv, "")
+		require.NoError(t, err)
+		assert.Equal(t, authType, selected)
+		assert.Equal(t, billed, GeminiAuthBilledPerToken(selected), authType)
+	}
+}

@@ -451,6 +451,10 @@ function populateConfigForm(cfg) {
   // Show the Costs tab + per-agent cost on a subscription (WHAT-IF mode).
   // Default off (auto-hide on subscription).
   $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
+  // cost.gemini_billing — absent/unknown resolves to 'auto'.
+  const geminiBilling = cfg.cost && cfg.cost.gemini_billing;
+  setSelectValue($('#cfg-cost-gemini-billing'),
+    (geminiBilling === 'api' || geminiBilling === 'subscription') ? geminiBilling : 'auto');
 
   // OpenCode legacy long-context WHAT-IF pricing — blank when unset so the
   // documented Go default (272000) remains visibly a default, not persisted
@@ -745,6 +749,10 @@ function assembleConfig() {
   // show_on_subscription: false is the default — drop it (matches the Go
   // `omitempty`) so an all-default cost block doesn't marshal a spurious key.
   if ($('#cfg-cost-show-on-subscription').checked) cost.show_on_subscription = true; else delete cost.show_on_subscription;
+  // gemini_billing: 'auto' is the omitempty default — drop it.
+  const geminiBillingValue = controlValue($('#cfg-cost-gemini-billing'));
+  if (geminiBillingValue && geminiBillingValue !== 'auto') cost.gemini_billing = geminiBillingValue;
+  else delete cost.gemini_billing;
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
 
   // opencode is an optional tclaude integration block. Preserve future

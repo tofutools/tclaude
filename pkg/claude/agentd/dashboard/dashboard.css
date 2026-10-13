@@ -3433,7 +3433,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
 #usage .uunits strong { color: #c9d1d9; font-weight: 600; }
 #usage .usage-source {
-  display: grid; grid-template-columns: calc(6ch + 14px) 14ch;
+  display: grid; grid-template-columns: calc(6ch + 14px) 17ch;
   column-gap: 4px; align-items: center;
 }
 #usage .usage-unit-switch-slot {
@@ -3462,25 +3462,26 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   gap: 2px;
   /* Fixed source + data columns keep selector and provider positions stable
      across every percentage/cost/units permutation. */
-  width: calc(66ch + 30px);
+  width: calc(69ch + 30px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 #usage .uline {
   display: grid;
-  grid-template-columns: calc(20ch + 18px) 46ch;
+  grid-template-columns: calc(23ch + 18px) 46ch;
   column-gap: 12px;
   align-items: center;
   align-self: stretch;
   white-space: nowrap;
 }
 /* Provider/source label — always present, even with one source. Every label
-   starts at the same point; the box still fits the longest normal row
-   ("Anthropic API:") so values retain their stable start as sources change. */
+   starts at the same point; the box fits the longest provider row
+   ("OpenCode WHAT-IF:") so values keep their stable start and a long label
+   never runs into its figures. */
 #usage .usrc {
   display: inline-block;
   color: #7d8590;
   text-align: left;
-  width: 14ch; /* "Anthropic API:" */
+  width: 17ch; /* "OpenCode WHAT-IF:" */
 }
 #usage .usage-values { display: inline-flex; align-items: center; gap: 12px; }
 /* Per-field column widths inside each window, worst-case sized so 5h/7d,

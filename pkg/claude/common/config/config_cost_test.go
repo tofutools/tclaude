@@ -96,3 +96,20 @@ func TestValidateCostHarnessFactors(t *testing.T) {
 	cfg.Cost.HarnessFactors["anthropic"] = 1.2
 	assert.Contains(t, strings.Join(Validate(cfg), " | "), "unknown harness")
 }
+
+func TestGeminiBilling(t *testing.T) {
+	var nilCfg *Config
+	assert.Equal(t, GeminiBillingAuto, nilCfg.ResolvedGeminiBilling())
+	cfg := DefaultConfig()
+	assert.Equal(t, GeminiBillingAuto, cfg.ResolvedGeminiBilling())
+	for _, value := range []string{"", GeminiBillingAuto, GeminiBillingAPI, GeminiBillingSubscription} {
+		cfg.Cost = &CostConfig{GeminiBilling: value}
+		assert.NotContains(t, strings.Join(Validate(cfg), " | "), "cost.gemini_billing", value)
+	}
+	cfg.Cost = &CostConfig{GeminiBilling: GeminiBillingAPI}
+	assert.Equal(t, GeminiBillingAPI, cfg.ResolvedGeminiBilling())
+	assert.False(t, cfg.Cost.Empty())
+	cfg.Cost = &CostConfig{GeminiBilling: "free"}
+	assert.Equal(t, GeminiBillingAuto, cfg.ResolvedGeminiBilling(), "an unknown value resolves to auto")
+	assert.Contains(t, strings.Join(Validate(cfg), " | "), "cost.gemini_billing")
+}

@@ -61,7 +61,7 @@ function unitsToken(key, win) {
 function providerLabel(provider) {
   if (provider === 'anthropic') return 'Anthropic';
   if (provider === 'openai') return 'OpenAI';
-  if (provider === 'github') return 'GitHub Copilot';
+  if (provider === 'github') return 'Copilot';
   if (provider === 'google') return 'Google';
   if (provider === 'opencode') return 'OpenCode';
   if (provider === 'unknown') return 'Unknown';

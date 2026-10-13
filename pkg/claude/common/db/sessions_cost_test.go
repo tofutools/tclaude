@@ -747,3 +747,40 @@ func TestAllCostDailyRows_ChronologicalTieBreak(t *testing.T) {
 	assert.Equal(t, []string{"spwn-1692c2", "conv-re"}, []string{rows[0].SessionID, rows[1].SessionID},
 		"same conv+day rows order by updated_at (chronological), earliest first — not lexical session_id")
 }
+
+// A re-classified conversation moves its whole history between the real and
+// WHAT-IF columns rather than counting it in both.
+func TestReplaceSessionCostHistoryForGenerationReclassifies(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now()
+	today := now.Format(costDayFormat)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "gc-1", TmuxSession: "tmux-gc-1", ConvID: "conv-gc",
+		Cwd: "/tmp/gc", Status: "idle", Harness: "gemini",
+	}))
+	sess, err := LoadSession("gc-1")
+	require.NoError(t, err)
+	snaps := []VirtualCostDailySnapshot{{Day: today, CostUSD: 2, UpdatedAt: now, Model: "gemini-3.5-flash"}}
+
+	updated, err := ReplaceSessionCostHistoryForGeneration("gc-1", "conv-gc", sess.CreatedAt, 2, snaps, true)
+	require.NoError(t, err)
+	require.True(t, updated)
+	updated, err = ReplaceSessionCostHistoryForGeneration("gc-1", "conv-gc", sess.CreatedAt, 2, snaps, false)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	row := dailyRowFor(t, rows, "gc-1", today)
+	assert.InDelta(t, 2, row.CostUSD, 1e-12)
+	assert.Zero(t, row.VirtualCostUSD)
+
+	updated, err = ReplaceSessionCostHistoryForGeneration("gc-1", "conv-gc", sess.CreatedAt, 2, snaps, true)
+	require.NoError(t, err)
+	require.True(t, updated)
+	rows, err = AllCostDailyRows()
+	require.NoError(t, err)
+	row = dailyRowFor(t, rows, "gc-1", today)
+	assert.Zero(t, row.CostUSD)
+	assert.InDelta(t, 2, row.VirtualCostUSD, 1e-12)
+}

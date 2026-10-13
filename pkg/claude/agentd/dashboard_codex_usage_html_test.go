@@ -45,10 +45,10 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	// anchored while leaving the selectors close to their provider names.
 	must("#usage.multiline", "multiline stacks the readout vertically")
 	must("#usage .usrc", "the source label column is styled")
-	must("grid-template-columns: calc(6ch + 14px) 14ch", "selector and provider names occupy fixed shared columns")
+	must("grid-template-columns: calc(6ch + 14px) 17ch", "selector and provider names occupy fixed shared columns")
 	must("column-gap: 4px", "selector sits close to its provider name")
-	must("width: calc(66ch + 30px)", "all display-mode permutations retain one header width")
-	must("grid-template-columns: calc(20ch + 18px) 46ch", "source and data regions retain stable positions")
+	must("width: calc(69ch + 30px)", "all display-mode permutations retain one header width")
+	must("grid-template-columns: calc(23ch + 18px) 46ch", "source and data regions retain stable positions")
 	must("padding: 0 2px", "compact selector buttons do not inflate the line spacing")
 	must("line-height: 11px", "selector height stays within the original usage-row rhythm")
 }
@@ -77,7 +77,7 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	// overflow and desync the right-aligned rows (see
 	// TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining). The source-label
 	// column also fits provider-prefixed API-cost rows.
-	must("width: 14ch;", "the source-label column fixes the \"Anthropic API:\" width")
+	must("width: 17ch;", "the source-label column fixes the \"OpenCode WHAT-IF:\" width")
 	must("align-self: stretch;", "short provider rows share the longest row's data start")
 	must("min-width: 4ch;", "the percent column reserves up to \"100%\"")
 	must("min-width: 8ch;", "the reset-hint column reserves its worst case \"(23h59m)\"")

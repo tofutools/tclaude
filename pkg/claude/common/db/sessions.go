@@ -2532,6 +2532,62 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 	totalUSD float64,
 	snapshots []VirtualCostDailySnapshot,
 ) (bool, error) {
+	return replaceSessionCostHistoryForGeneration(sessionID, expectedConvID, expectedCreatedAt,
+		totalUSD, snapshots, costHistoryVirtual)
+}
+
+// ReplaceSessionCostHistoryForGeneration is the classification-aware form for
+// a follower that prices the calls itself and decides per conversation
+// whether they are a real charge (Gemini on an API key) or a WHAT-IF estimate
+// (Gemini on a Google sign-in). whatIf selects the column written; the OTHER
+// column is cleared across the conversation, so a conversation that is
+// re-classified (the operator flips the billing setting) moves its whole
+// history rather than counting it twice.
+func ReplaceSessionCostHistoryForGeneration(
+	sessionID, expectedConvID string,
+	expectedCreatedAt time.Time,
+	totalUSD float64,
+	snapshots []VirtualCostDailySnapshot,
+	whatIf bool,
+) (bool, error) {
+	kind := costHistoryRealExclusive
+	if whatIf {
+		kind = costHistoryVirtualExclusive
+	}
+	return replaceSessionCostHistoryForGeneration(sessionID, expectedConvID, expectedCreatedAt,
+		totalUSD, snapshots, kind)
+}
+
+type costHistoryKind int
+
+const (
+	// costHistoryVirtual writes virtual_cost_usd and leaves cost_usd alone.
+	costHistoryVirtual costHistoryKind = iota
+	// costHistoryVirtualExclusive writes virtual_cost_usd and clears cost_usd.
+	costHistoryVirtualExclusive
+	// costHistoryRealExclusive writes cost_usd and clears virtual_cost_usd.
+	costHistoryRealExclusive
+)
+
+func replaceSessionCostHistoryForGeneration(
+	sessionID, expectedConvID string,
+	expectedCreatedAt time.Time,
+	totalUSD float64,
+	snapshots []VirtualCostDailySnapshot,
+	kind costHistoryKind,
+) (bool, error) {
+	// The column names are compile-time constants, never caller input.
+	column, other := "virtual_cost_usd", ""
+	switch kind {
+	case costHistoryVirtualExclusive:
+		other = "cost_usd"
+	case costHistoryRealExclusive:
+		column, other = "cost_usd", "virtual_cost_usd"
+	}
+	zero := column + " = 0"
+	if other != "" {
+		zero += ", " + other + " = 0"
+	}
 	if totalUSD < 0 {
 		return false, nil
 	}
@@ -2540,7 +2596,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 			return false, nil
 		}
 		if _, err := time.ParseInLocation(costDayFormat, snapshot.Day, time.Local); err != nil {
-			return false, fmt.Errorf("replace session virtual cost history: bad day %q: %w", snapshot.Day, err)
+			return false, fmt.Errorf("replace session cost history: bad day %q: %w", snapshot.Day, err)
 		}
 	}
 	d, err := Open()
@@ -2552,8 +2608,12 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	set := column + " = ?"
+	if other != "" {
+		set += ", " + other + " = 0"
+	}
 	var convID string
-	err = tx.QueryRow(`UPDATE sessions SET virtual_cost_usd = ?
+	err = tx.QueryRow(`UPDATE sessions SET `+set+`
 		WHERE id = ? AND conv_id = ? AND created_at = ?
 		RETURNING conv_id`,
 		totalUSD, sessionID, expectedConvID, dbTime(expectedCreatedAt)).Scan(&convID)
@@ -2564,15 +2624,15 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 		return false, err
 	}
 	if convID != "" {
-		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
+		if _, err := tx.Exec(`UPDATE sessions SET `+zero+`
 			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
 			return false, err
 		}
-		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET `+zero+`
 			WHERE conv_id = ?`, convID); err != nil {
 			return false, err
 		}
-	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET `+zero+`
 		WHERE session_id = ?`, sessionID); err != nil {
 		return false, err
 	}
@@ -2582,14 +2642,14 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 			updatedAt = time.Now()
 		}
 		if _, err := tx.Exec(`INSERT INTO session_cost_daily
-			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+			(session_id, day, conv_id, `+column+`, updated_at, model, agent_id, harness)
 			SELECT id, ?, conv_id, ?, ?, ?,
 			       COALESCE(NULLIF(sessions.agent_id, ''),
 			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 			       COALESCE(NULLIF(harness, ''), 'claude')
 			FROM sessions WHERE id = ?
 			ON CONFLICT(session_id, day) DO UPDATE SET
-				virtual_cost_usd = excluded.virtual_cost_usd,
+				`+column+` = excluded.`+column+`,
 				updated_at = excluded.updated_at,
 				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
 				                ELSE session_cost_daily.conv_id END,

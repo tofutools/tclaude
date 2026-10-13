@@ -751,9 +751,16 @@ read, the same read-through pattern Copilot uses:
   pane's footer shows.
 - Output tokens (thinking included) are summed over the conversation.
 
-Gemini records no price, so tclaude reports a **what-if cost**: each model
-call priced at Gemini API pay-per-token rates, the same opt-in estimate Codex
-gets (`cost.show_on_subscription`). Cached prompt tokens get the cached rate,
+Gemini records no price, so tclaude prices each model call itself at Gemini
+API pay-per-token rates. Whether that estimate counts as real spend or a
+**what-if cost** follows `cost.gemini_billing` (Config tab → Gemini billing):
+under the default `auto`, a session whose Gemini settings select an API key
+(`security.auth.selectedType` `gemini-api-key`) or Vertex AI is shown as real
+API spend, while a Google sign-in, or no readable selection, stays a what-if
+estimate behind the same opt-in Codex uses (`cost.show_on_subscription`).
+`api` and `subscription` force either side, for example when a Google sign-in
+uses a paid Cloud project. Either way the figure is tclaude's estimate, not
+Google's invoice. Cached prompt tokens get the cached rate,
 thinking tokens are priced as output, and Pro models switch to the long-context
 rate for prompts over 200k tokens. Calls dropped by a rewind or a `/compress`
 still count, because they were made. A model without a published rate, such as
