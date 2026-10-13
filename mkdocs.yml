@@ -75,6 +75,11 @@ nav:
       - Usage and costs: usage-and-costs.md
       - Host status: host.md
       - Codex permission registry: codex-native-permission-registry.md
+      - Server-hosted setups:
+          - Running on a server: server/index.md
+          - systemd: server/systemd.md
+          - macOS launchd: server/launchd.md
+          - Ansible: server/ansible.md
       - Adding a harness: adding-a-harness.md
 
 # Pages built but deliberately left out of the nav: a contributor runbook,
