@@ -29,9 +29,16 @@ jobs:
           else
             # Use only numeric PR IDs from the trusted workflow event. Read
             # state from GitHub; neither branch names nor PR code are executed.
-            jq -r '.workflow_run.pull_requests[].number' "$GITHUB_EVENT_PATH" |
+            numbers=$(jq -r '.workflow_run.pull_requests[].number' "$GITHUB_EVENT_PATH")
+            if [ -z "$numbers" ]; then
+              # Fork runs can omit associated PRs. Find only numeric PR-owned
+              # cache refs and still verify each PR is closed before deletion.
+              refs=$(gh api "repos/$GH_REPO/actions/caches?per_page=100" --paginate --jq '.actions_caches[].ref')
+              numbers=$(printf '%s\n' "$refs" | sed -n 's#^refs/pull/\([0-9][0-9]*\)/merge$#\1#p' | sort -u)
+            fi
+            printf '%s\n' "$numbers" |
             while read -r number; do
-              case "$number" in ''|*[!0-9]*) exit 1 ;; esac
+              case "$number" in '') continue ;; *[!0-9]*) exit 1 ;; esac
               state=$(gh api "repos/$GH_REPO/pulls/$number" --jq .state)
               if [ "$state" = closed ]; then
                 gh cache delete --all --ref "refs/pull/$number/merge" --succeed-on-no-caches
