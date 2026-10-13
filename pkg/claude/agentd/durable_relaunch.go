@@ -158,6 +158,13 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		source := p.CopilotAPISource
 		copilotAPISource = &source
 	}
+	piDrive := (*bool)(nil)
+	if harnessOrDefault(p.Harness) == harness.PiName {
+		// Frozen even when false, like CopilotAPI: "this pi agent is on
+		// send-keys" is a known posture a relaunch replays.
+		value := p.PiDrive
+		piDrive = &value
+	}
 	if harnessOrDefault(p.Harness) == harness.CodexName && p.FastModeSet {
 		value := p.FastMode
 		fastMode = &value
@@ -190,6 +197,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		ConfiguredContextWindowMax: configuredContextWindowMax,
 		CopilotAPI:                 copilotAPI,
 		CopilotAPISource:           copilotAPISource,
+		PiDrive:                    piDrive,
 		CodexAppServer:             codexAppServer,
 		CodexAppServerSource:       codexAppServerSource,
 		CodexStateRoot:             codexStateRoot,

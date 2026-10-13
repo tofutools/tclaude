@@ -69,7 +69,7 @@ func nonInteractiveUnsupportedOption(p *SpawnParams) string {
 		{"--ask-user-question-timeout", p.AskUserQuestionTimeout != ""},
 		{"--ask-for-approval", p.Approval != ""}, {"--tools", p.ToolGovernance != ""},
 		{"--auto-review", p.AutoReview}, {"--remote-control", p.RemoteControl},
-		{"--copilot-api", p.CopilotAPI}, {"--codex-app-server", p.CodexAppServer || p.codexAppServerSpecified},
+		{"--copilot-api", p.CopilotAPI}, {"--pi-drive", p.PiDrive}, {"--codex-app-server", p.CodexAppServer || p.codexAppServerSpecified},
 		{"--owner", p.Owner}, {"--no-owner", p.NoOwner},
 		{"--role", p.Role != ""},
 		{"--role-ref", p.RoleRef != ""}, {"--descr", p.Descr != ""},
@@ -523,6 +523,10 @@ type SpawnRequest struct {
 	// (Copilot); requesting it for Claude Code or Codex is a 400. Forwarded to
 	// `tclaude session new --copilot-api`. See TCL-1051 / TCL-1053.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// PiDrive opts a pi agent into the extension drive: tclaude's pi extension
+	// takes deliveries, rename, compaction and soft exit over its channel to
+	// agentd instead of tmux send-keys. Off unless set; pi only.
+	PiDrive *bool `json:"pi_drive,omitempty"`
 	// CodexAppServer selects the private app-server drive. nil lets profile
 	// tiers speak; false pins legacy send-keys; true opts in and fails closed.
 	CodexAppServer *bool `json:"codex_app_server,omitempty"`
@@ -919,6 +923,7 @@ type SpawnParams struct {
 	// &true and its absence leaves the pointer nil so a profile default can still
 	// speak (and, unset everywhere, resolve to the send-keys default).
 	CopilotAPI     bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit uses keystrokes because the API cannot exit the CLI. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
+	PiDrive        bool `long:"pi-drive" help:"EXPERIMENTAL: drive the new pi agent through tclaude's pi extension instead of tmux send-keys: messages, rename, compaction and soft exit go over the extension's channel to agentd, and wait while that channel is down. Off by default. pi only"`
 	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: drive the new Codex agent through a private per-agent app-server while keeping the normal TUI attached. Requires Codex 0.147.0 or newer. Off by default; unset = profile chain, then legacy send-keys. Pass --codex-app-server=false to override an opted-in profile for deliberate A/B testing. Codex only"`
 	// codexAppServerSpecified distinguishes an omitted bool flag (profile tiers
 	// may speak) from --codex-app-server=false (authoritative send-keys). Cobra
@@ -1783,6 +1788,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if p.codexAppServerSpecified || codexAppServer {
 		selected := codexAppServer
 		req.CodexAppServer = &selected
+	}
+	if p.PiDrive {
+		on := true
+		req.PiDrive = &on
 	}
 	if p.NonInteractive {
 		req.CodexAppServer = nil

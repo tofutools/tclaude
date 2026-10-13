@@ -126,7 +126,7 @@ warning. Model and effort are remembered by the harness itself.
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ⚠️ approval posture picks the tool set | ❌ |
 | Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — | — n/a |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | ⚠️ experimental `--pi-drive` | — n/a |
 
 ### Cross-harness history translation
 
@@ -898,6 +898,21 @@ auto-compaction window (`--auto-compact-window`) makes the extension compact
 between runs once the context reaches it; pi's own threshold near the model's
 full window stays the backstop. A cost factor for pi can be set under
 `cost.harness_factors`.
+
+**Extension drive (experimental).** `tclaude agent spawn --pi-drive` (or
+`pi_drive` in the spawn request) takes the new agent off tmux send-keys. The
+same tclaude extension holds a long poll on the agent socket
+(`POST /v1/whoami/pi-drive`) and runs what the daemon sends through pi's own
+API: inbox messages and reminders as user turns (steered into a running turn,
+as a typed message would be), compaction with its follow-up, rename
+(`setSessionName`) and the soft stop. As with the other API drives, an
+opted-in agent is channel-only: while the extension is not polling, messages
+stay in the inbox and are delivered when it reconnects, and a rename,
+compaction or soft stop fails instead of being typed (a stop still ends the
+pane). Only the pi process itself can hold the channel: a process pi started
+(a tool's shell or script) is refused. The choice is per launch, recorded with
+the agent and kept on resume; a launch without it is told so, and its extension
+stops asking.
 
 **Not yet.** `ask` and prompt-based name refinement are still to come.
 

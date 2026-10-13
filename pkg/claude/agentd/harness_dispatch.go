@@ -381,6 +381,24 @@ func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 			cacheDeliveredTitle(convID, title, h.Name)
 			return true
 		}
+		// A pi agent on the extension drive is renamed by setSessionName, and
+		// never typed at: a channel that is down fails the rename.
+		if h.Name == harness.PiName {
+			piSelected, err := piDriveSelected(convID)
+			if err != nil {
+				slog.Warn("rename: pi drive posture unreadable; refusing pane fallback",
+					"conv", convID, "error", err)
+				return false
+			}
+			if piSelected {
+				if err := piDriveRename(convID, title); err != nil {
+					slog.Warn("rename: pi drive rename failed", "conv", convID, "error", err)
+					return false
+				}
+				cacheDeliveredTitle(convID, title, h.Name)
+				return true
+			}
+		}
 		if !injectSlashCommandOn(
 			convID, h.Life.RenameCommand()+" "+title, "", "rename", channel) {
 			return false

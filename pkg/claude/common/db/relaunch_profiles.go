@@ -104,6 +104,10 @@ type AgentRelaunchProfile struct {
 	// API drive it never chose. nil = unknown (legacy record, or a launch that
 	// recorded none). Mirrors HarnessBuiltinModeSource.
 	CopilotAPISource *string `json:"copilot_api_source,omitempty"`
+	// PiDrive is the durable "this pi agent is driven through tclaude's
+	// extension channel rather than tmux send-keys" posture, frozen at birth
+	// for a pi agent. nil (legacy, or another harness) is send-keys.
+	PiDrive *bool `json:"pi_drive,omitempty"`
 	// CodexAppServer is the durable per-conversation Codex drive selection.
 	// nil means legacy/unknown and resolves to send-keys.
 	CodexAppServer       *bool   `json:"codex_app_server,omitempty"`
@@ -1260,6 +1264,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.CopilotAPI != nil {
 			merged.CopilotAPI = agent.CopilotAPI
+		}
+		if agent.PiDrive != nil {
+			merged.PiDrive = agent.PiDrive
 		}
 		if agent.CodexAppServer != nil {
 			merged.CodexAppServer = agent.CodexAppServer

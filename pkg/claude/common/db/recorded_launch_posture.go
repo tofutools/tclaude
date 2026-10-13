@@ -63,6 +63,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.CopilotAPI != nil {
 		merged.CopilotAPI = overlay.CopilotAPI
 	}
+	if overlay.PiDrive != nil {
+		merged.PiDrive = overlay.PiDrive
+	}
 	if overlay.CopilotAPISource != nil {
 		merged.CopilotAPISource = overlay.CopilotAPISource
 	}

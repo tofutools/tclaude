@@ -1592,6 +1592,7 @@ const (
 	slashTransportOpenCodeAPI slashTransport = "opencode-api"
 	slashTransportCopilotAPI  slashTransport = "copilot-api"
 	slashTransportCodexAPI    slashTransport = "codex-app-server"
+	slashTransportPiDrive     slashTransport = "pi-drive"
 )
 
 // slashFailure names WHY nothing was delivered, and — like slashTransport — it
@@ -1645,6 +1646,20 @@ func dispatchSlashCommandOn(
 			return slashTransportOpenCodeAPI, slashFailureNone
 		}
 		return slashTransportNone, slashFailureControl
+	}
+	if sess.Harness == harness.PiName {
+		piSelected, err := piDriveSelected(convID)
+		if err != nil {
+			slog.Warn("pi drive posture unreadable; refusing lifecycle pane fallback",
+				"error", err, "conv_id", convID, "line", line)
+			return slashTransportNone, slashFailureControl
+		}
+		if piSelected {
+			if piDriveSlashCommand(convID, line, followUp, reason) {
+				return slashTransportPiDrive, slashFailureNone
+			}
+			return slashTransportNone, slashFailureControl
+		}
 	}
 	codexSelected := false
 	if sess.Harness == harness.CodexName {

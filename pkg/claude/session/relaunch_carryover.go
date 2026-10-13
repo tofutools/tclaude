@@ -140,6 +140,9 @@ var launchCarryoverExcused = map[string]string{
 		"a decision",
 	"SSHWorkaround": "agentd materializes this internal Codex sandbox capability from " +
 		"the effective sandbox snapshot; it is not a session-new launch flag",
+	"PiDrive": "not a session-new flag: the pi extension asks agentd for the drive on " +
+		"every launch, and agentd answers from this recorded posture, so a resume keeps " +
+		"it with no flag to carry",
 	"CopilotAPISource": "not a launch parameter of its own — it is the attribution for " +
 		"CopilotAPI, carried by that field's own record, so a separate entry here would " +
 		"be a second, desynchronizable copy of the same decision",
