@@ -54,6 +54,7 @@ runs:
         RACE: ${{ inputs.race }}
         MODULES: ${{ hashFiles('go.mod', 'go.sum') }}
       run: |
+        python3 scripts/ci/test_build_cache.py
         echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
         prefix="gobuild-tests-v1-$PLATFORM-$SHARD-"
         compatible="$prefix$(go env GOVERSION)-$MODULES-race$RACE-"
