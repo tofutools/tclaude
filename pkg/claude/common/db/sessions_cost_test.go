@@ -784,3 +784,44 @@ func TestReplaceSessionCostHistoryForGenerationReclassifies(t *testing.T) {
 	assert.Zero(t, row.CostUSD)
 	assert.InDelta(t, 2, row.VirtualCostUSD, 1e-12)
 }
+
+// A resumed conversation whose real-cost history was replaced under the new
+// session id leaves the old session's rows zeroed; they must not reset the
+// real walk's baseline and count the earlier days twice.
+func TestReplaceSessionCostHistoryForGenerationRealAcrossResume(t *testing.T) {
+	setupTestDB(t)
+	yesterdayAt := time.Now().AddDate(0, 0, -1)
+	yesterday := yesterdayAt.Format(costDayFormat)
+	todayAt := time.Now()
+	today := todayAt.Format(costDayFormat)
+	const convID = "conv-gr-resume"
+	replace := func(id string, total float64, snaps []VirtualCostDailySnapshot) {
+		t.Helper()
+		require.NoError(t, SaveSession(&SessionRow{
+			ID: id, TmuxSession: "tmux-" + id, ConvID: convID,
+			Cwd: "/tmp/gr-resume", Status: "idle", Harness: "gemini",
+		}))
+		sess, err := LoadSession(id)
+		require.NoError(t, err)
+		updated, err := ReplaceSessionCostHistoryForGeneration(id, convID, sess.CreatedAt, total, snaps, false)
+		require.NoError(t, err)
+		require.True(t, updated)
+	}
+	// Both ids order the zeroed predecessor after its successor, the order
+	// that used to reset the baseline.
+	replace("gr-z-spawn", 3, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt},
+		{Day: today, CostUSD: 3, UpdatedAt: todayAt},
+	})
+	replace("gr-a-resume", 4, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt},
+		{Day: today, CostUSD: 4, UpdatedAt: todayAt},
+	})
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	total := 0.0
+	for _, delta := range CostDeltas(rows, false) {
+		total += delta.USD
+	}
+	assert.InDelta(t, 4, total, 1e-12)
+}

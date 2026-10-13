@@ -2540,7 +2540,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 // a follower that prices the calls itself and decides per conversation
 // whether they are a real charge (Gemini on an API key) or a WHAT-IF estimate
 // (Gemini on a Google sign-in). whatIf selects the column written; the OTHER
-// column is cleared across the conversation, so a conversation that is
+// column is cleared across the conversation, so a live conversation that is
 // re-classified (the operator flips the billing setting) moves its whole
 // history rather than counting it twice.
 func ReplaceSessionCostHistoryForGeneration(
@@ -2780,6 +2780,13 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 		val := r.CostUSD
 		if whatif {
 			val = r.VirtualCostUSD
+		}
+		if val <= 0 {
+			// A row with nothing in this column (a resumed conversation's
+			// superseded session, zeroed by a history replace) carries no
+			// counter state, so it must not reset the baseline the way a
+			// fresh session's lower counter does; see MixedCostDeltas.
+			continue
 		}
 		key := r.ConvID
 		if key == "" {

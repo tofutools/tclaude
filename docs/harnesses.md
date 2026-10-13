@@ -760,7 +760,9 @@ API spend, while a Google sign-in, or no readable selection, stays a what-if
 estimate behind the same opt-in Codex uses (`cost.show_on_subscription`).
 `api` and `subscription` force either side, for example when a Google sign-in
 uses a paid Cloud project. Either way the figure is tclaude's estimate, not
-Google's invoice. Cached prompt tokens get the cached rate,
+Google's invoice. The classification is applied while a session runs and
+covers its whole conversation: a running or resumed conversation moves to
+the current side, while an exited one keeps the side it was recorded under. Cached prompt tokens get the cached rate,
 thinking tokens are priced as output, and Pro models switch to the long-context
 rate for prompts over 200k tokens. Calls dropped by a rewind or a `/compress`
 still count, because they were made. A model without a published rate, such as
