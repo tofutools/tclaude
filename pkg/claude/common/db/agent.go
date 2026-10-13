@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -4222,64 +4223,54 @@ func GroupMessageParticipants(groupID int64) ([]string, error) {
 // read returns — the backing query for the Messages tab's paginated,
 // searchable folder view.
 //
+// Every predicate is a fixed-size SQL shape: sets that grow with the
+// installation (retired agents, group members, title matches) are
+// subqueries the database evaluates, never bound id lists, so neither the
+// bind-variable limit nor a per-request Go-side resolve pass scales with
+// the number of agents.
+//
 // ForConv scopes to one mailbox: rows where the conv is sender OR
 // recipient. "" is the virtual "all" firehose (no scope). A single
 // (to_conv = ? OR from_conv = ?) predicate dedups the rare self-addressed
 // row for free, so the scope needs no UNION.
 //
-// The remaining fields are the Messages-tab search box, already split
-// into the parts the DB can match directly and the parts the caller
-// resolved out-of-band:
-//   - Text: matched case-insensitively (SQLite LIKE) against subject /
-//     body / from_conv / to_conv. A conv-id prefix the operator types
-//     matches the full id this way (so the sidebar's short-id is
-//     searchable here too).
-//   - TitleConvs: convs whose resolved DISPLAY title contained the query.
-//     The display title (custom title > pending name > summary > first
-//     prompt) is not a single column — the caller resolves it via the
-//     conv index and passes the matching conv-ids, which fold in as
-//     from_conv/to_conv IN (…).
-//   - GroupIDs: groups whose name contained the query, folded in as
-//     group_id IN (…).
+// ScopeGroupID selects a GROUP folder — the Messages-tab "view this
+// group's messages" view. A row is in scope when ANY of: its sender is a
+// current member, its recipient is a current member, or it is one of the
+// group's own multicasts (group_id = ScopeGroupID). That OR-set is the
+// group analogue of ForConv's single-conv predicate. A group folder sets
+// this and leaves ForConv empty; the two are mutually-exclusive scopes.
 //
-// ExcludeConvs drops any row whose sender OR recipient is one of the
-// listed convs — folded in as `(from_conv NOT IN (…) OR subject =
-// 'reincarnation handoff') AND to_conv NOT IN (…)`. The dashboard's "all"
-// firehose uses it to omit retired agents' traffic unless the operator opts
-// in; a 1:1 to/from a retired agent disappears, while a group broadcast
-// (empty to_conv) survives unless its own sender is retired. The lone
-// carve-out is the reincarnation handoff: its sender is the retired
-// predecessor by construction, so the sender side relaxes to "live OR a
-// handoff" to keep the live successor's birth record visible (the recipient
-// side still must be live). It is an AND constraint independent of the
-// (OR-ed) search predicate, so it narrows whatever the search matched.
+// Text is the Messages-tab search box. Subject and body are matched through
+// the agent_messages_fts full-text index: every word of the query must
+// start a word of the message (see mailboxFTSQuery). The parties are
+// matched as substrings (SQLite LIKE, ASCII case folding): from_conv /
+// to_conv (so a typed conv-id fragment matches), the sender's or
+// recipient's display title (see mailboxTitleConvsSQL), and the routing
+// group's name.
 //
-// A filter with empty Text and nil id-sets matches the whole scope (the
-// unfiltered total).
-//
-// ScopeConvs + ScopeGroupID select a GROUP folder — the Messages-tab
-// "view this group's messages" view (all member traffic). A row is in
-// scope when ANY of: its sender is a member, its recipient is a member,
-// or it is one of the group's own multicasts (group_id = ScopeGroupID).
-// That OR-set is the group analogue of ForConv's single-conv predicate —
-// a group folder is the union of its members' folders, plus the group
-// channel. ANDed with search / exclude like ForConv. A group folder sets
-// these and leaves ForConv empty; the two are mutually-exclusive folder
-// scopes.
+// ExcludeRetired drops any row whose sender OR recipient is a retired
+// agent's conv — `(sender not retired OR <handoff>) AND recipient not
+// retired`. The dashboard's "all" firehose and group folders use it to
+// omit retired agents' traffic unless the operator opts in; a 1:1 to/from a
+// retired agent disappears, while a group broadcast (empty to_conv)
+// survives unless its own sender is retired. The lone carve-out is the
+// reincarnation handoff: its sender is the retired predecessor by
+// construction, so the sender side relaxes to "live OR a handoff" to keep
+// the live successor's birth record visible (the recipient side still must
+// be live). It is an AND constraint independent of the (OR-ed) search
+// predicate, so it narrows whatever the search matched.
 type MailboxFilter struct {
-	ForConv      string
-	ScopeConvs   []string
-	ScopeGroupID int64
-	Text         string
-	TitleConvs   []string
-	GroupIDs     []int64
-	ExcludeConvs []string
+	ForConv        string
+	ScopeGroupID   int64
+	Text           string
+	ExcludeRetired bool
 }
 
-// HasSearch reports whether f carries any search predicate (free text or
-// a resolved title/group match set) beyond its folder scope.
+// HasSearch reports whether f carries a search predicate beyond its folder
+// scope.
 func (f MailboxFilter) HasSearch() bool {
-	return f.Text != "" || len(f.TitleConvs) > 0 || len(f.GroupIDs) > 0
+	return f.Text != ""
 }
 
 // likeEscape escapes the LIKE metacharacters so the operator's search
@@ -4288,6 +4279,69 @@ func (f MailboxFilter) HasSearch() bool {
 func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
+
+// mailboxFTSQuery turns search-box text into an FTS5 MATCH expression:
+// each word (a run of letters or digits, as the unicode61 tokenizer splits
+// them) becomes a quoted prefix term, and all terms must match. Quoting
+// keeps operators and punctuation the operator types literal. "" when the
+// text has no words.
+func mailboxFTSQuery(text string) string {
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	terms := make([]string, 0, len(words))
+	for _, w := range words {
+		terms = append(terms, `"`+w+`"*`)
+	}
+	return strings.Join(terms, " ")
+}
+
+// retiredConvsSQL lists the conv-ids of retired agents, matching
+// ListRetiredAgents (an agent away on another federation node is not
+// retired here). Blank convs are dropped.
+const retiredConvsSQL = `SELECT current_conv_id FROM agents
+	WHERE retired_at IS NOT NULL AND current_conv_id != ''
+	AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p
+		WHERE p.agent_id = agents.agent_id AND p.state = 'away')`
+
+// retiredConvExistsSQL tests one conv column (the %s) against
+// retiredConvsSQL's set as a correlated lookup on the agents.current_conv_id
+// unique index. A `NOT IN (retiredConvsSQL)` list would be rebuilt per
+// statement — O(retired agents) for every count, which the roster runs once
+// per group. An empty conv never matches (current_conv_id is never blank
+// for a retired agent's lookup to hit), so multicasts with an empty to_conv
+// are never excluded on that side.
+const retiredConvExistsSQL = `EXISTS (SELECT 1 FROM agents ra
+	WHERE ra.current_conv_id = %s AND ra.current_conv_id != '' AND ra.retired_at IS NOT NULL
+	AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p
+		WHERE p.agent_id = ra.agent_id AND p.state = 'away'))`
+
+// handoffIDsSQL lists the reincarnation handoff rows, served by the
+// idx_agent_messages_handoff partial index so the retired-exclude carve-out
+// never reads message rows (a plain `subject = ?` would).
+const handoffIDsSQL = `SELECT id FROM agent_messages WHERE subject = '` + ReincarnationHandoffSubject + `'`
+
+// groupMemberConvsSQL lists a group's current member convs (one bound
+// group id), matching ListAgentGroupMembers.
+const groupMemberConvsSQL = `SELECT ag.current_conv_id FROM agent_group_members m
+	JOIN agents ag ON ag.agent_id = m.agent_id
+	WHERE m.group_id = ? AND ag.current_conv_id != ''`
+
+// mailboxTitleConvsSQL lists the convs whose display title matches one
+// LIKE pattern (bound twice). The title follows AgentDisplayTitle's
+// precedence — custom title > the owning agent's pending name > summary >
+// first prompt — the same name the reading pane renders; the second arm
+// covers agent convs with no conv_index row yet (pending name only).
+const mailboxTitleConvsSQL = `SELECT ci.conv_id FROM conv_index ci
+	LEFT JOIN agent_conversations ac ON ac.conv_id = ci.conv_id
+	LEFT JOIN agents a ON a.agent_id = ac.agent_id
+	WHERE COALESCE(NULLIF(ci.custom_title, ''), NULLIF(a.pending_name, ''),
+		NULLIF(ci.summary, ''), ci.first_prompt) LIKE ? ESCAPE '\'
+	UNION ALL
+	SELECT ac.conv_id FROM agent_conversations ac
+	JOIN agents a ON a.agent_id = ac.agent_id
+	WHERE a.pending_name LIKE ? ESCAPE '\'
+	AND NOT EXISTS (SELECT 1 FROM conv_index ci WHERE ci.conv_id = ac.conv_id)`
 
 // where builds the WHERE clause (without the "WHERE" keyword) and its
 // args. Returns ("", nil) for the unscoped, unfiltered "all" firehose so
@@ -4299,87 +4353,94 @@ func (f MailboxFilter) where() (string, []any) {
 		clauses = append(clauses, "(to_conv = ? OR from_conv = ?)")
 		args = append(args, f.ForConv, f.ForConv)
 	}
-	// Group folder scope: a row is in scope when a member is sender or
-	// recipient, or it is one of the group's own multicasts. Built as its
-	// own OR-group so it ANDs with search / exclude just like ForConv. A
-	// group with no members still scopes to its channel (group_id only).
-	if len(f.ScopeConvs) > 0 || f.ScopeGroupID != 0 {
-		var ors []string
-		if len(f.ScopeConvs) > 0 {
-			ph := sqlPlaceholders(len(f.ScopeConvs))
-			ors = append(ors, "from_conv IN ("+ph+")", "to_conv IN ("+ph+")")
-			for _, c := range f.ScopeConvs {
-				args = append(args, c)
-			}
-			for _, c := range f.ScopeConvs {
-				args = append(args, c)
-			}
-		}
-		if f.ScopeGroupID != 0 {
-			ors = append(ors, "group_id = ?")
-			args = append(args, f.ScopeGroupID)
-		}
-		clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
+	if f.ScopeGroupID != 0 {
+		clauses = append(clauses, "(from_conv IN ("+groupMemberConvsSQL+")"+
+			" OR to_conv IN ("+groupMemberConvsSQL+") OR group_id = ?)")
+		args = append(args, f.ScopeGroupID, f.ScopeGroupID, f.ScopeGroupID)
 	}
-	if f.HasSearch() {
-		var ors []string
-		if f.Text != "" {
-			like := "%" + likeEscape(f.Text) + "%"
-			ors = append(ors,
-				`subject LIKE ? ESCAPE '\'`,
-				`body LIKE ? ESCAPE '\'`,
-				`from_conv LIKE ? ESCAPE '\'`,
-				`to_conv LIKE ? ESCAPE '\'`)
-			args = append(args, like, like, like, like)
+	if f.Text != "" {
+		// One id set per statement: the arms are unioned inside a single
+		// non-correlated subquery, so the title match (a conv_index pass) runs
+		// once rather than per OR arm, and the outer query fetches only the
+		// matching rows by id instead of scanning every message for them.
+		like := "%" + likeEscape(f.Text) + "%"
+		arms := []string{
+			`SELECT id FROM agent_messages WHERE from_conv LIKE ? ESCAPE '\' OR to_conv LIKE ? ESCAPE '\'`,
+			`SELECT m.id FROM agent_messages m JOIN titled t ON m.from_conv = t.conv_id`,
+			`SELECT m.id FROM agent_messages m JOIN titled t ON m.to_conv = t.conv_id`,
+			`SELECT id FROM agent_messages WHERE group_id IN (SELECT id FROM agent_groups WHERE name LIKE ? ESCAPE '\')`,
 		}
-		if len(f.TitleConvs) > 0 {
-			ph := sqlPlaceholders(len(f.TitleConvs))
-			ors = append(ors, "from_conv IN ("+ph+")", "to_conv IN ("+ph+")")
-			for _, c := range f.TitleConvs {
-				args = append(args, c)
-			}
-			for _, c := range f.TitleConvs {
-				args = append(args, c)
-			}
+		args = append(args, like, like) // mailboxTitleConvsSQL in the WITH
+		args = append(args, like, like, like)
+		if match := mailboxFTSQuery(f.Text); match != "" {
+			arms = append(arms, `SELECT rowid FROM agent_messages_fts WHERE agent_messages_fts MATCH ?`)
+			args = append(args, match)
 		}
-		if len(f.GroupIDs) > 0 {
-			ph := sqlPlaceholders(len(f.GroupIDs))
-			ors = append(ors, "group_id IN ("+ph+")")
-			for _, g := range f.GroupIDs {
-				args = append(args, g)
-			}
-		}
-		if len(ors) > 0 {
-			clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
-		}
+		clauses = append(clauses, "id IN (WITH titled(conv_id) AS MATERIALIZED ("+mailboxTitleConvsSQL+") "+
+			strings.Join(arms, " UNION ALL ")+")")
 	}
-	if len(f.ExcludeConvs) > 0 {
-		ph := sqlPlaceholders(len(f.ExcludeConvs))
-		// AND, not OR: a row survives only when NEITHER party is excluded —
-		// with one carve-out. A reincarnation handoff is the bridge record
-		// from a retiring predecessor to its live successor, so its SENDER is
-		// always retired (and thus excluded). Dropping it would hide the
-		// successor's own birth certificate from the firehose / group folder
-		// even though those rows belong to a live agent (the per-agent folder
-		// already shows them, having no exclude). So the sender side relaxes
-		// to "live OR a handoff", while the recipient side still must be live
-		// — a handoff whose successor has itself since retired is fully
-		// historical and stays hidden, and a live→retired DM still drops.
+	if f.ExcludeRetired {
 		clauses = append(clauses,
-			"(from_conv NOT IN ("+ph+") OR subject = ?)",
-			"to_conv NOT IN ("+ph+")")
-		for _, c := range f.ExcludeConvs {
-			args = append(args, c)
-		}
-		args = append(args, ReincarnationHandoffSubject)
-		for _, c := range f.ExcludeConvs {
-			args = append(args, c)
-		}
+			"(NOT "+fmt.Sprintf(retiredConvExistsSQL, "from_conv")+" OR id IN ("+handoffIDsSQL+"))",
+			"NOT "+fmt.Sprintf(retiredConvExistsSQL, "to_conv"))
 	}
 	if len(clauses) == 0 {
 		return "", nil
 	}
 	return strings.Join(clauses, " AND "), args
+}
+
+// MailboxRosterTotals returns the badge totals the Messages-tab roster
+// shows for its aggregate folders, all from one pass over agent_messages:
+// all is the "all" firehose's row count, and groups maps each group id to its
+// group folder's total (a group with no traffic is absent). excludeRetired
+// applies MailboxFilter.ExcludeRetired to both. A group's total counts the
+// same rows a ScopeGroupID folder lists: traffic to or from a current member
+// plus the group's own multicasts, each row once.
+//
+// One CountMailbox per folder would re-run the exclude over the same rows
+// in its own statement for every group on every 2s roster refresh; here the
+// surviving rows are filtered once (over the covering
+// idx_agent_messages_parties index) and fanned out to their groups.
+func MailboxRosterTotals(excludeRetired bool) (all int, groups map[int64]int, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, nil, err
+	}
+	live := `SELECT id, group_id, from_conv, to_conv FROM agent_messages`
+	if where, _ := (MailboxFilter{ExcludeRetired: excludeRetired}).where(); where != "" {
+		live += " WHERE " + where
+	}
+	// Group ids are positive, so the firehose total rides along as g = 0.
+	rows, err := d.Query(`WITH live AS MATERIALIZED (` + live + `),
+		mem AS MATERIALIZED (SELECT m.group_id AS g, ag.current_conv_id AS conv
+			FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+			WHERE ag.current_conv_id != '')
+		SELECT 0, COUNT(*) FROM live
+		UNION ALL
+		SELECT g, COUNT(DISTINCT id) FROM (
+			SELECT group_id AS g, id FROM live WHERE group_id != 0
+			UNION ALL SELECT mem.g, live.id FROM live JOIN mem ON mem.conv = live.from_conv
+			UNION ALL SELECT mem.g, live.id FROM live JOIN mem ON mem.conv = live.to_conv
+		) GROUP BY g`)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	groups = map[int64]int{}
+	for rows.Next() {
+		var g int64
+		var n int
+		if err := rows.Scan(&g, &n); err != nil {
+			return 0, nil, err
+		}
+		if g == 0 {
+			all = n
+		} else {
+			groups[g] = n
+		}
+	}
+	return all, groups, rows.Err()
 }
 
 // sqlPlaceholders returns "?, ?, …" with n placeholders (n >= 1).

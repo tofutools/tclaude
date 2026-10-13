@@ -811,6 +811,30 @@ func ListRetiredAgents() ([]*Agent, error) {
 	return listAgents(`retired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=agents.agent_id AND p.state='away')`)
 }
 
+// ListRetiredConvIDs returns the current conv-ids of the agents
+// ListRetiredAgents returns, without loading their full rows — the
+// Messages-tab roster only needs the set.
+func ListRetiredConvIDs() ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(retiredConvsSQL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ListAgentRosterState returns the active actors' current conversation ids and
 // the retired actor count in one lightweight scan. Snapshot callers need only
 // these two facts; loading and time-parsing every rich Agent row twice (active
