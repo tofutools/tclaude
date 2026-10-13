@@ -83,8 +83,10 @@ dashboard or with `tclaude agent resume <agent>`.
 output. Without a terminal, the startup banner leaves the operator token out.
 Do not add `--print-human-token=always`, which would write the bearer token to
 that log file. With `--persist-operator-token` the token goes to a 0600
-`~/.tclaude/data/operator_token` that the CLI reads. Pass
-`--persist-operator-token-keychain` to keep it in the login keychain instead.
+`~/.tclaude/data/operator_token` that the CLI reads. The
+`--persist-operator-token-keychain` variant is not read by the CLI, so with it
+you have to export `TCLAUDE_HUMAN_TOKEN` yourself before `tclaude agent`
+commands work.
 
 **Tray.** A LaunchAgent in your GUI session can show the menu bar icon. Drop
 `--no-tray` if you want it. On a Mac you only reach over SSH, keep the flag.

@@ -149,11 +149,15 @@ Add this to the `[Service]` section of `tclaude-agentd.service`:
 ```ini
 Delegate=cpu memory pids
 DelegateSubgroup=tclaude-supervisor
+OOMPolicy=continue
 ```
 
 `DelegateSubgroup=` (systemd 254+) puts `agentd` and its children in a
 `tclaude-supervisor` child, which keeps the unit's own cgroup process-free.
 cgroup v2 requires that before tclaude can create per-agent nodes beside it.
+`OOMPolicy=continue` keeps systemd from stopping the whole unit when one
+agent hits its own memory limit. The default, `stop`, would take every agent
+down with it.
 tclaude finds the delegated node from its own cgroup, so no flag is needed.
 `pids` is needed only for PID limits.
 
@@ -181,6 +185,7 @@ ExecStart=/usr/bin/tmux -L tclaude start-server \; set-option -g exit-empty off
 ExecStop=/usr/bin/tmux -L tclaude kill-server
 Delegate=cpu memory pids
 DelegateSubgroup=server
+OOMPolicy=continue
 Restart=on-failure
 
 [Install]
@@ -199,7 +204,9 @@ systemctl --user show -p ControlGroup --value tclaude-tmux.service
 ```
 
 Then give `agentd` that path under `/sys/fs/cgroup`, and order it after the
-tmux unit. In `tclaude-agentd.service`, drop `KillMode=process` and add:
+tmux unit. In `tclaude-agentd.service`, drop `KillMode=process`, add the
+`[Unit]` lines, and replace the `ExecStart=` line (a `Type=simple` unit allows
+only one):
 
 ```ini
 [Unit]
@@ -230,7 +237,8 @@ need lingering. Use `WantedBy=multi-user.target`.
 
 Everything else carries over. The delegated path becomes
 `/sys/fs/cgroup/system.slice/tclaude-tmux.service`, and `Delegate=` on a
-`User=` service hands that subtree to the account. Two things change in
+`User=` service hands that subtree to the account. The `user@.service` drop-in
+above does not apply to system units. Two things change in
 practice:
 
 - Harness logins, `~/.tclaude`, and the socket all belong to that account. Run
