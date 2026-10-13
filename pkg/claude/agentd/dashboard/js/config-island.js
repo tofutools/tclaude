@@ -50,7 +50,16 @@ export function ConfigApp({ state, dependencies = {} }) {
     });
     configureConfigLifecycle(state.lifecycle);
     const unbind = bindConfigActivation();
+    // The remote-access certificate panel is static dashboard HTML wired by
+    // remote-admin.js; move it (listeners intact) into the Daemon & network
+    // panel, and back to its original host on unmount.
+    const remoteAdmin = document.getElementById('cfg-remote-admin');
+    const remoteAdminHome = remoteAdmin?.parentElement;
+    const remoteAdminNext = remoteAdmin?.nextSibling;
+    const remoteAdminSlot = root.current?.querySelector('#cfg-remote-admin-slot');
+    if (remoteAdmin && remoteAdminSlot) remoteAdminSlot.appendChild(remoteAdmin);
     return () => {
+      if (remoteAdmin && remoteAdminHome) remoteAdminHome.insertBefore(remoteAdmin, remoteAdminNext?.parentNode === remoteAdminHome ? remoteAdminNext : null);
       unbind?.();
       state.cancelDiff(false);
     };
@@ -58,16 +67,20 @@ export function ConfigApp({ state, dependencies = {} }) {
   // Do not subscribe this uncontrolled form subtree to Signals during render:
   // phase/dirty changes must never reconcile away imperative list rows or live
   // input values. State remains observable through the feature registry.
+  const panelOf = (node) => node?.closest?.('[data-cfg-panel]')?.getAttribute('data-cfg-panel');
   const changeList = (id, values) => {
     state.listController.set(id, values);
-    state.markDirty();
+    state.markDirty(panelOf(root.current?.querySelector(`#${id}`)));
   };
   const routeFormEvent = (event) => {
-    if (event.type === 'input' || event.type === 'change') state.markDirty();
+    // The settings search lives in the rail, outside every panel; typing a
+    // query is not an edit.
+    const editsConfig = event.target?.id !== 'cfg-filter';
+    if (editsConfig && (event.type === 'input' || event.type === 'change')) state.markDirty(panelOf(event.target));
     handleConfigEvent(event);
   };
   return html`<div ref=${root} class="config-island">
-    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} />
+    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} dirtyPanels=${state.dirtyPanels} />
     <${ConfigDiffModal} model=${state.diff.value} close=${state.cancelDiff} />
   </div>`;
 }

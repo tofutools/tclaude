@@ -62,11 +62,12 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 	if !strings.Contains(markup, `id="cfg-save"`) || !strings.Contains(markup, `id="cfg-sudo-json"`) {
 		t.Error("Config form controls are not owned by the Preact markup component")
 	}
+	terminals := strings.Index(markup, `<${Panel} id="terminals"`)
 	windowFocus := strings.Index(markup, `id="cfg-focus-window-title"`)
-	terminalAttach := strings.Index(markup, `class="cfg-field cfg-terminal-attach-field"`)
-	agentHide := strings.Index(markup, `id="cfg-dashboard-show-agent-hide-btn"`)
-	if windowFocus < 0 || terminalAttach < windowFocus || agentHide < terminalAttach {
-		t.Error("web terminal attachment controls are not grouped after Window focus and before the remaining terminal settings")
+	terminalAttach := strings.Index(markup, `cfg-terminal-attach-field"`)
+	notifications := strings.Index(markup, `<${Panel} id="notifications"`)
+	if terminals < 0 || windowFocus < terminals || terminalAttach < windowFocus || notifications < terminalAttach {
+		t.Error("web terminal attachment controls are not grouped after Window focus inside the Terminals panel")
 	}
 	for _, needle := range []string{
 		`<${ConfigSelect} id="cfg-terminal" aria-label="Terminal emulator">`,

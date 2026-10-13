@@ -17,8 +17,8 @@ func TestDashboardAssets_AskDefaultsWired(t *testing.T) {
 		// harness-independent Profile selector, JOH-252).
 		// Ask and Scribe defaults share one section; the labels carry the
 		// "Ask" qualifier that the old dedicated heading used to.
-		"<h3>Ask & scribe defaults</h3>",
-		`<span class="cfg-label">Ask — profile</span>`,
+		"<${Panel} id=\"assistants\"",
+		`<${Setting} title="Ask — profile" forId="ask-profile"`,
 		`id="ask-profile"`,
 		`id="ask-model"`,
 		`id="ask-effort"`,

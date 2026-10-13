@@ -16,7 +16,7 @@ import (
 func TestDashboardAssets_RemoteAccessWired(t *testing.T) {
 	for _, needle := range []string{
 		// HTML: the section heading + the three field anchors + the status line.
-		"<h3>Remote access</h3>",
+		"<${Group} title=\"Remote access\"",
 		`id="cfg-remote-enabled"`,
 		`id="cfg-remote-host"`,
 		`id="cfg-remote-port"`,
