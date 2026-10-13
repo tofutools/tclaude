@@ -799,7 +799,7 @@ unattended. `ask` loads a second tclaude extension, written read-only beside
 the status one, that asks you in the pane before every tool call that is not
 read-only: pi's `read`, `grep`, `find` and `ls`, and MCP tools whose server
 marks them read-only, run unasked; shell commands, edits and everything else
-open a confirmation showing the command or path. The pane shows as awaiting
+open a confirmation showing the call's arguments (control characters shown, never obeyed). The pane shows as awaiting
 permission until you answer, in the pane or the dashboard's terminal. A
 declined call is blocked, and the model is told so. With no one to ask (pi's
 print mode), such a call is blocked. `ask` gates tool calls, not code pi

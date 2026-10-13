@@ -340,6 +340,19 @@ func TestPiPermissionExtensionAsksBeforeActing(t *testing.T) {
 	result := w.Mock.LastMessages()
 	assert.NotContains(t, result, "declined_42", "the declined command did not run")
 	assert.Contains(t, result, "the human did not approve bash", "the model is told why")
+
+	// Terminal escapes in the command are shown, never obeyed, so the
+	// dialog cannot be made to read as a different command.
+	w.Mock.Command = "echo \x1b[8mhidden \u202eevil"
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "TOOL once more"})["success"])
+	request = confirm()
+	message, _ := request["message"].(string)
+	assert.NotContains(t, message, "\x1b")
+	assert.NotContains(t, message, "\u202e")
+	assert.Contains(t, message, `\u001b[8mhidden`)
+	assert.Contains(t, message, `\u202eevil`)
+	rpc.Reply(map[string]any{"type": "extension_ui_response", "id": request["id"], "confirmed": false})
+	rpc.AwaitEvent("agent_settled")
 	rpc.Close()
 
 	var prompts int
@@ -348,7 +361,7 @@ func TestPiPermissionExtensionAsksBeforeActing(t *testing.T) {
 			prompts++
 		}
 	}
-	assert.Equal(t, 2, prompts, "each open dialog reports a permission prompt")
+	assert.Equal(t, 3, prompts, "each open dialog reports a permission prompt")
 
 	w.Mock.Command = "echo unasked_$((6*7))"
 	_, err := w.Run(w.Project, "-p", "TOOL in print mode", "--extension", permissions, "--model", MockModel)
