@@ -328,7 +328,12 @@ function subtabMeta(name, quota, costs) {
     return count ? `${count} window${count === 1 ? '' : 's'}` : '';
   }
   if (name === 'costs' && costs.request.hasLoaded && costs.narrowed) {
-    return `${fmtUSD(costs.narrowed.total_usd)}${costs.span === 'month' ? ' mtd' : ''}`;
+    // Name the span (and a narrowed provider/model selection) so the figure
+    // never reads as month-to-date when it is not.
+    const span = { month: 'mtd', '7d': '7d', '30d': '30d', '90d': '90d' }[costs.span] || spanLabel(costs);
+    const narrowed = costs.selectedProviders?.size < (costs.providers?.length || 0)
+      || costs.selectedModels?.size < (costs.models?.length || 0);
+    return `${fmtUSD(costs.narrowed.total_usd)} ${span}${narrowed ? ' · filtered' : ''}`;
   }
   return '';
 }
