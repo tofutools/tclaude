@@ -53,3 +53,28 @@ func TestHumanInputGuardScreenAndCancellation(t *testing.T) {
 	require.True(t, called, "explicitly authorized dialog answers are preserved")
 	require.False(t, ScreenAwaitsHumanInput("model says: do you want to proceed?"))
 }
+
+func TestHumanInputGuardSubmittedTurnDoesNotRetry(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	row := &db.SessionRow{ID: "guard", TmuxSession: "guard", Status: "idle", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	require.NoError(t, db.SaveSession(row))
+	var keys []string
+	err := InjectTextAndSubmit("guard:0.0", "nudge", Options{
+		SettleDelaySet: true,
+		Run: func(args ...string) error {
+			if args[0] == "send-keys" {
+				key := args[len(args)-1]
+				keys = append(keys, key)
+				if key == "Enter" {
+					row.Status = "awaiting_permission"
+					return db.SaveSession(row)
+				}
+			}
+			return nil
+		},
+	})
+	require.NoError(t, err, "the submitted turn must be acknowledged rather than replayed")
+	require.Equal(t, []string{"nudge", "Enter"}, keys, "the workaround Enter must not answer the new dialog")
+}

@@ -211,9 +211,9 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 			return fmt.Errorf("send-keys submit: %w", err)
 		}
 		time.Sleep(opts.SettleDelay)
-		if err := run("send-keys", "-t", target, "Enter"); errors.Is(err, ErrAwaitingHumanInput) {
-			return err
-		}
+		// The first Enter already submitted. A dialog raised by that turn
+		// suppresses this workaround Enter, but must not cause full-text retry.
+		_ = run("send-keys", "-t", target, "Enter")
 		return nil
 	})
 }
