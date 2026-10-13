@@ -989,8 +989,8 @@ placeholders use the same `--set name=value` and `--keep-paths` conventions as
 setup bundles. Working directories, branches and paths inside prompts or tool
 output are hints, not filesystem contents; no repository or worktree is copied.
 
-`--history` includes Claude Code JSONL, a Codex rollout, OpenCode native export or Gemini
-native chat JSONL through the harness's
+`--history` includes Claude Code JSONL, a Codex rollout, OpenCode native export, Gemini
+native chat JSONL or a pi session JSONL through the harness's
 `HistoryTransfer` capability. Import remints native conversation identity and
 remaps known cwd metadata before resuming it as a new local agent. Message and
 tool-output text is preserved. Copilot currently exports
@@ -1174,7 +1174,7 @@ tclaude federation share-agent reviewer bob --group reviewers --history
 
 The default shares configuration only. `--history` includes the native
 conversation when the harness supports `HistoryTransfer` (currently Claude
-Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration only. The original
+Code, Codex, OpenCode, Gemini and pi); other harnesses warn and share configuration only. The original
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
@@ -1244,7 +1244,7 @@ it does not stop an already dispatched agent.
 
 A move clones native conversation history to a new destination agent, then
 retires the source after the destination confirms that its reserved launch is
-running. Claude, Codex, OpenCode and Gemini history are supported. A peer must advertise move
+running. Claude, Codex, OpenCode, Gemini and pi history are supported. A peer must advertise move
 support; an older peer cannot complete a move with an ordinary import receipt.
 
 ```bash
@@ -1677,7 +1677,7 @@ tclaude agent teleport status
 tclaude agent teleport --home --group helpers
 ```
 
-Teleport transfers native Claude Code, Codex, OpenCode or Gemini conversation history using the
+Teleport transfers native Claude Code, Codex, OpenCode, Gemini or pi conversation history using the
 existing agent-offer transport. Move mode keeps the source running until the
 receiver confirms that the imported generation is running. `--clone` keeps the
 source running. There is no destination retry after an offer might have been
@@ -2791,7 +2791,7 @@ peer that has not granted you `node.update` says so.
 package recipe as the daemon user, with no sudo. New installs live under
 `~/.local/share/tclaude/harnesses/npm`; the daemon includes its `bin` directory
 in subsequent probes and launches. The supported names are `claude`, `codex`,
-`opencode`, `copilot`, and `gemini`, using their vendors' latest stable npm
+`opencode`, `copilot`, `gemini`, and `pi`, using their vendors' latest stable npm
 packages. The recipes link to the official vendor instructions.
 
 `tclaude harness update <name|--all> [--node <peer>|--all-nodes]` updates
@@ -2825,7 +2825,7 @@ creates a private, owner-only backup and reports its ID/location. Symlink target
 are refused and new auth files have mode 0600.
 
 File copy supports Claude's `.credentials.json`, Codex's `auth.json`, OpenCode's
-`auth.json`, and Gemini's OAuth/account files in their standard directories.
+`auth.json`, Gemini's OAuth/account files, and pi's `auth.json` in their standard directories.
 Configured Codex/Gemini/XDG directories on each node are respected. Claude capture
 honors the sender configuration; receiving uses tclaude's pinned `~/.claude` state root. Keychain-only,
 Copilot, and environment-only credentials need the target's own login flow;

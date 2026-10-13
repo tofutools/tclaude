@@ -30,7 +30,8 @@ same layer. The values:
   (bubblewrap on Linux, Seatbelt on macOS), Codex, and Gemini CLI on macOS
   (its Seatbelt mode `seatbelt`). OpenCode refuses the pin
   — its access control is a command filter, not confinement — and Copilot's
-  descriptor declares no built-in OS sandbox. Leaving the implementation
+  descriptor declares no built-in OS sandbox. pi has no sandbox of its own;
+  tclaude's sandbox is its only boundary. Leaving the implementation
   *unset* is different from pinning `harness-builtin`: unset falls through the
   precedence chain and preserves each harness's historical behavior (for
   OpenCode, the command filter plus an explicit no-confinement warning).

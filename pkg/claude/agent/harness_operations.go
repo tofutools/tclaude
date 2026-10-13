@@ -18,7 +18,7 @@ import (
 )
 
 type harnessOperationParams struct {
-	Harness              string `pos:"true" optional:"true" help:"Harness name (claude, codex, opencode, copilot, gemini)"`
+	Harness              string `pos:"true" optional:"true" help:"Harness name (claude, codex, opencode, copilot, gemini, pi)"`
 	Node                 string `long:"node" optional:"true" help:"Trusted node label/ID; omit for local node"`
 	All                  bool   `long:"all" help:"Update every installed harness"`
 	AllNodes             bool   `long:"all-nodes" help:"Update on this node and every trusted linked node"`

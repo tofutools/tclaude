@@ -96,11 +96,10 @@ an internal `main_agent_idle` state until those settle, so you are not
 pinged while a subagent is still running.
 
 !!! note "Harness labeling caveat"
-    Notification titles are `<Harness>: <Status>` — but only Codex and
-    shell sessions get their own label (`Codex: …`, `Shell: …`). OpenCode,
-    Copilot, and Gemini sessions are currently titled `Claude: …` as well. This is
-    a known cosmetic quirk of the title mapping; the notification itself
-    fires and focuses correctly regardless of harness.
+    Notification titles are `<Harness>: <Status>`: `Claude: …`, `Codex: …`,
+    `OpenCode: …`, `Copilot: …`, `Gemini: …`, `pi: …` or `Shell: …`. A
+    harness-neutral notification (the task runner, rate-limit warnings) keeps
+    the `Claude: …` title.
 
 ## Click-to-focus per platform
 

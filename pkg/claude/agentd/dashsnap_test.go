@@ -366,8 +366,8 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 // plain "Opus 5" — which is exactly how a real fleet looks when only some
 // agents launched on the extended window, and the pair must render as ONE
 // model everywhere: one label in the roster, one row group in the Costs
-// table's Model column, one cell in the rollup. The Codex agent keeps the
-// strip honest about mixed fleets, and the deliberate price spread (Opus far
+// table's Model column, one cell in the rollup. The Codex and pi agents keep
+// the strip honest about mixed fleets, and the deliberate price spread (Opus far
 // above Sonnet) is what makes the per-model shares worth reading.
 func seedModelCostDashSnap(t *testing.T, members []dashMemberSpec) {
 	t.Helper()
@@ -379,7 +379,7 @@ func seedModelCostDashSnap(t *testing.T, members []dashMemberSpec) {
 	}{
 		"fe-lead":        {model: "Opus 5 (1M context)", effort: "high", usd: 8.10},
 		"fe-dev-forms":   {model: "Opus 5", effort: "medium", usd: 1.42},
-		"fe-dev-charts":  {model: "Sonnet 4.6", effort: "high", usd: 0.31},
+		"fe-dev-charts":  {model: "openai/gpt-5.5", effort: "high", harness: "pi", usd: 0.31},
 		"fe-dev-legacy":  {model: "Sonnet 4.6", effort: "medium", usd: 0.18},
 		"infra-lead":     {model: "Opus 4.8", effort: "medium", usd: 2.05},
 		"infra-dev-db":   {model: "GPT-5.6 Codex", effort: "medium", harness: "codex", usd: 0.44},

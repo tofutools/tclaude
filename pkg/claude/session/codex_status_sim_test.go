@@ -352,3 +352,37 @@ func runGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
 }
+
+// pi's extension puts the session cwd on every hook, so a pi pane publishes
+// its branch to the dashboard like the other hook-only harnesses.
+func TestApplyHook_PiPublishesWorkspaceBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	repo := filepath.Join(home, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	runGit(t, repo, "init", "-b", "feature-pi")
+	runGit(t, repo, "config", "user.email", "tclaude-test@example.invalid")
+	runGit(t, repo, "config", "user.name", "tclaude test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	const convID = "7d3c1a52-6b0e-4f1a-9c55-2b8f3e9d0a11"
+	const sessionID = "agent-pi-branch"
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, ConvID: convID, Status: session.StatusIdle,
+		Harness: "pi", Cwd: repo,
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "SessionStart", ConvID: convID, Cwd: repo,
+	}, sessionID))
+
+	ws, err := db.GetAgentWorkspace(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "feature-pi", ws.Branch)
+	assert.Equal(t, "feature-pi", agent.ResolveLocation(convID).CurrentBranch,
+		"dashboard resolver sees pi's branch")
+}

@@ -5,7 +5,7 @@ tclaude-managed tmux pane. tclaude is harness-agnostic: sessions,
 conversations, `ask`, agent groups, lifecycle, and the dashboard all work
 across every harness, and a group can freely mix them.
 
-Five coding harnesses and one shell pseudo-harness are supported:
+Six coding harnesses and one shell pseudo-harness are supported:
 
 | `--harness` | Harness | Binary in the pane |
 | --- | --- | --- |
@@ -14,6 +14,7 @@ Five coding harnesses and one shell pseudo-harness are supported:
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
 | `gemini` | Google Gemini CLI (beta) | `gemini` |
+| `pi` | pi (beta) | `pi` |
 | `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
@@ -61,7 +62,7 @@ takes `--harness`. When the flag is omitted, resolution is:
    `tclaude agent profiles default set`; its harness/model/effort apply to
    fresh terminal launches, each field overridable per launch.
 3. **First installed harness** — Claude Code is checked first; otherwise the
-   registry is walked in sorted order (codex, copilot, gemini, opencode) and the first
+   registry is walked in sorted order (codex, copilot, gemini, opencode, pi) and the first
    harness whose binary is on `PATH` wins. With nothing installed the launch
    reports the missing `claude` executable.
 

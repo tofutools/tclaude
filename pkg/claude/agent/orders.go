@@ -233,7 +233,7 @@ type ordersExplainParams struct {
 	Event   string `long:"event" optional:"true" default:"session.start" help:"Trigger event to simulate: session.start | user.prompt | tool.before | tool.after."`
 	Source  string `long:"source" optional:"true" default:"startup" help:"Event source: startup | resume | clear | compact."`
 	Conv    string `long:"conv" optional:"true" help:"Conversation to evaluate as. Defaults to the current one."`
-	Harness string `long:"harness" optional:"true" default:"claude" help:"Harness to evaluate as: claude | codex | opencode | copilot | gemini | shell. Decides which timing guarantees are available."`
+	Harness string `long:"harness" optional:"true" default:"claude" help:"Harness to evaluate as: claude | codex | opencode | copilot | gemini | pi | shell. Decides which timing guarantees are available."`
 	Hook    string `long:"hook" optional:"true" help:"Exact harness-native hook name to simulate (for selector orders), e.g. PostCompact or session.compacted."`
 	Trimmed bool   `long:"trimmed" optional:"true" help:"Simulate a hook payload whose tool fields were dropped for size, to see which orders could not be evaluated at all."`
 	Cwd     string `long:"cwd" optional:"true" help:"Working directory matcher input."`

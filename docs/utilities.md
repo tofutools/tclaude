@@ -68,7 +68,7 @@ tclaude stats -t         # token detail
 tclaude stats -j         # raw cache as JSON
 ```
 
-The data source is Claude Code's; Codex, OpenCode, Copilot, and Gemini
+The data source is Claude Code's; Codex, OpenCode, Copilot, Gemini, and pi
 activity is not included here — the [dashboard](dashboard.md) is where cross-harness
 usage lives.
 

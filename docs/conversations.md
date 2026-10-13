@@ -10,9 +10,9 @@ in each harness's own store and outlive the session that produced them. A
 session row can exit while its conversation stays listed, searchable, and
 resumable.
 
-`tclaude conv` is one merged index across all five agent harnesses: listings load
+`tclaude conv` is one merged index across all six agent harnesses: listings load
 Claude Code's cwd-indexed `.jsonl` store and merge in conversations from
-every other registered harness — Codex, OpenCode, Copilot, and Gemini —
+every other registered harness — Codex, OpenCode, Copilot, Gemini, and pi —
 read-only,
 each entry tagged with its harness. Resume and watch-mode launch use the
 recorded harness automatically.
@@ -106,7 +106,7 @@ Codex additionally has its own native archive state; tclaude surfaces it via
 ## Claude Code transcript operations
 
 These commands manipulate transcript files in Claude Code's cwd-indexed
-store. They do not touch Codex, OpenCode, Copilot, or Gemini stores.
+store. They do not touch Codex, OpenCode, Copilot, Gemini, or pi stores.
 
 ### conv delete
 
@@ -181,7 +181,7 @@ Semantic search ranks conversations by meaning rather than exact text, using
 
 !!! note "Claude Code transcripts only"
     The semantic index reads Claude Code's transcript store. Codex,
-    OpenCode, Copilot, and Gemini conversations are not indexed.
+    OpenCode, Copilot, Gemini, and pi conversations are not indexed.
 
 Requirements: a running Ollama with the embedding model pulled:
 

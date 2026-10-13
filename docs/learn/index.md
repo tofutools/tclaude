@@ -20,7 +20,7 @@ You need:
 - tmux (Homebrew installs it for you);
 - at least one harness CLI, installed and logged in. The tutorials use
   [Claude Code](https://claude.ai/code), the default. Codex CLI, OpenCode,
-  Copilot CLI and Gemini CLI work too: pick one under **Harness** when you
+  Copilot CLI, Gemini CLI and pi work too: pick one under **Harness** when you
   start an agent.
 
 You do not need to read anything else first. Each tutorial explains the terms

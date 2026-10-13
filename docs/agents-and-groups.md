@@ -380,8 +380,8 @@ Agents learn this command surface from bundled skills: `tclaude setup
 --install-agent-skills` installs the `agent-coord`, `agent-lifecycle`,
 `human-notify`, and related skills into `~/.claude/skills`, shared
 `~/.agents/skills`, and `$CODEX_HOME/skills` (default `~/.codex/skills`).
-Claude Code reads its own directory; Codex, Gemini, Copilot and OpenCode
-read the shared directory. Re-run setup after upgrading the binary.
+Claude Code reads its own directory; Codex, Gemini, Copilot, OpenCode and
+pi read the shared directory. Re-run setup after upgrading the binary.
 OpenCode's `OPENCODE_DISABLE_EXTERNAL_SKILLS` disables shared-directory
 discovery; remove that override to use the installed bundle.
 

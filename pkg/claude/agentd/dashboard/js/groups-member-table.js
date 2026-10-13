@@ -97,6 +97,7 @@ const HARNESS_LABELS = {
   opencode: { short: 'OC', long: 'OpenCode' },
   copilot: { short: 'COP', long: 'GitHub Copilot CLI' },
   gemini: { short: 'GEM', long: 'Gemini CLI' },
+  pi: { short: 'pi', long: 'pi' },
 };
 
 function harnessLabels(name) {

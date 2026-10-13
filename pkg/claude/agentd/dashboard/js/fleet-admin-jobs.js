@@ -111,7 +111,7 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
     <label class="fa-jb-row"><span class="fa-k">ref</span><input id="fleet-job-ref" value=${form.ref} placeholder="branch, full ref or exact commit" autocomplete="off" spellcheck="false" onInput=${set('ref')} /></label>
     <label class="fa-jb-row"><span class="fa-k">group</span><input id="fleet-job-group" value=${form.group} placeholder="receiving group on the peer" autocomplete="off" onInput=${set('group')} /></label>
     <label class="fa-jb-row"><span class="fa-k">harness</span><select id="fleet-job-harness" value=${form.harness} onChange=${set('harness')}>
-      <option value="">shell command</option>${['claude', 'codex', 'opencode', 'copilot', 'gemini'].map((x) => html`<option key=${x} value=${x}>${x} task</option>`)}</select></label>
+      <option value="">shell command</option>${['claude', 'codex', 'opencode', 'copilot', 'gemini', 'pi'].map((x) => html`<option key=${x} value=${x}>${x} task</option>`)}</select></label>
     <label class="fa-jb-row"><span class="fa-k">command</span><textarea id="fleet-job-command" rows="3" spellcheck="false" placeholder=${form.harness ? 'the task for the agent' : 'shell command'} onInput=${set('command')}>${form.command}</textarea></label>
     <label class="fa-jb-row"><span class="fa-k">timeout</span><input id="fleet-job-timeout" value=${form.timeout} inputmode="numeric" onInput=${set('timeout')} /></label>
     <label class="fa-jb-row"><span class="fa-k">require</span><input id="fleet-job-require" value=${form.require} placeholder="os=darwin,harness=codex,label=gpu (optional)" autocomplete="off" spellcheck="false" onInput=${set('require')} /></label>
