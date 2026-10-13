@@ -199,6 +199,20 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 			// keystrokes for the API drive, which is not a window or a race: it
 			// is reachable on every reminder tick for the life of the agent.
 			err = sendCopilotAPIMessage(conv, reminder)
+		case sess.Harness == harness.PiName:
+			selected, selectionErr := piDriveSelected(conv)
+			if selectionErr != nil {
+				slog.Warn("unread-reminder: pi drive posture unreadable; holding reminder without pane fallback",
+					"error", selectionErr, "tmux", sess.TmuxSession, "conv", conv)
+				continue
+			}
+			if selected {
+				// Same family as the inbox nudge: a channel that is down
+				// leaves the clock unadvanced, never types the reminder.
+				err = piDriveMessage(conv, reminder, "followUp")
+			} else {
+				err = injectTextAndSubmit(sess.TmuxSession+":0.0", reminder)
+			}
 		case sess.Harness == harness.CodexName:
 			selected, selectionErr := codexAppServerSelected(conv)
 			if selectionErr != nil {

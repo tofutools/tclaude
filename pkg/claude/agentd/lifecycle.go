@@ -362,6 +362,15 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
 		fallbackExitReason := ""
+		piDrive := false
+		if h.Name == harness.PiName {
+			selected, err := piDriveSelected(convID)
+			if err != nil {
+				res.Action, res.Detail = "error", "pi drive posture unreadable: "+err.Error()
+				return res, softExitUnattempted
+			}
+			piDrive = selected
+		}
 		if h.Name == harness.OpenCodeName && openCodeControlInputBlocked(sess.Status) {
 			res.Action = "error"
 			res.Detail = "OpenCode TUI is " + sess.Status + "; retry soft stop when idle or force kill"
@@ -374,7 +383,9 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		}
 		delivered := false
 		if h.Name == harness.OpenCodeName {
-			delivered = injectOpenCodeSoftExitTarget(target, "soft-exit", intentSet)
+			delivered = injectAPISoftExitTarget(target, "soft-exit", intentSet, openCodeSoftExit)
+		} else if piDrive {
+			delivered = injectAPISoftExitTarget(target, "soft-exit", intentSet, piDriveSoftExit)
 		} else {
 			delivered = injectSoftExitTarget(target, exitCmd, h.Life.SoftExitPrefixKeys(), "soft-exit", intentSet)
 		}
@@ -395,6 +406,9 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			switch {
 			case h.Name == harness.OpenCodeName:
 				res.Detail = "managed OpenCode TUI exit dispatch failed"
+			case piDrive:
+				// Channel-only: a stop never falls back to keystrokes.
+				res.Detail = "pi drive exit dispatch failed (is the extension connected?)"
 			case len(h.SignalExitKeys()) > 0:
 				// Every keystroke-free harness (Copilot, Claude Code, Codex)
 				// reports the signal path it actually took, not a typed
@@ -675,14 +689,45 @@ func setExitIntentTargetBestEffort(target *lifecycleTarget, action, relatedEvent
 	return &ref
 }
 
-// injectOpenCodeSoftExitTarget asks the managed server to dispatch app.exit to
-// the attached TUI's command registry. This is the semantic equivalent of
-// /exit without prompt-state or keybinding risk. The selected session ID and
-// pane identity remain bound across the API send and bounded retry.
-func injectOpenCodeSoftExitTarget(
+// apiSoftExit is a soft exit sent over a harness's control channel instead of
+// typed into the pane: the first send and every bounded retry use send, and
+// a retry waits while blocked says the harness cannot take it yet.
+type apiSoftExit struct {
+	label   string
+	send    func() error
+	blocked func(status string) bool
+}
+
+// openCodeSoftExit asks the managed server to dispatch app.exit to the
+// attached TUI's command registry. This is the semantic equivalent of /exit
+// without prompt-state or keybinding risk.
+func openCodeSoftExit(target *lifecycleTarget) apiSoftExit {
+	return apiSoftExit{
+		label: "OpenCode TUI API",
+		send: func() error {
+			return sendOpenCodeTUICommand(target.convID, target.sessionID, openCodeTUIExit)
+		},
+		blocked: openCodeControlInputBlocked,
+	}
+}
+
+// piDriveSoftExit asks a pi on the extension drive to shut down (ctx.shutdown).
+func piDriveSoftExit(target *lifecycleTarget) apiSoftExit {
+	return apiSoftExit{
+		label:   "pi drive",
+		send:    func() error { return piDriveExit(target.convID) },
+		blocked: func(string) bool { return false },
+	}
+}
+
+// injectAPISoftExitTarget sends a soft exit over the harness's control
+// channel. The selected session ID and pane identity remain bound across the
+// send and the bounded retry; nothing here types into the pane.
+func injectAPISoftExitTarget(
 	target *lifecycleTarget,
 	reason string,
 	intentRef *db.SessionExitIntentRef,
+	api func(*lifecycleTarget) apiSoftExit,
 ) bool {
 	if target == nil {
 		return false
@@ -695,10 +740,9 @@ func injectOpenCodeSoftExitTarget(
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
-	if err := sendOpenCodeTUICommand(
-		target.convID, target.sessionID, openCodeTUIExit,
-	); err != nil {
-		logLifecycleStopFailure("OpenCode TUI API", target.paneID, target.sessionID, err)
+	exit := api(target)
+	if err := exit.send(); err != nil {
+		logLifecycleStopFailure(exit.label, target.paneID, target.sessionID, err)
 		return false
 	}
 	if afterSoftExitTargetSendForTest != nil {
@@ -715,14 +759,15 @@ func injectOpenCodeSoftExitTarget(
 	if probe.state == paneProbeDead || !lifecycleProbeMatchesTarget(probe, target) {
 		return true
 	}
-	scheduleOpenCodeSoftExitRetryTarget(target, reason, intentRef)
+	scheduleAPISoftExitRetryTarget(target, reason, intentRef, exit)
 	return true
 }
 
-func scheduleOpenCodeSoftExitRetryTarget(
+func scheduleAPISoftExitRetryTarget(
 	target *lifecycleTarget,
 	reason string,
 	intentRef *db.SessionExitIntentRef,
+	exit apiSoftExit,
 ) {
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
@@ -752,20 +797,18 @@ func scheduleOpenCodeSoftExitRetryTarget(
 			if sess == nil || sess.ID != target.sessionID {
 				return
 			}
-			if openCodeControlInputBlocked(sess.Status) {
-				slog.Info("OpenCode soft-exit retry deferred while TUI is not idle",
-					"conv_id", target.convID, "tmux_session", target.tmuxSession,
+			if exit.blocked(sess.Status) {
+				slog.Info("soft-exit retry deferred while the harness is not idle",
+					"via", exit.label, "conv_id", target.convID, "tmux_session", target.tmuxSession,
 					"status", sess.Status, "attempt", attempt, "reason", reason)
 				if attempt == softExitMaxAttempts {
 					scheduleUnknownIntentCleanup(target, intentRef)
 				}
 				continue
 			}
-			if err := sendOpenCodeTUICommand(
-				target.convID, target.sessionID, openCodeTUIExit,
-			); err != nil {
-				slog.Warn("OpenCode soft-exit retry API dispatch failed",
-					"error", err, "conv_id", target.convID,
+			if err := exit.send(); err != nil {
+				slog.Warn("soft-exit retry dispatch failed",
+					"via", exit.label, "error", err, "conv_id", target.convID,
 					"tmux_session", target.tmuxSession, "attempt", attempt,
 					"reason", reason)
 				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
@@ -1089,7 +1132,23 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 		// OpenCode's first send and every bounded retry must use the managed
 		// TUI API. Falling through to scheduleSoftExitRetry would reintroduce
 		// tmux keystrokes when a reincarnating attach pane lingers.
-		return injectOpenCodeSoftExitTarget(target, reason, intentRef)
+		return injectAPISoftExitTarget(target, reason, intentRef, openCodeSoftExit)
+	}
+	if sess.Harness == harness.PiName {
+		piDrive, err := piDriveSelected(convID)
+		if err != nil {
+			slog.Warn("soft-exit: pi drive posture unreadable; refusing pane fallback",
+				"conv_id", convID, "error", err)
+			return false
+		}
+		if piDrive {
+			target, err := captureLifecycleTarget(sess)
+			if err != nil {
+				logLifecycleStopFailure("capture pi drive soft exit", sess.TmuxSession, sess.ID, err)
+				return false
+			}
+			return injectAPISoftExitTarget(target, reason, intentRef, piDriveSoftExit)
+		}
 	}
 	// Capture before injection: a responsive pane can exit synchronously after
 	// Enter, but that successful exit still owns the lifecycle intent and must
@@ -3497,7 +3556,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.RoleRef != "" || len(body.RoleRefs) > 0 || body.Descr != "" ||
 		body.TaskURL != "" || body.TaskLabel != "" || body.AutoFocus || body.AutoFocusWeb ||
 		body.IsOwner || len(body.PermissionOverrides) > 0 || body.RemoteControl != nil ||
-		body.CopilotAPI != nil || body.CodexAppServer != nil || body.AutoReview) {
+		body.CopilotAPI != nil || body.CodexAppServer != nil || body.PiDrive != nil || body.AutoReview) {
 		writeError(w, http.StatusBadRequest, "invalid_request",
 			"non-interactive spawn does not accept identity (other than name), messaging, or interactive drive settings")
 		return
@@ -4063,6 +4122,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	// The pi extension drive is an explicit per-launch opt-in, never a profile
+	// default: it changes how every delivery reaches the agent, so only the
+	// spawn that asks for it gets it.
+	piDrive := body.PiDrive != nil && *body.PiDrive
+	if piDrive && h.Name != harness.PiName {
+		writeError(w, http.StatusBadRequest, "invalid_request",
+			fmt.Sprintf("pi_drive is a pi-only drive; harness %q has none", h.Name))
 		return
 	}
 	var codexAppServer, codexAppServerSet bool
@@ -4977,6 +5045,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		CopilotAPI:                  copilotAPI,
 		CopilotAPISet:               copilotAPISet,
 		CopilotAPISource:            copilotAPISource,
+		PiDrive:                     piDrive,
 		CodexAppServer:              codexAppServer,
 		CodexAppServerSet:           codexAppServerSet,
 		CodexAppServerSource:        codexAppServerSource,
@@ -5404,6 +5473,10 @@ type spawnParams struct {
 	// dashboard sends exactly that explicit false on every Copilot spawn, so the
 	// gap is reachable from the most-used surface, not just a hand-built request.
 	CopilotAPISet bool
+	// PiDrive drives a pi agent through tclaude's pi extension channel instead
+	// of tmux send-keys (pi_drive.go). An explicit per-launch opt-in, pi only,
+	// frozen into the relaunch profile so a resume keeps the drive.
+	PiDrive bool
 	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value
 	// beside them, or the harness default when nobody did. resolveBoolLaunchField
 	// has always computed this and every caller threw it away; these carry it as
@@ -9027,11 +9100,22 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		}
 	}
 
+	piSelected := false
+	if h.Name == harness.PiName {
+		var err error
+		piSelected, err = piDriveSelected(convID)
+		if err != nil {
+			slog.Error("spawn: pi drive posture unreadable; post-init delivery abandoned without pane fallback",
+				"conv", convID, "error", err)
+			return
+		}
+	}
+
 	// Codex's seed-delivered welcome and out-of-band title update need no
 	// keystrokes. Its app-server path has an explicit control-readiness wait.
 	// Preserve the historical settling delay for other paths, including a
 	// legacy Codex welcome that still needs to be typed into the pane.
-	skipKeystrokeDelay := h.Name == harness.CodexName && (welcomeInSeed || codexSelected)
+	skipKeystrokeDelay := piSelected || h.Name == harness.CodexName && (welcomeInSeed || codexSelected)
 	if !skipKeystrokeDelay {
 		timing("keystroke_delay_begin", "delay_ms", reincarnateReadyDelay.Milliseconds())
 		time.Sleep(reincarnateReadyDelay)
@@ -9054,6 +9138,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"budget; post-init delivery is abandoned because the failed launch is being "+
 			"shut down as crashed and API posture never falls back to pane input",
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
+		return
+	}
+	if piSelected && !awaitPiDrive(convID) {
+		slog.Error("spawn: the pi drive channel never connected; post-init delivery is abandoned without pane fallback",
+			"conv", convID, "budget", piDriveConnectTimeout)
 		return
 	}
 	if codexSelected && !awaitCodexAppServerReady(convID) {
@@ -9128,6 +9217,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			err = sendCopilotAPIMessage(convID, welcome)
 		case codexSelected:
 			err = sendCodexAppServerMessage(convID, spawnContextMsgID, welcome)
+		case piSelected:
+			err = piDriveMessage(convID, welcome, "followUp")
 		default:
 			err = injectTextAndSubmit(target, welcome)
 		}

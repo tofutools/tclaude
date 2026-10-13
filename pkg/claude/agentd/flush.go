@@ -402,6 +402,31 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		}
 		return true
 	}
+	// A pi agent on the extension drive is equally fail-closed: the message
+	// goes to its extension as one user turn (steered in while pi is busy, as
+	// a typed Enter would be), and a channel that is down holds the row.
+	piSelected := false
+	if sess.Harness == harness.PiName {
+		var piSelectionErr error
+		piSelected, piSelectionErr = piDriveSelected(toConv)
+		if piSelectionErr != nil {
+			slog.Warn("pi drive posture unreadable; holding durable message without pane fallback",
+				"error", piSelectionErr, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+	}
+	if piSelected {
+		if err := piDriveMessage(toConv, nudge, "steer"); err != nil {
+			if standingOrderOrigin != nil {
+				_ = db.CancelPendingStandingOrderTurnOrigin(
+					m.ToAgent, toConv, m.ID, standingOrderOrigin.OpenCodeMessageID)
+			}
+			slog.Warn("pi drive nudge failed; holding durable message",
+				"error", err, "conv", toConv, "msg_id", m.ID, "tmux", sess.TmuxSession)
+			return false
+		}
+		return true
+	}
 	// An explicitly selected Codex app-server launch is equally fail-closed:
 	// warming or unavailable control leaves the durable message queued and is
 	// never permission to put caller-controlled bytes into the TUI composer.

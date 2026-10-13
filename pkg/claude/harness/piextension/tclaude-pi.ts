@@ -14,13 +14,20 @@
 //     (whose answer can cancel a compaction) and shutdown (which must flush
 //     before pi exits) wait for delivery; everything else is queued so a
 //     turn is never slowed by tclaude.
+//   - The drive (an agent spawned with --pi-drive) asks tclaude's daemon,
+//     over its agent socket, what to deliver, and runs it through pi's own
+//     API: a fixed set of operations, never commands. The daemon answers
+//     "no drive" for every other launch, and the loop stops.
 //
 // Keep it dependency-free: pi loads it with jiti, outside any project.
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { request } from "node:http";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
-export const TCLAUDE_PI_EXTENSION_VERSION = 3;
+export const TCLAUDE_PI_EXTENSION_VERSION = 4;
 
 const HOOK_BIN = process.env.TCLAUDE_PI_HOOK_BIN ?? "";
 // tclaude's auto-compaction window in tokens, when the agent pins one. pi
@@ -279,6 +286,163 @@ function build(event: string, ctx: any, fields: Payload, via: (p: Payload) => Pr
 	}
 }
 
+// The drive: a long poll on the daemon's agent socket. Each answer carries the
+// requests queued for this conversation; their results go back on the next
+// poll. The daemon tells a launch without the drive to stop.
+const DRIVE_PATH = "/v1/whoami/pi-drive";
+const DRIVE_POLL_TIMEOUT_MS = 60_000;
+const DRIVE_BACKOFF_MAX_MS = 30_000;
+const MAX_DRIVE_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+function driveSocket(): string {
+	const explicit = (process.env.TCLAUDE_AGENTD_SOCKET ?? "").trim();
+	if (explicit && isAbsolute(explicit)) return explicit;
+	return join(homedir(), ".tclaude", "api", "agentd-socket", "agentd.sock");
+}
+
+type DriveAck = { id: number; ok: boolean; error?: string };
+
+// One drive per pi process, whichever module instance started it; ctx is the
+// latest session's, since pi may load this module afresh per session.
+const drive: { started: boolean; stopped: boolean; ctx: any; pi: any; acks: DriveAck[]; req: any } =
+	((globalThis as any).__tclaudePiDrive ??= { started: false, stopped: false, ctx: undefined, pi: undefined, acks: [], req: undefined });
+
+function drivePoll(): Promise<{ status: number; body: any }> {
+	return new Promise((resolve) => {
+		const acks = drive.acks;
+		drive.acks = [];
+		const data = JSON.stringify({ acks });
+		let settled = false;
+		const finish = (status: number, body: any) => {
+			if (settled) return;
+			settled = true;
+			drive.req = undefined;
+			if (status !== 200) drive.acks = acks.concat(drive.acks);
+			resolve({ status, body });
+		};
+		try {
+			const req = request(
+				{
+					socketPath: driveSocket(),
+					path: DRIVE_PATH,
+					method: "POST",
+					headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data) },
+					timeout: DRIVE_POLL_TIMEOUT_MS,
+				},
+				(res) => {
+					let raw = "";
+					res.setEncoding("utf8");
+					res.on("data", (chunk: string) => {
+						raw += chunk;
+						if (raw.length > MAX_DRIVE_RESPONSE_BYTES) res.destroy();
+					});
+					res.on("end", () => {
+						let body: any = undefined;
+						try {
+							body = JSON.parse(raw);
+						} catch {}
+						finish(res.statusCode ?? 0, body);
+					});
+					res.on("error", () => finish(0, undefined));
+				},
+			);
+			drive.req = req;
+			// The poll never keeps pi alive on its own.
+			req.on("socket", (socket: any) => socket?.unref?.());
+			req.on("timeout", () => req.destroy());
+			req.on("error", () => finish(0, undefined));
+			req.end(data);
+		} catch {
+			finish(0, undefined);
+		}
+	});
+}
+
+function driveRun(op: any): DriveAck {
+	const id = typeof op?.id === "number" ? op.id : 0;
+	const ctx = drive.ctx;
+	const pi = drive.pi;
+	try {
+		switch (op?.op) {
+			case "message": {
+				const text = typeof op.text === "string" ? op.text : "";
+				const deliverAs = op.deliver === "followUp" ? "followUp" : "steer";
+				// While pi works, a message joins the run as a steer or waits
+				// for it as a follow-up; when idle it starts a turn.
+				if (ctx?.isIdle?.() === false) pi.sendUserMessage(text, { deliverAs });
+				else pi.sendUserMessage(text);
+				break;
+			}
+			case "compact": {
+				const followUp = typeof op.text === "string" ? op.text : "";
+				const after = () => {
+					if (!followUp) return;
+					try {
+						pi.sendUserMessage(followUp, { deliverAs: "followUp" });
+					} catch {}
+				};
+				ctx.compact({ onComplete: after, onError: after });
+				break;
+			}
+			case "rename":
+				pi.setSessionName(typeof op.name === "string" ? op.name : "");
+				break;
+			case "exit":
+				// ctx.shutdown() only takes effect when a turn settles, so an
+				// idle pi would never act on it. SIGTERM is pi's own graceful
+				// path: it ends any running turn, runs session_shutdown and
+				// exits (status 0 in the TUI).
+				drive.stopped = true;
+				setImmediate(() => process.kill(process.pid, "SIGTERM"));
+				break;
+			default:
+				return { id, ok: false, error: `unknown operation ${String(op?.op)}` };
+		}
+		return { id, ok: true };
+	} catch (err: any) {
+		return { id, ok: false, error: String(err?.message ?? err).slice(0, 500) };
+	}
+}
+
+async function driveLoop(): Promise<void> {
+	let backoff = 500;
+	while (!drive.stopped) {
+		const { status, body } = await drivePoll();
+		if (drive.stopped) return;
+		if (status === 200 && body && typeof body === "object") {
+			if (body.drive !== true) {
+				drive.stopped = true;
+				return;
+			}
+			backoff = 500;
+			for (const op of Array.isArray(body.requests) ? body.requests : []) {
+				drive.acks.push(driveRun(op));
+			}
+			continue;
+		}
+		if (status === 401 || status === 403 || status === 404 || status === 405) {
+			// Not this process's channel, or a daemon without the drive.
+			drive.stopped = true;
+			return;
+		}
+		await new Promise((resolve) => {
+			const timer = setTimeout(resolve, backoff);
+			(timer as any)?.unref?.();
+		});
+		backoff = Math.min(backoff * 2, DRIVE_BACKOFF_MAX_MS);
+	}
+}
+
+function startDrive(pi: any, ctx: any): void {
+	drive.pi = pi;
+	drive.ctx = ctx;
+	if (drive.started) return;
+	drive.started = true;
+	driveLoop().catch(() => {
+		drive.stopped = true;
+	});
+}
+
 // Claude Code's SessionStart sources. "clear" and "resume" tell tclaude the
 // pane moved to another conversation (pi's /new, /clone, /fork, /resume).
 const START_SOURCE: Record<string, string> = {
@@ -321,6 +485,9 @@ export default function tclaudePi(pi: any): void {
 		announced.id = id;
 		emit("SessionStart", ctx, { source: START_SOURCE[event?.reason] ?? "startup" });
 		showStatus(ctx);
+		try {
+			startDrive(pi, ctx);
+		} catch {}
 	});
 
 	pi.on("before_agent_start", (event: any) => {
@@ -410,7 +577,13 @@ export default function tclaudePi(pi: any): void {
 		]);
 		if (timer) clearTimeout(timer);
 		const end = emitNow("SessionEnd", ctx, { reason: END_REASON[reason] ?? "other" });
-		if (reason === "quit") closed = true;
+		if (reason === "quit") {
+			closed = true;
+			drive.stopped = true;
+			try {
+				drive.req?.destroy?.();
+			} catch {}
+		}
 		await end;
 	});
 }

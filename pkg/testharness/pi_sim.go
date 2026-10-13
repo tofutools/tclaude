@@ -805,3 +805,37 @@ func (s *simSpawner) startPi(args clcommon.SpawnArgs, label, cwd, cmd string, ex
 	sim.SubmitLaunchPrompt()
 	return nil
 }
+
+// Drive runs one request of tclaude's pi drive (agentd's pi_drive.go) as the
+// extension does through pi's API: a message is a user turn, rename is
+// setSessionName, compact compacts and then sends its follow-up, and exit
+// shuts pi down. None of it passes through the pane's input.
+func (p *PiSim) Drive(op, text, name string) error {
+	p.mu.Lock()
+	alive := p.alive
+	p.mu.Unlock()
+	if !alive {
+		return fmt.Errorf("pi is not running")
+	}
+	switch op {
+	case "message":
+		p.submitPrompt(text)
+	case "rename":
+		p.mu.Lock()
+		p.name = name
+		p.appendEntryLocked(map[string]any{"type": "session_info", "name": name})
+		p.mu.Unlock()
+	case "compact":
+		_ = p.hook("PreCompact", map[string]any{"trigger": "manual"})
+		p.compact()
+		_ = p.hook("PostCompact", map[string]any{"trigger": "manual"})
+		if text != "" {
+			p.submitPrompt(text)
+		}
+	case "exit":
+		p.quit()
+	default:
+		return fmt.Errorf("unknown operation %q", op)
+	}
+	return nil
+}
