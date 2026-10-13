@@ -1401,14 +1401,14 @@ setTimeout(function(){
 			Key:      "processes-templates",
 			Title:    "Processes — templates",
 			Caption:  "Feature-gated Processes tab with a populated versioned template list, dark-themed actions, and the library-scoped Edit-with-agent entry point.",
-			JS:       processTabJS("templates", `[data-process-template="release-train"]`),
+			JS:       processTabJS(`[data-process-template="release-train"]`),
 			SettleMS: 900,
 		},
 		{
 			Key:     "processes-template-description-edit",
 			Title:   "Processes — inline description edit",
 			Caption: "TCL-600: the Templates list edits a template description in place, with the click-to-edit affordance swapped for a focused, skin-themed editor.",
-			JS:      processTabJS("templates", `[data-process-template="release-train"]`),
+			JS:      processTabJS(`[data-process-template="release-train"]`),
 			// `return` matters, and so does the frame wait: the editor swaps in
 			// through a Preact state update, so a synchronous read right after
 			// the click always misses it. See processTabJS.
@@ -1428,7 +1428,7 @@ setTimeout(function(){
 			Key:     "processes-scribe-library-entry",
 			Title:   "Processes — library scribe entry",
 			Caption: "TCL-434 capstone: the Processes list exposes one visible library-scoped scribe action with skin-coherent language before any template is opened.",
-			JS:      processTabJS("templates", `#process-scribe-library`),
+			JS:      processTabJS(`#process-scribe-library`),
 			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `var button=document.querySelector('#process-scribe-library');
   if(!button) throw new Error('library-scoped process scribe action missing');
   var rect=button.getBoundingClientRect();
@@ -3400,12 +3400,16 @@ var processEditorLegacyEdgeErrorRowJS = processEditorStateJS(`var outcome='x'.re
 
 func processEditorStateJS(extraJS string) string {
 	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav [data-tab="processes"]');
-  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  var auto = document.querySelector('nav [data-tab="jobs"]');
+  if (!auto || auto.offsetParent === null) throw new Error('Automations nav is not visible');
+  auto.click();
+  var entryDeadline = Date.now() + 3000;
+  while (!document.querySelector('#tab-jobs [data-automations-subtab="processes"]') && Date.now() < entryDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var nav = document.querySelector('#tab-jobs [data-automations-subtab="processes"]');
+  if (!nav) throw new Error('Automations › Processes subtab is not visible');
   nav.click();
-  var sub = document.querySelector('[data-process-subtab="templates"]');
-  if (!sub) throw new Error('Processes templates subtab missing');
-  sub.click();
   var deadline = Date.now() + 5000;
   var openSel = 'button[data-process-action="edit"][data-id="release-train"]';
   while (!document.querySelector(openSel) && Date.now() < deadline) {
@@ -3506,23 +3510,27 @@ func processEditorLayeringState(key, title string) dashsnap.State {
 	}
 }
 
-func processTabJS(subtab, readySelector string) string {
+func processTabJS(readySelector string) string {
 	// `return` matters: dashsnap's MustEval wraps the JS in a function and
 	// awaits its RESULT, so only a returned promise makes the readiness
 	// checks (and their throws) actually gate the state.
 	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav [data-tab="processes"]');
-  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  var auto = document.querySelector('nav [data-tab="jobs"]');
+  if (!auto || auto.offsetParent === null) throw new Error('Automations nav is not visible');
+  auto.click();
+  var entryDeadline = Date.now() + 3000;
+  while (!document.querySelector('#tab-jobs [data-automations-subtab="processes"]') && Date.now() < entryDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var nav = document.querySelector('#tab-jobs [data-automations-subtab="processes"]');
+  if (!nav) throw new Error('Automations › Processes subtab is not visible');
   nav.click();
-  var sub = document.querySelector('[data-process-subtab="%s"]');
-  if (!sub) throw new Error('Processes subtab %s missing');
-  sub.click();
   var deadline = Date.now() + 3000;
   while (!document.querySelector('%s') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
   if (!document.querySelector('%s')) throw new Error('Processes populated row did not render');
-})();`, subtab, subtab, readySelector, readySelector)
+})();`, readySelector, readySelector)
 }
 
 func managementModalJS(modulePath, opener, readySelector string) string {

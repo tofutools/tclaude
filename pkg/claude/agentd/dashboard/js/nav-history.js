@@ -57,7 +57,12 @@ let ready = false;
 // live terminals, or a disabled Costs/Plugins tab). A restored URL pointing at
 // an unavailable tab is a stale target (AC #5): the caller falls back to the
 // default rather than stranding on a blank hidden section.
+//
+// Processes is the exception: it is reached through the Automations sub-nav, so
+// its nav button is permanently CSS-hidden and only the feature flag decides
+// whether it is reachable.
 function tabAvailable(tab) {
+  if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -128,15 +133,11 @@ function activeLocationFromDOM() {
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
-    // /processes/templates/<id> segment) is state the DOM never spells out, so
-    // a pure DOM read cannot reproduce it. Its `location` signal always yields
-    // at least {tab, subtab}, so the DOM branch below is reached only when the
-    // island is ABSENT (its asset failed to load and the subnav was never
-    // rendered) — where it degrades to exactly the pre-selection behaviour.
+    // /automations/processes/templates/<id> segment) is state the DOM never
+    // spells out, so a pure DOM read cannot reproduce it. An absent island
+    // (its asset failed to load) degrades to the bare Processes view.
     const island = featureState('processes');
     if (island) return normalizeLocation(island.location.value);
-    const sub = $$('#tab-processes .process-subtab').find(b => b.classList.contains('active'));
-    if (sub) loc.subtab = sub.dataset.processSubtab;
   }
   return normalizeLocation(loc);
 }

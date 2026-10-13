@@ -51,7 +51,7 @@ test('untrusted or unbounded handoff fields are rejected before the daemon call'
 test('task references and active-session readback stay scoped and injection-safe', () => {
   const handoff = processScribeHandoff({ kind: 'template', id: 'release-flow', isNew: true });
   assert.deepEqual(processScribeTaskRef(handoff, 'https://dash.example:9443'), {
-    url: 'https://dash.example:9443/processes/templates', label: 'process: release-flow',
+    url: 'https://dash.example:9443/automations/processes/templates', label: 'process: release-flow',
   });
   const agentId = `agt_${'a'.repeat(32)}`;
   const valid = {

@@ -594,6 +594,18 @@ export function buildCommands(snapshot) {
       run: () => btn.click(),
     });
   }
+  // Processes is an Automations subtab, so its nav anchor is always hidden and
+  // the loop above skips it; offer it explicitly while the feature is on.
+  const processesTab = $$('nav [data-tab="processes"]')[0];
+  if (processesTab && !document.body.classList.contains('hide-processes')) {
+    cmds.push({
+      peerView: 'tab', tab: 'processes', icon: wiz('⤢', '🪞'), label: wiz('Go to Processes', 'Scry the Rites'),
+      hint: wiz('Automations › Processes', 'peer into the Labours’ rites'),
+      keywords: 'tab navigate go open processes process templates automations'
+        + ' scry peer gaze behold chamber vision rites',
+      run: () => processesTab.click(),
+    });
+  }
   // Fleet administration has no visible tab before the first peer is
   // trusted (the Skynet bar appears with the fleet), so it is reached here.
   const fleetAdmin = $$('nav [data-tab="fleet-admin"]')[0];

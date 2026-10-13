@@ -139,7 +139,7 @@ export function processScribeTaskRef(handoff, origin = globalThis.location?.orig
   const label = processScribeScopeLabel(scope);
   if (!label) throw new Error('process scribe scope is invalid');
   return Object.freeze({
-    url: `${base}/processes/templates`,
+    url: `${base}/automations/processes/templates`,
     label: scope.id ? `process: ${scope.id}` : 'process templates',
   });
 }

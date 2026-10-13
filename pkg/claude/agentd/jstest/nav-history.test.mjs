@@ -73,8 +73,9 @@ test('a correction replaces the current history entry; a navigation pushes', asy
   registerFeatureState('processes', { location: islandLocation });
 
   initNavHistory();
-  // Boot canonicalises the current entry in place — never a push.
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/processes/templates' }]);
+  // Boot canonicalises the current entry in place — never a push. The legacy
+  // top-level /processes route heals to its Automations-nested form.
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/automations/processes/templates' }]);
   browsing.calls.length = 0;
 
   // Opening the editor is a real navigation: it must PUSH, so Back returns to
@@ -82,7 +83,7 @@ test('a correction replaces the current history entry; a navigation pushes', asy
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
     detail: { location: { tab: 'processes', subtab: 'templates', selection: 'release-train' } },
   }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/processes/templates/release-train' }]);
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/automations/processes/templates/release-train' }]);
   browsing.calls.length = 0;
 
   // A correction is NOT a user navigation. It must replace, because the browser
@@ -94,14 +95,14 @@ test('a correction replaces the current history entry; a navigation pushes', asy
     },
   }));
   assert.deepEqual(browsing.calls, [
-    { kind: 'replace', url: '/processes/templates/release-train' },
+    { kind: 'replace', url: '/automations/processes/templates/release-train' },
   ], 'a correction never pushes');
 });
 
 test('a repeated refusal does not grow history without bound', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);
-  const browsing = installBrowsingContext(t, harness, '/processes/templates/release-train');
+  const browsing = installBrowsingContext(t, harness, '/automations/processes/templates/release-train');
 
   const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
     harness.importDashboardModule('js/feature-state-registry.js'),
@@ -129,7 +130,7 @@ test('a repeated refusal does not grow history without bound', async (t) => {
   assert.equal(browsing.calls.length, 5);
   assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true,
     'refusals never accumulate history entries');
-  assert.equal(browsing.at(), '/processes/templates/release-train');
+  assert.equal(browsing.at(), '/automations/processes/templates/release-train');
 });
 
 test('a terminals deep link survives boot with the tab still hidden', async (t) => {
@@ -294,6 +295,6 @@ test('the adapter reads the open editor id from the island, not the DOM', async 
   harness.document.querySelector('nav [data-tab="processes"]').click();
 
   assert.deepEqual(browsing.calls, [
-    { kind: 'push', url: '/processes/templates/release-train' },
+    { kind: 'push', url: '/automations/processes/templates/release-train' },
   ]);
 });

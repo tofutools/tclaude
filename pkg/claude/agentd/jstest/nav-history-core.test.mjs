@@ -82,7 +82,7 @@ test('opening then closing the template editor is a real back/forward step', () 
 
   s = go(s, s.index - 1);
   assert.ok(locEquals(current(s), editingTemplate), 'Back re-enters the editor');
-  assert.equal(toPath(current(s)), '/processes/templates/release-train');
+  assert.equal(toPath(current(s)), '/automations/processes/templates/release-train');
 });
 
 test('push after Back truncates the forward tail (browser semantics)', () => {
@@ -255,12 +255,22 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
 
-  assert.equal(toPath(run), '/processes');
+  // Processes is an Automations subtab: canonical routes nest under
+  // /automations/processes, while the old /processes/... links still parse
+  // (and heal to the canonical form on the next serialization).
+  assert.equal(toPath(run), '/automations/processes');
+  assert.deepEqual(fromPath('/automations/processes/runs/run-42'), { tab: 'processes' });
   assert.deepEqual(fromPath('/processes/runs/run-42'), { tab: 'processes' });
+  assert.deepEqual(fromPath('/automations/processes'), { tab: 'processes' });
 
-  assert.equal(toPath(editingTemplate), '/processes/templates/release-train');
+  assert.equal(toPath(editingTemplate), '/automations/processes/templates/release-train');
+  assert.deepEqual(fromPath('/automations/processes/templates/release-train'),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' });
   assert.deepEqual(fromPath('/processes/templates/release-train'),
     { tab: 'processes', subtab: 'templates', selection: 'release-train' });
+  assert.equal(toPath(fromPath('/processes/templates/release-train')),
+    '/automations/processes/templates/release-train');
+  assert.equal(toPath({ tab: 'processes', subtab: 'templates' }), '/automations/processes/templates');
 
   // Round-trip every fixture.
   for (const loc of [groups, jobs, standingOrders, config, accessSudo, run, editingTemplate]) {

@@ -9824,13 +9824,20 @@ body.hide-debug #tab-debug { display: none; }
    feature flag, preventing a flash of experimental chrome while config loads. */
 body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
+/* Processes is presented as an Automations subtab (the shared sub-nav in
+   automations-subnav.js), so its own nav anchor never shows; Automations
+   carries the active underline while Processes is open. */
+nav [data-tab="processes"] { display: none; }
+nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #d4d4d4; border-bottom-color: #58a6ff; }
+body.slop nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #ffe88c; border-bottom-color: #ffd700; }
+body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f3e6c0; border-bottom-color: #d9b45a; }
 
 /* Processes tab shell — deliberately neutral and compact so the graph editor
    and live viewer can replace the list panels with their full-canvas mounts. */
 .process-subnav {
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
-  padding-bottom: 10px; border-bottom: 1px solid #30363d;
 }
+.process-subnav .jobs-subnav { margin: 0; }
 .process-subtab, .process-action {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
