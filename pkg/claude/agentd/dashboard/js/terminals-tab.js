@@ -52,7 +52,7 @@ export function openWebWindowPane(agent, label, options) {
   }, paneOptions);
 }
 
-export function openWebTermPane(agent, label, whichOrPromise, { group = '' } = {}) {
+export function openWebTermPane(agent, label, whichOrPromise, { group = '', ...paneOptions } = {}) {
   openTerminalPane(
     Promise.resolve(whichOrPromise).then((which) => (which
       ? {
@@ -62,6 +62,7 @@ export function openWebTermPane(agent, label, whichOrPromise, { group = '' } = {
         agent,
       }
       : null)),
+    paneOptions,
   );
 }
 
