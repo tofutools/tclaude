@@ -9,15 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestCodexNativeRegistryPreflightIsStructuredAndScoped(t *testing.T) {
-	// This test records the preflight boundary, not a live app-server. Both
-	// launch and post-init observe the same simulated ready server.
-	t.Cleanup(agentd.SetAwaitCodexAppServerReadyForTest(func(string) bool { return true }))
 	t.Cleanup(agentd.SetAwaitCodexAppServerLaunchReadyForTest(func(string, string) bool { return true }))
 	var readinessCalls atomic.Int32
 	restore := agentd.SetCodexNativeRegistryReadinessForTest(func() error {
@@ -62,6 +60,15 @@ func TestCodexNativeRegistryPreflightIsStructuredAndScoped(t *testing.T) {
 
 	t.Run("tclaude outer sandbox is unchanged", func(t *testing.T) {
 		f := newFlow(t)
+		// No app-server process exists behind this preflight recorder. Release
+		// its background version-proof wait at teardown, before newFlow drains it.
+		t.Cleanup(func() {
+			runtimes, err := db.ListCodexAppServerRuntimes()
+			require.NoError(t, err)
+			for _, rt := range runtimes {
+				require.NoError(t, db.MarkCodexAppServerRuntimeUnavailable(rt.Generation, "preflight fixture finished"))
+			}
+		})
 		f.HaveGroup("crew")
 		response := f.AsHuman().SpawnWith("crew", map[string]any{
 			"name": "outer-layer", "harness": harness.CodexName,

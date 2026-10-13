@@ -784,6 +784,9 @@ func TestResumeOneConv_DoesNotRequireFilesystemPin(t *testing.T) {
 }
 
 func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T) {
+	// This recorder checks launch arguments and has no live pane to re-arm.
+	// Keep its negative re-arm path, using the existing fixture timeout seam.
+	t.Cleanup(SetReincarnateSpawnTimeoutForTest(100 * time.Millisecond))
 	t.Cleanup(SetWaitTimingsForTest(100*time.Millisecond, time.Millisecond))
 	t.Cleanup(WaitForBackgroundForTest)
 	for _, tc := range []struct {
@@ -828,16 +831,6 @@ func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T
 			require.NoError(t, err)
 			require.Empty(t, rows, "test setup must prune every process-history row")
 
-			if tc.harnessName == harness.CodexName {
-				// The recording spawner does not launch Codex, whose real resume
-				// has this native thread row. Supply it so post-init title writes
-				// can finish instead of exhausting the 30-second missing-row retry.
-				home, err := os.UserHomeDir()
-				require.NoError(t, err)
-				cx := testharness.NewCodexSim(t, home, cwd)
-				cx.ConvID = convID
-				require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{Cwd: cwd}))
-			}
 			res := resumeOneConv(convID)
 			require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 			assert.Equal(t, physicalCwd, rec.cwd)
