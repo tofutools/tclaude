@@ -724,6 +724,7 @@ func runServe(p *serveParams) error {
 	startExportJobsCleanup(cronStop)
 	startHumanMessageAttachmentCleanup(cronStop)
 	startAgentMessageAttachmentCleanup(cronStop)
+	startPiWalledAuthSync(cronStop)
 
 	// Pending-spawn sweeper. Finishes enrollment for non-blocking spawns
 	// whose conv-id materialised only after the spawn returned PENDING —

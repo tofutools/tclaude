@@ -192,27 +192,34 @@ func TestPrepareTclaudeLayerHarnessStateRefusesExistingNonDirectory(t *testing.T
 	}
 }
 
-// pi writes every turn to its session store: inside the agent directory the
-// state root covers it, and a store the environment moves out of it is a
-// writable requirement of its own.
-func TestPiLayerPathRequirementsFollowTheSessionStore(t *testing.T) {
+// A walled pi's state root is tclaude's walled agent directory; the
+// operator's agent directory is read-only inside the wall, apart from the
+// session store pi writes every turn, wherever settings put it.
+func TestPiLayerPathRequirementsReadTheHostAndWriteSessions(t *testing.T) {
 	home := testutil.CanonicalTempDir(t)
 	cwd := testutil.CanonicalTempDir(t)
-	agentDir := filepath.Join(home, ".pi", "agent")
+	host := filepath.Join(home, ".pi", "agent")
+	require.NoError(t, os.MkdirAll(host, 0o700))
 	t.Setenv("HOME", home)
-	t.Setenv(harness.PiAgentDirEnvVar, agentDir)
+	t.Setenv(harness.PiAgentDirEnvVar, host)
 	t.Setenv(harness.PiSessionDirEnvVar, "")
-
-	got, err := piLayerPathRequirements(cwd, agentDir)
+	walled, err := harness.PiWalledAgentDir(host, "11111111-2222-4333-8444-555555555555")
 	require.NoError(t, err)
-	assert.Empty(t, got, "the default store lives in the state root")
+
+	got, err := piLayerPathRequirements(cwd, walled)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, host, got[0].Path)
+	assert.Equal(t, harness.LayerPathRead, got[0].Access)
+	assert.Equal(t, filepath.Join(host, "sessions"), got[1].Path)
+	assert.Equal(t, harness.LayerPathWrite, got[1].Access)
+	assert.True(t, got[1].MayCreate)
+	assert.True(t, got[1].PolicyGrant, "mounted after the read-only agent directory around it")
 
 	elsewhere := filepath.Join(home, "pi-sessions")
 	t.Setenv(harness.PiSessionDirEnvVar, elsewhere)
-	got, err = piLayerPathRequirements(cwd, agentDir)
+	got, err = piLayerPathRequirements(cwd, walled)
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, elsewhere, got[0].Path)
-	assert.Equal(t, harness.LayerPathWrite, got[0].Access)
-	assert.True(t, got[0].MayCreate)
+	require.Len(t, got, 2)
+	assert.Equal(t, elsewhere, got[1].Path)
 }

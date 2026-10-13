@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -139,12 +141,40 @@ func materializePiExtensionFile(dir, name string, source []byte) error {
 
 // readNoFollow reads a regular file, refusing a symlink in its place.
 func readNoFollow(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+	return readRegularFile(path, false, 1<<20)
+}
+
+// readRegularFile reads at most limit bytes of a regular file, following a
+// final symlink only when follow is set. It opens before it checks, so the
+// file it reads is the one it checked, and opens non-blocking, so a FIFO put
+// in its place fails the check instead of hanging the read.
+func readRegularFile(path string, follow bool, limit int64) ([]byte, error) {
+	flags := syscall.O_RDONLY | syscall.O_NONBLOCK | syscall.O_CLOEXEC
+	if !follow {
+		flags |= syscall.O_NOFOLLOW
+	}
+	fd, err := syscall.Open(path, flags, 0)
+	if err != nil {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, &fs.PathError{Op: "read", Path: path, Err: errors.New("not a regular file")}
 	}
-	return os.ReadFile(path)
+	if info.Size() > limit {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("larger than %d bytes", limit)}
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("larger than %d bytes", limit)}
+	}
+	return raw, nil
 }

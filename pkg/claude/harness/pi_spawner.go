@@ -109,11 +109,22 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 	// Under a filtered network pi runs offline, and that goes last before the
 	// binary so neither the forwarded exports nor a pre-launch script can
 	// turn it back on.
-	cmd := spec.EnvExports + prefix + spec.PreLaunchScript + piFilteredNetworkPrefix(spec.NetworkFiltered) + binary
+	cmd := spec.EnvExports + prefix + spec.PreLaunchScript + piFilteredNetworkPrefix(spec.NetworkFiltered) +
+		piWalledAgentDirPrefix(spec.HarnessStateDir) + binary
 	if len(quoted) > 0 {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	return cmd
+}
+
+// piWalledAgentDirPrefix points a walled launch at its walled agent
+// directory, after the forwarded exports and the pre-launch script so neither
+// can point it back at the operator's.
+func piWalledAgentDirPrefix(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return "export " + PiAgentDirEnvVar + "=" + clcommon.ShellQuoteArg(dir) + "; "
 }
 
 // piFilteredNetworkPrefix exports PiFilteredNetworkEnv for a filtered launch.

@@ -239,6 +239,11 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 		harness.OpenCodeName, filepath.Join(home, ".opencode"))
 	require.NoError(t, err)
 	assert.Empty(t, openCode)
+	// pi too: its walled agent directory links into the operator's, which is
+	// read-only inside the wall as a whole (piLayerPathRequirements).
+	pi, err := harnessConfigFloorCatalog(harness.PiName, filepath.Join(home, ".tclaude", "pi-agent", "x"))
+	require.NoError(t, err)
+	assert.Empty(t, pi)
 	for _, tc := range []struct {
 		harness string
 		root    string
@@ -250,8 +255,6 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			filepath.Join(home, ".codex", "config.toml")},
 		{harness.CopilotName, filepath.Join(home, ".copilot"),
 			filepath.Join(home, ".copilot", "config.json")},
-		{harness.PiName, filepath.Join(home, ".pi", "agent"),
-			filepath.Join(home, ".pi", "agent", "models.json")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
 			// File entries are floored only when the host has them.
@@ -266,18 +269,6 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			assert.Contains(t, paths, tc.want)
 		})
 	}
-	// pi runs a `!`-prefixed api_key as a shell command, so its auth.json is
-	// floored like code; its sessions stay writable.
-	piRoot := filepath.Join(home, ".pi", "agent")
-	require.NoError(t, os.WriteFile(filepath.Join(piRoot, "auth.json"), nil, 0o600))
-	piEntries, err := harnessConfigFloorCatalog(harness.PiName, piRoot)
-	require.NoError(t, err)
-	piPaths := make([]string, 0, len(piEntries))
-	for _, entry := range piEntries {
-		piPaths = append(piPaths, entry.Path)
-	}
-	assert.Contains(t, piPaths, filepath.Join(piRoot, "auth.json"))
-	assert.NotContains(t, piPaths, filepath.Join(piRoot, "sessions"))
 	_, err = harnessConfigFloorCatalog("nonesuch", filepath.Join(home, ".claude"))
 	assert.Error(t, err)
 }
