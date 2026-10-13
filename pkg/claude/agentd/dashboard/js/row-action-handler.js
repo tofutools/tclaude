@@ -372,12 +372,12 @@ export async function handleRowAction(action) {
         // as its own row action (term / web-term / open-window /
         // web-open-window) — after the chooser has closed, so a follow-up
         // dialog such as the which-dir picker can open.
-        const pick = await chooseTerminalAction(label, data.cwd || '');
-        if (!pick) return;
+        const act = await chooseTerminalAction(label, data.cwd || '');
+        if (!act) return;
         await handleRowAction(Object.freeze({
           ...action,
-          openInBackground: pick.background === true,
-          data: Object.freeze({ ...data, act: pick.act }),
+          openInBackground: false,
+          data: Object.freeze({ ...data, act }),
         }));
         return;
       }
@@ -391,7 +391,7 @@ export async function handleRowAction(action) {
         // = "web"), route this straight to a browser web-term pane — same as
         // the dedicated "web term" button. Hand the picker promise through so
         // a cancelled pick is a clean no-op.
-        if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label), terminalPaneOptions); return; }
+        if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }
         const which = await chooseTerminalDirectory(label);
         if (!which) return;
         const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
@@ -401,7 +401,7 @@ export async function handleRowAction(action) {
         });
         if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
         const info = await r.json().catch(() => ({}));
-        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label }, terminalPaneOptions); return; }
+        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label }); return; }
         toast(`terminal opened: ${info.dir || label}`);
         return;
       }
@@ -415,7 +415,7 @@ export async function handleRowAction(action) {
         // promise directly and reveals the tab once it resolves (a cancelled
         // pick is a no-op). Same helper the "open terminal" action uses when
         // web terminals are the default.
-        openWebTermPane(agent, label, chooseTerminalDirectory(label), terminalPaneOptions);
+        openWebTermPane(agent, label, chooseTerminalDirectory(label));
         return;
       }
       case 'open-window': {
@@ -429,7 +429,7 @@ export async function handleRowAction(action) {
         // = "web"), open the live session as a browser pane instead — same as
         // the dedicated "web window" button; the revealed Terminals tab is the
         // feedback (parity with web-open-window, which likewise doesn't toast).
-        if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness }); return; }
+        if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness }); return; }
         const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
         });
@@ -440,7 +440,7 @@ export async function handleRowAction(action) {
         // the tmux client, or the agent session stays "attached" and can't be
         // reattached. Only the open-window attach (the agent's live session)
         // gets this; web-term opens its own throwaway session.
-        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label, hideConv: agent, agent, harness }, terminalPaneOptions); return; }
+        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label, hideConv: agent, agent, harness }); return; }
         toast(`window opened: ${label}`);
         return;
       }

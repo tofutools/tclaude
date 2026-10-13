@@ -395,14 +395,7 @@ const TERMINAL_CHOICES = Object.freeze([
 function TerminalChoice({ choice, index, onPick, autofocus }) {
   return html`
     <button type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
-      onClick=${(event) => onPick(choice.act, event.ctrlKey || event.metaKey)}
-      onContextMenu=${(event) => {
-        // macOS turns Ctrl-click into contextmenu rather than click; honour
-        // it as the background open the hint promises.
-        if (!event.ctrlKey) return;
-        event.preventDefault();
-        onPick(choice.act, true);
-      }}>
+      onClick=${() => onPick(choice.act)}>
       <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
       <span class="term-choice-body">
         <span class="term-choice-title"><${Words} plain=${choice.title} wizard=${choice.wizardTitle} /></span>
@@ -414,11 +407,10 @@ function TerminalChoice({ choice, index, onPick, autofocus }) {
   `;
 }
 
-// TerminalChooserDialog resolves the ⚙ "terminals & windows…" choice to one of
-// TERMINAL_CHOICES (plus whether Ctrl/Cmd was held, to open a browser pane
-// without leaving the current tab); the row-action handler dispatches it.
+// TerminalChooserDialog resolves the ⚙ "terminals & windows…" choice to the
+// act of one of TERMINAL_CHOICES; the row-action handler dispatches it.
 export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
-  const pick = (act, background = false) => actions.finishChoice(descriptor, { act, background });
+  const pick = (act) => actions.finishChoice(descriptor, act);
   const onKeyDown = (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const choice = TERMINAL_CHOICES[Number(event.key) - 1];
@@ -448,8 +440,8 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           ${section('shell', 'Your own shell', 'Enter its lair')}
         </div>
         <p class="term-chooser-hint"><${Words}
-          plain=${html`Press <kbd>1</kbd>–<kbd>4</kbd> to pick. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>-click a browser option to open it without leaving this tab.`}
-          wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>-click a crystal to scry without leaving this tab.`}
+          plain=${html`Press <kbd>1</kbd>–<kbd>4</kbd> to pick.`}
+          wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose.`}
         /></p>
         <div class="modal-buttons">
           <button id="term-chooser-cancel" type="button" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</button>

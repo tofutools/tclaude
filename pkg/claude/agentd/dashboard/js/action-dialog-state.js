@@ -94,8 +94,8 @@ export function createActionDialogState() {
     openTerminalDirectory({ label = '' }) {
       return openChoice({ kind: 'terminal-directory', label });
     },
-    // Resolves to { act, background } — one of the four terminal row actions
-    // the ⚙ "terminals & windows…" item stands for — or null when cancelled.
+    // Resolves to the act of one of the four terminal row actions the ⚙
+    // "terminals & windows…" item stands for, or null when cancelled.
     openTerminalChooser({ label = '', cwd = '' }) {
       return openChoice({ kind: 'terminal-chooser', label, cwd });
     },
