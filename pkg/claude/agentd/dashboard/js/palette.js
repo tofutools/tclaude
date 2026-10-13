@@ -594,6 +594,29 @@ export function buildCommands(snapshot) {
       run: () => btn.click(),
     });
   }
+  // Activity folds Audit, Logs and Performance into one tab; each view keeps
+  // a direct command so "logs" or "debug" still finds it. Only Audit is
+  // offered on a peer view (peerView 'tab' gates it on the Activity tab);
+  // the others fall to the default local-only gate there.
+  const activityBtn = $$('nav [data-tab="activity"]')[0];
+  if (activityBtn && activityBtn.offsetParent !== null) {
+    for (const [subtab, plain, arcane, keywords] of [
+      ['audit', 'Audit', 'Deeds', 'audit trail log who commands denied chronicle deeds'],
+      ['logs', 'Logs', 'Runes', 'logs daemon log output tail errors warnings runes'],
+      ['performance', 'Performance', 'Alchemy', 'performance perf debug latency poll timing slow diagnostics alchemy'],
+    ]) {
+      cmds.push({
+        ...(subtab === 'audit' ? { peerView: 'tab', tab: 'activity' } : {}),
+        icon: wiz('⤢', '🪞'), label: wiz(`Go to Activity › ${plain}`, `Scry the Chronicle › ${arcane}`),
+        hint: wiz('switch tab', 'peer into this chamber of the Tower'),
+        keywords: 'tab navigate go open activity ' + keywords,
+        run: () => {
+          if (!activityBtn.classList.contains('active')) activityBtn.click();
+          document.querySelector(`#tab-activity .activity-subtab[data-subtab="${subtab}"]`)?.click();
+        },
+      });
+    }
+  }
   // Fleet administration has no visible tab before the first peer is
   // trusted (the Skynet bar appears with the fleet), so it is reached here.
   const fleetAdmin = $$('nav [data-tab="fleet-admin"]')[0];

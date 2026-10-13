@@ -252,6 +252,19 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(fromPath('/jobs'), { tab: 'jobs' });
   assert.equal(toPath(fromPath('/jobs')), '/automations');
 
+  // Audit, Logs and Debug merged into Activity; their old top-level paths
+  // heal onto the matching subtab, and a stack persisted with an old tab
+  // revives onto it too.
+  assert.equal(toPath({ tab: 'activity', subtab: 'logs' }), '/activity/logs');
+  assert.deepEqual(fromPath('/activity'), { tab: 'activity' });
+  assert.deepEqual(fromPath('/activity/performance'), { tab: 'activity', subtab: 'performance' });
+  assert.deepEqual(fromPath('/activity/bogus'), { tab: 'activity' });
+  assert.deepEqual(fromPath('/audit'), { tab: 'activity', subtab: 'audit' });
+  assert.deepEqual(fromPath('/logs/extra'), { tab: 'activity', subtab: 'logs' });
+  assert.deepEqual(fromPath('/debug'), { tab: 'activity', subtab: 'performance' });
+  assert.equal(toPath(fromPath('/debug')), '/activity/performance');
+  assert.deepEqual(normalizeLocation({ tab: 'audit' }), { tab: 'activity', subtab: 'audit' });
+
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
 

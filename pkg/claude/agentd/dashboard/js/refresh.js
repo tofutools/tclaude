@@ -261,7 +261,6 @@ export async function refresh(options) {
     renderDock();
     renderLinksTab();
     applyProcessesTabVisibility(data);
-    applyDebugTabVisibility(data);
     renderMailTab();
     renderDashDefaultProfile();
     renderDashSandboxProfile();
@@ -554,27 +553,6 @@ function bindTabHotkeys() {
   return cleanup;
 }
 
-// applyDebugTabVisibility drives the Debug tab's auto-hide off the
-// server's debug_tab_visible flag (config dashboard.show_debug_tab,
-// TCL-376), mirroring applyPluginsTabVisibility: the tab is a
-// maintainer/troubleshooting surface, hidden by default to keep the nav
-// tight. Display-only — the daemon records poll timings and serves
-// /api/perf regardless, so history exists from before the toggle. If
-// the Debug tab is the active one when it gets hidden (the human just
-// turned the opt-in off in the Config tab), fall back to Groups so they
-// aren't stranded on a now-invisible section.
-function applyDebugTabVisibility(data) {
-  const visible = !!(data && data.debug_tab_visible);
-  document.body.classList.toggle('hide-debug', !visible);
-  if (!visible) {
-    const sec = document.getElementById('tab-debug');
-    if (sec && sec.classList.contains('active')) {
-      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
-      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
-      dashboardState.setActiveTab('groups');
-    }
-  }
-}
 // activateAccessSubtab selects one of the Access tab's sub-views
 // (permissions / slugs / sudo) by toggling .active on the matching
 // segmented-control button and its panel. Exported so deep links (the

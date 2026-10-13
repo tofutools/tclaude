@@ -18,9 +18,10 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 		}
 	}
 
-	// The nav button + the tab section the generic switcher toggles.
-	must(`data-tab="logs"`, "the Logs nav button")
-	must(`id="tab-logs"`, "the Logs tab section")
+	// The Activity subtab + the panel activity-tab.js toggles (the shared
+	// Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
+	must(`data-subtab="logs" href="/activity/logs"`, "the Logs subtab")
+	must(`id="activity-logs"`, "the Logs panel")
 	must(`id="logs-root"`, "the stable Preact feature host")
 	must(`id="logs-list"`, "the Preact-owned table mount")
 	must(`id="filter-logs"`, "the server-side search input")

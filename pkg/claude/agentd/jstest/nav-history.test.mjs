@@ -58,6 +58,68 @@ function installShell(harness) {
     <main><section id="tab-processes"></section></main>`;
 }
 
+// The Activity shell: one nav anchor plus the static subnav/panels that
+// activity-tab.js binds.
+function installActivityShell(harness) {
+  harness.document.body.innerHTML = `
+    <nav>
+      <button data-tab="groups"></button>
+      <button data-tab="activity" class="active"></button>
+    </nav>
+    <main><section id="tab-activity" class="active">
+      <a class="activity-subtab active" data-subtab="audit" href="/activity/audit">Audit</a>
+      <a class="activity-subtab" data-subtab="logs" href="/activity/logs">Logs</a>
+      <a class="activity-subtab" data-subtab="performance" href="/activity/performance">Performance</a>
+      <div class="activity-panel active" id="activity-audit"></div>
+      <div class="activity-panel" id="activity-logs"></div>
+      <div class="activity-panel" id="activity-performance"></div>
+    </section></main>`;
+}
+
+test('a retired /logs deep link heals to /activity/logs; subtabs push and Back restores', async (t) => {
+  const harness = await createPreactHarness(t);
+  installActivityShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/logs?wizard=1');
+  const [{ initNavHistory }, { bindActivityTab }, { activitySubtab }] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/activity-tab.js'),
+    harness.importDashboardModule('js/activity-state.js'),
+  ]);
+  const unbind = bindActivityTab({ doc: harness.document });
+  t.after(unbind);
+  const panel = (name) => harness.document.getElementById(`activity-${name}`);
+
+  initNavHistory();
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/activity/logs' }],
+    'the old path is rewritten in place — no extra Back step');
+  assert.equal(activitySubtab.value, 'logs');
+  assert.equal(panel('logs').classList.contains('active'), true);
+  assert.equal(panel('audit').classList.contains('active'), false);
+  browsing.calls.length = 0;
+
+  harness.document.querySelector('[data-subtab="performance"]').click();
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/activity/performance' }]);
+  assert.equal(panel('performance').classList.contains('active'), true);
+  const atPerformance = browsing.history.state;
+  harness.document.querySelector('[data-subtab="performance"]').click();
+  assert.equal(browsing.calls.length, 1, 're-selecting the shown subtab adds no entry');
+  browsing.calls.length = 0;
+
+  // Back: the browser has moved to the previous entry and fires popstate.
+  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/activity/logs');
+  browsing.calls.length = 0;
+  const back = new harness.window.Event('popstate');
+  back.state = browsing.history.state;
+  harness.window.dispatchEvent(back);
+  assert.equal(activitySubtab.value, 'logs', 'Back restores the previous subtab');
+  assert.deepEqual(browsing.calls.map((call) => call.kind), ['replace'], 'traversal never pushes');
+
+  // A modified click is left to the browser (new tab), so nothing changes here.
+  const modified = harness.fireEvent(harness.document.querySelector('[data-subtab="audit"]'), 'click', { ctrlKey: true });
+  assert.equal(modified.defaultPrevented, false);
+  assert.equal(activitySubtab.value, 'logs');
+});
+
 test('a correction replaces the current history entry; a navigation pushes', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);

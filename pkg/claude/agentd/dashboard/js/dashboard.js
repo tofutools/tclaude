@@ -68,6 +68,7 @@ import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
+import { bindActivityTab } from './activity-tab.js';
 import {
   mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
@@ -317,7 +318,7 @@ async function settleInitialLayout() {
     mount().then((cleanup) => { bootStep(); return cleanup; })));
   pageCleanups.push(...featureCleanups);
 
-  pageCleanups.push(bindTabs(), bindTabHotkeys());
+  pageCleanups.push(bindTabs(), bindTabHotkeys(), bindActivityTab());
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();

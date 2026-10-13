@@ -62,6 +62,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`<a data-tab="jobs" href="/automations"`,
 		`<a data-tab="access" href="/access"`,
 		`<a data-tab="usage" href="/usage"`,
+		`<a data-tab="activity" href="/activity"`,
 		`<a data-tab="config" href="/config"`,
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
 		`<button data-tab="vegas">`,
@@ -69,6 +70,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// /processes/templates) while keeping tablist ARIA.
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
 		`data-process-subtab="templates" href="/processes/templates" role="tab"`,
+		`data-subtab="logs" href="/activity/logs" role="tab"`,
 		`href=${toPath(jobsLocation(kind))}`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()

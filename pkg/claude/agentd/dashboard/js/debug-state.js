@@ -1,5 +1,6 @@
 import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { activitySubtab as currentActivitySubtab, activityViewActive } from './activity-state.js';
 
 function errorMessage(error) {
   if (!error) return null;
@@ -14,7 +15,7 @@ function sortedEndpoints(response) {
   return endpoints;
 }
 
-export function createDebugState({ activeTab = dashboardState.activeTab } = {}) {
+export function createDebugState({ activeTab = dashboardState.activeTab, activitySubtab = currentActivitySubtab } = {}) {
   const response = signal(null);
   const request = signal({ phase: 'idle', token: 0, operation: null, error: null });
   const resetting = signal(false);
@@ -22,7 +23,7 @@ export function createDebugState({ activeTab = dashboardState.activeTab } = {}) 
   let pendingToken = null;
 
   const view = computed(() => ({
-    active: activeTab.value === 'debug',
+    active: activityViewActive(activeTab, activitySubtab, 'performance'),
     response: response.value,
     endpoints: sortedEndpoints(response.value),
     request: request.value,

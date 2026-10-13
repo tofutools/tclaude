@@ -1006,7 +1006,8 @@ func baseStates() []dashsnap.State {
 			Title:   "Debug / Alchemy diagnostics",
 			Caption: "The poll-timing cards retain their readable default skin while wizard mode adds the Alchemist's Observatory heading, violet panels and a gilded latency trace without recolouring categorical phase data.",
 			JS: `return (async function(){
-  document.querySelector('nav [data-tab="debug"]').click();
+  document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="performance"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.debug-card'); i++) {
     await new Promise(function(resolve){ setTimeout(resolve, 50); });
   }
@@ -4267,6 +4268,13 @@ func boundedTabJS(tab, readySelector string, afterReady ...string) string {
 	if len(afterReady) > 0 {
 		post = afterReady[0]
 	}
+	// Audit and Logs are subtabs of Activity: open the nav tab, then the
+	// subtab, and wait on the subtab's panel instead of a tab section.
+	navTab, panel, subClick := tab, "#tab-"+tab, ""
+	if tab == "audit" || tab == "logs" {
+		navTab, panel = "activity", "#activity-"+tab
+		subClick = fmt.Sprintf(`document.querySelector('#tab-activity .activity-subtab[data-subtab=%q]').click();`, tab)
+	}
 	return fmt.Sprintf(`return Promise.all([
   import('/static/js/snapshot-store.js'),
   import('/static/js/feature-state-registry.js')
@@ -4281,11 +4289,12 @@ if (%q === 'plugins' || %q === 'costs' || %q === 'usage') {
   await Promise.resolve();
 }
 __tab.click();
+%s
 return new Promise(function(resolve, reject) {
   var deadline = Date.now() + 4000;
   (function ready() {
     var node = document.querySelector(%q);
-    var panel = document.querySelector('#tab-' + %q);
+    var panel = document.querySelector(%q);
     var root = document.querySelector('#' + %q + '-root');
     var state = registry.featureState(%q);
     var phase = state?.request?.value?.phase || state?.phase?.value || state?.view?.value?.request?.phase;
@@ -4296,7 +4305,7 @@ return new Promise(function(resolve, reject) {
     setTimeout(ready, 25);
   })();
 });
-});`, tab, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, post, tab)
+});`, navTab, navTab, tab, tab, tab, subClick, readySelector, panel, tab, tab, tab, post, tab)
 }
 
 func boundedJobsEmptyJS() string {
@@ -4321,7 +4330,8 @@ func boundedJobsEmptyJS() string {
 
 func boundedLogsErrorJS() string {
 	return `
-document.querySelector('nav [data-tab="logs"]').click();
+document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="logs"]').click();
 return import('/static/js/feature-state-registry.js').then(function(registry) {
   return new Promise(function(resolve, reject) {
     var deadline = Date.now() + 4000;
@@ -4343,7 +4353,8 @@ return import('/static/js/feature-state-registry.js').then(function(registry) {
 
 func boundedLogsPollFocusJS() string {
 	return `
-document.querySelector('nav [data-tab="logs"]').click();
+document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="logs"]').click();
 return new Promise(function(resolve, reject) {
   var deadline = Date.now() + 4000;
   (function ready() {

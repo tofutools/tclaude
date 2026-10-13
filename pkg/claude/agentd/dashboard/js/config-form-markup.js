@@ -271,11 +271,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-show-group-description" /> show the 📝 description chip in each group header</label>
         <span class="cfg-hint">Every group can carry a short <strong>description</strong> — the 📝 chip beside the group name, click-to-edit. It's a <em>display-only</em> label: nothing in tclaude reads it, so it's a <strong>deprecated</strong> feature that mostly just clutters the header. The dashboard hides the chip <em>by default</em>; existing descriptions are kept in the database but not shown. <strong>Checked</strong> brings the chip back (and with it the only way to view or edit a group's description). Off by default. Stored as <code>dashboard.show_group_description</code> (the default is omitted; checked writes <code>true</code>).</span>
       </div>
-      <div class="cfg-field">
-        <span class="cfg-label">Debug tab</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-show-debug-tab" /> show the Debug tab (daemon poll-timing diagnostics)</label>
-        <span class="cfg-hint">The <strong>Debug</strong> tab shows how long the dashboard's own background polls take inside the daemon — a latency sparkline + p50/p90/p99/max per endpoint, and the <code>/api/snapshot</code> handler's per-phase breakdown — for chasing a slow dashboard. It is a troubleshooting surface, so the nav hides it <em>by default</em>. <strong>Checked</strong> brings it back. The timing recorder runs either way (a few hundred KB of daemon memory), so the history is already there when you switch the tab on. Off by default. Stored as <code>dashboard.show_debug_tab</code> (the default is omitted; checked writes <code>true</code>).</span>
-      </div>
     </div>
 
     <div class="cfg-section">
