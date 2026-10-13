@@ -385,6 +385,21 @@ CREATE INDEX idx_agent_messages_parties ON agent_messages(from_conv, to_conv, gr
 
 CREATE INDEX idx_agent_messages_handoff ON agent_messages(id) WHERE subject = 'reincarnation handoff';
 
+CREATE TRIGGER agent_messages_fts_ai AFTER INSERT ON agent_messages BEGIN
+	INSERT INTO agent_messages_fts(rowid, subject, body) VALUES (new.id, new.subject, new.body);
+END;
+
+CREATE TRIGGER agent_messages_fts_ad AFTER DELETE ON agent_messages BEGIN
+	INSERT INTO agent_messages_fts(agent_messages_fts, rowid, subject, body)
+		VALUES ('delete', old.id, old.subject, old.body);
+END;
+
+CREATE TRIGGER agent_messages_fts_au AFTER UPDATE OF subject, body ON agent_messages BEGIN
+	INSERT INTO agent_messages_fts(agent_messages_fts, rowid, subject, body)
+		VALUES ('delete', old.id, old.subject, old.body);
+	INSERT INTO agent_messages_fts(rowid, subject, body) VALUES (new.id, new.subject, new.body);
+END;
+
 CREATE TABLE "agent_transfer_log" (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind           TEXT NOT NULL,
@@ -1813,3 +1828,15 @@ CREATE TABLE managed_instruction_launches (
  agent_id TEXT PRIMARY KEY, body TEXT NOT NULL, resources TEXT NOT NULL,
  root TEXT NOT NULL DEFAULT ''
 ) STRICT;
+
+CREATE VIRTUAL TABLE agent_messages_fts USING fts5(
+	subject, body, content='agent_messages', content_rowid='id',
+	tokenize='unicode61 remove_diacritics 2');
+
+CREATE TABLE 'agent_messages_fts_data'(id INTEGER PRIMARY KEY, block BLOB);
+
+CREATE TABLE 'agent_messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID;
+
+CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
+
+CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;

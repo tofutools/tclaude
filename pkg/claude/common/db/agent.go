@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -4240,10 +4241,13 @@ func GroupMessageParticipants(groupID int64) ([]string, error) {
 // group analogue of ForConv's single-conv predicate. A group folder sets
 // this and leaves ForConv empty; the two are mutually-exclusive scopes.
 //
-// Text is the Messages-tab search box, matched case-insensitively (SQLite
-// LIKE, ASCII case folding) against subject / body / from_conv / to_conv
-// (so a typed conv-id prefix matches), the sender's or recipient's display
-// title (see mailboxTitleConvsSQL), and the routing group's name.
+// Text is the Messages-tab search box. Subject and body are matched through
+// the agent_messages_fts full-text index: every word of the query must
+// start a word of the message (see mailboxFTSQuery). The parties are
+// matched as substrings (SQLite LIKE, ASCII case folding): from_conv /
+// to_conv (so a typed conv-id fragment matches), the sender's or
+// recipient's display title (see mailboxTitleConvsSQL), and the routing
+// group's name.
 //
 // ExcludeRetired drops any row whose sender OR recipient is a retired
 // agent's conv — `(sender not retired OR <handoff>) AND recipient not
@@ -4274,6 +4278,22 @@ func (f MailboxFilter) HasSearch() bool {
 // run". Pairs with `LIKE ? ESCAPE '\'`.
 func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// mailboxFTSQuery turns search-box text into an FTS5 MATCH expression:
+// each word (a run of letters or digits, as the unicode61 tokenizer splits
+// them) becomes a quoted prefix term, and all terms must match. Quoting
+// keeps operators and punctuation the operator types literal. "" when the
+// text has no words.
+func mailboxFTSQuery(text string) string {
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	terms := make([]string, 0, len(words))
+	for _, w := range words {
+		terms = append(terms, `"`+w+`"*`)
+	}
+	return strings.Join(terms, " ")
 }
 
 // retiredConvsSQL lists the conv-ids of retired agents, matching
@@ -4339,15 +4359,25 @@ func (f MailboxFilter) where() (string, []any) {
 		args = append(args, f.ScopeGroupID, f.ScopeGroupID, f.ScopeGroupID)
 	}
 	if f.Text != "" {
+		// One id set per statement: the arms are unioned inside a single
+		// non-correlated subquery, so the title match (a conv_index pass) runs
+		// once rather than per OR arm, and the outer query fetches only the
+		// matching rows by id instead of scanning every message for them.
 		like := "%" + likeEscape(f.Text) + "%"
-		clauses = append(clauses, `(subject LIKE ? ESCAPE '\'`+
-			` OR body LIKE ? ESCAPE '\'`+
-			` OR from_conv LIKE ? ESCAPE '\'`+
-			` OR to_conv LIKE ? ESCAPE '\'`+
-			` OR from_conv IN (`+mailboxTitleConvsSQL+`)`+
-			` OR to_conv IN (`+mailboxTitleConvsSQL+`)`+
-			` OR group_id IN (SELECT id FROM agent_groups WHERE name LIKE ? ESCAPE '\'))`)
-		args = append(args, like, like, like, like, like, like, like, like, like)
+		arms := []string{
+			`SELECT id FROM agent_messages WHERE from_conv LIKE ? ESCAPE '\' OR to_conv LIKE ? ESCAPE '\'`,
+			`SELECT m.id FROM agent_messages m JOIN titled t ON m.from_conv = t.conv_id`,
+			`SELECT m.id FROM agent_messages m JOIN titled t ON m.to_conv = t.conv_id`,
+			`SELECT id FROM agent_messages WHERE group_id IN (SELECT id FROM agent_groups WHERE name LIKE ? ESCAPE '\')`,
+		}
+		args = append(args, like, like) // mailboxTitleConvsSQL in the WITH
+		args = append(args, like, like, like)
+		if match := mailboxFTSQuery(f.Text); match != "" {
+			arms = append(arms, `SELECT rowid FROM agent_messages_fts WHERE agent_messages_fts MATCH ?`)
+			args = append(args, match)
+		}
+		clauses = append(clauses, "id IN (WITH titled(conv_id) AS MATERIALIZED ("+mailboxTitleConvsSQL+") "+
+			strings.Join(arms, " UNION ALL ")+")")
 	}
 	if f.ExcludeRetired {
 		clauses = append(clauses,

@@ -130,3 +130,46 @@ func TestMailboxRosterTotalsMatchFolderCounts(t *testing.T) {
 		}
 	}
 }
+
+// Mailbox search matches subject/body through the FTS index: word prefixes,
+// operator characters taken literally, and the index tracks edits and
+// deletes of the underlying rows.
+func TestMailboxSearchUsesFullTextIndex(t *testing.T) {
+	setupTestDB(t)
+	insert := func(subject, body string) int64 {
+		id, err := InsertAgentMessage(&AgentMessage{FromConv: "conv-a", ToConv: "conv-b",
+			Subject: subject, Body: body, CreatedAt: time.Now()})
+		require.NoError(t, err)
+		return id
+	}
+	deploy := insert("deploy plan", "rolling out the new mailbox indexes tonight")
+	review := insert("review", "please review PR #3003 (federation-safe?)")
+	lunch := insert("lunch", "pizza")
+
+	search := func(q string) []int64 {
+		t.Helper()
+		rows, err := ListMailboxPage(MailboxFilter{Text: q}, 0, 0)
+		require.NoError(t, err)
+		ids := make([]int64, 0, len(rows))
+		for _, m := range rows {
+			ids = append(ids, m.ID)
+		}
+		return ids
+	}
+	assert.Equal(t, []int64{deploy}, search("mailbox"), "body word")
+	assert.Equal(t, []int64{deploy}, search("DEPLOY pl"), "case-insensitive subject word prefixes, all must match")
+	assert.Equal(t, []int64{review}, search("federation-safe?"), "punctuation is a separator, not FTS syntax")
+	assert.Equal(t, []int64{review}, search(`"please" -review* (3003`), "FTS syntax characters are ignored, not parsed")
+	assert.Empty(t, search("ndexes"), "matching is by word prefix, not arbitrary substring")
+	assert.ElementsMatch(t, []int64{deploy, review, lunch}, search("conv-a"), "conv-id substrings still match")
+
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_messages SET body = 'postponed' WHERE id = ?`, deploy)
+	require.NoError(t, err)
+	assert.Empty(t, search("mailbox"), "an edited body is re-indexed")
+	assert.Equal(t, []int64{deploy}, search("postponed"))
+	_, err = DeleteAgentMessagesByIDs([]int64{review})
+	require.NoError(t, err)
+	assert.Empty(t, search("federation"), "a deleted row leaves the index")
+}
