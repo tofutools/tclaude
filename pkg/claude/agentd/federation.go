@@ -65,8 +65,13 @@ const (
 	fedCatalogRefresh = 2 * time.Minute
 	// fedInboundMailPerMinute bounds mail accepted from one peer.
 	fedInboundMailPerMinute = 30
-	// fedOutboxTick is the outbox worker's polling cadence.
-	fedOutboxTick = 3 * time.Second
+)
+
+// Polling cadence is independent of expiry, lease and acknowledgement windows.
+var (
+	fedOutboxTick     = 3 * time.Second
+	fedSessionsTick   = 2 * time.Second
+	fedCompletionTick = time.Second
 )
 
 // Ack refusal codes. Retryable codes leave the sender's outbox row queued.
@@ -614,9 +619,9 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	refresh := time.NewTicker(fedCatalogRefresh)
 	defer refresh.Stop()
-	sessions := time.NewTicker(2 * time.Second)
+	sessions := time.NewTicker(fedSessionsTick)
 	defer sessions.Stop()
-	completion := time.NewTicker(time.Second)
+	completion := time.NewTicker(fedCompletionTick)
 	defer completion.Stop()
 	reconcileFederationSpawns()
 	reconcileFederationJobs()

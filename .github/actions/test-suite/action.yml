@@ -130,6 +130,14 @@ runs:
           pkgs="$selected"
         fi
 
+        # Both platforms run agentd's independent domain processes concurrently
+        # inside this same job; the runner reports each side's failures separately.
+        if [ "${{ inputs.shard }}" = agentd ]; then
+          python3 scripts/ci/test_agentd_tests.py
+          scripts/ci/agentd-tests.sh $race $timeout
+          exit 0
+        fi
+
         # Exercise macOS-style temp path aliases on Linux as well. Keep the
         # native macOS temp layout so both sources of aliases remain covered.
         if [ "$RUNNER_OS" = Linux ]; then

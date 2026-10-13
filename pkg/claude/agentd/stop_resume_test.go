@@ -784,6 +784,9 @@ func TestResumeOneConv_DoesNotRequireFilesystemPin(t *testing.T) {
 }
 
 func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T) {
+	// This recorder checks launch arguments and has no live pane to re-arm.
+	// Keep its negative re-arm path, using the existing fixture timeout seam.
+	t.Cleanup(SetReincarnateSpawnTimeoutForTest(100 * time.Millisecond))
 	t.Cleanup(SetWaitTimingsForTest(100*time.Millisecond, time.Millisecond))
 	t.Cleanup(WaitForBackgroundForTest)
 	for _, tc := range []struct {

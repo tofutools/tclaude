@@ -21,6 +21,9 @@ func setupTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	// Native Codex title writes must follow this fixture HOME, not an inherited
+	// developer root (which otherwise incurs the 30-second missing-row retry).
+	t.Setenv("CODEX_HOME", "")
 	// os.UserHomeDir() reads USERPROFILE on Windows; set it too so a
 	// Windows test run stays in the temp dir instead of the real home.
 	t.Setenv("USERPROFILE", dir)

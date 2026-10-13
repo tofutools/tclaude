@@ -162,6 +162,9 @@ func New(t *testing.T) *World {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Codex resolves CODEX_HOME before HOME; keep native-store writes in this
+	// simulated world even when the developer exports a custom Codex root.
+	t.Setenv("CODEX_HOME", "")
 	// Gemini CLI resolves its home from GEMINI_CLI_HOME before HOME; an
 	// operator's exported value would point the production Gemini store at
 	// their real chats instead of the simulator's.

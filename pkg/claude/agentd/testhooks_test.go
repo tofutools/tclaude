@@ -2208,3 +2208,11 @@ func SetPaneInputWaitForTest(wait func()) func() {
 func RunSpawnPostInitForTest(convID, name string) {
 	runSpawnPostInit(convID, name, "", "", "", 0, false, "", "", "", "", true)
 }
+
+// SetFederationPollIntervalForTest changes only polling cadence. Call before
+// starting runtimes, and restore after stopping them; deadlines stay unchanged.
+func SetFederationPollIntervalForTest(interval time.Duration) func() {
+	oldOutbox, oldSessions, oldCompletion := fedOutboxTick, fedSessionsTick, fedCompletionTick
+	fedOutboxTick, fedSessionsTick, fedCompletionTick = interval, interval, interval
+	return func() { fedOutboxTick, fedSessionsTick, fedCompletionTick = oldOutbox, oldSessions, oldCompletion }
+}
