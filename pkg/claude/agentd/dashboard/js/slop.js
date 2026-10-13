@@ -16,7 +16,7 @@ const SLOP_TITLE = 'The slop machine';
 // Wizard theme chrome — the 🧙 "it's wizard time" re-skin, sibling of the
 // slop constants above, tagged onto the URL with ?wizard=1. Same data, same
 // routes; a sarcastic over-the-top DnD paint job. Mutually exclusive with
-// slop (the header icon cycles regular → slop → wizard). A small badge on the
+// slop (the header icon cycles regular → wizard; slop is hotkey/URL-only). A small badge on the
 // shared agent-network mark carries the mode without replacing the product
 // icon in either the header or browser tab.
 const WIZARD_REST = "The Wizard's Tower";
@@ -67,7 +67,7 @@ function ensureH1Structure() {
   restNode = h1.querySelector('.dashboard-title');
   modeBadge = h1.querySelector('.theme-mode-badge');
   if (!iconSpan || !restNode || !modeBadge) return;
-  // The header icon cycles regular → slop → wizard → regular. It's the
+  // The header icon cycles regular → wizard → regular. It's the
   // discoverable easter-egg toggle; a single click steps to the next theme.
   iconSpan.addEventListener('click', cycleTheme);
 }
@@ -156,15 +156,15 @@ export function toggleWizard() {
   syncThemeParams();
 }
 
-// cycleTheme steps the header icon through the three themes in order:
-// regular → slop → wizard → regular. The one-click discoverable path; the
-// hotkeys and palette commands target a specific theme instead.
+// cycleTheme steps the header icon through the complete themes:
+// regular → wizard → regular. Slop is half-finished, so it is left out of the
+// one-click discoverable path for now (still reachable via its hotkey,
+// palette command and ?slop=1); clicking while in slop returns to regular.
 export function cycleTheme() {
   const theme = currentTheme();
   document.body.classList.remove('slop', 'wizard');
-  if (theme === 'regular') document.body.classList.add('slop');
-  else if (theme === 'slop') document.body.classList.add('wizard');
-  // wizard → regular leaves both cleared.
+  if (theme === 'regular') document.body.classList.add('wizard');
+  // wizard/slop → regular leaves both cleared.
   renderState();
   syncThemeParams();
 }

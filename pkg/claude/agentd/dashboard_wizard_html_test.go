@@ -39,8 +39,8 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("document.body.classList.remove('slop')", "toggleWizard clears slop (mutual exclusion)")
 	must("classList.remove('slop', 'wizard')", "cycleTheme clears both before setting the next")
 
-	// The header icon cycles through the three themes rather than a 2-state
-	// toggle — regular → slop → wizard.
+	// The header icon cycles regular → wizard (slop is left out of the cycle
+	// while it is half-finished).
 	must("iconSpan.addEventListener('click', cycleTheme)", "the header icon cycles themes")
 
 	// The music features light up in wizard mode too (isVegasActive gates the
