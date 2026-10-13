@@ -484,7 +484,11 @@ function cycleTab(dir) {
     document.dispatchEvent(new CustomEvent('tclaude:leave-map', { detail: { dir } }));
     return null;
   }
-  const active = tabs.findIndex(b => b.classList.contains('active'));
+  // Processes is an Automations subtab whose own anchor is always hidden, so
+  // while it is open, step from the Automations position instead.
+  const processesActive = !!document.querySelector('nav [data-tab="processes"].active');
+  const active = tabs.findIndex(b => b.classList.contains('active')
+    || (processesActive && b.dataset.tab === 'jobs'));
   // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
   // and slop just turned off); start the step from the first visible tab.
   const from = active < 0 ? 0 : active;

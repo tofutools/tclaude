@@ -28,8 +28,13 @@ const requestable = (o) => !!o.requires && SAFE_SLUG.test(o.requires)
 function defaultNavigate(tab) {
   let anchor = document.querySelector(`nav [data-tab="${tab}"]`);
   // A remembered per-node tab can have been hidden since (Terminals with no
-  // pane, Debug switched off); Groups is always there.
-  if (!TOP_LEVEL_TABS.has(tab) && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
+  // pane, Debug switched off); Groups is always there. Processes' anchor is
+  // always hidden (it is reached through Automations), so only its feature
+  // flag decides.
+  const hidden = tab === 'processes'
+    ? document.body.classList.contains('hide-processes')
+    : !anchor || anchor.offsetParent === null;
+  if (!TOP_LEVEL_TABS.has(tab) && hidden) anchor = document.querySelector('nav [data-tab="groups"]');
   anchor?.click();
 }
 
