@@ -807,8 +807,10 @@ an API key that starts with `!` as a shell command, and `models.json` and
 `settings.json` can name commands and code too, so your agent directory is
 read-only inside the wall, files that exist and files that do not, apart
 from its session store: a sandboxed agent cannot change what the next,
-possibly unsandboxed, pi runs. The walled copy lives under
-`~/.tclaude/pi-agent` and is rebuilt from yours before every walled launch:
+possibly unsandboxed, pi runs. Each conversation has its own walled copy,
+under `~/.tclaude/pi-agent`, so no two sandboxed agents share one. It is
+rebuilt from yours before every walled launch and removed once its
+conversation has no session left:
 
 - every entry pi reads (`settings.json`, `models.json`, `extensions/`,
   `skills/`, the prompt files, and so on) is a link to yours, so pi sees your

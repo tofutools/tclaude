@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -21,8 +22,8 @@ import (
 // A pi launch inside tclaude's sandbox does not run against the operator's
 // agent directory (the host directory, $PI_CODING_AGENT_DIR or ~/.pi/agent).
 // It runs against a walled agent directory tclaude keeps for that host
-// directory, under ~/.tclaude/pi-agent, and the host directory is read-only
-// inside the wall apart from its session store.
+// directory and that conversation, under ~/.tclaude/pi-agent, and the host
+// directory is read-only inside the wall apart from its session store.
 //
 // Why: pi runs an api_key credential whose key starts with `!` as a shell
 // command, and models.json and settings.json can name commands and code too.
@@ -61,31 +62,53 @@ var piWalledOwn = map[string]bool{
 	"pi-debug.log": true, "mcp.log": true,
 }
 
-// PiWalledAgentDir is the walled agent directory tclaude keeps for the host
-// agent directory host.
-func PiWalledAgentDir(host string) (string, error) {
+// PiWalledAgentDir is the walled agent directory tclaude keeps for one
+// conversation launched against the host agent directory host. Each
+// conversation has its own, so no two walled agents ever share a writable
+// copy: what one plants there cannot reach another's pi. A blank conversation
+// names the directory holding them all, which a launch never runs against.
+func PiWalledAgentDir(host, conversation string) (string, error) {
 	root := common.TclaudeDir()
 	if root == "" {
 		return "", errors.New("cannot resolve tclaude's directory")
 	}
-	sum := sha256.Sum256([]byte(filepath.Clean(host)))
-	return filepath.Join(root, "pi-agent", hex.EncodeToString(sum[:8])), nil
+	hostRoot := filepath.Join(root, "pi-agent", piHostKey(host))
+	if conversation == "" {
+		return hostRoot, nil
+	}
+	if !piConversationKey.MatchString(conversation) {
+		return "", fmt.Errorf("pi's walled agent directory: invalid conversation id %q", conversation)
+	}
+	return filepath.Join(hostRoot, conversation), nil
 }
 
-// PreparePiWalledAgentDir readies the walled agent directory for the ambient
-// host agent directory and returns it: a refreshed login merged back to the
-// host first, then the credential copy and the links rebuilt from the host.
-func PreparePiWalledAgentDir() (string, error) {
+func piHostKey(host string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(host)))
+	return hex.EncodeToString(sum[:8])
+}
+
+// piConversationKey is the shape a conversation id must have to name a
+// directory: pi's session ids are UUIDs.
+var piConversationKey = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+// PreparePiWalledAgentDir readies the walled agent directory for one
+// conversation against the ambient host agent directory and returns it: a
+// refreshed login merged back to the host first, then the credential copy and
+// the links rebuilt from the host.
+func PreparePiWalledAgentDir(conversation string) (string, error) {
 	host := PiAgentDir()
 	if host == "" {
 		return "", errors.New("cannot resolve pi's agent directory")
 	}
-	walled, err := PiWalledAgentDir(host)
+	if conversation == "" {
+		return "", errors.New("pi's walled agent directory needs the launch's conversation id")
+	}
+	walled, err := PiWalledAgentDir(host, conversation)
 	if err != nil {
 		return "", err
 	}
-	// pi creates both itself on first run; the wall needs them to exist to
-	// mount them.
+	// pi creates both host directories itself on first run; the wall needs
+	// them to exist to mount them.
 	for _, dir := range []string{host, filepath.Join(host, "sessions"), walled} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", fmt.Errorf("prepare pi's walled agent directory: %w", err)
@@ -94,7 +117,7 @@ func PreparePiWalledAgentDir() (string, error) {
 	if info, err := os.Lstat(walled); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("pi's walled agent directory %s is not a directory", walled)
 	}
-	if err := recordPiWalledAgentDir(host, walled); err != nil {
+	if err := recordPiWalledAgentDir(host, conversation); err != nil {
 		return "", err
 	}
 	if err := syncPiWalledAuth(host, walled, true); err != nil {
@@ -115,23 +138,43 @@ func PreparePiWalledAgentDir() (string, error) {
 // The pairs come from tclaude's private data directory, which walled agents
 // cannot see, not from the daemon's own environment: a launch's host
 // directory follows the environment of the `session new` that prepared it.
-func SyncPiWalledAuth() error {
-	hosts, err := piWalledAgentHosts()
+//
+// live reports whether a conversation still has a session. A walled
+// directory whose conversation has none is synced one last time and removed;
+// nil keeps every directory.
+func SyncPiWalledAuth(live func(conversation string) bool) error {
+	pairs, err := piWalledAgentPairs()
 	if err != nil {
 		return err
 	}
 	var errs []error
-	for _, host := range hosts {
-		walled, err := PiWalledAgentDir(host)
+	for _, pair := range pairs {
+		walled, err := PiWalledAgentDir(pair.host, pair.conversation)
 		if err != nil {
-			return err
+			continue
 		}
-		if err := syncPiWalledAuthIfChanged(host, walled); err != nil {
+		if err := syncPiWalledAuthIfChanged(pair.host, walled); err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		if live == nil || live(pair.conversation) || time.Since(pair.recorded) < piWalledAgentGrace {
+			continue
+		}
+		if err := os.RemoveAll(walled); err != nil {
+			errs = append(errs, fmt.Errorf("remove pi's walled agent directory: %w", err))
+			continue
+		}
+		_ = os.Remove(pair.record)
+		piWalledAuthSeen.Lock()
+		delete(piWalledAuthSeen.stamps, walled)
+		piWalledAuthSeen.Unlock()
 	}
 	return errors.Join(errs...)
 }
+
+// piWalledAgentGrace keeps a walled directory whose conversation has no
+// session yet: a launch prepares it before its session is recorded.
+const piWalledAgentGrace = time.Hour
 
 func syncPiWalledAuthIfChanged(host, walled string) error {
 	stamp := piAuthStamp(filepath.Join(host, "auth.json")) + "|" + piAuthStamp(filepath.Join(walled, "auth.json"))
@@ -155,7 +198,8 @@ func syncPiWalledAuthIfChanged(host, walled string) error {
 }
 
 // piWalledAgentRecords is where tclaude records, per walled directory, the
-// host directory it was prepared for.
+// host directory it was prepared for: one file per conversation, named
+// <host key>-<conversation> and holding the host path.
 func piWalledAgentRecords() (string, error) {
 	data := common.TclaudeDataDir()
 	if data == "" {
@@ -164,7 +208,7 @@ func piWalledAgentRecords() (string, error) {
 	return filepath.Join(data, "pi-walled-agents"), nil
 }
 
-func recordPiWalledAgentDir(host, walled string) error {
+func recordPiWalledAgentDir(host, conversation string) error {
 	records, err := piWalledAgentRecords()
 	if err != nil {
 		return err
@@ -172,17 +216,21 @@ func recordPiWalledAgentDir(host, walled string) error {
 	if err := os.MkdirAll(records, 0o700); err != nil {
 		return fmt.Errorf("record pi's walled agent directory: %w", err)
 	}
-	record := filepath.Join(records, filepath.Base(walled))
-	if current, err := os.ReadFile(record); err == nil && string(current) == filepath.Clean(host) {
-		return nil
-	}
+	// Rewritten on every launch: its time is when the directory was last
+	// prepared.
+	record := filepath.Join(records, piHostKey(host)+"-"+conversation)
 	if err := os.WriteFile(record, []byte(filepath.Clean(host)), 0o600); err != nil {
 		return fmt.Errorf("record pi's walled agent directory: %w", err)
 	}
 	return nil
 }
 
-func piWalledAgentHosts() ([]string, error) {
+type piWalledAgentPair struct {
+	host, conversation, record string
+	recorded                   time.Time
+}
+
+func piWalledAgentPairs() ([]piWalledAgentPair, error) {
 	records, err := piWalledAgentRecords()
 	if err != nil {
 		return nil, err
@@ -194,15 +242,22 @@ func piWalledAgentHosts() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read pi's walled agent records: %w", err)
 	}
-	var hosts []string
+	var pairs []piWalledAgentPair
 	for _, entry := range entries {
-		raw, err := os.ReadFile(filepath.Join(records, entry.Name()))
-		if err != nil || !filepath.IsAbs(string(raw)) {
+		key, conversation, ok := strings.Cut(entry.Name(), "-")
+		info, infoErr := entry.Info()
+		if !ok || infoErr != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		hosts = append(hosts, string(raw))
+		record := filepath.Join(records, entry.Name())
+		raw, err := os.ReadFile(record)
+		host := string(raw)
+		if err != nil || !filepath.IsAbs(host) || piHostKey(host) != key || !piConversationKey.MatchString(conversation) {
+			continue
+		}
+		pairs = append(pairs, piWalledAgentPair{host: host, conversation: conversation, record: record, recorded: info.ModTime()})
 	}
-	return hosts, nil
+	return pairs, nil
 }
 
 // piWalledAuthSeen remembers the files a sync last settled, so a periodic
@@ -221,7 +276,8 @@ func piAuthStamp(path string) string {
 }
 
 // piCredential is one auth.json entry, kept raw so a merge writes back
-// exactly what pi wrote.
+// exactly what pi wrote. An entry tclaude cannot read is kept too, with no
+// type, so a merge never touches it and never drops it.
 type piCredential struct {
 	raw             json.RawMessage
 	typ             string
@@ -229,14 +285,12 @@ type piCredential struct {
 	expires         int64
 }
 
+// piAuthMaxBytes bounds what a sync reads: an auth.json holds a handful of
+// logins, and a walled agent controls its copy.
+const piAuthMaxBytes = 1 << 20
+
 func readPiCredentials(path string, follow bool) (map[string]piCredential, bool, error) {
-	var raw []byte
-	var err error
-	if follow {
-		raw, err = os.ReadFile(path)
-	} else {
-		raw, err = readNoFollow(path)
-	}
+	raw, err := readRegularFile(path, follow, piAuthMaxBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]piCredential{}, false, nil
 	}
@@ -257,16 +311,19 @@ func readPiCredentials(path string, follow bool) (map[string]piCredential, bool,
 			Refresh json.RawMessage `json:"refresh"`
 			Expires json.Number     `json:"expires"`
 		}
+		credential := piCredential{raw: entry}
 		if json.Unmarshal(entry, &shape) != nil {
+			out[provider] = credential
 			continue
 		}
-		credential := piCredential{raw: entry, typ: shape.Type}
+		credential.typ = shape.Type
 		if shape.Type == "oauth" {
 			var access, refresh string
 			expires, err := shape.Expires.Int64()
 			if err != nil || json.Unmarshal(shape.Access, &access) != nil ||
 				json.Unmarshal(shape.Refresh, &refresh) != nil {
-				// Not a login pi itself would accept.
+				// Not a login pi itself would accept: kept as it is.
+				out[provider] = piCredential{raw: entry}
 				continue
 			}
 			credential.access, credential.refresh, credential.expires = access, refresh, expires
@@ -285,8 +342,14 @@ func readPiCredentials(path string, follow bool) (map[string]piCredential, bool,
 // rebuilds.
 func syncPiWalledAuth(host, walled string, rebuild bool) error {
 	hostPath, walledPath := filepath.Join(host, "auth.json"), filepath.Join(walled, "auth.json")
-	return withPiAuthLock(hostPath, func() error {
-		err := withPiAuthLock(walledPath, func() error {
+	// The daemon's periodic sync waits only briefly for a walled lock, which a
+	// walled agent may hold for as long as it likes.
+	walledWait := piAuthLockWait
+	if !rebuild {
+		walledWait = piWalledAuthLockWait
+	}
+	return withPiAuthLock(hostPath, piAuthLockWait, func() error {
+		err := withPiAuthLock(walledPath, walledWait, func() error {
 			return mergePiWalledAuth(hostPath, walledPath, rebuild, true)
 		})
 		if errors.Is(err, errPiAuthLockHeld) && rebuild {
@@ -326,8 +389,13 @@ func mergePiWalledAuth(hostPath, walledPath string, rebuild, carryBack bool) err
 		}
 	}
 	if hostChanged {
-		if err := writePiCredentials(hostPath, hostCreds); err != nil {
-			return fmt.Errorf("write pi's auth.json: %w", err)
+		// The operator's auth.json may be a link (a dotfiles checkout, say):
+		// the write goes to its target, so the link stays a link. One that
+		// does not resolve keeps the host login as it is.
+		if target, err := filepath.EvalSymlinks(hostPath); err == nil {
+			if err := writePiCredentials(target, hostCreds); err != nil {
+				return fmt.Errorf("write pi's auth.json: %w", err)
+			}
 		}
 	}
 	if rebuild {
@@ -454,13 +522,16 @@ func writePiCredentials(path string, creds map[string]piCredential) error {
 const (
 	piAuthLockStale = 10 * time.Second
 	piAuthLockWait  = 5 * time.Second
+	// piWalledAuthLockWait is how long the periodic sync waits for a walled
+	// copy's lock before trying again on its next round.
+	piWalledAuthLockWait = 250 * time.Millisecond
 )
 
 var errPiAuthLockHeld = errors.New("held by another pi")
 
-func withPiAuthLock(path string, fn func() error) error {
+func withPiAuthLock(path string, wait time.Duration, fn func() error) error {
 	lock := path + ".lock"
-	deadline := time.Now().Add(piAuthLockWait)
+	deadline := time.Now().Add(wait)
 	for {
 		err := os.Mkdir(lock, 0o700)
 		if err == nil {

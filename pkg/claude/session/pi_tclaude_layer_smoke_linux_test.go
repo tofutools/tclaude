@@ -101,9 +101,6 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 			} {
 				require.NoError(t, os.WriteFile(filepath.Join(agentDir, name), []byte(content), 0o600))
 			}
-			walled, err := harness.PreparePiWalledAgentDir()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = os.RemoveAll(walled) })
 
 			// Each marker is computed by the shell, so the command text the
 			// mock echoes back can never satisfy an assertion on its own.
@@ -120,6 +117,9 @@ func TestPiTclaudeLayerSmoke(t *testing.T) {
 			}, "; ")
 
 			const sessionID = "42222222-3333-4444-8555-666666666666"
+			walled, err := harness.PreparePiWalledAgentDir(sessionID)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(walled) })
 			h := harness.MustGet(harness.PiName)
 			commandLine := h.Spawn.BuildCommand(harness.SpawnSpec{
 				SessionID:             sessionID,

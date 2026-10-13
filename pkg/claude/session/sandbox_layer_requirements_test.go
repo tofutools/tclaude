@@ -203,7 +203,7 @@ func TestPiLayerPathRequirementsReadTheHostAndWriteSessions(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(harness.PiAgentDirEnvVar, host)
 	t.Setenv(harness.PiSessionDirEnvVar, "")
-	walled, err := harness.PiWalledAgentDir(host)
+	walled, err := harness.PiWalledAgentDir(host, "11111111-2222-4333-8444-555555555555")
 	require.NoError(t, err)
 
 	got, err := piLayerPathRequirements(cwd, walled)
@@ -214,6 +214,7 @@ func TestPiLayerPathRequirementsReadTheHostAndWriteSessions(t *testing.T) {
 	assert.Equal(t, filepath.Join(host, "sessions"), got[1].Path)
 	assert.Equal(t, harness.LayerPathWrite, got[1].Access)
 	assert.True(t, got[1].MayCreate)
+	assert.True(t, got[1].PolicyGrant, "mounted after the read-only agent directory around it")
 
 	elsewhere := filepath.Join(home, "pi-sessions")
 	t.Setenv(harness.PiSessionDirEnvVar, elsewhere)

@@ -2818,7 +2818,7 @@ func resumeLaunchCmdWithStackedProof(
 	if outerLayer && h.Name == harness.PiName {
 		// As in `session new`: a walled pi runs against tclaude's walled
 		// agent directory, rebuilt from the operator's for this launch.
-		walled, err := harness.PreparePiWalledAgentDir()
+		walled, err := harness.PreparePiWalledAgentDir(convID)
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -2942,6 +2942,7 @@ func resumeLaunchCmdWithStackedProof(
 		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
+			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
 			GitWriteDirs:     tclaudeLayerContractWriteDirs,
 			Snapshot:         effectiveSandbox,

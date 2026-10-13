@@ -2329,8 +2329,13 @@ func runNew(params *NewParams) error {
 	}
 	if outerLayer && h.Name == harness.PiName {
 		// A walled pi runs against tclaude's walled agent directory, never
-		// the operator's (pi_walled_agent.go).
-		walled, err := harness.PreparePiWalledAgentDir()
+		// the operator's (pi_walled_agent.go), and one of its own: the
+		// directory is keyed by the conversation it launches.
+		conversation := spawnSpec.ResumeID
+		if conversation == "" {
+			conversation = spawnSpec.SessionID
+		}
+		walled, err := harness.PreparePiWalledAgentDir(conversation)
 		if err != nil {
 			return err
 		}
@@ -2407,6 +2412,7 @@ func runNew(params *NewParams) error {
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
+			StateRoot:        spawnSpec.HarnessStateDir,
 			Cwd:              cwd,
 			GitWriteDirs:     launchGitWriteDirs,
 			Snapshot:         launchSandbox,
