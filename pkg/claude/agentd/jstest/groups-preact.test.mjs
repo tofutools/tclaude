@@ -622,7 +622,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   assert.equal(memberCog.getAttribute('aria-expanded'), 'true');
   assert.equal(memberMenu.classList.contains('open'), true, 'member and group menus are mutually exclusive');
 
-  const delegatedItem = memberMenu.querySelector('button[data-act="term"]');
+  const delegatedItem = memberMenu.querySelector('button[data-act="terminal-chooser"]');
   await harness.act(() => harness.fireEvent(delegatedItem, 'click'));
   assert.equal(delegatedItem.isConnected, true, 'dismissal leaves the delegated action target connected');
   assert.equal(memberMenu.classList.contains('open'), false, 'a menu item dismisses its menu');
@@ -691,7 +691,7 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
   const survivingMenu = survivingBeta.querySelector('tr[data-key="shared-member"] .action-menu');
   assert.equal(survivingMenu.classList.contains('open'), true,
     'removing another membership leaves the surviving menu registration live');
-  survivingMenu.querySelector('button[data-act="term"]').focus();
+  survivingMenu.querySelector('button[data-act="terminal-chooser"]').focus();
   await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
   assert.equal(survivingMenu.classList.contains('open'), false);
   assertSameNode(harness.document.activeElement, survivingCog,

@@ -61,14 +61,32 @@ func TestDashboardTerminalRevealFocusChrome(t *testing.T) {
 	t.Logf("terminal reveal-focus browser smoke: %s", filepath.Join(outDir, "index.html"))
 }
 
-// openWebWindowFromGroupsJS clicks the first member's "web window" row action.
-// That action builds its seed synchronously (no round trip), so the pane mount
-// and the tab reveal run without waiting on the terminal socket.
-const openWebWindowFromGroupsJS = `
+// pickTerminalJS is an async JS expression that opens the ⚙ "terminals &
+// windows…" chooser on the row matching rowSel (appended to the menu item's
+// selector) and picks act from it, as a click would. The chosen action is then
+// dispatched like the former dedicated row button.
+func pickTerminalJS(rowSel, act string) string {
+	return `(async function () {
+  var opener = document.querySelector('button[data-act="terminal-chooser"]` + rowSel + `');
+  if (!opener) throw new Error('terminals & windows row action missing');
+  opener.click();
+  for (var i = 0; i < 100; i++) {
+    var pick = document.querySelector('#term-chooser-modal [data-term-pick="` + act + `"]');
+    if (pick) { pick.click(); return; }
+    await new Promise(function (r) { setTimeout(r, 20); });
+  }
+  throw new Error('terminal chooser option ` + act + ` never rendered');
+})()`
+}
+
+// openWebWindowFromGroupsJS picks the first member's "open session in
+// browser" option from the terminals chooser. That action builds its seed
+// synchronously (no round trip), so the pane mount and the tab reveal run
+// without waiting on the terminal socket. It awaits, so it runs inside an
+// async function body.
+var openWebWindowFromGroupsJS = `
 document.querySelector('nav [data-tab="groups"]').click();
-var action = document.querySelector('button[data-act="web-open-window"]');
-if (!action) throw new Error('web window row action missing');
-action.click();
+await ` + pickTerminalJS("", "web-open-window") + `;
 `
 
 // assertActiveXtermFocusedJS proves the reveal left the keyboard in the active
@@ -99,9 +117,9 @@ func terminalOpenFromGroupsFocusState() dashsnap.State {
 		Key:     "terminal-open-from-groups-focuses-xterm",
 		Title:   "Opening the first web window from Groups focuses xterm",
 		Caption: "The first terminal opened from a Groups row reveals the Terminals tab and leaves the keyboard in the active xterm.",
-		JS: openWebWindowFromGroupsJS + `
+		JS: `
 return (async function(){
-` + waitTwoFramesJS + assertActiveXtermFocusedJS + `
+` + openWebWindowFromGroupsJS + waitTwoFramesJS + assertActiveXtermFocusedJS + `
 })();`,
 	}
 }
@@ -111,18 +129,16 @@ func terminalRevealFromOtherTabFocusState() dashsnap.State {
 		Key:     "terminal-reveal-from-other-tab-focuses-xterm",
 		Title:   "Revealing an existing pane from another tab focuses xterm",
 		Caption: "With a pane already open, navigating back to Groups and re-triggering the same terminal reveals the Terminals tab and returns the keyboard to the active xterm.",
-		JS: openWebWindowFromGroupsJS + `
+		JS: `
 return (async function(){
-` + waitTwoFramesJS + `
+` + openWebWindowFromGroupsJS + waitTwoFramesJS + `
   // Leave the Terminals tab and park focus elsewhere, so the reveal below has
   // to move the keyboard back into xterm rather than merely leaving it there.
   document.querySelector('nav [data-tab="groups"]').click();
   var filter = document.querySelector('#filter-groups');
   if (filter) filter.focus();
   if (document.querySelector('#tab-terminals').classList.contains('active')) throw new Error('Groups tab did not take over');
-  var action = document.querySelector('button[data-act="web-open-window"]');
-  if (!action) throw new Error('web window row action missing on re-reveal');
-  action.click();
+  await ` + pickTerminalJS("", "web-open-window") + `;
 ` + waitTwoFramesJS + `
   if (document.querySelectorAll('.mux-pane').length !== 1) throw new Error('re-revealing the same agent opened a second pane');
 ` + assertActiveXtermFocusedJS + `

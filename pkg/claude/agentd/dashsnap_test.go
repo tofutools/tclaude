@@ -1371,6 +1371,26 @@ setTimeout(function(){
 			SettleMS: 300,
 		},
 		{
+			Key:      "action-dialog-terminal-chooser",
+			Title:    "Action dialogs — terminals & windows",
+			Caption:  "The ⚙ terminals & windows chooser: four described options grouped by live session vs. own shell, native vs. web tags, 1–4 hotkeys, and scoped wizard chrome.",
+			JS: `return (async function(){
+  var module = await import('/static/js/action-dialog-controller.js');
+  module.chooseTerminalAction("fe-lead", "/tmp/lbl-fe-lead");
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#term-chooser-modal .term-choice') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var cards = document.querySelectorAll('#term-chooser-modal .term-choice');
+  if (cards.length !== 4) throw new Error('terminal chooser shows ' + cards.length + ' options, want 4');
+  if (document.body.classList.contains('wizard')) {
+    var surface = getComputedStyle(document.querySelector('#term-chooser-modal .modal'));
+    if (!surface.backgroundImage.includes('linear-gradient')) throw new Error('wizard terminal chooser lacks gradient chrome');
+  }
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:      "action-dialog-nest-group",
 			Title:    "Action dialogs — nest group",
 			Caption:  "Preact-owned group nesting dialog preserves the parent selector, explanatory copy, focus boundary, and wizard-compatible scoped chrome.",

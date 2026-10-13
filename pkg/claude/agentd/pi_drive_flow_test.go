@@ -47,6 +47,11 @@ func startPiDriveExtension(t *testing.T, f *testharness.Flow, sim *testharness.P
 	e := &piDriveExtension{t: t, f: f, sim: sim, conv: conv, cancel: cancel, done: make(chan struct{})}
 	go e.loop(ctx)
 	t.Cleanup(e.stop)
+	// The loop polls from its own goroutine; until its first poll lands the
+	// daemon counts the channel as down, and a stop or rename issued in that
+	// window fails rather than waiting for it.
+	require.Eventually(t, func() bool { return agentd.PiDriveConnectedForTest(conv) },
+		5*time.Second, 5*time.Millisecond, "the pi drive extension connects")
 	return e
 }
 
@@ -112,7 +117,11 @@ func piDriveFlow(t *testing.T) *testharness.Flow {
 	t.Cleanup(agentd.SetProcTreeForTest(
 		map[int]string{piDriveShellPID: "bash", piDrivePiPID: harness.PiName, piDriveToolPID: "node"},
 		map[int]int{piDriveShellPID: 1, piDrivePiPID: piDriveShellPID, piDriveToolPID: piDrivePiPID}))
-	t.Cleanup(agentd.SetPiDriveTimingsForTest(50*time.Millisecond, 200*time.Millisecond, 2*time.Second, 2*time.Second))
+	// The connected grace must outlast the fake extension's gap between two
+	// polls (running an op, building the next request) even on a loaded CI
+	// runner, or a delivery mid-test sees the channel as down. Tests that
+	// need it down wait for that rather than sleeping past the grace.
+	t.Cleanup(agentd.SetPiDriveTimingsForTest(50*time.Millisecond, 2*time.Second, 2*time.Second, 2*time.Second))
 	t.Cleanup(agentd.SetNudgeRetryTimingForTest(10*time.Millisecond, 50*time.Millisecond))
 	return newFlow(t)
 }
@@ -203,8 +212,8 @@ func TestPiDrive_HoldsDeliveriesWhileTheChannelIsDown(t *testing.T) {
 	ext := startPiDriveExtension(t, f, sim, resp.ConvID)
 	require.NoError(t, sim.Reply("ready"))
 	ext.stop()
-	// Past the connected grace: the channel is down.
-	time.Sleep(300 * time.Millisecond)
+	require.Eventually(t, func() bool { return !agentd.PiDriveConnectedForTest(resp.ConvID) },
+		10*time.Second, 20*time.Millisecond, "past the connected grace the channel is down")
 
 	sendToAgent(t, f, sender, resp.ConvID, "held while the drive is down")
 	time.Sleep(300 * time.Millisecond)

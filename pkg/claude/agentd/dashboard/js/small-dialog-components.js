@@ -361,6 +361,96 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
   `;
 }
 
+// TERMINAL_CHOICES are the four terminal row actions the ⚙ "terminals &
+// windows…" item collapses into one dialog: WHAT (the agent's live session or
+// a separate shell in its directory) × WHERE (a native window or a browser
+// pane). Each `act` is an existing row action, re-dispatched unchanged.
+const TERMINAL_CHOICES = Object.freeze([
+  Object.freeze({
+    act: 'open-window', section: 'session', icon: '◉', wizardIcon: '👁',
+    title: 'Open session window', wizardTitle: 'Reveal portal', tag: 'native', wizardTag: 'mortal window',
+    plain: "Attach to the agent's live session (its TUI) in a terminal window on this machine. You see what the agent sees, and keystrokes go to it. Falls back to the browser when no window can be opened.",
+    wizard: "Open a window onto the familiar's living session. You see what it sees; your words reach it. A crystal is conjured if no window can be.",
+  }),
+  Object.freeze({
+    act: 'web-open-window', section: 'session', icon: '◉', wizardIcon: '🔮',
+    title: 'Open session in browser', wizardTitle: 'Web portal', tag: 'web', wizardTag: 'crystal',
+    plain: 'The same live session, as a pane in the Terminals tab. Works remotely and without a display.',
+    wizard: 'The same living session, held in a crystal under Scrying. Works from afar.',
+  }),
+  Object.freeze({
+    act: 'term', section: 'shell', icon: '⌨', wizardIcon: '🕯',
+    title: 'Shell in its directory', wizardTitle: 'Scrying portal', tag: 'native', wizardTag: 'mortal window',
+    plain: "A new, separate shell in the agent's working directory (you pick launch, worktree or current dir next). The agent is not affected.",
+    wizard: "A fresh shell of your own in the familiar's lair (you pick which chamber next). The familiar is undisturbed.",
+  }),
+  Object.freeze({
+    act: 'web-term', section: 'shell', icon: '⌨', wizardIcon: '🕯',
+    title: 'Shell in browser', wizardTitle: 'Web scrying portal', tag: 'web', wizardTag: 'crystal',
+    plain: 'The same separate shell, as a pane in the Terminals tab.',
+    wizard: 'The same shell, held in a crystal under Scrying.',
+  }),
+]);
+
+function TerminalChoice({ choice, index, onPick, autofocus }) {
+  return html`
+    <button type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
+      onClick=${() => onPick(choice.act)}>
+      <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
+      <span class="term-choice-body">
+        <span class="term-choice-title"><${Words} plain=${choice.title} wizard=${choice.wizardTitle} /></span>
+        <span class="term-choice-tag"><${Words} plain=${choice.tag} wizard=${choice.wizardTag} /></span>
+        <span class="term-choice-desc"><${Words} plain=${choice.plain} wizard=${choice.wizard} /></span>
+      </span>
+      <kbd class="term-choice-key" aria-hidden="true">${index + 1}</kbd>
+    </button>
+  `;
+}
+
+// TerminalChooserDialog resolves the ⚙ "terminals & windows…" choice to the
+// act of one of TERMINAL_CHOICES; the row-action handler dispatches it.
+export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
+  const pick = (act) => actions.finishChoice(descriptor, act);
+  const onKeyDown = (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const choice = TERMINAL_CHOICES[Number(event.key) - 1];
+    if (!choice) return;
+    event.preventDefault();
+    pick(choice.act);
+  };
+  const section = (name, plain, wizard) => html`
+    <div class="term-choice-section" role="presentation"><${Words} plain=${plain} wizard=${wizard} /></div>
+    ${TERMINAL_CHOICES.map((choice, index) => choice.section === name && html`<${TerminalChoice} key=${choice.act} choice=${choice} index=${index} onPick=${pick} autofocus=${index === 0} />`)}
+  `;
+  return html`
+    <${Overlay}
+      id="term-chooser-modal"
+      dialogClass="modal"
+      labelledby="term-chooser-title"
+      onClose=${() => actions.finishChoice(descriptor, null)}
+      confirmDiscard=${confirmDiscard}
+    >
+      <div onKeyDown=${onKeyDown}>
+        <h3 id="term-chooser-title"><${Words} plain="Terminals & windows" wizard="🔮 Scrying portals" /></h3>
+        <div class="term-chooser-meta">
+          <${Words} plain="for " wizard="for familiar " /><code>${descriptor.label}</code>${descriptor.cwd && html` · <span class="term-chooser-cwd">${descriptor.cwd}</span>`}
+        </div>
+        <div class="term-choices">
+          ${section('session', 'Watch or drive the agent', 'Gaze into the familiar')}
+          ${section('shell', 'Your own shell', 'Enter its lair')}
+        </div>
+        <p class="term-chooser-hint"><${Words}
+          plain=${html`Press <kbd>1</kbd>–<kbd>4</kbd> to pick.`}
+          wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose.`}
+        /></p>
+        <div class="modal-buttons">
+          <button id="term-chooser-cancel" type="button" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</button>
+        </div>
+      </div>
+    </${Overlay}>
+  `;
+}
+
 // SANDBOX_IMPL_MODE_INHERIT is the "don't pin anything" option in the mode
 // select. It is not a mode the server accepts — it is the absence of one, which
 // makes the server carry the agent's recorded mode forward or, when the

@@ -90,8 +90,8 @@ export function setLastSnapshot(v) { lastSnapshot = v; }
 // dashboard.default_terminal="web").
 // Read off the latest snapshot so it tracks a live config change on the next
 // 2s poll. row-actions.js, palette.js and refresh.js gate their native-vs-web
-// routing on this; the dedicated "web term" / "web window" buttons ignore it
-// (always web).
+// routing on this; the terminal chooser's browser options (web-term /
+// web-open-window) ignore it (always web).
 export function webTerminalDefault() {
   return !!(lastSnapshot && lastSnapshot.default_terminal === 'web');
 }

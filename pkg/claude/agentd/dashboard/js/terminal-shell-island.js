@@ -1574,7 +1574,7 @@ function TerminalTabs({
       ${empty && !hasPanes ? html`
         <div id="mux-empty">
           <div class="mux-empty-title">No terminals open</div>
-          <div>Open one from the dashboard with the <code>web term</code> or <code>web window</code> buttons — they open in the dashboard's <code>Terminals</code> tab.</div>
+          <div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu item and pick a browser option — it opens in the dashboard's <code>Terminals</code> tab.</div>
           <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser window here.</div>
         </div>
       ` : null}

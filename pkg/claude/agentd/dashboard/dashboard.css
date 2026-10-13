@@ -13259,6 +13259,75 @@ body.wizard #term-modal #term-current:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 
+/* ─── Terminals & windows chooser (⚙ "terminals & windows…") ─────────
+   One card per terminal row action, grouped by what it opens (the agent's
+   live session vs. a separate shell), each explaining what it does. */
+#term-chooser-modal .modal { max-width: 540px; max-height: calc(100vh - 32px); overflow-y: auto; }
+#term-chooser-modal h3 { margin-bottom: 2px; }
+.term-chooser-meta { color: #8b949e; font-size: 12px; margin-bottom: 10px; overflow-wrap: anywhere; }
+.term-chooser-meta code { color: #79c0ff; }
+.term-choices { display: flex; flex-direction: column; gap: 8px; }
+.term-choice-section {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #8b949e; margin: 4px 0 -2px;
+}
+.term-choice {
+  display: flex; gap: 12px; align-items: flex-start; width: 100%;
+  text-align: left; font: inherit; cursor: pointer;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  padding: 10px 12px; color: #c9d1d9;
+}
+.term-choice:hover, .term-choice:focus-visible { border-color: #58a6ff; background: #1f2a3a; outline: none; }
+.term-choice-icon { font-size: 18px; width: 24px; flex: 0 0 auto; text-align: center; line-height: 1.2; }
+.term-choice-body { flex: 1 1 auto; min-width: 0; }
+.term-choice-title { color: #e6edf3; font-weight: 600; font-size: 13px; }
+.term-choice-tag {
+  font-size: 10px; border: 1px solid #30363d; border-radius: 10px;
+  padding: 0 6px; margin-left: 6px; color: #8b949e; vertical-align: 1px;
+}
+.term-choice-desc { display: block; margin-top: 2px; color: #8b949e; font-size: 12px; line-height: 1.4; }
+.term-choice-key, .term-chooser-hint kbd {
+  border: 1px solid #30363d; border-radius: 3px; padding: 0 5px;
+  font-size: 11px; color: #8b949e; background: transparent; font-family: inherit;
+}
+.term-choice-key { align-self: center; flex: 0 0 auto; }
+.term-chooser-hint { color: #8b949e; font-size: 11px; margin: 10px 0 0; }
+
+/* 🧙 Scrying portals — the same violet-void surface and gilded focus the
+   #term-modal picker above uses; scoped so sibling .modal dialogs keep theirs. */
+body.wizard #term-chooser-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #term-chooser-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #term-chooser-modal .term-chooser-meta,
+body.wizard #term-chooser-modal .term-choice-section,
+body.wizard #term-chooser-modal .term-choice-desc,
+body.wizard #term-chooser-modal .term-chooser-hint { color: #ad9abb; }
+body.wizard #term-chooser-modal .term-chooser-meta code { color: #d9b45a; }
+body.wizard #term-chooser-modal .term-choice {
+  background: #1e1629; border-color: #59466b; color: #e7d9f5;
+}
+body.wizard #term-chooser-modal .term-choice:hover,
+body.wizard #term-chooser-modal .term-choice:focus-visible {
+  border-color: #d9b45a; background: #2e2240; box-shadow: 0 0 10px rgba(217, 180, 90, 0.2);
+}
+body.wizard #term-chooser-modal .term-choice-title { color: #f3e6c0; }
+body.wizard #term-chooser-modal .term-choice-tag,
+body.wizard #term-chooser-modal .term-choice-key,
+body.wizard #term-chooser-modal .term-chooser-hint kbd { border-color: #59466b; color: #ad9abb; }
+body.wizard #term-chooser-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #term-chooser-modal .modal-buttons button:hover { background: #3a2a63; }
+
 /* ─── Wizard profile editor — "Inscribe a summoning recipe" ─────────
    The 🧙 re-skin of the spawn-profile editor (Groups cog → ⧉ profiles… →
    edit / + new profile, and the spawn dialog's "Save as profile"). A spawn

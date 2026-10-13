@@ -245,7 +245,7 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 // the bounded-poll / stats / open-pane helpers the states share. All waits are
 // deadline-bounded so a hung state reports WHAT it waited for instead of
 // silently eating the state timeout.
-const termSmokeHelpersJS = `
+var termSmokeHelpersJS = `
 window.__smokeErrors = [];
 window.addEventListener('error', function (event) {
   __smokeErrors.push('error: ' + event.message);
@@ -296,10 +296,7 @@ window.__smokeTwoFrames = function () {
 window.__smokeOpenLivePane = async function () {
   window.__s0 = await __smokeStats();
   document.querySelector('nav [data-tab="groups"]').click();
-  var action = document.querySelector(
-    'button[data-act="web-open-window"][data-conv="` + termSmokeMember + `"]');
-  if (!action) throw new Error('web window action for the online fixture member missing');
-  action.click();
+  await ` + pickTerminalJS(`[data-conv="`+termSmokeMember+`"]`, "web-open-window") + `;
   await __smokePoll('pane connected', function () { return __smokePaneStatus() === 'connected'; });
   await __smokePoll('live PTY banner', function () {
     return __smokePaneText().indexOf('SMOKEREADY') !== -1;
@@ -364,7 +361,7 @@ return (async function () {
   document.querySelector('nav [data-tab="groups"]').click();
   var filter = document.querySelector('#filter-groups');
   if (filter) filter.focus();
-  document.querySelector('button[data-act="web-open-window"][data-conv="` + termSmokeMember + `"]').click();
+  await ` + pickTerminalJS(`[data-conv="`+termSmokeMember+`"]`, "web-open-window") + `;
   await __smokeTwoFrames();
   if (document.querySelectorAll('.mux-pane').length !== 1) throw new Error('re-reveal opened a second pane');
   __smokeAssertXtermFocused();
@@ -591,7 +588,7 @@ func terminalLiveNativeFallbackState() dashsnap.State {
 		JS: `return (async function () {
     window.__s0 = await __smokeStats();
     document.querySelector('nav [data-tab="groups"]').click();
-    document.querySelector('button[data-act="open-window"][data-conv="` + termSmokeMember + `"]').click();
+    await ` + pickTerminalJS(`[data-conv="`+termSmokeMember+`"]`, "open-window") + `;
     await __smokePoll('fallback reveals terminal tab', function () {
       return document.querySelector('#tab-terminals').classList.contains('active');
     });
