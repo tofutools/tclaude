@@ -51,6 +51,8 @@ class RunnerTests(unittest.TestCase):
             result = subprocess.run(["bash", "scripts/ci/agentd-tests.sh", "-count=1"],
                                     cwd=ROOT, env=env, text=True, capture_output=True,
                                     timeout=10)
+            self.assertTrue((root / "domain.names").is_file(), result.stdout+result.stderr)
+            self.assertTrue((root / "other.names").is_file(), result.stdout+result.stderr)
             domain = set((root / "domain.names").read_text().splitlines())
             other = set((root / "other.names").read_text().splitlines())
             return result, domain, other

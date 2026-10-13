@@ -27,11 +27,12 @@ if [ "${RUNNER_OS:-$(uname -s)}" = Linux ]; then runner=(scripts/test.sh); fi
 run_side() {
   local side=$1
   shift
-  local coverage=()
+  # Bash 3.2 (macOS /bin/bash) treats an empty array as unset under -u.
   if [ "${TCLAUDE_AGENTD_TEST_COVER:-}" = 1 ]; then
-    coverage=("-coverprofile=$logs/$side.cover")
+    "${runner[@]}" -json "-coverprofile=$logs/$side.cover" "$@" ./pkg/claude/agentd
+  else
+    "${runner[@]}" -json "$@" ./pkg/claude/agentd
   fi
-  "${runner[@]}" -json "${coverage[@]}" "$@" ./pkg/claude/agentd
 }
 run_side domain "$@" -run "$domain" > "$logs/domain.json" 2>&1 &
 domain_pid=$!
