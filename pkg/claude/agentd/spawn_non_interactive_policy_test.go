@@ -265,3 +265,15 @@ func TestOneShotDirectorySweepReapsAbandonedAuthoredCgroup(t *testing.T) {
 	_, err = os.Stat(filepath.Join(run.Base, run.Key))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
+
+func TestOneShotDirectoryJournalCanonicalizesAliasedHome(t *testing.T) {
+	isolateOneShotDirectories(t)
+	alias := filepath.Join(testutil.CanonicalTempDir(t), "home-alias")
+	require.NoError(t, os.Symlink(os.Getenv("HOME"), alias))
+	t.Setenv("HOME", alias)
+	run, err := newOneShotDirectoryRun()
+	require.NoError(t, err)
+	run.finish()
+	_, err = os.Stat(filepath.Join(oneShotDirectoryJournalRoot(), run.Key+".json"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
