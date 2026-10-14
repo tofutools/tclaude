@@ -18236,6 +18236,22 @@ body.wizard .process-scroll-surface {
 .pscope-outline-item.is-in-scope { color: #a5d6ff; }
 .pscope-outline-glyph { width: 1.2em; flex: none; text-align: center; }
 .pscope-outline-ref { color: #6e7681; font-weight: 400; }
+
+/* Composition on the canvas (E2, tcl-lf1vlh): inline-expanded ▣ frames and
+   the connector a palette drag would splice into. */
+.process-group-frame {
+  fill: color-mix(in srgb, var(--pg-accent) 6%, transparent);
+  stroke: var(--pg-accent); stroke-width: 1.4; stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-group-label { fill: var(--pg-accent); font-size: 12px; font-weight: 600; pointer-events: none; }
+.process-group-action { cursor: pointer; outline: none; }
+.process-group-action-box { fill: var(--pg-panel); stroke: var(--pg-accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.process-group-action-label { fill: var(--pg-accent); font-size: 11px; }
+.process-group-action:hover .process-group-action-box,
+.process-group-action:focus-visible .process-group-action-box { fill: color-mix(in srgb, var(--pg-accent) 22%, var(--pg-panel)); stroke-width: 2; }
+.process-edge.is-drop-target { color: #f0883e; }
+.process-edge.is-drop-target .process-edge-path { stroke-width: 3.5; stroke-dasharray: 5 3; }
 .pni-subprocess, .pni-ports { display: flex; flex-direction: column; gap: 6px; }
 .pni-subprocess-inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; color: #c9d1d9; }
 body.wizard .pscope-crumb { background: #181226; border-color: #4a3d6b; }

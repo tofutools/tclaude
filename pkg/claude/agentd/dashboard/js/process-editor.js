@@ -36,6 +36,7 @@ import {
   validateProcessSelectionPayload,
 } from './process-editor-clipboard.js';
 import { LiveValidation } from './process-validation.js';
+import { insertNode, spliceNode, unwrapSubprocess, wrapPlan, wrapSelection } from './process-compose.js';
 import {
   NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
   sameTemplateGeneration, templateHeadFromEditView,
@@ -207,6 +208,20 @@ async function fetchEditView(id, version, { signal } = {}) {
 // (root) template. Inside a ▣ scope the body's nodes, edges, selection and
 // focused diagnostic are added under their namespaced ids ("qa/unit"), so
 // a scribe is never told about a top-level node that does not exist.
+// wrapBlocker says why the selection cannot be wrapped as a subprocess, or
+// '' when it can.
+function wrapBlocker(model, selection) {
+  const nodes = selectionItems(selection).filter((item) => item.type === 'node').map((item) => item.id);
+  if (!nodes.length) return 'Select the nodes to wrap first.';
+  if (typeof model?.nestedTarget !== 'function') return 'Wrapping is not available here.';
+  try {
+    wrapPlan(model, nodes);
+    return '';
+  } catch (error) {
+    return error.message;
+  }
+}
+
 export function scribeContextInput(model, selection, diagnostic) {
   const items = selectionItems(selection);
   if (!model.inScope) return { template: model.template, edges: model.edges, selection: items, diagnostic };
@@ -337,6 +352,7 @@ export class ProcessTemplateEditor {
         portDragStart: (event) => this.onPortDragStart(event),
         portDragEnd: (event) => this.onPortDragEnd(event),
         canvasDrop: (event) => this.onCanvasDrop(event),
+        groupAction: (event) => this.onGroupAction(event),
         canvasPointerMove: (event) => this.onCanvasPointerMove(event),
         canvasPointerLeave: () => this.onCanvasPointerLeave(),
       },
@@ -374,12 +390,25 @@ export class ProcessTemplateEditor {
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
       scribeDock: { ...this.scribeDock, available: !!this.options.scribeDock },
+      // Stored templates the palette offers as ▣ references (never this one:
+      // a template cannot run itself).
+      templateRefs: (this.options.templateRefs?.() || [])
+        .filter((item) => item?.id && item.id !== (this.model.template.id || ''))
+        .slice(0, 50).map((item) => ({ id: String(item.id), name: String(item.name || item.id), versions: item.versionCount || 0 })),
       snippets: {
         ...this.snippetLibrary,
         items: this.customSnippets.map(({ payload, ...metadata }) => ({ ...metadata })),
         canInsert: this.model.config.canInsert && !externalInteractionPending(this),
         canSaveSelection: this.canSaveSelectionAsSnippet(),
       },
+      compose: (() => {
+        const wrapReason = wrapBlocker(this.model, this.selection);
+        return {
+          canWrap: !wrapReason && this.model.config.canInsert && !externalInteractionPending(this) && !this.diffReview,
+          wrapReason,
+          expanded: [...(this.model.expansions?.keys() || [])].filter((id) => this.model.isExpanded?.(id)),
+        };
+      })(),
       inline: { ...this.inlineState },
       edgePin: this.edgePinView(),
       inspectorFocusRequest: this.inspectorFocusRequest,
@@ -717,6 +746,7 @@ export class ProcessTemplateEditor {
   }
 
   insertPaletteItem(payload, point = this.canvasCenterPoint()) {
+    if (payload.kind === 'template') return this.insertTemplateRef(payload, point);
     if (payload.kind === 'primitive') return this.addNodeType(payload.type, point);
     if (payload.kind === 'custom-snippet') return this.insertCustomSnippet(payload.id, point);
     if (payload.kind !== 'snippet') return false;
@@ -1419,7 +1449,10 @@ export class ProcessTemplateEditor {
   // so matching on from/outcome — which the layout spreads through — is the
   // only stable lookup.
   laidEdge(from, outcome) {
-    return this.graph?.layoutSnapshot().edges.find((edge) => edge.from === from && edge.outcome === outcome);
+    // A connector leaving an expanded ▣ is drawn from a body end; source
+    // carries its real identity.
+    return this.graph?.layoutSnapshot().edges.find((edge) => (edge.source?.from ?? edge.from) === from
+      && (edge.source?.outcome ?? edge.outcome) === outcome);
   }
 
   setSelection(selection) {
@@ -1469,6 +1502,11 @@ export class ProcessTemplateEditor {
   // the inspector's label input.
   onNodeDblClick({ node }) {
     if (!node || this.diffReview || isScopePortID(node.id)) return;
+    const nested = this.model.nestedTarget(node.id);
+    if (nested) {
+      this.revealOutlineNode([nested.owner], nested.inner);
+      return;
+    }
     if (this.model.node(node.id)?.type === 'subprocess' && this.enterSubprocess(node.id)) return;
     this.setSelection({ type: 'node', id: node.id });
     this.openNodeSettings(node.id);
@@ -1529,12 +1567,15 @@ export class ProcessTemplateEditor {
       if (change) this.setDiffCursor(change.id);
       return;
     }
-    const item = { type: 'edge', from: edge.from, outcome: edge.outcome };
+    // A connector leaving an expanded ▣ is drawn from a body end; source is
+    // the connector it really is.
+    const identity = edge.source || edge;
+    const item = { type: 'edge', from: identity.from, outcome: identity.outcome };
     const already = selectionContains(this.selection, item);
     const additive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
     this.setSelection(additive ? toggleSelection(this.selection, item) : item);
     // Second click on an already-selected edge edits the outcome label in place.
-    if (already && !additive) this.openInlineOutcomeEdit(edge.from, edge.outcome);
+    if (already && !additive) this.openInlineOutcomeEdit(identity.from, identity.outcome);
   }
 
   commitNodeDrag({ starts, delta, moved = true }) {
@@ -1692,13 +1733,109 @@ export class ProcessTemplateEditor {
 
   // ---- palette drop ----------------------------------------------------------
 
-  onCanvasDrop({ point, event }) {
+  onCanvasDrop({ point, edge, event }) {
     let raw = event?.dataTransfer?.getData?.(PALETTE_MIME) || '';
     if (!raw && this.paletteDragPayload) raw = this.paletteDragPayload;
     if (!raw) return;
     let payload;
     try { payload = JSON.parse(raw); } catch { return; }
+    if (edge && !this.diffReview && (payload.kind === 'primitive' || payload.kind === 'template')) {
+      ProcessTemplateEditor.prototype.splicePaletteItem.call(this, payload, edge.source || edge, point);
+      return;
+    }
     ProcessTemplateEditor.prototype.insertPaletteItem.call(this, payload, point);
+  }
+
+  // ---- composition (E2): splice, template refs, expand, wrap/unwrap ----------
+
+  // templateRefInit makes a ▣ node reference a stored template.
+  static templateRefInit(payload) {
+    return (node) => { node.subprocess = { templateRef: String(payload.id) }; };
+  }
+
+  insertTemplateRef(payload, point = this.canvasCenterPoint()) {
+    if (!payload?.id || payload.id === this.model.template.id) return false;
+    const id = this.mutate(() => insertNode(this.model, 'subprocess', {
+      x: point.x, y: point.y, name: payload.name || payload.id, init: ProcessTemplateEditor.templateRefInit(payload),
+    }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    this.status(`Added ▣ ${payload.name || payload.id}: it runs that template. Map its out-ports in the node inspector.`);
+    return id;
+  }
+
+  // splicePaletteItem drops a node kind or template onto a connector.
+  splicePaletteItem(payload, { from, outcome }, point = this.canvasCenterPoint()) {
+    if (this.destroyed) return false;
+    if (payload.kind === 'template' && (!payload.id || payload.id === this.model.template.id)) return false;
+    const type = payload.kind === 'template' ? 'subprocess' : payload.type;
+    const id = this.mutate(() => spliceNode(this.model, { from, outcome }, type, {
+      x: point.x, y: point.y,
+      ...(payload.kind === 'template' ? { name: payload.name || payload.id, init: ProcessTemplateEditor.templateRefInit(payload) } : {}),
+    }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    this.status(`Spliced ${payload.kind === 'template' ? `▣ ${payload.name || payload.id}` : type} into ${from} → (${outcome}).`);
+    return id;
+  }
+
+  // expandSubprocess draws a ▣ node's body in place, centered where the node
+  // is drawn now. View state: no edit, no undo step.
+  expandSubprocess(id) {
+    if (this.destroyed || this.diffReview || !this.model.canExpand(id)) return false;
+    const laid = this.graph?.layoutSnapshot().nodes.find((node) => node.id === id);
+    this.model.expandSubprocess(id, laid ? { x: laid.x, y: laid.y } : undefined);
+    this.setSelection(null);
+    // The graph just grew by a whole body: show all of it.
+    this.refresh({ fit: true });
+    this.status(`Expanded ${this.model.node(id)?.name || id} in place: edit its nodes here, or collapse it from the frame.`);
+    return true;
+  }
+
+  collapseSubprocess(id) {
+    if (this.destroyed || !this.model.collapseSubprocess(id)) return false;
+    this.selection = null;
+    this.refresh();
+    this.setSelection({ type: 'node', id });
+    return true;
+  }
+
+  onGroupAction({ id, action }) {
+    if (action === 'collapse') this.collapseSubprocess(id);
+  }
+
+  async wrapSelection() {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const ids = selectionItems(this.selection).filter((item) => item.type === 'node').map((item) => item.id);
+    const reason = wrapBlocker(this.model, this.selection);
+    if (reason) {
+      this.status(reason, true);
+      return false;
+    }
+    const name = await this.nameSnippetModal({ title: 'Wrap selection as a subprocess', submitLabel: 'Wrap', initialName: 'Subprocess' });
+    if (name == null || this.destroyed) return false;
+    const layout = this.graph?.layoutSnapshot();
+    const laid = (layout?.nodes || []).filter((node) => ids.includes(node.id));
+    const position = laid.length ? {
+      x: Math.round(laid.reduce((sum, node) => sum + node.x, 0) / laid.length),
+      y: Math.round(laid.reduce((sum, node) => sum + node.y, 0) / laid.length),
+    } : undefined;
+    const id = this.mutate(() => wrapSelection(this.model, ids, { name, position }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    const ports = this.model.node(id).subprocess;
+    this.status(`Wrapped ${ids.length} node${ids.length === 1 ? '' : 's'} as ▣ ${name}: ${Object.keys(ports.outputs || {}).length} out-port(s), ${Object.keys(ports.inputs || {}).length} in-port(s).`);
+    return id;
+  }
+
+  unwrapSubprocess(id) {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const laid = this.graph?.layoutSnapshot().nodes.find((node) => node.id === id);
+    const ids = this.mutate(() => unwrapSubprocess(this.model, id, { origin: laid ? { x: laid.x, y: laid.y } : undefined }));
+    if (!ids) return false;
+    this.setSelection(makeSelection(ids.map((nodeID) => ({ type: 'node', id: nodeID }))));
+    this.status(`Unwrapped ${id} into ${ids.length} node${ids.length === 1 ? '' : 's'}.`);
+    return ids;
   }
 
   canvasCenterPoint() {
@@ -1844,6 +1981,7 @@ export class ProcessTemplateEditor {
         canCreate: false, createReason: closedReason,
         canEdit: false, editReason: closedReason,
         canDuplicate: false, duplicateReason: closedReason,
+        canWrap: false, wrapReason: closedReason, expandable: '', canUnwrap: false, unwrapReason: closedReason,
         canDelete: false, deleteReason: closedReason,
         canValidate: false, validateReason: closedReason,
         issueCount: 0, hasCurrentIssue: false,
@@ -1880,8 +2018,14 @@ export class ProcessTemplateEditor {
       createReason: busyReason || 'Adding nodes is not allowed in this view.',
       canEdit: !pending && (templateSelected || (!!one && oneEditable)),
       editReason: busyReason || (!hasSelection ? 'Select one item first.' : selected.length > 1 ? 'Edit one item at a time.' : 'The selected item is read-only.'),
-      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length,
-      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : 'Only node selections can be duplicated.'),
+      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length
+        && !selectedNodes.some((item) => this.model.nestedTarget?.(item.id)),
+      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : selectedNodes.some((item) => this.model.nestedTarget?.(item.id)) ? 'Collapse the expanded subprocess to duplicate its nodes.' : 'Only node selections can be duplicated.'),
+      canWrap: !pending && this.model.config.canInsert && selectedNodes.length > 0 && !wrapBlocker(this.model, this.selection),
+      wrapReason: busyReason || wrapBlocker(this.model, this.selection) || 'Adding nodes is not allowed in this view.',
+      expandable: one?.type === 'node' && this.model.canExpand?.(one.id) ? one.id : '',
+      canUnwrap: !pending && one?.type === 'node' && !!this.model.canExpand?.(one.id) && this.model.config.canInsert,
+      unwrapReason: busyReason || 'Select one ▣ node with an inline body.',
       canDelete: !pending && selected.length > 0 && deletionEditable,
       deleteReason: busyReason || (!hasSelection ? 'Select graph items first.' : 'The selection includes read-only graph items.'),
       canValidate: !pending && !!this.validation,
