@@ -8,8 +8,9 @@ import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import {
-  GroupsFocusSwitch, GroupsProcessesPlaceholder, effectiveGroupsFocus, useGroupsFocusRestore,
+  GroupsFocusSwitch, effectiveGroupsFocus, useGroupsFocusRestore,
 } from './groups-focus.js';
+import { GroupsProcessesFocus } from './groups-processes.js';
 
 const html = htm.bind(h);
 
@@ -195,7 +196,7 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-export function GroupsList({ host, state, actions }) {
+export function GroupsList({ host, state, actions, processSource = undefined }) {
   const wizard = useWizardTheme();
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   const focus = effectiveGroupsFocus(state);
@@ -282,7 +283,8 @@ export function GroupsList({ host, state, actions }) {
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     ${focus === 'processes'
-    ? html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`
+    ? html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
+      filter=${state.processFilter.value} onFilter=${state.setProcessFilter} source=${processSource} />`
     : html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
       triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`}
     ${state.standingOrdersDialog.value && html`

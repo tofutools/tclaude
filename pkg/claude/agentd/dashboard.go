@@ -296,6 +296,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
+	// Groups › Processes "+ start process" (G3) starts a group-scoped run.
+	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)

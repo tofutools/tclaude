@@ -1,0 +1,94 @@
+{
+  "_comment": "GET /v1/process/context fixture (agreed tcl-f2cpfb shape) for the G3 jstests and dashsnap states. Times are relative to _now; dashsnap shifts them to the real clock and rebinds performer refs to the seeded members by name.",
+  "_now": "2026-10-14T12:04:00Z",
+  "runs": {
+    "run_release": {
+      "runId": "run_release", "templateId": "tpl_release_train", "templateRef": "release-train v7", "name": "release-2.4",
+      "status": "running", "action": "awaiting_decision", "needsYou": true, "startedAt": "2026-10-14T10:00:00Z", "updatedAt": "2026-10-14T12:03:00Z",
+      "scope": { "kind": "group", "groupId": "grp_fe", "group": "frontend-squad", "owner": "agt_fe_lead", "state": "bound" },
+      "nodes": [
+        { "id": "start", "kind": "start", "state": "done" },
+        { "id": "plan", "label": "Plan sprint", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_lead", "name": "fe-lead" }, "state": "done" },
+        { "id": "branches", "label": "Cut branches", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
+        { "id": "fanout", "label": "Fan out", "kind": "parallel", "state": "done" },
+        { "id": "checkout", "label": "Implement checkout", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_forms", "name": "fe-dev-forms" }, "state": "running" },
+        { "id": "charts", "label": "Implement charts", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_charts", "name": "fe-dev-charts" }, "state": "done" },
+        { "id": "review", "label": "Review gate", "kind": "task", "performer": { "kind": "human", "ref": "" }, "state": "awaiting" },
+        { "id": "qa", "label": "QA suite", "kind": "subprocess", "state": "pending" },
+        { "id": "ship", "label": "Ship", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "pending" },
+        { "id": "end", "kind": "end", "state": "pending" }
+      ],
+      "edges": [
+        { "from": "start", "to": "plan" }, { "from": "plan", "to": "branches" }, { "from": "branches", "to": "fanout" },
+        { "from": "fanout", "to": "checkout" }, { "from": "fanout", "to": "charts" }, { "from": "charts", "to": "review" },
+        { "from": "checkout", "to": "qa" }, { "from": "review", "to": "qa", "label": "approved" },
+        { "from": "qa", "to": "ship" }, { "from": "ship", "to": "end" }
+      ],
+      "current": ["checkout", "review"]
+    },
+    "run_reindex": {
+      "runId": "run_reindex", "templateId": "tpl_reindex", "name": "reindex-v2",
+      "status": "running", "action": "executing", "needsYou": false, "startedAt": "2026-10-14T11:23:00Z", "updatedAt": "2026-10-14T12:03:30Z",
+      "scope": { "kind": "agent", "agentId": "agt_fe_charts", "group": "frontend-squad", "state": "bound" },
+      "nodes": [
+        { "id": "start", "kind": "start", "state": "done" },
+        { "id": "snapshot", "label": "Snapshot index", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
+        { "id": "backfill", "label": "Backfill shards", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_charts", "name": "fe-dev-charts" }, "state": "running" },
+        { "id": "verify", "label": "Verify recall@10", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "pending" },
+        { "id": "gate", "label": "≥ 0.92?", "kind": "decision", "state": "pending" },
+        { "id": "swap", "label": "Swap alias", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "pending" },
+        { "id": "end", "kind": "end", "state": "pending" }
+      ],
+      "edges": [
+        { "from": "start", "to": "snapshot" }, { "from": "snapshot", "to": "backfill" }, { "from": "backfill", "to": "verify" },
+        { "from": "verify", "to": "gate" }, { "from": "gate", "to": "swap", "label": "yes" }, { "from": "swap", "to": "end" },
+        { "from": "gate", "to": "backfill", "label": "no", "back": true }
+      ],
+      "current": ["backfill"]
+    },
+    "run_migrate": {
+      "runId": "run_migrate", "templateId": "tpl_db_migrate", "templateRef": "db-migrate v3", "name": "migrate-orders",
+      "status": "running", "action": "blocked", "needsYou": true, "startedAt": "2026-10-14T09:12:00Z", "updatedAt": "2026-10-14T11:40:00Z",
+      "scope": { "kind": "group", "groupId": "grp_fe", "group": "frontend-squad", "owner": "agt_fe_lead", "state": "bound" },
+      "nodes": [
+        { "id": "start", "kind": "start", "state": "done" },
+        { "id": "dump", "label": "Dump tables", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
+        { "id": "apply", "label": "Apply migration", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "blocked" },
+        { "id": "verify", "label": "Verify counts", "kind": "task", "performer": { "kind": "agent", "ref": "unassigned" }, "state": "pending" },
+        { "id": "end", "kind": "end", "state": "pending" }
+      ],
+      "edges": [
+        { "from": "start", "to": "dump" }, { "from": "dump", "to": "apply" }, { "from": "apply", "to": "verify" }, { "from": "verify", "to": "end" }
+      ],
+      "current": ["apply"]
+    },
+    "run_hotfix": {
+      "runId": "run_hotfix", "templateId": "tpl_hotfix", "name": "hotfix-1468",
+      "status": "completed", "action": "terminal", "needsYou": false, "startedAt": "2026-10-14T07:00:00Z", "updatedAt": "2026-10-14T07:42:00Z",
+      "scope": { "kind": "group", "groupId": "grp_fe", "group": "frontend-squad", "owner": "agt_fe_lead", "state": "bound" },
+      "nodes": [
+        { "id": "start", "kind": "start", "state": "done" },
+        { "id": "patch", "label": "Patch", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_forms", "name": "fe-dev-forms" }, "state": "done" },
+        { "id": "deploy", "label": "Deploy", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
+        { "id": "end", "kind": "end", "state": "done" }
+      ],
+      "edges": [ { "from": "start", "to": "patch" }, { "from": "patch", "to": "deploy" }, { "from": "deploy", "to": "end" } ],
+      "current": []
+    }
+  },
+  "groups": [
+    {
+      "groupId": "grp_fe", "group": "frontend-squad",
+      "active": ["run_release", "run_reindex", "run_migrate"], "needsYou": ["run_migrate", "run_release"], "done": ["run_hotfix"],
+      "planned": [ { "source": "cron", "id": "cron_nightly", "templateId": "tpl_ingest", "name": "nightly-ingest", "nextAt": "2026-10-15T00:00:00Z" } ],
+      "activeCount": 3, "needsYouCount": 2
+    },
+    { "groupId": "grp_infra", "group": "infra-crew", "active": [], "needsYou": [], "planned": [], "activeCount": 0, "needsYouCount": 0 }
+  ],
+  "agents": [
+    { "agentId": "agt_fe_forms", "runs": [ { "runId": "run_release", "nodeId": "checkout", "index": 4, "total": 8, "state": "running" } ] },
+    { "agentId": "agt_fe_charts", "runs": [ { "runId": "run_reindex", "nodeId": "backfill", "index": 2, "total": 5, "state": "running" } ] }
+  ],
+  "orphaned": [],
+  "truncated": false
+}
