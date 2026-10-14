@@ -43,6 +43,11 @@ import {
 import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
 } from './process-selection.js';
+import {
+  DRAFT_DIFF_MAX_CHANGES, decideAllDraftChanges, decideDraftChange, diffTemplateDrafts,
+  draftChangeForEdge, draftChangeForNode, draftDiffCounts, mergeDraftDecisions,
+  overlayDraftDiff, pendingDraftChanges, sameDraftContent,
+} from './process-draft-diff.js';
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import {
@@ -98,8 +103,16 @@ export function hasNonCollapsedDOMSelection(event) {
   }
 }
 
+// An open proposal review (diffReview) freezes the draft exactly like a
+// pending reload: the review's three-way diff was computed against it.
 function externalInteractionPending(editor) {
-  return !!(editor.externalDecisionPending || editor.externalReloadPending);
+  return !!(editor.externalDecisionPending || editor.externalReloadPending || editor.diffReview);
+}
+
+function externalBusyReason(editor) {
+  return editor.diffReview
+    ? 'Finish or close the proposal review first.'
+    : 'An external template reload is in progress.';
 }
 
 function graphInteraction(editor) {
@@ -164,6 +177,10 @@ export class ProcessTemplateEditor {
     this.externalReviewRequest = null;
     this.externalChange = NO_EXTERNAL_CHANGE;
     this.externalReviewOpen = false;
+    // On-canvas review of an external generation (E4): { key, model, rev,
+    // ours, view, changes, decisions, cursor }. Private controller state; only
+    // bounded counts and the current change cross into the snapshot.
+    this.diffReview = null;
     this.paletteHidden = false;
     this.customSnippets = [];
     this.snippetLibrary = { loading: true, error: '', generation: 0, pendingID: '', creating: false };
@@ -263,7 +280,9 @@ export class ProcessTemplateEditor {
         save: this.savePending,
         externalDecision: this.externalDecisionPending,
         externalReload: this.externalReloadPending,
+        diffReview: !!this.diffReview,
       },
+      diff: this.diffReviewSnapshot(),
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
       snippets: {
@@ -354,6 +373,7 @@ export class ProcessTemplateEditor {
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
     this.externalReviewPending = false;
+    this.diffReview = null;
     cancelExternalReview(this);
     this.abort.abort();
     this.nodeChooserDispose?.();
@@ -622,7 +642,11 @@ export class ProcessTemplateEditor {
     // decorate() re-anchors the last known diagnostics on the fresh graph
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
-    const graph = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
+    const decorated = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
+    const review = this.diffReview;
+    const graph = review ? overlayDraftDiff(decorated, {
+      theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
+    }) : decorated;
     this.graph?.setGraph(graph, { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
@@ -653,6 +677,11 @@ export class ProcessTemplateEditor {
     const previous = this.externalChange;
     const observedKey = currentRef && currentSourceHash ? `${currentRef}\n${currentSourceHash}` : '';
     if (this.externalReviewRequest && this.externalReviewRequest.key !== observedKey) cancelExternalReview(this);
+    if (this.diffReview && observedKey && this.diffReview.key !== observedKey) {
+      this.diffReview = null;
+      this.refresh();
+      this.status('A newer version arrived while you were reviewing; nothing was merged. Review the newer version on the canvas.');
+    }
     this.externalChange = reconcileExternalChange(this.externalChange, {
       loadedRef: this.model.currentRef, loadedSourceHash: this.model.sourceHash,
       currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
@@ -852,6 +881,230 @@ export class ProcessTemplateEditor {
     }
   }
 
+  // ---- proposal review (draft diff overlay) --------------------------------
+
+  diffReviewSnapshot() {
+    const review = this.diffReview;
+    if (!review) return { open: false };
+    const index = review.changes.findIndex((change) => change.id === review.cursor);
+    const current = review.changes[index] || null;
+    const verdict = current ? review.decisions[current.id] : undefined;
+    return {
+      open: true,
+      ref: review.view.currentRef || '',
+      semanticHash: review.view.semanticHash || '',
+      counts: draftDiffCounts(review.changes, review.decisions),
+      index,
+      current: current ? {
+        id: current.id, kind: current.kind, op: current.op, label: current.label,
+        fields: [...(current.fields || [])], conflict: !!current.conflict,
+        previousTo: current.previousTo || '',
+        state: verdict === 'accept' ? 'accepted' : verdict === 'reject' ? 'rejected' : 'pending',
+        linked: current.requires.length,
+      } : null,
+    };
+  }
+
+  // openDiffReview diffs the exact reviewed external generation against the
+  // live draft (three-way, base = the generation the draft was loaded from)
+  // and paints the proposal on the canvas. The draft is frozen while open.
+  openDiffReview() {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const change = this.externalChange;
+    const view = change.review?.view;
+    if (change.kind !== 'clean' && change.kind !== 'dirty') return false;
+    if (!view || !sameTemplateGeneration(change, view)) {
+      void this.loadExternalReview();
+      this.status('Loading the proposed version; try again in a moment.');
+      return false;
+    }
+    if (this.modalDispose || this.inlineState.open || graphInteraction(this).active) {
+      this.status('Close the open editor dialog before reviewing the proposal.', true);
+      return false;
+    }
+    const ours = this.model.saveBody();
+    const changes = diffTemplateDrafts({ base: this.loadedView, ours, theirs: view });
+    if (!changes.length) {
+      this.adoptReviewedGeneration(ours, view, []);
+      this.status(`Your draft already contains every change in version ${shortHash(view.semanticHash)}.`);
+      return true;
+    }
+    if (changes.length > DRAFT_DIFF_MAX_CHANGES) {
+      this.status(`This version changes ${changes.length} items, too many to step through. Use Review changes and Apply update instead.`, true);
+      return false;
+    }
+    this.diffReview = {
+      key: `${change.ref}\n${change.sourceHash}`, model: this.model, rev: this.model.rev,
+      ours, view, changes, decisions: {}, cursor: changes[0].id,
+    };
+    this.externalReviewOpen = false;
+    this.setSelection(null);
+    this.refresh();
+    this.focusDiffChange();
+    return true;
+  }
+
+  closeDiffReview(message = 'Closed the proposal review; nothing was merged.') {
+    if (this.destroyed || !this.diffReview) return false;
+    this.diffReview = null;
+    this.refresh();
+    if (message) this.status(message);
+    return true;
+  }
+
+  setDiffCursor(id) {
+    const review = this.diffReview;
+    if (this.destroyed || !review || !review.changes.some((change) => change.id === id)) return false;
+    review.cursor = id;
+    this.refresh();
+    this.focusDiffChange();
+    return true;
+  }
+
+  // stepDiff walks the changes in review order, preferring undecided ones so
+  // "step through" lands on the next thing that still needs a verdict.
+  stepDiff(delta = 1) {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    const { changes } = review;
+    const at = Math.max(0, changes.findIndex((change) => change.id === review.cursor));
+    const pending = new Set(pendingDraftChanges(changes, review.decisions).map((change) => change.id));
+    for (let step = 1; step <= changes.length; step += 1) {
+      const candidate = changes[(at + delta * step + changes.length * step) % changes.length];
+      if (!pending.size || pending.has(candidate.id)) return this.setDiffCursor(candidate.id);
+    }
+    return false;
+  }
+
+  focusDiffChange() {
+    const review = this.diffReview;
+    const change = review?.changes.find((candidate) => candidate.id === review.cursor);
+    if (!change || !this.graph) return;
+    const layout = this.graph.layoutSnapshot();
+    let point = null;
+    if (change.kind === 'node') point = layout.nodes.find((node) => node.id === change.nodeId);
+    else if (change.kind === 'edge') {
+      const edge = layout.edges.find((candidate) => candidate.from === change.edge.from
+        && candidate.outcome === change.edge.outcome && candidate.diff);
+      point = edge?.label || layout.nodes.find((node) => node.id === change.edge.from);
+    }
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) this.graph.centerOn(point.x, point.y);
+  }
+
+  reviewStillCurrent(review) {
+    return this.diffReview === review && !this.destroyed && this.model === review.model
+      && this.model.rev === review.rev && sameTemplateGeneration(this.externalChange, review.view);
+  }
+
+  // A conflicting change is never settled implicitly: when a verdict (or the
+  // accept closure) would take the proposal over unsaved human work, ask.
+  async confirmConflicts(review, conflicts, verb) {
+    if (!conflicts.length) return 'theirs';
+    const choice = await this.choiceModal({
+      title: `${conflicts.length} proposed change${conflicts.length === 1 ? '' : 's'} conflict${conflicts.length === 1 ? 's' : ''} with your unsaved edits`,
+      body: `${conflicts.slice(0, 6).map((change) => change.label).join(', ')}${conflicts.length > 6 ? `, … ${conflicts.length - 6} more` : ''}. `
+        + `You changed ${conflicts.length === 1 ? 'this item' : 'these items'} locally too. ${verb} must choose explicitly which version to keep; cancel to decide one by one.`,
+      choices: [
+        { key: 'mine', label: 'Keep my edits' },
+        { key: 'theirs', label: 'Take the proposal', danger: true },
+      ],
+    });
+    if (!this.reviewStillCurrent(review)) return null;
+    return choice;
+  }
+
+  async decideDiff(id = this.diffReview?.cursor, verdict = 'accept') {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    const preview = decideDraftChange(review.changes, review.decisions, id, verdict);
+    if (!preview.affected.length) return false;
+    if (verdict === 'accept') {
+      const conflicts = review.changes.filter((change) => change.id !== id && change.conflict
+        && preview.affected.includes(change.id) && review.decisions[change.id] !== 'accept');
+      const choice = await this.confirmConflicts(review, conflicts, 'Accepting this change also applies linked changes, so you');
+      if (choice !== 'theirs') return false;
+    }
+    if (!this.reviewStillCurrent(review)) return false;
+    review.decisions = preview.decisions;
+    const linked = preview.affected.length - 1;
+    if (linked > 0) this.status(`${verdict === 'accept' ? 'Accepted' : 'Rejected'} ${linked} linked change${linked === 1 ? '' : 's'} as well.`);
+    else this.status('');
+    return this.afterDiffDecision();
+  }
+
+  undoDiffDecision(id = this.diffReview?.cursor) {
+    const review = this.diffReview;
+    if (this.destroyed || !review || !review.decisions[id]) return false;
+    review.decisions = decideDraftChange(review.changes, review.decisions, id, 'pending').decisions;
+    this.refresh();
+    return true;
+  }
+
+  async decideAllDiff(verdict = 'accept') {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    let decisions = review.decisions;
+    if (verdict === 'accept') {
+      const conflicts = pendingDraftChanges(review.changes, decisions).filter((change) => change.conflict);
+      const choice = await this.confirmConflicts(review, conflicts, 'Accept all');
+      if (!choice) return false;
+      decisions = decideAllDraftChanges(review.changes, decisions, 'accept', { includeConflicts: choice === 'theirs' });
+      // "Keep my edits": every conflict, and anything requiring one, stays ours.
+      for (const change of conflicts) {
+        if (!decisions[change.id]) decisions = decideDraftChange(review.changes, decisions, change.id, 'reject').decisions;
+      }
+      // Rejecting a conflict may have released dependants decided above;
+      // settle anything still pending the same way.
+      decisions = decideAllDraftChanges(review.changes, decisions, 'accept');
+    } else {
+      decisions = decideAllDraftChanges(review.changes, decisions, 'reject', { includeConflicts: true });
+    }
+    if (!this.reviewStillCurrent(review)) return false;
+    review.decisions = decisions;
+    return this.afterDiffDecision();
+  }
+
+  afterDiffDecision() {
+    const review = this.diffReview;
+    if (!pendingDraftChanges(review.changes, review.decisions).length) return this.finishDiffReview();
+    this.stepDiff(1);
+    return true;
+  }
+
+  finishDiffReview() {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    if (!this.reviewStillCurrent(review)) {
+      this.closeDiffReview('The editor or version changed during the review; nothing was merged.');
+      return false;
+    }
+    const merged = mergeDraftDecisions({
+      ours: review.ours, theirs: review.view, changes: review.changes, decisions: review.decisions,
+    });
+    const counts = draftDiffCounts(review.changes, review.decisions);
+    this.diffReview = null;
+    this.adoptReviewedGeneration(merged, review.view, review.changes, counts);
+    return true;
+  }
+
+  adoptReviewedGeneration(content, view, changes, counts = draftDiffCounts(changes, {})) {
+    const clean = sameDraftContent(content, view);
+    this.model.adoptReviewedGeneration(content, {
+      ref: view.currentRef, sourceHash: view.sourceHash, semanticHash: view.semanticHash,
+    }, { clean });
+    this.loadedView = structuredClone(view);
+    this.blank = false;
+    this.externalChange = NO_EXTERNAL_CHANGE;
+    this.externalReviewOpen = false;
+    this.retainLiveSelection();
+    this.refresh();
+    if (clean) this.validation?.applyDiagnostics(view.diagnostics || []);
+    if (changes.length) {
+      this.status(`Merged version ${shortHash(view.semanticHash)}: ${counts.accepted} accepted, ${counts.rejected} rejected.`
+        + `${clean ? '' : ' Your draft differs from that version; Save to keep your choices.'}`);
+    }
+  }
+
   status(message, isError = false) {
     if (this.destroyed) return;
     this.statusState = { message: message || '', error: !!isError };
@@ -895,6 +1148,11 @@ export class ProcessTemplateEditor {
 
   onNodeClick({ node, event }) {
     if (!node) return;
+    if (this.diffReview) {
+      const change = draftChangeForNode(this.diffReview.changes, node.id);
+      if (change) this.setDiffCursor(change.id);
+      return;
+    }
     const item = { type: 'node', id: node.id };
     this.setSelection(event?.shiftKey || event?.ctrlKey || event?.metaKey
       ? toggleSelection(this.selection, item) : item);
@@ -904,7 +1162,7 @@ export class ProcessTemplateEditor {
   // node's structured editing surface. In-place rename stays available via
   // the inspector's label input.
   onNodeDblClick({ node }) {
-    if (!node) return;
+    if (!node || this.diffReview) return;
     this.setSelection({ type: 'node', id: node.id });
     this.openNodeSettings(node.id);
   }
@@ -963,6 +1221,11 @@ export class ProcessTemplateEditor {
 
   onEdgeClick({ edge, event }) {
     if (!edge) return;
+    if (this.diffReview) {
+      const change = draftChangeForEdge(this.diffReview.changes, edge.from, edge.outcome);
+      if (change) this.setDiffCursor(change.id);
+      return;
+    }
     const item = { type: 'edge', from: edge.from, outcome: edge.outcome };
     const already = selectionContains(this.selection, item);
     const additive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
@@ -1294,7 +1557,7 @@ export class ProcessTemplateEditor {
     const deletionEditable = selected.every((item) => item.type === 'node'
       ? this.model.config.nodeEditable(item.id) : this.model.config.edgeEditable(this.model.findEdge(item.from, item.outcome)))
       && affectedEdges.every((edge) => this.model.config.edgeEditable(edge));
-    const busyReason = pending ? 'An external template reload is in progress.' : '';
+    const busyReason = pending ? externalBusyReason(this) : '';
     const issueCount = this.validation?.mapped?.entries?.length || 0;
     const hasCurrentIssue = !!this.validation?.currentIssue?.();
     const id = (this.model.template.id || '').trim();
@@ -1327,7 +1590,9 @@ export class ProcessTemplateEditor {
   mutate(operation, { fit = false } = {}) {
     if (this.destroyed) return undefined;
     if (externalInteractionPending(this)) {
-      this.status('Wait for the external reload to finish before editing.');
+      this.status(this.diffReview
+        ? 'Finish or close the proposal review before editing.'
+        : 'Wait for the external reload to finish before editing.');
       return undefined;
     }
     let result;
