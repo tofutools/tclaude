@@ -39,7 +39,132 @@ export const START_OUTCOME = 'start';
 
 export const PALETTE_PRIMITIVES = PROCESS_NODE_TYPES;
 
-const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
+const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
+
+// ---- subprocess scopes (E1) --------------------------------------------------
+//
+// A subprocess (▣) node carries a nested graph in node.subprocess: inline
+// (start, nodes with their own `next`, params) or a templateRef. The editor
+// drills into an inline body by projecting it as the model's active scope —
+// template/edges/layout become the body's — while the parents wait in
+// `frames`. Undo snapshots, Save and the outline always see the ROOT, folded
+// back from every open scope, so one history and one CAS save cover the whole
+// tree. Body layout lives in the root layout under namespaced keys
+// ("qa/unit"), matching the runtime's namespaced node ids.
+
+export const SCOPE_SEPARATOR = '/';
+export const MAX_SUBPROCESS_DEPTH = 4;
+
+export function isInlineSubprocess(sub) {
+  return !!sub && typeof sub === 'object' && !sub.templateRef
+    && (!!sub.start || Object.keys(sub.nodes || {}).length > 0 || Object.keys(sub.params || {}).length > 0);
+}
+
+// A fresh ▣ node: an inline body that runs straight from start to end.
+export function blankSubprocessBody() {
+  return {
+    start: 'start',
+    nodes: { start: { type: 'start', next: { pass: 'end' } }, end: { type: 'end', result: 'success' } },
+  };
+}
+
+function defaultNode(type) {
+  const node = { type };
+  if (type === 'end') node.result = 'success';
+  if (type === 'subprocess') node.subprocess = blankSubprocessBody();
+  return node;
+}
+
+// scopeEdges normalizes a body's nodes[*].next into the editor's edge list,
+// the client-side twin of the server's NormalizeEdges.
+export function scopeEdges(body = {}) {
+  const edges = [];
+  if (body.start) edges.push({ from: '', outcome: START_OUTCOME, to: body.start });
+  for (const id of Object.keys(body.nodes || {}).sort()) {
+    const next = body.nodes[id]?.next || {};
+    for (const outcome of Object.keys(next).sort()) edges.push({ from: id, outcome, to: next[outcome] });
+  }
+  return edges;
+}
+
+function scopeNodes(body = {}) {
+  return Object.fromEntries(Object.entries(clone(body.nodes) || {}).map(([id, node]) => {
+    const { next: _next, ...rest } = node || {};
+    return [id, rest];
+  }));
+}
+
+// foldBody writes a scope's nodes/edges/params back into its subprocess
+// object, keeping the node's other fields (inputs, outputs).
+export function foldBody(sub = {}, template = {}, edges = []) {
+  const { start: _start, nodes: _nodes, params: _params, ...rest } = clone(sub) || {};
+  const nodes = clone(template.nodes) || {};
+  let start = '';
+  for (const edge of edges) {
+    if (edge.from === '') {
+      if (edge.outcome === START_OUTCOME) start = edge.to;
+      continue;
+    }
+    const node = nodes[edge.from];
+    if (!node) continue;
+    node.next = { ...(node.next || {}), [edge.outcome]: edge.to };
+  }
+  const out = { ...rest };
+  if (template.params && Object.keys(template.params).length) out.params = clone(template.params);
+  if (start) out.start = start;
+  out.nodes = nodes;
+  return out;
+}
+
+function scopedLayout(layout = {}, prefix) {
+  const out = { nodes: {} };
+  for (const [key, value] of Object.entries(layout.nodes || {})) {
+    if (key.startsWith(prefix)) out.nodes[key.slice(prefix.length)] = clone(value);
+  }
+  for (const [from, value] of Object.entries(layout.edges || {})) {
+    if (!from.startsWith(prefix)) continue;
+    out.edges ||= {};
+    out.edges[from.slice(prefix.length)] = clone(value);
+  }
+  return out;
+}
+
+function withoutScope(layout = {}, prefix) {
+  const out = clone(layout) || {};
+  out.nodes ||= {};
+  for (const key of Object.keys(out.nodes)) if (key.startsWith(prefix)) delete out.nodes[key];
+  for (const key of Object.keys(out.edges || {})) if (key.startsWith(prefix)) delete out.edges[key];
+  if (out.edges && !Object.keys(out.edges).length) delete out.edges;
+  return out;
+}
+
+function foldFrame(frame, child) {
+  const template = clone(frame.template);
+  const node = template.nodes[frame.nodeId];
+  node.subprocess = foldBody(node.subprocess, child.template, child.edges);
+  const prefix = frame.nodeId + SCOPE_SEPARATOR;
+  const layout = withoutScope(frame.layout, prefix);
+  for (const [key, value] of Object.entries(child.layout?.nodes || {})) layout.nodes[prefix + key] = clone(value);
+  for (const [key, value] of Object.entries(child.layout?.edges || {})) {
+    layout.edges ||= {};
+    layout.edges[prefix + key] = clone(value);
+  }
+  return { template, edges: clone(frame.edges), layout };
+}
+
+// processOutline is the bounded tree the outline panel lists: every node of
+// the root graph, with inline bodies nested under their ▣ node.
+export function processOutline(template = {}, depth = 0) {
+  return Object.entries(template.nodes || {}).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([id, node]) => {
+    const entry = { id, name: String(node?.name || id), type: String(node?.type || 'task') };
+    if (node?.type === 'subprocess') {
+      const sub = node.subprocess || {};
+      if (sub.templateRef) entry.ref = String(sub.templateRef);
+      else if (depth + 1 < MAX_SUBPROCESS_DEPTH) entry.children = processOutline({ nodes: sub.nodes || {} }, depth + 1);
+    }
+    return entry;
+  });
+}
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -136,6 +261,9 @@ export class ProcessEditModel {
       canInsert: config.canInsert !== false,
       maxUndo: Number.isInteger(config.maxUndo) && config.maxUndo > 0 ? config.maxUndo : MAX_UNDO,
     };
+    // Open subprocess scopes, outermost first: each holds the PARENT state
+    // ({ nodeId, template, edges, layout }) as of entering the child.
+    this.frames = [];
     this.undoStack = [];
     this.redoStack = [];
     // rev identifies the CURRENT state; serial mints revs and never decreases,
@@ -159,13 +287,10 @@ export class ProcessEditModel {
     return this.redoStack.length > 0;
   }
 
+  // Undo snapshots always hold the ROOT, so history stays one timeline across
+  // drill-ins; restoring re-enters the open scope path as far as it survives.
   snapshotState() {
-    return {
-      template: clone(this.template),
-      edges: clone(this.edges),
-      layout: clone(this.layout),
-      rev: this.rev,
-    };
+    return { ...this.rootState(), rev: this.rev };
   }
 
   restoreState(snapshot) {
@@ -173,11 +298,161 @@ export class ProcessEditModel {
     // while topology history moves, and prevents pre-save snapshots from
     // resurrecting another store key after the identity becomes pinned.
     const id = this.template.id;
+    const path = this.scopePath();
+    this.frames = [];
     this.template = snapshot.template;
     this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
+    this.reenterScopes(path);
+  }
+
+  // ---- subprocess scopes ----------------------------------------------------
+
+  get inScope() {
+    return this.frames.length > 0;
+  }
+
+  scopePath() {
+    return this.frames.map((frame) => frame.nodeId);
+  }
+
+  // rootState folds every open scope back into a fresh copy of the root.
+  rootState() {
+    let state = { template: clone(this.template), edges: clone(this.edges), layout: clone(this.layout) };
+    for (let i = this.frames.length - 1; i >= 0; i -= 1) state = foldFrame(this.frames[i], state);
+    state.template.id = this.template.id;
+    return state;
+  }
+
+  scopeTrail() {
+    const root = this.frames[0]?.template || this.template;
+    return [
+      { id: '', label: String(root.name || root.id || 'process') },
+      ...this.frames.map((frame) => ({ id: frame.nodeId, label: String(frame.template.nodes[frame.nodeId]?.name || frame.nodeId) })),
+    ];
+  }
+
+  canEnterScope(id) {
+    const node = this.template.nodes[id];
+    return node?.type === 'subprocess' && isInlineSubprocess(node.subprocess) && this.frames.length < MAX_SUBPROCESS_DEPTH;
+  }
+
+  // enterScope is navigation, not an edit: no undo step, no rev change.
+  enterScope(id) {
+    if (!this.canEnterScope(id)) throw new Error(`node ${id} has no inline subprocess body to enter`);
+    const node = this.template.nodes[id];
+    const body = node.subprocess;
+    this.frames.push({ nodeId: id, template: this.template, edges: this.edges, layout: this.layout });
+    this.template = {
+      id: this.template.id, name: String(node.name || id),
+      params: clone(body.params) || {}, start: body.start || '', nodes: scopeNodes(body),
+    };
+    this.edges = scopeEdges(body);
+    this.layout = scopedLayout(this.frames.at(-1).layout, id + SCOPE_SEPARATOR);
+    return true;
+  }
+
+  exitScope() {
+    const frame = this.frames.pop();
+    if (!frame) return '';
+    const id = this.template.id;
+    const state = foldFrame(frame, { template: this.template, edges: this.edges, layout: this.layout });
+    this.template = state.template;
+    this.template.id = id;
+    this.edges = state.edges;
+    this.layout = state.layout;
+    return frame.nodeId;
+  }
+
+  exitToRoot() {
+    while (this.frames.length) this.exitScope();
+  }
+
+  reenterScopes(path = []) {
+    for (const id of path) {
+      if (!this.canEnterScope(id)) break;
+      this.enterScope(id);
+    }
+  }
+
+  // scopePorts describes the open scope's contract with its parent: body
+  // params are the in-ports (bound by inputs), and body end nodes leave
+  // through out-ports (outputs) onto the parent node's outcomes.
+  scopePorts() {
+    const frame = this.frames.at(-1);
+    if (!frame) return null;
+    const sub = frame.template.nodes[frame.nodeId]?.subprocess || {};
+    const outcomes = frame.edges.filter((edge) => edge.from === frame.nodeId).map((edge) => edge.outcome).sort();
+    const ends = Object.entries(this.template.nodes).filter(([, node]) => node?.type === 'end').map(([id]) => id).sort();
+    return {
+      nodeId: frame.nodeId,
+      params: Object.keys(this.template.params || {}).sort(),
+      parentParams: Object.keys((this.frames[0]?.template || this.template).params || {}).sort(),
+      inputs: { ...(sub.inputs || {}) },
+      outputs: { ...(sub.outputs || {}) },
+      outcomes, ends,
+      start: this.template.start || '',
+    };
+  }
+
+  // setScopeInput / setScopeOutput edit the open scope's ports on the parent
+  // ▣ node — one undoable step each. An empty value unbinds.
+  setScopeInput(param, expression) {
+    return this.editScopePorts('inputs', param, String(expression ?? '').trim());
+  }
+
+  setScopeOutput(endID, outcome) {
+    return this.editScopePorts('outputs', endID, String(outcome ?? '').trim());
+  }
+
+  editScopePorts(field, key, value) {
+    const frame = this.frames.at(-1);
+    if (!frame) throw new Error('not inside a subprocess');
+    if (!key) throw new Error('port name is required');
+    this.assertNodeEditable(frame.nodeId);
+    const sub = frame.template.nodes[frame.nodeId].subprocess;
+    if ((sub[field]?.[key] || '') === value) return false;
+    this.begin();
+    const next = { ...(sub[field] || {}) };
+    if (value) next[key] = value;
+    else delete next[key];
+    if (Object.keys(next).length) sub[field] = next;
+    else delete sub[field];
+    return true;
+  }
+
+  // replaceScopeWithRef swaps an inline body for a reference to a template
+  // the body was just extracted into, keeping the ports. Root-level edit.
+  replaceSubprocessWithRef(id, templateRef) {
+    if (this.inScope) throw new Error('exit the subprocess before replacing its body');
+    const node = this.template.nodes[id];
+    if (node?.type !== 'subprocess' || !isInlineSubprocess(node.subprocess)) throw new Error(`node ${id} has no inline body`);
+    if (!templateRef) throw new Error('template id is required');
+    this.assertNodeEditable(id);
+    this.begin();
+    const { inputs, outputs } = node.subprocess;
+    node.subprocess = { templateRef, ...(inputs ? { inputs } : {}), ...(outputs ? { outputs } : {}) };
+    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
+    return true;
+  }
+
+  // extractableBody returns the open scope as a standalone template edit
+  // view (for POST /v1/process/templates).
+  extractableBody(name) {
+    if (!this.inScope) throw new Error('enter a subprocess to extract it');
+    const template = clone(this.template);
+    delete template.id;
+    template.apiVersion = this.frames[0].template.apiVersion || 'tclaude.dev/v1alpha1';
+    template.kind = this.frames[0].template.kind || 'ProcessTemplate';
+    template.name = String(name || template.name || '').trim();
+    if (!Object.keys(template.params || {}).length) delete template.params;
+    return { template, edges: clone(this.edges), layout: clone(this.layout) };
+  }
+
+  outline() {
+    return processOutline(this.rootState().template);
   }
 
   // begin() is the single undo gate: every mutation snapshots the pre-state,
@@ -338,9 +613,8 @@ export class ProcessEditModel {
     const nodeType = NODE_TYPES.has(type) ? type : 'task';
     const nodeID = this.uniqueNodeID(id || nodeType);
     this.begin();
-    const node = { type: nodeType };
+    const node = defaultNode(nodeType);
     if (name) node.name = name;
-    if (nodeType === 'end') node.result = 'success';
     this.template.nodes[nodeID] = node;
     if (Number.isFinite(x) && Number.isFinite(y)) this.layout.nodes[nodeID] = { x, y };
     return nodeID;
@@ -366,9 +640,7 @@ export class ProcessEditModel {
     this.assertEdgeEditable(edge);
 
     this.begin();
-    const node = { type: nodeType };
-    if (nodeType === 'end') node.result = 'success';
-    this.template.nodes[nodeID] = node;
+    this.template.nodes[nodeID] = defaultNode(nodeType);
     if (Number.isFinite(x) && Number.isFinite(y)) this.layout.nodes[nodeID] = { x, y };
     this.edges.push(edge);
     return { id: nodeID, edge };
@@ -397,6 +669,7 @@ export class ProcessEditModel {
     this.begin();
     delete this.template.nodes[id];
     delete this.layout.nodes[id];
+    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
     this.edges = this.edges.filter((edge) => edge.from !== id && edge.to !== id);
     if (rewire && successor && successor !== id) {
       for (const edge of incoming) {
@@ -587,6 +860,8 @@ export class ProcessEditModel {
     for (const id of nodes) {
       delete this.template.nodes[id];
       delete this.layout.nodes[id];
+      this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
+    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
     }
     this.edges = this.edges.filter((edge) => !selectedEdge(edge) && !nodes.has(edge.from) && !nodes.has(edge.to));
     this.edges.push(...bridges);
@@ -717,6 +992,7 @@ export class ProcessEditModel {
   }
 
   setTemplateMeta({ name, description, doc } = {}) {
+    if (this.inScope) throw new Error('template settings belong to the root process; exit the subprocess first');
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
     const changed = (name !== undefined && (name || undefined) !== this.template.name)
@@ -824,14 +1100,9 @@ export class ProcessEditModel {
   // disallowed, so only the recognized edit-view fields go over the wire, and
   // template.layout stays empty — the top-level layout is authoritative.
   saveBody() {
-    const template = clone(this.template);
+    const { template, edges, layout } = this.rootState();
     delete template.layout;
-    return {
-      template,
-      edges: clone(this.edges),
-      layout: clone(this.layout),
-      sourceHash: this.sourceHash,
-    };
+    return { template, edges, layout, sourceHash: this.sourceHash };
   }
 
   // adoptReviewedGeneration applies a reviewed three-way merge
@@ -841,6 +1112,7 @@ export class ProcessEditModel {
   // byte-for-byte that saved generation; otherwise the draft stays dirty and
   // a later Save writes the human's choices on top of it.
   adoptReviewedGeneration({ template, edges, layout } = {}, { ref, sourceHash, semanticHash } = {}, { clean = false } = {}) {
+    this.exitToRoot();
     this.begin();
     const id = this.template.id;
     this.template = clone(template) || {};
