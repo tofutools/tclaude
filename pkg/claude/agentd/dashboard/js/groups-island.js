@@ -197,8 +197,8 @@ export function GroupsControls({ state, actions }) {
 
 export function GroupsList({ host, state, actions }) {
   const wizard = useWizardTheme();
-  const focus = effectiveGroupsFocus(state);
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
+  const focus = effectiveGroupsFocus(state);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
   const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
