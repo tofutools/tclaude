@@ -213,3 +213,24 @@ func TestOneShotOuterLayerAppliesPrivateDirectoriesAndSetup(t *testing.T) {
 	require.Zero(t, result.ExitCode, result.Stderr)
 	require.Equal(t, "profile:seeded", result.Stdout)
 }
+
+func TestOneShotNamedProxyOmissionIsDisclosed(t *testing.T) {
+	isolateOneShotDirectories(t)
+	useDirectNonInteractiveRunner(t)
+	path := filepath.Join(os.Getenv("HOME"), ".tclaude", "data", "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"agent":{"http_proxies":{"service":{"base_url":"https://example.com"}}}}`), 0600))
+	result, fail := runNonInteractiveSpawn(context.Background(), spawnParams{Harness: harness.ShellName, Cwd: testutil.CanonicalTempDir(t), InitialMessage: "printf answer"}, 10)
+	require.Nil(t, fail)
+	require.Equal(t, "answer", result.Stdout)
+	require.Contains(t, strings.Join(result.Notes, " "), "Named HTTP proxy URLs are omitted")
+}
+
+func TestOneShotPolicyRefusalNamesFieldsWithoutValues(t *testing.T) {
+	snapshot := oneShotPolicy(t, sandboxpolicy.PreLaunchBlock{Name: "setup", Script: "secret-script-content", Exports: []string{"SAFE_NAME"}})
+	message := oneShotPolicyFailure(snapshot, errors.New("missing Bash"))
+	require.Contains(t, message, `global "dev"`)
+	require.Contains(t, message, "GOCACHE")
+	require.Contains(t, message, "setup")
+	require.NotContains(t, message, "secret-script-content")
+	require.NotContains(t, message, "profile\"")
+}

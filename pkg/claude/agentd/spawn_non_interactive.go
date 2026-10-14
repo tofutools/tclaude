@@ -54,7 +54,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 400, Kind: kind, Msg: message}
 	}
 	if p.ModelProxy != "" && p.ModelProxy != "off" {
-		return bad("unsupported_model_proxy", "non-interactive runs do not yet support model gateways; use an ordinary Claude Code worker or --model-proxy off")
+		return bad("unsupported_model_proxy", fmt.Sprintf("one-shot runs cannot use model gateway %q without a gateway caller identity; use an interactive worker or --model-proxy off", p.ModelProxy))
 	}
 	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
@@ -162,7 +162,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	preLaunch, err := session.RenderPreLaunchScript(p.EffectiveSandbox)
 	if err != nil {
-		return bad("unsupported_sandbox", err.Error())
+		return bad("unsupported_sandbox", oneShotPolicyFailure(p.EffectiveSandbox, err))
 	}
 	// Match ordinary Claude panes: its account and project state lives in the
 	// writable harness state root, not the top-level file in $HOME. Without
@@ -217,7 +217,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		wrapped, cleanup, wrapErr := prepareNonInteractiveWithTclaudeLayer(p, h, argv, preLaunch)
 		defer cleanup()
 		if wrapErr != nil {
-			return bad("unsupported_sandbox", wrapErr.Error())
+			return bad("unsupported_sandbox", oneShotPolicyFailure(p.EffectiveSandbox, wrapErr))
 		}
 		argv = []string{"/bin/sh", "-c", wrapped}
 	} else if preLaunch != "" {
@@ -588,4 +588,19 @@ func quoteOneShotArgv(argv []string) string {
 		quoted[i] = clcommon.ShellQuoteArg(arg)
 	}
 	return strings.Join(quoted, " ")
+}
+
+func oneShotPolicyFailure(snapshot *sandboxpolicy.Snapshot, err error) string {
+	if snapshot == nil {
+		return err.Error()
+	}
+	var profiles, blocks []string
+	for _, source := range snapshot.Effective.Provenance.Applied {
+		profiles = append(profiles, fmt.Sprintf("%s %q", source.Scope, source.Profile))
+	}
+	for _, block := range snapshot.Effective.PreLaunch {
+		blocks = append(blocks, block.Name)
+	}
+	return fmt.Sprintf("%s (sandbox profiles: %s; agent_directories: %s; pre_launch blocks: %s). An operator can enable the missing capability or adjust the supplying profile; another --sandbox-profile cannot remove inherited global/group settings.",
+		err, strings.Join(profiles, ", "), strings.Join(snapshot.Effective.AgentDirectories, ", "), strings.Join(blocks, ", "))
 }
