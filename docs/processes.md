@@ -97,7 +97,79 @@ agent can watch run status and evidence without a human approval per read.
 Ownership confers reads only — mutations always need an explicit
 `process.runs.manage` grant or a one-shot `--ask-human` approval — and an
 explicit per-agent deny overrides everything, the owner grant included. See
-[Permissions and audit](permissions-and-audit.md).
+[Permissions and audit](permissions-and-audit.md). Starting a run bound to a
+group or an agent uses the scope gates below instead.
+
+## Run scope
+
+Every run is bound to a context when it starts, and keeps that binding:
+
+| Scope | Start with | Bound to |
+| --- | --- | --- |
+| `none` | `tclaude process run <template>` | nothing — the original, unscoped run |
+| `group` (⌂) | `... --group <name-or-id>` | the group's id, so renaming the group keeps the binding |
+| `agent` (◉) | `... --agent <agent>` | the agent's stable `agent_id`, so the run survives reincarnate and compact; a clone does not copy it |
+
+The run's **owner** is whoever started it (`human:operator` or
+`agent:<agent_id>`). `tclaude process show` prints the scope and owner;
+`tclaude process runs ls` adds a SCOPE column and filters with `--group`,
+`--agent` and `--performer`. Until per-node performer dispatch lands,
+`--performer` matches agent-scoped runs bound to that agent.
+
+**Who may start a scoped run.**
+
+- `none`: `process.runs.manage` for the template, as before.
+- `group`: `process.runs.start` covering the group. Group owners hold it for
+  their own groups; anyone else needs a grant (unscoped, or scoped to the
+  group and/or template). The human may always start one.
+- `agent`: the agent itself with `self.process` (default-granted by
+  `tclaude setup --install-default-agent-permissions`); for another agent,
+  `agent.process`, or `groups.members.process` covering every group the
+  target is in (group owners hold that for their members).
+
+The scope gates confer the *binding* only. A run that authorizes program
+profiles (`--authorize-program-profile`) also needs `process.runs.manage`,
+and group ownership never satisfies that: scope narrows authority, it never
+widens it into host program execution.
+
+**Orphaned runs.** A scope is never changed silently. If a group-scoped
+run's group is deleted, or an agent-scoped run's agent is retired or
+deleted, the run pauses with scope state `orphaned` (its `action` reads
+`orphaned` and a `run_orphaned` event records why). Program work already in
+flight finishes, but nothing new is planned and resume, decisions and
+reconciliation are refused until the human re-scopes it:
+
+```bash
+tclaude process rescope <run-id> --none            # unbind it
+tclaude process rescope <run-id> --group <group>   # re-bind to a group
+tclaude process rescope <run-id> --agent <agent>   # re-bind to an agent
+```
+
+The one input an orphaned run still accepts is giving it up:
+`tclaude process resolve-blocked ... --action cancel` on a blocked node.
+Runs of a deleted group stay listable with `runs ls --group <group-id>`.
+
+`rescope` is human-only and records a `run_rescoped` event. On a bound
+agent-scoped run, `rescope --group` **promotes** it to a group the agent
+belongs to; completed history is kept. Demoting a group-scoped run to agent
+scope is not supported.
+
+Unscoped runs need no migration and appear only in the Processes list, not
+in the Groups or Terminals overlays.
+
+**Runs in context.** The dashboard overlays poll `GET /v1/process/context`
+alongside the snapshot. It returns one mini-graph projection per scoped run
+(authored nodes with kind, state, work-step index and performer; edges with
+their disposition; the current nodes) in a `runs` map, and refers to them by
+id: per group `active`, `needsYou` (awaiting a decision, blocked, needing
+reconciliation) and the recently finished `done`; per agent its current step
+(`index` of `total`) in each run bound to it; and a top-level `orphaned`
+list. It is bounded: each group or agent contributes at most 16 active and 8
+finished runs (8 listed per bucket), at most 64 runs in all, and 48 nodes
+per run. The human and holders of `process.runs.read` see every
+scoped run; another agent sees its own groups' runs and the runs bound to
+itself. Visibility is unchanged:
+`process.runs.read` (which group owners hold) still gates the run surfaces.
 
 ## What executes today
 

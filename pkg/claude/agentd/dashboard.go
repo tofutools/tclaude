@@ -302,6 +302,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// records a human gate's verdict.
 	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/events", dashboardProcessRoute(handleProcessRunEvents))
+	mux.HandleFunc("GET /v1/process/context", dashboardProcessRoute(handleProcessContext))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", dashboardProcessRoute(handleProcessRunDecide))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)

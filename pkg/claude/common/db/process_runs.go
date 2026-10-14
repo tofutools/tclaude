@@ -51,6 +51,21 @@ const (
 	ProcessRunStatusCanceled  = "canceled"
 )
 
+// Run scope kinds and binding states. A scope is fixed when the run starts;
+// the only state change the runtime makes on its own is bound → orphaned when
+// the bound group or agent goes away, which parks the run for a human.
+const (
+	ProcessRunScopeNone  = "none"
+	ProcessRunScopeGroup = "group"
+	ProcessRunScopeAgent = "agent"
+
+	ProcessRunScopeBound    = "bound"
+	ProcessRunScopeOrphaned = "orphaned"
+
+	MaxProcessRunScopeAgentID = 128
+	MaxProcessRunOwner        = 256
+)
+
 var (
 	ErrProcessRunNotFound           = errors.New("process run not found")
 	ErrProcessRunExists             = errors.New("process run already exists")
@@ -58,6 +73,7 @@ var (
 	ErrProcessRunEventSequence      = errors.New("process run evidence sequence conflict")
 	ErrProcessRunInvalid            = errors.New("invalid process run data")
 	ErrProcessRunCorrupt            = errors.New("process run store is inconsistent")
+	ErrProcessRunRescope            = errors.New("process run cannot be re-scoped")
 	processRuntimeIdentifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 )
 
@@ -74,6 +90,34 @@ func (e *ProcessRunVersionConflictError) Error() string {
 
 func (e *ProcessRunVersionConflictError) Unwrap() error { return ErrProcessRunVersionConflict }
 
+// ProcessRunScope is a run's context binding. GroupID names an agent_groups
+// row (names are renameable), AgentID a stable agent identity (it survives
+// reincarnate and compact). GroupName is resolved at read time and is "" for
+// a group that no longer exists. Owner is the actor ref that started the run
+// ("human:operator" or "agent:<agent_id>"); "" for a pre-scope run whose
+// creator was never recorded.
+type ProcessRunScope struct {
+	Kind      string
+	GroupID   int64
+	GroupName string
+	AgentID   string
+	Owner     string
+	State     string
+}
+
+// Orphaned reports whether the run's scope target is gone.
+func (s ProcessRunScope) Orphaned() bool { return s.State == ProcessRunScopeOrphaned }
+
+// ProcessRunFilter narrows a summary listing. Zero values match everything;
+// set fields combine with AND. Performer currently matches agent-scoped runs
+// bound to that agent — the only performer a run records until per-node
+// performer dispatch lands.
+type ProcessRunFilter struct {
+	GroupID   int64
+	AgentID   string
+	Performer string
+}
+
 // ProcessRun is the canonical cold-load record. CheckpointJSON is returned
 // exactly as stored; evidence is intentionally absent and has a separate,
 // paginated reader because it is not a state reconstruction source.
@@ -86,6 +130,7 @@ type ProcessRun struct {
 	Status                    string
 	StateVersion              int64
 	CheckpointJSON            json.RawMessage
+	Scope                     ProcessRunScope
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 }
@@ -98,6 +143,7 @@ type ProcessRunSummary struct {
 	TemplateRef  string
 	Status       string
 	StateVersion int64
+	Scope        ProcessRunScope
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -112,7 +158,10 @@ type ProcessRunCreate struct {
 	ProgramAuthorizationsJSON json.RawMessage
 	Status                    string
 	CheckpointJSON            json.RawMessage
-	InitialEvents             []ProcessRunEvent
+	// Scope binds the run; a zero value is the unscoped ("none") binding.
+	// State and GroupName are store-owned and ignored here.
+	Scope         ProcessRunScope
+	InitialEvents []ProcessRunEvent
 }
 
 // ProcessRunEvent is one append-only human-facing evidence row. Sequence is
@@ -313,7 +362,41 @@ func validateProcessRunCreate(input ProcessRunCreate) error {
 	if err := validateProcessJSONObject("checkpoint", input.CheckpointJSON, MaxProcessRunCheckpointBytes); err != nil {
 		return err
 	}
+	if err := validateProcessRunScope(input.Scope); err != nil {
+		return err
+	}
 	return validateProcessRunEvents(input.InitialEvents, false)
+}
+
+// normalizeProcessRunScope defaults an empty kind to none.
+func normalizeProcessRunScope(scope ProcessRunScope) ProcessRunScope {
+	if scope.Kind == "" {
+		scope.Kind = ProcessRunScopeNone
+	}
+	return scope
+}
+
+func validateProcessRunScope(scope ProcessRunScope) error {
+	scope = normalizeProcessRunScope(scope)
+	if !validProcessRuntimeText(scope.Owner, MaxProcessRunOwner, true) {
+		return fmt.Errorf("%w: invalid run owner", ErrProcessRunInvalid)
+	}
+	if !validProcessRunScopeBinding(scope.Kind, scope.GroupID, scope.AgentID) {
+		return fmt.Errorf("%w: invalid %s scope binding", ErrProcessRunInvalid, scope.Kind)
+	}
+	return nil
+}
+
+func validProcessRunScopeBinding(kind string, groupID int64, agentID string) bool {
+	switch kind {
+	case ProcessRunScopeNone:
+		return groupID == 0 && agentID == ""
+	case ProcessRunScopeGroup:
+		return groupID > 0 && agentID == ""
+	case ProcessRunScopeAgent:
+		return groupID == 0 && agentID != "" && validProcessRuntimeText(agentID, MaxProcessRunScopeAgentID, false)
+	}
+	return false
 }
 
 func validateProcessRunEvents(events []ProcessRunEvent, allowAutoSequence bool) error {
@@ -376,13 +459,16 @@ func CreateProcessRun(input ProcessRunCreate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := dbTime(time.Now().UTC())
+	scope := normalizeProcessRunScope(input.Scope)
 	result, err := tx.Exec(`INSERT INTO process_runs
 		(id, template_ref, template_snapshot_json, params_json, program_authorizations_json, status,
-		 state_version, checkpoint_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 state_version, checkpoint_json, created_at, updated_at,
+		 scope_kind, scope_group_id, scope_agent_id, owner, scope_state)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING`,
 		input.ID, input.TemplateRef, string(input.TemplateSnapshotJSON), string(input.ParamsJSON), string(input.ProgramAuthorizationsJSON), input.Status,
-		InitialProcessRunStateVersion, string(input.CheckpointJSON), now, now)
+		InitialProcessRunStateVersion, string(input.CheckpointJSON), now, now,
+		scope.Kind, scope.GroupID, scope.AgentID, scope.Owner, ProcessRunScopeBound)
 	if err != nil {
 		return fmt.Errorf("create process run: %w", err)
 	}
@@ -510,8 +596,9 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	var id, templateRef, snapshot, params, authorizations, status, checkpoint sql.NullString
 	var created, updated dbTimestamp
 	var stateVersion sql.NullInt64
-	if err := scanner.Scan(&id, &templateRef, &snapshot, &params, &authorizations, &status,
-		&stateVersion, &checkpoint, &created, &updated); err != nil {
+	var scope processRunScopeColumns
+	if err := scanner.Scan(append([]any{&id, &templateRef, &snapshot, &params, &authorizations, &status,
+		&stateVersion, &checkpoint, &created, &updated}, scope.targets()...)...); err != nil {
 		return nil, err
 	}
 	if !id.Valid || !templateRef.Valid || !snapshot.Valid || !params.Valid || !authorizations.Valid || !status.Valid ||
@@ -525,7 +612,8 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 		run.StateVersion <= 0 {
 		return nil, ErrProcessRunCorrupt
 	}
-	if err := validateProcessJSONObject("params", []byte(params.String), MaxProcessRunParamsBytes); err != nil {
+	var err error
+	if err = validateProcessJSONObject("params", []byte(params.String), MaxProcessRunParamsBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
 	var authorizationProfiles []string
@@ -534,6 +622,9 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	}
 	if err := validateProcessJSONObject("checkpoint", []byte(checkpoint.String), MaxProcessRunCheckpointBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
+	}
+	if run.Scope, err = scope.decode(); err != nil {
+		return nil, err
 	}
 	run.CreatedAt = created.Time()
 	run.UpdatedAt = updated.Time()
@@ -558,8 +649,40 @@ const processRunSelect = `SELECT
 	CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
 	CASE WHEN typeof(checkpoint_json) = 'text' AND length(CAST(checkpoint_json AS BLOB)) BETWEEN 1 AND ? THEN checkpoint_json END,
 	CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
-	CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END
+	CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
+	` + processRunScopeColumnsSelect + `
 	FROM process_runs`
+
+// processRunScopeColumnsSelect projects the scope binding. The group name is
+// resolved through the id at read time because groups are renameable; a
+// deleted group reads as NULL → "".
+const processRunScopeColumnsSelect = `scope_kind, scope_group_id, scope_agent_id, owner, scope_state,
+	(SELECT name FROM agent_groups WHERE agent_groups.id = process_runs.scope_group_id AND process_runs.scope_kind = 'group')`
+
+type processRunScopeColumns struct {
+	kind, agentID, owner, state, groupName sql.NullString
+	groupID                                sql.NullInt64
+}
+
+func (c *processRunScopeColumns) targets() []any {
+	return []any{&c.kind, &c.groupID, &c.agentID, &c.owner, &c.state, &c.groupName}
+}
+
+func (c *processRunScopeColumns) decode() (ProcessRunScope, error) {
+	if !c.kind.Valid || !c.groupID.Valid || !c.agentID.Valid || !c.owner.Valid || !c.state.Valid {
+		return ProcessRunScope{}, ErrProcessRunCorrupt
+	}
+	scope := ProcessRunScope{
+		Kind: c.kind.String, GroupID: c.groupID.Int64, GroupName: c.groupName.String,
+		AgentID: c.agentID.String, Owner: c.owner.String, State: c.state.String,
+	}
+	if !validProcessRunScopeBinding(scope.Kind, scope.GroupID, scope.AgentID) ||
+		!validProcessRuntimeText(scope.Owner, MaxProcessRunOwner, true) ||
+		(scope.State != ProcessRunScopeBound && scope.State != ProcessRunScopeOrphaned) {
+		return ProcessRunScope{}, ErrProcessRunCorrupt
+	}
+	return scope, nil
+}
 
 func processRunSelectArgs() []any {
 	return []any{
@@ -621,7 +744,7 @@ func ListActiveProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 // ListProcessRunSummaries returns one bounded ID-ordered metadata page,
 // including terminal runs. It never selects snapshots, params,
 // authorizations, or checkpoints.
-func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, error) {
+func ListProcessRunSummaries(afterID string, limit int, filter ProcessRunFilter) ([]ProcessRunSummary, error) {
 	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
 		return nil, fmt.Errorf("%w: invalid run cursor", ErrProcessRunInvalid)
 	}
@@ -632,25 +755,41 @@ func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, er
 	if err != nil {
 		return nil, err
 	}
+	where, filterArgs := processRunFilterSQL(filter)
+	args := append([]any{afterID}, filterArgs...)
+	args = append(args, limit)
+	return queryProcessRunSummaries(d, `WHERE id > ?`+where+` ORDER BY id LIMIT ?`, limit, args...)
+}
+
+// queryProcessRunSummaries runs the bounded metadata projection with the
+// given tail (WHERE/ORDER/LIMIT) and its arguments.
+func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...any) ([]ProcessRunSummary, error) {
+	args := append([]any{MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes}, tailArgs...)
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
 		CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
 		CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
 		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
-		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END
-		FROM process_runs WHERE id > ? ORDER BY id LIMIT ?`,
-		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes, afterID, limit)
+		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
+		`+processRunScopeColumnsSelect+`
+		FROM process_runs `+tail, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	runs := make([]ProcessRunSummary, 0, limit)
+	runs := make([]ProcessRunSummary, 0, capacity)
 	for rows.Next() {
 		var id, templateRef, status sql.NullString
 		var createdAt, updatedAt dbTimestamp
 		var stateVersion sql.NullInt64
-		if err := rows.Scan(&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt); err != nil {
+		var scopeColumns processRunScopeColumns
+		if err := rows.Scan(append([]any{&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt},
+			scopeColumns.targets()...)...); err != nil {
+			return nil, err
+		}
+		scope, err := scopeColumns.decode()
+		if err != nil {
 			return nil, err
 		}
 		if !id.Valid || !templateRef.Valid || !status.Valid || !stateVersion.Valid || !createdAt.valid || !updatedAt.valid ||
@@ -661,7 +800,7 @@ func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, er
 		}
 		runs = append(runs, ProcessRunSummary{
 			ID: id.String, TemplateRef: templateRef.String, Status: status.String,
-			StateVersion: stateVersion.Int64, CreatedAt: createdAt.Time(), UpdatedAt: updatedAt.Time(),
+			StateVersion: stateVersion.Int64, Scope: scope, CreatedAt: createdAt.Time(), UpdatedAt: updatedAt.Time(),
 		})
 	}
 	return runs, rows.Err()
@@ -693,6 +832,9 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// accounted for by its dispatch record and simply occupies a slot while its
 	// performer works, so a sibling ready branch keeps the run runnable.
 	//
+	// An orphaned run (its bound group or agent is gone) is excluded too: it is
+	// parked for a human to re-scope, never resumed by the fallback.
+	//
 	// Everything else the run could be parked on is decided by one comparison:
 	// the run has pushable work exactly when it holds MORE ready nodes than
 	// awaited decision obligations. Every awaited obligation names a node that
@@ -715,6 +857,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
+			AND scope_state = 'bound'
 			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
 						WHERE json_extract(value, '$.kind') IS NOT 'agent')
@@ -726,7 +869,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 				> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
 			THEN 1 ELSE 0 END
 		FROM (
-			SELECT id, checkpoint_json FROM process_runs
+			SELECT id, checkpoint_json, scope_state FROM process_runs
 			WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled')
 			ORDER BY id LIMIT ?
 		) AS active_page

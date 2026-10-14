@@ -965,11 +965,26 @@ CREATE TABLE "process_runs" (
 			updated_at             INTEGER NOT NULL
 			                           CHECK(length(CAST(updated_at AS BLOB)) BETWEEN 1 AND 64)
 		, program_authorizations_json TEXT NOT NULL DEFAULT '[]'
-			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144)) STRICT;
+			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144), scope_kind TEXT NOT NULL DEFAULT 'none'
+			CHECK(scope_kind IN ('none', 'group', 'agent')), scope_group_id INTEGER NOT NULL DEFAULT 0
+			CHECK(scope_group_id >= 0), scope_agent_id TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(scope_agent_id AS BLOB)) <= 128), owner TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(owner AS BLOB)) <= 256), scope_state TEXT NOT NULL DEFAULT 'bound'
+			CHECK(scope_state IN ('bound', 'orphaned'))) STRICT;
 
 CREATE INDEX idx_process_runs_active
 			ON process_runs(id)
 			WHERE status NOT IN ('completed', 'failed', 'canceled');
+
+CREATE INDEX idx_process_runs_scope_group
+			ON process_runs(scope_group_id, id) WHERE scope_kind = 'group';
+
+CREATE INDEX idx_process_runs_scope_agent
+			ON process_runs(scope_agent_id, id) WHERE scope_kind = 'agent';
+
+CREATE INDEX idx_process_runs_scope_recent
+			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
+			WHERE scope_kind != 'none';
 
 CREATE TABLE "process_run_events" (
 			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
