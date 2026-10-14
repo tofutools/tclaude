@@ -70,7 +70,7 @@ uncommitted changes unless `-f/--force` is passed.
 
 In the [dashboard](dashboard.md), open a group's `⚙` actions menu and choose
 **🧹 cleanup worktrees…**. To scan every group's repositories, open the
-Agents tab's top-level `⚙` menu, choose **clean up**, then
+Groups tab's top-level `⚙` menu, choose **clean up**, then
 **🧹 Review worktrees across all groups…** in the bulk cleanup dialog.
 
 The sweep resolves repositories from group default directories and members'
