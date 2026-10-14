@@ -24,6 +24,7 @@ import { paneScope } from './skynet-scope.js';
 import { nodeColor } from './skynet-model.js';
 import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
+import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions } from './process-terminal-overlay.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -224,7 +225,7 @@ function RemoteBadge({ seed, remote }) {
 
 function TerminalPane({
   pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
-  snapshot = null, scope = null,
+  snapshot = null, scope = null, processSnapshot = null,
 }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
@@ -317,6 +318,8 @@ function TerminalPane({
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
+      ${!pane.seed.remote && pane.seed.agent ? html`<${PaneProcessOverlay} agentId=${pane.seed.agent}
+        snapshot=${processSnapshot} onComposeMessage=${onComposeMessage} />` : null}
       ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}
@@ -338,6 +341,16 @@ function TerminalPane({
       />
     </div>
   `;
+}
+
+// PaneProcessOverlay reads the snapshot signal itself so only this small
+// component, not the pane around the opaque xterm host, re-renders on each
+// snapshot; it shows nothing unless features.processes is on.
+function PaneProcessOverlay({ agentId, snapshot, onComposeMessage }) {
+  const enabled = !!snapshot?.value?.processes_enabled;
+  const [actions] = useState(() => processOverlayActions());
+  return html`<${ProcessPaneOverlay} agentId=${agentId} enabled=${enabled}
+    actions=${{ ...actions, onComposeMessage }} />`;
 }
 
 // paneUnreadNotifications returns the unread human notifications sent by the
@@ -583,6 +596,8 @@ function PaneTab({
       <${NodePill} node=${scope?.node} />
       <span class="mux-tab-label">${pane.label}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
+      ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
+        enabled=${!!snapshot?.value?.processes_enabled} />` : null}
       <button
         type="button"
         class="mux-tab-close"
@@ -1563,6 +1578,7 @@ function TerminalTabs({
               widgetFactory=${widgetFactory}
               onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
               snapshot=${manageTitle ? snapshot : null}
+              processSnapshot=${snapshot}
               scope=${scopeOf(pane)}
             />
           `)}

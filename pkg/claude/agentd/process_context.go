@@ -69,6 +69,19 @@ type processProjectionNode struct {
 	State     string                     `json:"state"`
 	Index     int                        `json:"index,omitempty"`
 	Performer processProjectionPerformer `json:"performer"`
+	// Description is the authored node description, clipped to
+	// processProjectionDescriptionRunes so a run's projection stays small.
+	Description string `json:"description,omitempty"`
+}
+
+const processProjectionDescriptionRunes = 160
+
+func clipProjectionText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if runes := []rune(text); len(runes) > limit {
+		return strings.TrimSpace(string(runes[:limit-1])) + "…"
+	}
+	return text
 }
 
 // processProjectionPerformer names who performs a node. Kind is agent,
@@ -466,6 +479,7 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 		node := tmpl.Nodes[id]
 		projected := processProjectionNode{
 			ID: id, Label: node.Name, Kind: string(node.Type), Performer: processProjectionPerformerOf(node),
+			Description: clipProjectionText(node.Description, processProjectionDescriptionRunes),
 		}
 		if projected.Label == "" {
 			projected.Label = id

@@ -43,9 +43,10 @@ func processHumanGateTemplate(id string) *model.Template {
 		Nodes: map[string]model.Node{
 			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "choose"}},
 			"choose": {
-				Type:      model.NodeTypeDecision,
-				Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Ship it?"},
-				Next:      model.Next{"approve": "end", "reject": "end"},
+				Type:        model.NodeTypeDecision,
+				Description: "Approve the release, or reject it.",
+				Performer:   &model.Performer{Kind: model.PerformerHuman, Ask: "Ship it?"},
+				Next:        model.Next{"approve": "end", "reject": "end"},
 			},
 			"end": {Type: model.NodeTypeEnd, Result: "success"},
 		},

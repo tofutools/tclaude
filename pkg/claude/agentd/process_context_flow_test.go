@@ -51,12 +51,13 @@ type processProjectionWire struct {
 	NeedsYou bool                `json:"needsYou"`
 	Scope    processRunScopeWire `json:"scope"`
 	Nodes    []struct {
-		ID        string `json:"id"`
-		Label     string `json:"label"`
-		Kind      string `json:"kind"`
-		State     string `json:"state"`
-		Index     int    `json:"index"`
-		Performer struct {
+		ID          string `json:"id"`
+		Label       string `json:"label"`
+		Kind        string `json:"kind"`
+		State       string `json:"state"`
+		Index       int    `json:"index"`
+		Description string `json:"description"`
+		Performer   struct {
 			Kind string `json:"kind"`
 			Ref  string `json:"ref"`
 		} `json:"performer"`
@@ -152,6 +153,7 @@ func TestProcessContextProjectsGroupAndAgentRuns(t *testing.T) {
 	assert.Equal(t, "human", waiting.Nodes[1].Performer.Kind)
 	assert.Equal(t, "gate", waiting.Name, "an unnamed template falls back to its id")
 	assert.Equal(t, "choose", waiting.Nodes[1].Label, "an unnamed node falls back to its id")
+	assert.Equal(t, "Approve the release, or reject it.", waiting.Nodes[1].Description)
 	assert.Equal(t, 1, waiting.Nodes[1].Index)
 	assert.Equal(t, "done", waiting.Nodes[0].State)
 	assert.Equal(t, "end", waiting.Nodes[2].Kind)
