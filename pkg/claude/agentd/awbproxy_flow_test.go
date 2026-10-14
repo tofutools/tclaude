@@ -779,7 +779,7 @@ func TestAWBProxy_RejectsInvalidImplementationFields(t *testing.T) {
 	assert.False(t, rec.sawAnyCall())
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
-		"workspace": "awb", "title": "Bad metadata", "commit_hash": "1234567",
+		"workspace": "awb", "title": "Bad metadata", "commit_hash": "123456",
 	})
 	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
 	assert.False(t, rec.sawAnyCall())
