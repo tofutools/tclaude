@@ -29,7 +29,7 @@ const MAX_EVENTS = 1000;
 const HISTORY_ROWS = 8;
 // The opened graph shrinks to fit its pane, but not below this: past it the
 // labels stop being readable and the pane scrolls instead.
-const MIN_GRAPH_SCALE = 0.55;
+const MIN_GRAPH_SCALE = 0.8;
 const GRAPH_PAD = { x: 48, y: 36 };
 
 // graphFitScale is the zoom that fits a run's whole graph in the pane.
@@ -344,8 +344,8 @@ export function GroupsRunFocus({
     if (!pane || !layoutSize) return undefined;
     const refit = () => setGraphScale(graphFitScale(layoutSize, { width: pane.clientWidth, height: pane.clientHeight }));
     refit();
-    // A run opens at the graph's start; the reveal below scrolls only if
-    // the selected node is still out of view.
+    // A run opens at the graph's start; the reveal below scrolls only as
+    // far as the selected node needs, keeping as much upstream as fits.
     pane.scrollLeft = 0;
     pane.scrollTop = 0;
     if (typeof ResizeObserver !== 'function') return undefined;

@@ -20164,8 +20164,10 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .grf-run-actions { margin-left: auto; }
 .grf-back { background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 2px 9px; cursor: pointer; }
 .grf-back:hover, .grf-back:focus-visible { border-color: #58a6ff; color: #e6edf3; }
-.grf-graph { flex: 1; overflow: auto; padding: 12px 24px 24px; }
-.grf-graph-fit { width: fit-content; margin: 0 auto; }
+.grf-graph { flex: 1; overflow: auto; padding: 12px 24px 24px; display: flex; }
+/* Auto margins centre the graph in the pane and collapse to 0 on an
+   overflowing axis, so a wide graph scrolls from its start, not its middle. */
+.grf-graph-fit { width: fit-content; height: fit-content; margin: auto; flex: none; }
 .grf-gone { flex: 1; padding: 24px; }
 .grf-dock {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 12px 12px; padding: 8px 12px;
