@@ -5,8 +5,8 @@ import { createPreactHarness } from './preact-harness.mjs';
 test('Logs state owns filters, paging, stream state, and stale request rejection', async (t) => {
   const harness = await createPreactHarness(t);
   const { createLogsState } = await harness.importDashboardModule('js/logs-state.js');
-  const activeTab = harness.signals.signal('logs');
-  const state = createLogsState({ activeTab });
+  const activeTab = harness.signals.signal('activity');
+  const state = createLogsState({ activeTab, activitySubtab: harness.signals.signal('logs') });
   state.setFilter('query', 'error'); state.setFilter('level', 'warn'); state.setPageSize(50); state.setStream(true);
   assert.equal(state.view.value.page, 1);
   assert.equal(state.view.value.query, 'error');
@@ -18,6 +18,6 @@ test('Logs state owns filters, paging, stream state, and stale request rejection
   assert.equal(state.failRequest(failed, Object.assign(new Error('HTTP 500'), { body: 'boom' })), true);
   assert.match(state.view.value.request.error, /boom/);
   assert.equal(state.view.value.response, null, 'accepted failure clears stale count/source/page metadata');
-  activeTab.value = 'audit';
+  activeTab.value = 'groups';
   assert.equal(state.view.value.active, false);
 });

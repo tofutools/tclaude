@@ -15,7 +15,8 @@
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
-import { peerViewTabUsable } from './peer-view-limits.js';
+import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
+import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -33,7 +34,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
+  'messages', 'usage', 'activity', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -140,6 +141,8 @@ function activeLocationFromDOM() {
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
+  } else if (tab === 'activity') {
+    loc.subtab = activitySubtab.value;
   } else if (tab === 'jobs') {
     const island = featureState('jobs');
     if (island) return normalizeLocation(island.location.value);
@@ -207,13 +210,19 @@ function requestGroupsLocation(loc) {
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
 // classes) reuses every lazy-loader hung on that button — the same reasoning as
-// cycleTab() in refresh.js — so a restored /costs or /logs actually loads its
+// cycleTab() in refresh.js — so a restored /costs or /activity/logs actually loads its
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
   if (!peerViewTabUsable(loc.tab)) { correct({ tab: 'groups' }); loc = { tab: 'groups' }; }
+  // Activity is usable on a peer view for its audit log only; a Logs or
+  // Performance location there lands on Audit instead.
+  if (loc.tab === 'activity' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
+    loc = { tab: 'activity', subtab: DEFAULT_ACTIVITY_SUBTAB };
+    correct(loc);
+  }
   applying = true;
   try {
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
@@ -226,6 +235,10 @@ function activate(loc) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
+    } else if (loc.tab === 'activity') {
+      // A bare /activity (hand-typed, or Back onto one) shows the default
+      // view, so a later subtab never strands an entry on another one.
+      setActivitySubtab(loc.subtab || DEFAULT_ACTIVITY_SUBTAB);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
     } else if (loc.tab === 'usage') {
@@ -426,10 +439,11 @@ export function initNavHistory() {
     // canonical /<tab>).
     loc = urlLoc;
     if (loc.tab === DEFAULT_TAB) {
-      // A retired tab (?tab=costs) resolves through the core's aliases first.
+      // normalizeLocation also folds a retired tab (?tab=costs, ?tab=audit)
+      // onto its new home.
       const legacyTab = new URLSearchParams(window.location.search).get('tab');
-      const legacy = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
-      if (legacy && ROUTABLE_TABS.has(legacy.tab)) loc = legacy;
+      const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
+      if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
     }
     stack = initialState(loc);
   }
@@ -451,7 +465,9 @@ export function initNavHistory() {
   // the current history entry so it carries the full stack + a canonical path
   // (a bare "/" stays "/"; "/costs" stays "/costs").
   activate(loc);
-  history.replaceState(serializeStack(stack), '', urlFor(loc));
+  // activate() may have corrected the location in place (a peer view refusing
+  // a tab or subtab), so canonicalise from the stack, not the parsed URL.
+  history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   ready = true;
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
@@ -471,7 +487,7 @@ export function initNavHistory() {
 
   window.addEventListener('popstate', onPopstate);
 
-  // Subtab switches (Access / Automations / Processes) emit
+  // Subtab switches (Access / Activity / Automations / Processes) emit
   // `tclaude:navigated` after they update their view — record them as user
   // navigation, so their deep paths update just like a top-level tab switch.
   document.addEventListener('tclaude:navigated', recordCurrentLocation);

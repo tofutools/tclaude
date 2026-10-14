@@ -947,6 +947,11 @@ section.active { display: block; }
 .access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
 .access-panel { display: none; }
 .access-panel.active { display: block; }
+/* Activity tab — Audit, Logs and Performance share one nav tab and reuse the
+   Access segmented-control look; activity-tab.js toggles the panels. */
+.activity-panel { display: none; }
+.activity-panel.active { display: block; }
+html.remote-node .activity-subtab.pv-off { opacity: .4; }
 .access-sub-intro {
   color: #8b949e; font-size: 12px; line-height: 1.5;
   margin: 0 0 12px; max-width: 760px;
@@ -10054,13 +10059,6 @@ body.wizard .usage-ov-chart, body.wizard .usage-ov-agents { background: #140f28;
 body.hide-plugins nav [data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
 
-/* Debug-tab auto-hide. body.hide-debug is set by refresh.js when the
-   server's debug_tab_visible flag (config dashboard.show_debug_tab) is
-   off — the default. Display-only: the daemon's poll-timing recorder and
-   /api/perf run regardless. */
-body.hide-debug nav [data-tab="debug"],
-body.hide-debug #tab-debug { display: none; }
-
 /* Processes is a dark-launched feature. The page starts with hide-processes
    on <body>; refresh.js removes it only when the server snapshot confirms the
    feature flag, preventing a flash of experimental chrome while config loads. */
@@ -15783,44 +15781,44 @@ body.wizard .debug-wizard-title {
   font-size: 22px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #tab-debug .debug-card {
+body.wizard #activity-performance .debug-card {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.14), transparent 68%),
     linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border-color: #7a5db0;
   box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.12);
 }
-body.wizard #tab-debug .debug-card-head .rowname {
+body.wizard #activity-performance .debug-card-head .rowname {
   color: #f3e6c0;
   text-shadow: 0 0 5px rgba(217, 180, 90, 0.25);
 }
-body.wizard #tab-debug .muted,
-body.wizard #tab-debug .debug-stat,
-body.wizard #tab-debug .debug-subhead { color: #9a86c4; }
-body.wizard #tab-debug .debug-stat strong {
+body.wizard #activity-performance .muted,
+body.wizard #activity-performance .debug-stat,
+body.wizard #activity-performance .debug-subhead { color: #9a86c4; }
+body.wizard #activity-performance .debug-stat strong {
   color: #f0d066;
   text-shadow: 0 0 5px rgba(217, 180, 90, 0.3);
 }
-body.wizard #tab-debug .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
-body.wizard #tab-debug .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
-body.wizard #tab-debug .debug-spark-line {
+body.wizard #activity-performance .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
+body.wizard #activity-performance .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
+body.wizard #activity-performance .debug-spark-line {
   stroke: #d9b45a;
   filter: drop-shadow(0 0 2px rgba(217, 180, 90, 0.45));
 }
-body.wizard #tab-debug .debug-phasebar {
+body.wizard #activity-performance .debug-phasebar {
   box-shadow: 0 0 0 1px rgba(122, 93, 176, 0.35), 0 0 8px rgba(169, 123, 214, 0.12);
 }
-body.wizard #tab-debug .debug-legend { color: #e7d9f5; }
-body.wizard #tab-debug .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
-body.wizard #tab-debug .debug-table th {
+body.wizard #activity-performance .debug-legend { color: #e7d9f5; }
+body.wizard #activity-performance .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
+body.wizard #activity-performance .debug-table th {
   color: #d9b45a;
   border-bottom-color: rgba(217, 180, 90, 0.45);
 }
-body.wizard #tab-debug .debug-table td {
+body.wizard #activity-performance .debug-table td {
   color: #e7d9f5;
   border-bottom-color: rgba(122, 93, 176, 0.22);
 }
-body.wizard #tab-debug .empty { color: #8f7bbf; }
+body.wizard #activity-performance .empty { color: #8f7bbf; }
 
 /* ─── Wizard Wards sub-nav — the three chambers of access control ─────
    The Access tab's inset segmented control (Permissions / Slug registry /

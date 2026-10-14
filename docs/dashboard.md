@@ -54,9 +54,7 @@ In order across the top:
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
 | Usage | Overview, subscription quota forecasts, and real/what-if costs |
-| Audit | Trail of daemon-proxied mutating actions |
-| Logs | Viewer over the daemon log |
-| Debug | Poll-latency self-diagnostics (hidden by default) |
+| Activity | Audit trail, daemon log, and poll performance (three subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
 With trusted federation peers, node chips and the Map / Groups · all nodes /
@@ -69,12 +67,11 @@ to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile
 and speed prefilled; the group remains editable and defaults to the last used
 group. Fast mode uses a higher-cost service tier.
-Debug appears only with `dashboard.show_debug_tab`; Processes only with
-`features.processes`. A theme-gated **Vegas** button appears in the slop and
+Processes appears only with `features.processes`. A theme-gated **Vegas** button appears in the slop and
 wizard themes (or via `slop.vegas_in_regular_mode`).
 
 The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
-Contraptions, Wards, Missives, Reserves, Coffers, Chronicle, Runes, Alchemy,
+Contraptions, Wards, Missives, Reserves, Coffers, Chronicle (Deeds, Runes, Alchemy),
 Almanac, The Tavern) and the **slop** theme goes full casino; both are
 re-skins of the same dashboard, not different feature sets. The header icon
 toggles regular ↔ wizard; the slop theme is unfinished and left out of that
@@ -214,7 +211,7 @@ The 🚫 broker-refusal badge deserves attention: when it shows, the entire row
 — status, model, cost, context, directory — is frozen at its last accepted
 value. The usual cause is a dead session row on the same pid or a session-id /
 ancestry mismatch. Refusals also produce throttled `broker: refused a
-brokered callback` WARN records in the daemon log (the Logs tab) with the
+brokered callback` WARN records in the daemon log (Activity › Logs) with the
 caller pid, the row the daemon resolved, the id the caller claimed, and, for
 a failed live-pane proof, which fact was missing (pane probe, launch
 generation, or ancestry). The first refusal of an episode always logs; later
@@ -588,7 +585,16 @@ top-bar totals. Recorded costs and native credits remain unchanged. The same
 settings are available under Config → Usage, costs & rate limits. On subscription accounts the
 Costs view appears only when enabled in Config.
 
-## Audit
+## Activity
+
+Three subtabs, each with its own address: **Audit** (`/activity/audit`, the
+default), **Logs** (`/activity/logs`) and **Performance**
+(`/activity/performance`). Switching subtabs adds a Back/Forward step.
+Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages still open
+the matching subtab. The command palette has a direct entry for each
+(“Go to Activity › Logs”). On a linked peer's view only Audit is available.
+
+### Audit
 
 The trail of daemon-proxied **mutating** actions — spawns, messaging,
 lifecycle verbs, group and permission changes, sudo grants, proxy calls,
@@ -601,11 +607,17 @@ included**. Server-side search plus source and outcome filters. Retention
 defaults to 30 days (`audit.retention_days`; negative keeps forever). The
 full recording policy is in [Permissions and audit](permissions-and-audit.md).
 
-## Logs
+### Logs
 
 A paged viewer over `~/.tclaude/output.log` and its rotated files: level
 pills, structured fields, search, a level floor, a since filter, and a
 2-second live-stream toggle.
+
+### Performance
+
+In-memory poll-latency self-diagnostics per endpoint — p50/p90/p99/max,
+sparkline, per-phase breakdown — reset on daemon restart or with the reset
+button. Formerly the opt-in Debug tab; it is now always shown.
 
 ## Config
 
@@ -617,10 +629,6 @@ defaults, the daemon and server (dashboard port and bind, tray,
 operator-token persistence), logging, retention, slop mode, experimental
 features, and the remote-access panel described in
 [Operating remotely](remote.md).
-
-The **Debug** tab (enable `dashboard.show_debug_tab`) shows in-memory
-poll-latency self-diagnostics per endpoint — p50/p90/p99/max, sparkline,
-per-phase breakdown — reset on daemon restart.
 
 ## Skynet UI: linked nodes
 

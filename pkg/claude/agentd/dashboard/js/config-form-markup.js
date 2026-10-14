@@ -301,11 +301,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more=${html`The <strong>Plugins</strong> tab manages human-defined integration bundles (e.g. a docker-backed MCP server). By default it <em>auto-hides</em> when you have no plugins installed — most setups never define one, so the empty tab is just clutter. Enable this to keep it visible regardless, e.g. to reach the built-in catalog and install one from there. (A broken <code>plugins.json</code> always shows the tab so the error isn't hidden.) Off by default.`}>
           <${Toggle} id="cfg-dashboard-always-show-plugins" />
         </${Setting}>
-        <${Setting} title="Debug tab" forId="cfg-dashboard-show-debug-tab" k="dashboard.show_debug_tab"
-          summary="show the Debug tab (daemon poll-timing diagnostics)"
-          more=${html`The <strong>Debug</strong> tab shows how long the dashboard's own background polls take inside the daemon — a latency sparkline + p50/p90/p99/max per endpoint, and the <code>/api/snapshot</code> handler's per-phase breakdown — for chasing a slow dashboard. It is a troubleshooting surface, so the nav hides it <em>by default</em>. <strong>Checked</strong> brings it back. The timing recorder runs either way (a few hundred KB of daemon memory), so the history is already there when you switch the tab on. Off by default. Stored as <code>dashboard.show_debug_tab</code> (the default is omitted; checked writes <code>true</code>).`}>
-          <${Toggle} id="cfg-dashboard-show-debug-tab" />
-        </${Setting}>
         <${Setting} title="Vegas music in regular mode" forId="cfg-slop-vegas-regular" k="slop.vegas_in_regular_mode"
           summary="show the Vegas tab, volume controls & play music outside slop mode"
           more=${html`The dashboard's casino "slop" mode (the 🎰 in the header) bundles a <strong>Vegas</strong> tab with a lounge-radio player and a header volume mixer. Enable this to surface those — the tab, the 🔊 sound switch and 🎚️ volume sliders, and the music — on the <em>plain</em> dashboard too, without the slot machines, coins and sound FX. Music starts muted and plays on your first click (browsers block autoplay); the 🔊 button mutes it (remembered per browser). Off by default. Stored in the <code>slop</code> block of config.json alongside the volume/channel settings.`}>

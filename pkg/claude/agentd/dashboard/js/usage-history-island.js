@@ -219,7 +219,7 @@ export function UsageHistoryApp({ state, actions }) {
   // tab opens on the data rather than on a paragraph about it.
   return html`<div class="usage-history-island">
     ${/* Always emitted, revealed by CSS in wizard mode only — same shape as the
-        Debug tab's .debug-wizard-title and the Config almanac's. Unlike the
+        Performance view's .debug-wizard-title and the Config almanac's. Unlike the
         copy below it, the nameplate has a stable two-state twin, so it does not
         need to wait on the island's repaint. aria-hidden: it is decorative
         chrome, and the nav tab already names the tab for a screen reader. */''}

@@ -159,9 +159,7 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 		{"access", "Access", "🛡", "Wards"},
 		{"messages", "Messages", "🕊", "Missives"},
 		{"usage", "Usage", "💰", "Treasury"},
-		{"audit", "Audit", "📖", "Chronicle"},
-		{"logs", "Logs", "🕯", "Runes"},
-		{"debug", "Debug", "🧪", "Alchemy"},
+		{"activity", "Activity", "📖", "Chronicle"},
 		{"config", "Config", "📜", "Almanac"},
 	}
 	for _, p := range pairs {

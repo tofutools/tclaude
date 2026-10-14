@@ -1,9 +1,10 @@
 import { computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { activitySubtab as currentActivitySubtab, activityViewActive } from './activity-state.js';
 import { AUDIT_SORT_KEYS, auditPageCount } from './audit-model.js';
 import { createRequestLifecycle } from './request-lifecycle.js';
 
-export function createAuditState({ activeTab = dashboardState.activeTab, now = () => Date.now() } = {}) {
+export function createAuditState({ activeTab = dashboardState.activeTab, activitySubtab = currentActivitySubtab, now = () => Date.now() } = {}) {
   const query = signal(''); const outcome = signal(''); const source = signal('');
   const page = signal(1); const pageSize = signal(100); const sort = signal('time'); const dir = signal('desc');
   const response = signal(null);
@@ -24,7 +25,7 @@ export function createAuditState({ activeTab = dashboardState.activeTab, now = (
   const view = computed(() => {
     const data = response.value;
     return {
-      active: activeTab.value === 'audit', query: query.value, outcome: outcome.value, source: source.value,
+      active: activityViewActive(activeTab, activitySubtab, 'audit'), query: query.value, outcome: outcome.value, source: source.value,
       page: page.value, pageSize: pageSize.value, sort: sort.value, dir: dir.value,
       response: data, rows: data?.entries || [], total: data?.total || 0,
       totalUnfiltered: data?.total_unfiltered || 0, pages: auditPageCount(data?.total || 0, pageSize.value),

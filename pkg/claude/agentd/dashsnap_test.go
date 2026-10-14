@@ -1006,7 +1006,8 @@ func baseStates() []dashsnap.State {
 			Title:   "Debug / Alchemy diagnostics",
 			Caption: "The poll-timing cards retain their readable default skin while wizard mode adds the Alchemist's Observatory heading, violet panels and a gilded latency trace without recolouring categorical phase data.",
 			JS: `return (async function(){
-  document.querySelector('nav [data-tab="debug"]').click();
+  document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="performance"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.debug-card'); i++) {
     await new Promise(function(resolve){ setTimeout(resolve, 50); });
   }
@@ -4347,14 +4348,22 @@ func boundedTabJS(tab, readySelector string, afterReady ...string) string {
 		post = afterReady[0]
 	}
 	// Quota ("usage") and Costs are views of the Usage tab: click its nav
-	// button with the hub already on the wanted view. `tab` stays the island
-	// name (its #<tab>-root host and feature-state registration).
-	navTab, subview := tab, ""
+	// button with the hub already on the wanted view. Audit and Logs are
+	// subtabs of Activity: open the nav tab, then the subtab, and wait on the
+	// subtab's panel instead of a tab section. `tab` stays the island name
+	// (its #<tab>-root host and feature-state registration).
+	navTab, subview, panel, subClick := tab, "", "", ""
 	switch tab {
 	case "usage":
 		subview = "quota"
 	case "costs":
 		navTab, subview = "usage", "costs"
+	case "audit", "logs":
+		navTab, panel = "activity", "#activity-"+tab
+		subClick = fmt.Sprintf(`document.querySelector('#tab-activity .activity-subtab[data-subtab=%q]').click();`, tab)
+	}
+	if panel == "" {
+		panel = "#tab-" + navTab
 	}
 	return fmt.Sprintf(`return Promise.all([
   import('/static/js/snapshot-store.js'),
@@ -4371,11 +4380,12 @@ if (%[2]q === 'plugins' || %[1]q === 'usage') {
 }
 if (%[3]q) registry.featureState('usage-hub')?.select(%[3]q);
 __tab.click();
+%[7]s
 return new Promise(function(resolve, reject) {
   var deadline = Date.now() + 4000;
   (function ready() {
     var node = document.querySelector(%[4]q);
-    var panel = document.querySelector('#tab-' + %[1]q);
+    var panel = document.querySelector(%[6]q);
     var root = document.querySelector('#' + %[2]q + '-root');
     var state = registry.featureState(%[2]q);
     var phase = state?.request?.value?.phase || state?.phase?.value || state?.view?.value?.request?.phase;
@@ -4386,7 +4396,7 @@ return new Promise(function(resolve, reject) {
     setTimeout(ready, 25);
   })();
 });
-});`, navTab, tab, subview, readySelector, post)
+});`, navTab, tab, subview, readySelector, post, panel, subClick)
 }
 
 func boundedJobsEmptyJS() string {
@@ -4411,7 +4421,8 @@ func boundedJobsEmptyJS() string {
 
 func boundedLogsErrorJS() string {
 	return `
-document.querySelector('nav [data-tab="logs"]').click();
+document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="logs"]').click();
 return import('/static/js/feature-state-registry.js').then(function(registry) {
   return new Promise(function(resolve, reject) {
     var deadline = Date.now() + 4000;
@@ -4433,7 +4444,8 @@ return import('/static/js/feature-state-registry.js').then(function(registry) {
 
 func boundedLogsPollFocusJS() string {
 	return `
-document.querySelector('nav [data-tab="logs"]').click();
+document.querySelector('nav [data-tab="activity"]').click();
+  document.querySelector('#tab-activity .activity-subtab[data-subtab="logs"]').click();
 return new Promise(function(resolve, reject) {
   var deadline = Date.now() + 4000;
   (function ready() {

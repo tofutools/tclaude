@@ -32,7 +32,6 @@ type dashSnapshot struct {
 	CostTabVisible            bool               `json:"cost_tab_visible"`
 	CostTabWhatIf             bool               `json:"cost_tab_whatif"`
 	PluginsTabVisible         bool               `json:"plugins_tab_visible"`
-	DebugTabVisible           bool               `json:"debug_tab_visible"`
 	ProcessesEnabled          bool               `json:"processes_enabled"`
 	TriggersEnabled           bool               `json:"triggers_enabled"`
 	GroupsRouteMapEnabled     bool               `json:"groups_route_map_enabled"`

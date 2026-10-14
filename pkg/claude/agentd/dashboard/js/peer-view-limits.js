@@ -16,7 +16,14 @@ import { shellToast } from './shell-state.js';
 // opens there through this node's federation bridge). A tab absent here has
 // no peer route at all. Usage is gated on costs: its Costs view is the only
 // half a peer serves (the quota history is this node's own accounts).
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+
+// SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
+// peer view for its audit log; the daemon log and poll timings have no peer
+// route, so those subtabs stay greyed there.
+const SUBTAB_FEATURES = Object.freeze({
+  activity: Object.freeze({ audit: 'audit', logs: '', performance: '' }),
+});
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
@@ -49,6 +56,12 @@ export function tabState(tab, peerView) {
   return featureState(TAB_FEATURES[tab] || '', peerView);
 }
 
+export function subtabState(tab, subtab, peerView) {
+  const subs = SUBTAB_FEATURES[tab];
+  if (!subs || !Object.hasOwn(subs, subtab)) return tabState(tab, peerView);
+  return featureState(subs[subtab], peerView);
+}
+
 function currentPeerView() {
   return dashboardState.snapshot.value?.peer_view || null;
 }
@@ -62,6 +75,15 @@ export function peerViewTabUsable(tab, { remote = globalThis.__tclaudeRemoteNode
   // known to be unusable; a deep link to one the peer may share waits.
   if (!peerView) return Boolean(TAB_FEATURES[tab]);
   return tabState(tab, peerView) === 'shared';
+}
+
+// peerViewSubtabUsable is peerViewTabUsable for one subtab of a tab.
+export function peerViewSubtabUsable(tab, subtab, { remote = globalThis.__tclaudeRemoteNode, peerView = currentPeerView() } = {}) {
+  if (!remote?.id) return true;
+  const subs = SUBTAB_FEATURES[tab];
+  if (!subs || !Object.hasOwn(subs, subtab)) return peerViewTabUsable(tab, { remote, peerView });
+  if (!peerView) return Boolean(subs[subtab]);
+  return subtabState(tab, subtab, peerView) === 'shared';
 }
 
 // limitPeerViewCommands disables the command palette's node-changing commands
@@ -84,7 +106,11 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
 function tabLabel(tab) {
-  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'audit' ? 'its audit log' : `the ${tab} tab`;
+  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'activity' ? 'its audit log' : `the ${tab} tab`;
+}
+
+function subtabLabel(subtab) {
+  return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : `The ${subtab} view`;
 }
 
 export function limitHint(state, what, node) {
@@ -162,6 +188,11 @@ export function blockedControl(target, peerView) {
     const state = tabState(tab.dataset.tab, peerView);
     return state === 'shared' ? null : { el: tab, state, what: tabLabel(tab.dataset.tab) };
   }
+  const sub = target?.closest?.('.activity-subtab');
+  if (sub) {
+    const state = subtabState('activity', sub.dataset.subtab, peerView);
+    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab) };
+  }
   const act = target?.closest?.('[data-act]');
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   const pa = act && peerAction(act, peerView);
@@ -208,6 +239,12 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       if (state === 'shared') clearReason(tab);
       else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName()));
     }
+    for (const sub of doc.querySelectorAll('.activity-subtab')) {
+      const state = subtabState('activity', sub.dataset.subtab, peerView);
+      sub.classList.toggle('pv-off', state !== 'shared');
+      if (state === 'shared') clearReason(sub);
+      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName()));
+    }
   });
 
   const refuse = (event) => {
@@ -235,7 +272,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // Hover explanation for controls (tabs get theirs from the effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView);
-    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab]')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
+    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
   };
   // Drags spawn, move and reorder on the node — never on a peer view.
   const onDrag = (event) => { event.preventDefault(); };

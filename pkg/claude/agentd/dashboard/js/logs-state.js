@@ -1,9 +1,10 @@
 import { computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { activitySubtab as currentActivitySubtab, activityViewActive } from './activity-state.js';
 import { keyedLogRows, pageCount } from './logs-model.js';
 import { createRequestLifecycle } from './request-lifecycle.js';
 
-export function createLogsState({ activeTab = dashboardState.activeTab } = {}) {
+export function createLogsState({ activeTab = dashboardState.activeTab, activitySubtab = currentActivitySubtab } = {}) {
   const query = signal('');
   const level = signal('');
   const rangeMs = signal(0);
@@ -28,7 +29,7 @@ export function createLogsState({ activeTab = dashboardState.activeTab } = {}) {
     const data = response.value;
     const pages = pageCount(data?.total || 0, pageSize.value);
     return {
-      active: activeTab.value === 'logs', query: query.value, level: level.value,
+      active: activityViewActive(activeTab, activitySubtab, 'logs'), query: query.value, level: level.value,
       rangeMs: rangeMs.value, includeRotated: includeRotated.value, hideRaw: hideRaw.value,
       stream: stream.value, page: page.value, pageSize: pageSize.value,
       response: data, rows: keyedLogRows(data?.entries || []), pages,

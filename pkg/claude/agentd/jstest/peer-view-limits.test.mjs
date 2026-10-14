@@ -7,7 +7,11 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   assert.equal(mod.tabState('groups', pv), 'shared');
-  assert.equal(mod.tabState('audit', pv), 'shared');
+  assert.equal(mod.tabState('activity', pv), 'shared', 'Activity is offered for its audit log');
+  assert.equal(mod.subtabState('activity', 'audit', pv), 'shared');
+  assert.equal(mod.subtabState('activity', 'logs', pv), 'local', 'the daemon log has no peer route');
+  assert.equal(mod.subtabState('activity', 'performance', pv), 'local');
+  assert.equal(mod.subtabState('activity', 'audit', { ...pv, included: ['agents.status'] }), 'omitted');
   assert.equal(mod.tabState('costs', pv), 'omitted');
   assert.equal(mod.tabState('config', pv), 'local');
   assert.equal(mod.tabState('map', pv), 'shared', 'the map is this operator\'s own fleet view');
@@ -51,6 +55,29 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   assert.equal(harness.fireEvent(doc.getElementById('retire'), 'click').defaultPrevented, false);
 });
 
+test('on a peer view, Activity subtabs without a peer route are greyed and refused', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = `<nav><a data-tab="activity">Activity</a></nav><section id="tab-activity">
+    <a class="activity-subtab" data-subtab="audit" title="Audit log">Audit</a><a class="activity-subtab" data-subtab="logs">Logs</a>
+    <a class="activity-subtab" data-subtab="performance">Performance</a></section>`;
+  const toasts = [];
+  doc.documentElement.dataset.remoteNodeName = 'forge';
+  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' } });
+  const sub = (name) => doc.querySelector(`[data-subtab="${name}"]`);
+  assert.equal(doc.querySelector('[data-tab="activity"]').classList.contains('pv-off'), false);
+  assert.equal(sub('audit').classList.contains('pv-off'), false);
+  assert.equal(sub('audit').getAttribute('title'), 'Audit log');
+  assert.equal(sub('logs').classList.contains('pv-off'), true);
+  assert.equal(sub('logs').getAttribute('title'), 'The daemon log is not available in a peer view');
+  assert.equal(sub('performance').classList.contains('pv-off'), true);
+  assert.equal(harness.fireEvent(sub('audit'), 'click').defaultPrevented, false);
+  assert.equal(harness.fireEvent(sub('logs'), 'click').defaultPrevented, true);
+  assert.equal(toasts.at(-1), 'The daemon log is not available in a peer view');
+  dispose();
+});
+
 test('this node is never limited', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
@@ -76,7 +103,12 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.match(out[2].disabledReason, /does not share costs/);
   assert.equal(mod.limitPeerViewCommands(cmds, { peer_view: pv }, undefined), cmds, 'this node: untouched');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: pv }), false);
-  assert.equal(mod.peerViewTabUsable('audit', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewTabUsable('activity', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote, peerView: pv }), false);
+  assert.equal(mod.peerViewSubtabUsable('activity', 'performance', { remote, peerView: null }), false, 'no peer route at all');
+  assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
+  assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote: undefined }), true);
   assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
