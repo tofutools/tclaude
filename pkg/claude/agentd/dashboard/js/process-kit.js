@@ -7,11 +7,12 @@
 // or an engine checkpoint:
 //
 //   run = {
-//     id, name,                       // run id and display name
+//     id, name,                       // run id and display name (runId / templateRef / templateId also accepted)
 //     status,                         // engine run status (running, completed, failed, canceled) or a kit state
 //     scope: { kind, name },          // kind: 'group' (⌂) | 'agent' (◉) | '' (unscoped)
-//     current,                        // optional node id the run is "at"
+//     current,                        // optional node id (or ids) the run is "at"
 //     nodes: [{ id, label, kind, state, sub, performers: [{ id, label, initial, kind }] }],
+//                                     // or the read model's single performer: { kind, ref }
 //     edges: [{ from, to, label, back }],
 //   }
 //
@@ -41,7 +42,7 @@ export const PROCESS_NODE_KINDS = Object.freeze({
 
 const KIND_ALIASES = Object.freeze({
   task: 'agent', agentic: 'agent', cmd: 'command', shell: 'command', program: 'command',
-  approval: 'human', gate: 'human', dec: 'decision', par: 'parallel', timer: 'wait',
+  approval: 'human', gate: 'human', dec: 'decision', par: 'parallel', join: 'parallel', timer: 'wait',
   comp: 'subprocess', compound: 'subprocess', subgraph: 'subprocess',
 });
 
@@ -58,7 +59,7 @@ export const PROCESS_STATES = Object.freeze({
 const STATE_ALIASES = Object.freeze({
   completed: 'done', succeeded: 'done', success: 'done',
   active: 'running', dispatched: 'running',
-  blocked: 'waiting', 'needs-human': 'waiting', parked: 'waiting',
+  blocked: 'waiting', awaiting: 'waiting', 'needs-human': 'waiting', parked: 'waiting',
   canceled: 'failed', cancelled: 'failed', error: 'failed',
   pending: 'planned', ready: 'planned', queued: 'planned', '': 'planned',
 });
@@ -82,7 +83,34 @@ export function normalizeNodeState(state) {
 
 export function normalizeScope(scope) {
   const kind = String(scope?.kind || '').toLowerCase();
-  return { kind: PROCESS_SCOPES[kind] ? kind : '', name: String(scope?.name || '') };
+  const name = scope?.name || (kind === 'agent' ? scope?.agentName || scope?.agentId : scope?.group || scope?.groupId) || '';
+  return { kind: PROCESS_SCOPES[kind] ? kind : '', name: String(name) };
+}
+
+export function runID(run) {
+  return String(run?.id ?? run?.runId ?? '');
+}
+
+export function runName(run) {
+  return String(run?.name || run?.templateRef || run?.templateId || runID(run) || 'run');
+}
+
+// A task's kit kind follows its performer: the read model keeps the template
+// type ('task') and says who performs it.
+const PERFORMER_KINDS = Object.freeze({ human: 'human', program: 'command', command: 'command', agent: 'agent' });
+
+function nodeKind(node) {
+  const raw = String(node.kind || '').toLowerCase();
+  const performer = PERFORMER_KINDS[String(node.performer?.kind || '').toLowerCase()];
+  if ((raw === '' || raw === 'task') && performer) return performer;
+  return normalizeNodeKind(raw);
+}
+
+function nodePerformers(node) {
+  if (Array.isArray(node.performers)) return node.performers;
+  const ref = String(node.performer?.ref || '');
+  if (!ref || ref === 'unassigned') return [];
+  return [{ id: ref, label: node.performer.label || ref, kind: node.performer.kind }];
 }
 
 function isTerminalKind(kind) {
@@ -93,9 +121,10 @@ function nodesOf(run) {
   return (run?.nodes || []).filter((node) => node && node.id != null).map((node) => ({
     ...node,
     id: String(node.id),
-    kind: normalizeNodeKind(node.kind),
+    kind: nodeKind(node),
     state: normalizeNodeState(node.state),
-    label: String(node.label ?? node.id),
+    label: String(node.label || node.id),
+    performers: nodePerformers(node),
   }));
 }
 
@@ -157,8 +186,10 @@ export function currentRunNode(run, performerID = '') {
     if (found) return found;
   }
   if (run?.current != null) {
-    const explicit = steps.find((node) => node.id === String(run.current));
-    if (explicit) return explicit;
+    const ids = new Set([].concat(run.current).map(String));
+    const explicit = steps.filter((node) => ids.has(node.id));
+    const found = pick(explicit) || explicit[0];
+    if (found) return found;
   }
   return pick(steps) || steps[steps.length - 1];
 }
@@ -197,7 +228,7 @@ export function runIconView(run, performerID = '') {
   const mine = performerID && node && performs(node, performerID) ? node.state : '';
   const state = overall === 'failed' || overall === 'done' || !mine || mine === 'skipped' ? overall : mine;
   const position = node ? steps.findIndex((step) => step.id === node.id) + 1 : 0;
-  const name = String(run?.name || run?.id || 'run');
+  const name = runName(run);
   const parts = [name, stateLabel(overall)];
   if (scope.kind) parts.push(`${PROCESS_SCOPES[scope.kind].label}${scope.name ? ` · ${scope.name}` : ''}`);
   if (node) parts.push(`at ${node.label} (${position}/${steps.length})`);
@@ -406,11 +437,11 @@ export function ProcessStepStrip({ run }) {
 export function ProcessRunBadge({ run, performerId = '', onOpen = null }) {
   const view = runIconView(run, performerId);
   const cls = `pk-run-badge pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}`;
-  const body = html`<span class="pk-run-glyph" aria-hidden="true">${view.glyph}</span><span class="pk-run-name">${run?.name || run?.id}</span>${view.node && html`<span class="pk-sep" aria-hidden="true">›</span><b class="pk-run-node">${view.node.label}</b>`}<${ProcessStepStrip} run=${run} />`;
+  const body = html`<span class="pk-run-glyph" aria-hidden="true">${view.glyph}</span><span class="pk-run-name">${runName(run)}</span>${view.node && html`<span class="pk-sep" aria-hidden="true">›</span><b class="pk-run-node">${view.node.label}</b>`}<${ProcessStepStrip} run=${run} />`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${run?.id} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
-  return html`<span class=${cls} title=${view.title} data-process-run=${run?.id}>${body}</span>`;
+  return html`<span class=${cls} title=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
 
 // ProcessRunIcon is the terminal-overlay icon: a circle whose ring carries
@@ -421,9 +452,9 @@ export function ProcessRunIcon({ run, performerId = '', onOpen = null, active = 
   const cls = `pk-run-icon pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}${active ? ' on' : ''}${small ? ' small' : ''}`;
   const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge">${view.badge}</span>`}`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${run?.id} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
-  return html`<span class=${cls} role="img" title=${view.title} aria-label=${view.title} data-process-run=${run?.id}>${body}</span>`;
+  return html`<span class=${cls} role="img" title=${view.title} aria-label=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
 
 const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skipped: 'planned' };
@@ -451,7 +482,7 @@ export function ProcessMiniGraph({ run, compact = false, performerId = '', onNod
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id}>${inner}</div>`;
   });
-  return html`<div class=${`pk-mini-graph${compact ? ' compact' : ''}`} role="group" aria-label=${`${run?.name || run?.id || 'run'} graph`} style=${`width:${layout.width}px;height:${layout.height}px`}>
+  return html`<div class=${`pk-mini-graph${compact ? ' compact' : ''}`} role="group" aria-label=${`${runName(run)} graph`} style=${`width:${layout.width}px;height:${layout.height}px`}>
     <svg class="pk-edges" width=${layout.width} height=${layout.height} aria-hidden="true">
       <defs>${Object.keys(ARROW_IDS).filter((k) => k !== 'skipped').map((state) => html`<marker key=${state} id=${`${prefix}-${state}`} class=${`pk-arrow ${state}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker>`)}</defs>
       ${layout.edges.map((edge) => html`<path key=${edge.key} class=${`pk-edge ${edge.state}${edge.back ? ' back' : ''}`} d=${edge.path} marker-end=${`url(#${prefix}-${ARROW_IDS[edge.state]})`} />`)}

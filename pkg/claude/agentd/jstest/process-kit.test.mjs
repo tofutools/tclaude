@@ -166,3 +166,53 @@ test('the S1 sheet mounts every section', async (t) => {
   assert.match(root.textContent, /familiar-bound · search-indexer/);
   await mounted.unmount();
 });
+
+test('the read model projection (GET /v1/process/context) renders without an adapter', async (t) => {
+  const { harness, mod } = await kit(t);
+  const run = {
+    runId: 'run_7', templateId: 'tpl_release', status: 'running', action: 'awaiting_decision', needsYou: true,
+    scope: { kind: 'group', groupId: 'grp_1', group: 'webshop', owner: 'lead', state: 'bound' },
+    nodes: [
+      { id: 'start', kind: 'start', performer: { kind: 'engine', ref: '' }, state: 'done' },
+      { id: 'build', label: 'Build', kind: 'task', performer: { kind: 'program', ref: '' }, state: 'done' },
+      { id: 'impl', label: 'Implement', kind: 'task', performer: { kind: 'agent', ref: 'agt_c' }, state: 'running' },
+      { id: 'triage', kind: 'task', performer: { kind: 'agent', ref: 'unassigned' }, state: 'ready' },
+      { id: 'approve', label: 'Approve', kind: 'task', performer: { kind: 'human', ref: '' }, state: 'awaiting' },
+      { id: 'merge', label: 'Merge', kind: 'join', state: 'pending' },
+      { id: 'end', kind: 'end', state: 'pending' },
+    ],
+    edges: [
+      { from: 'start', to: 'build' }, { from: 'build', to: 'impl' }, { from: 'build', to: 'triage' },
+      { from: 'impl', to: 'approve' }, { from: 'triage', to: 'merge' }, { from: 'approve', to: 'merge', label: 'approved' },
+      { from: 'approve', to: 'impl', label: 'changes', back: true }, { from: 'merge', to: 'end' },
+    ],
+    current: ['impl', 'triage', 'approve'],
+  };
+  assert.equal(mod.runID(run), 'run_7');
+  assert.equal(mod.runName(run), 'tpl_release', 'templateId names a run without a name');
+  assert.deepEqual(mod.normalizeScope(run.scope), { kind: 'group', name: 'webshop' });
+  assert.deepEqual(mod.normalizeScope({ kind: 'agent', agentId: 'agt_s' }), { kind: 'agent', name: 'agt_s' });
+  assert.deepEqual(mod.normalizeScope({ kind: 'none' }), { kind: '', name: '' });
+  const steps = mod.runSteps(run);
+  assert.deepEqual(steps.map((n) => [n.id, n.kind, n.state]), [
+    ['build', 'command', 'done'], ['impl', 'agent', 'running'], ['triage', 'agent', 'planned'],
+    ['approve', 'human', 'waiting'], ['merge', 'parallel', 'planned'],
+  ]);
+  assert.equal(steps.find((n) => n.id === 'triage').label, 'triage', 'a node without a label shows its id');
+  assert.deepEqual(steps.find((n) => n.id === 'impl').performers, [{ id: 'agt_c', label: 'agt_c', kind: 'agent' }]);
+  assert.deepEqual(steps.find((n) => n.id === 'triage').performers, [], 'unassigned slots draw no avatar');
+  assert.equal(mod.currentRunNode(run).id, 'approve', 'among several current nodes the human gate wins');
+  const view = mod.runIconView(run, 'agt_c');
+  assert.equal(view.node.id, 'impl');
+  assert.equal(view.badge, '2/5');
+
+  const mounted = await harness.mount(harness.html`<div>
+    <${mod.ProcessRunBadge} run=${run} performerId="agt_c" />
+    <${mod.ProcessMiniGraph} run=${run} performerId="agt_c" />
+  </div>`);
+  assert.equal(mounted.container.querySelector('.pk-run-badge').dataset.processRun, 'run_7');
+  assert.equal(mounted.container.querySelector('.pk-run-name').textContent, 'tpl_release');
+  assert.ok(mounted.container.querySelector('[data-process-node="impl"].here'));
+  assert.ok(mounted.container.querySelector('path.pk-edge.back'));
+  await mounted.unmount();
+});
