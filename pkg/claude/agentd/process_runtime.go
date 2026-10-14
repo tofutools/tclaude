@@ -497,7 +497,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	if err != nil {
 		return false, err
 	}
-	if orphaned && !(start.mode == processRunApplyInput && start.input.cancels()) {
+	if orphaned && (start.mode != processRunApplyInput || !start.input.cancels()) {
 		return false, errProcessRunOrphaned
 	}
 	run := prepared
