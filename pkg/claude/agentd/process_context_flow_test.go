@@ -7,8 +7,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -249,4 +251,58 @@ func mapKeysOf[V any](m map[string]V) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// Scenario: a decision whose approve branch skips ahead to a node the reject
+// branch's rework also reaches. The converging rework → merge edge is a
+// forward edge, not a loop, and step indices follow execution order.
+func TestProcessContextConvergingEdgesAreForward(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	task := func(next model.Next) model.Node {
+		return model.Node{Type: model.NodeTypeTask, Next: next,
+			Performer: &model.Performer{Kind: model.PerformerProgram, Profile: "safe", Run: "true"}}
+	}
+	putProcessRuntimeTemplate(t, root, &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "converge", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "review"}},
+			"review": {Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Ok?"},
+				Next: model.Next{"approve": "merge", "reject": "rework"}},
+			"rework": task(model.Next{"next": "merge"}),
+			"merge":  task(model.Next{"next": "end"}),
+			"end":    {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	})
+	f.HaveGroup("ctx-converge")
+	// The entry decision parks the run on a human, so no program executes.
+	startScopedRun(t, f, "run_converge", "converge", map[string]any{"group": "ctx-converge"}, []string{"safe"})
+
+	run := readProcessContext(t, f, "").Runs["run_converge"]
+	back := map[string]bool{}
+	for _, edge := range run.Edges {
+		back[edge.From+">"+edge.To] = edge.Back
+	}
+	assert.False(t, back["rework>merge"], "a converging forward edge is not a loop")
+	assert.False(t, back["review>merge"])
+	index := map[string]int{}
+	for _, node := range run.Nodes {
+		index[node.ID] = node.Index
+	}
+	assert.Equal(t, map[string]int{"start": 0, "review": 1, "rework": 2, "merge": 3, "end": 0}, index)
+}
+
+// Scenario: the browser reads the context through the dashboard's own mux,
+// as the human operator, and sees every scoped run.
+func TestProcessContextServedOnDashboardMux(t *testing.T) {
+	f := scopedRunFlow(t)
+	f.HaveGroup("ctx-dash")
+	startScopedRun(t, f, "run_dash", "gate", map[string]any{"group": "ctx-dash"}, []string{})
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		dashReq(t, http.MethodGet, "/v1/process/context", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var view processContextWire
+	testharness.DecodeJSON(t, rec, &view)
+	require.Len(t, view.Groups, 1)
+	assert.Equal(t, []string{"run_dash"}, view.Groups[0].NeedsYou)
 }

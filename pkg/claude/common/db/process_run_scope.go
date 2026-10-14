@@ -232,38 +232,67 @@ func RescopeProcessRun(runID string, next ProcessRunScope, actor string) (Proces
 	return next, nil
 }
 
-// MaxProcessRunContextRuns bounds one in-context read: the scoped,
-// non-terminal runs the dashboard overlays project per poll.
+// MaxProcessRunContextRuns bounds one in-context read: the scoped runs the
+// dashboard overlays project per poll, across every scope.
 const MaxProcessRunContextRuns = 64
 
-// ListScopedActiveProcessRuns returns the most recently updated non-terminal
-// runs bound to a group or an agent, newest first, at most limit of them. It
-// is the candidate set of the in-context read model; unscoped runs stay in
-// the Processes list only.
-func ListScopedActiveProcessRuns(limit int) ([]ProcessRunSummary, error) {
-	if limit <= 0 || limit > MaxProcessRunContextRuns {
-		return nil, fmt.Errorf("%w: context page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunContextRuns)
-	}
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	return queryProcessRunSummaries(d, `WHERE scope_kind != 'none'
-		AND status NOT IN ('completed', 'failed', 'canceled')
-		ORDER BY updated_at DESC, id LIMIT ?`, limit, limit)
+// ProcessRunContextQuery selects which scopes an in-context read covers and
+// how many runs each scope contributes. All covers every scope; otherwise
+// only the listed groups and the one bound agent. Every scope (one group,
+// one agent) gets at most PerScope runs, so one busy scope cannot starve
+// the others, and the whole read stays under MaxProcessRunContextRuns.
+type ProcessRunContextQuery struct {
+	All      bool
+	GroupIDs []int64
+	AgentID  string
+	PerScope int
 }
 
-// ListRecentTerminalGroupProcessRuns returns the most recently finished
-// group-scoped runs, newest first — the Done bucket of the in-context read.
-func ListRecentTerminalGroupProcessRuns(limit int) ([]ProcessRunSummary, error) {
-	if limit <= 0 || limit > MaxProcessRunContextRuns {
-		return nil, fmt.Errorf("%w: context page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunContextRuns)
+// ListScopedActiveProcessRuns returns the most recently updated non-terminal
+// runs bound to a group or an agent, newest first within each scope. It is
+// the candidate set of the in-context read model; unscoped runs stay in the
+// Processes list only.
+func ListScopedActiveProcessRuns(query ProcessRunContextQuery) ([]ProcessRunSummary, error) {
+	return listProcessRunContext(query, `status NOT IN ('completed', 'failed', 'canceled')`)
+}
+
+// ListRecentTerminalGroupProcessRuns returns each covered group's most
+// recently finished runs — the Done bucket of the in-context read.
+func ListRecentTerminalGroupProcessRuns(query ProcessRunContextQuery) ([]ProcessRunSummary, error) {
+	query.AgentID = ""
+	return listProcessRunContext(query, `scope_kind = 'group' AND status IN ('completed', 'failed', 'canceled')`)
+}
+
+func listProcessRunContext(query ProcessRunContextQuery, predicate string) ([]ProcessRunSummary, error) {
+	if query.PerScope <= 0 || query.PerScope > MaxProcessRunContextRuns {
+		return nil, fmt.Errorf("%w: per-scope context size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunContextRuns)
+	}
+	var visible strings.Builder
+	var args []any
+	if !query.All {
+		visible.WriteString(` AND (0`)
+		for _, id := range query.GroupIDs {
+			visible.WriteString(` OR (scope_kind = 'group' AND scope_group_id = ?)`)
+			args = append(args, id)
+		}
+		if query.AgentID != "" {
+			visible.WriteString(` OR (scope_kind = 'agent' AND scope_agent_id = ?)`)
+			args = append(args, query.AgentID)
+		}
+		visible.WriteString(`)`)
 	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	return queryProcessRunSummaries(d, `WHERE scope_kind = 'group'
-		AND status IN ('completed', 'failed', 'canceled')
-		ORDER BY updated_at DESC, id LIMIT ?`, limit, limit)
+	args = append(args, query.PerScope, MaxProcessRunContextRuns)
+	return queryProcessRunSummaries(d, `WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (
+					PARTITION BY scope_kind, scope_group_id, scope_agent_id
+					ORDER BY updated_at DESC, id) AS scope_rank
+				FROM process_runs
+				WHERE scope_kind != 'none' AND `+predicate+visible.String()+`
+			) WHERE scope_rank <= ?)
+		ORDER BY updated_at DESC, id LIMIT ?`, MaxProcessRunContextRuns, args...)
 }

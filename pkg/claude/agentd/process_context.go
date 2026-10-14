@@ -28,10 +28,12 @@ import (
 // one full mini-graph projection per run without duplication.
 
 const (
-	processContextPerGroup     = 8
-	processContextDoneRuns     = 32
-	processProjectionMaxNodes  = 48
-	processProjectionCacheSize = 256
+	processContextPerGroup = 8
+	// processContextActivePerScope is how many non-terminal runs one group or
+	// agent contributes per read: room for a full active and needs-you bucket.
+	processContextActivePerScope = 2 * processContextPerGroup
+	processProjectionMaxNodes    = 48
+	processProjectionCacheSize   = 256
 )
 
 // processRunProjection is the mini-graph a run renders as in context.
@@ -141,6 +143,9 @@ type processAgentRunStep struct {
 var processContextNeedsYou = map[string]bool{
 	"awaiting_decision": true, "blocked": true,
 	processCommandNeedsReconcile: true, "orphaned": true,
+	// Performer dispatch (tcl-09xlwr) parks a node without a resolvable
+	// performer under this action.
+	"needs_performer": true,
 }
 
 func handleProcessContext(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +168,17 @@ type processContextVisible struct {
 	all     bool
 	groups  map[int64]bool
 	agentID string
+}
+
+// query pushes the visibility into the store read, so a busy scope the
+// caller cannot see never takes the place of one it can.
+func (v processContextVisible) query(perScope int) db.ProcessRunContextQuery {
+	query := db.ProcessRunContextQuery{All: v.all, AgentID: v.agentID, PerScope: perScope}
+	for id := range v.groups {
+		query.GroupIDs = append(query.GroupIDs, id)
+	}
+	sort.Slice(query.GroupIDs, func(i, j int) bool { return query.GroupIDs[i] < query.GroupIDs[j] })
+	return query
 }
 
 func (v processContextVisible) allows(scope db.ProcessRunScope) bool {
@@ -209,7 +225,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		Runs: map[string]processRunProjection{}, Groups: []processGroupContext{},
 		Agents: []processAgentContext{}, Orphaned: []string{},
 	}
-	candidates, err := db.ListScopedActiveProcessRuns(db.MaxProcessRunContextRuns)
+	candidates, err := db.ListScopedActiveProcessRuns(visible.query(processContextActivePerScope))
 	if err != nil {
 		return view, err
 	}
@@ -236,6 +252,10 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		}
 		switch scope.Kind {
 		case db.ProcessRunScopeGroup:
+			if scope.GroupName == "" {
+				// The group is gone but the orphan catch-up has not run yet.
+				continue
+			}
 			g := groups[scope.GroupID]
 			if g == nil {
 				g = newProcessGroupContext(scope)
@@ -262,7 +282,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 			}
 		}
 	}
-	done, err := db.ListRecentTerminalGroupProcessRuns(processContextDoneRuns)
+	done, err := db.ListRecentTerminalGroupProcessRuns(visible.query(processContextPerGroup))
 	if err != nil {
 		return view, err
 	}
@@ -303,9 +323,10 @@ func newProcessGroupContext(scope db.ProcessRunScope) *processGroupContext {
 		Active: []string{}, NeedsYou: []string{}, Done: []string{}, Planned: []processPlannedRun{}}
 }
 
-// agentStep places the run's performer at its earliest current work step.
+// agentStep places the run's performer at its earliest current work step;
+// Index stays 0 while no work step is current.
 func (p processRunProjection) agentStep() processAgentRunStep {
-	step := processAgentRunStep{RunID: p.RunID, Total: p.steps, Index: p.steps, State: string(p.Status)}
+	step := processAgentRunStep{RunID: p.RunID, Total: p.steps, State: string(p.Status)}
 	best := 0
 	for _, id := range p.Current {
 		index := p.stepOrder[id]
@@ -385,35 +406,56 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 	if skeleton.name == "" {
 		skeleton.name = tmpl.ID
 	}
-	// Start-first breadth order over sorted outcome labels gives every reader
-	// the same stable node order; unreachable nodes follow by id.
-	order := make([]string, 0, len(tmpl.Nodes))
-	position := map[string]int{}
-	visit := func(id string) {
-		if _, seen := position[id]; seen {
-			return
+	// A depth-first walk from start over sorted outcome labels marks back
+	// edges — into a node still on the walk's stack, i.e. a retry or loop —
+	// and the reverse post-order of the forward edges is a topological order,
+	// so step indices follow execution order even where branches converge.
+	// Nodes start cannot reach follow, walked from each in id order.
+	const (
+		unseen = iota
+		onStack
+		finished
+	)
+	mark := map[string]int{}
+	back := map[[2]string]bool{}
+	var post []string
+	var walk func(id string)
+	walk = func(id string) {
+		mark[id] = onStack
+		node := tmpl.Nodes[id]
+		for _, label := range sortedNextLabels(node.Next) {
+			to := node.Next[label]
+			if _, exists := tmpl.Nodes[to]; !exists {
+				continue
+			}
+			switch mark[to] {
+			case onStack:
+				back[[2]string{id, label}] = true
+			case unseen:
+				walk(to)
+			}
 		}
-		if _, exists := tmpl.Nodes[id]; !exists {
-			return
-		}
-		position[id] = len(order)
-		order = append(order, id)
+		mark[id] = finished
+		post = append(post, id)
 	}
-	visit(tmpl.Start)
-	for i := 0; i < len(order); i++ {
-		for _, label := range sortedNextLabels(tmpl.Nodes[order[i]].Next) {
-			visit(tmpl.Nodes[order[i]].Next[label])
-		}
-	}
-	rest := make([]string, 0)
+	roots := make([]string, 0, len(tmpl.Nodes))
 	for id := range tmpl.Nodes {
-		if _, seen := position[id]; !seen {
-			rest = append(rest, id)
-		}
+		roots = append(roots, id)
 	}
-	sort.Strings(rest)
-	for _, id := range rest {
-		visit(id)
+	sort.Strings(roots)
+	if _, exists := tmpl.Nodes[tmpl.Start]; exists {
+		roots = append([]string{tmpl.Start}, roots...)
+	}
+	order := make([]string, 0, len(tmpl.Nodes))
+	for _, root := range roots {
+		if mark[root] != unseen {
+			continue
+		}
+		post = post[:0]
+		walk(root)
+		for k := len(post) - 1; k >= 0; k-- {
+			order = append(order, post[k])
+		}
 	}
 	if len(order) > processProjectionMaxNodes {
 		order, skeleton.truncated = order[:processProjectionMaxNodes], true
@@ -444,7 +486,7 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 				continue
 			}
 			skeleton.edges = append(skeleton.edges, processProjectionEdge{
-				From: from, To: to, Label: label, Back: position[to] <= position[from],
+				From: from, To: to, Label: label, Back: back[[2]string{from, label}],
 			})
 		}
 	}
