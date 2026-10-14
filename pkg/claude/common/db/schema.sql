@@ -982,6 +982,10 @@ CREATE INDEX idx_process_runs_scope_group
 CREATE INDEX idx_process_runs_scope_agent
 			ON process_runs(scope_agent_id, id) WHERE scope_kind = 'agent';
 
+CREATE INDEX idx_process_runs_scope_recent
+			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
+			WHERE scope_kind != 'none';
+
 CREATE TABLE "process_run_events" (
 			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
 			                 CHECK(length(CAST(run_id AS BLOB)) BETWEEN 1 AND 128),

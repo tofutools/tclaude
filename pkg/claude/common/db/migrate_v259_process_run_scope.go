@@ -54,6 +54,9 @@ func migrateV258toV259(d *sql.DB) error {
 			ON process_runs(scope_group_id, id) WHERE scope_kind = 'group';
 		CREATE INDEX IF NOT EXISTS idx_process_runs_scope_agent
 			ON process_runs(scope_agent_id, id) WHERE scope_kind = 'agent';
+		CREATE INDEX IF NOT EXISTS idx_process_runs_scope_recent
+			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
+			WHERE scope_kind != 'none';
 	`); err != nil {
 		return fmt.Errorf("migrate v258→v259 (backfill owner, index scope): %w", err)
 	}
