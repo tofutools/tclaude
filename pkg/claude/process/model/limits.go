@@ -122,6 +122,20 @@ func (b *templateDiagnosticBudget) fits(codeBytes, pathBytes, messageBytes int) 
 type templateDiagnosticCollector struct {
 	budget      *templateDiagnosticBudget
 	diagnostics Diagnostics
+	// parent and prefix make a scoped child collector: it shares the parent's
+	// budget, prefixes every path with the nested scope's own path, and appends
+	// to the parent's diagnostics, so a subprocess body validates with the same
+	// code and budget as its parent template.
+	parent *templateDiagnosticCollector
+	prefix string
+}
+
+// scoped returns a child collector for a nested scope rooted at prefix.
+func (c *templateDiagnosticCollector) scoped(prefix string) *templateDiagnosticCollector {
+	if c == nil {
+		return nil
+	}
+	return &templateDiagnosticCollector{budget: c.budget, parent: c, prefix: prefix}
 }
 
 func newTemplateDiagnosticCollector(budget *templateDiagnosticBudget) *templateDiagnosticCollector {
@@ -132,7 +146,18 @@ func newTemplateDiagnosticCollector(budget *templateDiagnosticBudget) *templateD
 }
 
 func (c *templateDiagnosticCollector) Add(diagnostic Diagnostic) bool {
-	return c != nil && c.budget.append(&c.diagnostics, diagnostic)
+	if c == nil {
+		return false
+	}
+	if c.parent != nil {
+		if diagnostic.Path == "" {
+			diagnostic.Path = c.prefix
+		} else {
+			diagnostic.Path = joinPath(c.prefix, diagnostic.Path)
+		}
+		return c.parent.Add(diagnostic)
+	}
+	return c.budget.append(&c.diagnostics, diagnostic)
 }
 
 func (c *templateDiagnosticCollector) AddAll(diagnostics Diagnostics) bool {
@@ -250,6 +275,9 @@ func PreflightNormalizedGraphCardinality(tmpl *Template) Diagnostics {
 			break
 		}
 	}
+	nested := subprocessGraphCardinality(tmpl)
+	counts.Nodes = saturatingAdd(counts.Nodes, nested.Nodes, MaxNormalizedNodes)
+	counts.Edges = saturatingAdd(counts.Edges, nested.Edges, MaxNormalizedEdges)
 	return normalizedGraphCardinalityDiagnostics(counts)
 }
 

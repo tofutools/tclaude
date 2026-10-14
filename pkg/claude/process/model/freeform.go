@@ -28,6 +28,13 @@ func normalizeFreeform(tmpl *Template, diagnostics *templateDiagnosticCollector)
 				node.Metadata = Metadata(metadata)
 			}
 		}
+		if sp := node.Subprocess; sp != nil && sp.IsInline() {
+			body := Template{Params: sp.Params, Nodes: sp.Nodes}
+			if !normalizeFreeform(&body, diagnostics.scoped("nodes."+nodeID+".subprocess")) {
+				return false
+			}
+			sp.Params, sp.Nodes = body.Params, body.Nodes
+		}
 		tmpl.Nodes[nodeID] = node
 	}
 	return true

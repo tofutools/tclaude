@@ -22,16 +22,26 @@ func validateWithDiagnosticCollector(tmpl *Template, edges []Edge, diagnostics *
 		diagnostics.Add(diagError("nil_template", "", "process template is nil"))
 		return
 	}
+	// Subprocess bodies count toward the same graph budget as the template
+	// that embeds them: they are executed as part of it.
+	nested := subprocessGraphCardinality(tmpl)
 	if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(NormalizedGraphCardinality{
-		Nodes: saturatingCount(len(tmpl.Nodes), MaxNormalizedNodes),
-		Edges: saturatingCount(len(edges), MaxNormalizedEdges),
+		Nodes: saturatingAdd(saturatingCount(len(tmpl.Nodes), MaxNormalizedNodes), nested.Nodes, MaxNormalizedNodes),
+		Edges: saturatingAdd(saturatingCount(len(edges), MaxNormalizedEdges), nested.Edges, MaxNormalizedEdges),
 	}); cardinalityDiagnostics.HasErrors() {
 		diagnostics.AddAll(cardinalityDiagnostics)
 		return
 	}
+	validateScope(tmpl, edges, diagnostics, 0, false)
+}
 
-	if !validateHeader(tmpl, diagnostics) ||
-		!validateNodes(tmpl, diagnostics) ||
+// validateScope validates one graph scope: the template itself, or a
+// subprocess body nested depth levels below it. An inline body (isBody) has no
+// template header or layout of its own, so only its start, nodes, and params
+// are checked there; everything about the graph is checked identically.
+func validateScope(tmpl *Template, edges []Edge, diagnostics *templateDiagnosticCollector, depth int, isBody bool) {
+	if !validateHeader(tmpl, diagnostics, isBody) ||
+		!validateNodes(tmpl, diagnostics, depth) ||
 		!validateExpansionCollisions(tmpl, diagnostics) {
 		return
 	}
@@ -58,13 +68,22 @@ func validateWithDiagnosticCollector(tmpl *Template, edges []Edge, diagnostics *
 		}
 	}
 	validateParamRefs(tmpl, diagnostics)
-	if diagnostics.Exhausted() {
+	if diagnostics.Exhausted() || isBody {
 		return
 	}
 	validateLayout(tmpl, diagnostics)
 }
 
-func validateHeader(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
+func validateHeader(tmpl *Template, diagnostics *templateDiagnosticCollector, isBody bool) bool {
+	if !isBody {
+		if !validateTemplateIdentity(tmpl, diagnostics) {
+			return false
+		}
+	}
+	return validateScopeHeader(tmpl, diagnostics)
+}
+
+func validateTemplateIdentity(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl.APIVersion != APIVersion {
 		if !diagnostics.Add(diagError("invalid_api_version", "apiVersion", fmt.Sprintf("apiVersion must be %q", APIVersion))) {
 			return false
@@ -84,6 +103,10 @@ func validateHeader(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 			return false
 		}
 	}
+	return true
+}
+
+func validateScopeHeader(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if strings.TrimSpace(tmpl.Start) == "" {
 		if !diagnostics.Add(diagError("missing_start", "start", "top-level start node is required")) {
 			return false
@@ -108,7 +131,7 @@ func validateHeader(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 	return true
 }
 
-func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
+func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, depth int) bool {
 	startNodeCount := 0
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
@@ -126,7 +149,16 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector) boo
 		if !validateCaptures(node, path, diagnostics) {
 			return false
 		}
+		if node.Subprocess != nil && node.Type != NodeTypeSubprocess {
+			if !diagnostics.Add(diagError("subprocess_on_non_subprocess_node", path+".subprocess", "subprocess is only valid on subprocess nodes")) {
+				return false
+			}
+		}
 		switch node.Type {
+		case NodeTypeSubprocess:
+			if !validateSubprocessNode(tmpl, nodeID, node, path, depth, diagnostics) {
+				return false
+			}
 		case NodeTypeTask:
 			if node.Performer == nil {
 				if !diagnostics.Add(diagError("missing_performer", path+".performer", "task node requires a performer")) {

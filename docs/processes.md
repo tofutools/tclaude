@@ -168,10 +168,28 @@ explicit per-agent deny overrides everything, the owner grant included. See
   refuses any other value — including a verdict formed against an earlier
   window and submitted late.
 
+- **Subprocess nodes** (`type: subprocess`) run a nested graph as one node
+  of their parent. The body is either inline (`subprocess.start`,
+  `subprocess.nodes`, `subprocess.params`) or another stored template
+  (`subprocess.templateRef`, optionally pinned with `version: sha256:<hex>`).
+  The body is its own param scope: `subprocess.inputs` binds each body param
+  from a literal or `{{ params.x }}` of the parent, and an unbound param falls
+  back to its default. `subprocess.outputs` maps each body end node to one of
+  the subprocess node's `next` outcomes; with a single outcome, unmapped ends
+  use it. Body nodes run under namespaced ids (`<id>/<inner id>`), so a body
+  decision is decided with `decide --node review/gate`. The subprocess node
+  stays `running` while its body is live and settles its own route exactly
+  once, when a body end node is reached; on an untaken branch the whole body
+  is skipped with it. Referenced templates are resolved when the run is
+  created and embedded in the run's snapshot, so later edits to them never
+  change a run in flight; reference cycles and nesting deeper than four levels
+  are refused. Inner program profiles need authorizing at run creation like
+  any other.
+
 One sizing rule applies only to running: a run records durable evidence per
 node, and that row bounds node ids at 256 bytes. Run creation refuses a
-template whose node ids — authored or derived from compound stages — exceed
-it; editing and storing such a template still works.
+template whose node ids — authored, derived from compound stages, or
+namespaced into a subprocess body — exceed it; editing and storing such a template still works.
 
 ## What does not execute yet
 
