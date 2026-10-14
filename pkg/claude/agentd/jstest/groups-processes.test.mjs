@@ -188,7 +188,10 @@ test('the start form asks for params and explicit program authorization', async 
   const api = {
     listTemplates: async () => [{ id: 'tpl_a', name: 'Alpha' }],
     templateRequirements: async () => ({
-      params: [{ name: 'issue', type: 'string', required: true, default: '', description: 'Tracker issue' }],
+      params: [
+        { name: 'issue', type: 'string', required: true, default: '', hasDefault: false, description: 'Tracker issue' },
+        { name: 'branch', type: 'string', required: false, default: 'main', hasDefault: true, description: '' },
+      ],
       programProfiles: ['ci'],
     }),
     startGroupRun: async (request) => {
@@ -204,6 +207,7 @@ test('the start form asks for params and explicit program authorization', async 
   const form = fe.querySelector('form.gp-start-form');
   const submit = form.querySelector('button[type="submit"]');
   assert.ok(submit.disabled, 'a required param blocks the start');
+  assert.equal(form.querySelector('[data-start-param="branch"]').value, 'main', 'a default starts out filled in');
   const input = form.querySelector('[data-start-param="issue"]');
   Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'TCL-1' });
   await harness.act(() => harness.fireEvent(input, 'input'));
@@ -219,7 +223,7 @@ test('the start form asks for params and explicit program authorization', async 
   }
   await harness.act(() => harness.fireEvent(form, 'submit'));
   await settle(harness);
-  assert.deepEqual(started, [{ templateId: 'tpl_a', group: 'frontend-squad', params: { issue: 'TCL-1' }, authorizeProgramProfiles: ['ci', 'deploy'] }]);
+  assert.deepEqual(started, [{ templateId: 'tpl_a', group: 'frontend-squad', params: { branch: 'main', issue: 'TCL-1' }, authorizeProgramProfiles: ['ci', 'deploy'] }]);
 });
 
 test('template start requirements walk stages and inline bodies', async (t) => {
@@ -233,7 +237,7 @@ test('template start requirements walk stages and inline bodies', async (t) => {
       h: { type: 'decision', performer: { kind: 'human' } },
     },
   });
-  assert.deepEqual(needs.params.map((p) => [p.name, p.required]), [['a', true], ['b', false]]);
+  assert.deepEqual(needs.params.map((p) => [p.name, p.required, p.hasDefault]), [['a', true, false], ['b', false, true]]);
   assert.deepEqual(needs.programProfiles, ['', 'ci', 'test']);
   assert.deepEqual(mod.unauthorizedProfiles('program profiles require explicit authorization: <empty>, ci'), ['', 'ci']);
 });

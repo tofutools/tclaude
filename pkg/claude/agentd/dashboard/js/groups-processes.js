@@ -69,7 +69,19 @@ function StartRunForm({ group, api, source, onClose, wizard }) {
     setError('');
     if (!templateId || typeof api.templateRequirements !== 'function') return () => { live = false; };
     api.templateRequirements(templateId).then((found) => {
-      if (live) setNeeds({ params: found.params || [], programProfiles: found.programProfiles || [] });
+      if (!live) return;
+      const params = found.params || [];
+      // The server binds only what is sent (root params get no default
+      // fill), so a default starts out as the field's value.
+      setValues((current) => ({
+        ...Object.fromEntries(params.filter((param) => param.hasDefault).map((param) => [param.name, param.default])),
+        ...current,
+      }));
+      // Merge, so profiles a refusal already named survive a slow fetch.
+      setNeeds((current) => ({
+        params,
+        programProfiles: [...new Set([...current.programProfiles, ...(found.programProfiles || [])])].sort(),
+      }));
     }).catch(() => { /* the start refusal will say what is missing */ });
     return () => { live = false; };
   }, [api, templateId]);

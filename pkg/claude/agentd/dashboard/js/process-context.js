@@ -173,7 +173,8 @@ export function templateStartRequirements(template = {}) {
     type: String(spec?.type || 'string'),
     description: String(spec?.description || ''),
     required: spec?.required === true || (spec?.required === undefined && spec?.default === undefined),
-    default: spec?.default === undefined ? '' : String(spec.default),
+    default: spec?.default === undefined || spec?.default === null ? '' : String(spec.default),
+    hasDefault: spec?.default !== undefined && spec?.default !== null,
   })).sort((a, b) => (a.required === b.required ? a.name.localeCompare(b.name, 'en') : a.required ? -1 : 1));
   const profiles = new Set();
   const walk = (value) => {
