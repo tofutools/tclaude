@@ -163,3 +163,15 @@ test('extract as template saves the body and swaps the node to a reference', asy
   await click('[data-subprocess-open-template]');
   assert.deepEqual(opened, ['qa-suite']);
 });
+
+test('scribe context from inside a scope names body items by namespaced id on the stored template', async (t) => {
+  const { harness, editor } = await openEditor(t);
+  await harness.act(() => editor.enterSubprocess('qa'));
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'unit' }));
+  const { scribeContextInput } = await harness.importDashboardModule('js/process-editor.js');
+  const input = scribeContextInput(editor.model, editor.selection, null);
+  assert.deepEqual(input.selection, [{ type: 'node', id: 'qa/unit' }]);
+  assert.equal(input.template.nodes['qa/unit'].name, 'Unit');
+  assert.ok(input.template.nodes.qa && input.template.nodes.ship, 'the root template is described');
+  assert.ok(input.edges.some((e) => e.from === 'qa/unit' && e.to === 'qa/ok'));
+});

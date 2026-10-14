@@ -16,7 +16,7 @@ export const PROCESS_CLIPBOARD_MAX_ID = 128;
 export const PROCESS_CLIPBOARD_MAX_OUTCOME = 512;
 export const PROCESS_CLIPBOARD_MAX_COORDINATE = 1_000_000;
 
-const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
+const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
 const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program']);
 const NODE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const MAX_JSON_DEPTH = 32;

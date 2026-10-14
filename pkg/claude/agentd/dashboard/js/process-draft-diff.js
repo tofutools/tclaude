@@ -337,6 +337,8 @@ export function mergeDraftDecisions({ ours, theirs, changes = [], decisions = {}
   if (layout.edges) {
     const live = new Set(edges.map((edge) => `${edge.from}\u0000${edge.outcome}`));
     for (const [from, byOutcome] of Object.entries(layout.edges)) {
+      // Namespaced keys ("qa/unit") pin edges inside subprocess bodies.
+      if (from.includes('/')) continue;
       for (const outcome of Object.keys(byOutcome || {})) {
         if (!live.has(`${from}\u0000${outcome}`)) delete byOutcome[outcome];
       }

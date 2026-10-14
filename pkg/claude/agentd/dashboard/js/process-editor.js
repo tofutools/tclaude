@@ -24,7 +24,7 @@
 import { createProcessGraphAdapter } from './process-graph-adapter.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_SNIPPETS,
+  PALETTE_SNIPPETS, SCOPE_SEPARATOR,
 } from './process-edit-model.js';
 import { edgePinPlacement, edgePinTitle } from './process-edge-hint.js';
 import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
@@ -201,6 +201,30 @@ async function fetchEditView(id, version, { signal } = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
   return body;
+}
+
+// scribeContextInput is what scribe context describes: always the stored
+// (root) template. Inside a ▣ scope the body's nodes, edges, selection and
+// focused diagnostic are added under their namespaced ids ("qa/unit"), so
+// a scribe is never told about a top-level node that does not exist.
+export function scribeContextInput(model, selection, diagnostic) {
+  const items = selectionItems(selection);
+  if (!model.inScope) return { template: model.template, edges: model.edges, selection: items, diagnostic };
+  const prefix = model.scopePath().join(SCOPE_SEPARATOR) + SCOPE_SEPARATOR;
+  const scoped = (id) => (id ? prefix + id : id);
+  const root = model.rootState();
+  const template = { ...root.template, nodes: { ...root.template.nodes } };
+  for (const [id, node] of Object.entries(model.template.nodes || {})) template.nodes[scoped(id)] = node;
+  const edges = [...root.edges, ...model.edges.filter((edge) => edge.from)
+    .map((edge) => ({ ...edge, from: scoped(edge.from), to: scoped(edge.to) }))];
+  const namespaced = items.map((item) => (item.type === 'node' ? { ...item, id: scoped(item.id) }
+    : item.type === 'edge' ? { ...item, from: scoped(item.from), to: scoped(item.to) } : item));
+  const focused = diagnostic && {
+    ...diagnostic,
+    ...(diagnostic.node ? { node: scoped(diagnostic.node) } : {}),
+    ...(diagnostic.edge ? { edge: { ...diagnostic.edge, from: scoped(diagnostic.edge.from) } } : {}),
+  };
+  return { template, edges, selection: namespaced, diagnostic: focused };
 }
 
 export class ProcessTemplateEditor {
@@ -1050,6 +1074,9 @@ export class ProcessTemplateEditor {
     }
     const guardedModel = this.model;
     const guardedPath = this.model.scopePath().join('/');
+    // Body edits made while the POST is in flight are not in the created
+    // template; swapping to the ref then would silently drop them.
+    const guardedRev = this.model.rev;
     let created;
     try {
       const response = await fetch('/v1/process/templates', {
@@ -1062,7 +1089,7 @@ export class ProcessTemplateEditor {
       return false;
     }
     if (this.destroyed) return false;
-    if (this.model !== guardedModel || this.model.scopePath().join('/') !== guardedPath || !created.id) {
+    if (this.model !== guardedModel || this.model.rev !== guardedRev || this.model.scopePath().join('/') !== guardedPath || !created.id) {
       this.status(`Saved the subgraph as template ${created.id || name}, but the editor moved on; reference it from the ▣ node yourself.`, true);
       return false;
     }
@@ -1357,9 +1384,8 @@ export class ProcessTemplateEditor {
           kind: 'template', id, currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
         });
         context = processScribeEditorContext({
-          kind: kind === 'explain' ? 'selection' : kind, handoff, template: this.model.template, edges: this.model.edges,
-          selection: selectionItems(this.selection),
-          diagnostic: kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null,
+          kind: kind === 'explain' ? 'selection' : kind, handoff,
+          ...scribeContextInput(this.model, this.selection, kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null),
         });
       }
       const body = processScribeChatMessage({
@@ -2346,8 +2372,7 @@ export class ProcessTemplateEditor {
     try {
       handoff = processScribeHandoff(anchor);
       context = processScribeEditorContext({
-        kind, handoff, template: this.model.template, edges: this.model.edges,
-        selection: selectionItems(this.selection), diagnostic: focusedDiagnostic,
+        kind, handoff, ...scribeContextInput(this.model, this.selection, focusedDiagnostic),
       });
     } catch (error) {
       this.status(error.message, true);
@@ -2369,8 +2394,7 @@ export class ProcessTemplateEditor {
         if (focusedDiagnostic && currentDiagnostic) {
           try {
             const currentContext = processScribeEditorContext({
-              kind, handoff, template: this.model.template, edges: this.model.edges,
-              selection: [], diagnostic: currentDiagnostic,
+              kind, handoff, ...scribeContextInput(this.model, null, currentDiagnostic),
             });
             diagnosticFresh = JSON.stringify(currentContext.diagnostic) === JSON.stringify(context.diagnostic);
           } catch {

@@ -2612,6 +2612,63 @@ setTimeout(function(){
 			SettleMS: 1400,
 		},
 		{
+			Key:     "process-subgraph-scope",
+			Title:   "Process editor — inside a ▣ subprocess",
+			Caption: "E1: double-clicking a ▣ node drills into its inline body. The breadcrumb names the path, the parent minimap marks where we are (click it, Esc or Alt+↑ to leave), and dashed in/out port nodes stand for the ▣ node's contract with its parent. The palette outline lists nested bodies.",
+			JS: subgraphStateJS(`  var qaNode = document.querySelector('[data-node-id="qa"]');
+  qaNode.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (ed.model.scopePath().join('/') !== 'qa') throw new Error('double-click did not enter the ▣ body');
+  var crumbs = Array.from(document.querySelectorAll('[data-scope-bar] .pscope-crumb')).map(function(el){ return el.textContent.trim(); });
+  if (crumbs.join('|') !== 'Release train|▣ QA suite') throw new Error('breadcrumb: ' + crumbs.join('|'));
+  if (!document.querySelector('[data-scope-minimap] .pscope-mini-node.is-current')) throw new Error('parent minimap missing');
+  if (!document.querySelector('[data-node-id="@in"]') || !document.querySelector('[data-node-id="@out:pass"]')) throw new Error('port nodes missing');
+  if (!document.querySelector('[data-scope-outline] [data-outline-node="qa/unit"]')) throw new Error('outline missing the body');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-subgraph-ports",
+			Title:   "Process editor — subgraph ports",
+			Caption: "E1: clicking a port node (or ⇄ ports) opens the subgraph's contract: in-ports bind body params from the parent's params or literals, out-ports map each body end onto one of the ▣ node's parent outcomes. Edits are ordinary undoable edits of the parent.",
+			JS: subgraphStateJS(`  ed.enterSubprocess('qa');
+  await editorPaint();
+  document.querySelector('[data-node-id="@out:pass"]').dispatchEvent(new MouseEvent('click', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('[data-scope-ports]')) throw new Error('port panel did not open');
+  if (!ed.setScopeOutput('bad', 'pass')) throw new Error('out-port edit refused');
+  await editorPaint();
+  if (ed.model.scopePorts().outputs.bad !== 'pass' || !ed.dirty) throw new Error('out-port edit did not land');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-subgraph-extract",
+			Title:   "Process editor — subgraph extracted as a template",
+			Caption: "E1: ⇪ extract as template saves the body as its own template (the snippet-name dialog, then POST /v1/process/templates), returns to the parent and swaps the ▣ node to a templateRef that keeps its ports. A referenced body is not entered; the inspector offers \"open template ↗\".",
+			JS: subgraphStateJS(`  var realFetch = window.fetch;
+  window.fetch = function(url, init) {
+    if (String(url) === '/v1/process/templates' && init && init.method === 'POST') {
+      return Promise.resolve(new Response(JSON.stringify({id: 'qa-suite'}), {status: 201, headers: {'Content-Type': 'application/json'}}));
+    }
+    return realFetch.apply(this, arguments);
+  };
+  ed.enterSubprocess('qa');
+  await editorPaint();
+  document.querySelector('[data-scope-action="extract"]').click();
+  await editorPaint(); await editorPaint();
+  var submit = Array.from(document.querySelectorAll('button')).find(function(b){ return b.textContent.trim() === 'Extract'; });
+  if (!submit) throw new Error('name dialog did not open');
+  submit.click();
+  var xDeadline = Date.now() + 3000;
+  while (ed.model.scopePath().length && Date.now() < xDeadline) await new Promise(function(r){ setTimeout(r, 40); });
+  await editorPaint();
+  var sp = ed.model.node('qa').subprocess;
+  if (sp.templateRef !== 'qa-suite' || sp.nodes || sp.outputs.bad !== 'fail') throw new Error('▣ node was not swapped to a ref: ' + JSON.stringify(sp));
+  ed.openNodeSettings('qa');
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('[data-subprocess-open-template]')) throw new Error('inspector does not offer open template');`),
+			SettleMS: 1200,
+		},
+		{
 			Key:     "process-editor-validation",
 			Title:   "Process editor — live validation",
 			Caption: "Live validation (TCL-299/397): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and keyboard focus exposes the node-local diagnostic detail while the issues panel lists every finding.",
@@ -3637,6 +3694,31 @@ var processEditorLegacyEdgeErrorRowJS = processEditorStateJS(`var outcome='x'.re
   if(!action) throw new Error('header controls disappeared behind the error row');
   var actionRect=action.getBoundingClientRect();
   if(actionRect.width<=0||actionRect.height<=0||actionRect.right>mountRect.right+1) throw new Error('header controls were pushed out of the editor mount');`)
+
+// subgraphStateJS opens release-train with a ▣ "QA suite" node whose
+// inline body runs unit tests and lint, wired begin → qa → ship / stop.
+func subgraphStateJS(extraJS string) string {
+	return processEditorStateJS(`ed.model.addNode('subprocess', {x: 300, y: 120, id: 'qa', name: 'QA suite'});
+  ed.model.addNode('end', {x: 520, y: 220, id: 'stop', name: 'Stop'});
+  ed.model.template.nodes.stop.result = 'failure';
+  ed.model.template.nodes.qa.subprocess = {
+    params: {target: {type: 'string'}}, start: 'in',
+    nodes: {
+      'in': {type: 'start', next: {pass: 'unit'}},
+      unit: {type: 'task', name: 'Unit tests', performer: {kind: 'program', run: 'make test'}, next: {pass: 'lint', fail: 'bad'}},
+      lint: {type: 'task', name: 'Lint', performer: {kind: 'program', run: 'make lint'}, next: {pass: 'ok', fail: 'bad'}},
+      ok: {type: 'end', result: 'success'}, bad: {type: 'end', result: 'failure'}
+    },
+    inputs: {target: '{{ params.issue }}'}, outputs: {ok: 'pass', bad: 'fail'}
+  };
+  ed.model.setEdgeTarget('begin', 'pass', 'qa');
+  ed.model.addEdge('qa', 'pass', 'ship');
+  ed.model.addEdge('qa', 'fail', 'stop');
+  ed.model.layout.nodes.ship = {x: 520, y: 40};
+  ed.refresh({fit: true});
+  await editorPaint();
+` + extraJS)
+}
 
 func processEditorStateJS(extraJS string) string {
 	return fmt.Sprintf(`return (async function(){

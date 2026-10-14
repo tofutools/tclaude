@@ -171,3 +171,19 @@ test('nested-body diagnostics badge inside the scope and roll up onto the ▣ no
   assert.equal(mapped.nodes.get('ship'), undefined, 'a parent node is not mistaken for a body node');
   assert.equal(mapped.entries.find((e) => e.targetId === 'ship').scope, 'template');
 });
+
+test('edits outside a body keep its edge pins; ▣ nodes stop at the nesting limit', () => {
+  const v = view();
+  v.layout.edges = { 'qa/unit': { pass: { x: 1, y: 2 } }, qa: { pass: { x: 3, y: 4 } } };
+  const model = new ProcessEditModel(v);
+  model.deleteEdge('qa', 'fail');
+  assert.deepEqual(model.saveBody().layout.edges, v.layout.edges, 'a root delete keeps body pins');
+  const frames = [];
+  for (let i = 0; i < 4; i += 1) {
+    const id = model.addNode('subprocess', { x: 0, y: 0 });
+    frames.push(id);
+    model.enterScope(id);
+  }
+  assert.throws(() => model.addNode('subprocess', { x: 0, y: 0 }), /at most 4 levels/);
+  assert.ok(model.addNode('task', { x: 0, y: 0 }));
+});

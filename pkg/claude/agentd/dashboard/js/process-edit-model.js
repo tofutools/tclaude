@@ -160,7 +160,7 @@ export function processOutline(template = {}, depth = 0) {
     if (node?.type === 'subprocess') {
       const sub = node.subprocess || {};
       if (sub.templateRef) entry.ref = String(sub.templateRef);
-      else if (depth + 1 < MAX_SUBPROCESS_DEPTH) entry.children = processOutline({ nodes: sub.nodes || {} }, depth + 1);
+      else if (depth < MAX_SUBPROCESS_DEPTH) entry.children = processOutline({ nodes: sub.nodes || {} }, depth + 1);
     }
     return entry;
   });
@@ -332,6 +332,14 @@ export class ProcessEditModel {
       { id: '', label: String(root.name || root.id || 'process') },
       ...this.frames.map((frame) => ({ id: frame.nodeId, label: String(frame.template.nodes[frame.nodeId]?.name || frame.nodeId) })),
     ];
+  }
+
+  // assertCanNest refuses a ▣ node whose body would exceed the server's
+  // nesting limit (bodies nest at most MAX_SUBPROCESS_DEPTH levels).
+  assertCanNest(type) {
+    if (type === 'subprocess' && this.frames.length >= MAX_SUBPROCESS_DEPTH) {
+      throw new Error(`subprocesses nest at most ${MAX_SUBPROCESS_DEPTH} levels deep`);
+    }
   }
 
   canEnterScope(id) {
@@ -576,6 +584,9 @@ export class ProcessEditModel {
     if (!this.layout.edges) return;
     const live = new Set(this.edges.map((edge) => `${edge.from}\u0000${edge.outcome}`));
     for (const [from, byOutcome] of Object.entries(this.layout.edges)) {
+      // Namespaced keys ("qa/unit") pin edges inside nested bodies; their own
+      // scope prunes them, and withoutScope drops them with the ▣ node.
+      if (from.includes(SCOPE_SEPARATOR)) continue;
       for (const outcome of Object.keys(byOutcome)) {
         if (!live.has(`${from}\u0000${outcome}`)) delete byOutcome[outcome];
       }
@@ -610,6 +621,7 @@ export class ProcessEditModel {
 
   addNode(type, { x, y, id, name } = {}) {
     this.assertCanInsert();
+    this.assertCanNest(type);
     const nodeType = NODE_TYPES.has(type) ? type : 'task';
     const nodeID = this.uniqueNodeID(id || nodeType);
     this.begin();
@@ -626,6 +638,7 @@ export class ProcessEditModel {
   // connectTo (new → existing) identifies the side of the dragged port.
   addConnectedNode(type, { x, y, connectFrom = '', connectTo = '' } = {}) {
     this.assertCanInsert();
+    this.assertCanNest(type);
     if (!!connectFrom === !!connectTo) throw new Error('connected node requires exactly one existing endpoint');
     const existingID = connectFrom || connectTo;
     if (!this.template.nodes[existingID]) throw new Error(`unknown node ${existingID}`);
@@ -861,7 +874,6 @@ export class ProcessEditModel {
       delete this.template.nodes[id];
       delete this.layout.nodes[id];
       this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
-    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
     }
     this.edges = this.edges.filter((edge) => !selectedEdge(edge) && !nodes.has(edge.from) && !nodes.has(edge.to));
     this.edges.push(...bridges);
