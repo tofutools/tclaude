@@ -321,12 +321,12 @@ func TestValidateAWBNameTokens(t *testing.T) {
 }
 
 func TestValidateAWBImplementationFields(t *testing.T) {
-	for _, ok := range []string{"", "01234567", strings.Repeat("A", maxAWBCommitHashLen)} {
+	for _, ok := range []string{"", "1234abc", "01234567", strings.Repeat("A", maxAWBCommitHashLen)} {
 		got, fault := validateAWBCommitHash(ok)
 		assert.Nil(t, fault, ok)
 		assert.Equal(t, ok, got, "commit hash case is preserved")
 	}
-	for _, bad := range []string{"1234567", strings.Repeat("a", maxAWBCommitHashLen+1), "not-a-hash"} {
+	for _, bad := range []string{"123456", strings.Repeat("a", maxAWBCommitHashLen+1), "not-a-hash"} {
 		_, fault := validateAWBCommitHash(bad)
 		assert.NotNil(t, fault, bad)
 	}
