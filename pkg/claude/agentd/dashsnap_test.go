@@ -1486,6 +1486,7 @@ setTimeout(function(){
   mod.mountProcessKitSheet(host);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var graphs = host.querySelectorAll('.pk-mini-graph');
+  if (!graphs.length || graphs[0].getBoundingClientRect().width < 200) throw new Error('process kit mini-graph is not visible');
   if (graphs.length !== 2) throw new Error('process kit sheet rendered ' + graphs.length + ' mini-graphs, want 2');
   if (!host.querySelector('.pk-run-icon.pk-scope-agent')) throw new Error('agent-scoped run icon missing');
   if (getComputedStyle(host.querySelector('.pk-gnode.pk-state-running')).borderTopColor === getComputedStyle(host.querySelector('.pk-gnode.pk-state-done')).borderTopColor) throw new Error('process kit stylesheet is not applied');

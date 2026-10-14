@@ -81,13 +81,13 @@ export function ProcessKitSheet({ wizard = false }) {
   const plannedRun = withRunStatus(SAMPLE_GROUP_RUN, 'pending', { start: 'pending', plan: 'pending', branches: 'pending', fanout: 'pending', checkout: 'pending', search: 'pending', review: 'pending' });
   const failedRun = withRunStatus(SAMPLE_AGENT_RUN, 'failed', { backfill: 'failed' });
   return html`<div class="pk-sheet" data-process-kit-sheet>
-    <section class="pk-sheet-box"><h3>Node kinds</h3>
+    <div class="pk-sheet-box"><h3>Node kinds</h3>
       ${Object.entries(PROCESS_NODE_KINDS).map(([kind, entry]) => html`<div key=${kind} class="pk-sheet-row"><${ProcessNodeGlyph} kind=${kind} wizard=${wizard} /><span>${wizard ? entry.wizardLabel : entry.label}: <span class="pk-sheet-muted">${entry.hint}</span></span></div>`)}
-    </section>
-    <section class="pk-sheet-box"><h3>Run / node state</h3>
+    </div>
+    <div class="pk-sheet-box"><h3>Run / node state</h3>
       ${STATE_ROWS.map(([state, label]) => html`<div key=${state} class="pk-sheet-row"><span class="pk-sheet-cell"><${ProcessNodeChip} node=${{ id: state, label: 'Node', kind: 'agent', state }} wizard=${wizard} /></span><${ProcessStateChip} state=${state} label=${label} /></div>`)}
-    </section>
-    <section class="pk-sheet-box"><h3>Scope</h3>
+    </div>
+    <div class="pk-sheet-box"><h3>Scope</h3>
       <div class="pk-sheet-row"><${ProcessScopeChip} scope=${SAMPLE_GROUP_RUN.scope} wizard=${wizard} /><span class="pk-sheet-muted">performers drawn from the group; owner is a lead</span></div>
       <div class="pk-sheet-row"><${ProcessScopeChip} scope=${SAMPLE_AGENT_RUN.scope} wizard=${wizard} /><span class="pk-sheet-muted">runs inside one agent’s bounds</span></div>
       <div class="pk-sheet-row">
@@ -100,13 +100,13 @@ export function ProcessKitSheet({ wizard = false }) {
       </div>
       <div class="pk-sheet-row"><${ProcessRunBadge} run=${SAMPLE_GROUP_RUN} performerId="checkout-ui" onOpen=${() => {}} /><span class="pk-sheet-muted">agent-row badge</span></div>
       <div class="pk-sheet-row"><${ProcessRunBadge} run=${SAMPLE_GROUP_RUN} performerId="human" /><${ProcessRunBadge} run=${SAMPLE_AGENT_RUN} performerId="search-indexer" /></div>
-    </section>
-    <section class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_GROUP_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_GROUP_RUN.scope} wizard=${wizard} /></h3>
+    </div>
+    <div class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_GROUP_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_GROUP_RUN.scope} wizard=${wizard} /></h3>
       <${ProcessMiniGraph} run=${SAMPLE_GROUP_RUN} performerId="checkout-ui" wizard=${wizard} />
-    </section>
-    <section class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_AGENT_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_AGENT_RUN.scope} wizard=${wizard} /> <span class="pk-sheet-muted">compact</span></h3>
+    </div>
+    <div class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_AGENT_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_AGENT_RUN.scope} wizard=${wizard} /> <span class="pk-sheet-muted">compact</span></h3>
       <${ProcessMiniGraph} run=${SAMPLE_AGENT_RUN} compact wizard=${wizard} />
-    </section>
+    </div>
   </div>`;
 }
 
