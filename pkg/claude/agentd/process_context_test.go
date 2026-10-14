@@ -74,6 +74,7 @@ func TestProcessProjectionLiftsStageDispatchOntoItsTask(t *testing.T) {
 	}
 	if assert.NotNil(t, work.Dispatch) {
 		assert.Equal(t, "agt_reviewer", work.Dispatch.AgentID)
+		assert.Equal(t, "work.review", work.Dispatch.NodeID, "acting on the attempt names the stage")
 	}
 	assert.Equal(t, "agt_reviewer", work.Performer.Ref)
 }

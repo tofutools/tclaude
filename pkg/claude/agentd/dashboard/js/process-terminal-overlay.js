@@ -274,12 +274,16 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
   const enabled = check.ok && !!actions.assign && candidates.length > 0;
   const title = !check.ok ? check.why : !actions.assign ? 'Reassigning is not available here'
     : candidates.length ? `Hand ${node.label || node.id} to another performer` : 'Nobody else can take this node';
-  const chosen = target || candidates[0]?.id || '';
+  // A stale pick (the candidates changed under an open picker) is dropped.
+  const chosen = candidates.some((candidate) => candidate.id === target) ? target : candidates[0]?.id || '';
+  // The attempt is addressed by the executable node it was dispatched under:
+  // a compound stage or subprocess body node lifts onto its authored node.
+  const executable = String(node?.dispatch?.nodeId || node?.id || '');
   const assign = async () => {
     setBusy(true);
     setError('');
     try {
-      await actions.assign(run, node.id, chosen);
+      await actions.assign(run, executable, chosen);
       setOpen(false);
     } catch (err) {
       setError(String(err?.message || err || 'reassign failed'));
@@ -296,7 +300,7 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
       value=${chosen} onChange=${(event) => setTarget(event.currentTarget.value)}>
       ${candidates.map((candidate) => html`<option key=${candidate.id} value=${candidate.id}>${candidate.label}</option>`)}
     </select>
-    <button type="button" class="mux-btn" disabled=${busy || !chosen} onClick=${() => void assign()}>assign</button>
+    <button type="button" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign</button>
     <button type="button" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel</button>
     ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
   </span>`;
@@ -359,7 +363,8 @@ function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidate
         <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
           onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner</button>
-        <${ReassignControl} run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
+        <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
+          run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${awaitingDecision && actions.decide
           ? around.outcomes.map((verdict) => html`<button key=${verdict} type="button" class="mux-btn pk-run-popover-verdict"
               disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)</button>`)

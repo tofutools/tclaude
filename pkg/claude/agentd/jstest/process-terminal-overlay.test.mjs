@@ -230,3 +230,30 @@ test('production assign posts to the node assign endpoint', async (t) => {
   assert.equal(posts[0].url, '/v1/process/runs/run_review/nodes/fix/assign');
   assert.deepEqual(JSON.parse(posts[0].init.body), { agent: 'agt_ops' });
 });
+
+test('reassign addresses a staged attempt by its stage and closes when the node moves on', async (t) => {
+  const { harness, mod } = await overlay(t);
+  const run = contextFixture().runs.run_review;
+  const staged = (dispatch) => ({ ...run, nodes: run.nodes.map((node) => (node.id === 'fix'
+    ? { ...node, state: 'running', performer: { kind: 'agent', ref: 'agt_coder' }, dispatch }
+    : node)) });
+  const snapshot = { groups: [{ id: 7, name: 'webshop', members: [{ agent_id: 'agt_coder', title: 'coder' }, { agent_id: 'agt_rev', title: 'reviewer' }] }] };
+  const assigned = [];
+  const actions = { assign: async (r, nodeId, agent) => { assigned.push([nodeId, agent]); } };
+  const candidatesFor = (r, current) => mod.reassignCandidates(snapshot, r, current);
+  const view = (dispatch) => harness.html`<${mod.ProcessRunPopover} run=${staged(dispatch)} agentId="agt_coder"
+    actions=${actions} candidatesFor=${candidatesFor} onClose=${() => {}} />`;
+  const mounted = await harness.mount(view({ nodeId: 'fix.review', agentId: 'agt_coder', attempt: 1, state: 'delivered' }));
+  const button = (pattern) => [...mounted.container.querySelectorAll('.pk-run-popover-actions button')].find((b) => pattern.test(b.textContent));
+  await harness.act(() => harness.fireEvent(button(/reassign/), 'click'));
+  assert.ok(mounted.container.querySelector('[data-process-reassign]'));
+
+  // A poll moves the node on to its next attempt: the open picker resets.
+  await mounted.rerender(view({ nodeId: 'fix.review', agentId: 'agt_coder', attempt: 2, state: 'delivered' }));
+  assert.ok(!mounted.container.querySelector('[data-process-reassign]'), 'a new attempt closes the stale picker');
+
+  await harness.act(() => harness.fireEvent(button(/reassign/), 'click'));
+  await harness.act(async () => { harness.fireEvent(button(/^assign$/), 'click'); });
+  assert.deepEqual(assigned, [['fix.review', 'agt_rev']], 'the stage the attempt runs under is addressed');
+  await mounted.unmount();
+});

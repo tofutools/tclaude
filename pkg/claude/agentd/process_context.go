@@ -99,6 +99,10 @@ type processProjectionPerformer struct {
 
 // processProjectionDispatch is one agent node's latest dispatched attempt.
 type processProjectionDispatch struct {
+	// NodeID is the executable node the attempt was dispatched under: the
+	// authored id for a plain task, a stage or body id otherwise. Acting on
+	// the attempt (reassign) names this id.
+	NodeID      string     `json:"nodeId"`
 	AgentID     string     `json:"agentId,omitempty"`
 	Name        string     `json:"name,omitempty"`
 	Attempt     int        `json:"attempt"`
@@ -628,7 +632,7 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			}
 			if latest, ok := dispatched[node.ID]; ok {
 				node.Dispatch = &processProjectionDispatch{
-					AgentID: latest.AgentID, Name: latest.Name, Attempt: latest.Attempt,
+					NodeID: latest.NodeID, AgentID: latest.AgentID, Name: latest.Name, Attempt: latest.Attempt,
 					State: latest.State, WaitReason: latest.WaitReason, DeliveredAt: latest.DeliveredAt,
 				}
 				if latest.AgentID != "" {
