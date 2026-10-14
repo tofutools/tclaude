@@ -869,9 +869,10 @@ button.tool:hover { border-color: #58a6ff; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mail-row-attachments {
-  display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto;
   color: #8b949e; font: 11px ui-monospace, monospace;
 }
+.mail-row-attachment-type { display: inline-flex; align-items: center; gap: 2px; }
 .mail-row-attachments svg { width: 15px; height: 15px; }
 .mail-row.active .mail-row-attachments,
 .mail-row.unread .mail-row-attachments { color: #adbac7; }
