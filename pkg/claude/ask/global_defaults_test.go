@@ -106,3 +106,31 @@ func TestAskResumedThreadSkipsIncompatibleGlobalVendorDefault(t *testing.T) {
 	require.Equal(t, "claude", f.last().Argv[0])
 	require.NotContains(t, f.last().Argv, "gpt-5")
 }
+
+func TestAskGlobalModelDoesNotCrossPermissiveHarnessCatalogs(t *testing.T) {
+	for _, test := range []struct{ globalHarness, model, askHarness string }{
+		{"claude", "opus[1m]", "copilot"}, {"gemini", "gemini-2.5-pro", "codex"},
+	} {
+		t.Run(test.askHarness, func(t *testing.T) {
+			setupAskTestDB(t)
+			setGlobalAskDefault(t, db.SpawnProfile{Name: "global", Harness: test.globalHarness, Model: test.model})
+			_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "ask", Harness: test.askHarness})
+			require.NoError(t, err)
+			target, err := resolveAskTargetDetails("", "", &config.Config{Ask: &config.AskConfig{Profile: "ask"}})
+			require.NoError(t, err)
+			require.Empty(t, target.Model, "ambient models are harness-owned even with permissive validation")
+			forceConvExists(t, true)
+			f := &fakeRun{answer: "ok\n", started: true}
+			f.install(t)
+			require.NoError(t, db.SetAskThread("existing", "/repo", "existing-conv", test.askHarness))
+			in := ttyInput("existing", "/repo", "follow up")
+			in.Harness = test.globalHarness
+			in.GlobalHarness = test.globalHarness
+			in.Model = test.model
+			in.ModelGlobal = true
+			aio, _, _ := io2buf()
+			require.NoError(t, runAsk(in, aio))
+			require.NotContains(t, f.last().Argv, test.model)
+		})
+	}
+}

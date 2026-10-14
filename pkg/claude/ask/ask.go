@@ -112,6 +112,7 @@ type askInput struct {
 	EffortBuiltin    bool
 	ModelGlobal      bool
 	EffortGlobal     bool
+	GlobalHarness    string
 	ForceInteractive bool
 	New              bool
 	// Verbose keeps the harness's capture-mode stderr transcript visible
@@ -199,6 +200,7 @@ func runFromCLI(p *Params, args []string) error {
 		EffortBuiltin:    target.EffortBuiltin,
 		ModelGlobal:      target.ModelGlobal,
 		EffortGlobal:     target.EffortGlobal,
+		GlobalHarness:    target.GlobalHarness,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
@@ -281,6 +283,7 @@ type resolvedAskTarget struct {
 	EffortBuiltin bool
 	ModelGlobal   bool
 	EffortGlobal  bool
+	GlobalHarness string
 }
 
 func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (resolvedAskTarget, error) {
@@ -324,11 +327,15 @@ func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (
 	// Ambient values from a different harness are skipped, as in spawn
 	// resolution. Dedicated ask configuration and explicit flags remain loud.
 	if global != nil {
+		target.GlobalHarness = global.Harness
+		if target.GlobalHarness == "" {
+			target.GlobalHarness = harness.DefaultName
+		}
 		h, err := harness.Resolve(target.Harness)
 		if err != nil {
 			return resolvedAskTarget{}, err
 		}
-		if target.Model == "" && global.Model != "" {
+		if target.Model == "" && global.Model != "" && target.Harness == target.GlobalHarness {
 			if value, err := h.Models.ValidateModel(global.Model); err == nil {
 				target.Model = value
 				modelBuiltin = false
@@ -467,7 +474,11 @@ func runAsk(in askInput, aio askIO) error {
 	// A thread keeps its recorded harness even when the global default changes
 	// vendor. Do not apply incompatible ambient defaults to that older thread.
 	if in.ModelGlobal && model != "" {
-		if _, err := h.Models.ValidateModel(model); err != nil {
+		sourceHarness := in.GlobalHarness
+		if sourceHarness == "" {
+			sourceHarness = in.Harness
+		}
+		if _, err := h.Models.ValidateModel(model); err != nil || (sourceHarness != "" && sourceHarness != h.Name) {
 			model = ""
 		}
 	}
