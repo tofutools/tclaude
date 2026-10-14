@@ -107,15 +107,45 @@ func (s *Subprocess) BindInputs(body *Template, parentParams map[string]string) 
 		return params
 	}
 	for name, param := range body.Params {
-		if expression, ok := s.Inputs[name]; ok {
+		if expression, ok := s.Inputs[name]; ok && paramRefsPresent(expression, parentParams) {
 			params[name] = interpolateParams(expression, parentParams)
 			continue
 		}
 		if param.Default != nil {
-			params[name] = fmt.Sprint(param.Default)
+			params[name] = formatParamDefault(param.Default)
 		}
 	}
 	return params
+}
+
+// paramRefsPresent reports whether every {{ params.x }} an input expression
+// references exists in params. A binding over a missing parent param must not
+// silently become "" — it falls back to the default or stays absent, so
+// program binding reports the param as missing.
+func paramRefsPresent(expression string, params map[string]string) bool {
+	for _, match := range paramRefPattern.FindAllStringSubmatch(expression, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		if _, ok := params[match[1]]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// formatParamDefault renders a declared default the same way whether the
+// template came from YAML (ints) or a cold JSON reload (float64): a whole
+// number must not turn into exponent notation such as "1e+06".
+func formatParamDefault(value any) string {
+	switch v := value.(type) {
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 // WalkNodes visits every node of a template, descending into subprocess
@@ -390,13 +420,31 @@ func ResolveSubprocessRefs(tmpl *Template, resolve TemplateResolver) (*Template,
 		return nil, fmt.Errorf("nil process template")
 	}
 	clone := cloneTemplate(tmpl)
-	if err := resolveScope(&clone, resolve, []string{tmpl.ID}, 0); err != nil {
+	budget := scopeGraphCardinality(&clone)
+	if err := resolveScope(&clone, resolve, []string{tmpl.ID}, 0, &budget); err != nil {
 		return nil, err
 	}
 	return &clone, nil
 }
 
-func resolveScope(scope *Template, resolve TemplateResolver, stack []string, depth int) error {
+// scopeGraphCardinality counts a scope's own nodes and edges plus every body
+// already embedded below it.
+func scopeGraphCardinality(scope *Template) NormalizedGraphCardinality {
+	counts := NormalizedGraphCardinality{Nodes: saturatingCount(len(scope.Nodes), MaxNormalizedNodes)}
+	for _, node := range scope.Nodes {
+		counts.Edges = saturatingAdd(counts.Edges, len(node.Next), MaxNormalizedEdges)
+	}
+	nested := subprocessGraphCardinality(scope)
+	counts.Nodes = saturatingAdd(counts.Nodes, nested.Nodes, MaxNormalizedNodes)
+	counts.Edges = saturatingAdd(counts.Edges, nested.Edges, MaxNormalizedEdges)
+	return counts
+}
+
+// resolveScope embeds referenced bodies below scope. budget is the running
+// node/edge total of the whole resolved tree: references fan out, so without
+// it a few small templates referencing each other many times over could
+// materialize an arbitrarily large snapshot before anything validated it.
+func resolveScope(scope *Template, resolve TemplateResolver, stack []string, depth int, budget *NormalizedGraphCardinality) error {
 	for _, nodeID := range sortedKeys(scope.Nodes) {
 		node := scope.Nodes[nodeID]
 		if node.Type != NodeTypeSubprocess || node.Subprocess == nil {
@@ -408,7 +456,7 @@ func resolveScope(scope *Template, resolve TemplateResolver, stack []string, dep
 		sp := node.Subprocess
 		if sp.IsInline() {
 			body, _ := sp.Body()
-			if err := resolveScope(body, resolve, stack, depth+1); err != nil {
+			if err := resolveScope(body, resolve, stack, depth+1, budget); err != nil {
 				return fmt.Errorf("subprocess %q: %w", nodeID, err)
 			}
 			continue
@@ -436,7 +484,13 @@ func resolveScope(scope *Template, resolve TemplateResolver, stack []string, dep
 		}
 		body := cloneTemplate(referenced)
 		body.Layout = nil
-		if err := resolveScope(&body, resolve, append(append([]string(nil), stack...), sp.TemplateRef), depth+1); err != nil {
+		added := scopeGraphCardinality(&body)
+		budget.Nodes = saturatingAdd(budget.Nodes, added.Nodes, MaxNormalizedNodes)
+		budget.Edges = saturatingAdd(budget.Edges, added.Edges, MaxNormalizedEdges)
+		if budget.Nodes > MaxNormalizedNodes || budget.Edges > MaxNormalizedEdges {
+			return fmt.Errorf("subprocess %q: resolved process exceeds %d nodes or %d edges", nodeID, MaxNormalizedNodes, MaxNormalizedEdges)
+		}
+		if err := resolveScope(&body, resolve, append(append([]string(nil), stack...), sp.TemplateRef), depth+1, budget); err != nil {
 			return fmt.Errorf("subprocess %q: %w", nodeID, err)
 		}
 		// The pin is the embedded body itself (its own semantic hash is the

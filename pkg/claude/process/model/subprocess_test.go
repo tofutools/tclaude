@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,51 @@ func TestResolveSubprocessRefsEmbedsBodiesAndRejectsCycles(t *testing.T) {
 	}
 	if _, err := ResolveSubprocessRefs(referencing("top", "ghost"), resolve); err == nil {
 		t.Fatalf("missing reference resolved")
+	}
+}
+
+func TestBindInputsDefaultsAndMissingParentParams(t *testing.T) {
+	body := &Template{Params: map[string]Param{
+		"limit":  {Type: "number", Default: float64(1000000)},
+		"ratio":  {Type: "number", Default: 0.25},
+		"target": {Type: "string", Default: "fallback"},
+		"name":   {Type: "string"},
+	}}
+	sp := &Subprocess{Inputs: map[string]string{
+		"target": "{{ params.missing }}",
+		"name":   "{{ params.who }}-x",
+	}}
+	got := sp.BindInputs(body, map[string]string{"who": "ann"})
+	want := map[string]string{"limit": "1000000", "ratio": "0.25", "target": "fallback", "name": "ann-x"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s = %q, want %q (all: %#v)", k, got[k], v, got)
+		}
+	}
+	got = sp.BindInputs(body, map[string]string{})
+	if _, ok := got["name"]; ok {
+		t.Fatalf("binding over a missing parent param must leave the param absent: %#v", got)
+	}
+}
+
+func TestResolveSubprocessRefsBoundsFanOut(t *testing.T) {
+	// wide references "leaf" from many subprocess nodes; each level multiplies.
+	wide := func(id, ref string, n int) *Template {
+		nodes := map[string]Node{"stop": {Type: NodeTypeEnd}}
+		for i := 0; i < n; i++ {
+			nodes[fmt.Sprintf("b%d", i)] = Node{Type: NodeTypeSubprocess, Subprocess: &Subprocess{TemplateRef: ref}, Next: Next{"next": "stop"}}
+		}
+		return &Template{APIVersion: APIVersion, Kind: Kind, ID: id, Start: "b0", Nodes: nodes}
+	}
+	leaf := &Template{APIVersion: APIVersion, Kind: Kind, ID: "leaf", Start: "go",
+		Nodes: map[string]Node{
+			"go":   {Type: NodeTypeTask, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{"next": "stop"}},
+			"stop": {Type: NodeTypeEnd},
+		}}
+	store := map[string]*Template{"leaf": leaf, "l1": wide("l1", "leaf", 60), "l2": wide("l2", "l1", 60)}
+	resolve := func(id, _ string) (*Template, string, error) { return store[id], "", nil }
+	_, err := ResolveSubprocessRefs(wide("top", "l2", 60), resolve)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("fan-out error = %v", err)
 	}
 }
