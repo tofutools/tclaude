@@ -1422,7 +1422,11 @@ export class ProcessTemplateEditor {
         return;
       }
     }
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && this.selection) {
+    // Keys aimed at the docked node inspector (its buttons, block handles)
+    // belong to that panel: deleting the node from under a focused ✕ or ↑ is
+    // never what Delete/Backspace meant there.
+    const inInspector = !!event.target?.closest?.('[data-node-inspector]');
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && !inInspector && this.selection) {
       event.preventDefault();
       this.deleteSelection();
     }

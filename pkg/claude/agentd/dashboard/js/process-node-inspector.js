@@ -94,7 +94,7 @@ function StagesBlock({ node, commit, readOnly }) {
         value=${node.plan.approval || 'auto'} readOnly=${readOnly}
         apply=${(key, value) => commit(key, (draft) => setPlanApproval(draft, value))} />
       <${PerformerEditor} path="plan.performer" locate=${(draft) => draft.plan.performer} performer=${node.plan.performer}
-        commit=${commit} readOnly=${readOnly} />`}
+        commit=${commit} readOnly=${readOnly} contact=${true} />`}
     <div class="process-node-checks">
       <span class="process-node-field-label">checks</span>
       ${(node.checks || []).map((check, index) => html`<div key=${index} class="process-node-check">
@@ -103,13 +103,13 @@ function StagesBlock({ node, commit, readOnly }) {
           ${!readOnly && html`<button class="process-action" type="button" aria-label=${`Move check ${check.id} up`} onClick=${() => commit(`checks.${index}.up`, (draft) => moveCheck(draft, index, -1))}>↑</button><button class="process-action" type="button" aria-label=${`Move check ${check.id} down`} onClick=${() => commit(`checks.${index}.down`, (draft) => moveCheck(draft, index, 1))}>↓</button><button class="process-action process-action-danger" type="button" aria-label=${`Remove check ${check.id}`} onClick=${() => commit(`checks.${index}.remove`, (draft) => removeCheck(draft, index))}>remove</button>`}
         </div>
         <${PerformerEditor} path=${`checks.${index}.performer`} locate=${(draft) => draft.checks[index].performer} performer=${check.performer}
-          commit=${commit} readOnly=${readOnly} />
+          commit=${commit} readOnly=${readOnly} contact=${true} />
       </div>`)}
       ${!readOnly && html`<button class="process-action process-node-add" type="button" onClick=${() => commit('checks.add', (draft) => addCheck(draft))}>+ add check</button>`}
     </div>
     ${toggle('review.enabled', 'review gate after checks', 'review')}
     ${node.review && html`<${PerformerEditor} path="review.performer" locate=${(draft) => draft.review.performer} performer=${node.review.performer}
-      commit=${commit} readOnly=${readOnly} />`}
+      commit=${commit} readOnly=${readOnly} contact=${true} />`}
   </div>`;
 }
 
@@ -176,7 +176,7 @@ const BLOCK_BODIES = {
   about: AboutBlock,
 };
 
-function Block({ blockKey, index, count, readOnly, onMove, onRemove, onDragStart, onDrop, children }) {
+function Block({ blockKey, index, count, readOnly, removable = true, onMove, onRemove, onDragStart, onDrop, children }) {
   const block = nodeBlock(blockKey);
   const [over, setOver] = useState(false);
   // A div, not a <section>: dashboard.css hides bare sections (tab panes).
@@ -193,11 +193,17 @@ function Block({ blockKey, index, count, readOnly, onMove, onRemove, onDragStart
       <span class="spacer"></span>
       <button type="button" class="pni-block-move" aria-label=${`Move ${block.label} up`} disabled=${index === 0} onClick=${() => onMove(blockKey, -1)}>↑</button>
       <button type="button" class="pni-block-move" aria-label=${`Move ${block.label} down`} disabled=${index === count - 1} onClick=${() => onMove(blockKey, 1)}>↓</button>
-      ${!block.required && !readOnly && html`<button type="button" class="pni-block-remove" aria-label=${`Remove ${block.label}`}
+      ${!block.required && !readOnly && removable && html`<button type="button" class="pni-block-remove" aria-label=${`Remove ${block.label}`}
         title=${block.clear ? `Remove ${block.label} and clear its settings` : `Hide ${block.label}`} onClick=${() => onRemove(blockKey)}>✕</button>`}
     </div>
     <div class="pni-block-body">${children}</div>
   </div>`;
+}
+
+// Closing or deleting from the inspector unmounts the focused button; hand
+// focus back to the canvas rather than dropping it on <body>.
+function refocusCanvas(controller) {
+  queueMicrotask(() => controller.graph?.focusKeyboardTarget?.());
 }
 
 export function NodeInspector({ controller, view }) {
@@ -222,6 +228,7 @@ export function NodeInspector({ controller, view }) {
   const nodeOpened = opened[nodeId] || [];
   const visible = visibleBlocks(node, { opened: nodeOpened, order, context: { inputs } });
   const addable = readOnly ? [] : addableBlocks(node, visible);
+  const fromData = visibleBlocks(node, { order, context: { inputs } });
   const saveOrder = (next) => {
     writeBlockOrder(type, mergeOrder(type, order, next));
     setOrderRevision((value) => value + 1);
@@ -242,7 +249,7 @@ export function NodeInspector({ controller, view }) {
         <${NodeField} fieldKey="meta.name" label="label" value=${node.name || ''} readOnly=${readOnly}
           apply=${(key, raw) => (controller.renameNode(nodeId, raw) === undefined ? { blocked: true } : { accepted: true })} />
         <button type="button" class="pni-close process-node-close" title="Close the inspector" aria-label="Close node inspector"
-          onClick=${() => controller.setSelection(null)}>✕</button>
+          onClick=${() => { controller.setSelection(null); refocusCanvas(controller); }}>✕</button>
       </div>
       <div class="pni-meta"><span class="process-inspector-kind">${type} node</span> · <span class="process-inspector-id">${nodeId}</span>
         ${readOnly && html` <span class="process-node-readonly-badge">read-only</span>`}</div>
@@ -253,13 +260,16 @@ export function NodeInspector({ controller, view }) {
         ${view.model.start !== nodeId && type !== 'end' && !readOnly && html`<button class="process-action" type="button" title="Make this node the process entry point" onClick=${() => controller.setStart(nodeId)}>set as start</button>`}
         <button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} title="Save this node as a reusable custom snippet" onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button>
         ${extraActions.map((action) => html`<button key=${action.key || action.label} class="process-action" type="button" disabled=${!!action.disabled} title=${action.title || ''} onClick=${action.run}>${action.label}</button>`)}
-        ${!readOnly && html`<button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete node</button>`}
+        ${!readOnly && html`<button class="process-action process-action-danger" type="button" onClick=${() => { controller.deleteSelection(); refocusCanvas(controller); }}>delete node</button>`}
       </div>
       ${diagnostics.length > 0 && html`<ul class="pni-diagnostics" aria-label="Issues on this node">${diagnostics.map((entry, i) => html`<li key=${i} class=${`pni-diag is-${entry.severity}`}>${entry.severity === 'error' ? '✕' : '⚠'} ${entry.message}</li>`)}</ul>`}
     </div>
     ${visible.map((key, index) => {
       const Body = BLOCK_BODIES[key];
-      return html`<${Block} key=${key} blockKey=${key} index=${index} count=${visible.length} readOnly=${readOnly}
+      // A block with nothing to clear that is present from data (Inputs with
+      // upstream captures) cannot be hidden: its ✕ would do nothing.
+      const removable = !!nodeBlock(key)?.clear || !fromData.includes(key);
+      return html`<${Block} key=${key} blockKey=${key} index=${index} count=${visible.length} readOnly=${readOnly} removable=${removable}
         onMove=${(blockKey, delta) => saveOrder(moveKey(visible, blockKey, delta))}
         onDrop=${(dragged, before) => saveOrder(moveKeyBefore(visible, dragged, before))}
         onRemove=${remove}><${Body} ...${bodyProps} /></${Block}>`;

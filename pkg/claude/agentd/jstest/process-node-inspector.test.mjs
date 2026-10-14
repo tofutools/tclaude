@@ -238,3 +238,17 @@ test('node diagnostics are listed at the top of the inspector', async (t) => {
   await open('build');
   assert.deepEqual([...dock().querySelectorAll('.pni-diag')].map((li) => li.textContent), ['✕ performer profile dev is unknown']);
 });
+
+test('Delete on an inspector button stays in the panel; stage performers show their contact schedule', async (t) => {
+  const { harness, editor, open, dock, click, field, set } = await openEditor(t);
+  await open('build');
+  await harness.act(() => harness.fireEvent(dock().querySelector('[aria-label="Move Outcomes up"]'), 'keydown', { key: 'Delete' }));
+  await harness.act(() => harness.fireEvent(dock().querySelector('.pni-close'), 'keydown', { key: 'Backspace' }));
+  assert.equal(editor.modalState, null, 'Delete/Backspace aimed at the inspector does not prompt to delete the node');
+  assert.ok(editor.model.node('build'));
+  assert.equal(dock().querySelector('[aria-label="Remove Inputs"]'), null, 'Inputs present from upstream captures cannot be hidden');
+  await click('[data-add-block="stages"]');
+  await set('plan.enabled', true);
+  assert.ok(editor.model.node('build').plan, 'plan stage enabled');
+  assert.ok(field('plan.performer.contact.cadence'), 'the plan performer keeps its contact schedule');
+});
