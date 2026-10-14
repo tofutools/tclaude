@@ -624,11 +624,25 @@ func TestProcessPerformer_DoomedRunWithdrawsAgentAttempt(t *testing.T) {
 		},
 	}
 	putProcessRuntimeTemplate(t, root, tmpl)
+	// The sibling program fails only once the agent holds its node, so the
+	// withdrawal is what this test observes rather than a planning race.
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		<-release
+		return processObservation(dispatch.Command(), engine.ProgramFailed, 1), nil
+	}))
+	t.Cleanup(letGo) // before restoring the hook, which waits for the runtime
 	t.Cleanup(agentd.SetProcessRunScopeForTest("run_withdraw", agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_withdraw", "templateId": "withdraw", "authorizeProgramProfiles": []string{"safe"},
 	})
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	require.Eventually(t, func() bool {
+		return len(peekPerformerRun(t, f, "run_withdraw").Performers) == 1
+	}, 5*time.Second, 10*time.Millisecond, "the agent node is delivered before the program fails")
+	letGo()
 	agentd.WaitForProcessRunRuntimeForTest()
 	agentd.SweepProcessAgentDispatchesForTest()
 

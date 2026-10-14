@@ -237,7 +237,10 @@ func reconcileProcessRunAgentDispatches(runID string) error {
 	// Run inputs go through the run's single state owner, and never while
 	// holding the dispatch lock: the owner's own dispatch pass may need it.
 	for _, row := range reapply {
-		applyRecordedProcessReport(row)
+		if err := applyRecordedProcessReport(row); err != nil && !errors.Is(err, engine.ErrStaleObservation) {
+			slog.Warn("process performers: recorded report not yet applied", "run", runID,
+				"node", row.NodeID, "error", err)
+		}
 	}
 	for _, command := range withdraw {
 		withdrawProcessAgentCommand(runID, command)
@@ -611,7 +614,7 @@ func processGroupCandidates(groupID int64) []processPerformerCandidate {
 
 func processCandidateFor(agentID, convID string, alive map[string]struct{}) processPerformerCandidate {
 	online, status := convLiveStatus(convID, alive)
-	rank := 2
+	var rank int
 	switch normalizeMemberStatus(online, status) {
 	case "idle":
 		rank = 0
