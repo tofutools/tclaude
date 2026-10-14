@@ -79,6 +79,25 @@ func TestProcessEditorSubgraphSaveExtractAndReference(t *testing.T) {
 	qa := view["template"].(map[string]any)["nodes"].(map[string]any)["qa"].(map[string]any)
 	assert.Equal(t, "unit", qa["subprocess"].(map[string]any)["nodes"].(map[string]any)["in"].(map[string]any)["next"].(map[string]any)["pass"])
 
+	// Live validation targets body nodes by their namespaced id, so the
+	// drilled-in canvas can badge them.
+	body["nodes"].(map[string]any)["orphan"] = map[string]any{"type": "task", "name": "Orphan", "performer": map[string]any{"kind": "program", "run": "true"}}
+	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", draft)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var validated struct {
+		Diagnostics []struct {
+			Scope    string `json:"scope"`
+			TargetID string `json:"targetId"`
+		} `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &validated)
+	targets := map[string]string{}
+	for _, d := range validated.Diagnostics {
+		targets[d.TargetID] = d.Scope
+	}
+	assert.Equal(t, "node", targets["qa/orphan"], "diagnostics: %+v", validated.Diagnostics)
+	delete(body["nodes"].(map[string]any), "orphan")
+
 	// Extract: the body becomes its own template (the editor's extractableBody).
 	extracted := map[string]any{
 		"template": map[string]any{

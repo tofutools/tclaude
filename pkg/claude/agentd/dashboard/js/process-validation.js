@@ -20,7 +20,7 @@
 //     stay up and the loop never crashes.
 //   - Badges are glyph-coded per severity (never color-only).
 
-import { graphEdgeID } from './process-edit-model.js';
+import { graphEdgeID, SCOPE_SEPARATOR } from './process-edit-model.js';
 
 export const VALIDATION_DEBOUNCE_MS = 400;
 
@@ -127,12 +127,36 @@ export class ValidationScheduler {
   }
 }
 
+// Diagnostics inside inline subprocess bodies target namespaced ids
+// ("qa/unit", "qa/unit:pass"). Against the open scope (the ▣ path drilled
+// into) a target is local when it sits directly in that scope, rolls up onto
+// the scope's ▣ node when it sits deeper, and is off-canvas otherwise. Every
+// namespaced target records entry.location (scope path + node) so focusing
+// it can drill there.
+function scopedNodeTarget(targetId, scopePath, entry) {
+  const parts = String(targetId || '').split(SCOPE_SEPARATOR);
+  if (parts.length > 1) entry.location = { path: parts.slice(0, -1), node: parts.at(-1) };
+  if (parts.length <= scopePath.length) return null;
+  for (let i = 0; i < scopePath.length; i += 1) if (parts[i] !== scopePath[i]) return null;
+  return parts[scopePath.length];
+}
+
+function scopedEdgeTarget(targetId, scopePath, entry) {
+  const target = splitEdgeTarget(targetId);
+  if (!target) return null;
+  const parts = target.from.split(SCOPE_SEPARATOR);
+  const local = scopedNodeTarget(target.from, scopePath, entry);
+  if (!local) return null;
+  return { from: local, outcome: target.outcome, rollup: parts.length > scopePath.length + 1 };
+}
+
 // mapDiagnostics resolves server diagnostics against the CURRENT edit model:
 // entries whose node/edge still exists anchor badges there; an edge whose
 // edge is gone falls back to its source node; anything else stays a
 // template-scope panel entry. Diagnostics may be one edit behind the model
 // (debounce + network), so dangling targets are expected, not an error.
 export function mapDiagnostics(diagnostics, model) {
+  const scopePath = model?.scopePath?.() || [];
   const nodes = new Map();
   const edges = new Map();
   const entries = [];
@@ -155,8 +179,12 @@ export function mapDiagnostics(diagnostics, model) {
       targetId: String(diag.targetId || ''),
     };
     if (diag.scope === 'edge') {
-      const target = splitEdgeTarget(entry.targetId);
-      if (target && model?.findEdge?.(target.from, target.outcome)) {
+      const target = scopedEdgeTarget(entry.targetId, scopePath, entry);
+      if (target?.rollup && model?.node?.(target.from)) {
+        entry.scope = 'node';
+        entry.node = target.from;
+        bump(nodes, target.from, severity);
+      } else if (target && model?.findEdge?.(target.from, target.outcome)) {
         entry.scope = 'edge';
         entry.edge = target;
         bump(edges, graphEdgeID(target.from, target.outcome), severity);
@@ -165,10 +193,13 @@ export function mapDiagnostics(diagnostics, model) {
         entry.node = target.from;
         bump(nodes, target.from, severity);
       }
-    } else if (diag.scope === 'node' && model?.node?.(entry.targetId)) {
-      entry.scope = 'node';
-      entry.node = entry.targetId;
-      bump(nodes, entry.targetId, severity);
+    } else if (diag.scope === 'node') {
+      const local = scopedNodeTarget(entry.targetId, scopePath, entry);
+      if (local && model?.node?.(local)) {
+        entry.scope = 'node';
+        entry.node = local;
+        bump(nodes, local, severity);
+      }
     }
     entries.push(entry);
   }
@@ -288,6 +319,11 @@ export class LiveValidation {
 
   // focusEntry selects the diagnostic's target and centers the canvas on it.
   focusEntry(entry) {
+    const here = this.editor.model.scopePath?.() || [];
+    if (entry.location && entry.location.path.join(SCOPE_SEPARATOR) !== here.join(SCOPE_SEPARATOR)) {
+      this.editor.revealOutlineNode?.(entry.location.path, entry.location.node);
+      return;
+    }
     const layout = this.editor.graph.layoutSnapshot();
     if (entry.scope === 'node' && entry.node) {
       this.editor.setSelection({ type: 'node', id: entry.node });

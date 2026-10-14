@@ -150,3 +150,24 @@ test('outline nests inline bodies and template settings stay at the root', () =>
   assert.deepEqual(qa.children.map((c) => c.id), ['bad', 'in', 'ok', 'unit']);
   assert.throws(() => model.setTemplateMeta({ name: 'x' }), /root process/);
 });
+
+test('nested-body diagnostics badge inside the scope and roll up onto the ▣ node at the root', async () => {
+  const { mapDiagnostics } = await import('../dashboard/js/process-validation.js');
+  const diagnostics = [
+    { scope: 'node', targetId: 'qa/unit', severity: 'error', code: 'missing_performer', message: 'm1' },
+    { scope: 'edge', targetId: 'qa/unit:pass', severity: 'warning', code: 'w', message: 'm2' },
+    { scope: 'node', targetId: 'ship', severity: 'warning', code: 'w', message: 'm3' },
+  ];
+  const model = new ProcessEditModel(view());
+  let mapped = mapDiagnostics(diagnostics, model);
+  assert.deepEqual(mapped.nodes.get('qa'), { error: 1, warning: 1 }, 'the root badges the ▣ node for its body');
+  assert.deepEqual(mapped.nodes.get('ship'), { error: 0, warning: 1 });
+  assert.deepEqual(mapped.entries.find((e) => e.code === 'missing_performer').location, { path: ['qa'], node: 'unit' });
+
+  model.enterScope('qa');
+  mapped = mapDiagnostics(diagnostics, model);
+  assert.deepEqual(mapped.nodes.get('unit'), { error: 1, warning: 0 });
+  assert.equal(mapped.edges.size, 1, 'the body edge badges inside the scope');
+  assert.equal(mapped.nodes.get('ship'), undefined, 'a parent node is not mistaken for a body node');
+  assert.equal(mapped.entries.find((e) => e.targetId === 'ship').scope, 'template');
+});
