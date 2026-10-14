@@ -52,7 +52,10 @@ func newOneShotDirectoryRun() (*oneShotDirectoryRun, error) {
 }
 
 func (run *oneShotDirectoryRun) save() error {
-	root := oneShotDirectoryJournalRoot()
+	root, err := canonicalizeForSecureMkdir(oneShotDirectoryJournalRoot())
+	if err != nil {
+		return err
+	}
 	if err := mkdirAllNoFollow(root, 0700); err != nil {
 		return err
 	}
