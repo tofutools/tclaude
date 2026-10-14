@@ -62,15 +62,15 @@ test('the focus switch is hidden while features.processes is off', async (t) => 
 
 test('switching to Processes swaps the list for the placeholder, persists and pushes one entry', async (t) => {
   const { harness, root, state, store, navigated } = await setup(t);
-  const radios = root.querySelector('[role="radiogroup"][aria-label="Groups focus"]');
+  const radios = root.querySelector('[role="group"][aria-label="Groups focus"]');
   assert.ok(radios);
-  const agents = getByRole(radios, 'radio', { name: /Agents/ });
-  const processes = getByRole(radios, 'radio', { name: /Processes/ });
-  assert.equal(agents.getAttribute('aria-checked'), 'true');
+  const agents = getByRole(radios, 'button', { name: /Agents/ });
+  const processes = getByRole(radios, 'button', { name: /Processes/ });
+  assert.equal(agents.getAttribute('aria-pressed'), 'true');
   assert.equal(agents.querySelector('.groups-focus-count').textContent, '3', 'distinct agents across shown groups');
 
   await harness.act(() => harness.fireEvent(processes, 'click'));
-  assert.equal(processes.getAttribute('aria-checked'), 'true');
+  assert.equal(processes.getAttribute('aria-pressed'), 'true');
   assert.equal(state.focus.value, 'processes');
   assert.equal(store.values.get('tclaude.dash.groups.focus'), 'processes');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
@@ -107,9 +107,9 @@ test('history restores set the focus; Route map restores leave it alone', async 
 test('the wizard skin renames the lenses', async (t) => {
   const { harness, root } = await setup(t);
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } })));
-  const radios = root.querySelector('[role="radiogroup"][aria-label="Party lens"]');
-  assert.ok(getByRole(radios, 'radio', { name: /Familiars/ }));
-  assert.ok(getByRole(radios, 'radio', { name: /Rites/ }));
+  const radios = root.querySelector('[role="group"][aria-label="Party lens"]');
+  assert.ok(getByRole(radios, 'button', { name: /Familiars/ }));
+  assert.ok(getByRole(radios, 'button', { name: /Rites/ }));
 });
 
 test('the palette offers both lenses while processes are on and switches through the Groups state', async (t) => {
@@ -135,5 +135,25 @@ test('the palette offers both lenses while processes are on and switches through
   assert.deepEqual(commands.map((c) => c.label), ['Groups › Processes focus', 'Groups › Agents focus']);
   commands[0].run();
   assert.equal(state.focus.value, 'processes');
+  assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
+});
+
+test('choosing a lens leaves the Route map, and its Members button announces the remembered lens', async (t) => {
+  const { harness, state, navigated } = await setup(t, { prefs: { 'tclaude.dash.groups.focus': 'processes' } });
+  state.publish({ ...state.snapshot.value, groups_route_map_enabled: true, route_map: { routes: [] } });
+  const { GroupsRouteMap } = await harness.importDashboardModule('js/groups-route-map.js');
+  const mapHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  t.after(() => mapHost.remove());
+  const map = await harness.mount(harness.html`<${GroupsRouteMap} state=${state} />`, mapHost);
+  await harness.act(() => harness.fireEvent(getByRole(map.container, 'tab', { name: 'Route map' }), 'click'));
+  assert.equal(state.subview.value, 'routes');
+  await harness.act(() => harness.fireEvent(getByRole(map.container, 'tab', { name: 'Members' }), 'click'));
+  assert.deepEqual(navigated.at(-1), { tab: 'groups', subtab: 'processes' }, 'Members shows (and names) the Processes lens');
+
+  await harness.act(() => harness.fireEvent(getByRole(map.container, 'tab', { name: 'Route map' }), 'click'));
+  const { chooseGroupsFocus } = await harness.importDashboardModule('js/groups-focus.js');
+  navigated.length = 0;
+  await harness.act(() => { chooseGroupsFocus(state, 'processes'); });
+  assert.equal(state.subview.value, 'members', 'the lens choice leaves the Route map even when the focus is unchanged');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
 });

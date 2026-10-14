@@ -423,9 +423,19 @@ test('a fresh bare load names the remembered Processes focus in the URL', async 
   assert.equal(groupsFocus.value, 'processes');
 });
 
-test('a remembered Processes focus stays out of the URL while processes are off', async (t) => {
-  const { browsing } = await bootGroupsFocus(t, '/', { focus: 'processes', processesHidden: true });
+test('a remembered Processes focus stays out of the URL while processes are off, and survives', async (t) => {
+  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'processes', processesHidden: true });
   assert.equal(browsing.at(), '/');
+  assert.deepEqual(restores, [], 'no synthetic restore clobbers the remembered lens');
+  assert.equal(groupsFocus.value, 'processes');
+});
+
+test('a stale-target fallback lands on the remembered Processes lens', async (t) => {
+  // /terminals with no panes (they do not survive a reload) is unavailable.
+  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/terminals', { focus: 'processes' });
+  assert.equal(browsing.at(), '/groups/processes');
+  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
+  assert.equal(groupsFocus.value, 'processes');
 });
 
 test('focus switches push entries and Back returns to the Agents focus', async (t) => {

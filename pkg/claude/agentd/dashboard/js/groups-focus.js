@@ -39,11 +39,14 @@ export function groupsFocusLocation(focus) {
 }
 
 // chooseGroupsFocus is the user gesture: switch, persist, and announce the
-// new location to nav-history so it pushes one entry. Re-selecting the
-// current focus is a no-op, so it never forges a history step.
+// new location to nav-history so it pushes one entry. It also leaves the
+// Route map, whose subview would otherwise keep hiding the chosen lens.
+// Re-selecting the shown focus is a no-op, so it never forges a history step.
 export function chooseGroupsFocus(state, next, { doc = document } = {}) {
   const focus = normalizeGroupsFocus(next);
-  if (state.focus.value === focus) return false;
+  const onRoutes = state.subview.value === 'routes';
+  if (state.focus.value === focus && !onRoutes) return false;
+  if (onRoutes) state.setSubview('members', '');
   state.setFocus(focus);
   doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: groupsFocusLocation(focus) } }));
   return true;
@@ -82,14 +85,13 @@ export function GroupsFocusSwitch({ state, groups, wizard = false }) {
   const focus = effectiveGroupsFocus(state);
   const segment = (value, glyph, plain, arcane, count, title) => html`<button
       type="button"
-      role="radio"
       class=${`groups-focus-option${focus === value ? ' active' : ''}`}
-      aria-checked=${focus === value ? 'true' : 'false'}
+      aria-pressed=${focus === value ? 'true' : 'false'}
       data-groups-focus=${value}
       title=${title}
       onClick=${() => chooseGroupsFocus(state, value)}
     ><span aria-hidden="true">${glyph}</span> ${wizard ? arcane : plain}${count != null && html` <span class="groups-focus-count">${count}</span>`}</button>`;
-  return html`<div class="groups-focus-switch" role="radiogroup" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
+  return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
     ${segment('agents', '👥', 'Agents', 'Familiars', agentCount(groups), 'Agents focus: member tables, with process state as small indicators')}
     ${segment('processes', '◈', 'Processes', 'Rites', null, 'Processes focus: run graphs per group, with agents as avatars on the nodes they perform')}
   </div>`;

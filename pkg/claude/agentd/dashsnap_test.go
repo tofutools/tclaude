@@ -777,7 +777,7 @@ func baseStates() []dashsnap.State {
   }
   var agents = document.querySelector('.groups-focus-switch [data-groups-focus="agents"]');
   if (!agents) throw new Error('groups focus switch did not render');
-  if (agents.getAttribute('aria-checked') !== 'true') throw new Error('Agents is not the default focus');
+  if (agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents is not the default focus');
   if (!document.querySelector('#groups-list details[data-group-key]')) throw new Error('Agents focus lost the member tables');
 })();`,
 			SettleMS: 200,
@@ -796,7 +796,7 @@ func baseStates() []dashsnap.State {
   groups.focus.value = 'processes';
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var processes = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
-  if (!processes || processes.getAttribute('aria-checked') !== 'true') throw new Error('Processes focus is not selected');
+  if (!processes || processes.getAttribute('aria-pressed') !== 'true') throw new Error('Processes focus is not selected');
   if (!document.querySelector('[data-groups-processes-placeholder]')) throw new Error('Processes placeholder missing');
   if (document.querySelector('#groups-list details[data-group-key]')) throw new Error('member tables still shown in Processes focus');
 })();`,

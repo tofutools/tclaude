@@ -156,6 +156,7 @@ function openGroupsFocus(focus) {
   if (!groups?.setFocus) return;
   const btn = $('nav [data-tab="groups"]');
   if (btn && !btn.classList.contains('active')) {
+    groups.setSubview?.('members', '');
     groups.setFocus(focus);
     btn.click();
     return;
