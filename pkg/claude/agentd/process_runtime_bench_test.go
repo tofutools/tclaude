@@ -112,7 +112,7 @@ func benchmarkWarmProcessRuns(b *testing.B, tasks int, enforceBudget bool) {
 		started := time.Now()
 		run, err := createProcessRun(context.Background(), processRunCreateRequest{
 			TemplateID: benchmarkTemplateID(tasks), AuthorizeProgramProfiles: []string{"benchmark"},
-		}, "benchmark")
+		}, "benchmark", db.ProcessRunScope{})
 		created := time.Now()
 		if err != nil {
 			b.Fatal(err)
@@ -153,7 +153,7 @@ func benchmarkColdProcessRuns(b *testing.B, tasks int) {
 		b.StopTimer()
 		fixture, err := createProcessRun(context.Background(), processRunCreateRequest{
 			TemplateID: benchmarkTemplateID(tasks), AuthorizeProgramProfiles: []string{"benchmark"},
-		}, "benchmark")
+		}, "benchmark", db.ProcessRunScope{})
 		if err != nil {
 			b.Fatal(err)
 		}

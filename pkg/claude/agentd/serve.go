@@ -1554,6 +1554,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", processRoute(handleProcessRunResolveBlocked))
+	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", processRoute(handleProcessRunRescope))
 	return idempotencyRequests(logRequest(auditRequests(dispatchHTTPProxyGateway(mux))))
 }
 
