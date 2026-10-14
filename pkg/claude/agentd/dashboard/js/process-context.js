@@ -163,6 +163,41 @@ async function processRequest(path, init, fetchImpl) {
   return body;
 }
 
+// templateStartRequirements lists a template's params (required first) and
+// the distinct program profiles its program performers use, walking stages
+// and inline subprocess bodies. An unnamed profile is the empty string, as
+// the server names it.
+export function templateStartRequirements(template = {}) {
+  const params = Object.entries(template.params || {}).map(([name, spec]) => ({
+    name,
+    type: String(spec?.type || 'string'),
+    description: String(spec?.description || ''),
+    required: spec?.required === true || (spec?.required === undefined && spec?.default === undefined),
+    default: spec?.default === undefined || spec?.default === null ? '' : String(spec.default),
+    hasDefault: spec?.default !== undefined && spec?.default !== null,
+  })).sort((a, b) => (a.required === b.required ? a.name.localeCompare(b.name, 'en') : a.required ? -1 : 1));
+  const profiles = new Set();
+  const walk = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (value.kind === 'program' && (typeof value.run === 'string' || Array.isArray(value.run) || 'profile' in value)) {
+      profiles.add(String(value.profile || ''));
+    }
+    for (const child of Object.values(value)) walk(child);
+  };
+  walk(template.nodes);
+  return { params, programProfiles: [...profiles].sort() };
+}
+
+// unauthorizedProfiles reads the profiles a 403 process_program_unauthorized
+// refusal names ("...authorization: a, b"; "<empty>" is the unnamed one).
+export function unauthorizedProfiles(message = '') {
+  const at = String(message).indexOf('require explicit authorization:');
+  if (at < 0) return [];
+  return String(message).slice(at + 'require explicit authorization:'.length).split(',')
+    .map((profile) => profile.trim()).filter(Boolean).map((profile) => (profile === '<empty>' ? '' : profile));
+}
+
 // processRunApi is the start-a-run seam the Groups Processes lens uses; tests
 // and dashsnap swap the fetch underneath.
 export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
@@ -175,9 +210,20 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     // (process.runs.start covering the group; the human always passes).
     // `attemptKey` makes a retried submit of the same attempt replay rather
     // than start a second run.
-    async startGroupRun({ templateId, group, attemptKey = newAttemptKey() }) {
+    // templateRequirements reads what starting a template asks for: its
+    // params and the program profiles its programs run under (inline bodies
+    // included; a referenced template's are named by the server's refusal).
+    async templateRequirements(templateId) {
+      const body = await processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, {}, fetchImpl);
+      return templateStartRequirements(body.template || {});
+    },
+    async startGroupRun({ templateId, group, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
       const path = '/v1/process/runs';
-      const body = JSON.stringify({ templateId, group, authorizeProgramProfiles: [] });
+      const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
+      const body = JSON.stringify({
+        templateId, group, ...(Object.keys(filled).length ? { params: filled } : {}),
+        authorizeProgramProfiles: [...authorizeProgramProfiles],
+      });
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);

@@ -1370,8 +1370,18 @@ export class ProcessTemplateEditor {
 
   toggleScribeDock(open = !this.scribeDock.open) {
     if (this.destroyed || !this.options.scribeDock) return false;
+    const changed = this.scribeDock.open !== !!open;
     this.scribeDock = { ...this.scribeDock, open: !!open };
     this.updateChrome?.();
+    // The dock is a column beside the canvas: opening it narrows the view
+    // and would clip the right-hand nodes. Refit once the column has laid
+    // out (never during a pointer gesture).
+    if (changed && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyed || this.graph?.interactionSnapshot?.()?.active) return;
+        this.graph?.fit?.();
+      }));
+    }
     return true;
   }
 
@@ -1495,6 +1505,18 @@ export class ProcessTemplateEditor {
     const item = { type: 'node', id: node.id };
     this.setSelection(event?.shiftKey || event?.ctrlKey || event?.metaKey
       ? toggleSelection(this.selection, item) : item);
+    // Selecting one node docks its inspector beside the canvas, narrowing
+    // it: a node near the right edge would end up clipped under the new
+    // column. Once the inspector has laid out, pan just enough to keep the
+    // clicked node in view (never during a pointer gesture).
+    if (this.selection?.type === 'node' && this.selection.id === node.id && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyed || this.selection?.type !== 'node' || this.selection.id !== node.id) return;
+        if (this.graph?.interactionSnapshot?.()?.active) return;
+        const laid = this.graph?.layoutSnapshot().nodes.find((candidate) => candidate.id === node.id);
+        if (laid) this.graph.revealPoint(laid.x, laid.y);
+      }));
+    }
   }
 
   // Double-click is the logical-zoom gesture (design §8a): zoom into the

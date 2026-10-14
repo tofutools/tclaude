@@ -55,6 +55,10 @@ test('bounds come from the snapshot row of the bound agent', async (t) => {
   assert.deepEqual(bounds.grants, ['agent.message', 'self.process']);
   assert.equal(bounds.costUSD, 1.234);
   assert.deepEqual(bounds.groups, [{ id: 7, name: 'webshop' }, { id: 9, name: 'search' }]);
+  assert.equal(bounds.name, snapshot().agents.find((a) => a.agent_id === 'agt_search').title || '');
+  assert.deepEqual(stepper.namedScope({ kind: 'agent', agentId: 'agt_search' }, 'agt_search', 'search-indexer'),
+    { kind: 'agent', agentId: 'agt_search', agentName: 'search-indexer' }, 'the ◉ chip names the pane agent');
+  assert.deepEqual(stepper.namedScope({ kind: 'group', group: 'webshop' }, 'agt_search', 'x'), { kind: 'group', group: 'webshop' });
   assert.equal(stepper.agentRunBounds(snapshot(), 'agt_unknown'), null);
   assert.equal(stepper.agentRunBounds(null, 'agt_search'), null);
   assert.ok(stepper.isAgentScopedTo(agentRun(), 'agt_search'));

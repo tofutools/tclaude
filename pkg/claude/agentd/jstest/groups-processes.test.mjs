@@ -124,7 +124,7 @@ test('+ start process starts a run scoped to the group and refreshes', async (t)
   const before = source.refreshes;
   await harness.act(() => harness.fireEvent(form, 'submit'));
   await settle(harness);
-  assert.deepEqual(started, [{ templateId: 'tpl_b', group: 'frontend-squad' }]);
+  assert.deepEqual(started, [{ templateId: 'tpl_b', group: 'frontend-squad', params: {}, authorizeProgramProfiles: [] }]);
   assert.equal(source.refreshes, before + 1);
   assert.equal(fe.querySelector('form'), null, 'the form closes after a start');
 });
@@ -180,4 +180,64 @@ test('starting a run posts the group with idempotency headers', async (t) => {
   assert.deepEqual(JSON.parse(init.body), { templateId: 'tpl_a', group: 'frontend-squad', authorizeProgramProfiles: [] });
   assert.equal(init.headers['Idempotency-Key'], '11111111-2222-4333-8444-555555555555');
   assert.match(init.headers['X-Tclaude-Request-Digest'], /^[0-9a-f]{64}$/);
+});
+
+test('the start form asks for params and explicit program authorization', async (t) => {
+  const started = [];
+  let refuse = true;
+  const api = {
+    listTemplates: async () => [{ id: 'tpl_a', name: 'Alpha' }],
+    templateRequirements: async () => ({
+      params: [
+        { name: 'issue', type: 'string', required: true, default: '', hasDefault: false, description: 'Tracker issue' },
+        { name: 'branch', type: 'string', required: false, default: 'main', hasDefault: true, description: '' },
+      ],
+      programProfiles: ['ci'],
+    }),
+    startGroupRun: async (request) => {
+      if (refuse) { refuse = false; throw new Error('program profiles require explicit authorization: ci, deploy'); }
+      started.push(request);
+      return { runId: 'run_new' };
+    },
+  };
+  const { harness, group } = await mountFocus(t, { api });
+  const fe = group('frontend-squad');
+  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start="frontend-squad"]'), 'click'));
+  await settle(harness);
+  const form = fe.querySelector('form.gp-start-form');
+  const submit = form.querySelector('button[type="submit"]');
+  assert.ok(submit.disabled, 'a required param blocks the start');
+  assert.equal(form.querySelector('[data-start-param="branch"]').value, 'main', 'a default starts out filled in');
+  const input = form.querySelector('[data-start-param="issue"]');
+  Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'TCL-1' });
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  const ci = form.querySelector('[data-start-profile="ci"]');
+  assert.ok(!ci.checked, 'program authorization is never pre-ticked');
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  await settle(harness);
+  assert.ok(form.querySelector('[data-start-profile="deploy"]'), 'a refusal naming more profiles lists them');
+  for (const profile of ['ci', 'deploy']) {
+    const box = form.querySelector(`[data-start-profile="${profile}"]`);
+    Object.defineProperty(box, 'checked', { configurable: true, writable: true, value: true });
+    await harness.act(() => harness.fireEvent(box, 'change'));
+  }
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  await settle(harness);
+  assert.deepEqual(started, [{ templateId: 'tpl_a', group: 'frontend-squad', params: { branch: 'main', issue: 'TCL-1' }, authorizeProgramProfiles: ['ci', 'deploy'] }]);
+});
+
+test('template start requirements walk stages and inline bodies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/process-context.js');
+  const needs = mod.templateStartRequirements({
+    params: { b: { type: 'string', default: 'x' }, a: { type: 'number', required: true } },
+    nodes: {
+      t: { type: 'task', performer: { kind: 'program', run: 'make', profile: 'ci' }, checks: [{ performer: { kind: 'program', run: 'lint' } }] },
+      q: { type: 'subprocess', subprocess: { nodes: { u: { type: 'task', performer: { kind: 'program', run: 'go test', profile: 'test' } } } } },
+      h: { type: 'decision', performer: { kind: 'human' } },
+    },
+  });
+  assert.deepEqual(needs.params.map((p) => [p.name, p.required, p.hasDefault]), [['a', true, false], ['b', false, true]]);
+  assert.deepEqual(needs.programProfiles, ['', 'ci', 'test']);
+  assert.deepEqual(mod.unauthorizedProfiles('program profiles require explicit authorization: <empty>, ci'), ['', 'ci']);
 });

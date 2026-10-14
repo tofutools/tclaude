@@ -20,6 +20,13 @@ const html = htm.bind(h);
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
+// namedScope labels a ◉ scope bound to this pane's agent with the agent's
+// display name rather than its stable id.
+export function namedScope(scope, agentId, name) {
+  if (!scope || String(scope.kind || '').toLowerCase() !== 'agent' || !name) return scope;
+  return scope.agentId === agentId && !scope.name && !scope.agentName ? { ...scope, agentName: name } : scope;
+}
+
 // isAgentScopedTo reports whether run is bound to agentId (◉ scope).
 export function isAgentScopedTo(run, agentId) {
   const scope = run?.scope || {};
@@ -45,6 +52,7 @@ export function agentRunBounds(snapshotValue, agentId) {
   const groupIDs = new Map((snapshotValue.groups || []).map((group) => [group?.name, group?.id]));
   const groups = (member.groups || []).map((name) => ({ id: groupIDs.get(name) ?? name, name }));
   return {
+    name: String(member.title || member.name || ''),
     cwd: String(state.cwd || ''),
     dir: baseName(state.cwd),
     sandbox,
@@ -182,7 +190,7 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
     <div class="pk-run-popover pk-agent-stepper" role="dialog" aria-label=${`${runName(run)} in this agent`} data-process-popover=${run.runId} data-process-stepper>
       <div class="pk-run-popover-head">
         <b class="pk-run-popover-name">${runName(run)}</b>
-        <${ProcessScopeChip} scope=${run.scope} />
+        <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, bounds?.name)} />
         <${ProcessStateChip} state=${view.state} label=${String(run.status || view.state)} />
         <${ProcessPausedChip} run=${run} />
         ${onClose ? html`<button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
