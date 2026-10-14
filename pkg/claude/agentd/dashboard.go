@@ -304,6 +304,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/process/runs/{id}/events", dashboardProcessRoute(handleProcessRunEvents))
 	mux.HandleFunc("GET /v1/process/context", dashboardProcessRoute(handleProcessContext))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", dashboardProcessRoute(handleProcessRunDecide))
+	// The Terminals overlay promotes an agent-scoped run to a group (T3).
+	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", dashboardProcessRoute(handleProcessRunRescope))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)

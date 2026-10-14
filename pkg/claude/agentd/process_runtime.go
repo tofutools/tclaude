@@ -1534,6 +1534,12 @@ func loadProcessRunView(runID string) (processRunView, error) {
 }
 
 func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, claimed bool) (processRunView, error) {
+	return processRunViewWith(record, accounted, claimed, newProcessLiveness())
+}
+
+// processRunViewWith is processRunViewOf sharing one liveness read across the
+// runs a caller projects.
+func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, claimed bool, live processLiveness) (processRunView, error) {
 	var checkpoint engine.Checkpoint
 	if err := record.DecodeCheckpoint(&checkpoint); err != nil {
 		return processRunView{}, err
@@ -1550,7 +1556,7 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 	// is precisely why a cold load calls every outstanding command ambiguous.
 	// The live claim is the only thing that knows which ones it owns; see
 	// loadProcessRunView for how that reading is kept conservative.
-	performerByCommand, performers, err := processRunPerformerViews(record.ID)
+	performerByCommand, performers, err := processRunPerformerViews(record.ID, live)
 	if err != nil {
 		return processRunView{}, err
 	}

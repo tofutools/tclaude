@@ -27,8 +27,11 @@ func processRunFilterSQL(filter ProcessRunFilter) (string, []any) {
 		args = append(args, filter.AgentID)
 	}
 	if filter.Performer != "" {
-		where.WriteString(` AND scope_kind = 'agent' AND scope_agent_id = ?`)
-		args = append(args, filter.Performer)
+		// An agent performs a run it is bound to, and any run with a node
+		// attempt dispatched to it.
+		where.WriteString(` AND ((scope_kind = 'agent' AND scope_agent_id = ?)
+			OR id IN (SELECT run_id FROM process_agent_dispatches WHERE agent_id = ?))`)
+		args = append(args, filter.Performer, filter.Performer)
 	}
 	return where.String(), args
 }

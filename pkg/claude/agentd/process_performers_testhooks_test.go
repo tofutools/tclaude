@@ -1,8 +1,9 @@
 package agentd
 
-// ProcessRunScopeForTest is the run scope a flow test binds a run to. It stands
-// in for the persisted scope columns (tcl-mrhhuc) until they land; once they
-// do, tests start scoped runs through the real API instead.
+// ProcessRunScopeForTest is the run scope a flow test binds a run to without
+// going through scoped run creation, so a test can pick an owner or an
+// orphaned state directly. TestProcessPerformer_PersistedGroupScope covers the
+// persisted scope end to end.
 type ProcessRunScopeForTest struct {
 	Kind     string // "none", "group", or "agent"
 	GroupID  int64

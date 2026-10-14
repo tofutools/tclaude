@@ -25,6 +25,7 @@ import { nodeColor } from './skynet-model.js';
 import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions } from './process-terminal-overlay.js';
+import { agentRunBounds } from './process-agent-stepper.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -352,6 +353,7 @@ function PaneProcessOverlay({ agentId, snapshot, onComposeMessage }) {
   const enabled = !!snapshot?.value?.processes_enabled;
   const [actions] = useState(() => processOverlayActions());
   return html`<${ProcessPaneOverlay} agentId=${agentId} enabled=${enabled}
+    bounds=${enabled ? agentRunBounds(snapshot?.value, agentId) : null}
     actions=${{ ...actions, onComposeMessage }} />`;
 }
 

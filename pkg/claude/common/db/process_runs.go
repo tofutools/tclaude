@@ -112,9 +112,8 @@ type ProcessRunScope struct {
 func (s ProcessRunScope) Orphaned() bool { return s.State == ProcessRunScopeOrphaned }
 
 // ProcessRunFilter narrows a summary listing. Zero values match everything;
-// set fields combine with AND. Performer currently matches agent-scoped runs
-// bound to that agent — the only performer a run records until per-node
-// performer dispatch lands.
+// set fields combine with AND. Performer matches runs bound to that agent and
+// runs with a node attempt dispatched to it.
 type ProcessRunFilter struct {
 	GroupID   int64
 	AgentID   string
