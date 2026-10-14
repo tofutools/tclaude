@@ -82,6 +82,8 @@ test('miniGraphLayout lays a run out left to right with routed edges', async (t)
   assert.equal(edge('fanout', 'checkout').state, 'running');
   assert.equal(edge('ship', 'end').state, 'planned');
   assert.equal(edge('review', 'qa').label, 'approved');
+  const gap = at.qa.x - at.qa.width / 2 - (at.review.x + at.review.width / 2);
+  assert.ok(gap >= 'approved'.length * 5.4 + 20, `a labelled edge leaves room for its label (gap ${gap})`);
   assert.match(edge('checkout', 'qa').path, /^M[\d.]+,[\d.]+( L[\d.]+,[\d.]+)+$/, 'a rank-skipping edge keeps the layout\'s orthogonal route');
   for (const [x, y] of edge('checkout', 'qa').path.matchAll(/([\d.-]+),([\d.-]+)/g).map((m) => [Number(m[1]), Number(m[2])])) {
     assert.ok(x >= 0 && x <= layout.width && y >= 0 && y <= layout.height, `route point ${x},${y} is inside the bounds`);

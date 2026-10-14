@@ -305,6 +305,9 @@ const MINI = Object.freeze({
   compact: { height: 28, minWidth: 74, maxWidth: 156, charWidth: 5.9, pad: 36, rankSep: 34, nodeSep: 12, margin: 14, subHeight: 0 },
 });
 
+// Approximate advance of one .pk-elabel character (9.5px UI font).
+const LABEL_CHAR_WIDTH = 5.4;
+
 function miniNodeSize(node, scale) {
   if (isTerminalKind(node.kind)) return { width: 30, height: 30 };
   if (node.kind === 'decision') return { width: scale.height + 18, height: scale.height + 18 };
@@ -376,6 +379,22 @@ export function miniGraphLayout(run, { compact = false } = {}) {
   const routePoints = [...routed.values()].flat();
   const top = Math.min(...nodes.map((node) => position.get(node.id).y - sizes.get(node.id).height / 2), ...routePoints.map((p) => p.y - 4));
   const left = Math.min(...nodes.map((node) => position.get(node.id).x - sizes.get(node.id).width / 2), ...routePoints.map((p) => p.x));
+  // A labelled edge ("approved") needs room between its ranks, or the label
+  // sits on top of the nodes it joins: widen just that gap by pushing
+  // everything from the target's rank rightwards.
+  const labelled = edges
+    .filter((edge) => !edge.back && String(edge.label || edge.outcome || ''))
+    .map((edge) => ({ edge, from: position.get(edge.from), to: position.get(edge.to) }))
+    .filter(({ from, to }) => from && to && to.x > from.x)
+    .sort((a, b) => a.to.x - b.to.x);
+  for (const { edge, from, to } of labelled) {
+    const gap = (to.x - sizes.get(edge.to).width / 2) - (from.x + sizes.get(edge.from).width / 2);
+    const need = Math.ceil(String(edge.label || edge.outcome).length * LABEL_CHAR_WIDTH) + 20;
+    if (gap >= need) continue;
+    const edgeX = to.x - sizes.get(edge.to).width / 2;
+    for (const pos of position.values()) if (pos.x - 1 > edgeX) pos.x += need - gap;
+    for (const p of routePoints) if (p.x >= edgeX) p.x += need - gap;
+  }
   const dy = scale.margin - top;
   const dx = scale.margin - left;
   for (const pos of position.values()) { pos.x += dx; pos.y += dy; }

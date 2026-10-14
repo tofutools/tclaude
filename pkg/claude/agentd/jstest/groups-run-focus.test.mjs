@@ -413,3 +413,12 @@ test('the run detail API posts idempotent pause and resume', async (t) => {
   await api.resume('run/1');
   assert.equal(calls.at(-1).path, '/v1/process/runs/run%2F1/resume');
 });
+
+test('the run graph scales to fit its pane, down to a readable floor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { graphFitScale } = await harness.importDashboardModule('js/groups-run-focus.js');
+  assert.equal(graphFitScale({ width: 400, height: 200 }, { width: 900, height: 500 }), 1, 'a small graph is never enlarged');
+  assert.equal(graphFitScale({ width: 1200, height: 200 }, { width: 948, height: 500 }), 0.75);
+  assert.equal(graphFitScale({ width: 4000, height: 200 }, { width: 948, height: 500 }), 0.55, 'past the floor the pane scrolls');
+  assert.equal(graphFitScale(null, { width: 900, height: 500 }), 1);
+});

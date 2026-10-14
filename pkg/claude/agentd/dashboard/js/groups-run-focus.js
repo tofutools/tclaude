@@ -15,7 +15,7 @@ import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
-  kindLabel, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
+  kindLabel, miniGraphLayout, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
@@ -27,6 +27,17 @@ const html = htm.bind(h);
 // run that has been open for hours must not grow without bound.
 const MAX_EVENTS = 1000;
 const HISTORY_ROWS = 8;
+// The opened graph shrinks to fit its pane, but not below this: past it the
+// labels stop being readable and the pane scrolls instead.
+const MIN_GRAPH_SCALE = 0.55;
+const GRAPH_PAD = { x: 48, y: 36 };
+
+// graphFitScale is the zoom that fits a run's whole graph in the pane.
+export function graphFitScale(size, pane) {
+  if (!size?.width || !size?.height || !pane?.width || !pane?.height) return 1;
+  const fit = Math.min((pane.width - GRAPH_PAD.x) / size.width, (pane.height - GRAPH_PAD.y) / size.height, 1);
+  return Math.max(MIN_GRAPH_SCALE, Math.round(fit * 100) / 100);
+}
 
 function memberName(member) {
   return member?.title || member?.agent_id || member?.conv_id || '';
@@ -322,22 +333,42 @@ export function GroupsRunFocus({
   const [picked, setPicked] = useState({ runId, nodeId: '' });
   const nodeId = picked.runId === runId && picked.nodeId ? picked.nodeId : defaultNode(run, detail.view);
   const node = run ? runGraphNodes(run).find((item) => item.id === nodeId) || null : null;
-  // A wide graph scrolls; bring the selected node into view when a run opens
-  // or the selection moves, without scrolling the page.
+  // Opening a run shows the whole graph: it scales down to fit the pane
+  // (to a readable floor) and refits when the pane resizes.
   const graphRef = useRef(null);
+  const [graphScale, setGraphScale] = useState(1);
+  const layoutSize = run ? miniGraphLayout(run) : null;
+  const sizeKey = layoutSize ? `${layoutSize.width}x${layoutSize.height}` : '';
+  useEffect(() => {
+    const pane = graphRef.current;
+    if (!pane || !layoutSize) return undefined;
+    const refit = () => setGraphScale(graphFitScale(layoutSize, { width: pane.clientWidth, height: pane.clientHeight }));
+    refit();
+    // A run opens at the graph's start; the reveal below scrolls only if
+    // the selected node is still out of view.
+    pane.scrollLeft = 0;
+    pane.scrollTop = 0;
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(refit);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [runId, sizeKey]);
+  // A graph still too wide at the floor scrolls; bring the selected node into
+  // view when a run opens or the selection moves, without scrolling the page.
   useEffect(() => {
     const pane = graphRef.current;
     const target = node && [...(pane?.querySelectorAll('[data-process-node]') || [])].find((el) => el.dataset.processNode === node.id);
     if (!pane || !target?.getBoundingClientRect) return;
     const paneBox = pane.getBoundingClientRect();
     const box = target.getBoundingClientRect();
-    if (box.left < paneBox.left || box.right > paneBox.right) {
-      pane.scrollLeft += box.left - paneBox.left - (paneBox.width - box.width) / 2;
-    }
-    if (box.top < paneBox.top || box.bottom > paneBox.bottom) {
-      pane.scrollTop += box.top - paneBox.top - (paneBox.height - box.height) / 2;
-    }
-  }, [runId, node?.id, !!run]);
+    // Scroll only as far as needed (with a margin), so as much of the graph
+    // as fits stays in view around the node.
+    const margin = 24;
+    if (box.left < paneBox.left) pane.scrollLeft -= paneBox.left - box.left + margin;
+    else if (box.right > paneBox.right) pane.scrollLeft += box.right - paneBox.right + margin;
+    if (box.top < paneBox.top) pane.scrollTop -= paneBox.top - box.top + margin;
+    else if (box.bottom > paneBox.bottom) pane.scrollTop += box.bottom - paneBox.bottom + margin;
+  }, [runId, node?.id, !!run, graphScale]);
   const busy = new Set();
   for (const item of runs) {
     for (const n of item.nodes || []) {
@@ -422,8 +453,8 @@ export function GroupsRunFocus({
       </div>
       ${run
     ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}
-        onDragOver=${onDragOver} onDragLeave=${(event) => { if (!event.currentTarget?.contains?.(event.relatedTarget)) setDropTarget(''); }} onDrop=${(event) => void onDrop(event)}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
-        onNodeClick=${(clicked) => setPicked({ runId, nodeId: clicked.id })} /></div>`
+        onDragOver=${onDragOver} onDragLeave=${(event) => { if (!event.currentTarget?.contains?.(event.relatedTarget)) setDropTarget(''); }} onDrop=${(event) => void onDrop(event)}><div class="grf-graph-fit" style=${`zoom:${graphScale}`} data-graph-scale=${graphScale}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
+        onNodeClick=${(clicked) => setPicked({ runId, nodeId: clicked.id })} /></div></div>`
     : html`<div class="grf-muted grf-gone">${wizard ? 'This rite is no longer in view.' : 'This run is no longer in the process context.'}</div>`}
       <${PerformerDock} members=${members} busy=${busy} wizard=${wizard} />
     </section>
