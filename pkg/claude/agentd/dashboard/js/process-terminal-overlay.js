@@ -130,8 +130,10 @@ export function nodeNeighbourhood(run, nodeId) {
     upstream: upstream.map((edge) => describe(edge.from, edge.label)),
     siblings: siblings.map((id) => describe(id)),
     downstream: downstream.map((edge) => describe(edge.to, edge.label)),
-    // A lone unlabelled `next` is plain sequencing, not an outcome to pick.
-    outcomes: downstream.map((edge) => edge.label).filter((label) => label && label !== 'next'),
+    // Outcomes include back edges: a rework verdict (changes → implement)
+    // loops back but is still a verdict. A lone `next` is plain sequencing.
+    outcomes: [...new Set(edges.filter((edge) => edge.from === nodeId).map((edge) => edge.label)
+      .filter((label) => label && label !== 'next'))],
   };
 }
 
@@ -208,6 +210,22 @@ function NeighbourList({ items, prefix }) {
 export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
   const view = runIconView(run, agentId);
   const node = view.node;
+  // A run bound to the agent may be at a step someone else performs; the
+  // kit then names the run's current node, which is not this agent's.
+  const mine = !!node && (node.performers || []).some((performer) => String(performer?.id) === String(agentId));
+  const [deciding, setDeciding] = useState(false);
+  const [decideError, setDecideError] = useState('');
+  const decide = async (verdict) => {
+    setDeciding(true);
+    setDecideError('');
+    try {
+      await actions.decide(run, node.id, verdict);
+    } catch (error) {
+      setDecideError(String(error?.message || error || 'decision failed'));
+    } finally {
+      setDeciding(false);
+    }
+  };
   const around = node ? nodeNeighbourhood(run, node.id) : { upstream: [], siblings: [], downstream: [], outcomes: [] };
   const age = formatRunAge(run.startedAt);
   const owner = ownerAgentID(run);
@@ -226,7 +244,7 @@ export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
       <div class="pk-run-popover-body">
         <div class="pk-run-popover-node">
           ${node ? html`
-            <div class="pk-run-popover-kicker">This agent's node${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
+            <div class="pk-run-popover-kicker">${mine ? "This agent's node" : 'The run is at'}${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
             <div class="pk-run-popover-title">${node.label || node.id}</div>
             ${node.description ? html`<p class="pk-run-popover-desc">${node.description}</p>` : null}
             ${around.outcomes.length ? html`<div class="pk-run-popover-outcomes"><b>Outcomes:</b>
@@ -249,9 +267,10 @@ export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
           title="Reassigning a node arrives with performer dispatch">↻ reassign node</button>
         ${awaitingDecision && actions.decide
           ? around.outcomes.map((verdict) => html`<button key=${verdict} type="button" class="mux-btn pk-run-popover-verdict"
-              title=${`Decide ${verdict} as the human`} onClick=${() => actions.decide(run, node.id, verdict)}>✓ ${verdict} (as human)</button>`)
+              disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)</button>`)
           : html`<button type="button" class="mux-btn" disabled=${true}
               title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)</button>`}
+        ${decideError ? html`<span class="pk-run-popover-error" role="alert">${decideError}</span>` : null}
       </div>
     </div>
   `;
@@ -264,13 +283,19 @@ export function processOverlayActions({ onComposeMessage = null, fetch = (...arg
   return {
     onComposeMessage,
     openGroups: () => globalThis.document?.querySelector('nav [data-tab="groups"]')?.click(),
+    // decide throws the server's message on a refused decision (stale,
+    // already decided, forbidden) so the popover can show it.
     decide: async (run, nodeId, verdict) => {
-      await fetch(`/v1/process/runs/${encodeURIComponent(run.runId)}/decide`, {
+      const response = await fetch(`/v1/process/runs/${encodeURIComponent(run.runId)}/decide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodeId, verdict }),
       });
       await refreshProcessContext();
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message || body?.error || `decision refused (HTTP ${response.status})`);
+      }
     },
   };
 }

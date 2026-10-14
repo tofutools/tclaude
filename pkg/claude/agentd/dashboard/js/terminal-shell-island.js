@@ -319,7 +319,9 @@ function TerminalPane({
         `}
       </div>
       ${!pane.seed.remote && pane.seed.agent ? html`<${PaneProcessOverlay} agentId=${pane.seed.agent}
-        snapshot=${processSnapshot} onComposeMessage=${onComposeMessage} />` : null}
+        snapshot=${processSnapshot} onComposeMessage=${onComposeMessage
+          ? (seed) => onComposeMessage({ ...seed, restoreFocus: () => actions.activatePane(pane.key) })
+          : null} />` : null}
       ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}

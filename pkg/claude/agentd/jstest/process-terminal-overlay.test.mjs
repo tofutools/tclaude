@@ -68,6 +68,13 @@ test('runs for an agent come from its bound runs and the nodes it performs', asy
   assert.deepEqual(around.downstream.map((item) => item.id), ['end', 'fix']);
   assert.deepEqual(around.outcomes, ['approved', 'changes'], 'back edges never count as outcomes');
   assert.deepEqual(mod.nodeNeighbourhood(context.runs.run_review, 'implement').siblings.map((item) => item.id), ['lint']);
+  // A rework verdict looping back is still a verdict.
+  const loop = { nodes: context.runs.run_review.nodes, edges: [
+    { from: 'implement', to: 'gate', label: 'next' },
+    { from: 'gate', to: 'end', label: 'approved' },
+    { from: 'gate', to: 'implement', label: 'changes', back: true }] };
+  assert.deepEqual(mod.nodeNeighbourhood(loop, 'gate').outcomes, ['approved', 'changes']);
+  assert.deepEqual(mod.nodeNeighbourhood(loop, 'gate').downstream.map((item) => item.id), ['end']);
 
   assert.equal(mod.formatRunAge('2026-01-01T00:00:00Z', Date.parse('2026-01-01T01:35:00Z')), '1h 35m');
   assert.equal(mod.formatRunAge('', 0), '');
@@ -142,16 +149,34 @@ test('the popover shows the agent\'s node, what is around it, and acts on the ru
   await harness.act(() => harness.fireEvent(verdicts[1], 'click'));
   assert.deepEqual(decided, [['run_review', 'gate', 'changes']]);
   assert.match(gate.container.textContent, /Approve or send back\./, 'the node description is the contract');
+  assert.match(gate.container.textContent, /This agent's node/);
   await gate.unmount();
+
+  // A refused decision is shown, not swallowed.
+  const refusing = { ...actions, decide: async () => { throw new Error('decision is stale'); } };
+  const refused = await harness.mount(harness.html`<${mod.ProcessRunPopover} run=${atGate} agentId="human" actions=${refusing} onClose=${() => {}} />`);
+  await harness.act(async () => { harness.fireEvent(refused.container.querySelector('.pk-run-popover-verdict'), 'click'); });
+  await harness.act(async () => {});
+  assert.match(refused.container.querySelector('.pk-run-popover-error').textContent, /decision is stale/);
+  await refused.unmount();
+
+  // A run bound to an agent that performs none of its nodes names the run's
+  // position, not "this agent's node".
+  const bound = await harness.mount(harness.html`<${mod.ProcessRunPopover} run=${run} agentId="agt_bound" actions=${actions} onClose=${() => {}} />`);
+  assert.match(bound.container.querySelector('.pk-run-popover-kicker').textContent, /The run is at/);
+  await bound.unmount();
 });
 
 test('production actions post the decision and refresh the context', async (t) => {
   const { mod, requests } = await overlay(t);
   const posts = [];
-  const actions = mod.processOverlayActions({ fetch: async (url, init) => { posts.push({ url, init }); return { ok: true }; } });
+  let reply = { ok: true };
+  const actions = mod.processOverlayActions({ fetch: async (url, init) => { posts.push({ url, init }); return reply; } });
   await actions.decide({ runId: 'run/1' }, 'gate', 'approved');
   assert.equal(posts[0].url, '/v1/process/runs/run%2F1/decide');
   assert.equal(posts[0].init.method, 'POST');
   assert.deepEqual(JSON.parse(posts[0].init.body), { nodeId: 'gate', verdict: 'approved' });
   assert.equal(requests.at(-1).url, '/v1/process/context');
+  reply = { ok: false, status: 409, json: async () => ({ code: 'process_run_stale', error: 'decision already made' }) };
+  await assert.rejects(actions.decide({ runId: 'r' }, 'gate', 'approved'), /decision already made/);
 });

@@ -61,6 +61,7 @@
   display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--pk-line);
 }
 .pk-run-popover-actions .mux-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
 .pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
 
 /* Tab-strip ("rail") miniatures */
