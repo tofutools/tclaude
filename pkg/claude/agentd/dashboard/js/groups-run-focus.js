@@ -352,11 +352,14 @@ export function GroupsRunFocus({
   // addressed by the executable id it runs under.
   const onAssign = api.assign ? async (target, agent) => {
     await api.assign(runId, { nodeId: target.dispatch?.nodeId || target.id, agent });
+    setDropError('');
     refresh();
     void source?.refresh?.();
   } : null;
   const [dropError, setDropError] = useState('');
   const [dropTarget, setDropTarget] = useState('');
+  // A refused drop's message belongs to the run it was made on.
+  useEffect(() => { setDropError(''); }, [runId]);
   const onDragOver = (event) => {
     if (!onAssign || ![...(event.dataTransfer?.types || [])].includes(DOCK_AGENT_TYPE)) return;
     const target = dropTargetNode(event, run);
@@ -411,7 +414,7 @@ export function GroupsRunFocus({
       </div>
       ${run
     ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}
-        onDragOver=${onDragOver} onDragLeave=${() => setDropTarget('')} onDrop=${(event) => void onDrop(event)}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
+        onDragOver=${onDragOver} onDragLeave=${(event) => { if (!event.currentTarget?.contains?.(event.relatedTarget)) setDropTarget(''); }} onDrop=${(event) => void onDrop(event)}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
         onNodeClick=${(clicked) => setPicked({ runId, nodeId: clicked.id })} /></div>`
     : html`<div class="grf-muted grf-gone">${wizard ? 'This rite is no longer in view.' : 'This run is no longer in the process context.'}</div>`}
       <${PerformerDock} members=${members} busy=${busy} wizard=${wizard} />

@@ -128,8 +128,6 @@ function nodesOf(run) {
   }));
 }
 
-// runGraphNodes is the normalized node list (kit kind, state, performers)
-// the graph draws, for surfaces that describe one node (the run inspector).
 // REASSIGNABLE_DISPATCH is the set of dispatch states whose attempt is still
 // outstanding and unreported, which is what the assign endpoint accepts.
 const REASSIGNABLE_DISPATCH = new Set(['pending', 'needs_performer', 'delivered']);
@@ -147,6 +145,8 @@ export function reassignableNode(run, node) {
   return { ok: true, why: '' };
 }
 
+// runGraphNodes is the normalized node list (kit kind, state, performers)
+// the graph draws, for surfaces that describe one node (the run inspector).
 export function runGraphNodes(run) {
   return nodesOf(run);
 }
