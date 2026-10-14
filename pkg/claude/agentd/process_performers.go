@@ -68,7 +68,13 @@ type processRunScope struct {
 	AgentID  string
 	Owner    string // "agent:<agent_id>" or "human:operator"
 	Orphaned bool
+	// Paused holds new agent turns: attempts already delivered keep going,
+	// pending ones wait for the operator's resume.
+	Paused bool
 }
+
+// processRunPausedWaitReason is why a paused run's undelivered attempt waits.
+const processRunPausedWaitReason = "the run is paused"
 
 // processOwnerOperator is the run owner for runs the operator started.
 const processOwnerOperator = "human:operator"
@@ -83,7 +89,7 @@ func defaultProcessRunScope(runID string) (processRunScope, error) {
 		return processRunScope{Kind: processScopeNone, Owner: processOwnerOperator}, err
 	}
 	scope := processRunScope{Kind: stored.Kind, GroupID: stored.GroupID, AgentID: stored.AgentID,
-		Owner: stored.Owner, Orphaned: stored.Orphaned()}
+		Owner: stored.Owner, Orphaned: stored.Orphaned(), Paused: stored.Paused()}
 	if scope.Kind == "" {
 		scope.Kind = processScopeNone
 	}
@@ -342,6 +348,8 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 	var choice processPerformerChoice
 	if scope.Orphaned {
 		choice.waitReason = "the run is orphaned: its scope target is gone"
+	} else if scope.Paused {
+		choice.waitReason = processRunPausedWaitReason
 	} else {
 		previous := previousProcessDispatch(row)
 		body := processDispatchMessage(row.RunID, command, "")

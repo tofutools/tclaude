@@ -308,6 +308,9 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// hands a node's attempt to another performer (T2/G5 reassign).
 	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", dashboardProcessRoute(handleProcessRunRescope))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/assign", dashboardProcessRoute(handleProcessRunAssign))
+	// The Pause / Resume control (T2/T3/G5) holds and releases a run.
+	mux.HandleFunc("POST /v1/process/runs/{id}/pause", dashboardProcessRoute(handleProcessRunPause))
+	mux.HandleFunc("POST /v1/process/runs/{id}/resume", dashboardProcessRoute(handleProcessRunResume))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)

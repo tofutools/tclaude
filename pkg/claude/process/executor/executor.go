@@ -88,7 +88,19 @@ type Run struct {
 	// explicitly reconcilable case: a cold load, a worker that never reported,
 	// or an observation that failed to commit.
 	dispatches map[string]*Dispatch
+	// held is an operator pause. A held run still commits engine-owned
+	// advances and the outcomes of attempts already in flight, but plans no
+	// new task command until it is released.
+	held bool
 }
+
+// Hold pauses (true) or releases (false) the run's planning. It is owner-only
+// in-memory state; the owner reloads it from the durable pause before every
+// planning call.
+func (r *Run) Hold(held bool) { r.held = held }
+
+// Held reports whether planning is paused.
+func (r *Run) Held() bool { return r.held }
 
 type Action struct {
 	Kind     ActionKind
@@ -407,7 +419,7 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if _, ok := run.firstUnaccountedCommand(); ok {
 		return nil, ErrNeedsReconcile
 	}
-	if run.checkpoint.Status != engine.RunRunning {
+	if run.checkpoint.Status != engine.RunRunning || run.held {
 		return nil, nil
 	}
 	next, command, advanced, err := engine.AdvanceAndPlan(run.checkpoint, run.definition)

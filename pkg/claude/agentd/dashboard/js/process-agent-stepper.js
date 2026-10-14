@@ -12,7 +12,9 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { ProcessNodeGlyph, ProcessScopeChip, ProcessStateChip, runIconView, runName, runSteps } from './process-kit.js';
+import {
+  ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, runIconView, runName, runSteps,
+} from './process-kit.js';
 
 const html = htm.bind(h);
 
@@ -153,8 +155,8 @@ function StepRow({ row }) {
   </div>`;
 }
 
-// ProcessAgentStepper is mock T3. actions: { promote(run, groupName) } —
-// optional; onGraph switches the popover to its graph view.
+// ProcessAgentStepper is mock T3. actions: { promote(run, groupName),
+// pause(run), resume(run) } — each optional; onGraph switches the popover to its graph view.
 export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {}, onGraph = null, onClose = null }) {
   const view = runIconView(run, agentId);
   const rows = stepperRows(run, agentId);
@@ -182,12 +184,13 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
         <b class="pk-run-popover-name">${runName(run)}</b>
         <${ProcessScopeChip} scope=${run.scope} />
         <${ProcessStateChip} state=${view.state} label=${String(run.status || view.state)} />
+        <${ProcessPausedChip} run=${run} />
         ${onClose ? html`<button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
       </div>
       <${BoundsStrip} bounds=${bounds} />
       <div class="pk-stepper-list" role="list">${rows.map((row) => html`<${StepRow} key=${row.id} row=${row} />`)}</div>
       <div class="pk-run-popover-actions">
-        <button type="button" class="mux-btn" disabled=${true} title="Pausing a run is not available yet">⏸ pause run</button>
+        <${ProcessPauseControl} run=${run} actions=${actions} />
         <button type="button" class="mux-btn" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view</button>
         ${groups.length > 1 ? html`<select class="pk-stepper-group" aria-label="Group to promote the run to"
           value=${group} onChange=${(event) => setTarget(event.currentTarget.value)}>

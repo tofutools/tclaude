@@ -183,6 +183,10 @@ func processAssignCandidate(scope processRunScope, actor, selector string) (*pro
 	if scope.Orphaned {
 		return nil, "the run is orphaned: its scope target is gone"
 	}
+	if scope.Paused {
+		// Handing the attempt over would start a new agent turn.
+		return nil, "the run is paused: resume it before reassigning"
+	}
 	switch scope.Kind {
 	case processScopeAgent:
 		candidate, reason := processBoundCandidate(scope.AgentID)

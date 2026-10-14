@@ -22,7 +22,7 @@
 // components so callers and tests can reason about a projection without a DOM.
 
 import { h } from 'preact';
-import { useId } from 'preact/hooks';
+import { useId, useState } from 'preact/hooks';
 import htm from 'htm';
 import { layoutProcessGraph } from './process-layout.js';
 
@@ -143,6 +143,20 @@ export function reassignableNode(run, node) {
     return { ok: false, why: 'The node has no outstanding attempt to reassign' };
   }
   return { ok: true, why: '' };
+}
+
+// runPauseState reports whether a run is paused and whether the Pause /
+// Resume control applies to it, and if not, why (for the button's title).
+export function runPauseState(run) {
+  const paused = !!run?.paused;
+  const status = String(run?.status || '').toLowerCase();
+  if (!paused && status && status !== 'running') return { paused, ok: false, why: 'A finished run cannot be paused' };
+  return {
+    paused,
+    ok: true,
+    why: paused ? 'Resume the run: dispatch new turns and commands again'
+      : 'Pause the run: work in flight finishes, nothing new is dispatched',
+  };
 }
 
 // runGraphNodes is the normalized node list (kit kind, state, performers)
@@ -450,6 +464,40 @@ export function ProcessScopeChip({ scope, wizard = false }) {
   const entry = PROCESS_SCOPES[kind];
   const text = `${entry.glyph} ${wizard ? entry.wizardLabel : entry.label}${name ? ` · ${name}` : ''}`;
   return html`<span class=${`pk-chip pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
+}
+
+// ProcessPausedChip marks a run an operator paused.
+export function ProcessPausedChip({ run }) {
+  if (!run?.paused) return null;
+  const by = run.paused.by ? ` by ${run.paused.by}` : '';
+  return html`<span class="pk-chip pk-paused" data-process-paused title=${`Paused${by}: nothing new is dispatched until it is resumed`}>⏸ paused</span>`;
+}
+
+// ProcessPauseControl is the run-level Pause / Resume button. actions:
+// { pause(run), resume(run) } — each optional and may throw the server's
+// refusal, which is shown beside the button.
+export function ProcessPauseControl({ run, actions = {} }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const state = runPauseState(run);
+  const act = state.paused ? actions.resume : actions.pause;
+  const title = !state.ok ? state.why : !act ? `${state.paused ? 'Resuming' : 'Pausing'} a run is not available here` : state.why;
+  const click = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await act(run);
+    } catch (err) {
+      setError(String(err?.message || err || (state.paused ? 'resume failed' : 'pause failed')));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<span class="pk-pause" data-process-pause=${state.paused ? 'paused' : 'live'}>
+    <button type="button" class="mux-btn" disabled=${busy || !state.ok || !act} title=${title}
+      onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}</button>
+    ${error ? html`<span class="pk-pause-error" role="alert">${error}</span>` : null}
+  </span>`;
 }
 
 export function ProcessStepStrip({ run }) {

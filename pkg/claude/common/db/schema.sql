@@ -970,7 +970,8 @@ CREATE TABLE "process_runs" (
 			CHECK(scope_group_id >= 0), scope_agent_id TEXT NOT NULL DEFAULT ''
 			CHECK(length(CAST(scope_agent_id AS BLOB)) <= 128), owner TEXT NOT NULL DEFAULT ''
 			CHECK(length(CAST(owner AS BLOB)) <= 256), scope_state TEXT NOT NULL DEFAULT 'bound'
-			CHECK(scope_state IN ('bound', 'orphaned'))) STRICT;
+			CHECK(scope_state IN ('bound', 'orphaned')), paused_at INTEGER, paused_by TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(paused_by AS BLOB)) <= 256)) STRICT;
 
 CREATE INDEX idx_process_runs_active
 			ON process_runs(id)

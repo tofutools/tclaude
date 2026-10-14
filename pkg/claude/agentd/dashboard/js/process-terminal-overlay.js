@@ -17,7 +17,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessMiniGraph, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
+  ProcessMiniGraph, ProcessPauseControl, ProcessPausedChip, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
   normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
 import { ProcessAgentStepper, isAgentScopedTo } from './process-agent-stepper.js';
@@ -186,7 +186,8 @@ export function ProcessTabIcons({ agentId, enabled }) {
 // ProcessPaneOverlay is the T1 cluster plus, when an icon is open, the T2
 // popover — or, for a run bound to this agent, the T3 stepper. actions:
 // { onComposeMessage(seed), openGroups(run), decide(run, nodeId, verdict),
-// promote(run, group), assign(run, nodeId, agentId) } — each optional; a
+// promote(run, group), assign(run, nodeId, agentId), pause(run), resume(run) }
+// — each optional; a
 // missing action disables its button. bounds is the agent's envelope
 // (agentRunBounds) for the stepper; candidatesFor(run, current) lists who a
 // node may be reassigned to.
@@ -322,6 +323,7 @@ function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidate
         <b class="pk-run-popover-name">${runName(run)}</b>
         <${ProcessScopeChip} scope=${run.scope} />
         <${ProcessStateChip} state=${view.state} label=${`${run.status || view.state}${age ? ` ${age}` : ''}`} />
+        <${ProcessPausedChip} run=${run} />
         <button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>
       </div>
       <div class="pk-run-popover-graph"><${ProcessMiniGraph} run=${run} performerId=${agentId} compact=${true} /></div>
@@ -348,6 +350,7 @@ function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidate
         <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
           onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner</button>
+        <${ProcessPauseControl} run=${run} actions=${actions} />
         <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
           run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${awaitingDecision && actions.decide
@@ -393,5 +396,11 @@ export function processOverlayActions({ onComposeMessage = null, fetch = (...arg
     assign: (run, nodeId, agent) => processRunPost(fetch,
       `/v1/process/runs/${encodeURIComponent(run.runId)}/nodes/${encodeURIComponent(nodeId)}/assign`,
       { agent }, 'reassign refused'),
+    // pause holds the run (in-flight work finishes, nothing new is
+    // dispatched); resume releases it.
+    pause: (run) => processRunPost(fetch,
+      `/v1/process/runs/${encodeURIComponent(run.runId)}/pause`, {}, 'pause refused'),
+    resume: (run) => processRunPost(fetch,
+      `/v1/process/runs/${encodeURIComponent(run.runId)}/resume`, {}, 'resume refused'),
   };
 }

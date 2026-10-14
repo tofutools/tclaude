@@ -13,7 +13,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessMiniGraph, ProcessNodeGlyph, ProcessScopeChip, ProcessStateChip, ProcessStepStrip,
+  ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
+  ProcessStepStrip,
   kindLabel, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
@@ -356,6 +357,11 @@ export function GroupsRunFocus({
     refresh();
     void source?.refresh?.();
   } : null;
+  // Pause / Resume holds or releases the whole run from the focus header.
+  const runActions = {
+    pause: api.pause ? async () => { await api.pause(runId); refresh(); await source?.refresh?.(); } : null,
+    resume: api.resume ? async () => { await api.resume(runId); refresh(); await source?.refresh?.(); } : null,
+  };
   const [dropError, setDropError] = useState('');
   const [dropTarget, setDropTarget] = useState('');
   // A refused drop's message belongs to the run it was made on.
@@ -409,6 +415,8 @@ export function GroupsRunFocus({
           title=${wizard ? 'Back to every rite' : 'Back to every run (Esc)'}>← ${wizard ? 'all rites' : 'all runs'}</button>
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
+        ${run && html`<${ProcessPausedChip} run=${run} />`}
+        ${run && html`<span class="grf-run-actions"><${ProcessPauseControl} run=${run} actions=${runActions} /></span>`}
         ${detail.error && html`<span class="grf-error" role="status">${detail.error}</span>`}
         ${dropError && html`<span class="grf-error" role="alert">${dropError}</span>`}
       </div>

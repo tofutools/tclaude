@@ -229,6 +229,10 @@ test('production assign posts to the node assign endpoint', async (t) => {
   await actions.assign({ runId: 'run_review' }, 'fix', 'agt_ops');
   assert.equal(posts[0].url, '/v1/process/runs/run_review/nodes/fix/assign');
   assert.deepEqual(JSON.parse(posts[0].init.body), { agent: 'agt_ops' });
+  await actions.pause({ runId: 'run_review' });
+  assert.equal(posts[1].url, '/v1/process/runs/run_review/pause');
+  await actions.resume({ runId: 'run_review' });
+  assert.equal(posts[2].url, '/v1/process/runs/run_review/resume');
 });
 
 test('reassign addresses a staged attempt by its stage and closes when the node moves on', async (t) => {

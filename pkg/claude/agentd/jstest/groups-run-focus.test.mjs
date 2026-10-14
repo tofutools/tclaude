@@ -366,3 +366,50 @@ test('a member badge opens its run; a header chip goes back to the cards', async
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="running"]'), 'click'));
   assert.equal(state.focusedRun.value, null);
 });
+
+test('the focus header pauses a live run', async (t) => {
+  const api = fakeApi();
+  api.paused = [];
+  api.pause = async (runId) => { api.paused.push(['pause', runId]); return {}; };
+  api.resume = async (runId) => { api.paused.push(['resume', runId]); return {}; };
+  const { harness, source, root } = await mountWithContext(t, structuredClone(FIXTURE), api);
+  assert.ok(!root.querySelector('[data-process-paused]'), 'a live run carries no paused chip');
+  const pause = [...root.querySelectorAll('.grf-run-actions button')].find((b) => /pause run/.test(b.textContent));
+  assert.ok(pause && !pause.disabled);
+  const before = source.refreshes;
+  await harness.act(async () => { harness.fireEvent(pause, 'click'); });
+  await settle(harness);
+  assert.deepEqual(api.paused, [['pause', 'run_release']]);
+  assert.ok(source.refreshes > before, 'the context refreshes after a pause');
+});
+
+test('a paused run shows its chip and resumes from the focus header', async (t) => {
+  const api = fakeApi();
+  api.paused = [];
+  api.resume = async (runId) => { api.paused.push(['resume', runId]); return {}; };
+  const paused = structuredClone(FIXTURE);
+  paused.runs.run_release.paused = { at: '2026-10-14T12:05:00Z', by: 'human:operator' };
+  const held = await mountWithContext(t, paused, api);
+  assert.match(held.root.querySelector('[data-process-paused]').textContent, /paused/);
+  const resume = [...held.root.querySelectorAll('.grf-run-actions button')].find((b) => /resume run/.test(b.textContent));
+  await held.harness.act(async () => { held.harness.fireEvent(resume, 'click'); });
+  await settle(held.harness);
+  assert.deepEqual(api.paused.at(-1), ['resume', 'run_release']);
+});
+
+test('the run detail API posts idempotent pause and resume', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/process-context.js');
+  const calls = [];
+  const api = mod.createRunDetailApi({ fetchImpl: async (path, init) => {
+    calls.push({ path, init });
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  await api.pause('run/1', { attemptKey: '11111111-2222-4333-8444-777777777777' });
+  assert.equal(calls.at(-1).path, '/v1/process/runs/run%2F1/pause');
+  assert.equal(calls.at(-1).init.method, 'POST');
+  assert.equal(calls.at(-1).init.body, '{}');
+  assert.equal(calls.at(-1).init.headers['Idempotency-Key'], '11111111-2222-4333-8444-777777777777');
+  await api.resume('run/1');
+  assert.equal(calls.at(-1).path, '/v1/process/runs/run%2F1/resume');
+});

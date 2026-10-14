@@ -74,6 +74,7 @@ var (
 	ErrProcessRunInvalid            = errors.New("invalid process run data")
 	ErrProcessRunCorrupt            = errors.New("process run store is inconsistent")
 	ErrProcessRunRescope            = errors.New("process run cannot be re-scoped")
+	ErrProcessRunPause              = errors.New("process run cannot be paused or resumed")
 	processRuntimeIdentifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 )
 
@@ -103,10 +104,18 @@ type ProcessRunScope struct {
 	AgentID   string
 	Owner     string
 	State     string
+	// PausedAt is when an operator paused the run (zero while it is free to
+	// plan) and PausedBy the actor ref that did. The pause rides the scope
+	// read because every gate that consults the binding must also honour it.
+	PausedAt time.Time
+	PausedBy string
 }
 
 // Orphaned reports whether the run's scope target is gone.
 func (s ProcessRunScope) Orphaned() bool { return s.State == ProcessRunScopeOrphaned }
+
+// Paused reports whether an operator has paused the run.
+func (s ProcessRunScope) Paused() bool { return !s.PausedAt.IsZero() }
 
 // ProcessRunFilter narrows a summary listing. Zero values match everything;
 // set fields combine with AND. Performer matches runs bound to that agent and
@@ -656,24 +665,31 @@ const processRunSelect = `SELECT
 // resolved through the id at read time because groups are renameable; a
 // deleted group reads as NULL → "".
 const processRunScopeColumnsSelect = `scope_kind, scope_group_id, scope_agent_id, owner, scope_state,
+	paused_at, paused_by,
 	(SELECT name FROM agent_groups WHERE agent_groups.id = process_runs.scope_group_id AND process_runs.scope_kind = 'group')`
 
 type processRunScopeColumns struct {
 	kind, agentID, owner, state, groupName sql.NullString
 	groupID                                sql.NullInt64
+	pausedAt                               dbTimestamp
+	pausedBy                               sql.NullString
 }
 
 func (c *processRunScopeColumns) targets() []any {
-	return []any{&c.kind, &c.groupID, &c.agentID, &c.owner, &c.state, &c.groupName}
+	return []any{&c.kind, &c.groupID, &c.agentID, &c.owner, &c.state, &c.pausedAt, &c.pausedBy, &c.groupName}
 }
 
 func (c *processRunScopeColumns) decode() (ProcessRunScope, error) {
-	if !c.kind.Valid || !c.groupID.Valid || !c.agentID.Valid || !c.owner.Valid || !c.state.Valid {
+	if !c.kind.Valid || !c.groupID.Valid || !c.agentID.Valid || !c.owner.Valid || !c.state.Valid || !c.pausedBy.Valid {
 		return ProcessRunScope{}, ErrProcessRunCorrupt
 	}
 	scope := ProcessRunScope{
 		Kind: c.kind.String, GroupID: c.groupID.Int64, GroupName: c.groupName.String,
 		AgentID: c.agentID.String, Owner: c.owner.String, State: c.state.String,
+		PausedBy: c.pausedBy.String,
+	}
+	if c.pausedAt.valid {
+		scope.PausedAt = c.pausedAt.time
 	}
 	if !validProcessRunScopeBinding(scope.Kind, scope.GroupID, scope.AgentID) ||
 		!validProcessRuntimeText(scope.Owner, MaxProcessRunOwner, true) ||
@@ -832,7 +848,8 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// performer works, so a sibling ready branch keeps the run runnable.
 	//
 	// An orphaned run (its bound group or agent is gone) is excluded too: it is
-	// parked for a human to re-scope, never resumed by the fallback.
+	// parked for a human to re-scope, never resumed by the fallback. A paused
+	// run likewise waits for the operator's resume.
 	//
 	// Everything else the run could be parked on is decided by one comparison:
 	// the run has pushable work exactly when it holds MORE ready nodes than
@@ -857,6 +874,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
 			AND scope_state = 'bound'
+			AND paused_at IS NULL
 			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
 						WHERE json_extract(value, '$.kind') IS NOT 'agent')
@@ -868,7 +886,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 				> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
 			THEN 1 ELSE 0 END
 		FROM (
-			SELECT id, checkpoint_json, scope_state FROM process_runs
+			SELECT id, checkpoint_json, scope_state, paused_at FROM process_runs
 			WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled')
 			ORDER BY id LIMIT ?
 		) AS active_page

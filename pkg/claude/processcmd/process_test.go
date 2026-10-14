@@ -26,7 +26,7 @@ func TestRuntimeMVPVerbsAndDeferredVerbsRemainDiscoverable(t *testing.T) {
 		Features: &config.FeaturesConfig{Processes: true},
 	}))
 
-	want := []string{"advance", "apply", "decide", "events", "observe", "preview", "reconcile", "record-outcome", "reissue", "repair", "report", "resolve", "resume", "run", "runs", "show", "unblock", "verify", "worklist"}
+	want := []string{"advance", "apply", "decide", "events", "observe", "pause", "preview", "reconcile", "record-outcome", "reissue", "repair", "report", "resolve", "resume", "run", "runs", "show", "unblock", "verify", "worklist"}
 	root := Cmd()
 	for _, name := range want {
 		command, _, err := root.Find([]string{name})
@@ -289,6 +289,12 @@ func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
 				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/resume", nil, stdout, stderr)
 			},
 			wantPath: "/v1/process/runs/run_1/resume",
+		},
+		"pause": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/pause", nil, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/pause",
 		},
 		"reissue": {
 			run: func(stdout, stderr *bytes.Buffer) error {

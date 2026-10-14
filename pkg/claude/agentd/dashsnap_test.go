@@ -1699,53 +1699,17 @@ setTimeout(function(){
 			SettleMS: 300,
 		},
 		{
-			Key:     "process-terminal-overlay-t3",
-			Title:   "Terminals — agent-scoped run stepper (T3)",
-			Caption: "A run bound to the pane's agent opens as a vertical stepper (mock T3): the bounds strip (dir, sandbox, grants, spend, reincarnation), agentic steps as turns in this conversation with their loop count, program steps flagged as leaving the agent's sandbox, the human decision, and pause / graph view / promote actions.",
-			JS: `return (async function(){
-  var kit = await import('/static/js/process-terminal-overlay.js');
-  var stepper = await import('/static/js/process-agent-stepper.js');
-  var preact = await import('preact');
-  var htm = (await import('htm')).default.bind(preact.h);
-  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
-  var run = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(41),
-    scope: { kind: 'agent', agentId: 'agt_search', owner: 'human:operator', state: 'bound' },
-    nodes: [
-      { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
-      { id: 'snapshot', label: 'Snapshot index', kind: 'task', state: 'done', performer: { kind: 'program', ref: 'safe' } },
-      { id: 'backfill', label: 'Backfill shards', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_search' },
-        dispatch: { agentId: 'agt_search', attempt: 4, state: 'delivered', deliveredAt: ago(21) } },
-      { id: 'verify', label: 'Verify recall@10', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'eval' } },
-      { id: 'decide', label: 'Decide', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
-      { id: 'swap', label: 'Swap alias', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'alias-write' } },
-      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
-    edges: [ { from: 'start', to: 'snapshot', label: 'next' }, { from: 'snapshot', to: 'backfill', label: 'next' },
-      { from: 'backfill', to: 'verify', label: 'next' }, { from: 'verify', to: 'decide', label: 'next' },
-      { from: 'decide', to: 'swap', label: 'swap' }, { from: 'decide', to: 'end', label: 'ask-lead' },
-      { from: 'swap', to: 'end', label: 'next' } ] };
-  var context = { runs: { run_reindex: run }, groups: [], agents: [{ agentId: 'agt_search', runs: [{ runId: 'run_reindex', nodeId: 'backfill', index: 2, total: 5, state: 'running' }] }], orphaned: [] };
-  var snap = { agents: [{ agent_id: 'agt_search', conv_id: 'conv-search', title: 'search-indexer', groups: ['webshop'],
-      state: { cwd: '/home/dev/git/webshop-search-index-v2', sandbox_profiles: [{ scope: 'group', name: 'dev-net' }], cost_usd: 3.42 } }],
-    groups: [{ id: 7, name: 'webshop', members: [] }], permissions: { grants: { 'conv-search': ['self.process'] } } };
-  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
-  var host = document.createElement('div');
-  host.id = 'process-terminal-overlay-t3-host';
-  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
-  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">search-indexer</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">[process reindex-v2 › Backfill shards] (injected turn)\nBash(./scripts/backfill.sh --shard 3)\n  shard 3/4: 1,284,113 docs … 71%\n</pre><div data-overlay-root></div></div>';
-  document.body.appendChild(host);
-  var root = host.querySelector('[data-overlay-root]');
-  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_search" enabled=${true} bounds=${stepper.agentRunBounds(snap, 'agt_search')} actions=${{ openGroups: function(){}, onComposeMessage: function(){}, promote: async function(){} }} />` + "`" + `, root);
-  await kit.refreshProcessContext();
-  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_reindex"]');
-  if (!icon) throw new Error('process overlay icon missing');
-  icon.click();
-  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var pop = host.querySelector('[data-process-stepper]');
-  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('agent stepper is not visible');
-  if (!pop.querySelector('[data-process-bounds] .pk-bounds-chip')) throw new Error('bounds strip missing');
-  if (pop.querySelectorAll('.pk-stepper-step').length !== 5) throw new Error('expected five steps');
-})();`,
+			Key:      "process-terminal-overlay-t3",
+			Title:    "Terminals — agent-scoped run stepper (T3)",
+			Caption:  "A run bound to the pane's agent opens as a vertical stepper (mock T3): the bounds strip (dir, sandbox, grants, spend, reincarnation), agentic steps as turns in this conversation with their loop count, program steps flagged as leaving the agent's sandbox, the human decision, and pause / graph view / promote actions.",
+			JS:       processStepperSnapJS(false),
+			SettleMS: 300,
+		},
+		{
+			Key:      "process-terminal-overlay-t3-paused",
+			Title:    "Terminals — paused agent-scoped run (T3)",
+			Caption:  "The same stepper for a run an operator paused: a ⏸ paused chip in the head, and the run action reads ▶ resume run. Work in flight finishes; nothing new is dispatched until resumed.",
+			JS:       processStepperSnapJS(true),
 			SettleMS: 300,
 		},
 		{
@@ -5414,4 +5378,60 @@ func groupsProcessesJS(extraJS string) string {
   if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
 ` + extraJS + `
 })();`
+}
+
+// processStepperSnapJS renders the T3 stepper for a live or a paused run.
+func processStepperSnapJS(paused bool) string {
+	field, state := "", "live"
+	if paused {
+		field, state = "paused: { at: ago(3), by: 'human:operator' },", "paused"
+	}
+	js := `return (async function(){
+  var kit = await import('/static/js/process-terminal-overlay.js');
+  var stepper = await import('/static/js/process-agent-stepper.js');
+  var preact = await import('preact');
+  var htm = (await import('htm')).default.bind(preact.h);
+  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+  var run = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(41), PAUSED_FIELD
+    scope: { kind: 'agent', agentId: 'agt_search', owner: 'human:operator', state: 'bound' },
+    nodes: [
+      { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'snapshot', label: 'Snapshot index', kind: 'task', state: 'done', performer: { kind: 'program', ref: 'safe' } },
+      { id: 'backfill', label: 'Backfill shards', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_search' },
+        dispatch: { agentId: 'agt_search', attempt: 4, state: 'delivered', deliveredAt: ago(21) } },
+      { id: 'verify', label: 'Verify recall@10', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'eval' } },
+      { id: 'decide', label: 'Decide', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
+      { id: 'swap', label: 'Swap alias', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'alias-write' } },
+      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'snapshot', label: 'next' }, { from: 'snapshot', to: 'backfill', label: 'next' },
+      { from: 'backfill', to: 'verify', label: 'next' }, { from: 'verify', to: 'decide', label: 'next' },
+      { from: 'decide', to: 'swap', label: 'swap' }, { from: 'decide', to: 'end', label: 'ask-lead' },
+      { from: 'swap', to: 'end', label: 'next' } ] };
+  var context = { runs: { run_reindex: run }, groups: [], agents: [{ agentId: 'agt_search', runs: [{ runId: 'run_reindex', nodeId: 'backfill', index: 2, total: 5, state: 'running' }] }], orphaned: [] };
+  var snap = { agents: [{ agent_id: 'agt_search', conv_id: 'conv-search', title: 'search-indexer', groups: ['webshop'],
+      state: { cwd: '/home/dev/git/webshop-search-index-v2', sandbox_profiles: [{ scope: 'group', name: 'dev-net' }], cost_usd: 3.42 } }],
+    groups: [{ id: 7, name: 'webshop', members: [] }], permissions: { grants: { 'conv-search': ['self.process'] } } };
+  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
+  var host = document.createElement('div');
+  host.id = 'process-terminal-overlay-t3-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
+  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">search-indexer</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">[process reindex-v2 › Backfill shards] (injected turn)\nBash(./scripts/backfill.sh --shard 3)\n  shard 3/4: 1,284,113 docs … 71%\n</pre><div data-overlay-root></div></div>';
+  document.body.appendChild(host);
+  var root = host.querySelector('[data-overlay-root]');
+  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_search" enabled=${true} bounds=${stepper.agentRunBounds(snap, 'agt_search')} actions=${{ openGroups: function(){}, onComposeMessage: function(){}, promote: async function(){}, pause: async function(){}, resume: async function(){} }} />` + "`" + `, root);
+  await kit.refreshProcessContext();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_reindex"]');
+  if (!icon) throw new Error('process overlay icon missing');
+  icon.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var pop = host.querySelector('[data-process-stepper]');
+  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('agent stepper is not visible');
+  if (!pop.querySelector('[data-process-bounds] .pk-bounds-chip')) throw new Error('bounds strip missing');
+  if (pop.querySelectorAll('.pk-stepper-step').length !== 5) throw new Error('expected five steps');
+  var pauseState = pop.querySelector('[data-process-pause]');
+  if (!pauseState || pauseState.dataset.processPause !== 'PAUSE_STATE') throw new Error('pause control is not PAUSE_STATE');
+  if (pauseState.querySelector('button').disabled) throw new Error('pause control is disabled');
+})();`
+	return strings.NewReplacer("PAUSED_FIELD", field, "PAUSE_STATE", state).Replace(js)
 }

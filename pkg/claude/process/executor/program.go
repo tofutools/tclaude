@@ -174,7 +174,16 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	// Settling this observation can activate more than one branch; the follow-on
 	// advance plans one of them. The branches it did not plan stay ready until
 	// the owner has capacity for them.
-	advanced, planned, _, err := engine.AdvanceAndPlan(next, run.definition)
+	//
+	// A held run settles the same advance but plans nothing: the attempt that
+	// was in flight is recorded, and its successor waits for the release.
+	var advanced engine.Checkpoint
+	var planned *engine.Command
+	if run.held {
+		advanced, err = engine.AdvanceUntilQuiescent(next, run.definition)
+	} else {
+		advanced, planned, _, err = engine.AdvanceAndPlan(next, run.definition)
+	}
 	if err != nil {
 		return nil, err
 	}

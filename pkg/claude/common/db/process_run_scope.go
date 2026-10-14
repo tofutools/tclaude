@@ -235,6 +235,76 @@ func RescopeProcessRun(runID string, next ProcessRunScope, actor string) (Proces
 	return next, nil
 }
 
+// SetProcessRunPaused pauses (paused=true) or resumes a non-terminal run and
+// records run_paused / run_resumed evidence. A pause is an operator hold, not
+// an engine transition: a paused run plans no new agent turns or program
+// commands, while attempts already in flight finish and are recorded. Asking
+// for the state the run is already in changes nothing and records nothing;
+// changed reports which happened.
+func SetProcessRunPaused(runID string, paused bool, actor string) (scope ProcessRunScope, changed bool, err error) {
+	if !validProcessRuntimeIdentifier(runID, MaxProcessRunIDBytes, false) {
+		return ProcessRunScope{}, false, fmt.Errorf("%w: invalid run id", ErrProcessRunInvalid)
+	}
+	if !validProcessRuntimeText(actor, MaxProcessRunEventActor, true) || len(actor) > MaxProcessRunOwner {
+		return ProcessRunScope{}, false, fmt.Errorf("%w: invalid actor", ErrProcessRunInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return ProcessRunScope{}, false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return ProcessRunScope{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var columns processRunScopeColumns
+	var status string
+	err = tx.QueryRow(`SELECT `+processRunScopeColumnsSelect+`, status FROM process_runs WHERE id = ?`, runID).
+		Scan(append(columns.targets(), &status)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProcessRunScope{}, false, ErrProcessRunNotFound
+	}
+	if err != nil {
+		return ProcessRunScope{}, false, err
+	}
+	current, err := columns.decode()
+	if err != nil {
+		return ProcessRunScope{}, false, err
+	}
+	if current.Paused() == paused {
+		return current, false, nil
+	}
+	// A run that ended while paused may still be released; only pausing a
+	// finished run is meaningless.
+	switch status {
+	case ProcessRunStatusCompleted, ProcessRunStatusFailed, ProcessRunStatusCanceled:
+		if paused {
+			return ProcessRunScope{}, false, fmt.Errorf("%w: run is %s", ErrProcessRunPause, status)
+		}
+	}
+	now := time.Now().UTC()
+	kind := "run_resumed"
+	next := current
+	next.PausedAt, next.PausedBy = time.Time{}, ""
+	if paused {
+		kind = "run_paused"
+		next.PausedAt, next.PausedBy = now, actor
+	}
+	if _, err := tx.Exec(`UPDATE process_runs SET paused_at = ?, paused_by = ?, updated_at = ? WHERE id = ?`,
+		nullableDBTime(next.PausedAt), next.PausedBy, dbTime(now), runID); err != nil {
+		return ProcessRunScope{}, false, fmt.Errorf("pause process run: %w", err)
+	}
+	if err := appendProcessRunEventTx(tx, runID, ProcessRunEvent{
+		OccurredAt: now, Kind: kind, PayloadJSON: json.RawMessage(`{}`), Actor: actor,
+	}); err != nil {
+		return ProcessRunScope{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProcessRunScope{}, false, fmt.Errorf("commit process run pause: %w", err)
+	}
+	return next, true, nil
+}
+
 // MaxProcessRunContextRuns bounds one in-context read: the scoped runs the
 // dashboard overlays project per poll, across every scope.
 const MaxProcessRunContextRuns = 64
