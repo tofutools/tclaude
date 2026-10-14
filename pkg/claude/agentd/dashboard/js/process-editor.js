@@ -1783,7 +1783,8 @@ export class ProcessTemplateEditor {
     const laid = this.graph?.layoutSnapshot().nodes.find((node) => node.id === id);
     this.model.expandSubprocess(id, laid ? { x: laid.x, y: laid.y } : undefined);
     this.setSelection(null);
-    this.refresh();
+    // The graph just grew by a whole body: show all of it.
+    this.refresh({ fit: true });
     this.status(`Expanded ${this.model.node(id)?.name || id} in place: edit its nodes here, or collapse it from the frame.`);
     return true;
   }

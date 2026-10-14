@@ -2719,6 +2719,71 @@ setTimeout(function(){
 			SettleMS: 1200,
 		},
 		{
+			Key:     "process-compose-splice",
+			Title:   "Process editor — splice onto a connector",
+			Caption: "E2: the palette lists stored templates beside node kinds. Dragging one over a connector marks it (orange, dashed); dropping splices the node in between, keeping the incoming connector's identity.",
+			JS: composeStateJS(`  var edge = ed.graph.layoutSnapshot().edges.find(function(e){ return e.from === 'plan' && e.outcome === 'pass'; });
+  ed.onCanvasDrop({point: {x: edge.label.x, y: edge.label.y + 160}, edge: edge, event: {dataTransfer: {getData: function(){ return JSON.stringify({kind: 'primitive', type: 'decision'}); }}}});
+  await editorPaint(); await editorPaint();
+  var ids = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; });
+  if (ids.indexOf('plan:pass>decision') < 0 || ids.indexOf('decision:pass>build') < 0) throw new Error('splice did not rewire: ' + ids.join(','));
+  var next = document.querySelector('.process-edge[data-from="decision"]');
+  if (next) next.classList.add('is-drop-target');
+  ed.options.templateRefs = function(){ return [{id: 'qa-suite', name: 'QA suite', versionCount: 3}, {id: 'deploy-std', name: 'Deploy (standard)', versionCount: 2}]; };
+  ed.publish();
+  await editorPaint(); await editorPaint();
+  var refs = Array.from(document.querySelectorAll('.process-editor-palette [data-palette-item]')).filter(function(el){ return el.dataset.paletteItem.indexOf('"template"') >= 0; });
+  if (refs.length !== 2) throw new Error('palette lists ' + refs.length + ' templates');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-compose-wrap",
+			Title:   "Process editor — wrap a selection as a subprocess",
+			Caption: "E2: selecting Build and Check offers ▣ wrap as subprocess…; the wrapped ▣ node keeps the region's connectors (one start, one out-port per outside target). The state self-checks that unwrap restores the original topology.",
+			JS: composeStateJS(`  var before = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; }).sort().join(',');
+  ed.setSelection({type: 'multi', items: [{type: 'node', id: 'build'}, {type: 'node', id: 'check'}]});
+  await editorPaint();
+  var wrap = document.querySelector('[data-wrap-selection]');
+  if (!wrap || wrap.disabled) throw new Error('wrap is not offered');
+  wrap.click();
+  await editorPaint(); await editorPaint();
+  var submit = Array.from(document.querySelectorAll('button')).find(function(b){ return b.textContent.trim() === 'Wrap'; });
+  if (!submit) throw new Error('name dialog did not open');
+  var input = submit.closest('form') && submit.closest('form').querySelector('input');
+  if (input) { input.value = 'Build and check'; input.dispatchEvent(new Event('input', {bubbles: true})); }
+  submit.click();
+  var wDeadline = Date.now() + 3000;
+  while ((!ed.selection || ed.model.node(ed.selection.id)?.type !== 'subprocess') && Date.now() < wDeadline) await new Promise(function(r){ setTimeout(r, 40); });
+  var id = ed.selection && ed.selection.id;
+  if (!id || ed.model.node(id).type !== 'subprocess') throw new Error('wrap did not create a ▣ node');
+  ed.unwrapSubprocess(id);
+  var after = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; }).sort().join(',');
+  if (after !== before) throw new Error('unwrap did not restore: ' + after);
+  ed.applyHistory('undo');
+  await editorPaint(); await editorPaint();
+  ed.setSelection({type: 'node', id: id});
+  ed.openNodeSettings(id);
+  await editorPaint(); await editorPaint();`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-compose-expand",
+			Title:   "Process editor — ▣ expanded in place",
+			Caption: "E2: ⊞ expand draws a ▣ node's body on the canvas as a framed group: connectors land on its start and leave from its mapped ends, inner nodes select and edit in context, and ⊟ collapse folds it back.",
+			JS: composeStateJS(`  ed.setSelection({type: 'multi', items: [{type: 'node', id: 'build'}, {type: 'node', id: 'check'}]});
+  var id = ed.mutate(function(){ return window.__compose.wrapSelection(ed.model, ['build', 'check'], {name: 'QA suite'}); });
+  ed.refresh();
+  await editorPaint();
+  if (!ed.expandSubprocess(id)) throw new Error('expand refused');
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-group[data-group-id="' + id + '"]')) throw new Error('frame missing');
+  document.querySelector('[data-node-id="' + id + '/check"]').dispatchEvent(new MouseEvent('click', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (!ed.selection || ed.selection.id !== id + '/check') throw new Error('inner node did not select: ' + JSON.stringify(ed.selection));
+  if (!document.querySelector('.process-node-inspector, [data-node-inspector]')) throw new Error('inspector did not open for the inner node');`),
+			SettleMS: 1200,
+		},
+		{
 			Key:     "process-editor-validation",
 			Title:   "Process editor — live validation",
 			Caption: "Live validation (TCL-299/397): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and keyboard focus exposes the node-local diagnostic detail while the issues panel lists every finding.",
@@ -3765,6 +3830,27 @@ func subgraphStateJS(extraJS string) string {
   ed.model.addEdge('qa', 'pass', 'ship');
   ed.model.addEdge('qa', 'fail', 'stop');
   ed.model.layout.nodes.ship = {x: 520, y: 40};
+  ed.refresh({fit: true});
+  await editorPaint();
+` + extraJS)
+}
+
+// composeStateJS opens release-train as plan → build → check → ship (check
+// may also fail to stop), the E2 composition fixture.
+func composeStateJS(extraJS string) string {
+	return processEditorStateJS(`window.__compose = await import('/static/js/process-compose.js');
+  ed.model.addNode('task', {x: 240, y: 120, id: 'plan', name: 'Plan sprint'});
+  ed.model.addNode('task', {x: 420, y: 120, id: 'build', name: 'Build'});
+  ed.model.addNode('decision', {x: 600, y: 120, id: 'check', name: 'Green?'});
+  ed.model.addNode('end', {x: 800, y: 220, id: 'stop', name: 'Stop'});
+  ed.model.template.nodes.stop.result = 'failure';
+  ed.model.setEdgeTarget('begin', 'pass', 'plan');
+  ed.model.addEdge('plan', 'pass', 'build');
+  ed.model.addEdge('build', 'pass', 'check');
+  ed.model.addEdge('check', 'yes', 'ship');
+  ed.model.addEdge('check', 'no', 'stop');
+  ed.model.layout.nodes.begin = {x: 80, y: 120};
+  ed.model.layout.nodes.ship = {x: 800, y: 40};
   ed.refresh({fit: true});
   await editorPaint();
 ` + extraJS)

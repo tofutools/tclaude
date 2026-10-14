@@ -213,6 +213,19 @@ export function wrapSelection(model, ids, { name = '', position } = {}) {
     y: Math.round(pins.reduce((sum, pin) => sum + pin.y, 0) / pins.length),
   } : null);
   if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) next.layout.nodes[id] = { x: at.x, y: at.y };
+  // New end nodes sit just right of the region, beside the node that leaves
+  // for them, so an expanded or drilled-in body stays compact.
+  if (pins.length) {
+    const right = Math.max(...pins.map((pin) => pin.x)) + 220;
+    const used = new Set();
+    for (const exit of plan.exits) {
+      const source = model.layout.nodes[exit.edges[0].from];
+      let y = Math.round(source ? source.y : pins[0].y);
+      while (used.has(y)) y += 100;
+      used.add(y);
+      next.layout.nodes[id + SCOPE_SEPARATOR + exit.end] = { x: right, y };
+    }
+  }
   // Label pins of connectors that now leave the ▣ node instead belong to
   // connectors that no longer exist in this scope.
   if (next.layout.edges) {

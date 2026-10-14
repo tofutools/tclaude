@@ -1137,6 +1137,17 @@ export class ProcessEditModel {
   // position; the editor passes it because an unpinned node has none here).
   expandSubprocess(id, origin = this.layout.nodes[id] || { x: 0, y: 0 }) {
     if (!this.canExpand(id)) throw new Error(`node ${id} has no inline subprocess body to expand`);
+    // A wrapped region keeps its pins in this canvas's coordinates around
+    // the ▣ node: show it exactly where it was drawn before wrapping.
+    const prefix = id + SCOPE_SEPARATOR;
+    const pins = Object.keys(this.template.nodes[id].subprocess.nodes || {})
+      .map((inner) => this.layout.nodes[prefix + inner]).filter(Boolean);
+    const near = 120;
+    if (pins.length && Math.min(...pins.map((p) => p.x)) - near <= origin.x && origin.x <= Math.max(...pins.map((p) => p.x)) + near
+        && Math.min(...pins.map((p) => p.y)) - near <= origin.y && origin.y <= Math.max(...pins.map((p) => p.y)) + near) {
+      this.expansions.set(id, { dx: 0, dy: 0 });
+      return true;
+    }
     const positions = [...this.bodyPositions(id).values()];
     const left = Math.min(...positions.map((p) => p.x - p.width / 2));
     const right = Math.max(...positions.map((p) => p.x + p.width / 2));
