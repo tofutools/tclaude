@@ -45,10 +45,10 @@ test('Config island renders static HTML characters instead of entity source text
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
   const text = mounted.container.textContent;
-  const headings = [...mounted.container.querySelectorAll('.cfg-section > h3')].map(node => node.textContent);
+  const panels = [...mounted.container.querySelectorAll('.cfg-panel-head h2')].map(node => node.textContent);
 
-  assert.ok(headings.includes('Terminals & windows'));
-  assert.ok(headings.includes('Usage, costs & rate limits'));
+  assert.ok(panels.some(title => title.includes('Terminals & windows')), panels.join(' | '));
+  assert.ok(panels.some(title => title.includes('Usage & costs')), panels.join(' | '));
   assert.ok(text.includes('keep the header & tabs pinned'));
   assert.ok(text.includes('tclaude:<id>'));
   assert.ok(text.includes('tclaude remote-access add-client <name>'));
@@ -711,4 +711,118 @@ test('Config round-trips harness factors and distinguishes explicit 1 from inher
   assert.equal(cost.estimate_factor, 2);
   assert.equal(cost.show_on_subscription, true);
   await mounted.unmount();
+});
+
+test('Config rail shows one panel at a time and marks panels with unsaved edits', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const root = mounted.container;
+  const current = () => [...root.querySelectorAll('[data-cfg-panel][data-cfg-current="true"]')].map(node => node.getAttribute('data-cfg-panel'));
+  assert.deepEqual(current(), ['appearance']);
+
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-cfg-panel-link="notifications"]'), 'click'));
+  assert.deepEqual(current(), ['notifications']);
+  assert.equal(root.querySelector('[data-cfg-panel-link="notifications"]').getAttribute('aria-current'), 'page');
+
+  // Every panel stays mounted, so the adapter can still read hidden fields.
+  assert.ok(root.querySelector('[data-cfg-panel="logs"] #cfg-log-level'));
+
+  state.lifecycle.loaded({ raw: '{}' });
+  const cooldown = root.querySelector('#cfg-notif-cooldown');
+  cooldown.value = '9';
+  await harness.act(() => harness.fireEvent(cooldown, 'input'));
+  assert.deepEqual(state.dirtyPanels.value, ['notifications']);
+  assert.equal(root.querySelector('[data-cfg-panel-link="notifications"] .cfg-rail-dirty').hasAttribute('hidden'), false);
+  assert.equal(root.querySelector('[data-cfg-panel-link="logs"] .cfg-rail-dirty').hasAttribute('hidden'), true);
+  assert.match(root.querySelector('.cfg-save-summary').textContent, /Unsaved changes · Notifications/);
+
+  // Typing a search query is not an edit.
+  const filter = root.querySelector('#cfg-filter');
+  filter.value = 'log';
+  await harness.act(() => harness.fireEvent(filter, 'input'));
+  assert.deepEqual(state.dirtyPanels.value, ['notifications']);
+
+  state.lifecycle.saved({ raw: '{}' });
+  await harness.act(() => {});
+  assert.deepEqual(state.dirtyPanels.value, []);
+  await mounted.unmount();
+});
+
+test('Config search filters individual settings across panels', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const tab = harness.document.body.appendChild(harness.document.createElement('section'));
+  tab.id = 'tab-config';
+  const host = tab.appendChild(harness.document.createElement('div'));
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`, host);
+  const root = mounted.container;
+  const filter = root.querySelector('#cfg-filter');
+  const search = async (value) => {
+    filter.value = value;
+    await harness.act(() => harness.fireEvent(filter, 'input'));
+  };
+  const rowFor = id => root.querySelector(`#${id}`).closest('.cfg-row');
+
+  await search('ghostty');
+  assert.ok(root.querySelector('#cfg-layout').hasAttribute('data-cfg-searching'));
+  assert.equal(rowFor('cfg-terminal').hidden, false);
+  assert.equal(rowFor('cfg-focus-raiseonly').hidden, true);
+  assert.equal(root.querySelector('[data-cfg-panel="notifications"]').hasAttribute('data-cfg-nomatch'), true);
+  assert.equal(root.querySelector('[data-cfg-hits="terminals"]').textContent, '1');
+  assert.match(root.querySelector('#cfg-filter-count').textContent, /^1 matching setting$/);
+
+  // Keys and folded "More…" guidance are searchable too.
+  await search('notifications.delivery');
+  assert.equal(rowFor('cfg-notif-delivery').hidden, false);
+  await search('d-bus');
+  assert.equal(rowFor('cfg-notif-delivery').hidden, false);
+
+  // A matching card heading keeps every row in that card.
+  await search('rate limits');
+  assert.equal(rowFor('cfg-ratelimit-7d').hidden, false);
+
+  // A term that only appears in a panel's lede still matches per setting.
+  await search('token');
+  assert.equal(rowFor('cfg-agent-persisttoken').hidden, false);
+  assert.equal(rowFor('cfg-agent-dashboardport').hidden, true);
+
+  // A matching panel title keeps the whole panel.
+  await search('experimental');
+  assert.equal(rowFor('cfg-feature-triggers').hidden, false);
+
+  await search('zzzz-nothing');
+  assert.equal(root.querySelector('#cfg-filter-empty').hidden, false);
+
+  // Picking a rail section leaves search mode.
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-cfg-panel-link="logs"]'), 'click'));
+  assert.equal(filter.value, '');
+  assert.equal(root.querySelector('#cfg-layout').hasAttribute('data-cfg-searching'), false);
+  assert.equal(rowFor('cfg-focus-raiseonly').hidden, false);
+  await mounted.unmount();
+});
+
+test('Config moves the static remote-access certificate panel into Daemon & network and back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const tab = harness.document.body.appendChild(harness.document.createElement('section'));
+  tab.id = 'tab-config';
+  const host = tab.appendChild(harness.document.createElement('div'));
+  const admin = tab.appendChild(harness.document.createElement('div'));
+  admin.id = 'cfg-remote-admin';
+  admin.className = 'cfg-section';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`, host);
+  assert.equal(admin.parentElement.id, 'cfg-remote-admin-slot');
+  assert.equal(admin.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'daemon');
+  await mounted.unmount();
+  assert.equal(admin.parentElement, tab);
 });

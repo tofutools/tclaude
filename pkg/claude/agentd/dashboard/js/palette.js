@@ -43,6 +43,8 @@ import { openGitRepositories } from './git-repositories-controller.js';
 // ends), Enter runs it, typing filters.
 
 import { $, $$ } from './helpers.js';
+import { featureState } from './feature-state-registry.js';
+import { setActivitySubtab } from './activity-state.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
   openWindowModal,
@@ -593,6 +595,67 @@ export function buildCommands(snapshot) {
         + ' scry peer gaze behold chamber vision',
       run: () => btn.click(),
     });
+  }
+  // Processes is an Automations subtab, so its nav anchor is always hidden and
+  // the loop above skips it; offer it explicitly while the feature is on.
+  const processesTab = $$('nav [data-tab="processes"]')[0];
+  if (processesTab && !document.body.classList.contains('hide-processes')) {
+    cmds.push({
+      peerView: 'tab', tab: 'processes', icon: wiz('⤢', '🪞'), label: wiz('Go to Processes', 'Scry the Rites'),
+      hint: wiz('Automations › Processes', 'peer into the Labours’ rites'),
+      keywords: 'tab navigate go open processes process templates automations'
+        + ' scry peer gaze behold chamber vision rites',
+      run: () => processesTab.click(),
+    });
+  }
+  // The Usage tab's Quota and Costs views were tabs of their own: keep them
+  // one command away (and findable as "costs") rather than behind Usage.
+  const usageBtn = $('nav [data-tab="usage"]');
+  const usageHub = featureState('usage-hub');
+  if (usageHub && usageBtn && usageBtn.offsetParent !== null && usageBtn.getAttribute('aria-disabled') !== 'true') {
+    for (const [view, plain, wizardly, words] of [
+      ['quota', 'Quota', 'Reserves', 'quota limits forecast subscription window reserves mana'],
+      ['costs', 'Costs', 'Coffers', 'costs spend money billing dollars coffers gold'],
+    ]) {
+      if (document.body.classList.contains(`hide-usage-${view}`)) continue;
+      cmds.push({
+        peerView: 'tab', tab: 'usage', icon: wiz('⤢', '🪞'),
+        label: wiz(`Go to Usage › ${plain}`, `Scry the ${wizardly}`),
+        hint: wiz('switch tab', 'peer into this chamber of the Tower'),
+        keywords: `tab navigate go open usage ${words}`,
+        run: () => usageHub.open(view),
+      });
+    }
+  }
+  // Activity folds Audit, Logs and Performance into one tab; each view keeps
+  // a direct command so "logs" or "debug" still finds it. Only Audit is
+  // offered on a peer view (peerView 'tab' gates it on the Activity tab);
+  // the others fall to the default local-only gate there.
+  const activityBtn = $$('nav [data-tab="activity"]')[0];
+  if (activityBtn && activityBtn.offsetParent !== null) {
+    for (const [subtab, plain, arcane, keywords] of [
+      ['audit', 'Audit', 'Deeds', 'audit trail log who commands denied chronicle deeds'],
+      ['logs', 'Logs', 'Runes', 'logs daemon log output tail errors warnings runes'],
+      ['performance', 'Performance', 'Alchemy', 'performance perf debug latency poll timing slow diagnostics alchemy'],
+    ]) {
+      cmds.push({
+        ...(subtab === 'audit' ? { peerView: 'tab', tab: 'activity' } : {}),
+        icon: wiz('⤢', '🪞'), label: wiz(`Go to Activity › ${plain}`, `Scry the Chronicle › ${arcane}`),
+        hint: wiz('switch tab', 'peer into this chamber of the Tower'),
+        keywords: 'tab navigate go open activity ' + keywords,
+        // From another tab, preselect the view so the one nav click records
+        // a single /activity/<subtab> entry; on Activity, the subtab click
+        // records it.
+        run: () => {
+          if (activityBtn.classList.contains('active')) {
+            document.querySelector(`#tab-activity .activity-subtab[data-subtab="${subtab}"]`)?.click();
+          } else {
+            setActivitySubtab(subtab);
+            activityBtn.click();
+          }
+        },
+      });
+    }
   }
   // Fleet administration has no visible tab before the first peer is
   // trusted (the Skynet bar appears with the fleet), so it is reached here.

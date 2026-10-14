@@ -68,8 +68,9 @@ import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
+import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -175,6 +176,7 @@ async function settleInitialLayout() {
     }),
     () => mountCostsFeature(),
     () => mountUsageHistoryFeature(),
+    () => mountUsageHubFeature(),
     () => mountAccessFeature({
       requestMutation: dashboardActions.requestMutation,
       confirm: confirmModal,
@@ -317,7 +319,7 @@ async function settleInitialLayout() {
     mount().then((cleanup) => { bootStep(); return cleanup; })));
   pageCleanups.push(...featureCleanups);
 
-  pageCleanups.push(bindTabs(), bindTabHotkeys());
+  pageCleanups.push(bindTabs(), bindTabHotkeys(), bindActivityTab());
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();
@@ -414,7 +416,7 @@ async function settleInitialLayout() {
   // restoring the URL so snapshot-gated tab visibility is known: Processes, for
   // example, starts CSS-hidden until processes_enabled arrives. Restoring its
   // route any earlier would mistake that provisional hidden state for a stale link
-  // and rewrite /processes/... to the home screen. Two animation-frame turns
+  // and rewrite /automations/processes/... to the home screen. Two animation-frame turns
   // then let Preact/Signals and the
   // ResizeObserver-driven dock/nav geometry settle before visibility changes.
   // dashboard.css carries an eight-second CSS-only failsafe in case the module

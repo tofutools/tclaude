@@ -15,7 +15,8 @@
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
-import { peerViewTabUsable } from './peer-view-limits.js';
+import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
+import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -33,7 +34,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
+  'messages', 'usage', 'activity', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -57,7 +58,12 @@ let ready = false;
 // live terminals, or a disabled Costs/Plugins tab). A restored URL pointing at
 // an unavailable tab is a stale target (AC #5): the caller falls back to the
 // default rather than stranding on a blank hidden section.
+//
+// Processes is the exception: it is reached through the Automations sub-nav, so
+// its nav button is permanently CSS-hidden and only the feature flag decides
+// whether it is reachable.
 function tabAvailable(tab) {
+  if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -70,9 +76,28 @@ function groupsRouteMapAvailable() {
   return !document.body.classList.contains('hide-groups-route-map');
 }
 
+// The Usage tab's quota and costs subtabs are gated independently (a
+// subscription with no quota history, costs disabled in config); the usage hub
+// island mirrors each onto a body class, so a bookmarked /usage/costs whose
+// half is off falls back like any other stale target.
+function usageSubtabAvailable(subtab) {
+  return !document.body.classList.contains(`hide-usage-${subtab}`);
+}
+
+// staleFallback is where an unavailable location lands. A Usage view whose
+// half is off falls back to the tab itself while the tab is still up (the hub
+// then shows the remaining half), so an old /costs bookmark lands the same way
+// whether or not the hub has applied its gates yet; everything else falls
+// back to the default tab.
+function staleFallback(loc) {
+  if (loc.tab === 'usage' && tabAvailable('usage')) return normalizeLocation({ tab: 'usage' });
+  return normalizeLocation({ tab: DEFAULT_TAB });
+}
+
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
-    && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable());
+    && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
+    && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
 // pendingTerminalAttach reports whether `loc` is a terminals deep link that is
@@ -116,8 +141,15 @@ function activeLocationFromDOM() {
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
+  } else if (tab === 'activity') {
+    loc.subtab = activitySubtab.value;
   } else if (tab === 'jobs') {
     const island = featureState('jobs');
+    if (island) return normalizeLocation(island.location.value);
+  } else if (tab === 'usage') {
+    // Overview / Quota / Costs is island state (a signal, not an active class
+    // the DOM could be trusted to have committed yet), so ask the island.
+    const island = featureState('usage-hub');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'terminals') {
     // Which terminal is being viewed is island state the DOM never spells out
@@ -128,15 +160,11 @@ function activeLocationFromDOM() {
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
-    // /processes/templates/<id> segment) is state the DOM never spells out, so
-    // a pure DOM read cannot reproduce it. Its `location` signal always yields
-    // at least {tab, subtab}, so the DOM branch below is reached only when the
-    // island is ABSENT (its asset failed to load and the subnav was never
-    // rendered) — where it degrades to exactly the pre-selection behaviour.
+    // /automations/processes/templates/<id> segment) is state the DOM never
+    // spells out, so a pure DOM read cannot reproduce it. An absent island
+    // (its asset failed to load) degrades to the bare Processes view.
     const island = featureState('processes');
     if (island) return normalizeLocation(island.location.value);
-    const sub = $$('#tab-processes .process-subtab').find(b => b.classList.contains('active'));
-    if (sub) loc.subtab = sub.dataset.processSubtab;
   }
   return normalizeLocation(loc);
 }
@@ -166,6 +194,12 @@ function requestJobsLocation(loc) {
   }));
 }
 
+function requestUsageLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 function requestGroupsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
@@ -176,13 +210,19 @@ function requestGroupsLocation(loc) {
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
 // classes) reuses every lazy-loader hung on that button — the same reasoning as
-// cycleTab() in refresh.js — so a restored /costs or /logs actually loads its
+// cycleTab() in refresh.js — so a restored /costs or /activity/logs actually loads its
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
   if (!peerViewTabUsable(loc.tab)) { correct({ tab: 'groups' }); loc = { tab: 'groups' }; }
+  // Activity is usable on a peer view for its audit log only; a Logs or
+  // Performance location there lands on Audit instead.
+  if (loc.tab === 'activity' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
+    loc = { tab: 'activity', subtab: DEFAULT_ACTIVITY_SUBTAB };
+    correct(loc);
+  }
   applying = true;
   try {
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
@@ -195,8 +235,16 @@ function activate(loc) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
+    } else if (loc.tab === 'activity') {
+      // A bare /activity (hand-typed, or Back onto one) shows the default
+      // view, so a later subtab never strands an entry on another one.
+      setActivitySubtab(loc.subtab || DEFAULT_ACTIVITY_SUBTAB);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
+    } else if (loc.tab === 'usage') {
+      // Always sent, bare /usage included: Back from /usage/costs to /usage
+      // must return the island to its Overview.
+      requestUsageLocation(loc);
     } else if (loc.tab === 'groups') {
       // Bare Groups is already the default Members view on boot. Avoid
       // broadcasting a synthetic restore for stale-target fallback (for
@@ -354,7 +402,7 @@ function onPopstate(e) {
     && !(current(stack).tab === DEFAULT_TAB && !current(stack).subtab)
     && !pendingTerminalAttach(current(stack))
     && !pendingMapLoad(current(stack))) {
-    stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
+    stack = replaceCurrent(stack, staleFallback(current(stack)));
   }
   activate(current(stack));
   // Re-stamp the current entry with the fresh full stack (heals stale/partial
@@ -391,8 +439,11 @@ export function initNavHistory() {
     // canonical /<tab>).
     loc = urlLoc;
     if (loc.tab === DEFAULT_TAB) {
+      // normalizeLocation also folds a retired tab (?tab=costs, ?tab=audit)
+      // onto its new home.
       const legacyTab = new URLSearchParams(window.location.search).get('tab');
-      if (legacyTab && ROUTABLE_TABS.has(legacyTab)) loc = normalizeLocation({ tab: legacyTab });
+      const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
+      if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
     }
     stack = initialState(loc);
   }
@@ -406,7 +457,7 @@ export function initNavHistory() {
     && !(loc.tab === DEFAULT_TAB && !loc.subtab)
     && !pendingTerminalAttach(loc)
     && !pendingMapLoad(loc)) {
-    loc = normalizeLocation({ tab: DEFAULT_TAB });
+    loc = staleFallback(loc);
     stack = initialState(loc);
   }
 
@@ -414,7 +465,9 @@ export function initNavHistory() {
   // the current history entry so it carries the full stack + a canonical path
   // (a bare "/" stays "/"; "/costs" stays "/costs").
   activate(loc);
-  history.replaceState(serializeStack(stack), '', urlFor(loc));
+  // activate() may have corrected the location in place (a peer view refusing
+  // a tab or subtab), so canonicalise from the stack, not the parsed URL.
+  history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   ready = true;
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
@@ -434,7 +487,7 @@ export function initNavHistory() {
 
   window.addEventListener('popstate', onPopstate);
 
-  // Subtab switches (Access / Automations / Processes) emit
+  // Subtab switches (Access / Activity / Automations / Processes) emit
   // `tclaude:navigated` after they update their view — record them as user
   // navigation, so their deep paths update just like a top-level tab switch.
   document.addEventListener('tclaude:navigated', recordCurrentLocation);

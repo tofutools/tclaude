@@ -58,6 +58,85 @@ function installShell(harness) {
     <main><section id="tab-processes"></section></main>`;
 }
 
+// The Activity shell: one nav anchor plus the static subnav/panels that
+// activity-tab.js binds.
+function installActivityShell(harness) {
+  harness.document.body.innerHTML = `
+    <nav>
+      <button data-tab="groups"></button>
+      <button data-tab="activity" class="active"></button>
+    </nav>
+    <main><section id="tab-activity" class="active">
+      <a class="activity-subtab active" data-subtab="audit" href="/activity/audit">Audit</a>
+      <a class="activity-subtab" data-subtab="logs" href="/activity/logs">Logs</a>
+      <a class="activity-subtab" data-subtab="performance" href="/activity/performance">Performance</a>
+      <div class="activity-panel active" id="activity-audit"></div>
+      <div class="activity-panel" id="activity-logs"></div>
+      <div class="activity-panel" id="activity-performance"></div>
+    </section></main>`;
+}
+
+test('a retired /logs deep link heals to /activity/logs; subtabs push and Back restores', async (t) => {
+  const harness = await createPreactHarness(t);
+  installActivityShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/logs?wizard=1');
+  const [{ initNavHistory }, { bindActivityTab }, { activitySubtab }] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/activity-tab.js'),
+    harness.importDashboardModule('js/activity-state.js'),
+  ]);
+  const unbind = bindActivityTab({ doc: harness.document });
+  t.after(unbind);
+  const panel = (name) => harness.document.getElementById(`activity-${name}`);
+
+  initNavHistory();
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/activity/logs' }],
+    'the old path is rewritten in place — no extra Back step');
+  assert.equal(activitySubtab.value, 'logs');
+  assert.equal(panel('logs').classList.contains('active'), true);
+  assert.equal(panel('audit').classList.contains('active'), false);
+  browsing.calls.length = 0;
+
+  harness.document.querySelector('[data-subtab="performance"]').click();
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/activity/performance' }]);
+  assert.equal(panel('performance').classList.contains('active'), true);
+  const atPerformance = browsing.history.state;
+  harness.document.querySelector('[data-subtab="performance"]').click();
+  assert.equal(browsing.calls.length, 1, 're-selecting the shown subtab adds no entry');
+  browsing.calls.length = 0;
+
+  // Back: the browser has moved to the previous entry and fires popstate.
+  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/activity/logs');
+  browsing.calls.length = 0;
+  const back = new harness.window.Event('popstate');
+  back.state = browsing.history.state;
+  harness.window.dispatchEvent(back);
+  assert.equal(activitySubtab.value, 'logs', 'Back restores the previous subtab');
+  assert.deepEqual(browsing.calls.map((call) => call.kind), ['replace'], 'traversal never pushes');
+
+  // A modified click is left to the browser (new tab), so nothing changes here.
+  const modified = harness.fireEvent(harness.document.querySelector('[data-subtab="audit"]'), 'click', { ctrlKey: true });
+  assert.equal(modified.defaultPrevented, false);
+  assert.equal(activitySubtab.value, 'logs');
+});
+
+test('a peer view lands a Logs deep link on Audit and the URL says so', async (t) => {
+  const harness = await createPreactHarness(t);
+  installActivityShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/activity/logs');
+  const previous = globalThis.__tclaudeRemoteNode;
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
+  const [{ initNavHistory }, { activitySubtab }] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/activity-state.js'),
+  ]);
+  initNavHistory();
+  assert.equal(activitySubtab.value, 'audit', 'the daemon log has no peer route');
+  assert.equal(browsing.at(), '/activity/audit?node=inst_forge7', 'boot keeps the corrected location');
+  assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true);
+});
+
 test('a correction replaces the current history entry; a navigation pushes', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);
@@ -73,8 +152,9 @@ test('a correction replaces the current history entry; a navigation pushes', asy
   registerFeatureState('processes', { location: islandLocation });
 
   initNavHistory();
-  // Boot canonicalises the current entry in place — never a push.
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/processes/templates' }]);
+  // Boot canonicalises the current entry in place — never a push. The legacy
+  // top-level /processes route heals to its Automations-nested form.
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/automations/processes/templates' }]);
   browsing.calls.length = 0;
 
   // Opening the editor is a real navigation: it must PUSH, so Back returns to
@@ -82,7 +162,7 @@ test('a correction replaces the current history entry; a navigation pushes', asy
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
     detail: { location: { tab: 'processes', subtab: 'templates', selection: 'release-train' } },
   }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/processes/templates/release-train' }]);
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/automations/processes/templates/release-train' }]);
   browsing.calls.length = 0;
 
   // A correction is NOT a user navigation. It must replace, because the browser
@@ -94,14 +174,14 @@ test('a correction replaces the current history entry; a navigation pushes', asy
     },
   }));
   assert.deepEqual(browsing.calls, [
-    { kind: 'replace', url: '/processes/templates/release-train' },
+    { kind: 'replace', url: '/automations/processes/templates/release-train' },
   ], 'a correction never pushes');
 });
 
 test('a repeated refusal does not grow history without bound', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);
-  const browsing = installBrowsingContext(t, harness, '/processes/templates/release-train');
+  const browsing = installBrowsingContext(t, harness, '/automations/processes/templates/release-train');
 
   const [{ registerFeatureState }, { initNavHistory }] = await Promise.all([
     harness.importDashboardModule('js/feature-state-registry.js'),
@@ -129,7 +209,7 @@ test('a repeated refusal does not grow history without bound', async (t) => {
   assert.equal(browsing.calls.length, 5);
   assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true,
     'refusals never accumulate history entries');
-  assert.equal(browsing.at(), '/processes/templates/release-train');
+  assert.equal(browsing.at(), '/automations/processes/templates/release-train');
 });
 
 test('a terminals deep link survives boot with the tab still hidden', async (t) => {
@@ -294,6 +374,6 @@ test('the adapter reads the open editor id from the island, not the DOM', async 
   harness.document.querySelector('nav [data-tab="processes"]').click();
 
   assert.deepEqual(browsing.calls, [
-    { kind: 'push', url: '/processes/templates/release-train' },
+    { kind: 'push', url: '/automations/processes/templates/release-train' },
   ]);
 });

@@ -947,6 +947,11 @@ section.active { display: block; }
 .access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
 .access-panel { display: none; }
 .access-panel.active { display: block; }
+/* Activity tab — Audit, Logs and Performance share one nav tab and reuse the
+   Access segmented-control look; activity-tab.js toggles the panels. */
+.activity-panel { display: none; }
+.activity-panel.active { display: block; }
+html.remote-node .activity-subtab.pv-off { opacity: .4; }
 .access-sub-intro {
   color: #8b949e; font-size: 12px; line-height: 1.5;
   margin: 0 0 12px; max-width: 760px;
@@ -1634,6 +1639,20 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .mail-attachment > .human-attachment-preview-trigger {
   flex: 0 0 100%; order: -1;
 }
+/* Video attachments reuse the image thumbnail card; the poster frame is the
+   <video> element itself, so it must not take pointer events from the button.
+   The play badge sits centred over it. */
+.video-preview-trigger :is(video, .video-preview-poster) { pointer-events: none; background: #000; }
+.video-preview-poster[hidden] { display: none; }
+.video-preview-play {
+  position: absolute; left: 50%; top: 50%; display: grid; place-items: center;
+  width: 44px; height: 44px; padding-left: 3px; border-radius: 50%;
+  background: rgba(13, 17, 23, .78); color: #f0f6fc; font-size: 18px;
+  border: 1px solid rgba(240, 246, 252, .35);
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.video-preview-trigger:hover .video-preview-play,
+.video-preview-trigger:focus-visible .video-preview-play { border-color: #58a6ff; color: #dbeafe; }
 
 /* Shared corner grip for the resizable attachment viewers (dialog-resize.js).
    It is absolutely positioned against the dialog, so it lands on the same
@@ -1725,6 +1744,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   -webkit-user-drag: none; user-select: none;
 }
 .image-preview-image[data-sized="true"] { max-width: none; max-height: none; }
+/* The video player letterboxes on black rather than the image checkerboard:
+   a video has no transparency to reveal. */
+.video-preview-stage { padding: 0; background: #000; }
+.video-preview-video {
+  display: block; flex: 1 1 auto; min-width: 0; min-height: 0;
+  width: 100%; height: 100%; object-fit: contain; background: #000;
+}
 .image-preview-state {
   position: absolute; z-index: 1; left: 50%; top: 50%;
   display: flex; flex-direction: column; gap: 5px; max-width: min(420px, calc(100% - 40px));
@@ -9257,7 +9283,141 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
    in-dock collapse are the remaining show/hide controls.) */
 /* === Config tab — visual editor for ~/.tclaude/config.json ========== */
-#tab-config { max-width: 780px; }
+#tab-config { max-width: 1180px; }
+/* Settings-app layout: a sticky section rail on the left, one panel at a
+   time on the right. Inactive panels stay mounted (the adapter reads every
+   field by id) and are hidden here; while a search is active
+   (data-cfg-searching) every panel with a match shows instead. */
+.cfg-layout { display: flex; align-items: flex-start; gap: 24px; }
+.cfg-rail {
+  flex: 0 0 220px; position: sticky; top: 10px;
+  max-height: calc(100vh - var(--footer-h, 0px) - 20px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px;
+}
+.cfg-rail .cfg-filter-bar { margin: 0; padding: 0; gap: 4px; }
+.cfg-rail .cfg-filter-bar input[type=search] { flex: 1; min-width: 0; width: 100%; }
+.cfg-rail .filter-count { font-size: 11px; color: #7d8590; min-height: 0; padding: 0 4px; }
+.cfg-rail .filter-count:empty { display: none; }
+.cfg-rail-links { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+.cfg-rail-link {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 0; border-radius: 6px; color: #c9d1d9;
+  font-family: inherit; font-size: 13px; padding: 6px 10px; cursor: pointer;
+}
+.cfg-rail-link:hover { background: #161b22; }
+.cfg-rail-link[aria-current="page"] { background: #1f6feb26; color: #e6edf3; box-shadow: inset 2px 0 #58a6ff; }
+.cfg-rail-link:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.cfg-rail-icon { flex: 0 0 20px; text-align: center; font-size: 12px; }
+.cfg-rail-title { flex: 1; min-width: 0; }
+.cfg-rail-dirty {
+  width: 7px; height: 7px; border-radius: 50%; background: #d29922;
+  display: inline-block; flex: 0 0 auto;
+}
+.cfg-rail-hits { font-size: 11px; color: #7d8590; }
+.cfg-layout[data-cfg-searching] .cfg-rail-link[aria-current="page"] { background: none; box-shadow: none; }
+.cfg-rail-link[data-cfg-nohits] { opacity: 0.45; }
+.cfg-main { flex: 1; min-width: 0; max-width: 100%; }
+.cfg-intro code, .cfg-more .cfg-hint, .cfg-row-summary { overflow-wrap: anywhere; }
+.cfg-layout:not([data-cfg-searching]) .cfg-panel[data-cfg-current="false"],
+.cfg-layout[data-cfg-searching] .cfg-panel[data-cfg-nomatch] { display: none; }
+.cfg-panel-head { margin: 2px 0 12px; }
+.cfg-panel-head h2 { margin: 0 0 3px; font-size: 18px; color: #e6edf3; font-weight: 600; }
+.cfg-panel-head p { margin: 0; font-size: 12px; color: #7d8590; }
+.cfg-layout[data-cfg-searching] .cfg-panel { margin-bottom: 22px; }
+.cfg-layout[data-cfg-searching] .cfg-panel-head h2 { font-size: 14px; }
+.cfg-layout[data-cfg-searching] .cfg-panel-head p { display: none; }
+.cfg-group-lede { font-size: 12px; color: #7d8590; margin: 0 0 8px; line-height: 1.5; }
+/* One setting row: text on the left (title, summary, key + "More…"),
+   controls on the right; .cfg-row-wide stacks wide controls underneath and
+   .cfg-row-child indents a setting that depends on the row above. */
+.cfg-section .cfg-field.cfg-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  gap: 6px 24px; align-items: start; margin: 0; padding: 11px 0;
+  border-top: 1px solid #21262d;
+}
+.cfg-section > h3 + .cfg-row, .cfg-section > .cfg-group-lede + .cfg-row { border-top: 0; }
+.cfg-section .cfg-field.cfg-row-wide { grid-template-columns: minmax(0, 1fr); }
+.cfg-row-child { padding-left: 22px !important; }
+.cfg-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cfg-field.cfg-row .cfg-label { flex: none; color: #e6edf3; font-size: 13px; font-weight: 500; }
+.cfg-row-child .cfg-label { font-weight: 400; }
+label.cfg-label { cursor: pointer; }
+.cfg-row-summary { color: #8b949e; font-size: 12px; line-height: 1.45; margin-top: 3px; }
+.cfg-row-summary code, .cfg-group-lede code { font-size: 11px; }
+.cfg-row-meta { display: flex; align-items: baseline; gap: 2px 12px; flex-wrap: wrap; margin-top: 2px; line-height: 1.4; }
+.cfg-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  color: #6e7681; background: none !important; padding: 0 !important; user-select: all;
+}
+.cfg-more { font-size: 11px; margin: 0; }
+.cfg-more[open] { flex-basis: 100%; }
+.cfg-more > summary { color: #58a6ff; cursor: pointer; width: max-content; list-style: none; padding: 0; margin: 0; font-size: 11px; }
+.cfg-more > summary::-webkit-details-marker { display: none; }
+.cfg-more[open] > summary { color: #7d8590; }
+.cfg-more .cfg-hint {
+  display: block; padding: 8px 10px !important; margin-top: 6px; line-height: 1.5;
+  background: #0b0f14; border: 1px solid #21262d; border-radius: 6px; font-size: 11.5px;
+}
+.cfg-row-ctl {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px 12px;
+  flex-wrap: wrap; font-size: 12px; color: #c9d1d9;
+}
+.cfg-row-ctl:empty { display: none; }
+.cfg-row-ctl button.cfg-inline {
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
+  padding: 4px 10px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+}
+.cfg-row-ctl button.cfg-inline:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-row-ctl button.cfg-inline:disabled { opacity: 0.5; cursor: default; }
+.cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
+.cfg-row-ctl .cfg-list { padding-left: 0; }
+.cfg-row-ctl .cfg-notif-types, .cfg-row-ctl .cfg-hint { padding-left: 0; }
+.cfg-row-ctl #ask-profile-state { flex-basis: 100%; text-align: right; }
+.cfg-row-ctl #ask-profile-state:empty { display: none; }
+.cfg-row-ctl textarea.cfg-json {
+  width: 100%; box-sizing: border-box; background: #010409;
+  border: 1px solid #30363d; border-radius: 6px; color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  padding: 8px; min-height: 180px; resize: vertical;
+}
+.cfg-row-ctl textarea.cfg-json:focus { outline: none; border-color: #58a6ff; }
+/* Boolean settings render as a switch; it is still a real checkbox. */
+.cfg-field input[type=checkbox].cfg-switch {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none;
+  width: 32px; height: 18px; border-radius: 9px; background: #30363d;
+  position: relative; cursor: pointer; transition: background 0.15s;
+}
+.cfg-field input[type=checkbox].cfg-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: #8b949e; transition: left 0.15s, background 0.15s;
+}
+.cfg-field input[type=checkbox].cfg-switch:checked { background: #238636; }
+.cfg-field input[type=checkbox].cfg-switch:checked::after { left: 16px; background: #fff; }
+.cfg-field input[type=checkbox].cfg-switch:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.cfg-field input[type=checkbox].cfg-switch:disabled { opacity: 0.4; cursor: default; }
+.cfg-badge {
+  font-size: 10px; line-height: 1.5; padding: 0 6px; border-radius: 10px;
+  border: 1px solid; white-space: nowrap; font-weight: 400;
+}
+.cfg-badge-restart { color: #e3b341; border-color: #9e6a03; background: #2a1f06; }
+.cfg-badge-refresh { color: #79c0ff; border-color: #1f6feb; background: #0c2d6b55; }
+.cfg-badge-claude { color: #d2a8ff; border-color: #6e40c9; background: #1f1535; }
+.cfg-badge-danger { color: #ff7b72; border-color: #8e1519; background: #2d0d0e; }
+.cfg-save-summary { font-size: 12px; color: #8b949e; display: inline-flex; align-items: center; gap: 6px; }
+.cfg-save-summary:empty { display: none; }
+.cfg-save-summary strong { color: #e6edf3; }
+#cfg-remote-admin-slot:empty { display: none; }
+@media (max-width: 760px) {
+  .cfg-layout { flex-direction: column; gap: 10px; }
+  .cfg-main { width: 100%; }
+  .cfg-rail { position: static; flex: none; width: 100%; max-height: none; overflow: visible; }
+  .cfg-rail-links { flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; }
+  .cfg-rail-link { width: auto; flex: none; white-space: nowrap; border: 1px solid #30363d; border-radius: 14px; padding: 4px 10px; }
+  .cfg-rail-link[aria-current="page"] { box-shadow: none; border-color: #58a6ff; }
+  .cfg-section .cfg-field.cfg-row { grid-template-columns: minmax(0, 1fr); }
+  .cfg-row-ctl { justify-content: flex-start; }
+  .cfg-row-ctl #ask-profile-state { text-align: left; }
+}
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
 .cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
 /* Config-tab live section filter. The bar itself reuses .filter-bar; these
@@ -9301,8 +9461,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
-.cfg-checkbox-stack-field { align-items: flex-start; }
-.cfg-checkbox-stack { display: flex; flex-direction: column; gap: 9px; }
 /* Web-terminal attachment geometry is a small subsection rather than one long
    flex row: strategy first, then one consistently aligned timing override per
    row. It sits after Window focus because both change terminal attachment /
@@ -9787,21 +9945,110 @@ nav [data-tab="vegas"] { display: none; }
 body.slop nav [data-tab="vegas"],
 body.vegas nav [data-tab="vegas"] { display: flex; }
 
-/* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
-   cost_tab_visible is false — a subscription account with no real spend that
-   hasn't opted into the WHAT-IF view. The nav button AND the section are
-   hidden so the tab vanishes entirely (refresh.js also falls the active tab
-   back to Groups if Costs was showing). The 💲 cost toggle hides too — there's
-   nothing to toggle when no cost data exists. */
-body.hide-costs nav [data-tab="costs"],
-body.hide-costs #tab-costs { display: none; }
+/* Costs auto-hide. body.hide-costs is set by costs-island.js when the
+   server's cost_tab_visible is false — a subscription account with no real
+   spend that hasn't opted into the WHAT-IF view. The 💲 cost toggle hides —
+   there's nothing to toggle when no cost data exists. The Usage tab's Costs
+   view is gated by the hub's own body.hide-usage-costs below. */
 body.hide-costs #groups-cost-toggle { display: none; }
 
-/* Usage-history auto-hide. A cache row is enough to keep the tab visible even
-   between live quota windows; accounts without subscription readings never
-   see an empty destination. */
+/* Usage tab: Overview / Quota / Costs. usage-hub-island.js sets data-subview
+   on the section (one host at a time; absent = hub failed to load, show both
+   halves) and mirrors each half's server gate onto body.hide-usage-quota /
+   body.hide-usage-costs. The tab itself hides only when both halves are off:
+   accounts with neither quota readings nor costs never see an empty
+   destination. */
 body.hide-usage-tab nav [data-tab="usage"],
 body.hide-usage-tab #tab-usage { display: none; }
+#tab-usage[data-subview]:not([data-subview="quota"]) #usage-root,
+#tab-usage[data-subview]:not([data-subview="costs"]) #costs-root,
+body.hide-usage-quota #usage-root,
+body.hide-usage-costs #costs-root { display: none; }
+.usage-subnav {
+  display: inline-flex; gap: 2px; margin: 0 0 16px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
+}
+.usage-subtab {
+  color: #7d8590; font-size: 13px; padding: 6px 16px; border-radius: 4px; text-decoration: none;
+}
+.usage-subtab:hover { color: #d4d4d4; }
+.usage-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.usage-subtab-meta { margin-left: 7px; color: #6e7681; font-size: 11px; font-weight: 400; }
+.usage-overview .empty { margin: 0; }
+.usage-ov-kpis, .usage-ov-quota-grid {
+  display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.usage-ov-card {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 7px;
+  color: inherit; text-decoration: none;
+}
+.usage-ov-card:hover { border-color: #58a6ff; }
+.usage-ov-card.danger, .usage-ov-card.at-risk { border-color: rgba(248, 81, 73, .55); }
+.usage-ov-value { font-size: 22px; font-weight: 600; color: #d4d4d4; line-height: 1.2; }
+.usage-ov-card.money .usage-ov-value { color: #3fb950; }
+.usage-ov-card.danger .usage-ov-value { color: #f85149; }
+.usage-ov-card.warn .usage-ov-value { color: #d29922; }
+.usage-ov-meta { color: #7d8590; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-ov-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.usage-ov-window { display: block; font-size: 14px; font-weight: 600; }
+.usage-ov-pct { font-size: 20px; font-weight: 600; color: #d4d4d4; }
+.usage-ov-spark { width: 100%; height: 40px; margin: 6px 0 2px; }
+.usage-ov-spark.empty { border-top: 1px dashed #2a3340; }
+.usage-ov-spark .limit { stroke: rgba(248, 81, 73, .35); stroke-width: 1; }
+.usage-ov-spark .reset { stroke: #a371f7; stroke-dasharray: 3 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-ov-spark .observed { fill: none; stroke: #58a6ff; stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+.usage-ov-spark .forecast { stroke: #e3a341; stroke-dasharray: 4 3; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.usage-ov-status { font-size: 12px; font-weight: 600; color: #8b949e; }
+.usage-ov-status.danger { color: #f85149; }
+.usage-ov-status.warn { color: #d29922; }
+.usage-ov-status.good { color: #3fb950; }
+.usage-ov-heading {
+  display: flex; align-items: baseline; gap: 12px; margin: 22px 0 10px;
+  color: #8b949e; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+}
+.usage-ov-heading a { color: #58a6ff; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; }
+.usage-ov-heading a:hover { text-decoration: underline; }
+.usage-ov-spend { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
+.usage-ov-chart { height: 170px; padding: 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; }
+.usage-ov-chart svg { width: 100%; height: 100%; display: block; }
+/* The Costs view's provider palette (.cost-seg-hN), as SVG fills. */
+.usage-ov-chart .bar.cost-seg-h0, .usage-ov-legend .cost-seg-h0 { fill: #6e9c7d; background: #6e9c7d; }
+.usage-ov-chart .bar.cost-seg-h1, .usage-ov-legend .cost-seg-h1 { fill: #6a8fd0; background: #6a8fd0; }
+.usage-ov-chart .bar.cost-seg-h2, .usage-ov-legend .cost-seg-h2 { fill: #b58cd6; background: #b58cd6; }
+.usage-ov-chart .bar.cost-seg-h3, .usage-ov-legend .cost-seg-h3 { fill: #d0a860; background: #d0a860; }
+.usage-ov-chart .bar.cost-seg-h4, .usage-ov-legend .cost-seg-h4 { fill: #5bb0a5; background: #5bb0a5; }
+.usage-ov-chart .bar.cost-seg-h5, .usage-ov-legend .cost-seg-h5 { fill: #cf8a8a; background: #cf8a8a; }
+.usage-ov-chart .what-if .bar { fill-opacity: .55; }
+.usage-ov-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: #7d8590; font-size: 11px; }
+.usage-ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.usage-ov-legend .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.usage-ov-legend .line { display: inline-block; width: 14px; border-top: 2px solid #d4d4d4; }
+.usage-ov-legend .line.dashed { border-top-style: dashed; opacity: .7; }
+.usage-ov-agents .id { color: #6e7681; font-family: ui-monospace, monospace; font-size: 11px; margin-left: 4px; }
+.usage-ov-coverage {
+  display: block; margin: 12px 0 0; padding: 8px 12px; border: 1px solid rgba(210, 153, 34, .45);
+  border-radius: 6px; color: #d29922; font-size: 12px; text-decoration: none;
+}
+.usage-ov-chart .cumulative { fill: none; stroke: #d4d4d4; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-ov-chart .projection { stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
+.usage-ov-agents { width: 100%; border-collapse: collapse; border: 1px solid #2a3340; border-radius: 7px; }
+.usage-ov-agents th { text-align: left; color: #8b949e; font-size: 11px; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid #2a3340; }
+.usage-ov-agents td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
+.usage-ov-agents td.cost { color: #3fb950; text-align: right; white-space: nowrap; }
+.usage-ov-agents th:last-child { text-align: right; }
+.usage-ov-note { color: #7d8590; font-size: 12px; margin: 10px 0 0; }
+@media (max-width: 760px) {
+  .usage-ov-spend { grid-template-columns: 1fr; }
+}
+body.wizard .usage-subtab { color: #b39ddb; }
+body.wizard .usage-subtab:hover { color: #f3e6c0; }
+body.wizard .usage-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+body.wizard .usage-ov-card { background: #140f28; border-color: #3a2a63; }
+body.wizard .usage-ov-chart, body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
 
 /* Plugins-tab auto-hide. body.hide-plugins is set by refresh.js when the
    server's plugins_tab_visible is false — no plugins installed, no broken
@@ -9812,25 +10059,25 @@ body.hide-usage-tab #tab-usage { display: none; }
 body.hide-plugins nav [data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
 
-/* Debug-tab auto-hide. body.hide-debug is set by refresh.js when the
-   server's debug_tab_visible flag (config dashboard.show_debug_tab) is
-   off — the default. Display-only: the daemon's poll-timing recorder and
-   /api/perf run regardless. */
-body.hide-debug nav [data-tab="debug"],
-body.hide-debug #tab-debug { display: none; }
-
 /* Processes is a dark-launched feature. The page starts with hide-processes
    on <body>; refresh.js removes it only when the server snapshot confirms the
    feature flag, preventing a flash of experimental chrome while config loads. */
 body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
+/* Processes is presented as an Automations subtab (the shared sub-nav in
+   automations-subnav.js), so its own nav anchor never shows; Automations
+   carries the active underline while Processes is open. */
+nav [data-tab="processes"] { display: none; }
+nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #d4d4d4; border-bottom-color: #58a6ff; }
+body.slop nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #ffe88c; border-bottom-color: #ffd700; }
+body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f3e6c0; border-bottom-color: #d9b45a; }
 
 /* Processes tab shell — deliberately neutral and compact so the graph editor
    and live viewer can replace the list panels with their full-canvas mounts. */
 .process-subnav {
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
-  padding-bottom: 10px; border-bottom: 1px solid #30363d;
 }
+.process-subnav .jobs-subnav { margin: 0; }
 .process-subtab, .process-action {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
@@ -15534,44 +15781,44 @@ body.wizard .debug-wizard-title {
   font-size: 22px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #tab-debug .debug-card {
+body.wizard #activity-performance .debug-card {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.14), transparent 68%),
     linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border-color: #7a5db0;
   box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.12);
 }
-body.wizard #tab-debug .debug-card-head .rowname {
+body.wizard #activity-performance .debug-card-head .rowname {
   color: #f3e6c0;
   text-shadow: 0 0 5px rgba(217, 180, 90, 0.25);
 }
-body.wizard #tab-debug .muted,
-body.wizard #tab-debug .debug-stat,
-body.wizard #tab-debug .debug-subhead { color: #9a86c4; }
-body.wizard #tab-debug .debug-stat strong {
+body.wizard #activity-performance .muted,
+body.wizard #activity-performance .debug-stat,
+body.wizard #activity-performance .debug-subhead { color: #9a86c4; }
+body.wizard #activity-performance .debug-stat strong {
   color: #f0d066;
   text-shadow: 0 0 5px rgba(217, 180, 90, 0.3);
 }
-body.wizard #tab-debug .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
-body.wizard #tab-debug .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
-body.wizard #tab-debug .debug-spark-line {
+body.wizard #activity-performance .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
+body.wizard #activity-performance .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
+body.wizard #activity-performance .debug-spark-line {
   stroke: #d9b45a;
   filter: drop-shadow(0 0 2px rgba(217, 180, 90, 0.45));
 }
-body.wizard #tab-debug .debug-phasebar {
+body.wizard #activity-performance .debug-phasebar {
   box-shadow: 0 0 0 1px rgba(122, 93, 176, 0.35), 0 0 8px rgba(169, 123, 214, 0.12);
 }
-body.wizard #tab-debug .debug-legend { color: #e7d9f5; }
-body.wizard #tab-debug .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
-body.wizard #tab-debug .debug-table th {
+body.wizard #activity-performance .debug-legend { color: #e7d9f5; }
+body.wizard #activity-performance .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
+body.wizard #activity-performance .debug-table th {
   color: #d9b45a;
   border-bottom-color: rgba(217, 180, 90, 0.45);
 }
-body.wizard #tab-debug .debug-table td {
+body.wizard #activity-performance .debug-table td {
   color: #e7d9f5;
   border-bottom-color: rgba(122, 93, 176, 0.22);
 }
-body.wizard #tab-debug .empty { color: #8f7bbf; }
+body.wizard #activity-performance .empty { color: #8f7bbf; }
 
 /* ─── Wizard Wards sub-nav — the three chambers of access control ─────
    The Access tab's inset segmented control (Permissions / Slug registry /
@@ -16444,6 +16691,25 @@ body.wizard #tab-config .cfg-section > h3 {
   color: #d9b45a;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
 }
+/* Settings-app chrome: the rail, panel heads, row text and switches. */
+body.wizard #tab-config .cfg-rail-link { color: #e7d9f5; }
+body.wizard #tab-config .cfg-rail-link:hover { background: #1c1436; }
+body.wizard #tab-config .cfg-rail-link[aria-current="page"] { background: #241b3d; color: #f3e6c0; box-shadow: inset 2px 0 #d9b45a; }
+body.wizard #tab-config .cfg-panel-head h2 { color: #f3e6c0; }
+body.wizard #tab-config .cfg-panel-head p,
+body.wizard #tab-config .cfg-group-lede,
+body.wizard #tab-config .cfg-row-summary,
+body.wizard #tab-config .cfg-field code.cfg-key,
+body.wizard #tab-config .cfg-save-summary { color: #b39ddb; }
+body.wizard #tab-config .cfg-field.cfg-row .cfg-label,
+body.wizard #tab-config .cfg-save-summary strong { color: #f3e6c0; }
+body.wizard #tab-config .cfg-section .cfg-field.cfg-row { border-top-color: rgba(122, 93, 176, 0.25); }
+body.wizard #tab-config .cfg-more > summary { color: #d9b45a; }
+body.wizard #tab-config .cfg-more .cfg-hint { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
+body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch { background: rgba(122, 93, 176, 0.45); }
+body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch::after { background: #e7d9f5; }
+body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch:checked { background: #7a5db0; }
+body.wizard #tab-config .cfg-row-ctl textarea.cfg-json { background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0; }
 /* The base theme draws a deliberate two-tier prominence on "Advanced …"
    disclosures: a section-level `.cfg-advanced` summary is blue+uppercase (like
    an h3 head), while a field-nested `.cfg-field details.cfg-advanced` summary is

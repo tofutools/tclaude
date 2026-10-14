@@ -62,8 +62,15 @@ func newProcessDefaultState(wizard bool) dashsnap.State {
 		Caption: "TCL-572 real Chrome: the production new-template action starts with one Start and no prepopulated End, reports the incomplete route honestly, and keeps connected insertion atomic and focusable.",
 		Wizard:  wizard,
 		JS: `return (async function(){
-  var nav=document.querySelector('nav [data-tab="processes"]');
-  if(!nav||nav.offsetParent===null) throw new Error('Processes nav is not visible');
+  var auto = document.querySelector('nav [data-tab="jobs"]');
+  if (!auto || auto.offsetParent === null) throw new Error('Automations nav is not visible');
+  auto.click();
+  var entryDeadline = Date.now() + 3000;
+  while (!document.querySelector('#tab-jobs [data-automations-subtab="processes"]') && Date.now() < entryDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var nav = document.querySelector('#tab-jobs [data-automations-subtab="processes"]');
+  if (!nav) throw new Error('Automations › Processes subtab is not visible');
   nav.click();
   var waitFor=async function(predicate,label){
     var deadline=Date.now()+5000;

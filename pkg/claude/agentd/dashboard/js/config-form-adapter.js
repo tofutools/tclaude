@@ -554,11 +554,6 @@ function populateConfigForm(cfg) {
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
 
-  // Debug tab — daemon poll-timing diagnostics (TCL-376). Hidden by
-  // default (unchecked); only an explicit dashboard.show_debug_tab true
-  // checks it.
-  $('#cfg-dashboard-show-debug-tab').checked = !!(cfg.dashboard && cfg.dashboard.show_debug_tab);
-
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -896,9 +891,9 @@ function assembleConfig() {
   // show_group_description: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
-  // show_debug_tab: false (hidden) is the default, so store only the
-  // NON-default true and drop the key otherwise — mirrors the Go omitempty.
-  if ($('#cfg-dashboard-show-debug-tab').checked) dashboard.show_debug_tab = true; else delete dashboard.show_debug_tab;
+  // show_debug_tab is retired: the poll-performance view (Activity ›
+  // Performance) is always shown, so a save drops the stale opt-in.
+  delete dashboard.show_debug_tab;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field
@@ -1199,57 +1194,88 @@ function renderConfigNotice(messages) {
 }
 
 // ===================================================================
-// Section filter — a search box that hides/shows whole config sections
-// by a title-OR-content match. cfgFilterBlocks() resolves the searchable
-// blocks LIVE from the DOM (every .cfg-section plus the standalone
-// Advanced sudo <details>), so a section added to dashboard.html is
-// filtered automatically — there is no hardcoded section list to keep in
-// sync. Hiding a section never affects Save: assembleConfig reads fields
-// by id regardless of visibility, so a filtered-out setting still
-// round-trips.
+// Settings search — filters individual setting rows by a title-OR-content
+// match. Rows, cards and panels are resolved LIVE from the DOM
+// in applyConfigFilter (every
+// .cfg-row inside a .cfg-section inside a [data-cfg-panel]), so a setting
+// added to the markup is searchable automatically — there is no hardcoded
+// list to keep in sync. While a query is active the layout shows every
+// panel with a match (data-cfg-searching on #cfg-layout) and the rail shows
+// per-panel hit counts. A card whose heading matches keeps all its rows; a
+// panel whose title (not its lede) matches keeps all its cards. Hiding a row never affects
+// Save: assembleConfig reads fields by id regardless of visibility, so a
+// filtered-out setting still round-trips.
 // ===================================================================
-function cfgFilterBlocks() {
-  return $$('#tab-config .cfg-section, #tab-config > details.cfg-advanced');
-}
-
-// cfgSearchText is the haystack for one block: its visible text (the <h3>
-// title, every label, hint and <option> label) plus input placeholders
-// and <option>/<datalist> values — so a term like "ghostty" or "8443"
-// that only appears as an attribute still matches. Lower-cased once per
-// call; the section count is tiny so there's no need to cache.
-function cfgSearchText(block) {
-  const parts = [block.textContent || ''];
-  block.querySelectorAll('input, textarea').forEach(el => {
+// cfgSearchText is the haystack for one node: its text (titles, summaries,
+// the folded "More…" guidance, config keys and <option> labels) plus input
+// placeholders and <option>/<datalist> values — so a term like "ghostty" or
+// "8443" that only appears as an attribute still matches.
+function cfgSearchText(node) {
+  const parts = [node.textContent || ''];
+  node.querySelectorAll('input, textarea').forEach(el => {
     if (el.placeholder) parts.push(el.placeholder);
   });
-  block.querySelectorAll('option').forEach(o => { if (o.value) parts.push(o.value); });
+  node.querySelectorAll('option').forEach(o => { if (o.value) parts.push(o.value); });
   return parts.join(' ').toLowerCase();
 }
 
-// applyConfigFilter shows a block when every space-separated term is found
-// somewhere in its searchable text (AND semantics); a blank query shows
-// all. It also updates the match count, the clear button and the no-match
-// line. Safe to call before the form has loaded — it only toggles
-// visibility on whatever sections are in the DOM.
+function setFlag(el, name, on) {
+  if (!el) return;
+  if (on) el.setAttribute(name, ''); else el.removeAttribute(name);
+}
+
+function cfgMatches(node, terms) {
+  const hay = cfgSearchText(node);
+  return terms.every(t => hay.includes(t));
+}
+
+// applyConfigFilter shows a row when every space-separated term is found
+// somewhere in its searchable text (AND semantics); a blank query restores
+// the one-panel view. It also updates the match count, rail hit counts, the
+// clear button and the no-match line. Safe to call before the form has
+// loaded — it only toggles visibility on whatever rows are in the DOM.
 function applyConfigFilter() {
   const input = $('#cfg-filter');
   if (!input) return;
   const raw = input.value.trim().toLowerCase();
   const terms = raw ? raw.split(/\s+/) : [];
-  const blocks = cfgFilterBlocks();
+  const layout = $('#cfg-layout');
+  setFlag(layout, 'data-cfg-searching', terms.length > 0);
   let shown = 0;
-  blocks.forEach(b => {
-    const match = terms.length === 0 || (() => {
-      const hay = cfgSearchText(b);
-      return terms.every(t => hay.includes(t));
-    })();
-    b.hidden = !match;
-    if (match) shown++;
+  $$('#tab-config [data-cfg-panel]').forEach(panel => {
+    // Only the panel title counts — its lede mentions many settings' topics
+    // and would otherwise turn a term search into a whole-panel match.
+    const panelTitle = panel.querySelector('.cfg-panel-head h2');
+    const panelMatch = terms.length > 0 && !!panelTitle && cfgMatches(panelTitle, terms);
+    let panelHits = 0;
+    panel.querySelectorAll('.cfg-section').forEach(section => {
+      const head = section.querySelector(':scope > h3');
+      const sectionMatch = panelMatch || (terms.length > 0 && !!head && cfgMatches(head, terms));
+      const rows = section.querySelectorAll('.cfg-row');
+      let hits = 0;
+      rows.forEach(row => {
+        const match = terms.length === 0 || sectionMatch || cfgMatches(row, terms);
+        row.hidden = !match;
+        if (match) hits++;
+      });
+      // A card without rows (the remote-access certificate panel) is one block.
+      const blockMatch = rows.length ? hits > 0 : (terms.length === 0 || sectionMatch || cfgMatches(section, terms));
+      if (!rows.length && blockMatch) hits = 1;
+      section.hidden = !blockMatch;
+      panelHits += hits;
+    });
+    setFlag(panel, 'data-cfg-nomatch', terms.length > 0 && panelHits === 0);
+    shown += panelHits;
+    const id = panel.getAttribute('data-cfg-panel');
+    const hitsEl = $(`#tab-config [data-cfg-hits="${id}"]`);
+    if (hitsEl) hitsEl.textContent = terms.length && panelHits ? String(panelHits) : '';
+    const link = $(`#tab-config [data-cfg-panel-link="${id}"]`);
+    setFlag(link, 'data-cfg-nohits', terms.length > 0 && panelHits === 0);
   });
   const clearBtn = $('#cfg-filter-clear');
   if (clearBtn) clearBtn.hidden = terms.length === 0;
   const countEl = $('#cfg-filter-count');
-  if (countEl) countEl.textContent = terms.length ? `${shown} / ${blocks.length} sections` : '';
+  if (countEl) countEl.textContent = terms.length ? `${shown} matching setting${shown === 1 ? '' : 's'}` : '';
   const emptyEl = $('#cfg-filter-empty');
   if (emptyEl) {
     emptyEl.hidden = !(terms.length && shown === 0);
@@ -1441,6 +1467,13 @@ function handleConfigEvent(event) {
     return;
   }
   if (event.type !== 'click') return;
+  // Picking a section from the rail leaves search mode so the chosen panel
+  // shows on its own.
+  if (target.closest?.('[data-cfg-panel-link]')) {
+    const filterInput = $('#cfg-filter');
+    if (filterInput?.value) { filterInput.value = ''; applyConfigFilter(); }
+    return;
+  }
   if (id === 'cfg-reload') { void loadConfigTab(); return; }
   if (id === 'cfg-save') { void saveConfig(); return; }
   if (id === 'cfg-filter-clear') {

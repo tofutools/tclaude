@@ -82,7 +82,7 @@ test('opening then closing the template editor is a real back/forward step', () 
 
   s = go(s, s.index - 1);
   assert.ok(locEquals(current(s), editingTemplate), 'Back re-enters the editor');
-  assert.equal(toPath(current(s)), '/processes/templates/release-train');
+  assert.equal(toPath(current(s)), '/automations/processes/templates/release-train');
 });
 
 test('push after Back truncates the forward tail (browser semantics)', () => {
@@ -158,16 +158,36 @@ test('a stray third segment under terminals is dropped', () => {
 test('a tab-level selection is refused on tabs that cannot show one', () => {
   // Only terminals has a tab-level selection; elsewhere a bare tab + selection
   // is meaningless and must not survive normalization into the URL.
-  assert.deepEqual(normalizeLocation({ tab: 'costs', selection: 'x' }), { tab: 'costs' });
+  assert.deepEqual(normalizeLocation({ tab: 'config', selection: 'x' }), { tab: 'config' });
   assert.deepEqual(normalizeLocation({ tab: 'groups', selection: 'x' }), { tab: 'groups' });
-  // /costs/x parses its second segment as a subtab, which costs does not have.
-  assert.deepEqual(fromPath('/costs/x'), { tab: 'costs' });
+  // /config/x parses its second segment as a subtab, which config does not have.
+  assert.deepEqual(fromPath('/config/x'), { tab: 'config' });
 });
 
-test('toPath / fromPath round-trip includes the Usage tab', () => {
+test('toPath / fromPath round-trip the Usage tab and its subtabs', () => {
   const usage = { tab: 'usage' };
   assert.equal(toPath(usage), '/usage');
   assert.deepEqual(fromPath('/usage'), usage);
+  for (const subtab of ['quota', 'costs']) {
+    const loc = { tab: 'usage', subtab };
+    assert.equal(toPath(loc), `/usage/${subtab}`);
+    assert.deepEqual(fromPath(`/usage/${subtab}`), loc);
+  }
+  // An unknown Usage view degrades to the Overview.
+  assert.deepEqual(fromPath('/usage/nope'), usage);
+  assert.ok(!locEquals({ tab: 'usage' }, { tab: 'usage', subtab: 'costs' }), 'Overview and Costs are distinct entries');
+});
+
+test('the retired Costs tab heals to the Usage tab costs view', () => {
+  // Old bookmarks, ?tab=costs links, and persisted history stacks all name the
+  // retired tab; each must land on the same view and serialize to the new path.
+  assert.deepEqual(fromPath('/costs'), { tab: 'usage', subtab: 'costs' });
+  assert.deepEqual(fromPath('/costs/x'), { tab: 'usage', subtab: 'costs' });
+  assert.deepEqual(normalizeLocation({ tab: 'costs' }), { tab: 'usage', subtab: 'costs' });
+  assert.equal(toPath({ tab: 'costs' }), '/usage/costs');
+  const revived = reviveState(serializeStack(push(initialState(groups), { tab: 'costs' })), fromPath('/usage/costs'));
+  assert.ok(revived, 'a stack persisted before the merge revives on the healed URL');
+  assert.deepEqual(current(revived), { tab: 'usage', subtab: 'costs' });
 });
 
 test('go() jumps to an absolute index and clamps-ignores out-of-range', () => {
@@ -252,15 +272,38 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(fromPath('/jobs'), { tab: 'jobs' });
   assert.equal(toPath(fromPath('/jobs')), '/automations');
 
+  // Audit, Logs and Debug merged into Activity; their old top-level paths
+  // heal onto the matching subtab, and a stack persisted with an old tab
+  // revives onto it too.
+  assert.equal(toPath({ tab: 'activity', subtab: 'logs' }), '/activity/logs');
+  assert.deepEqual(fromPath('/activity'), { tab: 'activity' });
+  assert.deepEqual(fromPath('/activity/performance'), { tab: 'activity', subtab: 'performance' });
+  assert.deepEqual(fromPath('/activity/bogus'), { tab: 'activity' });
+  assert.deepEqual(fromPath('/audit'), { tab: 'activity', subtab: 'audit' });
+  assert.deepEqual(fromPath('/logs/extra'), { tab: 'activity', subtab: 'logs' });
+  assert.deepEqual(fromPath('/debug'), { tab: 'activity', subtab: 'performance' });
+  assert.equal(toPath(fromPath('/debug')), '/activity/performance');
+  assert.deepEqual(normalizeLocation({ tab: 'audit' }), { tab: 'activity', subtab: 'audit' });
+
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
 
-  assert.equal(toPath(run), '/processes');
+  // Processes is an Automations subtab: canonical routes nest under
+  // /automations/processes, while the old /processes/... links still parse
+  // (and heal to the canonical form on the next serialization).
+  assert.equal(toPath(run), '/automations/processes');
+  assert.deepEqual(fromPath('/automations/processes/runs/run-42'), { tab: 'processes' });
   assert.deepEqual(fromPath('/processes/runs/run-42'), { tab: 'processes' });
+  assert.deepEqual(fromPath('/automations/processes'), { tab: 'processes' });
 
-  assert.equal(toPath(editingTemplate), '/processes/templates/release-train');
+  assert.equal(toPath(editingTemplate), '/automations/processes/templates/release-train');
+  assert.deepEqual(fromPath('/automations/processes/templates/release-train'),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' });
   assert.deepEqual(fromPath('/processes/templates/release-train'),
     { tab: 'processes', subtab: 'templates', selection: 'release-train' });
+  assert.equal(toPath(fromPath('/processes/templates/release-train')),
+    '/automations/processes/templates/release-train');
+  assert.equal(toPath({ tab: 'processes', subtab: 'templates' }), '/automations/processes/templates');
 
   // Round-trip every fixture.
   for (const loc of [groups, jobs, standingOrders, config, accessSudo, run, editingTemplate]) {

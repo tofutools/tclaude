@@ -48,9 +48,10 @@ func TestDashboardAuditSpawnPopoverChrome(t *testing.T) {
 	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 	defer srv.Close()
 	outDir := filepath.Join(dashSnapOutRoot(t), "audit-spawn-popover-"+time.Now().Format("20060102-150405.000"))
-	openAuditTabJS := `var tab = document.querySelector('nav [data-tab="audit"]');
-if (!tab) throw new Error('audit tab missing');
+	openAuditTabJS := `var tab = document.querySelector('nav [data-tab="activity"]');
+if (!tab) throw new Error('activity tab missing');
 tab.click();
+document.querySelector('#tab-activity .activity-subtab[data-subtab="audit"]').click();
 var deadline = Date.now() + 5000;
 while (!document.querySelector('.audit-spawn-info-trigger') && Date.now() < deadline) await new Promise(function(resolve){setTimeout(resolve, 50);});
 if (!document.querySelector('.audit-spawn-info-trigger')) throw new Error('spawn details trigger did not render');`

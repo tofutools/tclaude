@@ -10,7 +10,7 @@ test('Usage island keeps graphs available and renders provider-aware OpenCode co
     harness.importDashboardModule('js/usage-history-state.js'),
     harness.importDashboardModule('js/usage-history-island.js'),
   ]);
-  const state = createUsageHistoryState({
+  const state = createUsageHistoryState({ subview: harness.signals.signal('quota'),
     snapshot: harness.signals.signal({ usage_tab_visible: true }),
     activeTab: harness.signals.signal('usage'),
     prefs,

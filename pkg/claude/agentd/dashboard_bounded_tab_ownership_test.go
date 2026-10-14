@@ -35,7 +35,6 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 		"renderDock();",
 		"renderLinksTab();",
 		"applyProcessesTabVisibility(data);",
-		"applyDebugTabVisibility(data);",
 		"renderMailTab();",
 		"dashboardState.commitRequest(requestId, data);",
 	}
@@ -65,7 +64,7 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 	}
 	jobsMount := strings.Index(dashboard, "await mountJobsFeature({")
 	concurrentMounts := strings.Index(dashboard, "await Promise.all(featureMounts.map(")
-	bindTabs := strings.Index(dashboard, "pageCleanups.push(bindTabs(), bindTabHotkeys());")
+	bindTabs := strings.Index(dashboard, "pageCleanups.push(bindTabs(), bindTabHotkeys(), bindActivityTab());")
 	if jobsMount < 0 || concurrentMounts < jobsMount || bindTabs < concurrentMounts {
 		t.Error("dashboard boot must await Jobs, then bounded islands concurrently, before binding navigation")
 	}

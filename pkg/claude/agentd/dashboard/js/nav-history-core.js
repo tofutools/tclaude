@@ -40,7 +40,7 @@ export const DEFAULT_TAB = 'groups';
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'vegas',
+  'access', 'messages', 'usage', 'activity', 'config', 'vegas',
   'map',
   'fleet-admin',
 ]);
@@ -49,7 +49,13 @@ export const KNOWN_TABS = new Set([
 // sub-navigation. These tabs have one today:
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
-//   - Processes: the template library/editor.
+//   - Processes: the template library/editor. Processes renders as a subtab
+//     of Automations (/automations/processes/...) but keeps its own internal
+//     tab id, so its location model is unchanged; only toPath/fromPath know
+//     about the nesting.
+//   - Usage: the quota forecasts and the costs views; the bare tab is the
+//     Overview that summarises both.
+//   - Activity: audit / logs / performance (formerly three top-level tabs).
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -57,7 +63,21 @@ export const KNOWN_SUBTABS = {
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
+  usage: new Set(['quota', 'costs']),
+  activity: new Set(['audit', 'logs', 'performance']),
 };
+
+// LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now
+// shows them. Audit, Logs and Debug merged into Activity; their old paths (and
+// the /?tab=<name> alias) stay reload-safe and heal to the canonical
+// /activity/<subtab> in place, like /jobs → /automations. Costs likewise
+// became the Usage tab's costs subtab.
+export const LEGACY_TAB_LOCATIONS = Object.freeze({
+  costs: Object.freeze({ tab: 'usage', subtab: 'costs' }),
+  audit: Object.freeze({ tab: 'activity', subtab: 'audit' }),
+  logs: Object.freeze({ tab: 'activity', subtab: 'logs' }),
+  debug: Object.freeze({ tab: 'activity', subtab: 'performance' }),
+});
 
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
 // SINGLE entity, so a third path segment carries meaning there:
@@ -86,6 +106,9 @@ export function defaultLocation() {
 // are OMITTED (not set to undefined) so structural equality via locEquals and
 // JSON round-trips stay stable. An unknown tab collapses to the default.
 export function normalizeLocation(loc) {
+  // A retired tab (a history stack persisted before the Activity merge) heals
+  // to its new home rather than collapsing to the default.
+  if (loc && Object.hasOwn(LEGACY_TAB_LOCATIONS, loc.tab)) loc = LEGACY_TAB_LOCATIONS[loc.tab];
   const tab = loc && KNOWN_TABS.has(loc.tab) ? loc.tab : DEFAULT_TAB;
   const out = { tab };
   const subs = KNOWN_SUBTABS[tab];
@@ -258,7 +281,9 @@ export function toPath(loc) {
   if (l.tab === 'jobs') {
     return '/automations' + (l.subtab ? '/' + l.subtab : '');
   }
-  const segs = [l.tab];
+  // Processes is presented as an Automations subtab, so its canonical route
+  // nests under /automations; the internal tab id stays "processes".
+  const segs = l.tab === 'processes' ? ['automations', 'processes'] : [l.tab];
   if (l.subtab) segs.push(l.subtab);
   if (l.selection) segs.push(encodeURIComponent(l.selection));
   // The default bare view reads best as "/" rather than "/groups".
@@ -293,10 +318,16 @@ export function fromPath(pathname) {
   let [tab, second, third] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
-  if (tab === 'automations') tab = 'jobs';
+  // /automations/processes/... is the Processes view nested under
+  // Automations. The pre-nesting /processes/... route parses the same way and
+  // is healed in place to the canonical form.
+  if (tab === 'automations' && second === 'processes') {
+    [tab, second, third] = ['processes', third, parts[3]];
+  } else if (tab === 'automations') tab = 'jobs';
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (skynet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();
+  if (Object.hasOwn(LEGACY_TAB_LOCATIONS, tab)) return normalizeLocation({ tab });
   // On a tab-level-selection tab there is no subtab, so segment two IS the
   // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it
   // as a subtab would drop it on the floor, since terminals has no

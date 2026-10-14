@@ -14,7 +14,7 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   storage.values.set('tclaude.dash.costs.fillEmptyWeekdays', '1');
   const state = createCostsState({
     snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
-    activeTab: harness.signals.signal('costs'), prefs: storage,
+    activeTab: harness.signals.signal('usage'), prefs: storage,
     now: () => new Date(2026, 6, 10, 12),
   });
   state.initialize();
@@ -75,7 +75,7 @@ test('Provider filtering retains shared models while dropping exclusive models',
   const { createCostsState } = await harness.importDashboardModule('js/costs-state.js');
   const state = createCostsState({
     snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
-    activeTab: harness.signals.signal('costs'), prefs: prefs(),
+    activeTab: harness.signals.signal('usage'), prefs: prefs(),
   });
   state.initialize();
   state.beginRequest(1);
@@ -108,7 +108,7 @@ test('Saved model selection is normalized against the saved provider scope', asy
   storage.values.set('tclaude.dash.costs.models', JSON.stringify(['codex-only']));
   const state = createCostsState({
     snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
-    activeTab: harness.signals.signal('costs'), prefs: storage,
+    activeTab: harness.signals.signal('usage'), prefs: storage,
   });
   state.initialize();
   state.beginRequest(1);

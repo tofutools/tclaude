@@ -24,17 +24,12 @@ func TestDashboardAutomaticGroupConfigAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading config form markup: %v", err)
 	}
-	styles, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
-	if err != nil {
-		t.Fatalf("reading dashboard styles: %v", err)
-	}
-	for _, class := range []string{"cfg-checkbox-stack-field", "cfg-checkbox-stack"} {
-		if !strings.Contains(string(markup), `class="cfg-field `+class+`"`) &&
-			!strings.Contains(string(markup), `class="`+class+`"`) {
-			t.Errorf("terminal startup group markup missing %q", class)
-		}
-		if !strings.Contains(string(styles), "."+class+" {") {
-			t.Errorf("terminal startup group styles missing %q", class)
-		}
+	// The two startup-group settings sit together as their own switch rows
+	// in one "Terminal startup groups" card.
+	group := strings.Index(string(markup), `<${Group} title="Terminal startup groups">`)
+	join := strings.Index(string(markup), `<${Toggle} id="cfg-session-auto-join-group" />`)
+	create := strings.Index(string(markup), `<${Toggle} id="cfg-session-auto-join-or-create-group" />`)
+	if group < 0 || join < group || create < join {
+		t.Errorf("terminal startup group switches are not grouped in their card (group=%d join=%d create=%d)", group, join, create)
 	}
 }

@@ -45,6 +45,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab } = 
     subtab: 'templates',
     canvas: canvas.value,
     notice: notice.value,
+    snapshot: dashboardState.snapshot.value,
     scribes: processScribeSessions(dashboardState.snapshot.value),
     templates: templates.value?.templates || [],
     rename: rename.value,

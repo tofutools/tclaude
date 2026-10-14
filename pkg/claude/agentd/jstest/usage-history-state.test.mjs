@@ -19,7 +19,7 @@ test('usage spans are stored per series with legacy globals as the default', asy
     ['tclaude.dash.usage.lookaheadHours', '24'],
     ['tclaude.dash.usage.seriesSpans', JSON.stringify({ 'anthropic:seven_day': { hours: 24, lookaheadHours: 5 } })],
   ]);
-  const state = createUsageHistoryState({
+  const state = createUsageHistoryState({ subview: harness.signals.signal('quota'),
     snapshot: harness.signals.signal({ usage_tab_visible: true }),
     activeTab: harness.signals.signal('usage'),
     prefs,
@@ -80,7 +80,7 @@ test('usage span store drops entries that would break the request grammar', asyn
   };
   for (let i = 0; i < 150; i++) stored[`provider${i}:window`] = { hours: 24 };
   const prefs = fakePrefs([['tclaude.dash.usage.seriesSpans', JSON.stringify(stored)]]);
-  const state = createUsageHistoryState({
+  const state = createUsageHistoryState({ subview: harness.signals.signal('quota'),
     snapshot: harness.signals.signal({ usage_tab_visible: true }),
     activeTab: harness.signals.signal('usage'),
     prefs,
@@ -99,7 +99,7 @@ test('usage span store tolerates corrupt persisted JSON', async (t) => {
   const prefs = fakePrefs([
     ['tclaude.dash.usage.seriesSpans', '{not json'],
   ]);
-  const state = createUsageHistoryState({
+  const state = createUsageHistoryState({ subview: harness.signals.signal('quota'),
     snapshot: harness.signals.signal({ usage_tab_visible: true }),
     activeTab: harness.signals.signal('usage'),
     prefs,

@@ -1,6 +1,7 @@
 import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
+import { usageHubState } from './usage-hub-state.js';
 import { USAGE_DEFAULT_FORECAST_ALGO, USAGE_FORECAST_ALGOS, usageSeriesSort } from './usage-history-model.js';
 
 // Per-series (provider × quota window) spans live under one JSON pref key.
@@ -49,6 +50,8 @@ function parseStoredSpans(raw) {
 export function createUsageHistoryState({
   snapshot = dashboardState.snapshot,
   activeTab = dashboardState.activeTab,
+  // Quota is the Usage tab's quota subtab; the hub owns which view is up.
+  subview = usageHubState.subview,
   prefs = dashPrefs,
 } = {}) {
   const seriesSpans = signal({});
@@ -77,7 +80,10 @@ export function createUsageHistoryState({
         .filter(([, entry]) => entry.hours !== undefined && entry.hours !== fallback.hours)
         .map(([key, entry]) => [key, entry.hours])),
       request: request.value,
-      active: activeTab.value === 'usage',
+      // active: the Quota view is on screen. polling: its payload must stay
+      // fresh, which the Usage Overview also needs while it is up.
+      active: activeTab.value === 'usage' && subview.value === 'quota',
+      polling: activeTab.value === 'usage' && (subview.value === 'quota' || subview.value === 'overview'),
       activeTab: activeTab.value,
       snapshotLoaded: snap !== null,
       visible: !!snap?.usage_tab_visible,

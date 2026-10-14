@@ -4,6 +4,8 @@ import { dashboardState } from './snapshot-store.js';
 export function createConfigState({ activeTab = dashboardState.activeTab } = {}) {
   const phase = signal('idle');
   const dirty = signal(false);
+  // Rail ids of the panels holding unsaved edits since the last load/save.
+  const dirtyPanels = signal([]);
   const error = signal(null);
   const metadata = signal(null);
   const lists = signal({});
@@ -12,13 +14,17 @@ export function createConfigState({ activeTab = dashboardState.activeTab } = {})
   const view = computed(() => ({ active: activeTab.value === 'config', phase: phase.value, dirty: dirty.value, error: error.value, metadata: metadata.value }));
   const lifecycle = Object.freeze({
     loading() { phase.value = 'loading'; error.value = null; },
-    loaded(data) { phase.value = 'ready'; dirty.value = false; error.value = null; metadata.value = data; },
+    loaded(data) { phase.value = 'ready'; dirty.value = false; dirtyPanels.value = []; error.value = null; metadata.value = data; },
     saving() { phase.value = 'saving'; error.value = null; },
     ready() { phase.value = 'ready'; },
-    saved(data) { phase.value = 'ready'; dirty.value = false; error.value = null; metadata.value = data; },
+    saved(data) { phase.value = 'ready'; dirty.value = false; dirtyPanels.value = []; error.value = null; metadata.value = data; },
     failed(value) { phase.value = 'error'; error.value = value?.message || String(value); },
   });
-  function markDirty() { if (phase.value === 'ready' || phase.value === 'error') dirty.value = true; }
+  function markDirty(panel) {
+    if (phase.value !== 'ready' && phase.value !== 'error') return;
+    dirty.value = true;
+    if (panel && !dirtyPanels.value.includes(panel)) dirtyPanels.value = [...dirtyPanels.value, panel];
+  }
   function confirmDiff(beforeRaw, afterRaw, malformed, path) {
     cancelDiff(false);
     return new Promise(resolve => {
@@ -36,6 +42,6 @@ export function createConfigState({ activeTab = dashboardState.activeTab } = {})
     get(id) { return lists.value[id] || []; },
     set(id, values) { lists.value = { ...lists.value, [id]: values }; },
   });
-  return Object.freeze({ phase, dirty, error, metadata, lists, diff, listController, view, lifecycle, markDirty, confirmDiff, cancelDiff });
+  return Object.freeze({ phase, dirty, dirtyPanels, error, metadata, lists, diff, listController, view, lifecycle, markDirty, confirmDiff, cancelDiff });
 }
 export const configState = createConfigState();

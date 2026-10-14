@@ -261,7 +261,6 @@ export async function refresh(options) {
     renderDock();
     renderLinksTab();
     applyProcessesTabVisibility(data);
-    applyDebugTabVisibility(data);
     renderMailTab();
     renderDashDefaultProfile();
     renderDashSandboxProfile();
@@ -442,8 +441,8 @@ function bindTabs() {
 // visibleTabButtons returns the nav tab buttons that are actually on
 // screen, in DOM (left-to-right) order. offsetParent === null means a
 // display:none somewhere up the chain — which is exactly how the Vegas
-// tab (hidden unless body.slop) and the Costs tab (hidden via
-// body.hide-costs) drop out. Checking visibility instead of naming those
+// tab (hidden unless body.slop) and the Usage tab (hidden via
+// body.hide-usage-tab) drop out. Checking visibility instead of naming those
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
   // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
@@ -484,7 +483,11 @@ function cycleTab(dir) {
     document.dispatchEvent(new CustomEvent('tclaude:leave-map', { detail: { dir } }));
     return null;
   }
-  const active = tabs.findIndex(b => b.classList.contains('active'));
+  // Processes is an Automations subtab whose own anchor is always hidden, so
+  // while it is open, step from the Automations position instead.
+  const processesActive = !!document.querySelector('nav [data-tab="processes"].active');
+  const active = tabs.findIndex(b => b.classList.contains('active')
+    || (processesActive && b.dataset.tab === 'jobs'));
   // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
   // and slop just turned off); start the step from the first visible tab.
   const from = active < 0 ? 0 : active;
@@ -554,27 +557,6 @@ function bindTabHotkeys() {
   return cleanup;
 }
 
-// applyDebugTabVisibility drives the Debug tab's auto-hide off the
-// server's debug_tab_visible flag (config dashboard.show_debug_tab,
-// TCL-376), mirroring applyPluginsTabVisibility: the tab is a
-// maintainer/troubleshooting surface, hidden by default to keep the nav
-// tight. Display-only — the daemon records poll timings and serves
-// /api/perf regardless, so history exists from before the toggle. If
-// the Debug tab is the active one when it gets hidden (the human just
-// turned the opt-in off in the Config tab), fall back to Groups so they
-// aren't stranded on a now-invisible section.
-function applyDebugTabVisibility(data) {
-  const visible = !!(data && data.debug_tab_visible);
-  document.body.classList.toggle('hide-debug', !visible);
-  if (!visible) {
-    const sec = document.getElementById('tab-debug');
-    if (sec && sec.classList.contains('active')) {
-      $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
-      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
-      dashboardState.setActiveTab('groups');
-    }
-  }
-}
 // activateAccessSubtab selects one of the Access tab's sub-views
 // (permissions / slugs / sudo) by toggling .active on the matching
 // segmented-control button and its panel. Exported so deep links (the

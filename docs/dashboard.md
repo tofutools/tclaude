@@ -53,11 +53,8 @@ In order across the top:
 | Plugins | Shell-step plugin lists with status lamps |
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
-| Usage | Subscription quota bars and forecasts |
-| Costs | Real and what-if spend |
-| Audit | Trail of daemon-proxied mutating actions |
-| Logs | Viewer over the daemon log |
-| Debug | Poll-latency self-diagnostics (hidden by default) |
+| Usage | Overview, subscription quota forecasts, and real/what-if costs |
+| Activity | Audit trail, daemon log, and poll performance (three subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
 With trusted federation peers, node chips and the Map / Groups · all nodes /
@@ -70,12 +67,11 @@ to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile
 and speed prefilled; the group remains editable and defaults to the last used
 group. Fast mode uses a higher-cost service tier.
-Debug appears only with `dashboard.show_debug_tab`; Processes only with
-`features.processes`. A theme-gated **Vegas** button appears in the slop and
+Processes appears only with `features.processes`. A theme-gated **Vegas** button appears in the slop and
 wizard themes (or via `slop.vegas_in_regular_mode`).
 
 The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
-Contraptions, Wards, Missives, Reserves, Coffers, Chronicle, Runes, Alchemy,
+Contraptions, Wards, Missives, Reserves, Coffers, Chronicle (Deeds, Runes, Alchemy),
 Almanac, The Tavern) and the **slop** theme goes full casino; both are
 re-skins of the same dashboard, not different feature sets. The header icon
 toggles regular ↔ wizard; the slop theme is unfinished and left out of that
@@ -215,7 +211,7 @@ The 🚫 broker-refusal badge deserves attention: when it shows, the entire row
 — status, model, cost, context, directory — is frozen at its last accepted
 value. The usual cause is a dead session row on the same pid or a session-id /
 ancestry mismatch. Refusals also produce throttled `broker: refused a
-brokered callback` WARN records in the daemon log (the Logs tab) with the
+brokered callback` WARN records in the daemon log (Activity › Logs) with the
 caller pid, the row the daemon resolved, the id the caller claimed, and, for
 a failed live-pane proof, which fact was missing (pane probe, launch
 generation, or ancestry). The first refusal of an episode always logs; later
@@ -255,7 +251,7 @@ The header usage island shows one line per provider (Claude / Codex / Copilot
 / API) with an 8-block bar, percentage, and remaining amount: Claude tracks
 the 5-hour and 7-day rolling windows, Codex 5-hour and weekly, Copilot the
 monthly premium-request allowance, plus API cost month-to-date and today
-(click through to the Costs tab). When subscription what-if pricing is
+(click through to the Usage tab's Costs view). When subscription what-if pricing is
 enabled, use the compact selector to switch between quota percentage and
 estimated pay-per-token cost. Copilot also offers its native AIC allowance in
 the same selector: `% / ≈$ / AIC`.
@@ -484,8 +480,32 @@ and there is no Always-allow for peers. CLI:
 
 ## Usage
 
+One tab, three views: **Overview** (`/usage`), **Quota** (`/usage/quota`)
+and **Costs** (`/usage/costs`). Each view is its own history entry, so
+deep links, reload and browser Back/Forward land on the same view; the old
+`/costs` path (and `?tab=costs`) still works and settles on `/usage/costs`.
+Quota and Costs keep their own visibility rules: with only one of them
+available the tab shows it directly without the view switcher, and the tab
+hides only when neither has anything to show.
+
 Agents and operators can also query quotas and costs through the daemon with
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md), including JSON output.
+
+### Overview
+
+The glance page: headline cards for spend in the Costs view's current span
+(with the month projection), spend today, the next predicted quota wall, and
+how many quota windows are predicted to run out before they reset; a compact
+card per quota window (current percentage, reset countdown, sparkline with its
+forecast, prediction status); and the span's spend chart beside the top
+agents. Every card links into the full Quota or Costs view. The spend figures
+follow the span and provider/model filters chosen on the Costs view.
+
+![The Usage overview: spend and quota headline cards, a compact card per quota window, and the month's spend beside the top agents](assets/dashboard-usage-overview.png)
+
+*The Usage overview: spend and quota headline cards, a compact card per quota window, and the month's spend beside the top agents*
+
+### Quota
 
 Subscription quota and forecasting: one card per provider × quota window
 (Claude 5-hour / 7-day / 7-day-Sonnet; Codex 5-hour / weekly; Copilot monthly
@@ -528,7 +548,7 @@ would poison the forecast. There is no per-model quota breakdown; providers
 do not expose reliable attribution. OpenCode activity raises a coverage-lag
 warning banner.
 
-## Costs
+### Costs
 
 Spend over time: an accumulated-cost line graph, a stacked daily bar chart
 per provider, a per-model rollup strip, and a sortable per-agent table with
@@ -563,9 +583,18 @@ adjustment for that harness. OpenCode uses one multiplier across all its provide
 to dashboard dollar amounts, including agent badges, charts, projections, and
 top-bar totals. Recorded costs and native credits remain unchanged. The same
 settings are available under Config → Usage, costs & rate limits. On subscription accounts the
-tab appears only when enabled in Config.
+Costs view appears only when enabled in Config.
 
-## Audit
+## Activity
+
+Three subtabs, each with its own address: **Audit** (`/activity/audit`, the
+default), **Logs** (`/activity/logs`) and **Performance**
+(`/activity/performance`). Switching subtabs adds a Back/Forward step.
+Bookmarks to the old top-level `/audit`, `/logs` and `/debug` pages still open
+the matching subtab. The command palette has a direct entry for each
+(“Go to Activity › Logs”). On a linked peer's view only Audit is available.
+
+### Audit
 
 The trail of daemon-proxied **mutating** actions — spawns, messaging,
 lifecycle verbs, group and permission changes, sudo grants, proxy calls,
@@ -578,11 +607,17 @@ included**. Server-side search plus source and outcome filters. Retention
 defaults to 30 days (`audit.retention_days`; negative keeps forever). The
 full recording policy is in [Permissions and audit](permissions-and-audit.md).
 
-## Logs
+### Logs
 
 A paged viewer over `~/.tclaude/output.log` and its rotated files: level
 pills, structured fields, search, a level floor, a since filter, and a
 2-second live-stream toggle.
+
+### Performance
+
+In-memory poll-latency self-diagnostics per endpoint — p50/p90/p99/max,
+sparkline, per-phase breakdown — reset on daemon restart or with the reset
+button. Formerly the opt-in Debug tab; it is now always shown.
 
 ## Config
 
@@ -594,10 +629,6 @@ defaults, the daemon and server (dashboard port and bind, tray,
 operator-token persistence), logging, retention, slop mode, experimental
 features, and the remote-access panel described in
 [Operating remotely](remote.md).
-
-The **Debug** tab (enable `dashboard.show_debug_tab`) shows in-memory
-poll-latency self-diagnostics per endpoint — p50/p90/p99/max, sparkline,
-per-phase breakdown — reset on daemon restart.
 
 ## Skynet UI: linked nodes
 

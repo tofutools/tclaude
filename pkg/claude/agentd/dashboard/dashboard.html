@@ -295,15 +295,16 @@
        the badge counts the live terminals. -->
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
-  <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
+  <!-- Processes lives under Automations: its sub-nav entry there is the
+       visible way in, so this anchor is permanently CSS-hidden. It stays the
+       routing/activation target (bindTabs, the router's activate) for the
+       still-separate #tab-processes section. -->
+  <a data-tab="processes" href="/automations/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔧</span> <span class="tab-title">Contraptions</span></span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
-  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📈</span> <span class="tab-title">Reserves</span></span></a>
-  <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Coffers</span></span></a>
-  <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
-  <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕯</span> <span class="tab-title">Runes</span></span></a>
-  <a data-tab="debug" href="/debug" title="Debug — daemon self-diagnostics: dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Debug</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🧪</span> <span class="tab-title">Alchemy</span></span></a>
+  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
+  <a data-tab="activity" href="/activity" title="Activity — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Activity</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
@@ -486,20 +487,19 @@
       </details>
     </div>
   </section>
-  <!-- Costs tab — per-day API cost bar chart (with a month projection
-       on the "This month" span, weekday-based by default or per-day when
-       "include weekends" is on) followed by a per-agent breakdown.
-       Rendered by costs.js from /api/costs, fetched on tab activation /
-       span change rather than the 2s snapshot tick. -->
-  <section id="tab-costs">
-    <!-- Preact exclusively owns Costs controls, summaries, factor editing and
-         table. costs-chart.js owns the imperative chart below that boundary. -->
-    <div id="costs-root"></div>
-  </section>
-  <!-- Subscription quota history and post-reset forecasts. Preact owns the
-       cards and declarative SVG line charts inside this stable feature host. -->
+  <!-- Usage tab — three views under one nav tab (usage-hub-island.js owns
+       the subnav, the Overview, and data-subview on this section, which CSS
+       uses to show one host at a time):
+         Overview  /usage         spend + quota at a glance
+         Quota     /usage/quota   subscription quota history and forecasts
+         Costs     /usage/costs   real and WHAT-IF spend (formerly /costs)
+       Each host is its own Preact island; costs-chart.js owns the imperative
+       chart inside the Costs host. Without the hub (asset failure) the
+       section has no data-subview and both halves stay visible. -->
   <section id="tab-usage">
+    <div id="usage-hub-root"></div>
     <div id="usage-root"></div>
+    <div id="costs-root"></div>
   </section>
   <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
        refresh, and stable keyed command rows inside this feature host. -->
@@ -507,18 +507,28 @@
   <section id="tab-map">
     <div id="skynet-map-root"></div>
   </section>
-  <section id="tab-audit">
-    <div id="audit-root"></div>
-  </section>
-  <!-- Preact owns the Debug toolbar, endpoint cards, phase breakdowns and its
-       active-only 10s /api/perf poll inside this stable feature host. -->
-  <section id="tab-debug">
-    <div id="debug-root"></div>
-  </section>
-  <!-- Preact owns the Logs filters, server-side paging, status, table, and
-       opt-in tail polling inside this stable feature host. -->
-  <section id="tab-logs">
-    <div id="logs-root"></div>
+  <!-- Activity — Audit, Logs and Performance share one nav tab. The static
+       sub-navigation is wired by activity-tab.js; each panel keeps its own
+       bounded Preact island, which activates only while its subtab shows. -->
+  <section id="tab-activity">
+    <div class="access-subnav activity-subnav" role="tablist" aria-label="Activity views">
+      <a class="access-subtab activity-subtab active" data-subtab="audit" href="/activity/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="logs" href="/activity/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="performance" href="/activity/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+    </div>
+    <div class="activity-panel active" id="activity-audit" role="tabpanel" aria-label="Audit">
+      <div id="audit-root"></div>
+    </div>
+    <!-- Preact owns the Logs filters, server-side paging, status, table, and
+         opt-in tail polling inside this stable feature host. -->
+    <div class="activity-panel" id="activity-logs" role="tabpanel" aria-label="Logs">
+      <div id="logs-root"></div>
+    </div>
+    <!-- Preact owns the Performance toolbar, endpoint cards, phase breakdowns
+         and its active-only 10s /api/perf poll inside this stable feature host. -->
+    <div class="activity-panel" id="activity-performance" role="tabpanel" aria-label="Performance">
+      <div id="debug-root"></div>
+    </div>
   </section>
   <!-- Messages tab — a mail client for introspecting every mailbox the
        daemon stores: agent-to-agent mail plus the human.notify channel.

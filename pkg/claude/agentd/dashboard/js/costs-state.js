@@ -1,6 +1,7 @@
 import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
+import { usageHubState } from './usage-hub-state.js';
 import {
   COST_COLUMNS, buildAccumulatedCostChart, buildCostChart, costModelLabel, costModels, costModelStats,
   costProviders, costProviderStats,
@@ -31,6 +32,8 @@ function savedSelection(prefs, key) {
 export function createCostsState({
   snapshot = dashboardState.snapshot,
   activeTab = dashboardState.activeTab,
+  // Costs is the Usage tab's costs subtab; the hub owns which view is up.
+  subview = usageHubState.subview,
   prefs = dashPrefs,
   now = () => new Date(),
 } = {}) {
@@ -154,7 +157,10 @@ export function createCostsState({
       hasReal: (narrowed?.real_total_usd || 0) > 0,
       request: request.value,
       factor: factor.value,
-      active: activeTab.value === 'costs',
+      // active: the Costs view is on screen. polling: its payload must stay
+      // fresh, which the Usage Overview also needs while it is up.
+      active: activeTab.value === 'usage' && subview.value === 'costs',
+      polling: activeTab.value === 'usage' && (subview.value === 'costs' || subview.value === 'overview'),
       activeTab: activeTab.value,
       snapshotLoaded: snap !== null,
       visible: !!snap?.cost_tab_visible,

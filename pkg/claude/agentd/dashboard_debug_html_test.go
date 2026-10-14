@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// TestDashboardHTML_DebugTabWired guards the bounded Debug Preact island's
+// TestDashboardHTML_DebugTabWired guards the bounded Debug (Activity ›
+// Performance) Preact island's
 // production wiring. Behaviour is covered by jstest/debug-preact.test.mjs.
 func TestDashboardHTML_DebugTabWired(t *testing.T) {
 	must := func(needle, why string) {
@@ -15,9 +16,10 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 		}
 	}
 
-	// The nav button + the tab section the generic switcher toggles.
-	must(`data-tab="debug"`, "the Debug nav button")
-	must(`id="tab-debug"`, "the Debug tab section")
+	// The Activity › Performance subtab + the panel activity-tab.js toggles
+	// (the shared Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
+	must(`data-subtab="performance" href="/activity/performance"`, "the Performance subtab")
+	must(`id="activity-performance"`, "the Performance panel")
 	must(`id="debug-root"`, "the one bounded Preact host")
 
 	// State/actions own activation, monotonic request tokens, abortable I/O and
@@ -50,9 +52,9 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 	must(`'⚗ clear readings'`, "the reset control's Alchemy copy")
 	must(`class="debug-spark-area"`, "the sparkline area exposes a themeable class")
 	must(`class="debug-spark-line"`, "the sparkline stroke exposes a themeable class")
-	must("body.wizard #tab-debug .debug-card", "wizard mode themes the diagnostic cards")
-	must("body.wizard #tab-debug .debug-spark-line", "wizard mode themes the latency sparkline")
-	must("body.wizard #tab-debug .debug-table th", "wizard mode themes the phase table")
+	must("body.wizard #activity-performance .debug-card", "wizard mode themes the diagnostic cards")
+	must("body.wizard #activity-performance .debug-spark-line", "wizard mode themes the latency sparkline")
+	must("body.wizard #activity-performance .debug-table th", "wizard mode themes the phase table")
 
 	// The loader claims the host and dashboard bootstrap mounts the feature.
 	must("mountDebugFeature", "the loader exports and dashboard imports the feature")
@@ -62,20 +64,13 @@ func TestDashboardHTML_DebugTabWired(t *testing.T) {
 		t.Error("dashboard assets still carry the retired Debug tab binder")
 	}
 
-	// The URL router treats /debug as a routable location on both sides
-	// (client sets; the server-side allow-list is covered by
-	// TestDashboardAppPaths_SPAFallback).
-	must(`'debug', 'config', 'vegas',`, "nav-history-core.js KNOWN_TABS includes debug")
-	must(`'debug', 'config',`, "nav-history.js ROUTABLE_TABS includes debug")
-
-	// The visibility gate (config dashboard.show_debug_tab, default off):
-	// refresh.js applies the snapshot flag, CSS hides the chrome, and the
-	// Config tab carries the opt-in checkbox with its load/save wiring.
-	must("applyDebugTabVisibility", "refresh.js applies the snapshot visibility flag")
-	must("debug_tab_visible", "the snapshot flag the front-end keys off")
-	must(`body.hide-debug nav [data-tab="debug"]`, "CSS hides the nav button when gated off")
-	must(`id="cfg-dashboard-show-debug-tab"`, "the Config tab opt-in checkbox")
-	must("show_debug_tab", "config.js round-trips dashboard.show_debug_tab")
+	// The view is always shown: the retired dashboard.show_debug_tab opt-in
+	// and its snapshot flag must not come back.
+	for _, retired := range []string{"applyDebugTabVisibility", "debug_tab_visible", "body.hide-debug", `id="cfg-dashboard-show-debug-tab"`} {
+		if strings.Contains(dashboardAssets, retired) {
+			t.Errorf("dashboard assets still carry the retired Debug visibility gate %q", retired)
+		}
+	}
 
 	// Reset remains a POST followed by a sequenced fresh GET.
 	must(`id="debug-reset"`, "the reset-stats toolbar button")

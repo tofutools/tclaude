@@ -17,7 +17,7 @@ func TestDashboardDebugPreactBoundary(t *testing.T) {
 	}
 
 	state := read("js/debug-state.js")
-	for _, needle := range []string{"activeTab.value === 'debug'", "acceptsRequest", "cancelRequest"} {
+	for _, needle := range []string{"activityViewActive(activeTab, activitySubtab, 'performance')", "acceptsRequest", "cancelRequest"} {
 		if !strings.Contains(state, needle) {
 			t.Errorf("Debug state missing %q", needle)
 		}
