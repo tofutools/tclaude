@@ -212,7 +212,7 @@ func TestReplanningAnAlreadyCommittedAttemptIsRefused(t *testing.T) {
 	overBudget := cloneCheckpoint(exhausted)
 	overBudget.Nodes["task"] = NodeReady
 	overBudget.Status = RunRunning
-	third := programCommand(overBudget.RunID, definition.nodes[definition.index["task"]], 3)
+	third := taskCommand(overBudget.RunID, definition.nodes[definition.index["task"]], 3)
 	if _, err := Apply(overBudget, definition, Transition{Kind: TransitionCommandPlanned, Command: &third}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("over-budget plan error = %v", err)
 	}
@@ -397,7 +397,7 @@ func TestBoundaryRefusesImpossibleAttemptCommandPairings(t *testing.T) {
 	}
 
 	// The honest shape this is all measured against.
-	if err := ValidateCheckpoint(running(2, programCommand(base.RunID, task, 2)), definition); err != nil {
+	if err := ValidateCheckpoint(running(2, taskCommand(base.RunID, task, 2)), definition); err != nil {
 		t.Fatalf("a valid retried state was refused: %v", err)
 	}
 
@@ -440,19 +440,19 @@ func TestBoundaryRefusesImpossibleAttemptCommandPairings(t *testing.T) {
 		{
 			name: "command of a superseded attempt",
 			checkpoint: func() Checkpoint {
-				return running(2, programCommand(base.RunID, task, 1))
+				return running(2, taskCommand(base.RunID, task, 1))
 			},
 		},
 		{
 			name: "command ahead of the counter",
 			checkpoint: func() Checkpoint {
-				return running(1, programCommand(base.RunID, task, 2))
+				return running(1, taskCommand(base.RunID, task, 2))
 			},
 		},
 		{
 			name: "command id and attempt field disagree",
 			checkpoint: func() Checkpoint {
-				command := programCommand(base.RunID, task, 2)
+				command := taskCommand(base.RunID, task, 2)
 				command.Attempt = 1
 				return running(2, command)
 			},
@@ -460,7 +460,7 @@ func TestBoundaryRefusesImpossibleAttemptCommandPairings(t *testing.T) {
 		{
 			name: "outstanding command with no attempt counter at all",
 			checkpoint: func() Checkpoint {
-				checkpoint := running(1, programCommand(base.RunID, task, 1))
+				checkpoint := running(1, taskCommand(base.RunID, task, 1))
 				checkpoint.Attempts = nil
 				return checkpoint
 			},

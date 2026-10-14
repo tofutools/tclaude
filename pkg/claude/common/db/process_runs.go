@@ -698,7 +698,9 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// classify as empty via COALESCE(json_array_length(...), 0) = 0.
 	//
 	// An outstanding program command always excludes the run: it needs explicit
-	// reconciliation, not a resume.
+	// reconciliation, not a resume. An outstanding AGENT command does not: it is
+	// accounted for by its dispatch record and simply occupies a slot while its
+	// performer works, so a sibling ready branch keeps the run runnable.
 	//
 	// Everything else the run could be parked on is decided by one comparison:
 	// the run has pushable work exactly when it holds MORE ready nodes than
@@ -722,7 +724,10 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
-			AND COALESCE(json_array_length(checkpoint_json, '$.commands'), 0) = 0
+			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
+					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
+						WHERE json_extract(value, '$.kind') IS NOT 'agent')
+					ELSE 0 END = 0
 			AND CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')
 						WHERE value = 'ready')
