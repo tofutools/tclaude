@@ -1496,6 +1496,12 @@ func DeleteAgentGroup(name string) error {
 	if _, err := tx.Exec(`DELETE FROM group_process_state WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Runtime process runs bound to the group park as orphaned for a human to
+	// re-scope; they are never silently re-bound, and the flip must commit
+	// with the delete because group ids can be reused.
+	if err := orphanGroupProcessRunsTx(tx, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM group_process_transitions WHERE group_id = ?`, gID); err != nil {
 		return err
 	}

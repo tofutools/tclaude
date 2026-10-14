@@ -117,6 +117,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude federation share-agent":                 "group",
 		"claude federation spawn-request":               "brief",
 		"claude federation view":                        "node",
+		"claude process assign":                         "node agent",
 		"claude process decide":                         "node verdict",
 		"claude process record-outcome":                 "outcome",
 		"claude process resolve-blocked":                "node attempt action",

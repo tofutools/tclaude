@@ -2,17 +2,6 @@ package db
 
 import "database/sql"
 
-// migrateV259toV260 is a placeholder that keeps the chain contiguous while
-// the processes-in-context branch's sibling migration (process run scope,
-// #3018) is still in review. It is replaced by the real v260 step when that
-// lands.
-func migrateV259toV260(d *sql.DB) error { return placeholderSchemaStep(d, 260) }
-
-func placeholderSchemaStep(d *sql.DB, version int) error {
-	_, err := d.Exec(`UPDATE schema_version SET version = ?`, version)
-	return err
-}
-
 // migrateV260toV261 adds agent_turn_replies: a bounded per-agent ring of the
 // final assistant message of each turn, captured from the Stop hook for
 // process scribes only (RecordScribeTurnReply). It is the read side of the

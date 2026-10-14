@@ -485,7 +485,7 @@ func TestRuntimeShowJSONEmitsCompleteRunSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &fields))
 	assert.ElementsMatch(t, []string{
 		"id", "templateRef", "params", "programAuthorizations", "status", "stateVersion",
-		"checkpoint", "action", "needsReconcile", "awaitingDecisions", "commands", "blocked",
+		"checkpoint", "action", "needsReconcile", "awaitingDecisions", "commands", "blocked", "scope",
 		"createdAt", "updatedAt",
 	}, mapKeys(fields))
 }

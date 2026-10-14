@@ -72,7 +72,7 @@ inherited state.
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the
 self-management baseline: `self.rename`, `self.compact`, `self.interrupt`,
 `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`,
-`self.tags`, `self.dir-repair`, plus `process.templates.read`, `usage.read`, and `costs.read`.
+`self.tags`, `self.dir-repair`, `self.process`, plus `process.templates.read`, `usage.read`, and `costs.read`.
 The account read permissions expose quotas/forecasts and cost history through
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md).
 Self-reincarnation deliberately needs no slug at all. These defaults let an
@@ -85,8 +85,9 @@ manager pattern and the slugs it checks.
 
 Owning an active group structurally contributes grants scoped to that group:
 the `groups.*` roster/settings/link/attachment/nest/archive/schedule slugs
-and the `groups.members.<verb>` manager slugs, plus unscoped `human.notify`
-and `process.runs.read`. Ownership never confers slugs that mutate shared
+and the `groups.members.<verb>` manager slugs, `process.runs.start` (binding
+a new process run to the group), plus unscoped `human.notify` and
+`process.runs.read`. Ownership never confers slugs that mutate shared
 configuration (`process.templates.manage`, `agent.sandbox-impl`,
 `sandbox.harness-config`, `human.clipboard`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
