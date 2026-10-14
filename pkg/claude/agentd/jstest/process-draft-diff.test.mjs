@@ -128,3 +128,51 @@ test('overlay paints proposals, removals and a retarget ghost for the graph', ()
   assert.ok(out.edges.some((e) => e.proposed && e.from === 'b' && e.to === 'gate'));
   assert.equal(graph.nodes.length, 3, 'the input graph is not mutated');
 });
+
+// Review findings: a removal that would drop a local edge, and keep-mine
+// through a dependency.
+const wxy = view({
+  W: { type: 'task', name: 'W' }, X: { type: 'task', name: 'X' }, Y: { type: 'task', name: 'Y' },
+}, [{ from: 'W', outcome: 'ok', to: 'X' }, { from: 'Y', outcome: 'ok', to: 'W' }]);
+
+test('keep-mine in accept-all never pulls a conflict in through a dependency', () => {
+  const ours = structuredClone(wxy);
+  ours.edges.find((e) => e.from === 'W').to = 'Y';
+  const theirs = structuredClone(wxy);
+  delete theirs.template.nodes.X;
+  theirs.edges = theirs.edges.filter((e) => e.from !== 'W');
+  const changes = diffTemplateDrafts({ base: wxy, ours, theirs });
+  assert.equal(changes.find((c) => c.id === 'edge:W:ok').conflict, true);
+  const kept = decideAllDraftChanges(changes, {}, 'accept');
+  assert.equal(kept['edge:W:ok'], undefined, 'the conflict is not accepted through node:X\'s closure');
+  assert.equal(kept['node:X'], undefined);
+  let decisions = decideDraftChange(changes, {}, 'edge:W:ok', 'reject').decisions;
+  decisions = decideAllDraftChanges(changes, decisions, 'accept');
+  assert.equal(decisions['node:X'], 'reject', 'a change requiring a rejected conflict is rejected with it');
+  const merged = mergeDraftDecisions({ ours, theirs, changes, decisions });
+  assert.equal(merged.edges.find((e) => e.from === 'W')?.to, 'Y', 'the human\'s edge survives');
+});
+
+test('removing a node a local retarget points at is a conflict', () => {
+  const ours = structuredClone(wxy);
+  ours.edges.find((e) => e.from === 'Y').to = 'X';
+  const theirs = structuredClone(wxy);
+  delete theirs.template.nodes.X;
+  theirs.edges = theirs.edges.filter((e) => e.to !== 'X');
+  const changes = diffTemplateDrafts({ base: wxy, ours, theirs });
+  assert.equal(draftChangeForNode(changes, 'X').conflict, true);
+});
+
+test('an accepted edge to a node deleted locally is a conflict and restores the node', () => {
+  const ours = structuredClone(wxy);
+  delete ours.template.nodes.X;
+  ours.edges = ours.edges.filter((e) => e.to !== 'X');
+  const theirs = structuredClone(wxy);
+  theirs.edges.push({ from: 'Y', outcome: 'again', to: 'X' });
+  const changes = diffTemplateDrafts({ base: wxy, ours, theirs });
+  const added = draftChangeForEdge(changes, 'Y', 'again');
+  assert.equal(added.conflict, true);
+  const merged = mergeDraftDecisions({ ours, theirs, changes, decisions: decideDraftChange(changes, {}, added.id, 'accept').decisions });
+  assert.ok(merged.template.nodes.X, 'taking the edge brings its endpoint back');
+  assert.ok(merged.edges.some((e) => e.from === 'Y' && e.outcome === 'again' && e.to === 'X'));
+});

@@ -853,7 +853,9 @@ export class ProcessEditModel {
     this.sourceHash = sourceHash || '';
     this.currentRef = ref || '';
     this.semanticHash = semanticHash || '';
-    if (clean) this.savedRev = this.rev;
+    // Not clean: the CAS base moved to the reviewed version, so no undo
+    // snapshot (whose content predates it) may ever read as saved again.
+    this.savedRev = clean ? this.rev : -1;
   }
 
   // markSaved baselines dirty at savedAtRev -- the rev captured when the save

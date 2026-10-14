@@ -1071,14 +1071,15 @@ export class ProcessTemplateEditor {
       const conflicts = pendingDraftChanges(review.changes, decisions).filter((change) => change.conflict);
       const choice = await this.confirmConflicts(review, conflicts, 'Accept all');
       if (!choice) return false;
-      decisions = decideAllDraftChanges(review.changes, decisions, 'accept', { includeConflicts: choice === 'theirs' });
-      // "Keep my edits": every conflict, and anything requiring one, stays ours.
-      for (const change of conflicts) {
-        if (!decisions[change.id]) decisions = decideDraftChange(review.changes, decisions, change.id, 'reject').decisions;
+      // "Keep my edits": reject every conflict FIRST, which pushes out
+      // everything requiring one, so the accept pass below can never pull a
+      // conflict back in through a dependency.
+      if (choice === 'mine') {
+        for (const change of conflicts) {
+          if (!decisions[change.id]) decisions = decideDraftChange(review.changes, decisions, change.id, 'reject').decisions;
+        }
       }
-      // Rejecting a conflict may have released dependants decided above;
-      // settle anything still pending the same way.
-      decisions = decideAllDraftChanges(review.changes, decisions, 'accept');
+      decisions = decideAllDraftChanges(review.changes, decisions, 'accept', { includeConflicts: choice === 'theirs' });
     } else {
       decisions = decideAllDraftChanges(review.changes, decisions, 'reject', { includeConflicts: true });
     }

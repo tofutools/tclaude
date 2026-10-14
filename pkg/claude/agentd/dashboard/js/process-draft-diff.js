@@ -150,13 +150,17 @@ export function diffTemplateDrafts({ base, ours, theirs } = {}) {
     if (same(before, after) || same(mine, after)) continue;
     const op = opFor(!!before, !!after);
     const shown = after || mine || before;
+    // An endpoint the human deleted locally (still in base and theirs) is
+    // unsaved human work the proposal would bring back: a conflict.
+    const deletedEndpoint = !!after && [after.from, after.to]
+      .some((id) => id && B.nodes[id] && T.nodes[id] && !O.nodes[id]);
     changes.push({
       id: `edge:${key}`, kind: 'edge', op,
       edge: { from: shown.from, outcome: shown.outcome, to: shown.to },
       ...(mine && after && mine.to !== after.to ? { previousTo: mine.to } : {}),
       label: edgeLabel(shown),
       fields: op === 'changed' ? ['to'] : [],
-      conflict: !same(mine, before),
+      conflict: !same(mine, before) || deletedEndpoint,
       requires: [],
     });
   }
@@ -184,7 +188,7 @@ export function diffTemplateDrafts({ base, ours, theirs } = {}) {
     // A removal would also drop connectors the human drew to this node
     // locally. That is unsaved human work, so it counts as a conflict.
     for (const [key, edge] of O.edges) {
-      if (B.edges.has(key) || (edge.from !== change.nodeId && edge.to !== change.nodeId)) continue;
+      if (same(B.edges.get(key), edge) || (edge.from !== change.nodeId && edge.to !== change.nodeId)) continue;
       change.conflict = true;
     }
   }
@@ -250,12 +254,23 @@ export function decideDraftChange(changes = [], decisions = {}, id, verdict) {
 }
 
 // decideAllDraftChanges settles every pending change. Conflicts are never
-// settled implicitly: pass includeConflicts only after an explicit human
-// choice that covers them.
+// settled implicitly — not directly, and not through an accept closure that
+// would pull one in: pass includeConflicts only after an explicit human choice
+// that covers them. An accept never overrides an earlier reject either: a
+// change that requires a rejected change is rejected with it.
 export function decideAllDraftChanges(changes = [], decisions = {}, verdict, { includeConflicts = false } = {}) {
+  const byID = new Map(changes.map((change) => [change.id, change]));
   let next = { ...decisions };
   for (const change of changes) {
     if (next[change.id] || (change.conflict && !includeConflicts)) continue;
+    if (verdict === 'accept') {
+      const needed = [...closure(changes, change.id, (current) => byID.get(current)?.requires || [])];
+      if (needed.some((id) => next[id] === 'reject')) {
+        next[change.id] = 'reject';
+        continue;
+      }
+      if (!includeConflicts && needed.some((id) => byID.get(id)?.conflict && next[id] !== 'accept')) continue;
+    }
     next = decideDraftChange(changes, next, change.id, verdict).decisions;
   }
   return next;
@@ -302,7 +317,15 @@ export function mergeDraftDecisions({ ours, theirs, changes = [], decisions = {}
     edges = edges.filter((edge) => draftEdgeKey(edge.from, edge.outcome) !== key);
     if (change.op === 'removed') continue;
     const edge = T.edges.get(key);
-    if (edge) edges.push({ from: edge.from, outcome: edge.outcome, to: edge.to });
+    if (!edge) continue;
+    edges.push({ from: edge.from, outcome: edge.outcome, to: edge.to });
+    // Taking an edge whose endpoint the human deleted locally restores that
+    // node from the proposal (the change was flagged as a conflict).
+    for (const id of [edge.from, edge.to]) {
+      if (!id || template.nodes[id] || !T.nodes[id]) continue;
+      template.nodes[id] = semanticNode(clone(T.nodes[id]));
+      if (T.layout.nodes?.[id] && !layout.nodes[id]) layout.nodes[id] = clone(T.layout.nodes[id]);
+    }
   }
   // Start is a projection of the start pseudo edge (mirrors the model).
   const start = edges.find((edge) => edge.from === '' && edge.outcome === 'start');
