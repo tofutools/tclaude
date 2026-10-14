@@ -326,6 +326,11 @@ gets the prompt and is the only agent that may report; a previous performer is
 told to stop. A node that is not ready yet, already reported, or not agentic
 has nothing to reassign (409).
 
+In the dashboard the same operation is a drag: in Groups › Processes, drag
+an agent from a run's performer dock onto its agent node (or use the node
+inspector's reassign picker); in Terminals, the run popover's
+"reassign node" opens a picker of the group's members.
+
 `show --json` lists every attempt's performer under `performers` (agent,
 display name, live status, how it was chosen, and what it reported); outstanding
 agent commands report their dispatch state (`pending`, `needs_performer`,

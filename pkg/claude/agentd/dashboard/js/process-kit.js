@@ -130,6 +130,23 @@ function nodesOf(run) {
 
 // runGraphNodes is the normalized node list (kit kind, state, performers)
 // the graph draws, for surfaces that describe one node (the run inspector).
+// REASSIGNABLE_DISPATCH is the set of dispatch states whose attempt is still
+// outstanding and unreported, which is what the assign endpoint accepts.
+const REASSIGNABLE_DISPATCH = new Set(['pending', 'needs_performer', 'delivered']);
+
+// reassignableNode reports whether a node's current agent attempt can be
+// handed to someone else, and if not, why (for the button's title).
+export function reassignableNode(run, node) {
+  if (!node || node.kind !== 'agent') return { ok: false, why: 'Only an agent node can be reassigned' };
+  if (String(run?.scope?.kind || '') === 'agent') {
+    return { ok: false, why: 'An agent-scoped run is performed only by its bound agent' };
+  }
+  if (!node.dispatch || !REASSIGNABLE_DISPATCH.has(String(node.dispatch.state || ''))) {
+    return { ok: false, why: 'The node has no outstanding attempt to reassign' };
+  }
+  return { ok: true, why: '' };
+}
+
 export function runGraphNodes(run) {
   return nodesOf(run);
 }

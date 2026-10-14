@@ -19969,7 +19969,11 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
   border: 1px solid #2a3340; border-radius: 10px; background: #11161d; font-size: 11.5px;
 }
 .grf-dock-label { color: #8b949e; }
-.grf-dock-agent { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 2px; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; cursor: not-allowed; }
+.grf-dock-agent { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 2px; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; cursor: grab; }
+.grf-graph.grf-drop-armed { outline: 1px dashed #a371f7; outline-offset: -4px; }
+.grf-reassign { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.grf-reassign .grf-section { flex-basis: 100%; }
+.grf-reassign select { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; max-width: 200px; }
 .grf-dock-agent.busy { border-color: #1f6feb; }
 .grf-dock-agent .pk-avatar { width: 18px; height: 18px; font-size: 10px; }
 .grf-dock-note { margin-left: auto; color: #6e7681; }

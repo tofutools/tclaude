@@ -224,6 +224,15 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // assign hands a node's outstanding agent attempt to another performer.
+    // nodeId is the executable id the attempt runs under (dispatch.nodeId).
+    async assign(runId, { nodeId, agent, attemptKey = newAttemptKey() }) {
+      const path = `${runPath(runId)}/nodes/${encodeURIComponent(nodeId)}/assign`;
+      const body = JSON.stringify({ agent });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
   };
 }
 

@@ -860,7 +860,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "groups-run-focus",
 			Title:    "Groups — single-run focus",
-			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag-assign waits on run reassignment). Run context and detail are fixtures until the read model lands.",
+			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag one onto an agent node to reassign it). Run context and detail are fixtures until the read model lands.",
 			InitJS:   processContextFixtureInitJS() + processRunDetailInitJS(),
 			JS:       showGroups + groupsProcessesJS(groupsRunFocusJS),
 			SettleMS: 300,

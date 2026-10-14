@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessScopeChip, ProcessStateChip, ProcessStepStrip,
-  kindLabel, performerColor, runGraphNodes, runName, runState, stateLabel,
+  kindLabel, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
@@ -172,7 +172,7 @@ function DecisionForm({ decision, node, onDecide, wizard }) {
   </div>`;
 }
 
-export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, onDecide }) {
+export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, onDecide, members = [], onAssign = null }) {
   if (!node) {
     return html`<aside class="grf-inspector" aria-label=${wizard ? 'Rite step' : 'Node inspector'}>
       <div class="grf-muted">${wizard ? 'Choose a step to read it.' : 'Select a node to inspect it.'}</div>
@@ -201,6 +201,8 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
       ${blocked && html`<dt>blocked</dt><dd class="grf-blocked">${blocked.reason || 'parked on an operator'}</dd>`}
     </dl>
     ${decision && html`<${DecisionForm} key=${`${node.id}:${decision.attempt || 0}`} decision=${decision} node=${node} onDecide=${onDecide} wizard=${wizard} />`}
+    ${onAssign && html`<${ReassignForm} key=${`${node.id}:${node.dispatch?.nodeId || ''}:${node.dispatch?.attempt || 0}`}
+      run=${run} node=${node} members=${members} onAssign=${onAssign} wizard=${wizard} />`}
     <div class="grf-section">${wizard ? 'CHRONICLE' : 'HISTORY'}</div>
     ${history.length
     ? html`<ol class="grf-history">${history.map((event) => html`<li key=${event.sequence}><time>${eventTime(event.occurredAt)}</time> ${eventText(event)}</li>`)}</ol>`
@@ -238,20 +240,70 @@ function RunList({ group, entry, runs, planned, selectedRunId, onSelect, nameOf,
   </nav>`;
 }
 
-// PerformerDock lists the group's agents along the canvas foot. Drag-assign
-// needs a run-time reassign API, which the daemon does not have yet: the
-// dock ships read-only and says so.
-// TODO(tcl-amd5lb): wire drag onto a node once runs can reassign a node's
-// performer, and "+ spawn for node" once a run can spawn into its group.
+// DOCK_AGENT_TYPE carries a dragged dock agent's id onto a graph node.
+export const DOCK_AGENT_TYPE = 'application/x-tclaude-agent';
+
+// PerformerDock lists the group's agents along the canvas foot. Each one can
+// be dragged onto an agent node whose current attempt is still outstanding
+// to hand that attempt over (the inspector's reassign picker does the same
+// without a pointer).
+// TODO(tcl-amd5lb): "+ spawn for node" once a run can spawn into its group.
 function PerformerDock({ members, busy, wizard }) {
   return html`<div class="grf-dock" role="group" aria-label=${wizard ? 'Familiars' : 'Performers'} data-run-dock>
     <span class="grf-dock-label">${wizard ? 'familiars' : 'performers'}</span>
     ${members.map((member) => html`<span key=${memberKey(member)} class=${`grf-dock-agent${busy.has(memberKey(member)) ? ' busy' : ''}`}
-      draggable="false" aria-disabled="true" data-run-dock-agent=${memberKey(member)}
-      title=${`${memberName(member)}: drag-assign needs run reassignment, which is not available yet`}>
+      draggable="true" data-run-dock-agent=${memberKey(member)}
+      title=${`Drag ${memberName(member)} onto an agent node to hand it over`}
+      onDragStart=${(event) => {
+        event.dataTransfer?.setData(DOCK_AGENT_TYPE, memberKey(member));
+        event.dataTransfer?.setData('text/plain', memberName(member));
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      }}>
       <span class=${`pk-avatar ${performerColor(memberKey(member))}`} aria-hidden="true">${[...String(memberName(member) || '?')][0].toUpperCase()}</span>${memberName(member)}
     </span>`)}
-    <span class="grf-dock-note">${wizard ? 'binding a familiar to a step is not yet possible' : 'drag-assign arrives with run reassignment'}</span>
+    <span class="grf-dock-note">${wizard ? 'drag a familiar onto its step' : 'drag onto an agent node to reassign'}</span>
+  </div>`;
+}
+
+// dropTargetNode resolves the graph node under a drag event, if it is one
+// whose attempt can be reassigned.
+function dropTargetNode(event, run) {
+  const id = event.target?.closest?.('[data-process-node]')?.dataset?.processNode;
+  if (!id || !run) return null;
+  const node = runGraphNodes(run).find((item) => item.id === id) || null;
+  return node && reassignableNode(run, node).ok ? node : null;
+}
+
+// ReassignForm is the inspector's keyboard path to the dock's drag-assign.
+function ReassignForm({ run, node, members, onAssign, wizard }) {
+  const check = reassignableNode(run, node);
+  const current = String(node.dispatch?.agentId || '');
+  const candidates = members.filter((member) => member.agent_id && member.agent_id !== current);
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!check.ok) return null;
+  const chosen = candidates.some((member) => member.agent_id === target) ? target : candidates[0]?.agent_id || '';
+  const submit = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await onAssign(node, chosen);
+    } catch (err) {
+      setError(String(err?.message || err || 'reassign failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="grf-reassign" data-run-reassign=${node.id}>
+    <div class="grf-section">${wizard ? 'REBIND' : 'REASSIGN'}</div>
+    ${candidates.length ? html`<select aria-label=${`New performer for ${node.label}`} value=${chosen}
+        onChange=${(event) => setTarget(event.currentTarget.value)}>
+        ${candidates.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
+      </select>
+      <button type="button" class="mux-btn" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign</button>`
+    : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
+    ${error && html`<div class="grf-error" role="alert">${error}</div>`}
   </div>`;
 }
 
@@ -296,6 +348,38 @@ export function GroupsRunFocus({
     refresh();
     void source?.refresh?.();
   };
+  // onAssign hands the node's outstanding attempt to another member,
+  // addressed by the executable id it runs under.
+  const onAssign = api.assign ? async (target, agent) => {
+    await api.assign(runId, { nodeId: target.dispatch?.nodeId || target.id, agent });
+    refresh();
+    void source?.refresh?.();
+  } : null;
+  const [dropError, setDropError] = useState('');
+  const [dropTarget, setDropTarget] = useState('');
+  const onDragOver = (event) => {
+    if (!onAssign || ![...(event.dataTransfer?.types || [])].includes(DOCK_AGENT_TYPE)) return;
+    const target = dropTargetNode(event, run);
+    if (!target) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (dropTarget !== target.id) setDropTarget(target.id);
+  };
+  const onDrop = async (event) => {
+    const agent = event.dataTransfer?.getData(DOCK_AGENT_TYPE) || '';
+    const target = dropTargetNode(event, run);
+    setDropTarget('');
+    if (!onAssign || !agent || !target) return;
+    event.preventDefault();
+    setPicked({ runId, nodeId: target.id });
+    setDropError('');
+    if (agent === String(target.dispatch?.agentId || '')) return;
+    try {
+      await onAssign(target, agent);
+    } catch (err) {
+      setDropError(String(err?.message || err || 'reassign failed'));
+    }
+  };
   // Opening a run moves focus onto its back button (the clicked card button
   // is gone), and Esc closes the focus from anywhere but a text field.
   const backRef = useRef(null);
@@ -323,15 +407,18 @@ export function GroupsRunFocus({
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
         ${detail.error && html`<span class="grf-error" role="status">${detail.error}</span>`}
+        ${dropError && html`<span class="grf-error" role="alert">${dropError}</span>`}
       </div>
       ${run
-    ? html`<div class="grf-graph" ref=${graphRef}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
+    ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}
+        onDragOver=${onDragOver} onDragLeave=${() => setDropTarget('')} onDrop=${(event) => void onDrop(event)}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
         onNodeClick=${(clicked) => setPicked({ runId, nodeId: clicked.id })} /></div>`
     : html`<div class="grf-muted grf-gone">${wizard ? 'This rite is no longer in view.' : 'This run is no longer in the process context.'}</div>`}
       <${PerformerDock} members=${members} busy=${busy} wizard=${wizard} />
     </section>
     ${run
-    ? html`<${RunNodeInspector} run=${run} node=${node} detail=${detail} nameOf=${nameOf} wizard=${wizard} onDecide=${onDecide} />`
+    ? html`<${RunNodeInspector} run=${run} node=${node} detail=${detail} nameOf=${nameOf} wizard=${wizard} onDecide=${onDecide}
+        members=${members} onAssign=${onAssign} />`
     : html`<aside class="grf-inspector"></aside>`}
   </div>`;
 }

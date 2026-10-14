@@ -185,16 +185,108 @@ test('a refused verdict stays on screen as an error', async (t) => {
   assert.match(root.querySelector('.grf-decide [role="alert"]').textContent, /decision window is stale/);
 });
 
-test('the performer dock lists the group and says drag-assign is not available yet', async (t) => {
+// withDispatch gives run_release's running checkout node an outstanding
+// attempt delivered to fe-dev-forms, as performer dispatch reports it.
+function withDispatch(dispatch = { nodeId: 'checkout', agentId: 'agt_fe_forms', attempt: 1, state: 'delivered' }) {
+  const context = structuredClone(FIXTURE);
+  context.runs.run_release.nodes = context.runs.run_release.nodes.map((node) => (node.id === 'checkout' ? { ...node, dispatch } : node));
+  return context;
+}
+
+function assigningApi({ fail = null } = {}) {
+  const api = fakeApi();
+  api.assignments = [];
+  api.assign = async (runId, request) => {
+    if (fail) throw new Error(fail);
+    api.assignments.push([runId, request.nodeId, request.agent]);
+    return { runId };
+  };
+  return api;
+}
+
+async function mountWithContext(t, context, api) {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-run-focus.js');
+  const source = fakeSource(harness);
+  const mounted = await harness.mount(harness.html`<${mod.GroupsRunFocus} group=${GROUPS[0]} roster=${GROUPS[0]} context=${context}
+    runId="run_release" source=${source} api=${api} onSelectRun=${() => {}} onClose=${() => {}} />`);
+  await settle(harness);
+  return { harness, mod, source, root: mounted.container };
+}
+
+function dragEvent(harness, type, data) {
+  const store = new Map(Object.entries(data));
+  return { dataTransfer: { types: [...store.keys()], getData: (key) => store.get(key) || '', setData: (key, value) => store.set(key, value), dropEffect: '', effectAllowed: '' } };
+}
+
+test('the performer dock lists the group as draggable performers', async (t) => {
   const { root } = await mountRunFocus(t);
   const agents = [...root.querySelectorAll('[data-run-dock-agent]')];
   assert.deepEqual(agents.map((a) => a.textContent.slice(1)), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
   for (const agent of agents) {
-    assert.notEqual(agent.getAttribute('draggable'), 'true');
-    assert.equal(agent.getAttribute('aria-disabled'), 'true');
+    assert.ok(agent.hasAttribute('draggable') && agent.getAttribute('draggable') !== 'false', 'dock agents are draggable');
+    assert.equal(agent.getAttribute('aria-disabled'), null);
   }
   assert.ok(root.querySelector('[data-run-dock-agent="agt_fe_forms"]').classList.contains('busy'));
-  assert.match(root.querySelector('.grf-dock-note').textContent, /drag-assign arrives with run reassignment/);
+  assert.match(root.querySelector('.grf-dock-note').textContent, /drag onto an agent node to reassign/);
+});
+
+test('dropping a dock agent onto an outstanding agent node reassigns it', async (t) => {
+  const api = assigningApi();
+  const { harness, mod, source, root } = await mountWithContext(t, withDispatch(), api);
+  const lead = root.querySelector('[data-run-dock-agent="agt_fe_lead"]');
+  const started = dragEvent(harness, 'dragstart', {});
+  harness.fireEvent(lead, 'dragstart', started);
+  assert.equal(started.dataTransfer.getData(mod.DOCK_AGENT_TYPE), 'agt_fe_lead');
+
+  const checkout = root.querySelector('[data-process-node="checkout"]');
+  const over = harness.fireEvent(checkout, 'dragover', dragEvent(harness, 'dragover', { [mod.DOCK_AGENT_TYPE]: 'agt_fe_lead' }));
+  assert.ok(over.defaultPrevented, 'an outstanding agent node accepts the drop');
+  const done = root.querySelector('[data-process-node="charts"]');
+  const refused = harness.fireEvent(done, 'dragover', dragEvent(harness, 'dragover', { [mod.DOCK_AGENT_TYPE]: 'agt_fe_lead' }));
+  assert.ok(!refused.defaultPrevented, 'a node with nothing outstanding refuses it');
+
+  await harness.act(async () => { harness.fireEvent(checkout, 'drop', dragEvent(harness, 'drop', { [mod.DOCK_AGENT_TYPE]: 'agt_fe_lead' })); });
+  await settle(harness);
+  assert.deepEqual(api.assignments, [['run_release', 'checkout', 'agt_fe_lead']]);
+  assert.ok(source.refreshes > 0, 'the context refreshes after a reassign');
+  assert.equal(root.querySelector('[data-run-inspector]').dataset.runInspector, 'checkout', 'the dropped-on node is selected');
+
+  // Dropping the current performer back on its node is a no-op.
+  await harness.act(async () => { harness.fireEvent(checkout, 'drop', dragEvent(harness, 'drop', { [mod.DOCK_AGENT_TYPE]: 'agt_fe_forms' })); });
+  await settle(harness);
+  assert.equal(api.assignments.length, 1);
+});
+
+test('the inspector reassigns by keyboard and addresses the stage', async (t) => {
+  const api = assigningApi();
+  const { harness, root } = await mountWithContext(t, withDispatch({ nodeId: 'checkout.review', agentId: 'agt_fe_forms', attempt: 2, state: 'delivered' }), api);
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-process-node="checkout"]'), 'click'));
+  const form = root.querySelector('[data-run-reassign="checkout"]');
+  assert.ok(form);
+  const select = form.querySelector('select');
+  assert.deepEqual([...select.querySelectorAll('option')].map((o) => o.value), ['agt_fe_lead', 'agt_fe_charts'], 'the current performer is not offered');
+  for (const option of select.querySelectorAll('option')) option.selected = option.value === 'agt_fe_charts';
+  await harness.act(() => harness.fireEvent(select, 'change'));
+  await harness.act(async () => { harness.fireEvent(form.querySelector('button'), 'click'); });
+  await settle(harness);
+  assert.deepEqual(api.assignments, [['run_release', 'checkout.review', 'agt_fe_charts']]);
+});
+
+test('a refused reassign is shown, and a node with nothing outstanding offers none', async (t) => {
+  const refusing = assigningApi({ fail: 'the current performer is still being spawned' });
+  const second = await mountWithContext(t, withDispatch(), refusing);
+  await second.harness.act(() => second.harness.fireEvent(second.root.querySelector('[data-process-node="checkout"]'), 'click'));
+  await second.harness.act(async () => { second.harness.fireEvent(second.root.querySelector('[data-run-reassign] button'), 'click'); });
+  await settle(second.harness);
+  assert.match(second.root.querySelector('[data-run-reassign] [role="alert"]').textContent, /still being spawned/);
+
+});
+
+test('without an outstanding attempt the inspector offers no reassign', async (t) => {
+  const none = await mountWithContext(t, FIXTURE, assigningApi());
+  await none.harness.act(() => none.harness.fireEvent(none.root.querySelector('[data-process-node="checkout"]'), 'click'));
+  assert.equal(none.root.querySelector('[data-run-reassign]'), null);
 });
 
 test('Escape and the back button close the focus; Escape in the note does not', async (t) => {
@@ -233,6 +325,11 @@ test('the run detail API pages events and posts an idempotent decision', async (
   assert.equal(post.init.method, 'POST');
   assert.deepEqual(JSON.parse(post.init.body), { nodeId: 'review', verdict: 'approved', attempt: 2 });
   assert.equal(post.init.headers['Idempotency-Key'], '11111111-2222-4333-8444-555555555555');
+  await api.assign('run/1', { nodeId: 'work.do', agent: 'agt_fe_lead', attemptKey: '11111111-2222-4333-8444-666666666666' });
+  const assign = calls.at(-1);
+  assert.equal(assign.path, '/v1/process/runs/run%2F1/nodes/work.do/assign');
+  assert.deepEqual(JSON.parse(assign.init.body), { agent: 'agt_fe_lead' });
+  assert.equal(assign.init.headers['Idempotency-Key'], '11111111-2222-4333-8444-666666666666');
 });
 
 test('verdict labels read as approve / request changes, anything else verbatim', async (t) => {

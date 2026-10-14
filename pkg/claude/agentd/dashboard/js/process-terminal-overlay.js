@@ -18,9 +18,11 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
-  normalizeNodeState, runIconView, runName,
+  normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
 import { ProcessAgentStepper, isAgentScopedTo } from './process-agent-stepper.js';
+
+export { reassignableNode };
 
 const html = htm.bind(h);
 
@@ -146,23 +148,6 @@ export function formatRunAge(startedAt, now = Date.now()) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`;
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
-}
-
-// REASSIGNABLE_DISPATCH is the set of dispatch states whose attempt is still
-// outstanding and unreported, which is what the assign endpoint accepts.
-const REASSIGNABLE_DISPATCH = new Set(['pending', 'needs_performer', 'delivered']);
-
-// reassignableNode reports whether a node's current agent attempt can be
-// handed to someone else, and if not, why (for the button's title).
-export function reassignableNode(run, node) {
-  if (!node || node.kind !== 'agent') return { ok: false, why: 'Only an agent node can be reassigned' };
-  if (String(run?.scope?.kind || '') === 'agent') {
-    return { ok: false, why: 'An agent-scoped run is performed only by its bound agent' };
-  }
-  if (!node.dispatch || !REASSIGNABLE_DISPATCH.has(String(node.dispatch.state || ''))) {
-    return { ok: false, why: 'The node has no outstanding attempt to reassign' };
-  }
-  return { ok: true, why: '' };
 }
 
 // reassignCandidates lists who a run's node may go to, from the dashboard
