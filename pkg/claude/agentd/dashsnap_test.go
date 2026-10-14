@@ -839,6 +839,25 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-agents-process-badges",
+			Title:   "Groups — process chips and member badges",
+			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the G3 fixture until the read model lands.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + expandGroups + `return (async function(){
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('[data-group-processes="running"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-group-processes="needs-you"]')) throw new Error('group header lacks the needs-you chip');
+  if (!document.querySelector('[data-group-processes="planned"]')) throw new Error('group header lacks the planned chip');
+  if (!document.querySelector('.gpi-none')) throw new Error('a quiet group does not say "no processes"');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-running')) throw new Error('no running member badge');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-waiting')) throw new Error('no amber member badge');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-planned')) throw new Error('no dashed planned member badge');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "shell-notifications",
 			Title:   "Preact shell — notification popover",
 			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
@@ -5168,6 +5187,7 @@ func processContextFixtureInitJS() string {
       run.nodes.forEach(function(n){ if (n.performer && n.performer.ref) { n.performer.ref = rebind(n.performer.ref); delete n.performer.name; } });
     });
     data.groups.forEach(function(g){ (g.planned || []).forEach(function(p){ p.nextAt = new Date(Date.parse(p.nextAt) + shift).toISOString(); }); });
+    data.agents.forEach(function(a){ a.agentId = rebind(a.agentId); });
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 })();`, raw)

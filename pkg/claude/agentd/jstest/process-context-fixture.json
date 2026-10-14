@@ -54,7 +54,7 @@
         { "id": "start", "kind": "start", "state": "done" },
         { "id": "dump", "label": "Dump tables", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
         { "id": "apply", "label": "Apply migration", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "blocked" },
-        { "id": "verify", "label": "Verify counts", "kind": "task", "performer": { "kind": "agent", "ref": "unassigned" }, "state": "pending" },
+        { "id": "verify", "label": "Verify counts", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_forms", "name": "fe-dev-forms" }, "state": "pending" },
         { "id": "end", "kind": "end", "state": "pending" }
       ],
       "edges": [
@@ -86,7 +86,8 @@
     { "groupId": "grp_infra", "group": "infra-crew", "active": [], "needsYou": [], "planned": [], "activeCount": 0, "needsYouCount": 0 }
   ],
   "agents": [
-    { "agentId": "agt_fe_forms", "runs": [ { "runId": "run_release", "nodeId": "checkout", "index": 4, "total": 8, "state": "running" } ] },
+    { "agentId": "agt_fe_lead", "runs": [ { "runId": "run_release", "nodeId": "review", "index": 6, "total": 8, "state": "awaiting" } ] },
+    { "agentId": "agt_fe_forms", "runs": [ { "runId": "run_release", "nodeId": "checkout", "index": 4, "total": 8, "state": "running" }, { "runId": "run_migrate", "nodeId": "verify", "index": 3, "total": 3, "state": "pending" } ] },
     { "agentId": "agt_fe_charts", "runs": [ { "runId": "run_reindex", "nodeId": "backfill", "index": 2, "total": 5, "state": "running" } ] }
   ],
   "orphaned": [],

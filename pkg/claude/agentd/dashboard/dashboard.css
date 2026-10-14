@@ -19917,3 +19917,12 @@ body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-start-form { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-start, body.wizard .gp-start-form button, body.wizard .gp-start-form select { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
+
+/* Groups › Agents focus process indicators (js/groups-process-indicators.js, mock G1). */
+.gpi-chips { display: inline-flex; gap: 6px; }
+.gpi-chip { cursor: pointer; font: inherit; font-size: 11px; }
+.gpi-chip:hover { filter: brightness(1.2); }
+.gpi-chip:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.gpi-none { color: #6e7681; font-size: 11px; }
+.gpi-badges { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+td.process-cell { white-space: nowrap; }
