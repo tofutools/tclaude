@@ -767,6 +767,42 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-focus-agents",
+			Title:   "Groups — Agents focus switch",
+			Caption: "Mock G6-A: the Agents | Processes segmented control sits beside the group filter (features.processes on), Agents selected with its distinct-agent count over the usual member tables.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('.groups-focus-switch') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var agents = document.querySelector('.groups-focus-switch [data-groups-focus="agents"]');
+  if (!agents) throw new Error('groups focus switch did not render');
+  if (agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents is not the default focus');
+  if (!document.querySelector('#groups-list details[data-group-key]')) throw new Error('Agents focus lost the member tables');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:     "groups-focus-processes",
+			Title:   "Groups — Processes focus",
+			Caption: "Mock G6-A: the Processes focus (/groups/processes) swaps the member tables for the run-graph placeholder until the G3 cards land; the filter bar stays.",
+			// The focus is set through the island's signal rather than a click,
+			// so this capture does not persist the pref and leak the Processes
+			// focus into later states that boot on bare Groups.
+			JS: showGroups + `return (async function(){
+  var registry = await import('/static/js/feature-state-registry.js');
+  var groups = registry.featureState('groups');
+  if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  groups.focus.value = 'processes';
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var processes = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
+  if (!processes || processes.getAttribute('aria-pressed') !== 'true') throw new Error('Processes focus is not selected');
+  if (!document.querySelector('[data-groups-processes-placeholder]')) throw new Error('Processes placeholder missing');
+  if (document.querySelector('#groups-list details[data-group-key]')) throw new Error('member tables still shown in Processes focus');
+})();`,
+			SettleMS: 200,
+		},
+		{
 			Key:     "shell-notifications",
 			Title:   "Preact shell — notification popover",
 			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
