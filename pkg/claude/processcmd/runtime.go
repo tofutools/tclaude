@@ -943,6 +943,32 @@ func processRescopeCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+type processAssignParams struct {
+	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" help:"Agent node whose outstanding attempt to reassign"`
+	Agent    string `long:"agent" help:"New performer: agent name, agent id, or conv id"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+}
+
+func processAssignCmd() *cobra.Command {
+	return boa.CmdT[processAssignParams]{
+		Use:   "assign",
+		Short: "Hand an agent node's outstanding attempt to a named performer",
+		Long: "Reassigns the node's current, not yet reported agent attempt. The new performer receives the node " +
+			"prompt in its inbox and is the only agent that may report it; a previous performer is told to stop. " +
+			"The performer must fit the run's scope: a member of a group run, the bound agent of an agent run, " +
+			"or an agent the run owner shares a group with for an unscoped run.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processAssignParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *processAssignParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessAssign(p, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
 func runProcessRescope(p *processRescopeParams, stdout, stderr io.Writer) error {
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
@@ -968,5 +994,38 @@ func runProcessRescope(p *processRescopeParams, stdout, stderr io.Writer) error 
 	}
 	fmt.Fprintf(stdout, "Re-scoped process run %s\n", run.ID)
 	printProcessRun(stdout, &run)
+	return nil
+}
+
+func runProcessAssign(p *processAssignParams, stdout, stderr io.Writer) error {
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	node := strings.TrimSpace(p.Node)
+	if node == "" {
+		return fmt.Errorf("--node is required")
+	}
+	if strings.TrimSpace(p.Agent) == "" {
+		return fmt.Errorf("--agent is required")
+	}
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
+	request := struct {
+		Agent string `json:"agent"`
+	}{Agent: strings.TrimSpace(p.Agent)}
+	var response struct {
+		Attempt int            `json:"attempt"`
+		AgentID string         `json:"agentId"`
+		Run     processRunJSON `json:"run"`
+	}
+	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/nodes/" + url.PathEscape(node) + "/assign"
+	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Assigned node %s (attempt %d) of process run %s to %s.\n", node, response.Attempt, response.Run.ID, response.AgentID)
+	printProcessRun(stdout, &response.Run)
 	return nil
 }
