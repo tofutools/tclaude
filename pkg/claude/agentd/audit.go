@@ -311,6 +311,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "resume"}, verb: "process.run.resume"},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "reissue"}, verb: "process.run.reissue"},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "record-outcome"}, verb: "process.run.record-outcome"},
+	{method: http.MethodPost, segs: []string{"process", "report"}, verb: "process.report"},
 
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-

@@ -62,7 +62,14 @@ const (
 
 type CommandKind string
 
-const CommandProgram CommandKind = "program"
+const (
+	CommandProgram CommandKind = "program"
+	// CommandAgent is an asynchronous agent performer request. Its durable
+	// outbox entry is not a program a worker is running: it is accounted for by
+	// the daemon's dispatch record, and it settles through the same observation
+	// transition a program does once the performer reports back.
+	CommandAgent CommandKind = "agent"
+)
 
 // Checkpoint is the complete v3 reducer state. The pinned template and run
 // parameters live beside it in the run record, rather than being copied into
@@ -206,12 +213,36 @@ type BlockedResolution struct {
 // is what stops a retried node from minting the same identity twice: exact
 // outbox matching stays the stale-input authority, and the identity it matches
 // on is now per attempt rather than per node.
+//
+// Exactly one payload matches Kind: Program for a program command, Agent for an
+// agent command. Program is omitted when zero so an agent command does not
+// carry an empty program request.
 type Command struct {
 	ID      string         `json:"id"`
 	Kind    CommandKind    `json:"kind"`
 	NodeID  string         `json:"nodeId"`
 	Attempt int            `json:"attempt"`
-	Program ProgramCommand `json:"program"`
+	Program ProgramCommand `json:"program,omitzero"`
+	Agent   *AgentCommand  `json:"agent,omitempty"`
+}
+
+// AgentCommand is the fully bound request for one agent performer attempt.
+// Like ProgramCommand it is derived deterministically from the pinned
+// template and run parameters, so the durable entry never has to reread
+// mutable authoring input. Which agent actually performs it is a daemon
+// dispatch fact, deliberately not part of the reducer state.
+type AgentCommand struct {
+	Profile  string `json:"profile,omitempty"`
+	Prompt   string `json:"prompt"`
+	Assignee string `json:"assignee,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	// Spawn records that the template allows spawning a fresh performer with
+	// Profile when nobody in scope can take the node.
+	Spawn bool `json:"spawn,omitempty"`
+	// RetryMode is the authored on-fail mode for the node's next attempt:
+	// model.RetryModeFreshAttempt or model.RetryModeFeedbackSameSession.
+	RetryMode string `json:"retryMode,omitempty"`
 }
 
 type ProgramCommand struct {

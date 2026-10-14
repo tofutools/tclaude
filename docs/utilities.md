@@ -74,18 +74,17 @@ usage lives.
 
 ## tclaude usage
 
-Anthropic subscription limits: queries the Anthropic usage API with your
-Claude Code OAuth credentials and prints 5-hour and 7-day utilization
-percentages (plus whether extra usage is enabled). Responses are briefly
-cached.
+Reads daemon-cached subscription quota windows for all observed providers,
+including resets, forecasts, and freshness metadata. It makes no provider API
+requests.
 
 ```bash
 tclaude usage
-tclaude usage --json     # raw API response
+tclaude usage --json     # structured multi-provider observations and forecasts
 ```
 
-This command is Anthropic-subscription-specific. The
-[dashboard](dashboard.md) separately surfaces usage for the other providers.
+See [Querying usage and costs](usage-and-costs.md) for access permissions,
+response fields, and how to interpret missing or stale readings.
 
 ## tclaude memory-files
 

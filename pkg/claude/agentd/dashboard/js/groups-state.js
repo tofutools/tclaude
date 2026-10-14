@@ -16,6 +16,10 @@ import {
   setMemberColHidden,
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
+import { GROUPS_FOCUS_PREF, normalizeGroupsFocus } from './groups-focus.js';
+import { normalizeRunFilter } from './process-context.js';
+
+const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.filter';
 
 const FILTER_KEY = 'tclaude.dash.filter.groups';
 
@@ -177,6 +181,13 @@ export function createGroupsState({
   const standingOrdersDialog = signal(null);
   const subview = signal('members');
   const routeSelection = signal('');
+  // Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
+  const focus = signal('agents');
+  // Running | Planned | Done | All over the Processes lens's run cards.
+  const processFilter = signal('running');
+  // The single-run focus (G5): { group, runId } while one run is open in the
+  // Processes lens, else null. Session-only: a reload lands on the cards.
+  const focusedRun = signal(null);
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
@@ -210,6 +221,8 @@ export function createGroupsState({
     }
     batch(() => {
       query.value = prefs.getItem(FILTER_KEY) || '';
+      focus.value = normalizeGroupsFocus(prefs.getItem(GROUPS_FOCUS_PREF));
+      processFilter.value = normalizeRunFilter(prefs.getItem(PROCESS_FILTER_PREF));
       visibility.value = restored;
       renderRevision.value++;
     });
@@ -251,6 +264,27 @@ export function createGroupsState({
     const next = value === 'routes' ? 'routes' : 'members';
     subview.value = next;
     routeSelection.value = next === 'routes' ? String(selection || '') : '';
+  }
+
+  function setFocus(value) {
+    const next = normalizeGroupsFocus(value);
+    if (focus.value === next) return;
+    focus.value = next;
+    prefs.setItem(GROUPS_FOCUS_PREF, next);
+  }
+
+  function setFocusedRun(value) {
+    const next = value?.group && value?.runId ? { group: String(value.group), runId: String(value.runId) } : null;
+    const prev = focusedRun.value;
+    if (prev?.group === next?.group && prev?.runId === next?.runId) return;
+    focusedRun.value = next;
+  }
+
+  function setProcessFilter(value) {
+    const next = normalizeRunFilter(value);
+    if (processFilter.value === next) return;
+    processFilter.value = next;
+    prefs.setItem(PROCESS_FILTER_PREF, next);
   }
 
   function openMemberEditor(member, group, focus = 'title') {
@@ -350,9 +384,9 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, renderRevision,
+    standingOrdersDialog, subview, routeSelection, focus, processFilter, focusedRun, renderRevision,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,
