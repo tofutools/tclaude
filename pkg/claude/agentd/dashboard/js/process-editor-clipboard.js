@@ -31,7 +31,7 @@ const STEP_FIELDS = new Set([
 ]);
 const PERFORMER_FIELDS = new Set([
   'kind', 'profile', 'prompt', 'ask', 'choices', 'choiceOutcomes', 'assignee',
-  'model', 'effort', 'run', 'args', 'timeout', 'contact',
+  'spawn', 'model', 'effort', 'run', 'args', 'timeout', 'contact',
 ]);
 const CONTACT_FIELDS = new Set(['cadence', 'budget', 'escalationTarget']);
 const RETRY_FIELDS = new Set(['maxAttempts', 'backoff', 'onFail']);
@@ -109,7 +109,7 @@ function validatePerformer(value) {
   validateWireRecord(value, PERFORMER_FIELDS);
   if (!PROCESS_PERFORMER_KINDS.has(value.kind)) wireShapeReject();
   validateOptionalStrings(value, [
-    'profile', 'prompt', 'ask', 'assignee', 'model', 'effort', 'run', 'timeout',
+    'profile', 'prompt', 'ask', 'assignee', 'spawn', 'model', 'effort', 'run', 'timeout',
   ]);
   if (Object.hasOwn(value, 'choices')) validateStringList(value.choices);
   if (Object.hasOwn(value, 'args')) validateStringList(value.args);

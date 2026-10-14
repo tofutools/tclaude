@@ -78,6 +78,8 @@ tclaude process record-outcome <run-id> [--node <node>] \
     --outcome succeeded|failed
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
+tclaude process report succeeded|failed [--run <run-id> --node <node> \
+    --attempt <n>] [--note "summary"]      # agent performers only
 tclaude process templates ls
 ```
 
@@ -168,6 +170,9 @@ explicit per-agent deny overrides everything, the owner grant included. See
   refuses any other value — including a verdict formed against an earlier
   window and submitted late.
 
+- **Agent performers** (`performer.kind: agent` on a plain task) — see
+  [Agent performers](#agent-performers) below.
+
 One sizing rule applies only to running: a run records durable evidence per
 node, and that row bounds node ids at 256 bytes. Run creation refuses a
 template whose node ids — authored or derived from compound stages — exceed
@@ -177,14 +182,74 @@ it; editing and storing such a template still works.
 
 These CLI verbs are stubs that return a "process runtime is temporarily
 unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
-`advance`, `unblock`, `observe`, `resolve`, `report`, `verify`, `repair`.
+`advance`, `unblock`, `observe`, `resolve`, `verify`, `repair`.
 
 These authoring features are valid in a stored template but refused at run
 creation with a path-specific diagnostic, rather than failing later: agent
-deciders; agent or human task performers; retry backoff waits; same-session
-retry feedback (`retry.onFail: feedback-same-session`); retries on compound
-stages; `plan.approvalRetry`; human or agent stage performers; poison
-handling; wait nodes; captures.
+deciders; human task performers; agent performers on compound (staged) tasks;
+agent performer `timeout`; retry backoff waits; same-session retry feedback
+for program tasks (`retry.onFail: feedback-same-session` is executable only
+for agent tasks); retries on compound stages; `plan.approvalRetry`; human or
+agent stage performers; poison handling; wait nodes; captures.
+
+## Agent performers
+
+A plain task with `performer.kind: agent` is performed by an agent. When the
+node becomes ready the daemon resolves a performer from the run's scope and
+delivers the node's prompt **as a message in that agent's inbox** — never by
+typing into its pane. The message carries the run id, node id, and attempt,
+and the exact command to report back with:
+
+```bash
+tclaude process report succeeded --run <run-id> --node <node> --attempt <n> \
+    --note "PR #12 is open"
+tclaude process report failed --run <run-id> --node <node> --attempt <n> \
+    --note "why it failed"
+```
+
+`--run`, `--node`, and `--attempt` may be omitted when the agent has exactly
+one open node. The report is authenticated by the calling agent's identity and
+must match the exact attempt that was delivered to it: another agent is
+refused, a report for an older attempt is refused as stale, and a repeated
+identical report is acknowledged without being applied twice. A report goes
+through the same transition a program result does, so retry budgets, parking,
+and fail-fast behave identically.
+
+**Who performs the node**, by run scope:
+
+| Scope | Resolution |
+| --- | --- |
+| group | the explicit `assignee`, if it names a current member; else a member whose role matches the node's `profile` (or that spawn profile's role), idle first, then busy, then offline; else — only with `spawn: allowed` and when the run owner could spawn into the group — a fresh agent spawned with the node's `profile`; else the node waits as **needs performer** |
+| agent | the bound agent performs every agent node; an `assignee` naming anyone else waits as needs performer |
+| none | only an explicit `assignee` (any active agent); otherwise the node waits as needs performer |
+
+A **needs performer** node is retried on every runtime sweep (once a minute),
+so it is picked up as soon as a matching member joins. `show` prints the
+reason it waits.
+
+**Retries.** `retry.onFail: fresh-attempt` (the default) hands the next
+attempt to a different performer when one is available — spawning one if the
+template allows it — and only falls back to the previous performer as a last
+resort. `retry.onFail: feedback-same-session` hands it back to the same
+performer, together with the note its failed report carried.
+
+**Performers going away.** An offline performer keeps the node: its inbox holds
+the prompt and the node simply waits. A performer that is retired or leaves
+the group is replaced by re-resolving the same attempt. A run bound to an
+agent is never re-resolved to someone else.
+
+**People always win.** `record-outcome --node <node>` settles an agent's node
+in its place; the performer is told the attempt no longer needs it, and its
+later report is refused as stale. When a run is ending — a sibling failed, or
+an operator cancelled — outstanding agent attempts are withdrawn and their
+performers told to stop.
+
+`show --json` lists every attempt's performer under `performers` (agent,
+display name, live status, how it was chosen, and what it reported); outstanding
+agent commands report their dispatch state (`pending`, `needs_performer`,
+`delivered`, `reported`) instead of `needs_reconcile`. A daemon restart picks
+in-flight dispatches back up without re-sending them. An outstanding agent
+command occupies one of the run's four concurrency slots, like a program.
 
 ## Crashes and reconciliation
 

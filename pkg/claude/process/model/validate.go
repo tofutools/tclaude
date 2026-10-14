@@ -484,13 +484,20 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 	if !scoped("ask", !isBlank(performer.Ask), PerformerHuman) ||
 		!scoped("choices", len(performer.Choices) > 0, PerformerHuman) ||
 		!scoped("choiceOutcomes", len(performer.ChoiceOutcomes) > 0, PerformerHuman) ||
-		!scoped("assignee", !isBlank(performer.Assignee), PerformerHuman) ||
+		!scoped("assignee", !isBlank(performer.Assignee), PerformerHuman, PerformerAgent) ||
+		!scoped("spawn", !isBlank(performer.Spawn), PerformerAgent) ||
 		!scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman) ||
 		!scoped("model", !isBlank(performer.Model), PerformerAgent) ||
 		!scoped("effort", !isBlank(performer.Effort), PerformerAgent) ||
 		!scoped("run", !isBlank(performer.Run), PerformerProgram) ||
 		!scoped("args", len(performer.Args) > 0, PerformerProgram) {
 		return false
+	}
+	if !isBlank(performer.Spawn) && performer.Spawn != SpawnAllowed && performer.Spawn != SpawnNever {
+		if !diagnostics.Add(diagError("invalid_spawn", path+".spawn",
+			fmt.Sprintf("spawn must be %q or %q", SpawnAllowed, SpawnNever))) {
+			return false
+		}
 	}
 	for i, choice := range performer.Choices {
 		if isBlank(choice) {
