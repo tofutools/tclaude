@@ -308,3 +308,21 @@ func TestProcessContextServedOnDashboardMux(t *testing.T) {
 	require.Len(t, view.Groups, 1)
 	assert.Equal(t, []string{"run_dash"}, view.Groups[0].NeedsYou)
 }
+
+// Scenario: the Terminals stepper (T3) promotes an agent-scoped run to a
+// group the agent belongs to, from the dashboard, and the context read then
+// lists it under that group.
+func TestProcessRunPromoteServedOnDashboardMux(t *testing.T) {
+	f := scopedRunFlow(t)
+	f.HaveGroup("ctx-promote")
+	const workerConv = "prmo-1111-2222-3333-4444"
+	f.HaveMember("ctx-promote", workerConv)
+	startScopedRun(t, f, "run_promote", "gate", map[string]any{"agent": agentIDOf(t, workerConv)}, []string{})
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		dashReq(t, http.MethodPost, "/v1/process/runs/run_promote/rescope", map[string]any{"group": "ctx-promote"}))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	view := readProcessContext(t, f, "")
+	require.Len(t, view.Groups, 1)
+	assert.Contains(t, append(view.Groups[0].Active, view.Groups[0].NeedsYou...), "run_promote")
+}

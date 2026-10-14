@@ -143,3 +143,20 @@ func TestProcessPerformerAssign_CarriesRetryFeedback(t *testing.T) {
 	assert.Contains(t, inbox[0].Body, "Attempt: 2")
 	assert.Contains(t, inbox[0].Body, "tests are red on CI")
 }
+
+// Scenario: the Terminals and Groups reassign controls post from the
+// dashboard, so the dashboard handler serves the assign route too.
+func TestProcessPerformerAssign_ServedOnDashboardMux(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	havePerformerAgent(t, f, "crew", "asgd-1111-2222-3333-4444", "alice", "dev", "idle")
+	bob := havePerformerAgent(t, f, "crew", "asgd-5555-2222-3333-4444", "bob", "reviewer", "idle")
+	startPerformerRun(t, f, root, "run_assign_dash", performerTemplate("assign-dash", devPerformer(), nil),
+		agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID})
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		dashReq(t, http.MethodPost, "/v1/process/runs/run_assign_dash/nodes/"+performerNode+"/assign", map[string]any{"agent": bob}))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	agentd.WaitForProcessDispatchForTest()
+	assert.Equal(t, bob, showPerformerRun(t, f, "run_assign_dash").Commands[0].Performer.AgentID)
+}
