@@ -13,9 +13,8 @@ import (
 
 func TestForegroundAskJournalPreservesLiveOwnerAcrossSweep(t *testing.T) {
 	isolateOneShotDirectories(t)
-	run, err := newOneShotDirectoryRun()
+	run, err := newOneShotDirectoryRunForOwner(true)
 	require.NoError(t, err)
-	require.NoError(t, run.setForegroundOwner())
 	root := filepath.Join(run.Base, run.Key)
 	require.NoError(t, os.MkdirAll(root, 0700))
 	activeOneShotDirectories.Delete(run.Key) // model a separate daemon's map

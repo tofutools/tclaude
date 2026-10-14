@@ -55,7 +55,7 @@ func prepareAskSandbox(in askInput, h *harness.Harness, spec harness.AskSpec) (*
 	if snapshot == nil {
 		return nil, "", nil
 	}
-	implementation, mode, approval := "", "", ""
+	implementation, mode, approval, gateway := "", "", "", ""
 	for _, profile := range in.LaunchProfiles {
 		if profile == nil {
 			continue
@@ -67,8 +67,8 @@ func prepareAskSandbox(in askInput, h *harness.Harness, spec harness.AskSpec) (*
 		if source != h.Name {
 			continue
 		}
-		if profile.ModelProxy != "" && profile.ModelProxy != "off" {
-			return nil, "", fmt.Errorf("ask sandbox: model gateway %q needs a tracked gateway caller identity; use an interactive worker or a profile without a model gateway", profile.ModelProxy)
+		if gateway == "" {
+			gateway = profile.ModelProxy
 		}
 		if implementation == "" {
 			implementation = profile.SandboxImplementation
@@ -79,6 +79,9 @@ func prepareAskSandbox(in askInput, h *harness.Harness, spec harness.AskSpec) (*
 		if approval == "" {
 			approval = profile.Approval
 		}
+	}
+	if gateway != "" && gateway != "off" {
+		return nil, "", fmt.Errorf("ask sandbox: model gateway %q needs a tracked gateway caller identity; use an interactive worker or set model_proxy=off in the ask profile", gateway)
 	}
 	if implementation == "" {
 		implementation = string(sandboxpolicy.ImplementationTclaudeLayer)

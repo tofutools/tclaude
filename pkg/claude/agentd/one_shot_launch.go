@@ -149,16 +149,11 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 	}
 	layer := p.SandboxImplementation == "tclaude-layer" || p.SandboxImplementation == "stacked"
 	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
-		run, err := newOneShotDirectoryRun()
+		run, err := newOneShotDirectoryRunForOwner(foreground)
 		if err != nil {
 			return hostFailure("sandbox_init", err.Error())
 		}
 		prepared.directory = run
-		if foreground {
-			if err := run.setForegroundOwner(); err != nil {
-				return hostFailure("sandbox_init", err.Error())
-			}
-		}
 		materialized, _, err := prepareCodexSSHWorkaroundForNewLaunch(*p.EffectiveSandbox, run.Key, p.SSHWorkaround && codexSSHWorkaroundApplies(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox))
 		if err != nil {
 			return hostFailure("sandbox_init", err.Error())

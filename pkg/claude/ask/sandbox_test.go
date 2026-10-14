@@ -1,8 +1,10 @@
 package ask
 
 import (
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -133,4 +135,33 @@ func TestAskSandboxUsesCurrentPolicyForResumedThread(t *testing.T) {
 	require.NoError(t, runAsk(in, aio))
 	require.Len(t, f.plans, 2)
 	require.Contains(t, f.plans[1].Argv, "--resume=existing-copilot")
+}
+
+func TestAskSandboxGatewayOffOverridesGlobalGateway(t *testing.T) {
+	setupAskTestDB(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "policy"})
+	require.NoError(t, err)
+	h, err := harness.Resolve(harness.CodexName)
+	require.NoError(t, err)
+	in := askInput{Cwd: testutil.CanonicalTempDir(t), SandboxSetting: "policy", LaunchProfiles: []*db.SpawnProfile{
+		{Harness: harness.CodexName, ModelProxy: "off", SandboxImplementation: "off"},
+		{Harness: harness.CodexName, ModelProxy: "global-gateway"},
+	}}
+	_, _, err = prepareAskSandbox(in, h, harness.AskSpec{Print: true, Prompt: "hello"})
+	require.ErrorContains(t, err, "cannot be enforced") // Passed identity resolution, refused off confinement.
+	in.LaunchProfiles[0].ModelProxy = ""
+	_, _, err = prepareAskSandbox(in, h, harness.AskSpec{Print: true, Prompt: "hello"})
+	require.ErrorContains(t, err, `model gateway "global-gateway"`)
+}
+
+func TestAskForegroundRunnerPreservesStdioAndPreparedEnvironment(t *testing.T) {
+	cwd := testutil.CanonicalTempDir(t)
+	aio, out, errout := io2buf()
+	aio.Stdin = strings.NewReader("input from terminal\n")
+	prepared := &agentd.PreparedOneShotLaunch{Argv: []string{"/bin/sh", "-c", `read line; printf '%s|%s' "$line" "$POLICY_VALUE"; printf diagnostic >&2`}, Env: append(os.Environ(), "POLICY_VALUE=prepared")}
+	started, err := liveRunner(runPlan{Argv: prepared.Argv, Env: prepared.Env, Preparation: prepared, Cwd: cwd, Stdin: aio.Stdin, Stdout: aio.Stdout, Stderr: aio.Stderr})
+	require.NoError(t, err)
+	require.True(t, started)
+	require.Equal(t, "input from terminal|prepared", out.String())
+	require.Equal(t, "diagnostic", errout.String())
 }

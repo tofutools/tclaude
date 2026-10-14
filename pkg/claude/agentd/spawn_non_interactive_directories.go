@@ -41,11 +41,22 @@ func oneShotDirectoryJournalRoot() string {
 }
 
 func newOneShotDirectoryRun() (*oneShotDirectoryRun, error) {
+	return newOneShotDirectoryRunForOwner(false)
+}
+
+func newOneShotDirectoryRunForOwner(foreground bool) (*oneShotDirectoryRun, error) {
 	base, err := canonicalizeForSecureMkdir(tclcommon.CacheDir())
 	if err != nil {
 		return nil, err
 	}
 	run := &oneShotDirectoryRun{Key: "oneshot-" + session.GenerateSessionID(), Base: filepath.Join(base, "agent-dirs"), Boot: oneShotBootIdentity()}
+	if foreground {
+		identity, err := readOneShotOwnerIdentity(os.Getpid())
+		if err != nil {
+			return nil, fmt.Errorf("identify foreground directory owner: %w", err)
+		}
+		run.Foreground, run.OwnerPID, run.OwnerStart = true, os.Getpid(), identity
+	}
 	activeOneShotDirectories.Store(run.Key, true)
 	if err := run.save(); err != nil {
 		activeOneShotDirectories.Delete(run.Key)
@@ -138,22 +149,6 @@ func (run *oneShotDirectoryRun) journalRoot() string {
 		return filepath.Join(config.DataDir(), "foreground-one-shot-directories")
 	}
 	return oneShotDirectoryJournalRoot()
-}
-
-func (run *oneShotDirectoryRun) setForegroundOwner() error {
-	original := filepath.Join(oneShotDirectoryJournalRoot(), run.Key+".json")
-	identity, err := readOneShotOwnerIdentity(os.Getpid())
-	if err != nil {
-		return fmt.Errorf("identify foreground directory owner: %w", err)
-	}
-	run.Foreground, run.OwnerPID, run.OwnerStart = true, os.Getpid(), identity
-	if err := run.save(); err != nil {
-		return err
-	}
-	if err := os.Remove(original); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
 }
 
 func cleanupRetainedOneShotDirectories() error {

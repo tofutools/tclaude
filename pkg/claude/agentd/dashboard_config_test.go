@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -482,5 +483,23 @@ func TestDashboardConfig_StartupTimingTogglesWithoutRestart(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 		require.Empty(t, resp.UnknownKeys)
 		require.Equal(t, value == "true", config.StartupTimingEnabled())
+	}
+}
+
+func TestDashboardConfigAskSandboxValidatesLibrarySelection(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "off"})
+	require.NoError(t, err)
+	for _, setting := range []string{"auto", "global", "off", "profile:off"} {
+		body := wrapBody(`{"ask":{"sandbox":`+strconv.Quote(setting)+`}}`, "")
+		w, resp := postConfig(t, "/api/config?dry_run=1", body)
+		require.Equal(t, http.StatusOK, w.Code, resp)
+		require.Contains(t, resp.Raw, strconv.Quote(setting))
+	}
+	for _, setting := range []string{"deleted", "profile:"} {
+		w, resp := postConfig(t, "/api/config?dry_run=1", wrapBody(`{"ask":{"sandbox":`+strconv.Quote(setting)+`}}`, ""))
+		require.Equal(t, http.StatusBadRequest, w.Code, resp)
+		require.Contains(t, strings.Join(resp.Errors, " "), "ask.sandbox")
 	}
 }
