@@ -1840,3 +1840,13 @@ CREATE TABLE 'agent_messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term
 CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
+
+CREATE TABLE agent_turn_replies (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+	conv_id    TEXT NOT NULL,
+	body       TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_agent_turn_replies_agent ON agent_turn_replies(agent_id, id);
