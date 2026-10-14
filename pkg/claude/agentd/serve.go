@@ -1550,6 +1550,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/events", processRoute(handleProcessRunEvents))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
+	mux.HandleFunc("POST /v1/process/runs/{id}/pause", processRoute(handleProcessRunPause))
 	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))

@@ -100,7 +100,7 @@ test('an agent-scoped run opens as the stepper, toggles to the graph, and promot
   assert.ok(root.querySelector('[data-process-step="verify"] .pk-stepper-step-warning'));
 
   const button = (pattern) => [...root.querySelectorAll('.pk-run-popover-actions button')].find((b) => pattern.test(b.textContent));
-  assert.equal(button(/pause/).disabled, true);
+  assert.equal(button(/pause/).disabled, true, 'no pause action wired');
   const select = root.querySelector('.pk-stepper-group');
   assert.ok(select, 'two groups offer a choice');
   for (const option of select.querySelectorAll('option')) option.selected = option.value === 'search';
@@ -140,4 +140,33 @@ test('production promote posts a rescope to the chosen group', async (t) => {
   await actions.promote({ runId: 'run_reindex' }, 'webshop');
   assert.equal(posts[0].url, '/v1/process/runs/run_reindex/rescope');
   assert.deepEqual(JSON.parse(posts[0].init.body), { group: 'webshop' });
+});
+
+test('the stepper pauses and resumes the run, and shows a refusal', async (t) => {
+  const { harness, stepper } = await load(t);
+  const calls = [];
+  const actions = {
+    pause: async (run) => { calls.push(['pause', run.runId]); },
+    resume: async (run) => { calls.push(['resume', run.runId]); throw new Error('process run is not found'); },
+  };
+  const live = await harness.mount(harness.html`<${stepper.ProcessAgentStepper} run=${agentRun()} agentId="agt_search" actions=${actions} />`);
+  const pause = [...live.container.querySelectorAll('button')].find((b) => /pause run/.test(b.textContent));
+  assert.equal(pause.disabled, false);
+  await harness.act(async () => { harness.fireEvent(pause, 'click'); });
+  assert.deepEqual(calls, [['pause', 'run_reindex']]);
+  await live.unmount();
+
+  const held = { ...agentRun(), paused: { at: '2026-10-14T12:00:00Z', by: 'human:operator' } };
+  const paused = await harness.mount(harness.html`<${stepper.ProcessAgentStepper} run=${held} agentId="agt_search" actions=${actions} />`);
+  assert.ok(paused.container.querySelector('[data-process-paused]'), 'a paused run says so in the head');
+  const resume = [...paused.container.querySelectorAll('button')].find((b) => /resume run/.test(b.textContent));
+  await harness.act(async () => { harness.fireEvent(resume, 'click'); });
+  assert.deepEqual(calls.at(-1), ['resume', 'run_reindex']);
+  assert.match(paused.container.querySelector('[role="alert"]').textContent, /not found/);
+  await paused.unmount();
+
+  const finished = await harness.mount(harness.html`<${stepper.ProcessAgentStepper} run=${{ ...agentRun(), status: 'completed' }} agentId="agt_search" actions=${actions} />`);
+  const done = [...finished.container.querySelectorAll('button')].find((b) => /pause run/.test(b.textContent));
+  assert.equal(done.disabled, true, 'a finished run cannot be paused');
+  await finished.unmount();
 });

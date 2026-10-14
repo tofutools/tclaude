@@ -46,6 +46,7 @@ type processRunProjection struct {
 	Action      string                  `json:"action"`
 	NeedsYou    bool                    `json:"needsYou"`
 	Scope       processRunScopeView     `json:"scope"`
+	Paused      *processRunPauseView    `json:"paused,omitempty"`
 	Nodes       []processProjectionNode `json:"nodes"`
 	Edges       []processProjectionEdge `json:"edges"`
 	Current     []string                `json:"current"`
@@ -99,6 +100,10 @@ type processProjectionPerformer struct {
 
 // processProjectionDispatch is one agent node's latest dispatched attempt.
 type processProjectionDispatch struct {
+	// NodeID is the executable node the attempt was dispatched under: the
+	// authored id for a plain task, a stage or body id otherwise. Acting on
+	// the attempt (reassign) names this id.
+	NodeID      string     `json:"nodeId"`
 	AgentID     string     `json:"agentId,omitempty"`
 	Name        string     `json:"name,omitempty"`
 	Attempt     int        `json:"attempt"`
@@ -570,7 +575,7 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 	projection := processRunProjection{
 		RunID: run.ID, TemplateID: s.templateID, TemplateRef: run.TemplateRef, Name: s.name,
 		Status: run.Status, Action: run.Action, NeedsYou: processContextNeedsYou[run.Action],
-		Scope: run.Scope, Edges: append([]processProjectionEdge(nil), s.edges...),
+		Scope: run.Scope, Paused: run.Paused, Edges: append([]processProjectionEdge(nil), s.edges...),
 		Current: []string{}, Truncated: s.truncated, StartedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 		stepOrder: s.stepOrder, steps: s.steps,
 	}
@@ -628,7 +633,7 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			}
 			if latest, ok := dispatched[node.ID]; ok {
 				node.Dispatch = &processProjectionDispatch{
-					AgentID: latest.AgentID, Name: latest.Name, Attempt: latest.Attempt,
+					NodeID: latest.NodeID, AgentID: latest.AgentID, Name: latest.Name, Attempt: latest.Attempt,
 					State: latest.State, WaitReason: latest.WaitReason, DeliveredAt: latest.DeliveredAt,
 				}
 				if latest.AgentID != "" {

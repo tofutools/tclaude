@@ -48,8 +48,15 @@ type processRunJSON struct {
 	Commands              []processRunCommandJSON  `json:"commands"`
 	Blocked               []processRunBlockedJSON  `json:"blocked"`
 	Scope                 processRunScopeJSON      `json:"scope"`
+	Paused                *processRunPauseJSON     `json:"paused,omitempty"`
 	CreatedAt             time.Time                `json:"createdAt"`
 	UpdatedAt             time.Time                `json:"updatedAt"`
+}
+
+// processRunPauseJSON mirrors the daemon's operator-pause view.
+type processRunPauseJSON struct {
+	At time.Time `json:"at"`
+	By string    `json:"by,omitempty"`
 }
 
 // processRunDecisionJSON mirrors the daemon's awaited-decision view. Attempt is
@@ -508,9 +515,22 @@ func runProcessShow(runID, askHuman string, reconcileOnly, jsonOutput bool, stdo
 	return nil
 }
 
+func processPauseCmd() *cobra.Command {
+	return boa.CmdT[processRunMutationParams]{
+		Use: "pause", Short: "Pause a process run: no new agent turns or program commands until resumed",
+		Long: "Holds a run. Attempts already in flight finish and are recorded, and human inputs " +
+			"(decisions, reports) are still accepted, but nothing new is dispatched until " +
+			"`tclaude process resume` releases it.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processRunMutationParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessMutation(p, "/pause", nil, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
 func processResumeCmd() *cobra.Command {
 	return boa.CmdT[processRunMutationParams]{
-		Use: "resume", Short: "Resume or tick one runnable process run",
+		Use: "resume", Short: "Resume a paused process run, or tick one runnable run",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processRunMutationParams, _ *cobra.Command, _ []string) {
 			exitProcessRuntime(runProcessMutation(p, "/resume", nil, os.Stdout, os.Stderr), os.Stderr)
@@ -560,15 +580,26 @@ func runProcessMutation(p *processRunMutationParams, suffix string, request map[
 		request = map[string]any{}
 	}
 	var response struct {
-		Started bool           `json:"started"`
-		Run     processRunJSON `json:"run"`
+		Started  bool           `json:"started"`
+		Changed  bool           `json:"changed"`
+		Unpaused bool           `json:"unpaused"`
+		Run      processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + suffix
 	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Process run %s: started=%t\n", response.Run.ID, response.Started)
+	switch {
+	case suffix == "/pause" && response.Changed:
+		fmt.Fprintf(stdout, "Process run %s: paused\n", response.Run.ID)
+	case suffix == "/pause":
+		fmt.Fprintf(stdout, "Process run %s: already paused\n", response.Run.ID)
+	case response.Unpaused:
+		fmt.Fprintf(stdout, "Process run %s: unpaused, started=%t\n", response.Run.ID, response.Started)
+	default:
+		fmt.Fprintf(stdout, "Process run %s: started=%t\n", response.Run.ID, response.Started)
+	}
 	printProcessRun(stdout, &response.Run)
 	return nil
 }
@@ -828,6 +859,9 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		run.ID, run.TemplateRef, run.Status, run.Action, run.StateVersion, run.Scope)
 	if run.Scope.Owner != "" {
 		fmt.Fprintf(out, "owner=%s\n", run.Scope.Owner)
+	}
+	if run.Paused != nil {
+		fmt.Fprintf(out, "paused=%s by %s\n", run.Paused.At.Format(time.RFC3339), displayProcessEventField(run.Paused.By))
 	}
 	if run.NeedsReconcile {
 		fmt.Fprintln(out, "needsReconcile=true")

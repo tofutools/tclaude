@@ -74,6 +74,9 @@ body.wizard {
 .pk-chip.pk-state-done { border-color: color-mix(in srgb, var(--pk-done) 45%, transparent); color: var(--pk-done-text); }
 .pk-chip.pk-state-planned, .pk-chip.pk-state-skipped { color: var(--pk-planned-text); }
 .pk-chip.pk-scope-group { color: var(--pk-muted); }
+.pk-chip.pk-paused { border-color: color-mix(in srgb, var(--pk-waiting) 60%, transparent); color: var(--pk-waiting-text); }
+.pk-pause { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pk-pause-error { color: var(--pk-failed-text); font-size: 12px; }
 .pk-chip.pk-scope-agent { color: var(--pk-agent-text); border-color: color-mix(in srgb, var(--pk-agent) 40%, transparent); }
 
 /* Node chip (state-styled node pill) */

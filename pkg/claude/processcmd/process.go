@@ -18,7 +18,7 @@ func Cmd() *cobra.Command {
 	cmd := boa.CmdT[Params]{
 		Use:         "process",
 		Short:       "Author process templates and drive daemon-owned runs",
-		Long:        "Author process templates on the existing filesystem path and create, inspect, resume, or explicitly reconcile daemon-owned sequential runs.",
+		Long:        "Author process templates on the existing filesystem path and create, inspect, pause, resume, or explicitly reconcile daemon-owned sequential runs.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			templatesCmd(),
@@ -26,6 +26,7 @@ func Cmd() *cobra.Command {
 			processRunCmd(),
 			processShowCmd(),
 			processEventsCmd(),
+			processPauseCmd(),
 			processResumeCmd(),
 			processReconcileCmd(),
 			processReissueCmd(),

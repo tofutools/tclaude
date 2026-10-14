@@ -263,8 +263,24 @@ type processRunView struct {
 	// Performers is every agent node attempt's performer, oldest attempt first
 	// per node: who was chosen, how, and what they reported.
 	Performers []processRunPerformerView `json:"performers"`
-	CreatedAt  time.Time                 `json:"createdAt"`
-	UpdatedAt  time.Time                 `json:"updatedAt"`
+	// Paused says an operator paused the run: it plans no new agent turns or
+	// program commands until resumed, while in-flight attempts finish.
+	Paused    *processRunPauseView `json:"paused,omitempty"`
+	CreatedAt time.Time            `json:"createdAt"`
+	UpdatedAt time.Time            `json:"updatedAt"`
+}
+
+// processRunPauseView is who paused a run, and when.
+type processRunPauseView struct {
+	At time.Time `json:"at"`
+	By string    `json:"by,omitempty"`
+}
+
+func processRunPauseViewOf(scope db.ProcessRunScope) *processRunPauseView {
+	if !scope.Paused() {
+		return nil
+	}
+	return &processRunPauseView{At: scope.PausedAt, By: scope.PausedBy}
 }
 
 // processRunDecisionView presents one awaited decision with its selectable
@@ -320,13 +336,14 @@ const (
 )
 
 type processRunSummaryView struct {
-	ID           string              `json:"id"`
-	TemplateRef  string              `json:"templateRef"`
-	Status       engine.RunStatus    `json:"status"`
-	StateVersion int64               `json:"stateVersion"`
-	Scope        processRunScopeView `json:"scope"`
-	CreatedAt    time.Time           `json:"createdAt"`
-	UpdatedAt    time.Time           `json:"updatedAt"`
+	ID           string               `json:"id"`
+	TemplateRef  string               `json:"templateRef"`
+	Status       engine.RunStatus     `json:"status"`
+	StateVersion int64                `json:"stateVersion"`
+	Scope        processRunScopeView  `json:"scope"`
+	Paused       *processRunPauseView `json:"paused,omitempty"`
+	CreatedAt    time.Time            `json:"createdAt"`
+	UpdatedAt    time.Time            `json:"updatedAt"`
 }
 
 type processRunEventView struct {
@@ -524,6 +541,26 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	if orphaned && (start.mode != processRunApplyInput || !start.input.cancels()) {
 		return false, errProcessRunOrphaned
 	}
+	// A paused run still records what arrives — outcomes, reports, verdicts —
+	// but plans nothing new. A reissue IS a new command, so it waits too.
+	// The planning gate makes this pause read and the planning below one step
+	// against a concurrent pause (see processRunPauseGate).
+	processRunPauseGate.RLock()
+	planningGated := true
+	ungatePlanning := func() {
+		if planningGated {
+			planningGated = false
+			processRunPauseGate.RUnlock()
+		}
+	}
+	defer ungatePlanning()
+	paused, err := processRunPaused(runID)
+	if err != nil {
+		return false, err
+	}
+	if paused && start.mode == processRunReissue {
+		return false, errProcessRunPaused
+	}
 	run := prepared
 	if run == nil {
 		run, err = executor.LoadRun(runID)
@@ -534,6 +571,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	if claim.ctx.Err() != nil {
 		return false, errProcessRuntimeStopped
 	}
+	run.Hold(paused)
 
 	var dispatches []*executor.Dispatch
 	// committed records that this start already made a durable change. A
@@ -576,6 +614,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	default:
 		err = fmt.Errorf("unknown process run start mode")
 	}
+	ungatePlanning()
 	if err != nil {
 		return false, err
 	}
@@ -595,6 +634,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		if len(run.AgentCommands()) > 0 {
 			// Agent performers hold the run's slots, or are the only live work.
 			// Their reports, not a driver, move the run next.
+			return false, nil
+		}
+		if run.Held() && run.Action().Kind != executor.ActionNeedsReconcile {
+			// Paused: the operator's resume, not a driver, moves the run next.
 			return false, nil
 		}
 		switch run.Action().Kind {
@@ -758,7 +801,9 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 				pendingPrograms++
 			}
 		}
+		ungate := gateProcessRunPlanning(runID, claim.run)
 		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-pendingPrograms)
+		ungate()
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -778,9 +823,11 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		executor.Abandon(claim.run, result.dispatch)
 		return nil
 	}
+	ungate := gateProcessRunPlanning(runID, claim.run)
 	next, err := claim.plan(func() (*executor.Dispatch, error) {
 		return executor.Observe(claim.run, result.dispatch, result.result)
 	})
+	ungate()
 	// Best-effort sibling cancellation, decided on the run rather than on this
 	// observation: with authored retries a failed program is ordinarily just one
 	// attempt ending, and the branch is re-readied for the next one. Cancelling
@@ -966,6 +1013,7 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef,
 			Status: engine.RunStatus(runs[i].Status), StateVersion: runs[i].StateVersion,
 			Scope:     processRunScopeViewOf(runs[i].Scope),
+			Paused:    processRunPauseViewOf(runs[i].Scope),
 			CreatedAt: runs[i].CreatedAt, UpdatedAt: runs[i].UpdatedAt,
 		})
 	}
@@ -1099,16 +1147,30 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, map[string]any{"events": views, "next": next})
 }
 
+// handleProcessRunResume releases an operator pause, if any, and then resumes
+// (or ticks) the run.
 func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
+	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	if !ok {
 		return
 	}
 	if err := decodeEmptyProcessRuntimeRequest(w, r); err != nil {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
+		return
+	}
 	runID := r.PathValue("id")
-	started, err := processRuns.begin(runID, processRunStart{mode: processRunResume})
+	setAuditDetail(r, "run: "+runID)
+	unpaused, err := releaseProcessRunPause(strings.TrimSpace(runID), string(actor))
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	started, err := resumeProcessRun(runID, unpaused)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -1118,7 +1180,7 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "unpaused": unpaused, "run": view})
 }
 
 func handleProcessRunReissue(w http.ResponseWriter, r *http.Request) {
@@ -1661,6 +1723,10 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		action = "awaiting_decision"
 	case len(blocked) > 0:
 		action = "blocked"
+	case record.Scope.Paused() && checkpoint.Status == engine.RunRunning:
+		// Below everything a human must still answer: a pause holds new work,
+		// it does not settle what is already waiting on someone.
+		action = "paused"
 	case awaitingPerformer:
 		action = processCommandAwaitPerformer
 	case checkpoint.Status != engine.RunRunning:
@@ -1675,6 +1741,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
+		Paused:    processRunPauseViewOf(record.Scope),
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
@@ -1732,6 +1799,10 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_exists", err.Error())
 	case errors.Is(err, errProcessRunOrphaned):
 		writeError(w, http.StatusConflict, "process_run_orphaned", err.Error())
+	case errors.Is(err, errProcessRunPaused):
+		writeError(w, http.StatusConflict, "process_run_paused", err.Error())
+	case errors.Is(err, db.ErrProcessRunPause):
+		writeError(w, http.StatusConflict, "process_run_pause", err.Error())
 	case errors.Is(err, db.ErrProcessRunRescope):
 		writeError(w, http.StatusConflict, "process_run_rescope", err.Error())
 	case errors.Is(err, errProcessRunClaimed):

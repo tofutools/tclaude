@@ -68,6 +68,9 @@ type processRunScope struct {
 	AgentID  string
 	Owner    string // "agent:<agent_id>" or "human:operator"
 	Orphaned bool
+	// Paused holds new agent turns: attempts already delivered keep going,
+	// pending ones wait for the operator's resume.
+	Paused bool
 }
 
 // processOwnerOperator is the run owner for runs the operator started.
@@ -83,7 +86,7 @@ func defaultProcessRunScope(runID string) (processRunScope, error) {
 		return processRunScope{Kind: processScopeNone, Owner: processOwnerOperator}, err
 	}
 	scope := processRunScope{Kind: stored.Kind, GroupID: stored.GroupID, AgentID: stored.AgentID,
-		Owner: stored.Owner, Orphaned: stored.Orphaned()}
+		Owner: stored.Owner, Orphaned: stored.Orphaned(), Paused: stored.Paused()}
 	if scope.Kind == "" {
 		scope.Kind = processScopeNone
 	}
@@ -337,6 +340,12 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 	scope, err := processRunScopeOf(row.RunID)
 	if err != nil {
 		slog.Warn("process performers: scope lookup failed", "run", row.RunID, "error", err)
+		return
+	}
+	if scope.Paused {
+		// A paused run starts no new agent turn. The attempt stays as it is —
+		// not needs_performer, which would ask a human for a performer — and
+		// resume's dispatch pass delivers it.
 		return
 	}
 	var choice processPerformerChoice

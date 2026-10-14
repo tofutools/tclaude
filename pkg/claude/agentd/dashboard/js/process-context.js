@@ -197,6 +197,9 @@ export const RUN_EVENT_PAGES = 8;
 // events, and the manual decision a human gate waits for.
 export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
   const runPath = (runId) => `/v1/process/runs/${encodeURIComponent(runId)}`;
+  const postEmpty = (path, attemptKey) => processRequest(path, {
+    method: 'POST', headers: idempotentRequestHeaders('POST', path, '{}', attemptKey), body: '{}',
+  }, fetchImpl);
   return {
     getRun: (runId) => processRequest(runPath(runId), {}, fetchImpl),
     // listEvents reads the events after `after`, oldest first; `more` says
@@ -224,6 +227,19 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // assign hands a node's outstanding agent attempt to another performer.
+    // nodeId is the executable id the attempt runs under (dispatch.nodeId).
+    async assign(runId, { nodeId, agent, attemptKey = newAttemptKey() }) {
+      const path = `${runPath(runId)}/nodes/${encodeURIComponent(nodeId)}/assign`;
+      const body = JSON.stringify({ agent });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // pause holds the run: work in flight finishes, nothing new is
+    // dispatched until resume releases it. Both are idempotent server-side.
+    pause: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
+    resume: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
   };
 }
 
