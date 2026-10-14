@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -20,6 +21,9 @@ func isolateOneShotDirectories(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", testutil.CanonicalTempDir(t))
 	t.Setenv("XDG_CACHE_HOME", testutil.CanonicalTempDir(t))
+	data := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(data, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(data, "config.json"), []byte(`{"features":{"agent_dirs_mount_parent":false}}`), 0600))
 	previous := prepareNonInteractiveResourceCgroup
 	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
 		return "", func() {}, errors.New("no delegation")
@@ -169,4 +173,43 @@ func TestOneShotDirectoryPreLaunchValidationFailureCleansTree(t *testing.T) {
 	entries, err := os.ReadDir(oneShotDirectoryJournalRoot())
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestOneShotDirectoryRetentionDisclosedWhenCgroupReapFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cgroups are Linux-only")
+	}
+	isolateOneShotDirectories(t)
+	useDirectNonInteractiveRunner(t)
+	previousConfigure, previousValidate, previousRemove := configureNonInteractiveResourceCgroup, validateNonInteractivePreparedResourceCgroup, removeNonInteractiveResourceCgroup
+	t.Cleanup(func() {
+		configureNonInteractiveResourceCgroup = previousConfigure
+		validateNonInteractivePreparedResourceCgroup = previousValidate
+		removeNonInteractiveResourceCgroup = previousRemove
+	})
+	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return testutil.CanonicalTempDir(t), func() {}, nil
+	}
+	configureNonInteractiveResourceCgroup = func(*exec.Cmd, string) (func(), error) { return func() {}, nil }
+	validateNonInteractivePreparedResourceCgroup = func(string, sandboxpolicy.ResourceLimits) error { return nil }
+	removeNonInteractiveResourceCgroup = func(string) error { return errors.New("still busy") }
+	result, fail := runNonInteractiveSpawn(context.Background(), spawnParams{Harness: harness.ShellName, Cwd: testutil.CanonicalTempDir(t), SandboxImplementation: "off", EffectiveSandbox: oneShotPolicy(t), InitialMessage: "printf '%s' \"$GOCACHE\""}, 10)
+	require.Nil(t, fail)
+	require.Contains(t, strings.Join(result.Notes, " "), filepath.Dir(result.Stdout))
+	_, err := os.Stat(result.Stdout)
+	require.NoError(t, err)
+}
+
+func TestOneShotOuterLayerAppliesPrivateDirectoriesAndSetup(t *testing.T) {
+	if err := session.TclaudeLayerServerHostAvailability(); err != nil {
+		t.Skipf("outer layer unavailable: %v", err)
+	}
+	isolateOneShotDirectories(t)
+	useDirectNonInteractiveRunner(t)
+	result, fail := runNonInteractiveSpawn(context.Background(), spawnParams{Harness: harness.ShellName, Cwd: testutil.CanonicalTempDir(t), SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: oneShotPolicy(t, sandboxpolicy.PreLaunchBlock{Name: "setup", Script: "export SCRIPT_VALUE=$POLICY_VALUE; printf seeded > \"$GOCACHE/value\"\n", Exports: []string{"SCRIPT_VALUE"}}),
+		InitialMessage:   "printf '%s:%s' \"$SCRIPT_VALUE\" \"$(cat \"$GOCACHE/value\")\""}, 10)
+	require.Nil(t, fail)
+	require.Zero(t, result.ExitCode, result.Stderr)
+	require.Equal(t, "profile:seeded", result.Stdout)
 }

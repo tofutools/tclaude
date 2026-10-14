@@ -46,7 +46,7 @@ type nonInteractiveSpawnResult struct {
 
 // runNonInteractiveSpawn uses the ordinary spawn boundary's resolved fields,
 // but does not allocate a conversation or group membership.
-func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64) (nonInteractiveSpawnResult, *spawnFailure) {
+func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64) (out nonInteractiveSpawnResult, failure *spawnFailure) {
 	if p.CleanupDirWriteProof {
 		defer cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
@@ -95,7 +95,17 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		if prepareErr != nil {
 			return hostFailure("sandbox_init", prepareErr.Error())
 		}
-		defer directoryRun.finish()
+		defer func() {
+			directoryRun.finish()
+			if _, err := os.Lstat(filepath.Join(oneShotDirectoryJournalRoot(), directoryRun.Key+".json")); err == nil {
+				note := fmt.Sprintf("One-shot directories retained at %s until termination can be proven; without a cgroup the automatic sweep waits for a reboot. Remove them manually only after all descendants have stopped.", filepath.Join(directoryRun.Base, directoryRun.Key))
+				if failure != nil {
+					failure.Msg += "; " + note
+				} else {
+					out.Notes = append(out.Notes, note)
+				}
+			}
+		}()
 		materialized, _, prepareErr := prepareCodexSSHWorkaroundForNewLaunch(
 			*p.EffectiveSandbox, directoryRun.Key, p.SSHWorkaround && codexSSHWorkaroundApplies(
 				p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox))
@@ -119,6 +129,18 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		return bad("invalid_prompt", "a non-interactive prompt is required")
 	}
 	mode := p.HarnessBuiltinMode
+	if p.SandboxImplementation == "stacked" {
+		if err := session.ValidateStackedSandboxHarness(h); err != nil {
+			return bad("unsupported_sandbox", err.Error())
+		}
+		// As runNew does, force the reviewed inner wall before generating a
+		// managed profile; the requested native mode must not skip that step.
+		if h.Name == harness.CodexName {
+			mode = harness.SandboxManagedProfile
+		} else {
+			mode = harness.ClaudeSandboxOn
+		}
+	}
 	postureSnapshot := p.EffectiveSandbox
 	if layer {
 		if p.SandboxImplementation != "stacked" {
@@ -230,9 +252,6 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	finish := func(result nonInteractiveSpawnResult, failure *spawnFailure) (nonInteractiveSpawnResult, *spawnFailure) {
 		if cfg, err := config.Load(); err == nil && cfg.HTTPProxyConfigured() {
 			result.Notes = append(result.Notes, "Named HTTP proxy URLs are omitted from one-shot runs because they have no gateway caller identity; use an interactive spawn for named proxies.")
-		}
-		if directoryRun != nil && directoryRun.Cgroup == "" && directoryRun.Started {
-			result.Notes = append(result.Notes, fmt.Sprintf("One-shot directories retained at %s until termination can be proven; without a cgroup the automatic sweep waits for a reboot. Remove them manually only after all descendants have stopped.", filepath.Join(directoryRun.Base, directoryRun.Key)))
 		}
 		if failure == nil && result.ExitCode == 0 && h.Name != harness.ShellName {
 			// Harness CLIs print diagnostics and session metadata to stderr even

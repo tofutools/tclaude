@@ -124,7 +124,7 @@ func (run *oneShotDirectoryRun) reap() (bool, error) {
 	if !stopped && run.Cgroup != "" {
 		// A removed cgroup cannot contain a live process. Merely unreadable is
 		// not proof; do not use the resource helper's best-effort populated probe.
-		_, err := os.Stat(run.Cgroup)
+		_, err := os.Lstat(run.Cgroup)
 		stopped = errors.Is(err, os.ErrNotExist)
 	}
 	if !stopped {

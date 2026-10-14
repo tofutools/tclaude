@@ -15,6 +15,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -411,4 +413,32 @@ func TestSpawnCLI_NoOwnerDeclinesADefaultProfilesOwnership(t *testing.T) {
 	require.NotNil(t, declined)
 	assert.False(t, ownsGroup(t, g.ID, declined.ConvID),
 		"--no-owner must outrank the group default profile's is_owner")
+}
+
+func TestSpawnCLI_NonInteractiveAppliesSandboxSetup(t *testing.T) {
+	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	cwd := resolveSym(t, t.TempDir())
+	chdirTo(t, cwd)
+	bin := resolveSym(t, t.TempDir())
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nprintf '%s:%s' \"$SETUP_RESULT\" \"$(cat \"$GOCACHE/value\")\"\n"), 0755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	previous := agentd.EnsureSeanceCodexProfile
+	agentd.EnsureSeanceCodexProfile = func(_, id string, _ *sandboxpolicy.Snapshot) (string, string, *harness.CodexSplitPolicyCapability, error) {
+		profile := filepath.Join(bin, "profile-"+id)
+		require.NoError(t, os.WriteFile(profile, nil, 0600))
+		return "one-shot-profile", profile, nil, nil
+	}
+	t.Cleanup(func() { agentd.EnsureSeanceCodexProfile = previous })
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "oneshot-setup", AgentDirectories: []string{"GOCACHE"}, PreLaunch: []sandboxpolicy.PreLaunchBlock{{Name: "setup", Script: "export SETUP_RESULT=ready; printf seeded > \"$GOCACHE/value\"\n", Exports: []string{"SETUP_RESULT"}}}})
+	require.NoError(t, err)
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	_, rc := agent.RunSpawn(&agent.SpawnParams{Group: "alpha", NonInteractive: true, Harness: "codex", Sandbox: "tclaude-agent", SandboxProfile: "oneshot-setup", InitialMessage: "task"}, stdout, stderr, new(bytes.Buffer))
+	require.Zero(t, rc, stderr.String())
+	require.Equal(t, "ready:seeded", stdout.String())
+	rr := httptest.NewRecorder()
+	f.Mux.ServeHTTP(rr, agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet, "/v1/groups/alpha/members", nil)))
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 }

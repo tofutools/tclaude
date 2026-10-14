@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"github.com/stretchr/testify/require"
 	"slices"
 	"testing"
 )
@@ -166,4 +167,13 @@ func TestCodexAsker_NoisyCaptureStderr(t *testing.T) {
 	if claude.NoisyCaptureStderr() {
 		t.Fatal("claude -p keeps stderr quiet — nothing to hide")
 	}
+}
+
+func TestCodexAskerStackedLaunchPinsReviewedBackend(t *testing.T) {
+	h, err := Resolve(CodexName)
+	require.NoError(t, err)
+	posture := h.NestedSandbox.PrepareLaunch(SpawnSpec{PermissionProfile: "private-one-shot"})
+	argv := h.Ask.BuildAskArgv(AskSpec{Print: true, Prompt: "task", LaunchPosture: &posture})
+	require.Contains(t, argv, "features.use_legacy_landlock=false")
+	require.Contains(t, argv, "private-one-shot")
 }
