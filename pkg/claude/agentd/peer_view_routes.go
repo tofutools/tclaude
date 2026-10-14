@@ -297,6 +297,7 @@ var peerViewLocalRoutes = []string{
 	"POST /api/templates/{name}/deploy",
 	"POST /api/templates/{name}/instantiate",
 	"POST /api/templates/{name}/reinforce",
+	"POST /v1/process/runs",
 	"POST /v1/process/templates",
 	"POST /v1/process/templates/{id}",
 	"POST /v1/process/validate",
