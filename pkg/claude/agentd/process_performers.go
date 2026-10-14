@@ -1004,13 +1004,26 @@ type processRunPerformerView struct {
 	DeliveredAt *time.Time `json:"deliveredAt,omitempty"`
 }
 
+// processLiveness lists the live tmux sessions, at most once per value: a
+// read that projects many runs shares one, so a context poll forks tmux once
+// rather than once per run.
+type processLiveness func() map[string]struct{}
+
+func newProcessLiveness() processLiveness {
+	var once sync.Once
+	var alive map[string]struct{}
+	return func() map[string]struct{} {
+		once.Do(func() { alive, _ = session.LiveTmuxSessions() })
+		return alive
+	}
+}
+
 // processRunPerformerViews projects a run's dispatch history.
-func processRunPerformerViews(runID string) (map[string]processRunPerformerView, []processRunPerformerView, error) {
+func processRunPerformerViews(runID string, live processLiveness) (map[string]processRunPerformerView, []processRunPerformerView, error) {
 	rows, err := db.ListProcessAgentDispatchesForRun(runID)
 	if err != nil || len(rows) == 0 {
 		return map[string]processRunPerformerView{}, []processRunPerformerView{}, err
 	}
-	alive, _ := session.LiveTmuxSessions()
 	byCommand := make(map[string]processRunPerformerView, len(rows))
 	views := make([]processRunPerformerView, 0, len(rows))
 	for _, row := range rows {
@@ -1027,7 +1040,7 @@ func processRunPerformerViews(runID string) (map[string]processRunPerformerView,
 			view.Status = "retired"
 			if performer, _ := db.GetAgent(row.AgentID); performer.Active() {
 				conv, _ := db.CurrentConvForAgent(row.AgentID)
-				online, status := convLiveStatus(conv, alive)
+				online, status := convLiveStatus(conv, live())
 				view.Status = normalizeMemberStatus(online, status)
 				view.Name = agent.FreshTitle(conv)
 			}

@@ -251,6 +251,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		Runs: map[string]processRunProjection{}, Groups: []processGroupContext{},
 		Agents: []processAgentContext{}, Orphaned: []string{},
 	}
+	live := newProcessLiveness()
 	candidates, err := db.ListScopedActiveProcessRuns(visible.query(processContextActivePerScope))
 	if err != nil {
 		return view, err
@@ -262,7 +263,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		if !visible.allows(candidates[i].Scope) {
 			continue
 		}
-		projection, err := projectProcessRun(candidates[i].ID)
+		projection, err := projectProcessRun(candidates[i].ID, live)
 		if err != nil {
 			// One unreadable run must not blank every overlay.
 			slog.Warn("process context: run projection failed", "run", candidates[i].ID, "error", err)
@@ -325,7 +326,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		if len(g.Done) >= processContextPerGroup {
 			continue
 		}
-		projection, err := projectProcessRun(done[i].ID)
+		projection, err := projectProcessRun(done[i].ID, live)
 		if err != nil {
 			slog.Warn("process context: run projection failed", "run", done[i].ID, "error", err)
 			continue
@@ -372,12 +373,12 @@ func (p processRunProjection) agentStep() processAgentRunStep {
 
 // projectProcessRun reads one run through the same live-claim-aware view the
 // run surfaces use, so action and needs-you agree with `process show`.
-func projectProcessRun(runID string) (processRunProjection, error) {
+func projectProcessRun(runID string, live processLiveness) (processRunProjection, error) {
 	record, accounted, claimed, err := processRuns.snapshotRunView(runID)
 	if err != nil {
 		return processRunProjection{}, err
 	}
-	runView, err := processRunViewOf(record, accounted, claimed)
+	runView, err := processRunViewWith(record, accounted, claimed, live)
 	if err != nil {
 		return processRunProjection{}, err
 	}
@@ -598,11 +599,21 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			states[authored] = state
 		}
 	}
-	// Performers lists attempts oldest first per node, so the last one per
-	// node is its latest dispatch.
+	// A dispatch names the executable node — a compound stage or a
+	// subprocess body node lifts onto its authored node, like its state. Per
+	// authored node an open attempt wins over a closed one, and among equals
+	// the later one (Performers lists attempts oldest first per node).
 	dispatched := make(map[string]processRunPerformerView, len(run.Performers))
 	for _, performer := range run.Performers {
-		dispatched[performer.NodeID] = performer
+		authored, ok := s.authoredID(performer.NodeID)
+		if !ok {
+			continue
+		}
+		if current, seen := dispatched[authored]; seen &&
+			current.State != db.ProcessDispatchClosed && performer.State == db.ProcessDispatchClosed {
+			continue
+		}
+		dispatched[authored] = performer
 	}
 	projection.Nodes = make([]processProjectionNode, len(s.nodes))
 	for i, node := range s.nodes {
