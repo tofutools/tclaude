@@ -148,6 +148,41 @@ export function formatRunAge(startedAt, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+// REASSIGNABLE_DISPATCH is the set of dispatch states whose attempt is still
+// outstanding and unreported, which is what the assign endpoint accepts.
+const REASSIGNABLE_DISPATCH = new Set(['pending', 'needs_performer', 'delivered']);
+
+// reassignableNode reports whether a node's current agent attempt can be
+// handed to someone else, and if not, why (for the button's title).
+export function reassignableNode(run, node) {
+  if (!node || node.kind !== 'agent') return { ok: false, why: 'Only an agent node can be reassigned' };
+  if (String(run?.scope?.kind || '') === 'agent') {
+    return { ok: false, why: 'An agent-scoped run is performed only by its bound agent' };
+  }
+  if (!node.dispatch || !REASSIGNABLE_DISPATCH.has(String(node.dispatch.state || ''))) {
+    return { ok: false, why: 'The node has no outstanding attempt to reassign' };
+  }
+  return { ok: true, why: '' };
+}
+
+// reassignCandidates lists who a run's node may go to, from the dashboard
+// snapshot: the members of a group run's group, or any agent for an unscoped
+// run (the server still checks the owner's reach). The current performer is
+// left out.
+export function reassignCandidates(snapshotValue, run, current = '') {
+  const scope = run?.scope || {};
+  let entries = [];
+  if (String(scope.kind || '') === 'group') {
+    const group = (snapshotValue?.groups || []).find((g) => String(g?.id) === String(scope.groupId));
+    entries = group?.members || [];
+  } else if (String(scope.kind || '') !== 'agent') {
+    entries = snapshotValue?.agents || [];
+  }
+  return entries
+    .filter((entry) => entry?.agent_id && entry.agent_id !== current)
+    .map((entry) => ({ id: entry.agent_id, label: entry.title || entry.agent_id }));
+}
+
 function ownerAgentID(run) {
   const owner = String(run?.scope?.owner || '');
   return owner.startsWith('agent:') ? owner.slice('agent:'.length) : '';
@@ -166,9 +201,11 @@ export function ProcessTabIcons({ agentId, enabled }) {
 // ProcessPaneOverlay is the T1 cluster plus, when an icon is open, the T2
 // popover — or, for a run bound to this agent, the T3 stepper. actions:
 // { onComposeMessage(seed), openGroups(run), decide(run, nodeId, verdict),
-// promote(run, group) } — each optional; a missing action disables its
-// button. bounds is the agent's envelope (agentRunBounds) for the stepper.
-export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = null }) {
+// promote(run, group), assign(run, nodeId, agentId) } — each optional; a
+// missing action disables its button. bounds is the agent's envelope
+// (agentRunBounds) for the stepper; candidatesFor(run, current) lists who a
+// node may be reassigned to.
+export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = null, candidatesFor = null }) {
   const runs = processRunsForAgent(useProcessContext(enabled && !!agentId), agentId);
   const [collapsed, setCollapsed] = useState(false);
   const [openID, setOpenID] = useState('');
@@ -193,7 +230,7 @@ export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = nu
           onClick=${() => { setCollapsed(!collapsed); setOpenID(''); }}>${collapsed ? '◂' : '▾'}</button>
       </div>
       ${open ? html`<${ProcessRunPopover} key=${open.runId} run=${open} agentId=${agentId} actions=${actions}
-        bounds=${bounds} onClose=${() => setOpenID('')} />` : null}
+        bounds=${bounds} candidatesFor=${candidatesFor} onClose=${() => setOpenID('')} />` : null}
     </div>
   `;
 }
@@ -211,7 +248,7 @@ function NeighbourList({ items, prefix }) {
 // ProcessRunPopover is mock T2: the run seen from this agent. It is a div,
 // built from divs: dashboard.css styles bare section/header/footer as page
 // chrome (a section is a hidden tab, the footer is pinned to the viewport).
-export function ProcessRunPopover({ run, agentId, actions = {}, bounds = null, onClose }) {
+export function ProcessRunPopover({ run, agentId, actions = {}, bounds = null, candidatesFor = null, onClose }) {
   // A run bound to this agent opens as the T3 stepper; its graph view is
   // this T2 popover, with a way back.
   const stepper = isAgentScopedTo(run, agentId);
@@ -221,10 +258,51 @@ export function ProcessRunPopover({ run, agentId, actions = {}, bounds = null, o
       onGraph=${() => setGraph(true)} onClose=${onClose} />`;
   }
   return html`<${ProcessRunGraphPopover} run=${run} agentId=${agentId} actions=${actions} onClose=${onClose}
-    onStepper=${stepper ? () => setGraph(false) : null} />`;
+    candidatesFor=${candidatesFor} onStepper=${stepper ? () => setGraph(false) : null} />`;
 }
 
-function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, onStepper = null }) {
+// ReassignControl turns the reassign button into an inline picker of the
+// node's possible performers.
+function ReassignControl({ run, node, actions, candidatesFor }) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const check = reassignableNode(run, node);
+  const current = String(node?.dispatch?.agentId || '');
+  const candidates = check.ok && candidatesFor ? candidatesFor(run, current) : [];
+  const enabled = check.ok && !!actions.assign && candidates.length > 0;
+  const title = !check.ok ? check.why : !actions.assign ? 'Reassigning is not available here'
+    : candidates.length ? `Hand ${node.label || node.id} to another performer` : 'Nobody else can take this node';
+  const chosen = target || candidates[0]?.id || '';
+  const assign = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await actions.assign(run, node.id, chosen);
+      setOpen(false);
+    } catch (err) {
+      setError(String(err?.message || err || 'reassign failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!open) {
+    return html`<button type="button" class="mux-btn" disabled=${!enabled} title=${title}
+      onClick=${() => setOpen(true)}>↻ reassign node</button>`;
+  }
+  return html`<span class="pk-reassign" data-process-reassign=${node.id}>
+    <select class="pk-reassign-select" aria-label=${`New performer for ${node.label || node.id}`}
+      value=${chosen} onChange=${(event) => setTarget(event.currentTarget.value)}>
+      ${candidates.map((candidate) => html`<option key=${candidate.id} value=${candidate.id}>${candidate.label}</option>`)}
+    </select>
+    <button type="button" class="mux-btn" disabled=${busy || !chosen} onClick=${() => void assign()}>assign</button>
+    <button type="button" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel</button>
+    ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
+  </span>`;
+}
+
+function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidatesFor = null, onStepper = null }) {
   const view = runIconView(run, agentId);
   const node = view.node;
   // A run bound to the agent may be at a step someone else performs; the
@@ -281,8 +359,7 @@ function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, onStepper
         <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
           onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner</button>
-        <button type="button" class="mux-btn" disabled=${true}
-          title="Reassigning a node arrives with performer dispatch">↻ reassign node</button>
+        <${ReassignControl} run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${awaitingDecision && actions.decide
           ? around.outcomes.map((verdict) => html`<button key=${verdict} type="button" class="mux-btn pk-run-popover-verdict"
               disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)</button>`)
@@ -322,5 +399,9 @@ export function processOverlayActions({ onComposeMessage = null, fetch = (...arg
     // (human-only on the server).
     promote: (run, group) => processRunPost(fetch,
       `/v1/process/runs/${encodeURIComponent(run.runId)}/rescope`, { group }, 'promotion refused'),
+    // assign hands a node's outstanding agent attempt to another performer.
+    assign: (run, nodeId, agent) => processRunPost(fetch,
+      `/v1/process/runs/${encodeURIComponent(run.runId)}/nodes/${encodeURIComponent(nodeId)}/assign`,
+      { agent }, 'reassign refused'),
   };
 }

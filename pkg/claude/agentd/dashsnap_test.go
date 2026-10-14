@@ -1544,6 +1544,62 @@ setTimeout(function(){
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-terminal-overlay-reassign",
+			Title:   "Terminals — reassign a node from the overlay",
+			Caption: "The T2 popover's reassign control opened on the agent's delivered node: an inline picker of the group's other members, with assign and cancel.",
+			JS: `return (async function(){
+  var kit = await import('/static/js/process-terminal-overlay.js');
+  var preact = await import('preact');
+  var htm = (await import('htm')).default.bind(preact.h);
+  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+  var run = { runId: 'run_review', name: 'review-loop', status: 'running', startedAt: ago(95),
+    scope: { kind: 'group', groupId: 7, group: 'webshop', owner: 'agent:agt_lead', state: 'bound' },
+    nodes: [
+      { id: 'start', label: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'plan', label: 'Plan', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_lead' } },
+      { id: 'implement', label: 'Implement checkout', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_coder' }, dispatch: { agentId: 'agt_coder', attempt: 1, state: 'delivered' }, description: 'Implement the checkout flow against the payments API and push a PR.' },
+      { id: 'search', label: 'Implement search', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_search' } },
+      { id: 'gate', label: 'Ship it?', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
+      { id: 'end', label: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'plan', label: 'next' }, { from: 'plan', to: 'implement', label: 'next' },
+      { from: 'plan', to: 'search', label: 'next' }, { from: 'implement', to: 'gate', label: 'next' },
+      { from: 'search', to: 'gate', label: 'next' }, { from: 'gate', to: 'end', label: 'approved' },
+      { from: 'gate', to: 'implement', label: 'changes', back: true } ] };
+  var agentRun = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(20),
+    scope: { kind: 'agent', agentId: 'agt_coder', owner: 'human:operator', state: 'bound' },
+    nodes: [ { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'snap', label: 'Snapshot', kind: 'task', state: 'pending', performer: { kind: 'agent', ref: 'agt_coder' } },
+      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'snap', label: 'next' }, { from: 'snap', to: 'end', label: 'next' } ] };
+  var snap = { groups: [{ id: 7, name: 'webshop', members: [{ agent_id: 'agt_coder', title: 'coder' }, { agent_id: 'agt_search', title: 'search-indexer' }, { agent_id: 'agt_lead', title: 'lead' }] }] };
+  var context = { runs: { run_review: run, run_reindex: agentRun }, groups: [], agents: [], orphaned: [] };
+  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
+  var host = document.createElement('div');
+  host.id = 'process-terminal-overlay-reassign-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
+  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">coder · checkout</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">$ go test ./pkg/checkout/...\nok   pkg/checkout  1.2s\n$ git push -u origin checkout\n</pre><div data-overlay-root></div></div>';
+  document.body.appendChild(host);
+  var root = host.querySelector('[data-overlay-root]');
+  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_coder" enabled=${true} actions=${{ openGroups: function(){}, onComposeMessage: function(){}, assign: async function(){} }} candidatesFor=${function(run, current){ return kit.reassignCandidates(snap, run, current); }} />` + "`" + `, root);
+  await kit.refreshProcessContext();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_review"]');
+  if (!icon) throw new Error('process overlay icon missing');
+  icon.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var pop = host.querySelector('[data-process-popover="run_review"]');
+  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('process run popover is not visible: ' + (pop ? pop.getBoundingClientRect().width + ' ' + getComputedStyle(pop).display : 'absent'));
+  if (!pop.querySelector('.pk-mini-graph')) throw new Error('popover mini-graph missing');
+  if (getComputedStyle(host.querySelector('.pk-pane-overlay')).position !== 'absolute') throw new Error('overlay stylesheet is not applied');
+  var reassign = Array.from(pop.querySelectorAll('.pk-run-popover-actions button')).find(function(b){ return /reassign/.test(b.textContent); });
+  if (!reassign || reassign.disabled) throw new Error('reassign is not enabled on a delivered agent node');
+  reassign.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!pop.querySelector('[data-process-reassign="implement"] select')) throw new Error('reassign picker missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-terminal-overlay-t3",
 			Title:   "Terminals — agent-scoped run stepper (T3)",
 			Caption: "A run bound to the pane's agent opens as a vertical stepper (mock T3): the bounds strip (dir, sandbox, grants, spend, reincarnation), agentic steps as turns in this conversation with their loop count, program steps flagged as leaving the agent's sandbox, the human decision, and pause / graph view / promote actions.",

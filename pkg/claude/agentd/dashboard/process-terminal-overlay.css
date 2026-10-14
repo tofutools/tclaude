@@ -64,6 +64,10 @@
 .pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
 .pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
 
+/* Reassign picker in the T2 actions row */
+.pk-reassign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pk-reassign-select { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; max-width: 220px; }
+
 /* T3: agent-scoped run stepper (js/process-agent-stepper.js) */
 .pk-agent-stepper { width: min(440px, calc(100vw - 48px)); }
 .pk-bounds {
