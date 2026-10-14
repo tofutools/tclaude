@@ -1638,6 +1638,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
    <video> element itself, so it must not take pointer events from the button.
    The play badge sits centred over it. */
 .video-preview-trigger :is(video, .video-preview-poster) { pointer-events: none; background: #000; }
+.video-preview-poster[hidden] { display: none; }
 .video-preview-play {
   position: absolute; left: 50%; top: 50%; display: grid; place-items: center;
   width: 44px; height: 44px; padding-left: 3px; border-radius: 50%;

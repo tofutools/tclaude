@@ -54,30 +54,33 @@ function PlayerState({ state }) {
 // VideoPoster is the thumbnail frame. A <video preload="metadata"> left
 // mounted keeps its ranged request open for as long as the page lives, and the
 // dashboard is plain HTTP/1.1 with a handful of connections per host: a list of
-// video messages would starve the snapshot poll. So the frame is copied onto a
-// canvas as soon as it decodes and the <video> is dropped, which aborts its
-// request. The #t fragment asks for the frame just past zero, since some
-// encoders open on a black frame.
+// video messages would starve the snapshot poll. So the frame is painted onto
+// the canvas beside it as soon as it decodes and the <video> is dropped, which
+// aborts its request. The #t fragment asks for the frame just past zero, since
+// some encoders open on a black frame.
 function VideoPoster({ href }) {
-  const [poster, setPoster] = useState(null);
-  const [failed, setFailed] = useState(false);
-  if (poster) return html`<img class="human-attachment-preview-thumb video-preview-poster" src=${poster} alt="" />`;
-  if (failed) return html`<span class="human-attachment-preview-thumb video-preview-poster" aria-hidden="true"></span>`;
-  return html`<video class="human-attachment-preview-thumb" src=${`${href}#t=0.1`}
-    preload="metadata" muted playsInline tabIndex="-1" aria-hidden="true"
-    onLoadedData=${(event) => {
-      const video = event.currentTarget;
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext('2d').drawImage(video, 0, 0);
-        setPoster(canvas.toDataURL('image/jpeg', 0.8));
-      } catch {
-        setFailed(true);
-      }
-    }}
-    onError=${() => setFailed(true)}></video>`;
+  const [captured, setCaptured] = useState(false);
+  const canvasRef = useRef(null);
+  return html`<${Fragment}>
+    <canvas ref=${canvasRef} class="human-attachment-preview-thumb video-preview-poster"
+      hidden=${!captured} aria-hidden="true"></canvas>
+    ${!captured && html`<video class="human-attachment-preview-thumb" src=${`${href}#t=0.1`}
+      preload="metadata" muted playsInline tabIndex="-1" aria-hidden="true"
+      onLoadedData=${(event) => {
+        const video = event.currentTarget;
+        const canvas = canvasRef.current;
+        try {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          canvas.getContext('2d').drawImage(video, 0, 0);
+        } catch {
+          // An undrawable frame leaves a blank (black) poster; the play badge
+          // still says what the card is.
+        }
+        setCaptured(true);
+      }}
+      onError=${() => setCaptured(true)}></video>`}
+  </${Fragment}>`;
 }
 
 // VideoAttachmentPreview is the video counterpart of ImageAttachmentPreview:
