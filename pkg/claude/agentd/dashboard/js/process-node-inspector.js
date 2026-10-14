@@ -22,6 +22,7 @@ import {
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
   upstreamInputs, stageSummary,
+  setSubprocessPort, setSubprocessRef,
 } from './process-node-blocks.js';
 import { NodeField, NodeSelect, PerformerEditor } from './process-node-fields.js';
 
@@ -153,6 +154,40 @@ function OutcomesBlock({ edges, nameOf }) {
   </div>`;
 }
 
+function SubprocessBlock({ node, nodeId, controller, commit, readOnly, edges }) {
+  const sub = node.subprocess || {};
+  const isRef = !!sub.templateRef;
+  const inlineNodes = Object.entries(sub.nodes || {});
+  const params = isRef ? Object.keys(sub.inputs || {}) : Object.keys(sub.params || {});
+  const ends = isRef ? Object.keys(sub.outputs || {}) : inlineNodes.filter(([, n]) => n?.type === 'end').map(([id]) => id);
+  const outcomes = edges.map((edge) => edge.outcome);
+  return html`<div class="pni-subprocess">
+    ${isRef ? html`<div class="pni-row">
+        <${NodeField} fieldKey="subprocess.templateRef" label="template" value=${sub.templateRef} readOnly=${readOnly}
+          apply=${(key, raw) => commit(key, (draft) => setSubprocessRef(draft, 'templateRef', raw))} />
+        <${NodeField} fieldKey="subprocess.version" label="version" placeholder="head at run start" value=${sub.version || ''} readOnly=${readOnly}
+          apply=${(key, raw) => commit(key, (draft) => setSubprocessRef(draft, 'version', raw))} />
+      </div>
+      ${controller.options?.onOpenTemplate && html`<button type="button" class="process-action" data-subprocess-open-template
+        onClick=${() => controller.options.onOpenTemplate(sub.templateRef)}>open template ↗</button>`}`
+    : html`<div class="pni-subprocess-inline"><span>Inline body · ${inlineNodes.length} node${inlineNodes.length === 1 ? '' : 's'}</span>
+        <button type="button" class="process-action primary" data-subprocess-enter disabled=${!controller.model.canEnterScope(nodeId)}
+          title="Open the nested graph (double-click the node does the same)" onClick=${() => controller.enterSubprocess(nodeId)}>enter ▸</button></div>`}
+    <div class="pni-ports">
+      <span class="process-node-field-label">in-ports · bind body params</span>
+      ${params.length ? params.map((param) => html`<${NodeField} key=${param} fieldKey=${`subprocess.inputs.${param}`} label=${`${param} ←`}
+          placeholder="literal or {{ params.x }}" value=${sub.inputs?.[param] || ''} readOnly=${readOnly}
+          apply=${(key, raw) => commit(key, (draft) => setSubprocessPort(draft, 'inputs', param, raw))} />`)
+        : html`<p class="process-node-empty">${isRef ? 'Bindings for the referenced template\'s params appear once set.' : 'The body declares no params.'}</p>`}
+      <span class="process-node-field-label">out-ports · body end → outcome</span>
+      ${ends.length ? ends.map((end) => html`<${NodeSelect} key=${end} fieldKey=${`subprocess.outputs.${end}`} label=${`${end} →`}
+          options=${outcomes} value=${sub.outputs?.[end] || ''} blankLabel=${outcomes.length === 1 ? `default (${outcomes[0]})` : 'unmapped'} readOnly=${readOnly}
+          apply=${(key, raw) => commit(key, (draft) => setSubprocessPort(draft, 'outputs', end, raw))} />`)
+        : html`<p class="process-node-empty">No end nodes to map.</p>`}
+    </div>
+  </div>`;
+}
+
 function AboutBlock({ node, commit, readOnly }) {
   const type = node.type || 'task';
   return html`<div class="pni-about">
@@ -164,6 +199,7 @@ function AboutBlock({ node, commit, readOnly }) {
 }
 
 const BLOCK_BODIES = {
+  subprocess: SubprocessBlock,
   performer: PerformerBlock,
   prompt: PromptBlock,
   stages: StagesBlock,
@@ -241,7 +277,7 @@ export function NodeInspector({ controller, view }) {
   const nameOf = (id) => model.node(id)?.name || id;
   const diagnostics = (view.issues?.entries || []).filter((entry) => entry.node === nodeId);
   const extraActions = controller.options?.nodeInspectorActions?.({ nodeId, node, readOnly }) || [];
-  const bodyProps = { node, commit, readOnly, inputs, edges: model.outgoingEdges(nodeId), nameOf };
+  const bodyProps = { node, nodeId, controller, commit, readOnly, inputs, edges: model.outgoingEdges(nodeId), nameOf };
   return html`<aside ref=${root} class="process-node-inspector process-node-detail process-scroll-surface${readOnly ? ' is-readonly' : ''}"
       aria-label=${`Node ${nodeId}`} data-node-inspector=${nodeId} inert=${pending}>
     <div class="pni-head">

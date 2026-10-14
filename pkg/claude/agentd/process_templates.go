@@ -744,6 +744,17 @@ func diagnosticEditorTarget(path string, tmpl *model.Template) (string, string) 
 		return "template", ""
 	}
 	nodeID, field := splitDiagnosticNodePath(rest, tmpl)
+	// A diagnostic inside an inline subprocess body targets the inner node by
+	// its namespaced id ("qa/unit"), the same key the editor's body layout
+	// uses, so a drilled-in canvas can badge it (and the root can roll it up
+	// onto the ▣ node).
+	if inner, ok := strings.CutPrefix(field, "subprocess."); ok && tmpl != nil {
+		if node, found := tmpl.Nodes[nodeID]; found && node.Subprocess != nil && node.Subprocess.IsInline() {
+			if scope, target := diagnosticEditorTarget(inner, &model.Template{Nodes: node.Subprocess.Nodes}); scope != "template" {
+				return scope, nodeID + model.SubprocessNodeIDSeparator + target
+			}
+		}
+	}
 	if outcome, isEdge := strings.CutPrefix(field, "next."); isEdge {
 		return "edge", nodeID + ":" + outcome
 	}

@@ -10,6 +10,7 @@ import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
 import { ScribeDock } from './process-scribe-dock.js';
 import { DiffReviewBar } from './process-diff-review.js';
+import { ScopeBar, ScopeMinimap, ScopeOutline, ScopePorts } from './process-scope-ui.js';
 import { ParamsDialog } from './process-params-dialog.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
@@ -143,7 +144,7 @@ function Header({ controller, view }) {
     <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
     <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
     <span class="spacer"></span>
-    <button class="process-action" type="button" disabled=${externalPending} title="Edit template name and description" onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
+    <button class="process-action" type="button" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title="Undo (Ctrl+Z)" onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
@@ -225,7 +226,7 @@ function ExternalChange({ controller, view }) {
   </div>`;
 }
 
-function Palette({ controller, hidden, snippets }) {
+function Palette({ controller, hidden, snippets, view }) {
   const card = (payload, label, hint, { custom = false, available = true, pending = false } = {}) => {
     const canInsert = snippets.canInsert && available && !pending;
     return html`<div
@@ -244,6 +245,7 @@ function Palette({ controller, hidden, snippets }) {
   return html`<aside class="process-editor-palette process-scroll-surface" aria-label="Node palette" hidden=${hidden}
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
+    ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
     <div class="process-palette-section">Primitives</div>
     ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
     <div class="process-palette-section">Built-in snippets</div>
@@ -489,14 +491,17 @@ export function ProcessEditorApp({ controller }) {
     <${Header} controller=${controller} view=${view} />
     <${ExternalChange} controller=${controller} view=${view} />
     <div class="process-editor-body" inert=${view.pending.externalDecision || view.pending.externalReload}>
-      <${Palette} controller=${controller} hidden=${view.paletteHidden} snippets=${view.snippets} />
+      <${Palette} controller=${controller} hidden=${view.paletteHidden} snippets=${view.snippets} view=${view} />
       <div ref=${stageRef} class="process-editor-stage">
         <div ref=${graphRef} class="process-editor-canvas-host"></div>
+        <${ScopeBar} controller=${controller} view=${view} />
+        <${ScopeMinimap} controller=${controller} view=${view} />
         <${InlineEditor} controller=${controller} inline=${view.inline} />
         <${EdgePin} controller=${controller} pin=${view.edgePin} />
         <${Issues} controller=${controller} issues=${view.issues} />
       </div>
       <${NodeInspector} controller=${controller} view=${view} />
+      <${ScopePorts} controller=${controller} view=${view} />
       <${ScribeDock} controller=${controller} view=${view} />
     </div>
     <${DiffReviewBar} controller=${controller} view=${view} />

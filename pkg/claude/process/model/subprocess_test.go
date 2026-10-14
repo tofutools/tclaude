@@ -217,3 +217,31 @@ func TestResolveSubprocessRefsBoundsFanOut(t *testing.T) {
 		t.Fatalf("fan-out error = %v", err)
 	}
 }
+
+// The editor lays inline body nodes out under namespaced keys; those are
+// live layout, while a key into a missing body node stays stale.
+func TestSubprocessNamespacedLayoutKeys(t *testing.T) {
+	source := subprocessTemplateYAML + `
+layout:
+  nodes:
+    review: {x: 10, y: 10}
+    review/lint: {x: 20, y: 20}
+    review/gone: {x: 30, y: 30}
+  edges:
+    review/gate:
+      pass: {labelPinned: true}
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale []string
+	for _, d := range parsed.Diagnostics {
+		if d.Code == "stale_layout_node" || d.Code == "stale_layout_edge" {
+			stale = append(stale, d.Path)
+		}
+	}
+	if fmt.Sprint(stale) != "[layout.nodes.review/gone]" {
+		t.Fatalf("stale layout diagnostics = %v", stale)
+	}
+}

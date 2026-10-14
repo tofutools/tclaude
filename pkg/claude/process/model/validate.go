@@ -1096,12 +1096,33 @@ func collectParamRefs(diagnostics *templateDiagnosticCollector, declared map[str
 	return true
 }
 
+// layoutNode resolves a layout key: a top-level node id, or a namespaced
+// "<subprocess>/<inner>[/...]" path into inline subprocess bodies — the
+// editor lays body nodes out under the same ids the run state uses.
+func layoutNode(nodes map[string]Node, key string) (Node, bool) {
+	parts := strings.Split(key, SubprocessNodeIDSeparator)
+	for i, part := range parts {
+		node, ok := nodes[part]
+		if !ok {
+			return Node{}, false
+		}
+		if i == len(parts)-1 {
+			return node, true
+		}
+		if node.Subprocess == nil || !node.Subprocess.IsInline() {
+			return Node{}, false
+		}
+		nodes = node.Subprocess.Nodes
+	}
+	return Node{}, false
+}
+
 func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	if tmpl.Layout == nil {
 		return true
 	}
 	for _, nodeID := range sortedKeys(tmpl.Layout.Nodes) {
-		if _, ok := tmpl.Nodes[nodeID]; !ok {
+		if _, ok := layoutNode(tmpl.Nodes, nodeID); !ok {
 			if !diagnostics.Add(diagWarning("stale_layout_node", "layout.nodes."+nodeID, fmt.Sprintf("layout references undeclared node %q", nodeID))) {
 				return false
 			}
@@ -1112,7 +1133,7 @@ func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 	// they are free, so an orphan is not merely dead weight -- it is an opinion
 	// waiting to be inherited by an unrelated future connector.
 	for _, from := range sortedKeys(tmpl.Layout.Edges) {
-		node, ok := tmpl.Nodes[from]
+		node, ok := layoutNode(tmpl.Nodes, from)
 		if !ok {
 			if !diagnostics.Add(diagWarning("stale_layout_edge", "layout.edges."+from, fmt.Sprintf("layout references undeclared node %q", from))) {
 				return false

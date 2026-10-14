@@ -26,7 +26,7 @@ test('anchored node chooser exposes the full vocabulary and supports search, key
   assertSameNode(harness.document.activeElement, input, 'the searchable control receives initial focus');
   assert.equal(dialog.style.left, '125px');
   assert.equal(dialog.style.top, '98px', 'the chooser sits just below the drop point');
-  assert.equal(dialog.querySelectorAll('[role="option"]').length, 6, 'all canonical node types are offered');
+  assert.equal(dialog.querySelectorAll('[role="option"]').length, 7, 'all canonical node types are offered');
   assert.ok(dialog.querySelector('[data-command-id="process.create.parallel"]'));
   assert.ok(input.getAttribute('aria-activedescendant'));
   key(harness.window, input, 'ArrowDown');

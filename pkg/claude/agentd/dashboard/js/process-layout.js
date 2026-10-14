@@ -19,6 +19,11 @@ const TYPE_SIZES = Object.freeze({
   wait: [78, 78],
   start: [58, 58],
   end: [62, 62],
+  subprocess: [180, 76],
+  // Scope ports (E1): the open subprocess's in/out contract, drawn as
+  // read-only pseudo nodes inside a drilled-in body.
+  'port-in': [54, 54],
+  'port-out': [54, 54],
 });
 
 function cmpText(a, b) {
@@ -289,7 +294,7 @@ function boundaryPoint(node, toward, outgoing) {
     const scale = 1 / ((Math.abs(dx) / (node.width / 2)) + (Math.abs(dy) / (node.height / 2)) || 1);
     return { x: node.x + dx * scale, y: node.y + dy * scale };
   }
-  if (node.type === 'wait' || node.type === 'start' || node.type === 'end') {
+  if (node.type === 'wait' || node.type === 'start' || node.type === 'end' || node.type === 'port-in' || node.type === 'port-out') {
     const length = Math.hypot(dx, dy) || 1;
     const radius = Math.min(node.width, node.height) / 2;
     return { x: node.x + dx / length * radius, y: node.y + dy / length * radius };

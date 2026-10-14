@@ -75,8 +75,13 @@ export const NODE_BLOCKS = [
     hint: 'Pause for a duration, until a time, or for a signal',
   },
   {
+    key: 'subprocess', label: 'Subgraph', icon: '▣',
+    kinds: ['subprocess'], required: true,
+    hint: 'The nested graph (inline, or a template reference) and its in/out ports',
+  },
+  {
     key: 'outcomes', label: 'Outcomes', icon: '⇉',
-    kinds: ['task', 'decision', 'parallel', 'wait', 'start'], required: true,
+    kinds: ['task', 'decision', 'parallel', 'wait', 'start', 'subprocess'], required: true,
     hint: 'Outgoing edges: which outcome leads where',
   },
   {
@@ -88,7 +93,7 @@ export const NODE_BLOCKS = [
   },
   {
     key: 'about', label: 'Notes', icon: '✎',
-    kinds: ['task', 'decision', 'parallel', 'wait', 'start', 'end'],
+    kinds: ['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess'],
     hint: 'Description and longer documentation for this node',
     present: (node) => !!(node.description || node.doc),
     clear: (node) => { delete node.description; delete node.doc; },
@@ -227,4 +232,28 @@ export function stageSummary(node) {
   for (const check of node.checks || []) stages.push({ key: `check:${check.id}`, label: check.id, detail: 'check' });
   if (node.review) stages.push({ key: 'review', label: 'review', detail: node.review.performer?.kind || '' });
   return stages;
+}
+
+// setSubprocessPort binds (or, with an empty value, unbinds) one in-port
+// (field 'inputs': body param ← parent expression) or out-port (field
+// 'outputs': body end node → parent outcome) on a ▣ node draft.
+export function setSubprocessPort(node, field, key, raw) {
+  if (field !== 'inputs' && field !== 'outputs') throw new Error(`unknown port field ${field}`);
+  const sub = node.subprocess || (node.subprocess = {});
+  const value = String(raw ?? '').trim();
+  const next = { ...(sub[field] || {}) };
+  if (value) next[key] = value;
+  else delete next[key];
+  if (Object.keys(next).length) sub[field] = next;
+  else delete sub[field];
+}
+
+// setSubprocessRef edits a referenced body's templateRef / version.
+export function setSubprocessRef(node, field, raw) {
+  if (field !== 'templateRef' && field !== 'version') throw new Error(`unknown reference field ${field}`);
+  const sub = node.subprocess || (node.subprocess = {});
+  const value = String(raw ?? '').trim();
+  if (field === 'templateRef' && !value) throw new Error('a referenced subprocess needs a template id');
+  if (value) sub[field] = value;
+  else delete sub[field];
 }
