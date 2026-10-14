@@ -442,8 +442,8 @@ function bindTabs() {
 // visibleTabButtons returns the nav tab buttons that are actually on
 // screen, in DOM (left-to-right) order. offsetParent === null means a
 // display:none somewhere up the chain — which is exactly how the Vegas
-// tab (hidden unless body.slop) and the Costs tab (hidden via
-// body.hide-costs) drop out. Checking visibility instead of naming those
+// tab (hidden unless body.slop) and the Usage tab (hidden via
+// body.hide-usage-tab) drop out. Checking visibility instead of naming those
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
   // A peer view skips the tabs the peer does not offer (peer-view-limits.js).

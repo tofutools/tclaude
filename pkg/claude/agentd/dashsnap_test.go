@@ -1291,6 +1291,31 @@ setTimeout(function(){
 			SettleMS: 500,
 		},
 		{
+			Key:     "bounded-usage-overview",
+			Title:   "Bounded Preact — Usage overview",
+			Caption: "The Usage tab's Overview: spend and quota headline cards, a compact card per quota window, and the span's spend chart beside the top agents.",
+			JS: `return (async function(){
+  var store = await import('/static/js/snapshot-store.js');
+  var registry = await import('/static/js/feature-state-registry.js');
+  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
+    cost_tab_visible: true, usage_tab_visible: true
+  });
+  await Promise.resolve();
+  registry.featureState('usage-hub').select('overview');
+  document.querySelector('nav [data-tab="usage"]').click();
+  var deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    if (document.querySelector('#tab-usage.active .usage-ov-quota') && document.querySelector('#tab-usage.active .usage-ov-agents')) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  if (!document.querySelector('.usage-ov-quota')) throw new Error('usage-overview: quota cards did not render');
+  if (!document.querySelector('.usage-ov-agents')) throw new Error('usage-overview: spend did not render');
+  if (document.querySelectorAll('.usage-subtab').length !== 3) throw new Error('usage-overview: subnav missing');
+  if (location.pathname !== '/usage') throw new Error('usage-overview: URL is ' + location.pathname);
+})();`,
+			SettleMS: 500,
+		},
+		{
 			Key:      "bounded-access-normal",
 			Title:    "Bounded Preact — Access normal",
 			Caption:  "Access island rendered its normal fixture state with keyboard-navigable sub-tabs.",
@@ -4321,36 +4346,47 @@ func boundedTabJS(tab, readySelector string, afterReady ...string) string {
 	if len(afterReady) > 0 {
 		post = afterReady[0]
 	}
+	// Quota ("usage") and Costs are views of the Usage tab: click its nav
+	// button with the hub already on the wanted view. `tab` stays the island
+	// name (its #<tab>-root host and feature-state registration).
+	navTab, subview := tab, ""
+	switch tab {
+	case "usage":
+		subview = "quota"
+	case "costs":
+		navTab, subview = "usage", "costs"
+	}
 	return fmt.Sprintf(`return Promise.all([
   import('/static/js/snapshot-store.js'),
   import('/static/js/feature-state-registry.js')
 ]).then(async function(modules) {
 var store = modules[0], registry = modules[1];
-var __tab = document.querySelector('nav [data-tab=%q]');
-if (!__tab) throw new Error('missing bounded tab: %s');
-if (%q === 'plugins' || %q === 'costs' || %q === 'usage') {
+var __tab = document.querySelector('nav [data-tab=%[1]q]');
+if (!__tab) throw new Error('missing bounded tab: %[1]s');
+if (%[2]q === 'plugins' || %[1]q === 'usage') {
   store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
     plugins_tab_visible: true, cost_tab_visible: true, usage_tab_visible: true
   });
   await Promise.resolve();
 }
+if (%[3]q) registry.featureState('usage-hub')?.select(%[3]q);
 __tab.click();
 return new Promise(function(resolve, reject) {
   var deadline = Date.now() + 4000;
   (function ready() {
-    var node = document.querySelector(%q);
-    var panel = document.querySelector('#tab-' + %q);
-    var root = document.querySelector('#' + %q + '-root');
-    var state = registry.featureState(%q);
+    var node = document.querySelector(%[4]q);
+    var panel = document.querySelector('#tab-' + %[1]q);
+    var root = document.querySelector('#' + %[2]q + '-root');
+    var state = registry.featureState(%[2]q);
     var phase = state?.request?.value?.phase || state?.phase?.value || state?.view?.value?.request?.phase;
     var settled = root && state && !root.querySelector('[role="alert"]') && !root.querySelector('[aria-busy="true"]') &&
-      (%q === 'access' || phase === 'ready');
-    if (node && panel?.classList.contains('active') && node.getClientRects().length && settled) { %s resolve(); return; }
-    if (Date.now() >= deadline) { reject(new Error('bounded tab did not render: %s')); return; }
+      (%[2]q === 'access' || phase === 'ready');
+    if (node && panel?.classList.contains('active') && node.getClientRects().length && settled) { %[5]s resolve(); return; }
+    if (Date.now() >= deadline) { reject(new Error('bounded tab did not render: %[2]s')); return; }
     setTimeout(ready, 25);
   })();
 });
-});`, tab, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, post, tab)
+});`, navTab, tab, subview, readySelector, post)
 }
 
 func boundedJobsEmptyJS() string {

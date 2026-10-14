@@ -47,11 +47,12 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	must(`mode === 'cost' ? '≈$'`, "the WHAT-IF selector identifies estimated dollar values")
 	mustNot("token.estimate ? '≈' : ''", "WHAT-IF values do not repeat the selector's approximation mark")
 
-	// The token links to the Costs tab: shell-island.js tags it, the Costs island
-	// delegates the click to the nav button.
-	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-tab link")
-	must(`document.querySelector('nav [data-tab="costs"]')?.click()`,
-		"Costs island opens the tab via the nav button on a token click")
+	// The token links to the Usage tab's Costs view: shell-island.js tags it,
+	// the Usage hub selects Costs and delegates the switch to the nav button.
+	must(`data-goto-tab="costs"`, "cost token tagged as a Costs-view link")
+	must(`[data-goto-tab="costs"]')) state.open('costs');`, "Usage hub opens its Costs view on a token click")
+	must(`const nav = doc?.querySelector('nav [data-tab="usage"]');`,
+		"Usage hub opens the tab via the nav button")
 
 	// The no-data state is unchanged: neither windows nor cost → n/a.
 	must("'usage: n/a'", "graceful n/a fallback still present")
@@ -83,8 +84,9 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 
 	// dashboard.html: the tab exists and carries the span selector,
 	// chart, summary and table mount points.
-	must(`data-tab="costs"`, "Costs nav button present")
-	must(`id="tab-costs"`, "Costs tab section present")
+	must(`data-tab="usage"`, "Usage nav button (home of the Costs view) present")
+	must(`id="costs-root"`, "Costs view host present")
+	mustNot(`data-tab="costs"`, "the retired Costs nav button is gone")
 	must(`id="costs-spans"`, "span selector bar present")
 	must(`id="costs-chart"`, "chart mount point present")
 	must(`id="costs-summary"`, "summary mount point present")

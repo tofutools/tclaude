@@ -93,7 +93,7 @@ spend to a monetary budget. `what_if_enabled` follows the operator's
 when disabled. Dashboard display multipliers never change these raw amounts.
 
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
-Model attribution follows the Costs tab: each conversation/day slice uses the
+Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all
 sessions have recently reported costs. No configured monetary budget or hard
 spending enforcement is provided by these queries.

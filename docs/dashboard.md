@@ -53,8 +53,7 @@ In order across the top:
 | Plugins | Shell-step plugin lists with status lamps |
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
-| Usage | Subscription quota bars and forecasts |
-| Costs | Real and what-if spend |
+| Usage | Overview, subscription quota forecasts, and real/what-if costs |
 | Audit | Trail of daemon-proxied mutating actions |
 | Logs | Viewer over the daemon log |
 | Debug | Poll-latency self-diagnostics (hidden by default) |
@@ -255,7 +254,7 @@ The header usage island shows one line per provider (Claude / Codex / Copilot
 / API) with an 8-block bar, percentage, and remaining amount: Claude tracks
 the 5-hour and 7-day rolling windows, Codex 5-hour and weekly, Copilot the
 monthly premium-request allowance, plus API cost month-to-date and today
-(click through to the Costs tab). When subscription what-if pricing is
+(click through to the Usage tab's Costs view). When subscription what-if pricing is
 enabled, use the compact selector to switch between quota percentage and
 estimated pay-per-token cost. Copilot also offers its native AIC allowance in
 the same selector: `% / ≈$ / AIC`.
@@ -484,8 +483,32 @@ and there is no Always-allow for peers. CLI:
 
 ## Usage
 
+One tab, three views: **Overview** (`/usage`), **Quota** (`/usage/quota`)
+and **Costs** (`/usage/costs`). Each view is its own history entry, so
+deep links, reload and browser Back/Forward land on the same view; the old
+`/costs` path (and `?tab=costs`) still works and settles on `/usage/costs`.
+Quota and Costs keep their own visibility rules: with only one of them
+available the tab shows it directly without the view switcher, and the tab
+hides only when neither has anything to show.
+
 Agents and operators can also query quotas and costs through the daemon with
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md), including JSON output.
+
+### Overview
+
+The glance page: headline cards for spend in the Costs view's current span
+(with the month projection), spend today, the next predicted quota wall, and
+how many quota windows are predicted to run out before they reset; a compact
+card per quota window (current percentage, reset countdown, sparkline with its
+forecast, prediction status); and the span's spend chart beside the top
+agents. Every card links into the full Quota or Costs view. The spend figures
+follow the span and provider/model filters chosen on the Costs view.
+
+![The Usage overview: spend and quota headline cards, a compact card per quota window, and the month's spend beside the top agents](assets/dashboard-usage-overview.png)
+
+*The Usage overview: spend and quota headline cards, a compact card per quota window, and the month's spend beside the top agents*
+
+### Quota
 
 Subscription quota and forecasting: one card per provider × quota window
 (Claude 5-hour / 7-day / 7-day-Sonnet; Codex 5-hour / weekly; Copilot monthly
@@ -528,7 +551,7 @@ would poison the forecast. There is no per-model quota breakdown; providers
 do not expose reliable attribution. OpenCode activity raises a coverage-lag
 warning banner.
 
-## Costs
+### Costs
 
 Spend over time: an accumulated-cost line graph, a stacked daily bar chart
 per provider, a per-model rollup strip, and a sortable per-agent table with
@@ -563,7 +586,7 @@ adjustment for that harness. OpenCode uses one multiplier across all its provide
 to dashboard dollar amounts, including agent badges, charts, projections, and
 top-bar totals. Recorded costs and native credits remain unchanged. The same
 settings are available under Config → Usage, costs & rate limits. On subscription accounts the
-tab appears only when enabled in Config.
+Costs view appears only when enabled in Config.
 
 ## Audit
 
