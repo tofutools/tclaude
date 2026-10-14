@@ -9,6 +9,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
 // processResolutionReassigned marks a dispatch a person or manager handed to a
@@ -129,11 +130,26 @@ func assignProcessNodePerformer(runID, nodeID, selector, actor string) (*db.Proc
 	if row.State == db.ProcessDispatchDelivered && row.AgentID == candidate.AgentID {
 		return row, nil
 	}
+	if row.State == db.ProcessDispatchDelivered {
+		// A spawned performer that has not launched yet cannot be told to stop:
+		// it would start with the node prompt and do the work for nothing.
+		if pending, err := db.GetPendingSpawnByAgentID(row.AgentID); err != nil {
+			return nil, err
+		} else if pending != nil {
+			return nil, &processAssignError{http.StatusConflict, "process_assign_performer_starting",
+				"the current performer is still being spawned; reassign once it has started"}
+		}
+	}
+	conflict := &processAssignError{http.StatusConflict, "process_assign_not_outstanding",
+		"the attempt changed while reassigning (its performer may have just reported); check the run and retry"}
 
 	fromState := row.State
 	if row.State == db.ProcessDispatchDelivered {
 		if err := db.ReleaseProcessAgentDispatch(runID, row.CommandID, row.AgentID,
 			"reassigned to "+candidate.AgentID+" by "+actor); err != nil {
+			if errors.Is(err, db.ErrProcessDispatchConflict) {
+				return nil, conflict
+			}
 			return nil, err
 		}
 		notifyProcessPerformerReleased(*row, "This process node attempt was reassigned to another performer. Stop working on it; your report is no longer needed.")
@@ -141,7 +157,8 @@ func assignProcessNodePerformer(runID, nodeID, selector, actor string) (*db.Proc
 	}
 	messageID, err := queueAgentMessage(&db.AgentMessage{
 		GroupID: scope.GroupID, ToConv: candidate.ConvID,
-		Subject: processDispatchSubject(runID, *command), Body: processDispatchMessage(runID, *command, ""),
+		Subject: processDispatchSubject(runID, *command),
+		Body:    processDispatchMessage(runID, *command, processAssignFeedback(*row, *command)),
 	})
 	if err != nil {
 		// The released attempt is pending again, so the next pass resolves it
@@ -150,6 +167,9 @@ func assignProcessNodePerformer(runID, nodeID, selector, actor string) (*db.Proc
 	}
 	if err := db.MarkProcessAgentDispatchDelivered(runID, row.CommandID, fromState,
 		candidate.AgentID, processResolutionReassigned, messageID); err != nil {
+		if errors.Is(err, db.ErrProcessDispatchConflict) {
+			return nil, conflict
+		}
 		return nil, err
 	}
 	return db.GetProcessAgentDispatch(runID, row.CommandID)
@@ -174,6 +194,10 @@ func processAssignCandidate(scope processRunScope, actor, selector string) (*pro
 		}
 		return candidate, ""
 	case processScopeGroup:
+		group, err := db.GetAgentGroupByID(scope.GroupID)
+		if err != nil || group == nil || group.IsArchived() {
+			return nil, "the run's group is unavailable"
+		}
 		for _, member := range processGroupCandidates(scope.GroupID) {
 			if processCandidateMatches(member, selector) {
 				return &member, ""
@@ -193,4 +217,20 @@ func processAssignCandidate(scope processRunScope, actor, selector string) (*pro
 		}
 		return candidate, ""
 	}
+}
+
+// processAssignFeedback carries a feedback-same-session retry's previous
+// failure to whoever takes the attempt, as ordinary resolution would.
+func processAssignFeedback(row db.ProcessAgentDispatch, command engine.Command) string {
+	if command.Agent.RetryMode != model.RetryModeFeedbackSameSession {
+		return ""
+	}
+	previous := previousProcessDispatch(row)
+	if previous == nil {
+		return ""
+	}
+	if previous.ReportNote == "" {
+		return "the previous attempt reported failure without a note"
+	}
+	return previous.ReportNote
 }

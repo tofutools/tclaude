@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -118,4 +119,27 @@ func TestProcessPerformerAssign_Refusals(t *testing.T) {
 	bound := assignNode(t, f, "run_assign_bound", performerNode, "olga")
 	assert.Equal(t, http.StatusUnprocessableEntity, bound.Code, bound.Body.String())
 	assert.Contains(t, bound.Body.String(), "bound to")
+}
+
+// Scenario: a feedback-same-session retry is handed to someone else. The new
+// performer gets the previous attempt's failure, as ordinary resolution would
+// have handed it back.
+func TestProcessPerformerAssign_CarriesRetryFeedback(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const first, second = "asg6-1111-2222-3333-4444", "asg7-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", first, "alice", "dev", "idle")
+	havePerformerAgent(t, f, "crew", second, "bob", "reviewer", "idle")
+	retry := &model.RetryPolicy{MaxAttempts: 2, OnFail: model.RetryModeFeedbackSameSession}
+	startPerformerRun(t, f, root, "run_assign_fb", performerTemplate("assign-fb", devPerformer(), retry),
+		agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID})
+	failed := reportAs(t, f, first, map[string]any{"outcome": "failed", "note": "tests are red on CI"})
+	require.Equal(t, http.StatusOK, failed.Code, failed.Body.String())
+
+	rec := assignNode(t, f, "run_assign_fb", performerNode, "bob")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	inbox := processInbox(t, second)
+	require.Len(t, inbox, 1)
+	assert.Contains(t, inbox[0].Body, "Attempt: 2")
+	assert.Contains(t, inbox[0].Body, "tests are red on CI")
 }
