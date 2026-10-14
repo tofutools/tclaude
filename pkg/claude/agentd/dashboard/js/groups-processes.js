@@ -5,7 +5,7 @@
 // and renders through the shared process UI kit (process-kit.js).
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
@@ -180,6 +180,19 @@ export function GroupsProcessesFocus({
   // An open run shows in the single-run focus; its group comes from the full
   // roster so a Groups search cannot strand it.
   const focusGroup = focusedRun && (rosters.get(focusedRun.group) || realGroups.find((group) => group.name === focusedRun.group));
+  // A run whose group is gone closes rather than hiding and popping back.
+  const strandedRun = status === 'ready' && focusedRun && !focusGroup;
+  useEffect(() => { if (strandedRun) onFocusRun(null); }, [strandedRun]);
+  // Closing the focus hands keyboard focus back to the card that opened it.
+  const lastRun = useRef(null);
+  useEffect(() => {
+    const previous = lastRun.current;
+    lastRun.current = focusedRun?.runId || null;
+    if (previous && !focusedRun) {
+      const opener = [...document.querySelectorAll('[data-process-open]')].find((el) => el.dataset.processOpen === previous);
+      opener?.focus?.();
+    }
+  }, [focusedRun?.runId]);
   if (status === 'ready' && focusGroup) {
     return html`<div class="gp-focus" data-groups-processes>
       ${source.error.value && html`<span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span>`}

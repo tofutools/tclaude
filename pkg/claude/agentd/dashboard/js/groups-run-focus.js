@@ -37,35 +37,59 @@ function memberKey(member) {
 
 // useRunDetail reads the run's durable view and its events, then follows
 // both on every snapshot poll: the view in full, the events from the last
-// sequence seen.
+// sequence seen. One read is in flight at a time: a poll that lands mid-read
+// queues exactly one follow-up instead of discarding the read, so a slow
+// daemon still converges. A long run's history catches up read after read
+// (`catchingUp`) without waiting for polls.
 function useRunDetail(api, runId) {
-  const [detail, setDetail] = useState({ runId, view: null, events: [], error: '' });
+  const empty = (id) => ({ runId: id, view: null, events: [], error: '', catchingUp: false });
+  const [detail, setDetail] = useState(() => empty(runId));
   const [revision, setRevision] = useState(0);
   const latest = useRef(detail);
   latest.current = detail;
+  const inflight = useRef(null);
+  const again = useRef(false);
+  const mounted = useRef(true);
   useEffect(() => {
+    mounted.current = true;
     const poll = () => setRevision((value) => value + 1);
     document.addEventListener('tclaude:snapshot', poll);
-    return () => document.removeEventListener('tclaude:snapshot', poll);
+    return () => {
+      mounted.current = false;
+      document.removeEventListener('tclaude:snapshot', poll);
+    };
   }, []);
   useEffect(() => {
-    let live = true;
-    const prior = latest.current.runId === runId ? latest.current : { runId, view: null, events: [], error: '' };
+    if (inflight.current?.runId === runId) {
+      again.current = true;
+      return;
+    }
+    const token = { runId };
+    inflight.current = token;
+    again.current = false;
+    const prior = latest.current.runId === runId ? latest.current : empty(runId);
     if (prior !== latest.current) setDetail(prior);
     const after = prior.events.length ? prior.events[prior.events.length - 1].sequence : 0;
+    const settle = (next) => {
+      if (inflight.current !== token || !mounted.current) return;
+      inflight.current = null;
+      setDetail(next);
+      if (again.current || next.catchingUp) {
+        again.current = false;
+        setRevision((value) => value + 1);
+      }
+    };
     Promise.all([
       api.getRun(runId),
-      api.listEvents(runId, after).catch(() => ({ events: [] })),
+      api.listEvents(runId, after).catch(() => ({ events: [], more: false })),
     ]).then(([view, page]) => {
-      if (!live) return;
       const events = [...prior.events, ...(page.events || [])].slice(-MAX_EVENTS);
-      setDetail({ runId, view, events, error: '' });
+      settle({ runId, view, events, error: '', catchingUp: page.more === true });
     }).catch((cause) => {
-      if (live) setDetail({ ...prior, error: cause?.message || String(cause) });
+      settle({ ...prior, error: cause?.message || String(cause), catchingUp: false });
     });
-    return () => { live = false; };
   }, [api, runId, revision]);
-  const current = detail.runId === runId ? detail : { runId, view: null, events: [], error: '' };
+  const current = detail.runId === runId ? detail : empty(runId);
   return [current, () => setRevision((value) => value + 1)];
 }
 
@@ -112,14 +136,19 @@ function eventText(event) {
 
 function DecisionForm({ decision, node, onDecide, wizard }) {
   const [busy, setBusy] = useState('');
+  const [decided, setDecided] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const decide = async (verdict) => {
-    if (busy) return;
+    if (busy || decided) return;
     setBusy(verdict);
     setError('');
     try {
       await onDecide({ nodeId: node.id, verdict, evidence: note.trim(), attempt: decision.attempt || 0 });
+      // The gate stays shut until the refreshed view drops this decision
+      // (the form is keyed by node and attempt), so a second click cannot
+      // race the first into a refused duplicate.
+      setDecided(verdict);
       setNote('');
     } catch (cause) {
       setError(cause?.message || String(cause));
@@ -130,14 +159,15 @@ function DecisionForm({ decision, node, onDecide, wizard }) {
   const verdicts = decision.verdicts || [];
   return html`<div class="grf-decide" data-run-decision=${node.id}>
     <textarea aria-label=${wizard ? 'Words for the record (optional)' : 'Note for the record (optional)'} rows="2" maxlength="4096"
-      placeholder=${wizard ? 'words for the record (optional)' : 'note (optional)'} value=${note} disabled=${!!busy}
+      placeholder=${wizard ? 'words for the record (optional)' : 'note (optional)'} value=${note} disabled=${!!busy || !!decided}
       onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
     <div class="grf-verdicts">${verdicts.map((verdict) => {
       const { label, cls } = verdictPresentation(verdict);
-      return html`<button key=${verdict} type="button" class=${cls} data-run-verdict=${verdict} disabled=${!!busy}
+      return html`<button key=${verdict} type="button" class=${cls} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
         onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}</button>`;
     })}</div>
     ${!verdicts.length && html`<div class="grf-muted">This gate offers no verdicts.</div>`}
+    ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${verdictPresentation(decided).label}</div>`}
     ${error && html`<div class="grf-error" role="alert">${error}</div>`}
   </div>`;
 }
@@ -175,6 +205,7 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
     ${history.length
     ? html`<ol class="grf-history">${history.map((event) => html`<li key=${event.sequence}><time>${eventTime(event.occurredAt)}</time> ${eventText(event)}</li>`)}</ol>`
     : html`<div class="grf-muted">${view ? 'No events for this node yet.' : 'Loading…'}</div>`}
+    ${detail.catchingUp && html`<div class="grf-muted" role="status">Reading the rest of this run's history…</div>`}
   </aside>`;
 }
 
@@ -265,18 +296,29 @@ export function GroupsRunFocus({
     refresh();
     void source?.refresh?.();
   };
-  const onKeyDown = (event) => {
-    if (event.key !== 'Escape' || event.target?.closest?.('textarea, input, select')) return;
-    event.stopPropagation();
-    onClose();
-  };
+  // Opening a run moves focus onto its back button (the clicked card button
+  // is gone), and Esc closes the focus from anywhere but a text field.
+  const backRef = useRef(null);
+  useEffect(() => { backRef.current?.focus?.(); }, []);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.target?.closest?.('textarea, input, select, [role="dialog"]')) return;
+      event.preventDefault();
+      close.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
   const template = run?.templateRef || run?.templateId || '';
-  return html`<div class="grf" data-run-focus=${runId} onKeyDown=${onKeyDown}>
+  return html`<div class="grf" data-run-focus=${runId}>
     <${RunList} group=${group} entry=${entry} runs=${runs} planned=${planned} selectedRunId=${runId}
       onSelect=${onSelectRun} nameOf=${nameOf} wizard=${wizard} />
     <section class="grf-canvas" aria-label=${run ? `${runName(run)} ${wizard ? 'rite' : 'run'}` : 'run'}>
       <div class="grf-crumbs">
-        <button type="button" class="grf-back" data-run-focus-close onClick=${onClose}
+        <button type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
           title=${wizard ? 'Back to every rite' : 'Back to every run (Esc)'}>← ${wizard ? 'all rites' : 'all runs'}</button>
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}

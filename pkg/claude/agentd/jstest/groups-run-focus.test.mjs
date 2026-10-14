@@ -88,6 +88,12 @@ test('a G3 card opens its run in the single-run focus', async (t) => {
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-run-focus-close]'), 'click'));
   assert.deepEqual(opened.at(-1), null);
   assert.ok(mounted.container.querySelector('[data-process-run-card="run_release"]'), 'back lands on the cards');
+  assert.equal(harness.document.activeElement, mounted.container.querySelector('[data-process-open="run_release"]'),
+    'focus returns to the card that opened the run');
+
+  await harness.act(() => { focused.value = { group: 'gone-squad', runId: 'run_x' }; });
+  await settle(harness);
+  assert.equal(focused.value, null, 'a run whose group is gone closes instead of lingering');
 });
 
 test('the run list shows live, planned and recent runs; picking one selects it', async (t) => {
@@ -141,6 +147,35 @@ test('approve / request changes posts the verdict with the note and refreshes', 
   assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'changes', evidence: 'tighten the copy', attempt: 0 }]]);
   assert.equal(source.refreshes, before + 1, 'the context refreshes so the cards and chips follow');
   assert.ok(api.eventReads.some(([runId, after]) => runId === 'run_release' && after === 3), 'later reads continue from the last event');
+  assert.ok([...root.querySelectorAll('[data-run-verdict]')].every((b) => b.disabled), 'the gate stays shut until the view drops the decision');
+  assert.match(root.querySelector('.grf-decide [role="status"]').textContent, /Recorded: ↺ request changes/);
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-run-verdict="approved"]'), 'click'));
+  await settle(harness);
+  assert.equal(api.decisions.length, 1, 'no second decide');
+});
+
+test('polls during a slow read queue one follow-up instead of discarding it, and long histories catch up', async (t) => {
+  const api = fakeApi();
+  const gates = [];
+  api.getRun = (runId) => new Promise((resolve) => gates.push(() => resolve(VIEWS[runId])));
+  let pages = 0;
+  api.listEvents = async (runId, after = 0) => {
+    api.eventReads.push([runId, after]);
+    pages++;
+    return pages === 1 ? { events: EVENTS.slice(0, 2), more: true } : { events: EVENTS.filter((e) => e.sequence > after), more: false };
+  };
+  const { harness, root } = await mountRunFocus(t, { api });
+  for (let i = 0; i < 3; i++) await harness.act(() => harness.document.dispatchEvent(new harness.window.Event('tclaude:snapshot')));
+  assert.equal(gates.length, 1, 'one read in flight however many polls land');
+  await harness.act(async () => { gates.shift()(); });
+  await settle(harness);
+  assert.match(root.textContent, /Reading the rest of this run's history/);
+  assert.equal(gates.length, 1, 'catch-up (and the queued poll) start exactly one more read');
+  await harness.act(async () => { gates.shift()(); });
+  await settle(harness);
+  assert.deepEqual(api.eventReads.map(([, after]) => after), [0, 2]);
+  assert.doesNotMatch(root.textContent, /Reading the rest/);
+  assert.equal(root.querySelector('[data-run-inspector]').dataset.runInspector, 'review');
 });
 
 test('a refused verdict stays on screen as an error', async (t) => {
@@ -164,10 +199,11 @@ test('the performer dock lists the group and says drag-assign is not available y
 
 test('Escape and the back button close the focus; Escape in the note does not', async (t) => {
   const { harness, root, calls } = await mountRunFocus(t);
+  assert.equal(harness.document.activeElement, root.querySelector('[data-run-focus-close]'), 'opening lands focus on the back button');
   await harness.act(() => harness.fireEvent(root.querySelector('.grf-decide textarea'), 'keydown', { key: 'Escape' }));
   assert.equal(calls.closed, 0);
-  await harness.act(() => harness.fireEvent(root.querySelector('[data-run-list-item="run_release"]'), 'keydown', { key: 'Escape' }));
-  assert.equal(calls.closed, 1);
+  await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
+  assert.equal(calls.closed, 1, 'Esc works with focus anywhere outside a text field');
   await harness.act(() => harness.fireEvent(getByRole(root, 'button', { name: '← all runs' }), 'click'));
   assert.equal(calls.closed, 2);
 });
