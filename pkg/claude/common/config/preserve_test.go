@@ -93,3 +93,50 @@ func TestUnknownConfigKeys(t *testing.T) {
 	assert.Empty(t, preserved)
 	assert.Empty(t, dropped)
 }
+
+// Clearing a block (nil pointer, often "off") must stick: its unmodeled keys
+// must not recreate it, or the next load would see it switched back on.
+func TestSave_ClearedBlockStaysCleared(t *testing.T) {
+	isolateConfigHome(t)
+	require.NoError(t, os.MkdirAll(DataDir(), 0o700))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"ratelimit":{"five_hour_percent_max_used":50,"future_knob":1}}`), 0o644))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.RateLimit)
+	cfg.RateLimit = nil
+	require.NoError(t, Save(cfg))
+
+	data, err := os.ReadFile(ConfigPath())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "ratelimit")
+	reloaded, err := Load()
+	require.NoError(t, err)
+	assert.Nil(t, reloaded.RateLimit, "the cleared block stays cleared")
+}
+
+// encoding/json matches keys case-insensitively, so a case variant of a
+// modeled key is that field, not an unknown key to carry: carrying it would
+// make it win over the edited value on the next load.
+func TestSave_CaseVariantKeyIsModeled(t *testing.T) {
+	isolateConfigHome(t)
+	require.NoError(t, os.MkdirAll(DataDir(), 0o700))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"Log_Level":"debug","Agent":{"Future_Flag":true}}`), 0o644))
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "debug", cfg.LogLevel)
+	cfg.LogLevel = "warn"
+	require.NoError(t, Save(cfg))
+
+	data, err := os.ReadFile(ConfigPath())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "Log_Level")
+	assert.Contains(t, string(data), "Future_Flag", "an unknown key under a case-variant block is still carried")
+	reloaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "warn", reloaded.LogLevel, "the edit is not reverted by the old spelling")
+
+	preserved, _ := UnknownConfigKeys([]byte(`{"Log_Level":"debug","Agent":{"Future_Flag":true}}`))
+	assert.Equal(t, []string{"agent.Future_Flag"}, preserved)
+}

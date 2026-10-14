@@ -20,12 +20,14 @@ import (
 // typed encoding would not otherwise produce (appended after the modeled
 // keys of the same object).
 //
-// Two kinds of unmodeled key are NOT carried over:
+// Three kinds of unmodeled key are NOT carried over:
 //   - retiredConfigKeys: keys tclaude itself used to write and has since
 //     retired. Dropping them on the next save is the intended cleanup.
 //   - keys inside array elements: elements carry no identity, so an edit that
 //     reorders or removes elements would graft the key onto the wrong one.
-//     UnpreservedConfigKeys reports these so a UI can warn about them.
+//     UnknownConfigKeys reports these so a UI can warn about them.
+//   - keys under a block or map entry the new config removed: recreating a
+//     cleared block would flip it back on at the next load.
 
 // retiredConfigKeys lists dotted paths tclaude once modeled and retired. A
 // save drops them silently; they are not reported as unknown.
@@ -134,9 +136,11 @@ func parseOrderedValue(dec *json.Decoder) (any, error) {
 	}
 }
 
-// jsonFieldTypes maps a struct type's JSON field names to their types.
-func jsonFieldTypes(t reflect.Type) map[string]reflect.Type {
-	out := map[string]reflect.Type{}
+// jsonFields maps a struct type's JSON field names to their types.
+type jsonFields map[string]reflect.Type
+
+func jsonFieldTypes(t reflect.Type) jsonFields {
+	out := jsonFields{}
 	for i := 0; i < t.NumField(); i++ {
 		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		if name != "" && name != "-" {
@@ -144,6 +148,22 @@ func jsonFieldTypes(t reflect.Type) map[string]reflect.Type {
 		}
 	}
 	return out
+}
+
+// lookup resolves a JSON key to its field the way encoding/json does: an
+// exact match first, then a case-insensitive one. A case variant such as
+// "Log_Level" IS the modeled field to the typed decode, so it must not be
+// carried over next to the canonical key (it would win on the next load).
+func (f jsonFields) lookup(key string) (name string, t reflect.Type, ok bool) {
+	if t, ok := f[key]; ok {
+		return key, t, true
+	}
+	for name, t := range f {
+		if strings.EqualFold(name, key) {
+			return name, t, true
+		}
+	}
+	return "", nil, false
 }
 
 func derefType(t reflect.Type) reflect.Type {
@@ -169,7 +189,7 @@ func carryUnknown(prefix string, dst, src *orderedObject, t reflect.Type) bool {
 	added := false
 	for _, k := range src.keys {
 		path := joinPath(prefix, k)
-		ft, modeled := fields[k]
+		name, ft, modeled := fields.lookup(k)
 		if !modeled {
 			if retiredConfigKeys[path] {
 				continue
@@ -180,7 +200,7 @@ func carryUnknown(prefix string, dst, src *orderedObject, t reflect.Type) bool {
 			}
 			continue
 		}
-		if carryUnknownValue(path, dst, k, src.vals[k], derefType(ft)) {
+		if carryUnknownValue(joinPath(prefix, name), dst, name, src.vals[k], derefType(ft)) {
 			added = true
 		}
 	}
@@ -196,21 +216,16 @@ func carryUnknownValue(path string, dst *orderedObject, k string, srcVal any, ft
 	}
 	switch ft.Kind() {
 	case reflect.Struct:
+		// A block the new encoding omits or nulls was cleared on purpose
+		// (every block is an omitempty pointer, and nil often means "off"):
+		// recreating it just to hold unmodeled keys would turn it back on
+		// at the next load. Its unmodeled keys go with it, like a deleted
+		// map entry's.
 		dstObj, ok := dst.vals[k].(*orderedObject)
-		if ok {
-			return carryUnknown(path, dstObj, srcObj, ft)
-		}
-		if _, exists := dst.vals[k]; exists && dst.vals[k] != nil {
-			return false // the field changed shape; leave the new value alone
-		}
-		// The new encoding omits the block (all defaults): recreate it
-		// only if it has unmodeled keys to hold.
-		holder := &orderedObject{vals: map[string]any{}}
-		if !carryUnknown(path, holder, srcObj, ft) {
+		if !ok {
 			return false
 		}
-		dst.set(k, holder)
-		return true
+		return carryUnknown(path, dstObj, srcObj, ft)
 	case reflect.Map:
 		// Map keys are arbitrary by design; descend only into entries the
 		// new config still has, so a deleted entry stays deleted.
@@ -287,7 +302,7 @@ func collectUnknown(prefix string, node map[string]any, t reflect.Type, inArray 
 	fields := jsonFieldTypes(t)
 	for key, val := range node {
 		path := joinPath(prefix, key)
-		ft, ok := fields[key]
+		name, ft, ok := fields.lookup(key)
 		if !ok {
 			if retiredConfigKeys[path] {
 				continue
@@ -299,7 +314,7 @@ func collectUnknown(prefix string, node map[string]any, t reflect.Type, inArray 
 			}
 			continue
 		}
-		descendUnknown(path, val, ft, inArray, preserved, dropped)
+		descendUnknown(joinPath(prefix, name), val, ft, inArray, preserved, dropped)
 	}
 }
 
