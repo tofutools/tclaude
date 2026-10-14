@@ -2,12 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
-	"reflect"
-	"sort"
-	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -34,11 +30,11 @@ import (
 // JS-side / Go-side canonicalisation can drift apart.
 //
 // Schema scope: the editor round-trips the fields of config.Config.
-// A JSON key absent from that struct is dropped by the typed decode —
-// this is pre-existing config.Load behaviour (every Load+Save caller
-// drops them), not introduced here. The GET handler surfaces any such
-// keys as "unknown_keys" so the human is warned before a save removes
-// them, rather than the loss being silent.
+// A JSON key absent from that struct is invisible to the form, but
+// config.Save carries it over from the file it replaces, so a save keeps
+// it. The exception is a key inside an array element, which has no stable
+// identity to carry it by: the GET handler surfaces those as
+// "unknown_keys" so the human is warned before a save removes them.
 
 // configPostBody is the POST wire shape. Config carries the edited
 // config; Base is the canonical baseline the dashboard diffed against,
@@ -78,8 +74,8 @@ func configErrors(w http.ResponseWriter, msgs ...string) {
 //
 // "warning" appears when the file on disk is malformed (Load fell back
 // to defaults). "unknown_keys" lists keys present in the file but
-// absent from the config.Config schema — at any nesting depth, as
-// dotted paths — that a save would drop, so the human is told up front.
+// absent from the config.Config schema that a save would drop (those
+// inside array elements), as dotted paths, so the human is told up front.
 func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfg, loadErr := config.Load()
 	raw, err := json.MarshalIndent(cfg, "", "  ")
@@ -190,74 +186,16 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// unknownConfigKeys walks the on-disk config file and returns the
-// dotted paths of every key absent from the config.Config schema, at
-// any nesting depth — keys a save through the typed decode would drop.
-// Empty when the file is missing, unparseable, or fully conformant.
+// unknownConfigKeys returns the dotted paths of the on-disk config's keys
+// that the config.Config schema does not model AND a save would drop —
+// config.Save carries every other unmodeled key over (see
+// config.UnknownConfigKeys). Empty when the file is missing, unparseable, or
+// has nothing a save would lose.
 func unknownConfigKeys() []string {
 	data, err := os.ReadFile(config.ConfigPath())
 	if err != nil {
 		return nil
 	}
-	var tree map[string]any
-	if err := json.Unmarshal(data, &tree); err != nil {
-		return nil
-	}
-	var unknown []string
-	collectUnknownKeys("", tree, reflect.TypeOf(config.Config{}), &unknown)
-	sort.Strings(unknown)
-	return unknown
-}
-
-// collectUnknownKeys walks one JSON object against the struct type that
-// models it: every key with no matching struct field is appended (as a
-// dotted path), and the value of every known key is descended into.
-func collectUnknownKeys(prefix string, node map[string]any, t reflect.Type, out *[]string) {
-	fieldType := map[string]reflect.Type{}
-	for i := 0; i < t.NumField(); i++ {
-		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
-		if name != "" && name != "-" {
-			fieldType[name] = t.Field(i).Type
-		}
-	}
-	for key, val := range node {
-		path := key
-		if prefix != "" {
-			path = prefix + "." + key
-		}
-		ft, ok := fieldType[key]
-		if !ok {
-			*out = append(*out, path)
-			continue
-		}
-		descendUnknownKeys(path, val, ft, out)
-	}
-}
-
-// descendUnknownKeys recurses into a known field's value: into a nested
-// struct's keys, into each element of a slice, into each value of a map
-// (whose own keys are arbitrary by design, e.g. agent.sudo.overrides).
-// Scalars and type mismatches bottom out.
-func descendUnknownKeys(path string, val any, ft reflect.Type, out *[]string) {
-	for ft.Kind() == reflect.Pointer {
-		ft = ft.Elem()
-	}
-	switch ft.Kind() {
-	case reflect.Struct:
-		if obj, ok := val.(map[string]any); ok {
-			collectUnknownKeys(path, obj, ft, out)
-		}
-	case reflect.Map:
-		if obj, ok := val.(map[string]any); ok {
-			for mk, mv := range obj {
-				descendUnknownKeys(path+"."+mk, mv, ft.Elem(), out)
-			}
-		}
-	case reflect.Slice, reflect.Array:
-		if arr, ok := val.([]any); ok {
-			for i, item := range arr {
-				descendUnknownKeys(fmt.Sprintf("%s[%d]", path, i), item, ft.Elem(), out)
-			}
-		}
-	}
+	_, dropped := config.UnknownConfigKeys(data)
+	return dropped
 }

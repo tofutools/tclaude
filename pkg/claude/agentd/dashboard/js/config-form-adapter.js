@@ -1181,7 +1181,8 @@ function showConfigErrors(errs) {
 
 // The notice box (amber) carries load-time facts about the file the
 // form cannot represent: a malformed file shown as defaults, or
-// keys the running tclaude does not model and a save would drop.
+// unmodeled keys a save would drop (only those inside list entries —
+// the daemon carries every other unmodeled key over on save).
 function renderConfigNotice(messages) {
   const el = $('#cfg-notice');
   if (!messages.length) {
@@ -1309,9 +1310,9 @@ async function loadConfigTab() {
     const notices = [];
     if (data.warning) notices.push(data.warning);
     if (data.unknown_keys && data.unknown_keys.length) {
-      notices.push('config.json also contains key(s) this version of tclaude does not ' +
-        'model: ' + data.unknown_keys.join(', ') + '. They are not shown here, and ' +
-        'saving from this tab will remove them.');
+      notices.push('config.json has key(s) inside list entries that this version of ' +
+        'tclaude does not model: ' + data.unknown_keys.join(', ') + '. They are not ' +
+        'shown here, and saving from this tab will remove them.');
     }
     renderConfigNotice(notices);
     $('#cfg-status').textContent = notices.length

@@ -3554,6 +3554,13 @@ func saveLocked(config *Config) error {
 	if err != nil {
 		return err
 	}
+	// Keep the keys this version does not model (see preserve.go): the
+	// typed decode that produced config never saw them.
+	if old, err := os.ReadFile(target); err == nil {
+		if data, err = mergeUnknownKeys(data, old); err != nil {
+			return err
+		}
+	}
 
 	tmp, err := os.CreateTemp(dir, "config-*.json.tmp")
 	if err != nil {

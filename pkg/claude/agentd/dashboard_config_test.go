@@ -321,33 +321,48 @@ func TestDashboardConfig_RejectsBadSudoDuration(t *testing.T) {
 	assertErrorContains(t, resp.Errors, "max_duration")
 }
 
-// Keys tclaude's schema does not model must be reported as unknown so
-// the human is warned a save drops them — at every nesting depth, with
-// arbitrary map keys (agent.sudo.overrides.<id>) correctly exempted.
-func TestDashboardConfig_GetReportsUnknownKeys(t *testing.T) {
+// Keys tclaude's schema does not model are kept by a save, so only the
+// ones a save still drops (inside array elements) are reported — the human
+// is warned about real losses, not about keys that survive.
+func TestDashboardConfig_GetReportsOnlyDroppedUnknownKeys(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
 	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
-	// Top-level unknowns (human_notify, zzz_future); a nested unknown
-	// (agent.future_flag); and a sudo override whose map key is
-	// arbitrary-by-design (alice — must NOT be flagged) but which
-	// carries an unknown field of its own (bogus — must be flagged).
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{
 		"log_level":"info",
 		"human_notify":{"channel":"telegram"},
-		"zzz_future":1,
-		"agent":{"future_flag":true,"sudo":{"overrides":{"alice":{"max_duration":"1h","bogus":2}}}}
+		"dashboard":{"show_debug_tab":true},
+		"agent":{"future_flag":true,"sudo":{"overrides":{"alice":{"max_duration":"1h","bogus":2}}}},
+		"pre_compact_guard":{"thresholds":[{"window_size":200000,"min_tokens":1000,"lost":1}]}
 	}`), 0o644))
 
 	w, resp := getConfig(t)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
-	assert.Equal(t, []string{
-		"agent.future_flag",
-		"agent.sudo.overrides.alice.bogus",
-		"human_notify",
-		"zzz_future",
-	}, resp.UnknownKeys, "unknown keys at every depth listed (sorted); arbitrary map keys exempt")
+	assert.Equal(t, []string{"pre_compact_guard.thresholds[0].lost"}, resp.UnknownKeys,
+		"only keys a save drops are listed; preserved and retired keys are not")
+}
+
+// Saving from the Config tab must keep custom keys the form cannot show.
+func TestDashboardConfig_SavePreservesUnknownKeys(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"log_level":"info","my_custom":{"a":1}}`), 0o644))
+
+	_, getResp := getConfig(t)
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"log_level":"debug"}`, getResp.Raw))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	onDisk, err := os.ReadFile(config.ConfigPath())
+	require.NoError(t, err)
+	assert.Contains(t, string(onDisk), `"my_custom"`, "the custom key survives the save")
+	assert.Contains(t, string(onDisk), `"log_level": "debug"`)
+
+	// The drift guard still matches: a fresh GET's raw is the typed form.
+	_, after := getConfig(t)
+	assert.NotContains(t, after.Raw, "my_custom")
 }
 
 // A log_rotation block POSTed through the editor must persist and
