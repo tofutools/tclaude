@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -141,13 +142,18 @@ func processRunListFilter(w http.ResponseWriter, r *http.Request) (db.ProcessRun
 	query := r.URL.Query()
 	if ref := strings.TrimSpace(query.Get("group")); ref != "" {
 		// A miss and a lookup failure both answer 404: resolveGroupToken
-		// reports an unknown group as an error.
+		// reports an unknown group as an error. A numeric id is taken as-is,
+		// so a deleted group's orphaned runs stay findable.
 		g, err := resolveGroupToken(ref)
-		if err != nil || g == nil {
+		switch id, perr := strconv.ParseInt(ref, 10, 64); {
+		case err == nil && g != nil:
+			filter.GroupID = g.ID
+		case perr == nil && id > 0:
+			filter.GroupID = id
+		default:
 			writeError(w, http.StatusNotFound, "process_run_scope_not_found", fmt.Sprintf("no group %q", ref))
 			return filter, false
 		}
-		filter.GroupID = g.ID
 	}
 	for _, field := range []struct {
 		name string
@@ -283,7 +289,13 @@ func processRunOrphaned(runID string) (bool, error) {
 	if _, err := db.OrphanProcessRunsWithMissingScope(); err != nil {
 		return false, err
 	}
-	return true, nil
+	// Re-read rather than assume: the catch-up only flips non-terminal runs,
+	// and a terminal run keeps its ordinary terminal handling.
+	scope, err = db.GetProcessRunScope(runID)
+	if err != nil {
+		return false, err
+	}
+	return scope.Orphaned(), nil
 }
 
 func processRunScopeAgentInGroup(groupID int64, agentID string) (bool, error) {

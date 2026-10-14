@@ -64,6 +64,12 @@ type processRunInput struct {
 	resolution *executor.ResolutionInput
 }
 
+// cancels reports whether this input gives the run up — the one input an
+// orphaned run still accepts.
+func (i processRunInput) cancels() bool {
+	return i.resolution != nil && i.resolution.Action == engine.ResolveCancel
+}
+
 // apply commits this input against the run. It is called only by the run's
 // owner — either the live claim's driver goroutine or the fresh claim a
 // begin() took — so it is never a second writer.
@@ -485,10 +491,13 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	}()
 
 	// An orphaned run is parked for a human to re-scope: nothing — resume,
-	// sweep, or operator input — may advance it until then.
-	if orphaned, err := processRunOrphaned(runID); err != nil {
+	// sweep, or operator input — may advance it until then. Canceling it is
+	// the one input that still applies, since it only gives the run up.
+	orphaned, err := processRunOrphaned(runID)
+	if err != nil {
 		return false, err
-	} else if orphaned {
+	}
+	if orphaned && !(start.mode == processRunApplyInput && start.input.cancels()) {
 		return false, errProcessRunOrphaned
 	}
 	run := prepared
@@ -649,6 +658,18 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// program result is serialized here rather than by a lock: whichever
 			// the select takes first commits first, and the loser sees the state
 			// the winner left behind.
+			//
+			// The orphan gate applies here as in beginRun, so an input is not
+			// accepted merely because programs happened to still be in flight.
+			if !request.input.cancels() {
+				if orphaned, err := processRunOrphaned(runID); err != nil || orphaned {
+					if err == nil {
+						err = errProcessRunOrphaned
+					}
+					request.reply <- err
+					break
+				}
+			}
 			applyErr := request.input.apply(claim.run, request.actor)
 			request.reply <- applyErr
 			// An operator cancel dooms the run from HERE rather than from an

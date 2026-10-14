@@ -135,14 +135,17 @@ run's group is deleted, or an agent-scoped run's agent is retired or
 deleted, the run pauses with scope state `orphaned` (its `action` reads
 `orphaned` and a `run_orphaned` event records why). Program work already in
 flight finishes, but nothing new is planned and resume, decisions and
-reconciliation are refused until the human resolves it:
+reconciliation are refused until the human re-scopes it:
 
 ```bash
 tclaude process rescope <run-id> --none            # unbind it
 tclaude process rescope <run-id> --group <group>   # re-bind to a group
 tclaude process rescope <run-id> --agent <agent>   # re-bind to an agent
-tclaude process resolve-blocked ... --action cancel # or cancel the work
 ```
+
+The one input an orphaned run still accepts is giving it up:
+`tclaude process resolve-blocked ... --action cancel` on a blocked node.
+Runs of a deleted group stay listable with `runs ls --group <group-id>`.
 
 `rescope` is human-only and records a `run_rescoped` event. On a bound
 agent-scoped run, `rescope --group` **promotes** it to a group the agent

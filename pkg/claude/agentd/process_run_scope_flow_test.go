@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,7 +229,7 @@ func TestProcessRunScopeAgentStartGates(t *testing.T) {
 // re-binding it explicitly returns it to a bound, resumable state.
 func TestProcessRunScopeGroupDeletedOrphansUntilRescoped(t *testing.T) {
 	f := scopedRunFlow(t)
-	f.HaveGroup("scope-doomed")
+	doomed := f.HaveGroup("scope-doomed")
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_scope_doomed", "templateId": "gate", "group": "scope-doomed", "authorizeProgramProfiles": []string{},
 	})
@@ -240,6 +241,9 @@ func TestProcessRunScopeGroupDeletedOrphansUntilRescoped(t *testing.T) {
 	assert.Equal(t, "orphaned", view.Action)
 	assert.Equal(t, "group", view.Scope.Kind, "the binding is kept, never silently re-scoped")
 	assert.Contains(t, processRunEventKinds(t, f, "run_scope_doomed"), "run_orphaned")
+	assert.Equal(t, []string{"run_scope_doomed"},
+		listScopedRuns(t, f, url.Values{"group": {strconv.FormatInt(doomed.ID, 10)}}),
+		"a deleted group's runs stay listable by id")
 
 	resume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_scope_doomed/resume", map[string]any{})
 	require.Equal(t, http.StatusConflict, resume.Code, resume.Body.String())
