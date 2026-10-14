@@ -290,7 +290,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			}()
 		}
 		if directoryRun != nil {
-			if err := directoryRun.launched(command.ResourceCgroupDir); err != nil {
+			if err := directoryRun.launched(command.ResourceCgroupDir, command.ResourceLimits); err != nil {
 				return hostFailure("sandbox_init", err.Error())
 			}
 		}

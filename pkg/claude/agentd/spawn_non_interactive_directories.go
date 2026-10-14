@@ -23,11 +23,12 @@ import (
 // prove that descendants have stopped using its cache. Reuse the one-shot
 // cgroup reap path; without that proof keep the tree until a different boot.
 type oneShotDirectoryRun struct {
-	Key     string `json:"key"`
-	Base    string `json:"base"`
-	Boot    string `json:"boot"`
-	Started bool   `json:"started"`
-	Cgroup  string `json:"cgroup,omitempty"`
+	Key     string                       `json:"key"`
+	Base    string                       `json:"base"`
+	Boot    string                       `json:"boot"`
+	Started bool                         `json:"started"`
+	Cgroup  string                       `json:"cgroup,omitempty"`
+	Limits  sandboxpolicy.ResourceLimits `json:"resource_limits,omitempty"`
 }
 
 var activeOneShotDirectories sync.Map
@@ -92,8 +93,11 @@ func (run *oneShotDirectoryRun) save() error {
 	return os.Rename(file.Name(), filepath.Join(root, run.Key+".json"))
 }
 
-func (run *oneShotDirectoryRun) launched(cgroup string) error {
+func (run *oneShotDirectoryRun) launched(cgroup string, limits ...sandboxpolicy.ResourceLimits) error {
 	run.Started, run.Cgroup = true, cgroup
+	if len(limits) > 0 {
+		run.Limits = limits[0]
+	}
 	return run.save()
 }
 
@@ -167,8 +171,8 @@ func cleanupRetainedOneShotDirectories() error {
 		// Reclaim an abandoned delegated boundary through the same validation and
 		// reaping path as the helper. No group/process PID guess authorizes cleanup.
 		if run.Started && run.Cgroup != "" && runtime.GOOS == "linux" {
-			if session.ValidatePreparedResourceCgroup(run.Cgroup, sandboxpolicy.ResourceLimits{}) == nil {
-				_ = session.RemoveResourceCgroup(run.Cgroup)
+			if validateNonInteractivePreparedResourceCgroup(run.Cgroup, run.Limits) == nil {
+				_ = removeNonInteractiveResourceCgroup(run.Cgroup)
 			}
 		}
 		if _, err := run.reap(); err != nil {

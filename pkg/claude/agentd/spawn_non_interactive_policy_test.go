@@ -234,3 +234,34 @@ func TestOneShotPolicyRefusalNamesFieldsWithoutValues(t *testing.T) {
 	require.NotContains(t, message, "secret-script-content")
 	require.NotContains(t, message, "profile\"")
 }
+
+func TestOneShotDirectorySweepReapsAbandonedAuthoredCgroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cgroups are Linux-only")
+	}
+	isolateOneShotDirectories(t)
+	run, err := newOneShotDirectoryRun()
+	require.NoError(t, err)
+	_, _, err = materializeAgentDirectories(*oneShotPolicy(t), run.Key)
+	require.NoError(t, err)
+	cgroup := testutil.CanonicalTempDir(t)
+	limits := sandboxpolicy.ResourceLimits{Memory: "16MiB"}
+	require.NoError(t, run.launched(cgroup, limits))
+	activeOneShotDirectories.Delete(run.Key) // model an abandoned helper/daemon
+	previousValidate, previousRemove := validateNonInteractivePreparedResourceCgroup, removeNonInteractiveResourceCgroup
+	t.Cleanup(func() {
+		validateNonInteractivePreparedResourceCgroup = previousValidate
+		removeNonInteractiveResourceCgroup = previousRemove
+	})
+	var validated bool
+	validateNonInteractivePreparedResourceCgroup = func(dir string, got sandboxpolicy.ResourceLimits) error {
+		require.Equal(t, cgroup, dir)
+		require.Equal(t, limits, got)
+		validated = true
+		return nil
+	}
+	removeNonInteractiveResourceCgroup = func(dir string) error { require.True(t, validated); return os.Remove(dir) }
+	require.NoError(t, cleanupRetainedOneShotDirectories())
+	_, err = os.Stat(filepath.Join(run.Base, run.Key))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
