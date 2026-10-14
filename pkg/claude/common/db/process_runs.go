@@ -59,6 +59,9 @@ var (
 	ErrProcessRunInvalid            = errors.New("invalid process run data")
 	ErrProcessRunCorrupt            = errors.New("process run store is inconsistent")
 	processRuntimeIdentifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+	// processRuntimeNodeIDPattern also admits subprocess-namespaced node ids:
+	// identifier segments joined by "/" ("review/lint").
+	processRuntimeNodeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$`)
 )
 
 // ProcessRunVersionConflictError reports both sides of a failed checkpoint
@@ -270,6 +273,12 @@ func validProcessRuntimeIdentifier(value string, maximum int, allowEmpty bool) b
 	return len(value) <= maximum && processRuntimeIdentifierPattern.MatchString(value)
 }
 
+// validProcessRuntimeNodeID admits an empty id (run-level evidence) or an
+// authored, derived, or subprocess-namespaced node id.
+func validProcessRuntimeNodeID(value string) bool {
+	return value == "" || len(value) <= MaxProcessRunNodeIDBytes && processRuntimeNodeIDPattern.MatchString(value)
+}
+
 func validProcessRuntimeText(value string, maximum int, allowEmpty bool) bool {
 	if value == "" {
 		return allowEmpty
@@ -335,7 +344,7 @@ func validateProcessRunEvents(events []ProcessRunEvent, allowAutoSequence bool) 
 		if !validProcessRunEventTime(event.OccurredAt) {
 			return fmt.Errorf("%w: event %d occurrence time must be representable as RFC3339", ErrProcessRunInvalid, index)
 		}
-		if !validProcessRuntimeIdentifier(event.NodeID, MaxProcessRunNodeIDBytes, true) {
+		if !validProcessRuntimeNodeID(event.NodeID) {
 			return fmt.Errorf("%w: invalid event node id", ErrProcessRunInvalid)
 		}
 		if !validProcessRuntimeIdentifier(event.Kind, MaxProcessRunEventKind, false) {
@@ -773,7 +782,7 @@ func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {
 	event.RunID, event.Sequence, event.NodeID = runID.String, sequence.Int64, nodeID.String
 	event.Kind, event.Actor = kind.String, actor.String
 	if !validProcessRuntimeIdentifier(event.RunID, MaxProcessRunIDBytes, false) || event.Sequence <= 0 ||
-		!validProcessRuntimeIdentifier(event.NodeID, MaxProcessRunNodeIDBytes, true) ||
+		!validProcessRuntimeNodeID(event.NodeID) ||
 		!validProcessRuntimeIdentifier(event.Kind, MaxProcessRunEventKind, false) ||
 		!validProcessRuntimeText(event.Actor, MaxProcessRunEventActor, true) {
 		return ProcessRunEvent{}, ErrProcessRunCorrupt
