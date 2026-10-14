@@ -3,11 +3,13 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -84,6 +86,16 @@ func TestDashboardScribeChat_MergesOperatorMailAndStopReplies(t *testing.T) {
 	assert.Empty(t, stored, "a non-scribe's Stop reply is never stored")
 	code, _ = chat("not-an-agent")
 	assert.Equal(t, http.StatusBadRequest, code)
+
+	// Behind features.processes like every process surface: with the flag off
+	// the read is absent and the Stop hook records nothing.
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
+	code, _ = chat(scribeAgent)
+	assert.Equal(t, http.StatusNotFound, code)
+	stop(scribe.ConvID, scribeLabel, "recorded while disabled")
+	stored, err = db.ListScribeTurnReplies(scribeAgent, 0)
+	require.NoError(t, err)
+	assert.Len(t, stored, 1, "no reply is recorded while processes are disabled")
 }
 
 func httptestGet(t *testing.T, path string) *http.Request {

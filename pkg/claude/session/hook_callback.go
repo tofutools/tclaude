@@ -1764,11 +1764,14 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 				"error", err, "conv_id", state.ConvID, "module", "hooks")
 		}
 		// The process editor's scribe chat reads the scribe's turn replies
-		// back from here. The store decides scribe membership itself; for
-		// every other conv this is a no-op lookup.
-		if _, err := db.RecordScribeTurnReply(state.ConvID, input.LastAssistantMessage, time.Now()); err != nil {
-			slog.Warn("failed to record scribe turn reply",
-				"error", err, "conv_id", state.ConvID, "module", "hooks")
+		// back from here (a features.processes surface). The store decides
+		// scribe membership itself; for every other conv this is a no-op
+		// lookup.
+		if cfg, err := config.Load(); err == nil && cfg.ProcessesEnabled() {
+			if _, err := db.RecordScribeTurnReply(state.ConvID, input.LastAssistantMessage, time.Now()); err != nil {
+				slog.Warn("failed to record scribe turn reply",
+					"error", err, "conv_id", state.ConvID, "module", "hooks")
+			}
 		}
 	}
 
