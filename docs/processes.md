@@ -70,6 +70,7 @@ tclaude process run <template-id> --param key=value \
 tclaude process runs ls
 tclaude process show <run-id>
 tclaude process events <run-id>
+tclaude process pause <run-id>
 tclaude process resume <run-id>
 tclaude process decide <run-id> --node <node> --verdict <verdict> [--attempt N]
 tclaude process reconcile <run-id>
@@ -330,6 +331,20 @@ In the dashboard the same operation is a drag: in Groups › Processes, drag
 an agent from a run's performer dock onto its agent node (or use the node
 inspector's reassign picker); in Terminals, the run popover's
 "reassign node" opens a picker of the group's members.
+
+**Pausing.** `tclaude process pause <run-id>` (HTTP
+`POST /v1/process/runs/{id}/pause`) holds a run: it dispatches no new agent
+turns or program commands, while attempts already in flight finish and their
+outcomes and reports are recorded. Decisions are still accepted; what they
+make ready waits too. A paused run's `paused` field says who paused it and
+when, its `action` reads `paused` unless something still needs a human, an
+undelivered agent attempt waits with the reason "the run is paused", and
+reassigning (which would start a new turn) is refused until it is resumed.
+`tclaude process resume <run-id>` (`POST /v1/process/runs/{id}/resume`)
+releases the pause and plans what waited. Both need the same permission as
+`decide`, are idempotent, and record `run_paused` / `run_resumed` evidence; a
+finished run cannot be paused. The dashboard's Pause / Resume control sits in
+the Terminals run popover and stepper and in the Groups single-run focus.
 
 `show --json` lists every attempt's performer under `performers` (agent,
 display name, live status, how it was chosen, and what it reported); outstanding
