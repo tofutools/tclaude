@@ -172,7 +172,11 @@ function SubprocessBlock({ node, nodeId, controller, commit, readOnly, edges }) 
         onClick=${() => controller.options.onOpenTemplate(sub.templateRef)}>open template ↗</button>`}`
     : html`<div class="pni-subprocess-inline"><span>Inline body · ${inlineNodes.length} node${inlineNodes.length === 1 ? '' : 's'}</span>
         <button type="button" class="process-action primary" data-subprocess-enter disabled=${!controller.model.canEnterScope(nodeId)}
-          title="Open the nested graph (double-click the node does the same)" onClick=${() => controller.enterSubprocess(nodeId)}>enter ▸</button></div>`}
+          title="Open the nested graph (double-click the node does the same)" onClick=${() => controller.enterSubprocess(nodeId)}>enter ▸</button>
+        <button type="button" class="process-action" data-subprocess-expand disabled=${!controller.model.canExpand?.(nodeId)}
+          title="Draw the body on this canvas as a framed group and edit it in context" onClick=${() => controller.expandSubprocess(nodeId)}>⊞ expand</button>
+        <button type="button" class="process-action" data-subprocess-unwrap disabled=${readOnly || !controller.model.canExpand?.(nodeId)}
+          title="Inline the body into this graph; the ▣ node's connectors attach to its start and ends" onClick=${() => controller.unwrapSubprocess(nodeId)}>⇲ unwrap</button></div>`}
     <div class="pni-ports">
       <span class="process-node-field-label">in-ports · bind body params</span>
       ${params.length ? params.map((param) => html`<${NodeField} key=${param} fieldKey=${`subprocess.inputs.${param}`} label=${`${param} ←`}

@@ -48,6 +48,7 @@ export class ProcessGraphAdapter {
       onNodeClick: emit('nodeClick'),
       onNodeDblClick: emit('nodeDoubleClick'),
       onEdgeClick: emit('edgeClick'),
+      onGroupAction: emit('groupAction'),
       onCanvasClick: emit('canvasClick'),
       onViewportChange: emit('viewportChange'),
       onMarqueeSelect: emit('marqueeSelection'),

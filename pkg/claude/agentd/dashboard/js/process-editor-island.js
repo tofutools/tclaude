@@ -248,6 +248,8 @@ function Palette({ controller, hidden, snippets, view }) {
     ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
     <div class="process-palette-section">Primitives</div>
     ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
+    ${!!view?.templateRefs?.length && html`<div class="process-palette-section" title="Drop onto the canvas, or onto a connector to splice it in">Templates</div>
+    ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
     <div class="process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
     <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><button
@@ -285,7 +287,7 @@ function Inspector({ controller, view }) {
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
     const edges = selected.length - nodes;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…</button><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
   }
   if (sel?.type === 'node' && view.selectedNode) {
     // The node itself is edited in the docked node inspector beside the canvas.
