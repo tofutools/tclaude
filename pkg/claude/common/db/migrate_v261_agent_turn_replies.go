@@ -2,12 +2,10 @@ package db
 
 import "database/sql"
 
-// migrateV258toV259 and migrateV259toV260 are placeholders that keep the chain
-// contiguous while the processes-in-context branch's sibling migrations
-// (process run scope, process agent dispatches) are still in review. They are
-// replaced by the real v259/v260 steps when those land.
-func migrateV258toV259(d *sql.DB) error { return placeholderSchemaStep(d, 259) }
-
+// migrateV259toV260 is a placeholder that keeps the chain contiguous while
+// the processes-in-context branch's sibling migration (process run scope,
+// #3018) is still in review. It is replaced by the real v260 step when that
+// lands.
 func migrateV259toV260(d *sql.DB) error { return placeholderSchemaStep(d, 260) }
 
 func placeholderSchemaStep(d *sql.DB, version int) error {

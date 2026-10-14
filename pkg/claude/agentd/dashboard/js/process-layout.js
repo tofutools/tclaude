@@ -34,20 +34,24 @@ function finite(value, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function nodeSize(node) {
+function nodeSize(node, sizeOf) {
+  // A caller-supplied sizer lets read-only renderers (the process UI kit's
+  // mini-graph) reuse layering and ordering at their own node scale.
+  const custom = typeof sizeOf === 'function' ? sizeOf(node) : null;
+  if (custom && Number.isFinite(custom.width) && Number.isFinite(custom.height)) return { width: custom.width, height: custom.height };
   if (node.compound?.collapsed) return { width: 190, height: 88 };
   const [width, height] = TYPE_SIZES[node.type] || TYPE_SIZES.task;
   return { width, height };
 }
 
-function stableNodes(graph) {
+function stableNodes(graph, sizeOf) {
   const seen = new Set();
   return (graph.nodes || []).map((raw, inputIndex) => {
     const id = String(raw.id || '');
     if (!id) throw new Error(`process layout: node at index ${inputIndex} has no id`);
     if (seen.has(id)) throw new Error(`process layout: duplicate node id ${id}`);
     seen.add(id);
-    return { ...raw, ...nodeSize(raw), id };
+    return { ...raw, ...nodeSize(raw, sizeOf), id };
   }).sort((a, b) => cmpText(a.id, b.id));
 }
 
@@ -761,7 +765,7 @@ export function rerouteProcessLayout(layout, positions, overrides = {}) {
 // this module later without touching editor/viewer callers.
 export function layoutProcessGraph(graph, overrides = {}) {
   const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
-  const nodes = stableNodes(graph || {});
+  const nodes = stableNodes(graph || {}, options.nodeSize);
   const byID = new Map(nodes.map((n) => [n.id, n]));
   const edges = stableEdges(graph || {}, byID);
   const feedbackArc = typeof options.feedbackArc === 'function' ? options.feedbackArc : defaultFeedbackArc;

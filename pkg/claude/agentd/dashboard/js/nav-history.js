@@ -91,12 +91,29 @@ function usageSubtabAvailable(subtab) {
 // back to the default tab.
 function staleFallback(loc) {
   if (loc.tab === 'usage' && tabAvailable('usage')) return normalizeLocation({ tab: 'usage' });
+  return defaultGroupsLocation();
+}
+
+// defaultGroupsLocation is bare Groups in its remembered lens: a fallback or
+// fresh load that lands on Groups says /groups/processes when that is what
+// shows, so neither the URL nor a later Back disagrees with the screen.
+function defaultGroupsLocation() {
+  if (featureState('groups')?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
+    return normalizeLocation({ tab: 'groups', subtab: 'processes' });
+  }
   return normalizeLocation({ tab: DEFAULT_TAB });
+}
+
+// The Groups Processes focus (/groups/processes) exists only while the
+// processes feature is on; processes.js mirrors that onto body.hide-processes.
+function groupsProcessesFocusAvailable() {
+  return !document.body.classList.contains('hide-processes');
 }
 
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
+    && !(loc.tab === 'groups' && loc.subtab === 'processes' && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
@@ -137,6 +154,8 @@ function activeLocationFromDOM() {
     if (island?.subview?.value === 'routes') {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
+    } else if (island?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
+      loc.subtab = 'processes';
     }
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
@@ -212,11 +231,11 @@ function requestGroupsLocation(loc) {
 // classes) reuses every lazy-loader hung on that button — the same reasoning as
 // cycleTab() in refresh.js — so a restored /costs or /activity/logs actually loads its
 // data. A non-routable or unknown tab is left as-is.
-function activate(loc) {
+function activate(loc, { traversal = false } = {}) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
-  if (!peerViewTabUsable(loc.tab)) { correct({ tab: 'groups' }); loc = { tab: 'groups' }; }
+  if (!peerViewTabUsable(loc.tab)) { loc = defaultGroupsLocation(); correct(loc); }
   // Activity is usable on a peer view for its audit log only; a Logs or
   // Performance location there lands on Audit instead.
   if (loc.tab === 'activity' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
@@ -251,8 +270,12 @@ function activate(loc) {
       // example /terminals with no panes), which would look like a user
       // navigation to observers. A bare Groups pop from Route map still has
       // to return the island to Members; explicit route locations always do.
+      // The same holds for a Back/Forward onto bare Groups from the
+      // Processes focus — but only a traversal: a boot or stale fallback must
+      // not turn the remembered lens into Agents.
       const groups = featureState('groups');
-      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes') {
+      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
+        || (traversal && groups?.focus?.value === 'processes' && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
@@ -404,7 +427,7 @@ function onPopstate(e) {
     && !pendingMapLoad(current(stack))) {
     stack = replaceCurrent(stack, staleFallback(current(stack)));
   }
-  activate(current(stack));
+  activate(current(stack), { traversal: true });
   // Re-stamp the current entry with the fresh full stack (heals stale/partial
   // state after a reload) AND — because theme is global, not per-location —
   // rewrite the URL to carry the LIVE theme so navigating history never leaves
@@ -445,6 +468,9 @@ export function initNavHistory() {
       const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
       if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
     }
+    // A fresh bare Groups load shows the remembered focus, so the URL says
+    // so too: otherwise a later Back onto this entry would restore Agents.
+    if (loc.tab === DEFAULT_TAB && !loc.subtab && !loc.selection) loc = defaultGroupsLocation();
     stack = initialState(loc);
   }
 

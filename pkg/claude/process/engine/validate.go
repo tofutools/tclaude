@@ -58,7 +58,8 @@ const (
 type definitionNode struct {
 	id      string
 	kind    definitionNodeKind
-	program ProgramCommand // task nodes only
+	program ProgramCommand // program task nodes only
+	agent   *AgentCommand  // agent task nodes only
 	// maxAttempts is the authored retry budget of a task node, first attempt
 	// included, and 1 for a task with no authored retry. It is the ONLY thing
 	// preparation carries about retry: the reducer needs a ceiling to compare
@@ -249,6 +250,14 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			// absent policy to the fail-fast single attempt.
 			prepared.maxAttempts = model.RetryBudget(node.Retry)
 			prepared.retryAuthored = node.Retry != nil
+			if node.Performer.Kind == model.PerformerAgent {
+				agent, err := bindAgent(id, *node.Performer, node.Retry, params)
+				if err != nil {
+					return err
+				}
+				prepared.agent = agent
+				break
+			}
 			program, err := bindProgram(id, *node.Performer, params)
 			if err != nil {
 				return err
@@ -610,6 +619,27 @@ func bindProgram(nodeID string, performer model.Performer, params map[string]str
 	}, nil
 }
 
+// bindAgent binds one agent performer slot to its run parameters. A prompt that
+// names a parameter the run does not supply fails preparation, exactly as a
+// program's run does, so an agent is never handed an instruction with a hole.
+func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolicy, params map[string]string) (*AgentCommand, error) {
+	for _, reference := range model.ParamReferences(performer.Prompt) {
+		if _, ok := params[reference]; !ok {
+			return nil, fmt.Errorf("%w: node %q prompt parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
+		}
+	}
+	bound := model.InterpolatePerformer(performer, params)
+	if strings.TrimSpace(bound.Prompt) == "" {
+		return nil, fmt.Errorf("%w: node %q prompt is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+	}
+	return &AgentCommand{
+		Profile: bound.Profile, Prompt: bound.Prompt, Assignee: bound.Assignee,
+		Model: bound.Model, Effort: bound.Effort,
+		Spawn:     bound.Spawn == model.SpawnAllowed,
+		RetryMode: model.RetryMode(retry),
+	}, nil
+}
+
 // DecodeCheckpoint is the persistence/load boundary: strict JSON shape
 // decoding is followed by semantic validation against the prepared definition.
 // Pure in-memory engine cycles operate on the typed Checkpoint instead.
@@ -867,12 +897,12 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 	seen := make(map[string]struct{}, len(checkpoint.Commands))
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
-		if command.Kind != CommandProgram {
-			return invalid("command kind must be %q", CommandProgram)
-		}
 		node, ok := definitionNodeByID(definition, command.NodeID)
 		if !ok || node.kind != definitionTask {
-			return invalid("command node %q is not a program task", command.NodeID)
+			return invalid("command node %q is not a prepared task", command.NodeID)
+		}
+		if command.Kind != node.commandKind() {
+			return invalid("command kind for node %q must be %q", command.NodeID, node.commandKind())
 		}
 		if _, dup := seen[command.NodeID]; dup {
 			return invalid("duplicate command for node %q", command.NodeID)
@@ -882,7 +912,7 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 		// durable outbox entry that names any attempt other than its node's
 		// current one fails closed here — including one whose id and Attempt
 		// field agree with each other but not with the run's own state.
-		expected := programCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
+		expected := taskCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
 		if !commandsEqual(command, expected) {
 			return invalid("command does not match the deterministic bound request for node %q", command.NodeID)
 		}
@@ -1223,6 +1253,9 @@ func terminalStatus(result string) RunStatus {
 }
 
 func commandsEqual(left, right Command) bool {
+	if (left.Agent == nil) != (right.Agent == nil) || (left.Agent != nil && *left.Agent != *right.Agent) {
+		return false
+	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
 		left.Attempt == right.Attempt &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&
