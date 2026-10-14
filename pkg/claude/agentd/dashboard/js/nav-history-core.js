@@ -47,6 +47,7 @@ export const KNOWN_TABS = new Set([
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
 // sub-navigation. These tabs have one today:
+//   - Groups: Members (bare), the Route map, and the Processes focus.
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor. Processes renders as a subtab
@@ -59,7 +60,7 @@ export const KNOWN_TABS = new Set([
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
-  groups: new Set(['members', 'routes']),
+  groups: new Set(['members', 'routes', 'processes']),
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),

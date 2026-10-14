@@ -127,6 +127,7 @@ button.pk-run-badge:focus-visible, button.pk-run-icon:focus-visible, button.pk-g
 .pk-run-badge.pk-state-waiting { border-color: color-mix(in srgb, var(--pk-waiting) 55%, transparent); background: color-mix(in srgb, var(--pk-waiting) 13%, transparent); color: var(--pk-waiting-text); }
 .pk-run-badge.pk-state-failed { border-color: color-mix(in srgb, var(--pk-failed) 55%, transparent); background: color-mix(in srgb, var(--pk-failed) 10%, transparent); color: var(--pk-failed-text); }
 .pk-run-badge.pk-state-planned, .pk-run-badge.pk-state-done { border-color: var(--pk-line); background: transparent; color: var(--pk-muted); }
+.pk-run-badge.pk-state-planned { border-style: dashed; }
 .pk-run-badge.pk-scope-agent .pk-run-glyph { color: var(--pk-agent-text); }
 
 /* Overlay run icon with a state ring */
@@ -193,6 +194,7 @@ button.pk-gnode { cursor: pointer; }
 .pk-gnode-sub { font-weight: 400; font-size: 10px; color: var(--pk-muted); overflow: hidden; text-overflow: ellipsis; }
 .pk-gnode .pk-avatars { position: absolute; right: -8px; top: -9px; }
 .pk-gnode.here { outline: 2px solid var(--pk-text); outline-offset: 3px; }
+.pk-gnode.selected { outline: 2px solid var(--pk-running); outline-offset: 3px; box-shadow: 0 0 12px color-mix(in srgb, var(--pk-running) 45%, transparent); }
 .pk-gnode.pk-kind-subprocess {
   box-shadow: 3px 3px 0 -1px var(--pk-node-bg), 3px 3px 0 0 var(--pk-node-border), 6px 6px 0 -1px var(--pk-node-bg), 6px 6px 0 0 var(--pk-line);
 }

@@ -974,6 +974,8 @@ test('native member rows preserve the legacy field, capability and selector matr
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(fullSnapshot);
+  // Processes are off (the shell's boot class), so the gated Process column is absent.
+  harness.document.body.classList.add('hide-processes');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
   const table = host.querySelector('details[data-group-key="alpha"] table');
@@ -1546,4 +1548,37 @@ test('missing extension status has a diagnostic badge only while online', async 
   const offline = await harness.mount(harness.html`<${StatePill} state=${{ status: 'exited', status_warning: warning }} online=${false} conv="c1" />`, host);
   assert.doesNotMatch(host.textContent, /status missing/);
   await offline.unmount();
+});
+
+test('the column menu recomputes when processes turn on or off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  // The Process column's availability reads body.hide-processes, which the
+  // column store sees only when the menu's options are rebuilt.
+  let available = false;
+  const state = createGroupsState({
+    prefs: memoryPrefs(), resetOffsets: () => {}, reorder: (groups) => groups,
+    columns: {
+      list: () => (available ? [{ key: 'role', label: 'Role' }, { key: 'process', label: 'Process' }] : [{ key: 'role', label: 'Role' }]),
+      hidden: () => false, setHidden: () => {}, deviationCount: () => 0,
+    },
+  });
+  state.initialize();
+  state.publish(snapshot([{ name: 'alpha', members: [] }]));
+  const source = { context: harness.signals.signal(null), status: harness.signals.signal('idle'), error: harness.signals.signal(''), refresh: () => Promise.resolve() };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  t.after(() => host.remove());
+  await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${{}} processSource=${source} />`, host);
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
+
+  available = true;
+  await harness.act(() => state.publish({ ...snapshot([{ name: 'alpha', members: [] }]), processes_enabled: true }));
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role', 'process']);
+
+  available = false;
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 });

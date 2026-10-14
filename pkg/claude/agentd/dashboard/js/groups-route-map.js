@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 
 const html = htm.bind(h);
 
@@ -175,9 +176,10 @@ export function GroupsRouteMap({ state }) {
   };
   const changeSubview = (next) => {
     state.setSubview(next);
+    // Members shows whichever Agents | Processes lens is remembered.
     const location = next === 'routes'
       ? { tab: 'groups', subtab: 'routes' }
-      : { tab: 'groups' };
+      : groupsFocusLocation(effectiveGroupsFocus(state));
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
   };
   const selectGroup = (event) => {
