@@ -56,7 +56,7 @@ test('the focus switch is hidden while features.processes is off', async (t) => 
   const { root, state } = await setup(t, { enabled: false, prefs: { 'tclaude.dash.groups.focus': 'processes' } });
   assert.equal(root.querySelector('.groups-focus-switch'), null);
   assert.equal(state.focus.value, 'processes', 'the remembered focus survives');
-  assert.equal(root.querySelector('[data-groups-processes-placeholder]'), null, 'but Agents is what shows');
+  assert.equal(root.querySelector('[data-groups-processes]'), null, 'but Agents is what shows');
   assert.ok(root.querySelector('details[data-group-key="webshop"]'));
 });
 
@@ -74,7 +74,7 @@ test('switching to Processes swaps the list for the placeholder, persists and pu
   assert.equal(state.focus.value, 'processes');
   assert.equal(store.values.get('tclaude.dash.groups.focus'), 'processes');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.ok(root.querySelector('[data-groups-processes-placeholder]'));
+  assert.ok(root.querySelector('[data-groups-processes]'));
   assert.equal(root.querySelector('details[data-group-key="webshop"]'), null);
   assert.ok(harness.document.body.classList.contains('groups-focus-processes'));
 
@@ -94,7 +94,7 @@ test('history restores set the focus; Route map restores leave it alone', async 
   ));
   await restore({ tab: 'groups', subtab: 'processes' });
   assert.equal(state.focus.value, 'processes');
-  assert.ok(root.querySelector('[data-groups-processes-placeholder]'));
+  assert.ok(root.querySelector('[data-groups-processes]'));
   await restore({ tab: 'groups', subtab: 'routes' });
   assert.equal(state.focus.value, 'processes');
   await restore({ tab: 'terminals' });

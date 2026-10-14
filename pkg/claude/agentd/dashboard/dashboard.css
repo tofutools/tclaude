@@ -19870,3 +19870,50 @@ body.wizard .groups-focus-option.active .groups-focus-count { background: #a97bd
 body.wizard .groups-processes-placeholder { border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; }
 body.wizard .groups-processes-placeholder strong { color: #f3e6c0; }
 body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
+
+/* Groups › Processes focus: run graph cards (js/groups-processes.js, mock G3). */
+.gp-focus { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 16px; }
+.gp-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.gp-filter { display: inline-flex; border: 1px solid #30363d; border-radius: 7px; overflow: hidden; background: #0f141a; }
+.gp-filter button { border: 0; border-radius: 0; background: transparent; color: #8b949e; font: inherit; font-size: 12px; padding: 4px 12px; cursor: pointer; }
+.gp-filter button + button { border-left: 1px solid #30363d; }
+.gp-filter button.active { background: #1f2a37; color: #fff; box-shadow: inset 0 -2px 0 #58a6ff; }
+.gp-filter button:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.gp-stale { color: #e3b341; font-size: 11px; }
+.gp-group { padding: 4px 0; }
+.gp-group-head { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.gp-group-name { font-weight: 700; font-size: 15px; color: #e6edf3; }
+.gp-avatar-strip { display: inline-flex; align-items: center; gap: 8px; }
+.gp-member.idle { opacity: .45; }
+.gp-member.busy { box-shadow: 0 0 0 2px #58a6ff; }
+.gp-strip-text { color: #8b949e; font-size: 11px; }
+.gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
+.gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
+.gp-card-name { font-weight: 700; font-size: 13.5px; color: #e6edf3; }
+.gp-card-meta { color: #8b949e; font-size: 11px; }
+.gp-card-meta code { color: #c9d1d9; }
+.gp-spacer { flex: 1; }
+.gp-card-body { padding: 12px 14px; overflow-x: auto; }
+.gp-card-note { color: #8b949e; font-size: 11px; padding: 0 14px 10px; }
+.gp-planned-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px 18px; }
+.gp-planned-source { color: #6e7681; font-size: 10px; }
+.gp-empty { color: #8b949e; font-size: 12px; margin: 0 0 8px 18px; }
+.gp-error { color: #ff7b72; }
+body.wizard .gp-filter { border-color: rgba(122, 93, 176, 0.5); background: #140f28; }
+body.wizard .gp-filter button { color: #b39ddb; }
+body.wizard .gp-filter button + button { border-left-color: rgba(122, 93, 176, 0.5); }
+body.wizard .gp-filter button.active { background: #241b3d; color: #f3e6c0; box-shadow: inset 0 -2px 0 #d4af37; }
+body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
+body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
+body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
+body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
+.gp-start, .gp-start-form button, .gp-start-form select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
+.gp-start:hover, .gp-start-form button:hover:not(:disabled) { border-color: #58a6ff; }
+.gp-start-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.gp-start-form button:disabled { opacity: .55; cursor: default; }
+.gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
+.gp-start-note { color: #8b949e; font-size: 12px; }
+.gp-start-error { color: #ff7b72; font-size: 12px; flex-basis: 100%; }
+body.wizard .gp-start-form { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
+body.wizard .gp-start, body.wizard .gp-start-form button, body.wizard .gp-start-form select { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
+body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }

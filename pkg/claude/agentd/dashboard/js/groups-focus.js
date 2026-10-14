@@ -5,8 +5,8 @@
 // the group filter, remembered as a dashboard pref, deep-linkable as
 // /groups/processes, and only offered while `features.processes` is on.
 //
-// The Processes lens renders a placeholder until the run-graph cards (G3)
-// land.
+// The Processes lens itself (the G3 run cards) lives in groups-processes.js;
+// GroupsProcessesPlaceholder stands in while this agentd serves no run context.
 
 import { h } from 'preact';
 import { useEffect } from 'preact/hooks';

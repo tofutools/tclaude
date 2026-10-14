@@ -803,6 +803,42 @@ func baseStates() []dashsnap.State {
 			SettleMS: 200,
 		},
 		{
+			Key:      "groups-processes-running",
+			Title:    "Groups — Processes focus run cards",
+			Caption:  "Mock G3: each group renders its live runs as graph cards (needs-you first, scope chip, duration, template/owner), performer avatars on nodes, a busy/idle avatar strip on the group header, and an empty group saying so. Run context is a fixture (jstest/process-context-fixture.json) until the read model lands.",
+			InitJS:   processContextFixtureInitJS(),
+			JS:       showGroups + groupsProcessesJS(""),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-blocked-start",
+			Title:   "Groups — blocked run + scoped start",
+			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var migrate = document.querySelector('[data-process-run-card="run_migrate"]');
+  if (!migrate || !migrate.querySelector('[data-process-node="apply"].pk-state-waiting')) throw new Error('blocked run card missing its blocked node');
+  document.querySelector('[data-process-start="frontend-squad"]').click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('.gp-start-form select, .gp-start-form .gp-start-note:not(:empty)') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('.gp-start-form')) throw new Error('start form did not open');`),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-all",
+			Title:   "Groups — Processes focus, All filter",
+			Caption: "Mock G3: the All filter adds finished runs and planned (cron/trigger) entries to each group's live runs.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  groups.processFilter.value = 'all';
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('[data-process-run-card="run_hotfix"]')) throw new Error('All filter lacks the finished run');
+  if (!document.querySelector('[data-process-planned="cron_nightly"]')) throw new Error('All filter lacks the planned entry');`),
+			SettleMS: 300,
+		},
+		{
 			Key:     "shell-notifications",
 			Title:   "Preact shell — notification popover",
 			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
@@ -5095,4 +5131,65 @@ input.value = %q;
 input.dispatchEvent(new Event('input', { bubbles: true }));
 if (!document.querySelector('#cfg-layout').hasAttribute('data-cfg-searching')) throw new Error('config search mode not entered');
 `, query)
+}
+
+// processContextFixtureInitJS stubs GET /v1/process/context with the G3 jstest
+// fixture until the read model (tcl-f2cpfb) is on this branch. Fixture times
+// shift to the real clock, and performer/owner/scope refs rebind by member
+// title to the seeded agents' ids, so the avatar strip's busy ring is real.
+func processContextFixtureInitJS() string {
+	raw, err := os.ReadFile(filepath.Join("jstest", "process-context-fixture.json"))
+	if err != nil {
+		panic(fmt.Sprintf("read process context fixture: %v", err))
+	}
+	return fmt.Sprintf(`(function(){
+  var fixture = %s;
+  var realFetch = window.fetch.bind(window);
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf('/v1/process/context') === -1) return realFetch(input, init);
+    var data = JSON.parse(JSON.stringify(fixture));
+    var shift = Date.now() - Date.parse(data._now);
+    var dash = await import('/static/js/dashboard.js');
+    var idByTitle = {};
+    ((dash.lastSnapshot && dash.lastSnapshot.groups) || []).forEach(function(g){
+      (g.members || []).forEach(function(m){ if (m.title && m.agent_id) idByTitle[m.title] = m.agent_id; });
+    });
+    var titleByRef = {};
+    Object.values(data.runs).forEach(function(run){
+      run.nodes.forEach(function(n){ if (n.performer && n.performer.name) titleByRef[n.performer.ref] = n.performer.name; });
+    });
+    titleByRef.agt_fe_lead = 'fe-lead';
+    var rebind = function(ref){ return idByTitle[titleByRef[ref]] || ref; };
+    Object.values(data.runs).forEach(function(run){
+      ['startedAt', 'updatedAt'].forEach(function(k){ if (run[k]) run[k] = new Date(Date.parse(run[k]) + shift).toISOString(); });
+      if (run.scope.owner) run.scope.owner = rebind(run.scope.owner);
+      if (run.scope.agentId) run.scope.agentId = rebind(run.scope.agentId);
+      run.nodes.forEach(function(n){ if (n.performer && n.performer.ref) { n.performer.ref = rebind(n.performer.ref); delete n.performer.name; } });
+    });
+    data.groups.forEach(function(g){ (g.planned || []).forEach(function(p){ p.nextAt = new Date(Date.parse(p.nextAt) + shift).toISOString(); }); });
+    return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+})();`, raw)
+}
+
+// groupsProcessesJS shows the Groups Processes focus through the island's
+// signals (no pref write leaks into later states), waits for the fixture's
+// cards, then runs extraJS with `groups` in scope.
+func groupsProcessesJS(extraJS string) string {
+	return `return (async function(){
+  var registry = await import('/static/js/feature-state-registry.js');
+  var groups = registry.featureState('groups');
+  if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  groups.focus.value = 'processes';
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('[data-process-run-card="run_release"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-process-run-card="run_release"]')) throw new Error('fixture run cards did not render');
+  var empty = document.querySelector('[data-process-group="infra-crew"] .gp-empty');
+  if (!empty) throw new Error('the empty group does not say so');
+  if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
+` + extraJS + `
+})();`
 }

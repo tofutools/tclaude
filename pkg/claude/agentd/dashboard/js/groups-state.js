@@ -17,6 +17,9 @@ import {
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
 import { GROUPS_FOCUS_PREF, normalizeGroupsFocus } from './groups-focus.js';
+import { normalizeRunFilter } from './process-context.js';
+
+const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.filter';
 
 const FILTER_KEY = 'tclaude.dash.filter.groups';
 
@@ -180,6 +183,8 @@ export function createGroupsState({
   const routeSelection = signal('');
   // Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
   const focus = signal('agents');
+  // Running | Planned | Done | All over the Processes lens's run cards.
+  const processFilter = signal('running');
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
@@ -214,6 +219,7 @@ export function createGroupsState({
     batch(() => {
       query.value = prefs.getItem(FILTER_KEY) || '';
       focus.value = normalizeGroupsFocus(prefs.getItem(GROUPS_FOCUS_PREF));
+      processFilter.value = normalizeRunFilter(prefs.getItem(PROCESS_FILTER_PREF));
       visibility.value = restored;
       renderRevision.value++;
     });
@@ -262,6 +268,13 @@ export function createGroupsState({
     if (focus.value === next) return;
     focus.value = next;
     prefs.setItem(GROUPS_FOCUS_PREF, next);
+  }
+
+  function setProcessFilter(value) {
+    const next = normalizeRunFilter(value);
+    if (processFilter.value === next) return;
+    processFilter.value = next;
+    prefs.setItem(PROCESS_FILTER_PREF, next);
   }
 
   function openMemberEditor(member, group, focus = 'title') {
@@ -361,9 +374,9 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, focus, renderRevision,
+    standingOrdersDialog, subview, routeSelection, focus, processFilter, renderRevision,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,
