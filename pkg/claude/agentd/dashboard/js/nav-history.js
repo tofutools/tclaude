@@ -94,9 +94,16 @@ function staleFallback(loc) {
   return normalizeLocation({ tab: DEFAULT_TAB });
 }
 
+// The Groups Processes focus (/groups/processes) exists only while the
+// processes feature is on; processes.js mirrors that onto body.hide-processes.
+function groupsProcessesFocusAvailable() {
+  return !document.body.classList.contains('hide-processes');
+}
+
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
+    && !(loc.tab === 'groups' && loc.subtab === 'processes' && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
@@ -137,6 +144,8 @@ function activeLocationFromDOM() {
     if (island?.subview?.value === 'routes') {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
+    } else if (island?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
+      loc.subtab = 'processes';
     }
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
@@ -251,8 +260,10 @@ function activate(loc) {
       // example /terminals with no panes), which would look like a user
       // navigation to observers. A bare Groups pop from Route map still has
       // to return the island to Members; explicit route locations always do.
+      // The same holds for a bare Groups pop from the Processes focus.
       const groups = featureState('groups');
-      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes') {
+      if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
+        || groups?.focus?.value === 'processes') {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
@@ -444,6 +455,12 @@ export function initNavHistory() {
       const legacyTab = new URLSearchParams(window.location.search).get('tab');
       const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
       if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
+    }
+    // A fresh bare Groups load shows the remembered focus, so the URL says
+    // so too: otherwise a later Back onto this entry would restore Agents.
+    if (loc.tab === DEFAULT_TAB && !loc.subtab && !loc.selection
+      && featureState('groups')?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
+      loc = normalizeLocation({ tab: 'groups', subtab: 'processes' });
     }
     stack = initialState(loc);
   }

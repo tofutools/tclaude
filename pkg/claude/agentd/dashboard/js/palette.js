@@ -44,6 +44,7 @@ import { openGitRepositories } from './git-repositories-controller.js';
 
 import { $, $$ } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
+import { chooseGroupsFocus } from './groups-focus.js';
 import { setActivitySubtab } from './activity-state.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
@@ -146,6 +147,20 @@ async function hideAgent(conv, label) {
 function gotoGroupsTab() {
   const btn = $('nav [data-tab="groups"]');
   if (btn) btn.click();
+}
+
+// openGroupsFocus switches the Groups lens. From another tab the focus is set
+// first so the Groups nav click records /groups/<focus> as one entry.
+function openGroupsFocus(focus) {
+  const groups = featureState('groups');
+  if (!groups?.setFocus) return;
+  const btn = $('nav [data-tab="groups"]');
+  if (btn && !btn.classList.contains('active')) {
+    groups.setFocus(focus);
+    btn.click();
+    return;
+  }
+  chooseGroupsFocus(groups, focus);
 }
 
 function setGroupOpen(name, open) {
@@ -607,6 +622,20 @@ export function buildCommands(snapshot) {
         + ' scry peer gaze behold chamber vision rites',
       run: () => processesTab.click(),
     });
+  }
+  // The Groups Agents | Processes focus switch (features.processes only).
+  if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
+    for (const [focus, plain, arcane, words] of [
+      ['processes', 'Processes', 'Rites', 'processes process runs graphs rites'],
+      ['agents', 'Agents', 'Familiars', 'agents members tables familiars'],
+    ]) {
+      cmds.push({
+        icon: wiz('◈', '🔮'), label: wiz(`Groups › ${plain} focus`, `Party lens: ${arcane}`),
+        hint: wiz('switch the Groups tab focus', 'turn the party lens'),
+        keywords: `groups focus lens view switch toggle ${words}`,
+        run: () => openGroupsFocus(focus),
+      });
+    }
   }
   // The Usage tab's Quota and Costs views were tabs of their own: keep them
   // one command away (and findable as "costs") rather than behind Usage.

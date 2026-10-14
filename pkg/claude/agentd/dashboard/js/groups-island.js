@@ -7,6 +7,9 @@ import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import {
+  GroupsFocusSwitch, GroupsProcessesPlaceholder, effectiveGroupsFocus, useGroupsFocusRestore,
+} from './groups-focus.js';
 
 const html = htm.bind(h);
 
@@ -61,6 +64,7 @@ export function GroupsControls({ state, actions }) {
   const badge = state.deviationCount.value;
   const columns = state.columnOptions.value;
   const wizard = useWizardTheme();
+  useGroupsFocusRestore(state);
 
   const queueRefresh = () => {
     clearTimeout(refreshTimer.current);
@@ -129,6 +133,7 @@ export function GroupsControls({ state, actions }) {
         inputRef.current?.focus();
       }}
     >×</button>
+    <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
       <button
         ref=${buttonRef}
@@ -191,7 +196,8 @@ export function GroupsControls({ state, actions }) {
 }
 
 export function GroupsList({ host, state, actions }) {
-  useWizardTheme();
+  const wizard = useWizardTheme();
+  const focus = effectiveGroupsFocus(state);
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
@@ -267,10 +273,18 @@ export function GroupsList({ host, state, actions }) {
     if (!present) setHoveredGroupKey(null);
   }, [current.groups, hoveredGroupKey]);
 
+  // The drag-and-drop hints and member-table chrome belong to the Agents lens.
+  useEffect(() => {
+    document.body.classList.toggle('groups-focus-processes', focus === 'processes');
+    return () => document.body.classList.remove('groups-focus-processes');
+  }, [focus]);
+
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
-    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
-      triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />
+    ${focus === 'processes'
+    ? html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`
+    : html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
+      triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`}
     ${state.standingOrdersDialog.value && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
