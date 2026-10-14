@@ -532,18 +532,21 @@ func processProjectionPerformerOf(node model.Node) processProjectionPerformer {
 }
 
 // authoredID maps an executable node id to the authored node that owns it:
-// itself, or the compound parent of a derived stage ("parent.stage…").
+// itself, the compound parent of a derived stage ("parent.stage…"), or the
+// subprocess node whose body holds a namespaced node ("parent/inner…"). Body
+// nodes are not projected one by one: their live state lifts onto the
+// subprocess node, which projects with kind "subprocess".
 func (s *processProjectionSkeleton) authoredID(id string) (string, bool) {
 	for _, authored := range s.ids {
-		if id == authored || strings.HasPrefix(id, authored+".") {
+		if id == authored || strings.HasPrefix(id, authored+".") || strings.HasPrefix(id, authored+"/") {
 			return authored, true
 		}
 	}
 	return "", false
 }
 
-// processNodeStateRank orders the states a compound parent can take from its
-// stages: the most operator-relevant one wins.
+// processNodeStateRank orders the states a compound parent or a subprocess
+// node can take from the nodes it owns: the most operator-relevant one wins.
 var processNodeStateRank = map[string]int{
 	"awaiting": 6, string(engine.NodeBlocked): 5, string(engine.NodeRunning): 4,
 	string(engine.NodeReady): 3, string(engine.NodeFailed): 2, string(engine.NodeCanceled): 2,
