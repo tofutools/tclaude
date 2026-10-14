@@ -12,6 +12,7 @@ import {
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
+import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -49,6 +50,7 @@ const MAIL_PANES = [
 // dedicated caret button, which avoids overloading a folder row with two
 // meanings and keeps pane traversal consistent from every row in the sidebar.
 function movePaneFocus(event, controller) {
+  if (hasShownOverlay()) return false;
   if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
   const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
   if (!direction) return false;

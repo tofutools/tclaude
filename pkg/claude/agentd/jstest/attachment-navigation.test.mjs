@@ -81,3 +81,39 @@ test('navigation ignores editing and composition; single media hides controls', 
   assert.equal(mounted.container.querySelector('.attachment-preview-nav'), null);
   await mounted.unmount();
 });
+
+test('browsing between image and video keeps the fullscreen element mounted', async (t) => {
+  const harness = await createPreactHarness(t);
+  harness.document.documentElement.requestFullscreen = async () => {};
+  harness.document.exitFullscreen = async () => {
+    harness.document.fullscreenElement = null;
+    harness.fireEvent(harness.document, 'fullscreenchange');
+  };
+  const { ImageAttachmentPreview } = await harness.importDashboardModule('js/image-preview-overlay.js');
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const mounted = await harness.mount(harness.html`<${ImageAttachmentPreview} messageID=${42}
+    attachment=${image} siblings=${[image, video]} />`);
+  await harness.act(() => mounted.container.querySelector('button').click());
+  await settle(harness);
+  const dialog = mounted.container.querySelector('[role="dialog"]');
+  dialog.requestFullscreen = async () => {
+    harness.document.fullscreenElement = dialog;
+    harness.fireEvent(harness.document, 'fullscreenchange');
+  };
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'f' }));
+  assert.equal(dialog.getAttribute('data-display'), 'fullscreen');
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'ArrowRight' }));
+  await settle(harness);
+  assertSameNode(mounted.container.querySelector('[role="dialog"]'), dialog);
+  assert.equal(harness.document.fullscreenElement, dialog);
+  assert.ok(dialog.querySelector('.video-preview-video'));
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'ArrowLeft', shiftKey: true }));
+  await settle(harness);
+  assert.equal(dialog.querySelector('h2').textContent, image.filename);
+  assert.equal(harness.document.fullscreenElement, dialog);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'f' }));
+  assert.equal(dialog.getAttribute('data-display'), 'normal');
+  await mounted.unmount();
+});

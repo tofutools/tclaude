@@ -63,4 +63,3 @@ export function VideoPoster({ href }) {
       onError=${() => setCaptured(true)}></video>`}
   </${Fragment}>`;
 }
-
