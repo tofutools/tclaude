@@ -244,6 +244,16 @@ later report is refused as stale. When a run is ending — a sibling failed, or
 an operator cancelled — outstanding agent attempts are withdrawn and their
 performers told to stop.
 
+**Reassigning.** `tclaude process assign <run-id> --node <node> --agent <agent>`
+(HTTP `POST /v1/process/runs/{id}/nodes/{node}/assign` with `{"agent": ...}`)
+hands a node's outstanding, not yet reported attempt to a named performer. It
+needs the same permission as `decide`. The new performer must fit the run's
+scope: a member of a group run, the bound agent of an agent run, or for an
+unscoped run an agent the owner (and an agent caller) shares a group with. It
+gets the prompt and is the only agent that may report; a previous performer is
+told to stop. A node that is not ready yet, already reported, or not agentic
+has nothing to reassign (409).
+
 `show --json` lists every attempt's performer under `performers` (agent,
 display name, live status, how it was chosen, and what it reported); outstanding
 agent commands report their dispatch state (`pending`, `needs_performer`,

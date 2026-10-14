@@ -31,6 +31,7 @@ func Cmd() *cobra.Command {
 			processReissueCmd(),
 			processRecordOutcomeCmd(),
 			processDecideCmd(),
+			processAssignCmd(),
 			processResolveBlockedCmd(),
 			processReportCmd(),
 			unavailableRuntimeCmd("preview", "Preview a process-template change"),
