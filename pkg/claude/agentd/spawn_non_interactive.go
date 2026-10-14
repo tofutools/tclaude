@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -34,11 +36,12 @@ var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
 var runNonInteractiveTmuxCommand = runNonInteractiveThroughTmux
 
 type nonInteractiveSpawnResult struct {
-	StdoutBytes []byte `json:"stdout_bytes,omitempty"`
-	StderrBytes []byte `json:"stderr_bytes,omitempty"`
-	Stdout      string `json:"stdout"`
-	Stderr      string `json:"stderr"`
-	ExitCode    int    `json:"exit_code"`
+	Notes       []string `json:"notes,omitempty"`
+	StdoutBytes []byte   `json:"stdout_bytes,omitempty"`
+	StderrBytes []byte   `json:"stderr_bytes,omitempty"`
+	Stdout      string   `json:"stdout"`
+	Stderr      string   `json:"stderr"`
+	ExitCode    int      `json:"exit_code"`
 }
 
 // runNonInteractiveSpawn uses the ordinary spawn boundary's resolved fields,
@@ -62,16 +65,13 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if seconds < 1 || seconds > 24*3600 {
 		return bad("invalid_timeout", "non-interactive timeout must be between 1 second and 24 hours")
 	}
-	layer := p.SandboxImplementation == "tclaude-layer"
+	layer := p.SandboxImplementation == "tclaude-layer" || p.SandboxImplementation == "stacked"
 	if p.SandboxImplementation != "" && p.SandboxImplementation != "harness-builtin" &&
-		p.SandboxImplementation != "off" && !layer {
+		p.SandboxImplementation != "off" && p.SandboxImplementation != "resource-only" && !layer {
 		return bad("unsupported_sandbox", "non-interactive runs cannot replay this sandbox implementation")
 	}
 	if snapshot := p.EffectiveSandbox; snapshot != nil {
 		effective := snapshot.Effective
-		if len(effective.PreLaunch) > 0 || len(effective.AgentDirectories) > 0 {
-			return bad("unsupported_sandbox", "one-shot runs cannot replay pre-launch scripts or agent-owned directories")
-		}
 		if !layer && (effective.NetworkAccess == sandboxpolicy.NetworkAccessNone || effective.Network != nil ||
 			effective.UnixSockets != nil || len(effective.Tmpfs) > 0 ||
 			effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate) {
@@ -87,6 +87,22 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	if h.Name != harness.ShellName && !h.CanReplayOneShotLaunchPosture() {
 		return bad("unsupported_harness", fmt.Sprintf("harness %q cannot run a one-shot launch with its resolved posture", h.Name))
+	}
+	var directoryRun *oneShotDirectoryRun
+	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
+		var prepareErr error
+		directoryRun, prepareErr = newOneShotDirectoryRun()
+		if prepareErr != nil {
+			return hostFailure("sandbox_init", prepareErr.Error())
+		}
+		defer directoryRun.finish()
+		materialized, _, prepareErr := prepareCodexSSHWorkaroundForNewLaunch(
+			*p.EffectiveSandbox, directoryRun.Key, p.SSHWorkaround && codexSSHWorkaroundApplies(
+				p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox))
+		if prepareErr != nil {
+			return hostFailure("sandbox_init", prepareErr.Error())
+		}
+		p.EffectiveSandbox = &materialized
 	}
 	prompt := p.InitialMessage
 	if h.Name != harness.ShellName {
@@ -105,17 +121,26 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	mode := p.HarnessBuiltinMode
 	postureSnapshot := p.EffectiveSandbox
 	if layer {
-		mode = h.TclaudeLayerMode
-		postureSnapshot = nil // the outer layer owns the filesystem grants
+		if p.SandboxImplementation != "stacked" {
+			mode = h.TclaudeLayerMode
+		}
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+	if err != nil {
+		return bad("unsupported_sandbox", err.Error())
 	}
 	posture, err := session.OneShotLaunchPosture(p.Cwd, h, mode,
-		p.ApprovalPolicy, false, postureSnapshot)
+		p.ApprovalPolicy, false, postureSnapshot, implementation)
 	if err != nil {
 		return bad("unsupported_sandbox", err.Error())
 	}
 	posture.PeerMessaging = p.PeerMessaging
 	if posture.ShellEnvironment == nil {
 		posture.ShellEnvironment = make(map[string]string)
+	}
+	preLaunch, err := session.RenderPreLaunchScript(p.EffectiveSandbox)
+	if err != nil {
+		return bad("unsupported_sandbox", err.Error())
 	}
 	// Match ordinary Claude panes: its account and project state lives in the
 	// writable harness state root, not the top-level file in $HOME. Without
@@ -147,6 +172,12 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			posture.HarnessBuiltinMode = ""
 			posture.PermissionProfile = name
 		}
+		if p.SandboxImplementation == "stacked" {
+			if err := session.ValidateStackedSandboxHarness(h); err != nil {
+				return bad("unsupported_sandbox", err.Error())
+			}
+			posture = h.NestedSandbox.PrepareLaunch(posture)
+		}
 		askSpec := harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
 			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture}
 		if remover, ok := h.Ask.(harness.EphemeralSessionRemover); ok && h.PreMintsAskConvID() {
@@ -161,11 +192,14 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		return bad("unsupported_harness", "harness returned an empty command")
 	}
 	if layer {
-		wrapped, wrapErr := wrapNonInteractiveWithTclaudeLayer(p, h, argv)
+		wrapped, cleanup, wrapErr := prepareNonInteractiveWithTclaudeLayer(p, h, argv, preLaunch)
+		defer cleanup()
 		if wrapErr != nil {
 			return bad("unsupported_sandbox", wrapErr.Error())
 		}
 		argv = []string{"/bin/sh", "-c", wrapped}
+	} else if preLaunch != "" {
+		argv = append(clcommon.BootstrapShellArgv(), "-c", preLaunch+"exec "+quoteOneShotArgv(argv))
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
 	defer cancel()
@@ -194,6 +228,12 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
 	finish := func(result nonInteractiveSpawnResult, failure *spawnFailure) (nonInteractiveSpawnResult, *spawnFailure) {
+		if cfg, err := config.Load(); err == nil && cfg.HTTPProxyConfigured() {
+			result.Notes = append(result.Notes, "Named HTTP proxy URLs are omitted from one-shot runs because they have no gateway caller identity; use an interactive spawn for named proxies.")
+		}
+		if directoryRun != nil && directoryRun.Cgroup == "" && directoryRun.Started {
+			result.Notes = append(result.Notes, fmt.Sprintf("One-shot directories retained at %s until termination can be proven; without a cgroup the automatic sweep waits for a reboot. Remove them manually only after all descendants have stopped.", filepath.Join(directoryRun.Base, directoryRun.Key)))
+		}
 		if failure == nil && result.ExitCode == 0 && h.Name != harness.ShellName {
 			// Harness CLIs print diagnostics and session metadata to stderr even
 			// when the requested answer succeeded. The one-shot's answer is stdout.
@@ -202,7 +242,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		return result, failure
 	}
 	if runtime.GOOS == "linux" || p.RemoteJob != nil {
-		if command.ResourceLimits.Enabled() {
+		if command.ResourceLimits.Enabled() || p.SandboxImplementation == "resource-only" || directoryRun != nil {
 			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
 			if implErr != nil {
 				return bad("unsupported_sandbox", implErr.Error())
@@ -215,7 +255,12 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			// permission to create or configure a sibling boundary.
 			dir, cleanup, prepErr := prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), command.ResourceLimits)
 			if prepErr != nil {
-				return hostFailure("resource_limit_init", prepErr.Error())
+				if command.ResourceLimits.Enabled() || p.SandboxImplementation == "resource-only" {
+					return hostFailure("resource_limit_init", prepErr.Error())
+				}
+				// As with ordinary layer launches, a cgroup without authored
+				// ceilings is opportunistic. Directory cleanup stays conservative.
+				dir, cleanup = "", func() {}
 			}
 			command.ResourceCgroupDir = dir
 			defer func() {
@@ -225,7 +270,17 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 				cleanup()
 			}()
 		}
+		if directoryRun != nil {
+			if err := directoryRun.launched(command.ResourceCgroupDir); err != nil {
+				return hostFailure("sandbox_init", err.Error())
+			}
+		}
 		return finish(runNonInteractiveTmuxCommand(ctx, command))
+	}
+	if directoryRun != nil {
+		if err := directoryRun.launched(""); err != nil {
+			return hostFailure("sandbox_init", err.Error())
+		}
 	}
 	return finish(executeNonInteractiveCommand(ctx, command))
 }
@@ -284,7 +339,7 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 		cmd.Stderr = io.MultiWriter(cmd.Stderr, frames.Channel(jobstream.Stderr))
 	}
 	cmd.Env = command.Env
-	if command.ResourceLimits.Enabled() {
+	if command.ResourceLimits.Enabled() || command.ResourceCgroupDir != "" {
 		limits := command.ResourceLimits
 		implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
 		if implErr != nil {
@@ -356,8 +411,16 @@ func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string) (string, error) {
-	return wrapOneShotWithTclaudeLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv)
+type oneShotLayerOptions struct {
+	preLaunch string
+	stacked   bool
+	cleanup   func()
+}
+
+func prepareNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string, preLaunch string) (string, func(), error) {
+	opts := &oneShotLayerOptions{preLaunch: preLaunch, stacked: p.SandboxImplementation == "stacked", cleanup: func() {}}
+	wrapped, err := wrapOneShotLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv, opts)
+	return wrapped, opts.cleanup, err
 }
 
 // wrapOneShotWithTclaudeLayer renders a one-shot argv as a shell command run
@@ -365,6 +428,12 @@ func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv 
 // non-interactive spawns and séances replaying a tclaude-layer generation.
 func wrapOneShotWithTclaudeLayer(
 	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string,
+) (string, error) {
+	return wrapOneShotLayer(h, cwd, snapshot, gitWriteDirs, argv, nil)
+}
+
+func wrapOneShotLayer(
+	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string, opts *oneShotLayerOptions,
 ) (string, error) {
 	var harnessReadPaths []string
 	if runtime.GOOS == "linux" {
@@ -469,9 +538,35 @@ func wrapOneShotWithTclaudeLayer(
 	if err != nil {
 		return "", err
 	}
+	if opts != nil && opts.stacked {
+		proof, err := session.ProbeStackedSandbox(binary, spec, h, cwd)
+		if err != nil {
+			return "", err
+		}
+		opts.cleanup = proof.Cleanup
+		argv[0] = proof.Executable.Path
+		command := "exec " + quoteOneShotArgv(argv)
+		if opts.preLaunch != "" {
+			command = opts.preLaunch + command
+			command = "exec " + quoteOneShotArgv(append(clcommon.BootstrapShellArgv(), "-c", command))
+		}
+		return session.WrapTclaudeLayerStackedSpec(binary, spec,
+			proof.ManifestPath, proof.ManifestSHA256, proof.ReadyPath, true, command)
+	}
+	command := "exec " + quoteOneShotArgv(argv)
+	if opts != nil && opts.preLaunch != "" {
+		command = opts.preLaunch + command
+		// The ordinary pane bootstrap uses Bash too. Run the fragments in
+		// that shell inside the outer wall, not in the host /bin/sh wrapper.
+		command = "exec " + quoteOneShotArgv(append(clcommon.BootstrapShellArgv(), "-c", command))
+	}
+	return session.WrapTclaudeLayerServerSpec(binary, spec, command)
+}
+
+func quoteOneShotArgv(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
 		quoted[i] = clcommon.ShellQuoteArg(arg)
 	}
-	return session.WrapTclaudeLayerServerSpec(binary, spec, "exec "+strings.Join(quoted, " "))
+	return strings.Join(quoted, " ")
 }

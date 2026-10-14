@@ -108,11 +108,37 @@ messaging, interactive approval, and remote-control options do not apply to
 this mode. Successful non-shell runs print stdout only; failed runs retain
 stderr, and shell runs always forward both streams. The harness-native and
 `tclaude-layer` sandbox implementations are
-supported for Claude, Codex, and shell. On Linux, a configured resource limit
-is applied to the one-shot process through a temporary cgroup. A resolved policy
-with pre-launch scripts or agent-owned directories fails before launch because
-the one-shot path cannot apply those settings. A configured resource limit also
+supported for Claude, Codex, and shell. Linux Claude/Codex stacked launches use
+the same live nested-engine probe and immutable launch binding as interactive
+workers; an unavailable boundary refuses the launch rather than dropping a wall.
+Linux `resource-only` launches require a temporary cgroup even without ceilings.
+On Linux, a configured resource limit is applied through a temporary cgroup.
+A configured resource limit also
 refuses the run on macOS or when the Linux daemon lacks a delegated cgroup.
+Sandbox-profile `agent_directories` receive fresh private per-run bindings and
+writable grants. Ordered `pre_launch` blocks run after profile environment
+export and before the harness, with the same authority as an interactive launch:
+inside the outer sandbox for `tclaude-layer`/`stacked`, in the host bootstrap
+shell for `harness-builtin`/`resource-only`/`off`. Bash is required for scripts;
+a failed block aborts launch and names the block.
+
+The existing process-group/cgroup reaper handles completion, failure, timeout,
+and cancellation. Per-run directory cleanup waits for proof that descendants
+have stopped. A delegated cgroup is used opportunistically even without authored
+ceilings, and its removal permits immediate directory cleanup. Without that
+proof, directories remain under the tclaude cache's `agent-dirs/oneshot-*` tree;
+the command reports the retained path. A private cleanup journal under
+`~/.tclaude/data/one-shot-directories/` lets the startup/hourly sweep reclaim
+abandoned cgroups and directories, or directories from a previous boot. On
+macOS and Linux without delegation, these caches can accumulate until reboot;
+operators may remove the reported tree and corresponding journal **after all
+descendants have stopped**. Age alone does not prove that a process exited.
+
+One-shots currently have no local gateway caller identity. Named HTTP proxy
+URLs are omitted with a notice; model gateways refuse the run with guidance to
+use an interactive worker. Managed instructions also require an interactive
+worker. Selecting another `--sandbox-profile` adds to the global/group policy,
+so it cannot remove inherited profile settings.
 When `--worktree` is used, the worktree remains after the run so its changes
 can be inspected.
 

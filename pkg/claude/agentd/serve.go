@@ -685,6 +685,7 @@ func runServe(p *serveParams) error {
 	// Shares the same stop channel — both sweeps shut down together
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
+	startOneShotDirectoryCleanup(cronStop)
 
 	// audit_log retention sweep (JOH-268). Hard-deletes audit rows older
 	// than the configured retention window (default 30 days) so the command

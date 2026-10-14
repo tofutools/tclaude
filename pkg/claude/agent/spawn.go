@@ -55,9 +55,10 @@ type SpawnResponse struct {
 }
 
 type nonInteractiveSpawnResponse struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
+	Notes    []string `json:"notes,omitempty"`
+	Stdout   string   `json:"stdout"`
+	Stderr   string   `json:"stderr"`
+	ExitCode int      `json:"exit_code"`
 }
 
 func nonInteractiveUnsupportedOption(p *SpawnParams) string {
@@ -804,7 +805,7 @@ type SpawnParams struct {
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"Interactive: conv-id wait (default 30s); non-interactive: entire run (default 1h)"`
-	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion and print its result instead of opening an interactive agent"`
+	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion using the resolved launch policy (including private per-run directories and pre-launch scripts); model gateways and managed instructions require an interactive worker"`
 	GroupContext   bool     `long:"group-context" help:"Include the group's startup context in a non-interactive prompt (off by default)"`
 	Environment    []string `long:"env" optional:"true" help:"Process environment NAME=value. Repeatable; later sources override group/profile values. Values may contain '='."`
 
@@ -985,6 +986,11 @@ func spawnCmd() *cobra.Command {
 			"excluded unless --group-context is passed. --name is optional and names the " +
 			"one-shot's tmux session (Linux). An interactive --harness shell " +
 			"spawn accepts neither --initial-message nor --file. " +
+			"Sandbox-profile agent directories are private per-run trees; scripts run " +
+			"at the same boundary as interactive launches. Cleanup waits for proven " +
+			"termination; without a delegated cgroup, retained directories are swept " +
+			"after reboot. Named HTTP proxy URLs are omitted with a notice, and model " +
+			"gateways require an interactive worker. " +
 			"\n\n" +
 			"--worktree <branch> creates (or reuses) a git worktree on that branch and " +
 			"spawns the agent into it — the CLI equivalent of the dashboard spawn modal's " +
@@ -1869,6 +1875,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 		_, _ = io.WriteString(stdout, result.Stdout)
 		_, _ = io.WriteString(stderr, result.Stderr)
+		for _, note := range result.Notes {
+			fmt.Fprintf(stderr, "Note: %s\n", note)
+		}
 		return nil, result.ExitCode
 	}
 	var resp SpawnResponse

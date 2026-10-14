@@ -370,6 +370,9 @@ func oneShotProcessStartTime(pid int) (string, error) {
 // A daemon restart owns no jobs from the prior process. Remove handoffs left
 // behind if it died before the helper could consume or clean them.
 func cleanupStaleOneShotHandoffs() error {
+	if err := cleanupRetainedOneShotDirectories(); err != nil {
+		return err
+	}
 	root := filepath.Join(config.DataDir(), "one-shot")
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
