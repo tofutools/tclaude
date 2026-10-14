@@ -194,6 +194,7 @@ button.pk-gnode { cursor: pointer; }
 .pk-gnode-sub { font-weight: 400; font-size: 10px; color: var(--pk-muted); overflow: hidden; text-overflow: ellipsis; }
 .pk-gnode .pk-avatars { position: absolute; right: -8px; top: -9px; }
 .pk-gnode.here { outline: 2px solid var(--pk-text); outline-offset: 3px; }
+.pk-gnode.selected { outline: 2px solid var(--pk-running); outline-offset: 3px; box-shadow: 0 0 12px color-mix(in srgb, var(--pk-running) 45%, transparent); }
 .pk-gnode.pk-kind-subprocess {
   box-shadow: 3px 3px 0 -1px var(--pk-node-bg), 3px 3px 0 0 var(--pk-node-border), 6px 6px 0 -1px var(--pk-node-bg), 6px 6px 0 0 var(--pk-line);
 }

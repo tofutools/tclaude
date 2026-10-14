@@ -51,10 +51,19 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
   groups.setProcessFilter?.(filter);
+  groups.setFocusedRun?.(null);
   chooseGroupsFocus(groups, 'processes', { doc });
   const reveal = () => doc.querySelector(`[data-process-group="${cssString(groupName)}"]`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(reveal));
   else reveal();
+}
+
+// openRunInProcesses opens one run in the Processes lens's single-run focus.
+export function openRunInProcesses(groupName, runId, { doc = document } = {}) {
+  const groups = featureState('groups');
+  if (!groups?.setFocus) return;
+  if (groupName && runId && groups.setFocusedRun) groups.setFocusedRun({ group: groupName, runId });
+  chooseGroupsFocus(groups, 'processes', { doc });
 }
 
 function cssString(value) {
@@ -89,5 +98,5 @@ export function MemberProcessCell({ member, group, snapshot, source = processCon
   if (!entries.length) return html`<span class="muted">—</span>`;
   return html`<span class="gpi-badges">${entries.map((entry) => html`<${ProcessRunBadge}
     key=${`${entry.runId}:${entry.nodeId}`} run=${entry.run} nodeId=${entry.nodeId}
-    onOpen=${() => openGroupInProcesses(entry.run.scope?.group || group?.name || '', 'running')} />`)}</span>`;
+    onOpen=${() => openRunInProcesses(entry.run.scope?.group || group?.name || '', entry.runId)} />`)}</span>`;
 }

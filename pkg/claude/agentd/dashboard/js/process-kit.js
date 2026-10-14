@@ -128,6 +128,12 @@ function nodesOf(run) {
   }));
 }
 
+// runGraphNodes is the normalized node list (kit kind, state, performers)
+// the graph draws, for surfaces that describe one node (the run inspector).
+export function runGraphNodes(run) {
+  return nodesOf(run);
+}
+
 function edgesOf(run, known) {
   return (run?.edges || [])
     .filter((edge) => edge && known.has(String(edge.from)) && known.has(String(edge.to)))
@@ -463,8 +469,9 @@ export function ProcessRunIcon({ run, performerId = '', onOpen = null, active = 
 const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skipped: 'planned' };
 
 // ProcessMiniGraph renders a projected run read-only. `performerId` marks the
-// "you are here" node(s); `onNodeClick` turns nodes into buttons.
-export function ProcessMiniGraph({ run, compact = false, performerId = '', onNodeClick = null, wizard = false }) {
+// "you are here" node(s); `onNodeClick` turns nodes into buttons and
+// `selectedId` marks the one an inspector beside the graph describes.
+export function ProcessMiniGraph({ run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false }) {
   // Marker ids are per instance: the same run can be drawn on two surfaces
   // in one document, and a hidden copy must not own the visible arrowheads.
   const prefix = `pk-ah-${useId().replace(/[^A-Za-z0-9_-]/g, '_')}`;
@@ -472,7 +479,8 @@ export function ProcessMiniGraph({ run, compact = false, performerId = '', onNod
   if (!layout.nodes.length) return html`<div class="pk-mini-graph empty">no nodes</div>`;
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
-    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}`;
+    const selected = selectedId !== '' && node.id === String(selectedId);
+    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}`;
     const inner = isTerminalKind(node.kind)
@@ -481,7 +489,7 @@ export function ProcessMiniGraph({ run, compact = false, performerId = '', onNod
         ? html`<span class="pk-gnode-label">${node.label}</span>`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />`;
     if (typeof onNodeClick === 'function') {
-      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} onClick=${() => onNodeClick(node)}>${inner}</button>`;
+      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)}>${inner}</button>`;
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id}>${inner}</div>`;
   });

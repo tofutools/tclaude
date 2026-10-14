@@ -306,7 +306,8 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     ${focus === 'processes'
     ? html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
-      filter=${state.processFilter.value} onFilter=${state.setProcessFilter} source=${processSource} />`
+      filter=${state.processFilter.value} onFilter=${state.setProcessFilter} source=${processSource}
+      focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun} />`
     : html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
       triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`}
     ${state.standingOrdersDialog.value && html`

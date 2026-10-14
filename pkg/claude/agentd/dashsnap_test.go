@@ -858,6 +858,14 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:      "groups-run-focus",
+			Title:    "Groups — single-run focus",
+			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag-assign waits on run reassignment). Run context and detail are fixtures until the read model lands.",
+			InitJS:   processContextFixtureInitJS() + processRunDetailInitJS(),
+			JS:       showGroups + groupsProcessesJS(groupsRunFocusJS),
+			SettleMS: 300,
+		},
+		{
 			Key:     "shell-notifications",
 			Title:   "Preact shell — notification popover",
 			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
@@ -5192,6 +5200,44 @@ func processContextFixtureInitJS() string {
   };
 })();`, raw)
 }
+
+// processRunDetailInitJS stubs the single-run focus's run detail reads: the
+// release run's review gate awaits a verdict and has a short history.
+func processRunDetailInitJS() string {
+	return `(function(){
+  var prevFetch = window.fetch;
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var m = url.match(/\/v1\/process\/runs\/([^/?]+)(\/events)?/);
+    if (!m || (init && init.method && init.method !== 'GET')) return prevFetch(input, init);
+    var id = decodeURIComponent(m[1]);
+    var json = function(body){ return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+    if (m[2]) {
+      if (id !== 'run_release' || url.indexOf('after=') !== -1) return json({ events: [], next: 0 });
+      var at = function(min){ return new Date(Date.now() - min * 60000).toISOString(); };
+      return json({ events: [
+        { sequence: 1, occurredAt: at(16), nodeId: 'review', kind: 'node_entered', actor: 'from Implement charts' },
+        { sequence: 2, occurredAt: at(15), nodeId: 'review', kind: 'human_notified', actor: 'Messages' },
+        { sequence: 3, occurredAt: at(2), nodeId: 'review', kind: 'reminder' },
+      ], next: 0 });
+    }
+    return json({ id: id, awaitingDecisions: id === 'run_release' ? [{ nodeId: 'review', verdicts: ['approved', 'changes'] }] : [], blocked: id === 'run_migrate' ? [{ nodeId: 'apply', attempt: 1, reason: 'migration lock held' }] : [] });
+  };
+})();`
+}
+
+// groupsRunFocusJS opens the release run's card into the single-run focus
+// and waits for the inspector to land on its awaited review gate.
+const groupsRunFocusJS = `
+  document.querySelector('[data-process-open="run_release"]').click();
+  var focusDeadline = Date.now() + 3000;
+  while (!document.querySelector('[data-run-inspector="review"] [data-run-verdict]') && Date.now() < focusDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-run-focus="run_release"]')) throw new Error('run focus did not open');
+  if (!document.querySelector('[data-run-inspector="review"] [data-run-verdict="approved"]')) throw new Error('inspector lacks the gate verdicts');
+  if (!document.querySelector('[data-run-dock-agent]')) throw new Error('performer dock is empty');
+  if (!document.querySelector('.grf-history li')) throw new Error('inspector history is empty');`
 
 // groupsProcessesJS shows the Groups Processes focus through the island's
 // signals (no pref write leaks into later states), waits for the fixture's
