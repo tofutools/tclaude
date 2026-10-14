@@ -60,7 +60,7 @@ func (geminiAsker) BuildAskArgv(spec AskSpec) []string {
 		return nil
 	}
 	var argv []string
-	if posture := spec.LaunchPosture; posture != nil && spec.Print {
+	if posture := spec.LaunchPosture; posture != nil {
 		if env := geminiOneShotEnv(*posture); len(env) > 0 {
 			argv = append(append([]string{"env"}, env...), argv...)
 		}
@@ -79,7 +79,7 @@ func (geminiAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
 	}
-	if posture := spec.LaunchPosture; posture != nil && spec.Print {
+	if posture := spec.LaunchPosture; posture != nil {
 		if arg := geminiApprovalArg(posture.ApprovalPolicy); arg != "" {
 			argv = append(argv, arg)
 		}

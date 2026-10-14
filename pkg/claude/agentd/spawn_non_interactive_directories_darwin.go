@@ -1,7 +1,10 @@
 package agentd
 
 import (
+	"errors"
+	"fmt"
 	"golang.org/x/sys/unix"
+	"os"
 	"strings"
 )
 
@@ -13,4 +16,18 @@ func readOneShotBootIdentity() string {
 		return ""
 	} // Missing evidence cannot authorize cleanup.
 	return strings.TrimSpace(data)
+}
+
+func readOneShotOwnerIdentity(pid int) (string, error) {
+	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return "", os.ErrNotExist
+		}
+		return "", err
+	}
+	if info.Proc.P_pid != int32(pid) {
+		return "", os.ErrNotExist
+	}
+	return fmt.Sprintf("%d:%d", info.Proc.P_starttime.Sec, info.Proc.P_starttime.Usec), nil
 }

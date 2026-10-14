@@ -4,6 +4,7 @@ import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
 import { dashboardState } from './snapshot-store.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
+import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 
 let configLifecycle = {};
 const fallbackLists = new Map();
@@ -180,6 +181,34 @@ async function populateAskProfileSelect(selected) {
   }
   setSelectValue(sel, selectedName);
   applyAskProfileState();
+}
+
+const askSandboxModes = [
+  ['auto', 'Auto (dashboard global + group rules for this dir)'],
+  ['global', 'Dashboard global default'],
+  ['off', 'Off'],
+];
+
+async function populateAskSandboxSelect(selected) {
+  const bindingEpoch = configBindingEpoch;
+  const sel = $('#ask-sandbox');
+  if (!sel) return;
+  const raw = (selected || 'global').trim() || 'global';
+  const value = askSandboxModes.some(([mode]) => mode === raw) || raw.startsWith('profile:') ? raw : `profile:${raw}`;
+  const seed = [...askSandboxModes];
+  if (value.startsWith('profile:')) seed.push([value, `${value.slice(8)} (loading…)`]);
+  replaceOptions(sel, seed);
+  setSelectValue(sel, value);
+  let profiles = [];
+  try { profiles = await loadSandboxProfiles(); } catch { profiles = []; }
+  if (bindingEpoch !== configBindingEpoch || sel !== $('#ask-sandbox')) return;
+  const currentValue = controlValue(sel).trim() || value;
+  const choices = profiles.map(profile => [`profile:${profile.name}`, profile.name]);
+  if (currentValue.startsWith('profile:') && !profiles.some(profile => `profile:${profile.name}` === currentValue)) {
+    choices.push([currentValue, `${currentValue.slice(8)} (missing — choose another profile)`]);
+  }
+  replaceOptions(sel, [...askSandboxModes.slice(0, 2), ...choices, askSandboxModes[2]]);
+  setSelectValue(sel, currentValue);
 }
 
 // applyAskProfileState greys out the Model / Effort selects while a profile is
@@ -576,6 +605,7 @@ function populateConfigForm(cfg) {
   setAskSelectValue($('#ask-model'), ask.model);
   setAskSelectValue($('#ask-effort'), ask.effort);
   void populateAskProfileSelect(ask.profile);
+  void populateAskSandboxSelect(ask.sandbox);
 
   // Scribe defaults — the spawn profile a freshly summoned scribe launches
   // with (JOH-371). Options are the saved spawn profiles; "(default)" (empty)
@@ -931,6 +961,8 @@ function assembleConfig() {
   // nothing left is dropped so an all-default ask doesn't marshal as a
   // spurious "ask": {} diff.
   const ask = (cfg.ask && typeof cfg.ask === 'object') ? cfg.ask : {};
+  const askSandbox = controlValue($('#ask-sandbox')).trim() || 'global';
+  if (askSandbox === 'global') delete ask.sandbox; else ask.sandbox = askSandbox;
   const askProfile = controlValue($('#ask-profile')).trim();
   const askModel = controlValue($('#ask-model')).trim();
   const askEffort = controlValue($('#ask-effort')).trim();

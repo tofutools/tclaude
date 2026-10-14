@@ -177,3 +177,8 @@ func TestCodexAskerStackedLaunchPinsReviewedBackend(t *testing.T) {
 	require.Contains(t, argv, "features.use_legacy_landlock=false")
 	require.Contains(t, argv, "private-one-shot")
 }
+
+func TestCodexAskInteractivePosturePrecedesResume(t *testing.T) {
+	argv := codexAsker{}.BuildAskArgv(AskSpec{ResumeID: "existing", Prompt: "next", LaunchPosture: &SpawnSpec{PermissionProfile: "ask-profile", ApprovalPolicy: ApprovalNever}})
+	require.Equal(t, []string{"codex", "-p", "ask-profile", "--ask-for-approval", "never", "resume", "existing", "next"}, argv)
+}

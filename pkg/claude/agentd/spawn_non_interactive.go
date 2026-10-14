@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
@@ -88,150 +87,29 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if h.Name != harness.ShellName && !h.CanReplayOneShotLaunchPosture() {
 		return bad("unsupported_harness", fmt.Sprintf("harness %q cannot run a one-shot launch with its resolved posture", h.Name))
 	}
-	var directoryRun *oneShotDirectoryRun
-	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
-		var prepareErr error
-		directoryRun, prepareErr = newOneShotDirectoryRun()
-		if prepareErr != nil {
-			return hostFailure("sandbox_init", prepareErr.Error())
-		}
-		defer func() {
-			directoryRun.finish()
-			if _, err := os.Lstat(filepath.Join(oneShotDirectoryJournalRoot(), directoryRun.Key+".json")); err == nil {
-				note := fmt.Sprintf("One-shot directories retained at %s until termination can be proven; without a cgroup the automatic sweep waits for a reboot. Remove them manually only after all descendants have stopped.", filepath.Join(directoryRun.Base, directoryRun.Key))
-				if failure != nil {
-					failure.Msg += "; " + note
-				} else {
-					out.Notes = append(out.Notes, note)
-				}
-			}
-		}()
-		materialized, _, prepareErr := prepareCodexSSHWorkaroundForNewLaunch(
-			*p.EffectiveSandbox, directoryRun.Key, p.SSHWorkaround && codexSSHWorkaroundApplies(
-				p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox))
-		if prepareErr != nil {
-			return hostFailure("sandbox_init", prepareErr.Error())
-		}
-		p.EffectiveSandbox = &materialized
+	prepared, prepareFailure := prepareOneShotLaunch(p, h, harness.AskSpec{
+		Prompt: p.InitialMessage, Print: true, Ephemeral: true, Model: p.Model, Effort: p.Effort,
+	}, false)
+	if prepareFailure != nil {
+		return nonInteractiveSpawnResult{}, prepareFailure
 	}
-	prompt := p.InitialMessage
-	if h.Name != harness.ShellName {
-		if p.WorktreePath != "" {
-			prompt = fmt.Sprintf("Worktree: %s (branch %s)\n\n%s", p.WorktreePath, p.WorktreeBranch, prompt)
-		}
-		for _, context := range []string{p.ProfileContext, p.GroupContext} {
-			if strings.TrimSpace(context) != "" {
-				prompt = context + "\n\n" + prompt
+	defer func() {
+		for _, note := range prepared.Close() {
+			if failure != nil {
+				failure.Msg += "; " + note
+			} else {
+				out.Notes = append(out.Notes, note)
 			}
 		}
-	}
-	if strings.TrimSpace(prompt) == "" {
-		return bad("invalid_prompt", "a non-interactive prompt is required")
-	}
-	mode := p.HarnessBuiltinMode
-	if p.SandboxImplementation == "stacked" {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
-			return bad("unsupported_sandbox", err.Error())
-		}
-		// As runNew does, force the reviewed inner wall before generating a
-		// managed profile; the requested native mode must not skip that step.
-		if h.Name == harness.CodexName {
-			mode = harness.SandboxManagedProfile
-		} else {
-			mode = harness.ClaudeSandboxOn
-		}
-	}
-	postureSnapshot := p.EffectiveSandbox
-	if layer {
-		if p.SandboxImplementation != "stacked" {
-			mode = h.TclaudeLayerMode
-		}
-	}
-	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
-	if err != nil {
-		return bad("unsupported_sandbox", err.Error())
-	}
-	posture, err := session.OneShotLaunchPosture(p.Cwd, h, mode,
-		p.ApprovalPolicy, false, postureSnapshot, implementation)
-	if err != nil {
-		return bad("unsupported_sandbox", err.Error())
-	}
-	posture.PeerMessaging = p.PeerMessaging
-	if posture.ShellEnvironment == nil {
-		posture.ShellEnvironment = make(map[string]string)
-	}
-	preLaunch, err := session.RenderPreLaunchScript(p.EffectiveSandbox)
-	if err != nil {
-		return bad("unsupported_sandbox", oneShotPolicyFailure(p.EffectiveSandbox, err))
-	}
-	// Match ordinary Claude panes: its account and project state lives in the
-	// writable harness state root, not the top-level file in $HOME. Without
-	// this, a one-shot under a constructed root looks for ~/.claude.json and
-	// reports a missing config even when normal tclaude sessions are set up.
-	if err := session.ApplyClaudeConfigDirEnv(h.Name, posture.ShellEnvironment); err != nil {
-		return hostFailure("sandbox_init", err.Error())
-	}
-	session.ApplyAutoMemoryEnv(h, p.AutoMemory, posture.ShellEnvironment)
-	var argv []string
-	if h.Name == harness.ShellName {
-		shell := strings.TrimSpace(os.Getenv("SHELL"))
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-		argv = []string{shell, "-c", prompt}
-	} else {
-		if h.NeedsManagedProfileForOneShot(posture.HarnessBuiltinMode) {
-			name, path, capability, profileErr := EnsureSeanceCodexProfile(p.Cwd, session.GenerateSessionID(), p.EffectiveSandbox)
-			if profileErr != nil {
-				return hostFailure("sandbox_init", profileErr.Error())
-			}
-			defer func() { _ = os.Remove(path) }()
-			if capability != nil {
-				if err := RevalidateSeanceCodexCapability(*capability); err != nil {
-					return hostFailure("sandbox_init", err.Error())
-				}
-			}
-			posture.HarnessBuiltinMode = ""
-			posture.PermissionProfile = name
-		}
-		if p.SandboxImplementation == "stacked" {
-			if err := session.ValidateStackedSandboxHarness(h); err != nil {
-				return bad("unsupported_sandbox", err.Error())
-			}
-			posture = h.NestedSandbox.PrepareLaunch(posture)
-		}
-		askSpec := harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
-			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture}
-		if remover, ok := h.Ask.(harness.EphemeralSessionRemover); ok && h.PreMintsAskConvID() {
-			// The harness persists the turn anyway; pin its id so the
-			// conversation it creates is removed once the run is over.
-			askSpec.SessionID = uuid.NewString()
-			defer remover.RemoveEphemeralSession(askSpec.SessionID)
-		}
-		argv = h.Ask.BuildAskArgv(askSpec)
-	}
-	if len(argv) == 0 {
-		return bad("unsupported_harness", "harness returned an empty command")
-	}
-	if layer {
-		wrapped, cleanup, wrapErr := prepareNonInteractiveWithTclaudeLayer(p, h, argv, preLaunch)
-		defer cleanup()
-		if wrapErr != nil {
-			return bad("unsupported_sandbox", oneShotPolicyFailure(p.EffectiveSandbox, wrapErr))
-		}
-		argv = []string{"/bin/sh", "-c", wrapped}
-	} else if preLaunch != "" {
-		argv = append(clcommon.BootstrapShellArgv(), "-c", preLaunch+"exec "+quoteOneShotArgv(argv))
-	}
+	}()
 	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
 	defer cancel()
 	command := nonInteractiveCommand{
-		Argv: argv, Cwd: p.Cwd,
+		Argv: prepared.Argv, Cwd: p.Cwd,
 		// A one-shot has no session row or group member. Installed harness
 		// callbacks cannot be attributed to it, so suppress those callbacks
 		// before they reach the broker and raise an unplaceable-caller alert.
-		Env: append(seanceProcessEnv(posture.ShellEnvironment),
-			"TCLAUDE_AGENT_HINT=1", "TCLAUDE_IGNORE_HOOKS=1"),
+		Env:                   prepared.Env,
 		SandboxImplementation: p.SandboxImplementation,
 		TimeoutSeconds:        seconds,
 		TmuxSessionName:       p.OneShotName,
@@ -240,9 +118,8 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if p.RemoteJob != nil {
 		command.JobLiveOutput = p.RemoteJob.LivePath
 	}
-	if p.EffectiveSandbox != nil {
-		command.ResourceLimits = p.EffectiveSandbox.Effective.ResourceLimits
-	}
+	command.ResourceLimits, command.ResourceCgroupDir = prepared.ResourceLimits, prepared.ResourceCgroupDir
+
 	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
 		return nonInteractiveSpawnResult{}, fail
 	}
@@ -260,47 +137,13 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		}
 		return result, failure
 	}
+	if err := prepared.MarkLaunchAttempt(); err != nil {
+		return hostFailure("sandbox_init", err.Error())
+	}
 	if runtime.GOOS == "linux" || p.RemoteJob != nil {
-		if command.ResourceLimits.Enabled() || p.SandboxImplementation == "resource-only" || directoryRun != nil {
-			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
-			if implErr != nil {
-				return bad("unsupported_sandbox", implErr.Error())
-			}
-			if err := sandboxpolicy.ValidateResourceLimitTarget(command.ResourceLimits, implementation, runtime.GOOS); err != nil {
-				return bad("unsupported_sandbox", err.Error())
-			}
-			// Ordinary pane launches prepare their resource boundary in agentd
-			// and hand it to the tmux child. The pane's own cgroup may not have
-			// permission to create or configure a sibling boundary.
-			dir, cleanup, prepErr := prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), command.ResourceLimits)
-			if prepErr != nil {
-				if command.ResourceLimits.Enabled() || p.SandboxImplementation == "resource-only" {
-					return hostFailure("resource_limit_init", prepErr.Error())
-				}
-				// As with ordinary layer launches, a cgroup without authored
-				// ceilings is opportunistic. Directory cleanup stays conservative.
-				dir, cleanup = "", func() {}
-			}
-			command.ResourceCgroupDir = dir
-			defer func() {
-				if err := removeNonInteractiveResourceCgroup(dir); err != nil {
-					slog.Warn("one-shot resource cgroup cleanup failed", "dir", dir, "error", err)
-				}
-				cleanup()
-			}()
-		}
-		if directoryRun != nil {
-			if err := directoryRun.launched(command.ResourceCgroupDir, command.ResourceLimits); err != nil {
-				return hostFailure("sandbox_init", err.Error())
-			}
-		}
 		return finish(runNonInteractiveTmuxCommand(ctx, command))
 	}
-	if directoryRun != nil {
-		if err := directoryRun.launched(""); err != nil {
-			return hostFailure("sandbox_init", err.Error())
-		}
-	}
+
 	return finish(executeNonInteractiveCommand(ctx, command))
 }
 

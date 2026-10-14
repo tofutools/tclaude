@@ -703,6 +703,15 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${ConfigSelect} id="ask-profile" aria-label="Ask default profile" style="min-width:160px"></${ConfigSelect}>
           <span id="ask-profile-state" class="cfg-hint"></span>
         </${Setting}>
+        <${Setting} title="Ask — sandbox" forId="ask-sandbox" k="ask.sandbox"
+          summary="Apply the current sandbox policy to each ask turn. Dashboard global default is the default."
+          more=${html`<strong>Auto</strong> adds the exact directory group's sandbox rules to the dashboard global policy. Ambiguous groups require a directory default or another selection. A named library profile applies exactly that profile and its includes. <strong>Off</strong> keeps the harness's ordinary ask behavior. Unsupported restrictions refuse the ask with guidance.`}>
+          <${ConfigSelect} id="ask-sandbox" aria-label="Ask sandbox policy" style="min-width:160px">
+            <option value="auto">Auto (dashboard global + group rules for this dir)</option>
+            <option value="global">Dashboard global default</option>
+            <option value="off">Off</option>
+          </${ConfigSelect}>
+        </${Setting}>
         <${Setting} title="Ask — model" forId="ask-model" k="ask.model" child
           summary="Used when no profile is selected and no -m flag is passed.">
           <${ConfigSelect} id="ask-model" aria-label="Ask default model" style="min-width:160px"></${ConfigSelect}>

@@ -214,7 +214,7 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 			Stream: true, Ephemeral: true, LaunchPosture: &posture,
 			SessionID: "sid-3", Prompt: "hi",
 		}),
-		[]string{"claude", "--session-id", "sid-3", "hi"})
+		[]string{"claude", "--settings", `{"sandbox":{"enabled":false}}`, "--permission-mode", "auto", "--session-id", "sid-3", "hi"})
 
 	// Defensive cross-check of the ordering invariant the eq() above
 	// already encodes: every flag index precedes the `--` marker.

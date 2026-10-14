@@ -22,12 +22,15 @@ import (
 // prove that descendants have stopped using its cache. Reuse the one-shot
 // cgroup reap path; without that proof keep the tree until a different boot.
 type oneShotDirectoryRun struct {
-	Key     string                       `json:"key"`
-	Base    string                       `json:"base"`
-	Boot    string                       `json:"boot"`
-	Started bool                         `json:"started"`
-	Cgroup  string                       `json:"cgroup,omitempty"`
-	Limits  sandboxpolicy.ResourceLimits `json:"resource_limits,omitempty"`
+	Key        string                       `json:"key"`
+	Base       string                       `json:"base"`
+	Boot       string                       `json:"boot"`
+	Started    bool                         `json:"started"`
+	Cgroup     string                       `json:"cgroup,omitempty"`
+	Limits     sandboxpolicy.ResourceLimits `json:"resource_limits,omitempty"`
+	Foreground bool                         `json:"foreground,omitempty"`
+	OwnerPID   int                          `json:"owner_pid,omitempty"`
+	OwnerStart string                       `json:"owner_start,omitempty"`
 }
 
 var activeOneShotDirectories sync.Map
@@ -52,7 +55,7 @@ func newOneShotDirectoryRun() (*oneShotDirectoryRun, error) {
 }
 
 func (run *oneShotDirectoryRun) save() error {
-	root, err := canonicalizeForSecureMkdir(oneShotDirectoryJournalRoot())
+	root, err := canonicalizeForSecureMkdir(run.journalRoot())
 	if err != nil {
 		return err
 	}
@@ -95,7 +98,7 @@ func (run *oneShotDirectoryRun) finish() {
 		slog.Warn("one-shot directory cleanup failed", "key", run.Key, "error", err)
 	}
 	if !removed {
-		slog.Warn("one-shot directories retained until termination can be proven", "path", filepath.Join(run.Base, run.Key), "journal", filepath.Join(oneShotDirectoryJournalRoot(), run.Key+".json"))
+		slog.Warn("one-shot directories retained until termination can be proven", "path", filepath.Join(run.Base, run.Key), "journal", filepath.Join(run.journalRoot(), run.Key+".json"))
 	}
 }
 
@@ -124,14 +127,46 @@ func (run *oneShotDirectoryRun) reap() (bool, error) {
 	if _, err := removeAgentOwnedDirAtNoFollow(run.Base, run.Key); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	if err := os.Remove(filepath.Join(oneShotDirectoryJournalRoot(), run.Key+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(filepath.Join(run.journalRoot(), run.Key+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
 	return true, nil
 }
 
+func (run *oneShotDirectoryRun) journalRoot() string {
+	if run.Foreground {
+		return filepath.Join(config.DataDir(), "foreground-one-shot-directories")
+	}
+	return oneShotDirectoryJournalRoot()
+}
+
+func (run *oneShotDirectoryRun) setForegroundOwner() error {
+	original := filepath.Join(oneShotDirectoryJournalRoot(), run.Key+".json")
+	identity, err := readOneShotOwnerIdentity(os.Getpid())
+	if err != nil {
+		return fmt.Errorf("identify foreground directory owner: %w", err)
+	}
+	run.Foreground, run.OwnerPID, run.OwnerStart = true, os.Getpid(), identity
+	if err := run.save(); err != nil {
+		return err
+	}
+	if err := os.Remove(original); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func cleanupRetainedOneShotDirectories() error {
-	root := oneShotDirectoryJournalRoot()
+	for _, root := range []string{oneShotDirectoryJournalRoot(), filepath.Join(config.DataDir(), "foreground-one-shot-directories")} {
+		if err := cleanupOneShotDirectoryJournal(root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupOneShotDirectoryJournal(root string) error {
+
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -155,6 +190,21 @@ func cleanupRetainedOneShotDirectories() error {
 		if len(data) > 4096 || json.Unmarshal(data, &run) != nil || run.Key != key {
 			continue
 		}
+		if run.journalRoot() != root {
+			continue
+		}
+		if run.Foreground {
+			// The foreground journal is separate so an older daemon cannot treat a
+			// live ask as an abandoned local worker. PID reuse is checked too.
+			identity, err := readOneShotOwnerIdentity(run.OwnerPID)
+			if err == nil && identity == run.OwnerStart {
+				continue
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+		}
+
 		// Reclaim an abandoned delegated boundary through the same validation and
 		// reaping path as the helper. No group/process PID guess authorizes cleanup.
 		if run.Started && run.Cgroup != "" && runtime.GOOS == "linux" {
