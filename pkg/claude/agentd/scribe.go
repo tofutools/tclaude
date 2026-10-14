@@ -47,7 +47,7 @@ import (
 
 // scribeGroupDescr is stamped on the shared scribe-kind group so the Groups tab
 // explains why the ad-hoc agents are grouped together.
-const scribeGroupDescr = "Ad-hoc scribe agent — summoned from the dashboard to edit tclaude state by chat (JOH-361)."
+const scribeGroupDescr = db.ScribeGroupDescr
 
 // scribeSummonRequest is the wire body of POST /api/scribe and its /v1 twin.
 type scribeSummonRequest struct {

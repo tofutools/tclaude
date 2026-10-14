@@ -2634,6 +2634,34 @@ setTimeout(function(){
 			SettleMS: 1200,
 		},
 		{
+			Key:      "process-scribe-dock-chat",
+			Title:    "Process editor — docked scribe, chat mode",
+			Caption:  "E4: the scribe docks beside the canvas. Chat mode mails the scribe and reads its turn replies back (GET /api/scribe/{agent}/chat); context chips show the selection and validation errors, and context actions send bounded editor context. A saved scribe version waits as \"Review on canvas\".",
+			JS:       scribeDockStateJS("chat", true, `  if (document.querySelectorAll('[data-scribe-msg]').length !== 3) throw new Error('chat bubbles missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-scribe-dock-terminal",
+			Title:    "Process editor — docked scribe, terminal mode",
+			Caption:  "Terminal mode keeps the same context actions but hands the conversation to the scribe's own terminal pane (openTerminalPane); messages sent from the dock arrive there.",
+			JS:       scribeDockStateJS("terminal", false, `  if (!document.querySelector('[data-scribe-open-terminal]')) throw new Error('terminal mode button missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-diff-review",
+			Title:   "Process editor — scribe proposal reviewed on the canvas",
+			Caption: "Review on canvas paints the scribe's saved version over the live draft: added (green, dashed), changed (amber) and removed/retargeted (red ghost) items with tags; the bar counts +added ~changed −removed, walks the changes, and accepts or rejects each — or all. The merge lands as one undoable edit.",
+			JS: scribeDockStateJS("chat", true, `  if (!ed.openDiffReview()) throw new Error('review did not open');
+  await editorPaint();
+  await ed.decideDiff(undefined, 'accept');
+  await editorPaint();
+  var bar = document.querySelector('[data-diff-review]');
+  if (!bar) throw new Error('review bar missing');
+  if (!/1 of \d+ decided/.test(bar.textContent)) throw new Error('review bar did not record the accept: ' + bar.textContent);
+  if (!document.querySelector('.process-node.is-diff-added')) throw new Error('proposed nodes are not painted');`),
+			SettleMS: 1400,
+		},
+		{
 			Key:     "process-editor-validation",
 			Title:   "Process editor — live validation",
 			Caption: "Live validation (TCL-299/397): an orphaned task carries the ✕ error badge with an ×3 count, the extra 'later' start edge gets a ⚠ dead-edge badge at its label, and keyboard focus exposes the node-local diagnostic detail while the issues panel lists every finding.",
@@ -3487,6 +3515,47 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
 // decision ("escalate") purely through the client edit model, then runs the
 // state's inspector-driving JS. `return` matters — MustEval awaits the
 // promise, so the self-checks (throws) gate the capture.
+// scribeDockStateJS opens the release-train editor with the docked scribe:
+// the browser-side scribe API is stubbed (no live scribe agent exists in the
+// fixture), and with proposal set a scribe-saved version is pending review.
+func scribeDockStateJS(mode string, proposal bool, extraJS string) string {
+	js := `var scribe = {agentId: 'agt_' + 'a'.repeat(32), convId: 'scribe-conv', name: 'process-scribe-k3x',
+    scope: {kind: 'process-template', id: 'release-train'}, scopeLabel: 'process template release-train', online: true};
+  ed.options.scribeDock = {
+    scribes: function(){ return [scribe]; },
+    openTerminal: function(){ return true; },
+    fetchChat: async function(){ return [
+      {id: 'h1', role: 'human', body: 'Add an implement step and a human review gate before ship.', at: ''},
+      {id: 's1', role: 'scribe', body: 'Added "Implement" (agent, dev profile) after begin and a "Review gate" decision before ship. Validated and saved as a new version; review it on the canvas.', at: ''},
+      {id: 'h2', role: 'human', body: 'Also tighten the description.', at: ''},
+    ]; },
+  };
+  ed.observeExternalHead = function(){};
+  ed.setScribeDockMode('` + mode + `');
+  ed.toggleScribeDock(true);
+`
+	if proposal {
+		js += `  var theirs = JSON.parse(JSON.stringify(ed.model.saveBody()));
+  theirs.template.description = 'Plan, implement, review, and ship a dashboard release behind a human review gate.';
+  theirs.template.nodes.implement = {type: 'task', name: 'Implement', performer: {kind: 'agent', profile: 'dev', prompt: 'Implement the change'}};
+  theirs.template.nodes.gate = {type: 'decision', name: 'Review gate', performer: {kind: 'human', ask: 'Ship it?', choices: ['yes', 'no']}};
+  theirs.edges = theirs.edges.filter(function(e){ return !(e.from === 'begin' && e.outcome === 'pass'); });
+  theirs.edges.push({from: 'begin', outcome: 'pass', to: 'implement'}, {from: 'implement', outcome: 'pass', to: 'gate'}, {from: 'gate', outcome: 'yes', to: 'ship'});
+  theirs.layout = theirs.layout || {};
+  theirs.layout.nodes = Object.assign({}, theirs.layout.nodes, {implement: {x: 220, y: 240}, gate: {x: 360, y: 300}});
+  theirs.currentRef = 'release-train@sha256:' + 'b'.repeat(64);
+  theirs.sourceHash = 'c'.repeat(64);
+  theirs.semanticHash = '5c71be0a' + 'd'.repeat(56);
+  ed.externalChange = {kind: 'clean', ref: theirs.currentRef, sourceHash: theirs.sourceHash, review: {view: theirs, summary: null}};
+  ed.renderExternalChange();
+`
+	}
+	js += `  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-scribe-dock[data-scribe-dock="` + mode + `"]')) throw new Error('scribe dock did not open in ` + mode + ` mode');
+`
+	return processEditorStateJS(js + extraJS)
+}
+
 func nodeInspectorStateJS(extraJS string) string {
 	const seed = `ed.model.addNode('task', {x: 470, y: 90, id: 'implement', name: 'Implement'});
   ed.model.updateNode('implement', function(n){

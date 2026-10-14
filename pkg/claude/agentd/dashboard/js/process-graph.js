@@ -104,6 +104,35 @@ function edgeAccessibleName(edge, issues = []) {
     + `${detail ? `: ${detail}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`;
 }
 
+// Review-diff decoration (process-draft-diff.js): class-coded AND text-coded
+// (a visible "+ added" / "− removed" / "~ fields" tag), never colour-only.
+function diffClasses(diff) {
+  if (!diff) return '';
+  return ` is-diff is-diff-${diff.op} is-diff-${diff.state || 'pending'}`
+    + `${diff.conflict ? ' is-diff-conflict' : ''}${diff.current ? ' is-diff-current' : ''}${diff.ghost ? ' is-diff-ghost' : ''}`;
+}
+
+function diffDescription(diff) {
+  if (!diff) return '';
+  const op = diff.op === 'added' ? 'proposed addition' : diff.op === 'removed' ? 'proposed removal' : 'proposed change';
+  return `, ${op}${diff.state && diff.state !== 'pending' ? ` ${diff.state}` : ''}${diff.conflict ? ', conflicts with your edits' : ''}`;
+}
+
+function renderDiffTag(parent, node) {
+  const diff = node.diff;
+  if (!diff?.tag) return;
+  const text = `${diff.conflict ? '⚠ ' : ''}${diff.state === 'accepted' ? '✓ ' : diff.state === 'rejected' ? '✕ ' : ''}${diff.tag}`;
+  const width = Math.min(node.width + 40, 16 + [...text].length * 6.4);
+  const group = svgElement('g', {
+    class: 'process-diff-tag', transform: `translate(${-node.width / 2} ${-node.height / 2 - 20})`, 'aria-hidden': 'true',
+  });
+  group.append(svgElement('rect', { class: 'process-diff-tag-bg', x: 0, y: 0, width, height: 16, rx: 4 }));
+  const label = svgElement('text', { class: 'process-diff-tag-text', x: 7, y: 12 });
+  label.textContent = text;
+  group.append(label);
+  parent.append(group);
+}
+
 function outgoingCounts(edges) {
   const counts = new Map();
   for (const edge of edges) counts.set(edge.from, (counts.get(edge.from) || 0) + 1);
@@ -687,7 +716,7 @@ export class ProcessGraph {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
-      class: `process-edge${edge.back ? ' process-edge-back' : ''}`,
+      class: `process-edge${edge.back ? ' process-edge-back' : ''}${diffClasses(edge.diff)}`,
       'data-key': key,
       'data-edge-id': edge.id,
       'data-edge-index': edge.inputIndex,
@@ -696,7 +725,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': edgeAccessibleName(edge, issues),
+      'aria-label': `${edgeAccessibleName(edge, issues)}${diffDescription(edge.diff)}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -729,20 +758,21 @@ export class ProcessGraph {
   renderNode(node) {
     const overlay = overlayPresentation(node.overlay || node.stateOverlay);
     const group = svgElement('g', {
-      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}`,
+      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}${diffClasses(node.diff)}`,
       transform: `translate(${node.x} ${node.y})`,
       'data-key': `node:${node.id}`,
       'data-node-id': node.id,
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}`,
+      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}${diffDescription(node.diff)}`,
     });
     group.dataset.baseAriaLabel = group.getAttribute('aria-label');
     renderShape(group, node);
     const labelSerial = this.labelSerial = (this.labelSerial || 0) + 1;
     renderText(group, node, `process-node-label-clip-${this.instanceID}-${labelSerial}`);
     renderOverlay(group, node, overlay);
+    renderDiffTag(group, node);
     return group;
   }
 
@@ -1835,6 +1865,18 @@ export class ProcessGraph {
     this.view.y = rect.height / 2 - y * this.view.k;
     this.applyView();
     return true;
+  }
+
+  // revealPoint pans only when graph point (x, y) sits outside the viewport
+  // (less a margin), so stepping through nearby items keeps the view steady.
+  revealPoint(x, y, margin = 60) {
+    const rect = this.svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const sx = this.view.x + x * this.view.k;
+    const sy = this.view.y + y * this.view.k;
+    const inset = Math.min(margin, rect.width / 4, rect.height / 4);
+    if (sx >= inset && sx <= rect.width - inset && sy >= inset && sy <= rect.height - inset) return false;
+    return this.centerOn(x, y);
   }
 
   focusNode(id) {
