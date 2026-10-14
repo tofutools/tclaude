@@ -158,10 +158,10 @@ test('a stray third segment under terminals is dropped', () => {
 test('a tab-level selection is refused on tabs that cannot show one', () => {
   // Only terminals has a tab-level selection; elsewhere a bare tab + selection
   // is meaningless and must not survive normalization into the URL.
-  assert.deepEqual(normalizeLocation({ tab: 'audit', selection: 'x' }), { tab: 'audit' });
+  assert.deepEqual(normalizeLocation({ tab: 'config', selection: 'x' }), { tab: 'config' });
   assert.deepEqual(normalizeLocation({ tab: 'groups', selection: 'x' }), { tab: 'groups' });
-  // /audit/x parses its second segment as a subtab, which audit does not have.
-  assert.deepEqual(fromPath('/audit/x'), { tab: 'audit' });
+  // /config/x parses its second segment as a subtab, which config does not have.
+  assert.deepEqual(fromPath('/config/x'), { tab: 'config' });
 });
 
 test('toPath / fromPath round-trip the Usage tab and its subtabs', () => {
