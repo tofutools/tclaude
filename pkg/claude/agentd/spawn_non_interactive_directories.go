@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -33,21 +32,6 @@ type oneShotDirectoryRun struct {
 
 var activeOneShotDirectories sync.Map
 var oneShotBootIdentity = readOneShotBootIdentity
-
-func readOneShotBootIdentity() string {
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-		if err == nil {
-			return strings.TrimSpace(string(data))
-		}
-	} else if runtime.GOOS == "darwin" {
-		data, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
-		if err == nil {
-			return strings.TrimSpace(string(data))
-		}
-	}
-	return "" // Missing evidence must never authorize deletion.
-}
 
 func oneShotDirectoryJournalRoot() string {
 	return filepath.Join(config.DataDir(), "one-shot-directories")
@@ -82,7 +66,7 @@ func (run *oneShotDirectoryRun) save() error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	if _, err = file.Write(data); err != nil {
 		_ = file.Close()
 		return err
