@@ -1510,6 +1510,26 @@ setTimeout(function(){
 			SettleMS: 900,
 		},
 		{
+			Key:     "process-kit-s1",
+			Title:   "Process UI kit — S1 sheet",
+			Caption: "The shared process vocabulary (mock S1): node-kind glyphs, run/node state styling, scope chips, run badges with step strips, state-ring overlay icons, and two read-only mini-graphs rendered from run projections.",
+			JS: `return (async function(){
+  var mod = await import('/static/js/process-kit-sheet.js');
+  var host = document.createElement('div');
+  host.id = 'process-kit-sheet-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;overflow:auto;visibility:visible;background:var(--pk-surface)';
+  document.body.appendChild(host);
+  mod.mountProcessKitSheet(host);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var graphs = host.querySelectorAll('.pk-mini-graph');
+  if (!graphs.length || graphs[0].getBoundingClientRect().width < 200) throw new Error('process kit mini-graph is not visible');
+  if (graphs.length !== 2) throw new Error('process kit sheet rendered ' + graphs.length + ' mini-graphs, want 2');
+  if (!host.querySelector('.pk-run-icon.pk-scope-agent')) throw new Error('agent-scoped run icon missing');
+  if (getComputedStyle(host.querySelector('.pk-gnode.pk-state-running')).borderTopColor === getComputedStyle(host.querySelector('.pk-gnode.pk-state-done')).borderTopColor) throw new Error('process kit stylesheet is not applied');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "processes-scribe-library-entry",
 			Title:   "Processes — library scribe entry",
 			Caption: "TCL-434 capstone: the Processes list exposes one visible library-scoped scribe action with skin-coherent language before any template is opened.",
