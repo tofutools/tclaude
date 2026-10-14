@@ -2148,17 +2148,16 @@ setTimeout(function(){
   if(contrast<4.5) throw new Error('disabled reason contrast is '+contrast.toFixed(2)+':1');`},
 				{Kind: "click", Selector: `.process-node-chooser [data-command-id="process.create.task"]`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
-  if(!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('configuration-required task editor did not open');
+  if(!document.querySelector('.process-editor-body > [data-node-inspector]')) throw new Error('configuration-required task did not open the node inspector');
   if(Object.keys(ed.model.template.nodes).length!==state.nodes+1||ed.model.edges.length!==state.edges+1) throw new Error('node and edge were not both created');
   if(ed.model.undoStack.length!==state.undo+1) throw new Error('connected insertion was not one undo operation');
   var created=Object.keys(ed.model.template.nodes).find(function(id){return !['begin','ship'].includes(id);});
   var edge=ed.model.edges.find(function(candidate){return candidate.from===created&&candidate.to==='ship';});
   if(!created||ed.model.node(created).type!=='task'||!edge) throw new Error('input-port drop did not create new-source → existing-target direction');
   window.__edgeDrop.created=created;`},
-				{Kind: "click", Selector: ".process-node-modal .process-node-cancel"},
 				{Kind: "click", Selector: `.process-editor-header button[title="Undo (Ctrl+Z)"]`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
-  if(document.querySelector('.process-node-modal')) throw new Error('configuration editor did not close');
+  if(document.querySelector('[data-node-inspector]')) throw new Error('node inspector outlived the undone node');
   if(ed.model.node(state.created)||Object.keys(ed.model.template.nodes).length!==state.nodes||ed.model.edges.length!==state.edges) throw new Error('one undo did not remove the connected node and edge');
   if(ed.model.undoStack.length!==state.undo) throw new Error('atomic undo did not restore the prior history depth');`},
 			},
@@ -2655,65 +2654,82 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
-			Key:      "process-node-dialog-task-agent",
-			Title:    "Process node dialog — task, agent work performer",
-			Caption:  "The compound task's stage editor (TCL-298): plan stage with approval policy, agent work performer (profile/prompt/model/effort + contact schedule), ordered checks, review gate, retry policy, captures, and the read-only edges summary.",
-			JS:       nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent")),
+			Key:      "process-node-inspector-task-agent",
+			Title:    "Process node inspector — task, agent work performer",
+			Caption:  "E3: selecting a node docks its inspector beside the canvas as a stack of blocks — Performer (agent: profile/model/effort), Prompt, Work stages (plan → work → checks → review chips), Inputs, Retry, Outputs, Outcomes → edges, Bounds (timeout + contact schedule) — each reorderable, with + add block offering only what fits the kind.",
+			JS:       nodeInspectorStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("agent")),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-resized",
-			Title:   "Process node dialog — resized workspace",
-			Caption: "TCL-419: the standard persisted resize affordance expands the compound task editor into a two-column workspace; the scroll body and fixed action row remain usable in both skins.",
-			JS: nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent") + `
-  var dialog = document.querySelector('.process-node-dialog');
-  if (getComputedStyle(dialog).resize !== 'both') throw new Error('node dialog resize affordance is not active');
-  dialog.style.width = '1000px'; dialog.style.height = '760px';
-  var detail = dialog.querySelector('.process-node-detail');
-  if (getComputedStyle(detail).columnCount !== '2') throw new Error('wide node form did not reflow into columns');`),
-			SettleMS: 1200,
-		},
-		{
-			Key:     "process-node-dialog-task-human",
-			Title:   "Process node dialog — task, human work performer",
-			Caption: "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",
-			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+			Key:     "process-node-inspector-task-human",
+			Title:   "Process node inspector — task, human work performer",
+			Caption: "The same shared performer editor keyed to human: choices, choice outcomes and assignee in Performer, the question in Prompt. No per-kind component forks (uniform performer contract).",
+			JS: nodeInspectorStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'human', profile: 'operator', ask: 'Apply the manual registry update', choices: ['done', 'blocked'], assignee: 'johan'};
   });
-  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("human") + nodeDialogScrollToWork),
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("human")),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-task-program",
-			Title:   "Process node dialog — task, program work performer",
-			Caption: "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10) — scrolled to the work section.",
-			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+			Key:     "process-node-inspector-task-program",
+			Title:   "Process node inspector — task, program work performer",
+			Caption: "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10); Prompt is not offered for a program.",
+			JS: nodeInspectorStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'program', profile: 'ci', run: 'go', args: ['test', './...']};
   });
-  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("program") + `
-  if (!document.querySelector('.process-node-security-note')) throw new Error('program security note missing');` + nodeDialogScrollToWork),
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("program") + `
+  if (!document.querySelector('[data-node-inspector] .process-node-security-note')) throw new Error('program security note missing');
+  if (document.querySelector('[data-node-inspector] [data-node-block="prompt"], [data-node-inspector] [data-add-block="prompt"]')) throw new Error('a program performer was offered a prompt');`),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-decision",
-			Title:   "Process node dialog — decision node",
-			Caption: "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
-			JS: nodeDialogStateJS(`await ed.openNodeSettings('escalate'); await editorPaint();` + `
-  var choiceHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'choices → edges'; });
-  if (!choiceHead) throw new Error('decision dialog missing the choices → edges section');`),
+			Key:     "process-node-inspector-decision",
+			Title:   "Process node inspector — decision node",
+			Caption: "A decision docks the decider performer (human, with choices), its question in Prompt, and the read-only choices → edges in Outcomes, pointing at the canvas for topology edits.",
+			JS: nodeInspectorStateJS(`await ed.openNodeSettings('escalate'); await editorPaint();
+  var outcomes = document.querySelector('[data-node-inspector="escalate"] [data-node-block="outcomes"]');
+  if (!outcomes || !/cancel/.test(outcomes.textContent)) throw new Error('decision inspector missing its choices → edges');`),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-card-readonly",
-			Title:   "Process node detail card — read-only mode",
-			Caption: "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
-			JS: nodeDialogStateJS(`ed.model.config.nodeEditable = function(){ return false; };
+			Key:     "process-node-inspector-readonly",
+			Title:   "Process node inspector — read-only node",
+			Caption: "The same inspector for a node the view may not edit: read-only badge, every control disabled, no add or remove — block order stays a local preference.",
+			JS: nodeInspectorStateJS(`ed.model.config.nodeEditable = function(){ return false; };
   await ed.openNodeSettings('implement'); await editorPaint();
-  if (!document.querySelector('.process-node-readonly-badge')) throw new Error('read-only badge missing');
-  if (!document.querySelector('.process-node-detail.is-readonly')) throw new Error('detail card is not in read-only mode');
-  var enabled = document.querySelector('.process-node-detail select:not(:disabled), .process-node-detail input:not(:disabled), .process-node-detail textarea:not(:disabled)');
-  if (enabled) throw new Error('read-only card left a control enabled: ' + enabled.className);`),
+  if (!document.querySelector('[data-node-inspector] .process-node-readonly-badge')) throw new Error('read-only badge missing');
+  if (!document.querySelector('.process-node-inspector.is-readonly')) throw new Error('inspector is not in read-only mode');
+  var enabled = document.querySelector('.process-node-inspector select:not(:disabled), .process-node-inspector input:not(:disabled), .process-node-inspector textarea:not(:disabled)');
+  if (enabled) throw new Error('read-only inspector left a control enabled: ' + enabled.className);`),
 			SettleMS: 1200,
+		},
+		{
+			Key:      "process-scribe-dock-chat",
+			Title:    "Process editor — docked scribe, chat mode",
+			Caption:  "E4: the scribe docks beside the canvas. Chat mode mails the scribe and reads its turn replies back (GET /api/scribe/{agent}/chat); context chips show the selection and validation errors, and context actions send bounded editor context. A saved scribe version waits as \"Review on canvas\".",
+			JS:       scribeDockStateJS("chat", true, `  if (document.querySelectorAll('[data-scribe-msg]').length !== 3) throw new Error('chat bubbles missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-scribe-dock-terminal",
+			Title:    "Process editor — docked scribe, terminal mode",
+			Caption:  "Terminal mode keeps the same context actions but hands the conversation to the scribe's own terminal pane (openTerminalPane); messages sent from the dock arrive there.",
+			JS:       scribeDockStateJS("terminal", false, `  if (!document.querySelector('[data-scribe-open-terminal]')) throw new Error('terminal mode button missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-diff-review",
+			Title:   "Process editor — scribe proposal reviewed on the canvas",
+			Caption: "Review on canvas paints the scribe's saved version over the live draft: added (green, dashed), changed (amber) and removed/retargeted (red ghost) items with tags; the bar counts +added ~changed −removed, walks the changes, and accepts or rejects each — or all. The merge lands as one undoable edit.",
+			JS: scribeDockStateJS("chat", true, `  if (!ed.openDiffReview()) throw new Error('review did not open');
+  await editorPaint();
+  await ed.decideDiff(undefined, 'accept');
+  await editorPaint();
+  var bar = document.querySelector('[data-diff-review]');
+  if (!bar) throw new Error('review bar missing');
+  if (!/1 of \d+ decided/.test(bar.textContent)) throw new Error('review bar did not record the accept: ' + bar.textContent);
+  if (!document.querySelector('.process-node.is-diff-added')) throw new Error('proposed nodes are not painted');`),
+			SettleMS: 1400,
 		},
 		{
 			Key:     "process-editor-validation",
@@ -3563,13 +3579,54 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
 });`, title, graph, colorScheme, title)
 }
 
-// nodeDialogStateJS builds on the editor harness: it grows the seeded
+// nodeInspectorStateJS builds on the editor harness: it grows the seeded
 // release-train template into a compound task ("implement": plan + agent
 // work + ordered checks + review gate + retry + captures) and a human
 // decision ("escalate") purely through the client edit model, then runs the
-// state's dialog-driving JS. `return` matters — MustEval awaits the promise,
-// so the self-checks (throws) gate the capture.
-func nodeDialogStateJS(extraJS string) string {
+// state's inspector-driving JS. `return` matters — MustEval awaits the
+// promise, so the self-checks (throws) gate the capture.
+// scribeDockStateJS opens the release-train editor with the docked scribe:
+// the browser-side scribe API is stubbed (no live scribe agent exists in the
+// fixture), and with proposal set a scribe-saved version is pending review.
+func scribeDockStateJS(mode string, proposal bool, extraJS string) string {
+	js := `var scribe = {agentId: 'agt_' + 'a'.repeat(32), convId: 'scribe-conv', name: 'process-scribe-k3x',
+    scope: {kind: 'process-template', id: 'release-train'}, scopeLabel: 'process template release-train', online: true};
+  ed.options.scribeDock = {
+    scribes: function(){ return [scribe]; },
+    openTerminal: function(){ return true; },
+    fetchChat: async function(){ return [
+      {id: 'h1', role: 'human', body: 'Add an implement step and a human review gate before ship.', at: ''},
+      {id: 's1', role: 'scribe', body: 'Added "Implement" (agent, dev profile) after begin and a "Review gate" decision before ship. Validated and saved as a new version; review it on the canvas.', at: ''},
+      {id: 'h2', role: 'human', body: 'Also tighten the description.', at: ''},
+    ]; },
+  };
+  ed.observeExternalHead = function(){};
+  ed.setScribeDockMode('` + mode + `');
+  ed.toggleScribeDock(true);
+`
+	if proposal {
+		js += `  var theirs = JSON.parse(JSON.stringify(ed.model.saveBody()));
+  theirs.template.description = 'Plan, implement, review, and ship a dashboard release behind a human review gate.';
+  theirs.template.nodes.implement = {type: 'task', name: 'Implement', performer: {kind: 'agent', profile: 'dev', prompt: 'Implement the change'}};
+  theirs.template.nodes.gate = {type: 'decision', name: 'Review gate', performer: {kind: 'human', ask: 'Ship it?', choices: ['yes', 'no']}};
+  theirs.edges = theirs.edges.filter(function(e){ return !(e.from === 'begin' && e.outcome === 'pass'); });
+  theirs.edges.push({from: 'begin', outcome: 'pass', to: 'implement'}, {from: 'implement', outcome: 'pass', to: 'gate'}, {from: 'gate', outcome: 'yes', to: 'ship'});
+  theirs.layout = theirs.layout || {};
+  theirs.layout.nodes = Object.assign({}, theirs.layout.nodes, {implement: {x: 220, y: 240}, gate: {x: 360, y: 300}});
+  theirs.currentRef = 'release-train@sha256:' + 'b'.repeat(64);
+  theirs.sourceHash = 'c'.repeat(64);
+  theirs.semanticHash = '5c71be0a' + 'd'.repeat(56);
+  ed.externalChange = {kind: 'clean', ref: theirs.currentRef, sourceHash: theirs.sourceHash, review: {view: theirs, summary: null}};
+  ed.renderExternalChange();
+`
+	}
+	js += `  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-scribe-dock[data-scribe-dock="` + mode + `"]')) throw new Error('scribe dock did not open in ` + mode + ` mode');
+`
+	return processEditorStateJS(js + extraJS)
+}
+
+func nodeInspectorStateJS(extraJS string) string {
 	const seed = `ed.model.addNode('task', {x: 470, y: 90, id: 'implement', name: 'Implement'});
   ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'agent', profile: 'dev', prompt: 'Implement the change', model: 'opus', effort: 'high',
@@ -3595,22 +3652,16 @@ func nodeDialogStateJS(extraJS string) string {
 	return processEditorStateJS(seed + extraJS)
 }
 
-// nodeDialogSelfCheck asserts the dialog is open with the work performer's
-// kind select showing `kind` — a broken dialog fails the run instead of
-// passing as a silent blank capture.
-func nodeDialogSelfCheck(kind string) string {
+// nodeInspectorSelfCheck asserts the inspector is docked with the work
+// performer's kind select showing `kind` — a broken inspector fails the run
+// instead of passing as a silent blank capture.
+func nodeInspectorSelfCheck(kind string) string {
 	return fmt.Sprintf(`
-  if (!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('node dialog did not open');
-  var kinds = Array.from(document.querySelectorAll('.process-node-modal .process-node-select'));
-  if (!kinds.some(function(sel){ return sel.value === %q; })) throw new Error('no performer editor shows kind %s');`, kind, kind)
+  var dock = document.querySelector('.process-editor-body > [data-node-inspector]');
+  if (!dock) throw new Error('node inspector did not dock');
+  var kindSelect = dock.querySelector('[data-node-field="performer.kind"]');
+  if (!kindSelect || kindSelect.value !== %q) throw new Error('performer block does not show kind %s');`, kind, kind)
 }
-
-// nodeDialogScrollToWork scrolls the dialog body so the work section's
-// performer editor is the visible content in the capture.
-const nodeDialogScrollToWork = `
-  var workHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'work'; });
-  if (!workHead) throw new Error('work section missing');
-  workHead.scrollIntoView();`
 
 func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, state, message string) dashsnap.State {
 	caption := "TCL-563: a trusted connector drag exposes the shared source/valid/invalid action vocabulary, delayed bounded tooltip, accessible reason, unchanged port geometry, and readable regular/wizard contrast."

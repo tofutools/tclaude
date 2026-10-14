@@ -275,7 +275,8 @@ export class LiveValidation {
   // through here so badges survive re-renders and drop with deleted targets.
   applyDiagnostics(diagnostics) {
     this.diagnostics = diagnostics || [];
-    this.editor.graph.setGraph(this.decorate(this.editor.model.graph()));
+    const decorated = this.decorate(this.editor.model.graph());
+    this.editor.graph.setGraph(this.editor.overlayGraph ? this.editor.overlayGraph(decorated) : decorated);
     this.editor?.publish?.();
   }
 

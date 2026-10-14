@@ -5,14 +5,6 @@ import (
 	"fmt"
 )
 
-// migrateV260toV261 is a placeholder that keeps the chain contiguous while
-// the sibling v261 migration (agent turn replies, #3036) is still in review.
-// It is replaced by the real v261 step when that lands.
-func migrateV260toV261(d *sql.DB) error {
-	_, err := d.Exec(`UPDATE schema_version SET version = 261`)
-	return err
-}
-
 // migrateV261toV262 adds an operator pause to process runs. paused_at is NULL
 // for a run that is free to plan; a timestamp parks it — no new agent turns or
 // program commands are dispatched — while in-flight attempts finish and are

@@ -18635,29 +18635,174 @@ body.wizard .process-param-row input[type="text"] { background: #2c2042; border-
 body.wizard .process-param-row input:focus { border-color: #d4af37; outline: none; }
 body.wizard .process-param-check { color: #f3e6c0; }
 
-/* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
-   One component, two modes: the editor's modal and the viewer's read-only
-   detail card share every rule below; .is-readonly only dims the controls. */
-.process-node-modal .process-node-dialog {
-  /* The fixed CSS floor (rather than makeModalResizable's natural-content
-     floor) keeps compound task forms shrinkable. Both floor and ceiling
-     follow the viewport, so a size saved on a large display remains usable
-     after reopening in a small window. */
-  width: min(680px, calc(100vw - 32px));
-  min-width: min(360px, calc(100vw - 32px));
-  max-width: min(1100px, calc(100vw - 32px));
-  min-height: min(300px, calc(100vh - 32px));
-  max-height: calc(100vh - 32px);
-  resize: both;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 14px 16px;
-  container: process-node-dialog / inline-size;
+/* === Node inspector (process-node-inspector.js, E3) =========================
+   The editor's docked node inspector: a column of blocks beside the canvas.
+   Field and section rules below are shared by every block; .is-readonly only
+   dims the controls. */
+.process-node-inspector {
+  width: 340px; flex: none; min-height: 0; overflow-y: auto; padding: 12px;
+  border-left: 1px solid #21262d; background: #10151c; box-sizing: border-box;
 }
-.process-node-dialog-body { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; }
-.process-node-dialog-actions { margin-top: 10px; }
-.process-node-dialog-actions button { min-width: 84px; }
+.pni-head { display: flex; flex-direction: column; gap: 6px; }
+.pni-head-row { display: flex; align-items: flex-end; gap: 6px; }
+.pni-head-row .process-node-field { flex: 1; min-width: 0; }
+.pni-head-row .process-node-input { font-weight: 600; font-size: 14px; }
+.pni-meta { color: #8b949e; font-size: 11px; }
+.pni-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.pni-diagnostics { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.pni-diag.is-error { color: #ff7b72; }
+.pni-diag.is-warning { color: #e3b341; }
+.pni-block { border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
+.pni-block.is-drop-target { border-color: #58a6ff; box-shadow: 0 -2px 0 #58a6ff; }
+.pni-block-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+.pni-block-head .spacer { flex: 1; }
+.pni-grip { color: #6e7681; cursor: grab; user-select: none; }
+.pni-block-title { font-weight: 600; font-size: 12.5px; color: #e6edf3; }
+.pni-block-move, .pni-block-remove {
+  background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e;
+  font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer;
+}
+.pni-block-move:hover:not(:disabled), .pni-block-remove:hover, .pni-block-move:focus-visible, .pni-block-remove:focus-visible { border-color: #30363d; color: #e6edf3; }
+.pni-block-move:disabled { opacity: .35; cursor: default; }
+.pni-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
+.pni-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.pni-stage-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pni-stage-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11px; color: #c9d1d9; }
+.pni-stage-work { border-color: #58a6ff; color: #a5d6ff; }
+.pni-stage-arrow { color: #6e7681; font-size: 11px; }
+.pni-input-list { margin: 0; padding-left: 16px; font-size: 12px; color: #c9d1d9; }
+.pni-params { margin: 0; font-size: 12px; color: #8b949e; }
+.pni-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px dashed #30363d; border-radius: 8px; font-size: 12px; color: #8b949e; }
+.pni-add-block { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
+.pni-add-block:hover, .pni-add-block:focus-visible { border-color: #58a6ff; }
+body.wizard .process-node-inspector { background: #140f28; border-left-color: #4a3d6b; }
+body.wizard .pni-block { background: #181226; border-color: #4a3d6b; }
+body.wizard .pni-block-head { border-bottom-color: #4a3d6b; }
+body.wizard .pni-add, body.wizard .pni-add-block { border-color: #4a3d6b; }
+@media (max-width: 900px) { .process-node-inspector { width: 280px; } }
+/* Proposal review overlay (E4): another author's saved version painted over
+   the live draft. Added = green, changed = amber, removed = red dashed; the
+   change under review gets a halo; settled changes fade. */
+.process-node.is-diff-added .process-node-shape { stroke: #3fb950; stroke-dasharray: 6 3; }
+.process-node.is-diff-changed .process-node-shape { stroke: #d29922; }
+.process-node.is-diff-removed .process-node-shape { stroke: #f85149; stroke-dasharray: 4 3; opacity: .7; }
+.process-node.is-diff-current .process-node-shape { stroke-width: 4; filter: drop-shadow(0 0 6px rgba(88, 166, 255, .65)); }
+.process-node.is-diff-accepted, .process-node.is-diff-rejected { opacity: .62; }
+.process-node.is-diff-rejected.is-diff-added { opacity: .3; }
+.process-node.is-diff-conflict .process-node-shape { stroke: #db6d28; }
+.process-edge.is-diff-added .process-edge-path { stroke: #3fb950; stroke-dasharray: 6 3; }
+.process-edge.is-diff-changed .process-edge-path { stroke: #d29922; }
+.process-edge.is-diff-removed .process-edge-path { stroke: #f85149; stroke-dasharray: 4 4; opacity: .65; }
+.process-edge.is-diff-ghost { pointer-events: none; }
+.process-edge.is-diff-current .process-edge-path { stroke-width: 4; }
+.process-edge.is-diff-rejected.is-diff-added { opacity: .3; }
+.process-diff-tag { pointer-events: none; }
+.process-diff-tag-bg { fill: #161b22; stroke: #30363d; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.process-diff-tag-text { fill: #c9d1d9; font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.is-diff-added > .process-diff-tag .process-diff-tag-text { fill: #56d364; }
+.is-diff-changed > .process-diff-tag .process-diff-tag-text { fill: #e3b341; }
+.is-diff-removed > .process-diff-tag .process-diff-tag-text { fill: #ff7b72; }
+
+.process-diff-review {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px;
+  border-top: 1px solid #1f6feb; background: #0d1a2d; font-size: 12.5px;
+}
+.pdr-summary, .pdr-current { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pdr-summary .spacer, .pdr-current .spacer { flex: 1; }
+.pdr-title { color: #e6edf3; }
+.pdr-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; }
+.pdr-chip.is-added { color: #56d364; border-color: #238636; }
+.pdr-chip.is-changed { color: #e3b341; border-color: #9e6a03; }
+.pdr-chip.is-removed { color: #ff7b72; border-color: #da3633; }
+.pdr-chip.is-conflict { color: #ffa657; border-color: #db6d28; }
+.pdr-progress { color: #8b949e; }
+.pdr-current { padding: 6px 8px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
+.pdr-current.is-conflict { border-color: #db6d28; }
+.pdr-index { color: #8b949e; font-variant-numeric: tabular-nums; }
+.pdr-op { font-weight: 700; width: 1ch; text-align: center; }
+.pdr-current.is-added .pdr-op { color: #56d364; }
+.pdr-current.is-changed .pdr-op { color: #e3b341; }
+.pdr-current.is-removed .pdr-op { color: #ff7b72; }
+.pdr-label { color: #e6edf3; font-weight: 600; overflow-wrap: anywhere; }
+.pdr-fields, .pdr-linked { color: #8b949e; font-size: 11.5px; }
+.pdr-conflict { color: #ffa657; font-size: 11.5px; }
+.pdr-verdict { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+.pdr-verdict.is-accepted { color: #56d364; }
+.pdr-verdict.is-rejected { color: #ff7b72; }
+.pdr-step, .pdr-close {
+  background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9;
+  font: inherit; padding: 0 8px; cursor: pointer; line-height: 22px;
+}
+.pdr-step:hover, .pdr-close:hover, .pdr-step:focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
+body.wizard .process-diff-review { background: #160f2c; border-top-color: #7c5cff; }
+body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
+
+/* Docked process scribe (E4): chat or terminal, beside the canvas. */
+.process-scribe-dock {
+  width: 320px; flex: none; min-height: 0; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border-left: 1px solid #21262d; background: #10151c; box-sizing: border-box; overflow-y: auto;
+}
+.psd-head { display: flex; flex-direction: column; gap: 6px; }
+.psd-title-row { display: flex; align-items: center; gap: 6px; }
+.psd-title-row .spacer { flex: 1; }
+.psd-title { color: #e6edf3; font-size: 13px; overflow-wrap: anywhere; }
+.psd-state { border-radius: 999px; padding: 0 7px; font-size: 11px; border: 1px solid #30363d; }
+.psd-state.is-live { color: #56d364; border-color: #238636; }
+.psd-state.is-stopped { color: #8b949e; }
+.psd-close { background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e; font: inherit; cursor: pointer; }
+.psd-close:hover, .psd-close:focus-visible { border-color: #30363d; color: #e6edf3; }
+.psd-modes { display: inline-flex; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.psd-mode { background: transparent; border: 0; color: #8b949e; font: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer; }
+.psd-mode + .psd-mode { border-left: 1px solid #30363d; }
+.psd-mode.is-active { background: #1f6feb; color: #fff; }
+.psd-scope { color: #8b949e; font-size: 11.5px; overflow-wrap: anywhere; }
+.psd-summon, .psd-terminal, .psd-proposal {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+  padding: 10px; border: 1px dashed #30363d; border-radius: 8px; color: #c9d1d9; font-size: 12.5px;
+}
+.psd-summon p, .psd-terminal p { margin: 0; }
+.psd-proposal { border-style: solid; border-color: #1f6feb; background: #0d1a2d; }
+.psd-context { display: flex; flex-direction: column; gap: 6px; }
+.psd-chips, .psd-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.psd-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: #c9d1d9; }
+.psd-chip.is-empty { color: #6e7681; }
+.psd-chip.is-error { color: #ff7b72; border-color: #da3633; }
+.psd-actions .process-action { font-size: 11.5px; }
+.psd-log {
+  flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid #21262d; padding-top: 8px;
+}
+body.wizard .psd-log { border-top-color: #4a3d6b; }
+.psd-empty { margin: 0; color: #8b949e; font-size: 12.5px; }
+.psd-msg { display: flex; flex-direction: column; gap: 2px; max-width: 92%; }
+.psd-msg.is-human { align-self: flex-end; }
+.psd-msg-who { font-size: 10.5px; color: #6e7681; }
+.psd-msg.is-human .psd-msg-who { text-align: right; }
+.psd-msg-body {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.45;
+  padding: 6px 9px; border-radius: 10px; border: 1px solid #30363d; background: #161b22; color: #e6edf3;
+}
+.psd-msg.is-human .psd-msg-body { background: #1f3a5f; border-color: #1f6feb; }
+.psd-working { margin: 0; color: #8b949e; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.psd-dot { width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; animation: psd-pulse 1.2s ease-in-out infinite; }
+@keyframes psd-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .psd-dot { animation: none; } }
+.psd-error, .psd-notice.is-error { color: #ff7b72; font-size: 12px; margin: 0; }
+.psd-notice { color: #8b949e; font-size: 12px; }
+.psd-compose { display: flex; flex-direction: column; gap: 6px; }
+.psd-input {
+  width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12.5px;
+  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 8px;
+}
+.psd-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
+.psd-compose-row { display: flex; align-items: center; gap: 6px; }
+.psd-compose-row .spacer { flex: 1; }
+.process-scribe-action.is-active { border-color: #58a6ff; color: #a5d6ff; }
+body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
+body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
+body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
+body.wizard .psd-mode.is-active { background: #7c5cff; }
+@media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
 .process-node-detail-head {
   display: flex;
@@ -18766,20 +18911,6 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .process-node-status { margin: 6px 0 0; min-height: 16px; font-size: 12px; color: #8b949e; }
 .process-node-status.is-error { color: #f85149; }
 .process-node-missing { color: #f85149; }
-/* Extra width should buy useful editing space, not just longer text inputs.
-   The query follows the dialog's dragged inline size (not the viewport), so
-   task sections reflow live when the standard resize grip crosses the wide
-   threshold. Default/narrow dialogs retain the familiar single column. */
-@container process-node-dialog (min-width: 840px) {
-  .process-node-detail {
-    display: block;
-    column-count: 2;
-    column-gap: 10px;
-  }
-  .process-node-detail-head { column-span: all; margin-bottom: 10px; }
-  .process-node-section { break-inside: avoid; margin-bottom: 10px; }
-  .process-node-check { break-inside: avoid; }
-}
 /* Wizard skin: violet chrome, gold accents — explicitly themed so no control
    falls back to UA defaults. */
 body.wizard .process-node-section { background: #181226; border-color: #4a3d6b; }
@@ -18788,14 +18919,6 @@ body.wizard .process-node-input,
 body.wizard .process-node-textarea,
 body.wizard .process-node-select,
 body.wizard .process-node-close { background: #2c2042; border-color: #4a3d6b; color: #efe6ff; }
-body.wizard .process-node-dialog-actions button {
-  background: #2c2042; border-color: #4a3d6b; color: #efe6ff;
-}
-body.wizard .process-node-dialog-actions button:hover { border-color: #d4af37; }
-body.wizard .process-node-dialog-actions .primary {
-  background: #6d4aa2; border-color: #d4af37; color: #fff8dc;
-}
-body.wizard .process-node-dialog-actions button:disabled { opacity: .45; cursor: default; }
 body.wizard .process-node-input:focus,
 body.wizard .process-node-textarea:focus,
 body.wizard .process-node-select:focus { border-color: #d4af37; }
