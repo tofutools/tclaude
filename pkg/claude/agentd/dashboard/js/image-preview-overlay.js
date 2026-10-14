@@ -8,6 +8,9 @@ import {
   ViewerDisplayButtons, ZOOM_STEP, clamp, useViewerDisplay, useZoomGestures,
 } from './viewer-controls.js';
 
+import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
+import { attachmentNavigationStep, previewAttachments } from './attachment-navigation.js';
+
 const html = htm.bind(h);
 
 // Zoom is a scale against the image's own pixels (1 = one image pixel per CSS
@@ -78,7 +81,7 @@ function useStageBox(stageRef, open) {
   return box;
 }
 
-// ImageAttachmentPreview owns the one-image viewer used by both the quick
+// ImageAttachmentPreview owns the media viewer used by both the quick
 // notification drawer and Messages. The thumbnail remains in the attachment
 // card; only this overlay is shared between the two surfaces.
 //
@@ -86,7 +89,13 @@ function useStageBox(stageRef, open) {
 // the stage's scroll range is exactly the zoomed image and centring it with
 // auto margins stays safe when it overflows. Every zoom keeps one point still:
 // the pointer for a pinch / Ctrl+wheel / double-click, the middle otherwise.
-export function ImageAttachmentPreview({ messageID, attachment, surface = 'attachment' }) {
+export function ImageAttachmentPreview({ messageID, attachment: launcherAttachment, siblings = [], surface = 'attachment', videoTrigger = false }) {
+  const [selected, setSelected] = useState(null);
+  const items = previewAttachments(siblings.length ? siblings : [launcherAttachment]);
+  const attachment = items[selected] || launcherAttachment;
+  const index = items.indexOf(attachment);
+  const video = Boolean(attachment?.video);
+  const [meta, setMeta] = useState(null);
   const [open, setOpen] = useState(false);
   const [loadState, setLoadState] = useState('idle');
   const [natural, setNatural] = useState(null);
@@ -105,7 +114,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   const titleID = `image-preview-title-${surface}-${safeIDPart(messageID)}-${safeIDPart(attachment?.id ?? 0)}`;
   const detailsID = `${titleID}-details`;
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => { setOpen(false); setSelected(null); }, []);
   const { dialogRef } = useDialogFocus({
     open,
     initialFocusRef: closeRef,
@@ -114,7 +123,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   });
   const { dialogStyle, resizerProps } = useDialogResize({
     dialogRef,
-    prefKey: 'tclaude.dash.attachmentViewer.image.size',
+    prefKey: `tclaude.dash.attachmentViewer.${videoTrigger ? 'video' : 'image'}.size`,
   });
   const topmost = () => isTopmostOverlay(overlayRef.current);
   const view = useViewerDisplay({ dialogRef, open, shouldHandle: topmost });
@@ -170,7 +179,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
 
   useZoomGestures({
     targetRef: dialogRef,
-    enabled: open && loadState === 'ready',
+    enabled: open && !video && loadState === 'ready',
     shouldHandle: topmost,
     onZoom: (factor, point) => zoomTo((value) => value * factor, point),
     onKey: (action) => {
@@ -180,24 +189,44 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
     },
   });
 
+  const navigate = (step) => {
+    if (items.length < 2) return;
+    setSelected((Math.max(0, index) + step + items.length) % items.length);
+  };
+  useEffect(() => {
+    if (!open || items.length < 2) return undefined;
+    const onKeyDown = (event) => {
+      if (!topmost()) return;
+      const step = attachmentNavigationStep(event, video);
+      if (!step) return;
+      event.preventDefault();
+      navigate(step);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open, video, index, siblings]);
+
   useEffect(() => {
     if (!open) return undefined;
     let active = true;
     setLoadState('checking');
     setScale(null);
     setNatural(null);
+    setMeta(null);
+    anchorRef.current = null;
+    if (stageRef.current) { stageRef.current.scrollLeft = 0; stageRef.current.scrollTop = 0; }
     fetch(href, { method: 'HEAD', credentials: 'same-origin' })
       .then((response) => {
         if (!active) return;
         if (response.status === 410) setLoadState('gone');
         else if (!response.ok) setLoadState('error');
-        else setLoadState('loading');
+        else setLoadState(video ? 'ready' : 'loading');
       })
       .catch(() => {
         if (active) setLoadState('error');
       });
     return () => { active = false; };
-  }, [href, open]);
+  }, [href, open, video]);
 
   // Double-click toggles between fit and a closer look at the clicked point:
   // actual pixels for an image that fit had to shrink, double size otherwise.
@@ -239,7 +268,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
     stage.addEventListener('pointercancel', onUp);
   };
 
-  if (!attachment?.previewable) return null;
+  if (videoTrigger ? !launcherAttachment?.video : !launcherAttachment?.previewable) return null;
 
   const pannable = Boolean(natural && stageBox
     && (natural.w * effective > stageBox.w + 0.5 || natural.h * effective > stageBox.h + 0.5));
@@ -249,39 +278,56 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   const ready = loadState === 'ready';
 
   return html`<${Fragment}>
-    <button type="button" class="human-attachment-preview-trigger"
-      onClick=${() => setOpen(true)} aria-label=${`Preview ${filename}`}>
-      <img class="human-attachment-preview-thumb" src=${href} alt="" loading="lazy" decoding="async" />
-      <span class="human-attachment-preview-label">Preview</span>
+    <button type="button" class=${`human-attachment-preview-trigger${videoTrigger ? ' video-preview-trigger' : ''}`}
+      onClick=${() => { setSelected(null); setOpen(true); }} aria-label=${`${videoTrigger ? 'Play' : 'Preview'} ${launcherAttachment.filename || 'attachment'}`}>
+      ${videoTrigger ? html`<${VideoPoster} href=${attachmentURL(messageID, launcherAttachment)} />
+        <span class="video-preview-play" aria-hidden="true">▶</span>`
+        : html`<img class="human-attachment-preview-thumb" src=${attachmentURL(messageID, launcherAttachment)} alt="" loading="lazy" decoding="async" />`}
+      <span class="human-attachment-preview-label">${videoTrigger ? 'Play' : 'Preview'}</span>
     </button>
-    ${open && html`<div ref=${overlayRef} class="modal-overlay show image-preview-overlay"
+    ${open && html`<div ref=${overlayRef} class=${`modal-overlay show image-preview-overlay${video ? ' video-preview-overlay' : ''}`}
       onMouseDown=${(event) => {
         if (event.target === event.currentTarget && isTopmostOverlay(overlayRef.current)) {
           event.preventDefault();
           close();
         }
       }}>
-      <div ref=${dialogRef} class="image-preview-dialog" role="dialog" aria-modal="true"
+      <div ref=${dialogRef} class=${`image-preview-dialog${video ? ' video-preview-dialog' : ''}`} role="dialog" aria-modal="true"
         aria-labelledby=${titleID} aria-describedby=${detailsID} style=${dialogStyle}
         data-display=${view.display}>
         <header class="image-preview-header">
           <div class="image-preview-heading">
             <h2 id=${titleID}>${filename}</h2>
-            <span>${attachment.content_type || 'image'} · ${attachmentSize(attachment.size_bytes)}${natural ? ` · ${natural.w}×${natural.h}` : ''}</span>
+            <span id=${detailsID}>${attachment.content_type || 'image'} · ${attachmentSize(attachment.size_bytes)}${natural ? ` · ${natural.w}×${natural.h}` : ''}${meta ? ` · ${meta.w}×${meta.h} · ${formatDuration(meta.duration)}` : ''}</span>
           </div>
           <div class="image-preview-header-actions">
+            ${items.length > 1 && html`<div role="group" class="attachment-preview-nav" aria-label="Message attachments">
+              <button type="button" class="viewer-display-button attachment-preview-step"
+                onClick=${() => navigate(-1)} aria-label="Previous attachment"
+                title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}>‹</button>
+              <span class="attachment-preview-position" role="status" aria-live="polite" aria-atomic="true">${index + 1} of ${items.length}</span>
+              <button type="button" class="viewer-display-button attachment-preview-step"
+                onClick=${() => navigate(1)} aria-label="Next attachment"
+                title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}>›</button>
+            </div>`}
             ${loadState !== 'gone' && html`<a class="image-preview-download" href=${href} download=${filename}
               title="Download this agent-published file">Download</a>`}
             <${ViewerDisplayButtons} ...${view} />
             <button ref=${closeRef} type="button" class="image-preview-close"
-              onClick=${close} aria-label="Close image preview" title="Close (Esc)">×</button>
+              onClick=${close} aria-label=${video ? 'Close video player' : 'Close image preview'} title="Close (Esc)">×</button>
           </div>
         </header>
-        <div ref=${stageRef} class="image-preview-stage" data-pannable=${pannable} data-panning=${panning}
-          tabIndex="0" role="region" onPointerDown=${onStagePointerDown}
-          aria-label="Image canvas; pinch, Ctrl+scroll or + and − to zoom; drag or scroll to pan">
-          <${PreviewState} state=${loadState} />
-          ${(loadState === 'loading' || ready) && html`<img ref=${imageRef}
+        <div ref=${stageRef} class=${`image-preview-stage${video ? ' video-preview-stage' : ''}`} data-pannable=${!video && pannable} data-panning=${panning}
+          tabIndex="0" role="region" onPointerDown=${video ? undefined : onStagePointerDown}
+          aria-label=${video ? 'Video player' : 'Image canvas; pinch, Ctrl+scroll or + and − to zoom; drag or scroll to pan'}>
+          ${video ? html`<${PlayerState} state=${loadState} />` : html`<${PreviewState} state=${loadState} />`}
+          ${video && ready && html`<video key=${href} class="video-preview-video" src=${href}
+            controls autoplay playsInline preload="auto" aria-label=${filename}
+            onLoadedMetadata=${(event) => {
+              const { videoWidth: w, videoHeight: h, duration } = event.currentTarget;
+              setMeta({ w, h, duration });
+            }} onError=${() => setLoadState('error')}></video>`}
+          ${!video && (loadState === 'loading' || ready) && html`<img key=${href} ref=${imageRef}
             class="image-preview-image" src=${href} alt=${filename} draggable="false"
             data-sized=${Boolean(natural)} style=${imageStyle}
             onDblClick=${onImageDoubleClick}
@@ -292,7 +338,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
             }}
             onError=${() => setLoadState('error')} />`}
         </div>
-        <footer class="image-preview-footer" id=${detailsID}>
+        ${!video && html`<footer class="image-preview-footer">
           <span class="image-preview-footer-file">${filename}</span>
           <span class="image-preview-footer-size">${attachmentSize(attachment.size_bytes)}</span>
           <span class="grow"></span>
@@ -309,8 +355,8 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
           <button type="button" onClick=${() => zoomTo(() => 1)} disabled=${!ready}
             aria-pressed=${scale !== null && Math.abs(scale - 1) < 1e-4}
             aria-label="Actual size" title="Actual size (100%)">1:1</button>
-        </footer>
-        <${DialogResizer} ...${resizerProps} label="Resize the image viewer" />
+        </footer>`}
+        <${DialogResizer} ...${resizerProps} label=${video ? 'Resize the video player' : 'Resize the image viewer'} />
       </div>
     </div>`}
   </${Fragment}>`;

@@ -463,8 +463,8 @@ function HumanAttachment({ message }) {
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
     <div class="mail-attachment" key=${attachment.id || index}>
-      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
-      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
+      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
+      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <span class="mail-attachment-label">Agent file</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
