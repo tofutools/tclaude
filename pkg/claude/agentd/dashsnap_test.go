@@ -1319,6 +1319,29 @@ setTimeout(function(){
 			SettleMS: 500,
 		},
 		{
+			Key:      "config-panel-notifications",
+			Title:    "Config — Notifications panel",
+			Caption:  "Settings-app layout: rail on the left, one panel of setting rows, a folded More… opened, and the save bar showing the dirtied panel.",
+			JS:       boundedTabJS("config", "#cfg-save", configPanelJS("notifications", "#cfg-notif-cooldown")),
+			SettleMS: 500,
+		},
+		{
+			Key:      "config-search",
+			Title:    "Config — settings search",
+			Caption:  "A query shows matching rows from every panel, with per-panel hit counts in the rail.",
+			JS:       boundedTabJS("config", "#cfg-save", configSearchJS("port")),
+			SettleMS: 500,
+		},
+		{
+			Key:      "config-narrow",
+			Title:    "Config — phone width",
+			Caption:  "Below 760px the rail becomes a horizontal chip strip and rows stack their controls under the text.",
+			Width:    390,
+			Height:   844,
+			JS:       boundedTabJS("config", "#cfg-save", configPanelJS("terminals", "")),
+			SettleMS: 500,
+		},
+		{
 			Key:      "bounded-jobs-empty",
 			Title:    "Bounded Preact — Jobs empty filter",
 			Caption:  "Representative empty state produced through the real Jobs filter input.",
@@ -4929,4 +4952,35 @@ func pafSnapshotSpawnDashSnapJS() string {
   }
   if (!document.querySelector('#snapshot-spawn-confirm-loss')) throw new Error('snapshot spawn checkbox did not render');
 })();`
+}
+
+// configPanelJS picks a Config rail section, opens its first "More…" and, when
+// dirtyInput names a field, edits it so the save bar shows the dirtied panel.
+// It runs synchronously inside boundedTabJS's ready callback; the state's
+// SettleMS lets Preact commit the panel switch before the capture.
+func configPanelJS(panel, dirtyInput string) string {
+	return fmt.Sprintf(`
+var link = document.querySelector('[data-cfg-panel-link=%q]');
+if (!link) throw new Error('missing config rail link: %s');
+link.click();
+var more = document.querySelector('[data-cfg-panel=%q] details.cfg-more');
+if (more) more.open = true;
+var dirty = %q;
+if (dirty) {
+  var input = document.querySelector(dirty);
+  if (!input) throw new Error('missing config input ' + dirty);
+  input.value = '9';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+`, panel, panel, panel, dirtyInput)
+}
+
+// configSearchJS types a settings search through the real input event path.
+func configSearchJS(query string) string {
+	return fmt.Sprintf(`
+var input = document.querySelector('#cfg-filter');
+input.value = %q;
+input.dispatchEvent(new Event('input', { bubbles: true }));
+if (!document.querySelector('#cfg-layout').hasAttribute('data-cfg-searching')) throw new Error('config search mode not entered');
+`, query)
 }
