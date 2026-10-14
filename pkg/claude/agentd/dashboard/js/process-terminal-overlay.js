@@ -20,6 +20,7 @@ import {
   ProcessMiniGraph, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
   normalizeNodeState, runIconView, runName,
 } from './process-kit.js';
+import { ProcessAgentStepper, isAgentScopedTo } from './process-agent-stepper.js';
 
 const html = htm.bind(h);
 
@@ -163,9 +164,11 @@ export function ProcessTabIcons({ agentId, enabled }) {
 }
 
 // ProcessPaneOverlay is the T1 cluster plus, when an icon is open, the T2
-// popover. actions: { onComposeMessage(seed), openGroups(run), decide(run,
-// nodeId, verdict) } — each optional; a missing action disables its button.
-export function ProcessPaneOverlay({ agentId, enabled, actions = {} }) {
+// popover — or, for a run bound to this agent, the T3 stepper. actions:
+// { onComposeMessage(seed), openGroups(run), decide(run, nodeId, verdict),
+// promote(run, group) } — each optional; a missing action disables its
+// button. bounds is the agent's envelope (agentRunBounds) for the stepper.
+export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = null }) {
   const runs = processRunsForAgent(useProcessContext(enabled && !!agentId), agentId);
   const [collapsed, setCollapsed] = useState(false);
   const [openID, setOpenID] = useState('');
@@ -189,7 +192,8 @@ export function ProcessPaneOverlay({ agentId, enabled, actions = {} }) {
           title=${toggleTitle} aria-label=${toggleTitle}
           onClick=${() => { setCollapsed(!collapsed); setOpenID(''); }}>${collapsed ? '◂' : '▾'}</button>
       </div>
-      ${open ? html`<${ProcessRunPopover} run=${open} agentId=${agentId} actions=${actions} onClose=${() => setOpenID('')} />` : null}
+      ${open ? html`<${ProcessRunPopover} key=${open.runId} run=${open} agentId=${agentId} actions=${actions}
+        bounds=${bounds} onClose=${() => setOpenID('')} />` : null}
     </div>
   `;
 }
@@ -207,7 +211,20 @@ function NeighbourList({ items, prefix }) {
 // ProcessRunPopover is mock T2: the run seen from this agent. It is a div,
 // built from divs: dashboard.css styles bare section/header/footer as page
 // chrome (a section is a hidden tab, the footer is pinned to the viewport).
-export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
+export function ProcessRunPopover({ run, agentId, actions = {}, bounds = null, onClose }) {
+  // A run bound to this agent opens as the T3 stepper; its graph view is
+  // this T2 popover, with a way back.
+  const stepper = isAgentScopedTo(run, agentId);
+  const [graph, setGraph] = useState(false);
+  if (stepper && !graph) {
+    return html`<${ProcessAgentStepper} run=${run} agentId=${agentId} bounds=${bounds} actions=${actions}
+      onGraph=${() => setGraph(true)} onClose=${onClose} />`;
+  }
+  return html`<${ProcessRunGraphPopover} run=${run} agentId=${agentId} actions=${actions} onClose=${onClose}
+    onStepper=${stepper ? () => setGraph(false) : null} />`;
+}
+
+function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, onStepper = null }) {
   const view = runIconView(run, agentId);
   const node = view.node;
   // A run bound to the agent may be at a step someone else performs; the
@@ -259,6 +276,7 @@ export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
         </div>
       </div>
       <div class="pk-run-popover-actions">
+        ${onStepper ? html`<button type="button" class="mux-btn" onClick=${onStepper}>☰ stepper view</button>` : null}
         <button type="button" class="mux-btn" disabled=${!actions.openGroups} onClick=${() => actions.openGroups?.(run)}>↗ open in Groups</button>
         <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
@@ -276,26 +294,33 @@ export function ProcessRunPopover({ run, agentId, actions = {}, onClose }) {
   `;
 }
 
+async function processRunPost(fetch, path, body, refused) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await refreshProcessContext();
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || payload?.error || `${refused} (HTTP ${response.status})`);
+  }
+}
+
 // processOverlayActions is the production action set: open the Groups tab,
-// compose through the operator message dialog, and decide through the run
-// API, refreshing the context afterwards.
+// compose through the operator message dialog, decide and promote through
+// the run API, refreshing the context afterwards.
 export function processOverlayActions({ onComposeMessage = null, fetch = (...args) => globalThis.fetch(...args) } = {}) {
   return {
     onComposeMessage,
     openGroups: () => globalThis.document?.querySelector('nav [data-tab="groups"]')?.click(),
     // decide throws the server's message on a refused decision (stale,
     // already decided, forbidden) so the popover can show it.
-    decide: async (run, nodeId, verdict) => {
-      const response = await fetch(`/v1/process/runs/${encodeURIComponent(run.runId)}/decide`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodeId, verdict }),
-      });
-      await refreshProcessContext();
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message || body?.error || `decision refused (HTTP ${response.status})`);
-      }
-    },
+    decide: (run, nodeId, verdict) => processRunPost(fetch,
+      `/v1/process/runs/${encodeURIComponent(run.runId)}/decide`, { nodeId, verdict }, 'decision refused'),
+    // promote re-scopes an agent-bound run to a group the agent belongs to
+    // (human-only on the server).
+    promote: (run, group) => processRunPost(fetch,
+      `/v1/process/runs/${encodeURIComponent(run.runId)}/rescope`, { group }, 'promotion refused'),
   };
 }

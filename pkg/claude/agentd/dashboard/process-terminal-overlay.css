@@ -64,6 +64,45 @@
 .pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
 .pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
 
+/* T3: agent-scoped run stepper (js/process-agent-stepper.js) */
+.pk-agent-stepper { width: min(440px, calc(100vw - 48px)); }
+.pk-bounds {
+  display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px;
+  border-bottom: 1px solid var(--pk-line);
+  background: color-mix(in srgb, var(--pk-agent) 9%, var(--pk-surface));
+}
+.pk-bounds-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid color-mix(in srgb, var(--pk-agent) 55%, transparent);
+  color: var(--pk-text);
+}
+.pk-bounds-unknown { border-color: var(--pk-line); color: var(--pk-muted); }
+.pk-stepper-list { padding: 6px 12px 4px; }
+.pk-stepper-step { position: relative; display: flex; gap: 10px; padding: 6px 0 10px; }
+.pk-stepper-step:not(:last-child)::before {
+  content: ''; position: absolute; left: 10px; top: 28px; bottom: -2px; width: 2px; background: var(--pk-line);
+}
+.pk-stepper-step.pk-state-done:not(:last-child)::before { background: var(--pk-done); }
+.pk-stepper-step-dot {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; border: 2px solid var(--pk-line); background: var(--pk-surface); z-index: 1;
+}
+.pk-stepper-step.pk-state-done .pk-stepper-step-dot { border-color: var(--pk-done); }
+.pk-stepper-step.pk-state-running .pk-stepper-step-dot { border-color: var(--pk-running); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pk-running) 25%, transparent); }
+.pk-stepper-step.pk-state-waiting .pk-stepper-step-dot { border-color: var(--pk-waiting); }
+.pk-stepper-step.pk-state-failed .pk-stepper-step-dot { border-color: var(--pk-failed); }
+.pk-stepper-step.pk-stepper-step-here.pk-state-running .pk-stepper-step-dot { border-color: var(--pk-agent); }
+.pk-stepper-step-body { min-width: 0; flex: 1; }
+.pk-stepper-step-title { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.pk-stepper-step-title b { font-size: 12.5px; }
+.pk-stepper-step.pk-state-planned .pk-stepper-step-title b { color: var(--pk-planned-text); }
+.pk-stepper-step-here-label { font-size: 11px; color: var(--pk-agent-text); }
+.pk-stepper-step-time { margin-left: auto; font-size: 11px; color: var(--pk-muted); }
+.pk-stepper-step-detail { color: var(--pk-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+.pk-stepper-step-warning { color: var(--pk-waiting-text); font-size: 11px; margin-top: 2px; }
+.pk-stepper-group { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; }
+
 /* Tab-strip ("rail") miniatures */
 .pk-tab-icons { display: inline-flex; gap: 3px; margin: 0 2px; vertical-align: middle; }
 
