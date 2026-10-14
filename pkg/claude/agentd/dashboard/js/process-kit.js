@@ -21,6 +21,7 @@
 // components so callers and tests can reason about a projection without a DOM.
 
 import { h } from 'preact';
+import { useId } from 'preact/hooks';
 import htm from 'htm';
 import { layoutProcessGraph } from './process-layout.js';
 
@@ -367,7 +368,8 @@ export function ProcessPerformers({ performers = [], max = 3 }) {
   const shown = list.slice(0, max);
   const extra = list.length - shown.length;
   return html`<span class="pk-avatars">${shown.map((performer) => {
-    const kind = performer.kind === 'human' || performer.kind === 'command' ? performer.kind : 'agent';
+    const raw = performer.kind === 'program' ? 'command' : performer.kind;
+    const kind = raw === 'human' || raw === 'command' ? raw : 'agent';
     const color = kind === 'agent' ? performerColor(performer.id ?? performer.label) : kind;
     return html`<span key=${performer.id ?? performer.label} class=${`pk-avatar ${color}`} title=${performer.label || performer.id}>${performerInitial(performer)}</span>`;
   })}${extra > 0 && html`<span class="pk-avatar more" title=${`${extra} more`}>+${extra}</span>`}</span>`;
@@ -429,9 +431,11 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 // ProcessMiniGraph renders a projected run read-only. `performerId` marks the
 // "you are here" node(s); `onNodeClick` turns nodes into buttons.
 export function ProcessMiniGraph({ run, compact = false, performerId = '', onNodeClick = null, wizard = false }) {
+  // Marker ids are per instance: the same run can be drawn on two surfaces
+  // in one document, and a hidden copy must not own the visible arrowheads.
+  const prefix = `pk-ah-${useId().replace(/[^A-Za-z0-9_-]/g, '_')}`;
   const layout = miniGraphLayout(run, { compact });
   if (!layout.nodes.length) return html`<div class="pk-mini-graph empty">no nodes</div>`;
-  const prefix = `pk-ah-${String(run?.id || 'run').replace(/[^A-Za-z0-9_-]/g, '_')}`;
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}`;

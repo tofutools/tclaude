@@ -133,7 +133,10 @@ test('the mini-graph marks "you are here", and nodes become buttons only with a 
   const mounted = await harness.mount(harness.html`<div>
     <${mod.ProcessMiniGraph} run=${sheet.SAMPLE_GROUP_RUN} performerId="checkout-ui" onNodeClick=${(node) => clicked.push(node.id)} />
     <${mod.ProcessMiniGraph} run=${sheet.SAMPLE_AGENT_RUN} compact />
+    <${mod.ProcessMiniGraph} run=${sheet.SAMPLE_AGENT_RUN} compact />
+    <${mod.ProcessPerformers} performers=${[{ id: 'p', label: 'lint', kind: 'program' }]} />
   </div>`);
+  assert.ok(mounted.container.querySelector('.pk-avatars > .pk-avatar.command'), 'program performers read as commands');
   const [interactive, readonly] = mounted.container.querySelectorAll('.pk-mini-graph');
   assert.equal(interactive.querySelectorAll('[data-process-node]').length, 10);
   assert.deepEqual([...interactive.querySelectorAll('.pk-gnode.here')].map((n) => n.dataset.processNode), ['checkout']);
@@ -149,7 +152,7 @@ test('the mini-graph marks "you are here", and nodes become buttons only with a 
   assert.equal(readonly.querySelectorAll('.pk-gnode-sub').length, 0, 'compact graphs drop sub-lines');
   assert.ok(readonly.querySelector('path.pk-edge.back'));
   const markerIDs = [...mounted.container.querySelectorAll('marker')].map((m) => m.id);
-  assert.equal(new Set(markerIDs).size, markerIDs.length, 'arrow markers are unique per run');
+  assert.equal(new Set(markerIDs).size, markerIDs.length, 'arrow markers are unique per graph instance, even for the same run');
   await mounted.unmount();
 });
 
