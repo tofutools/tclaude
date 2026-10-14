@@ -66,6 +66,41 @@ tclaude worktree rm feat/my-feature -D    # also delete the branch
 `rm` accepts a branch name or a path and refuses to remove a worktree with
 uncommitted changes unless `-f/--force` is passed.
 
+## Dashboard cleanup sweep
+
+In the [dashboard](dashboard.md), open a group's `⚙` actions menu and choose
+**🧹 cleanup worktrees…**. To scan every group's repositories, open the
+Groups tab's top-level `⚙` menu, choose **clean up**, then
+**🧹 Review worktrees across all groups…** in the bulk cleanup dialog.
+
+The sweep resolves repositories from group default directories and members'
+recorded directory history, then lists all linked worktrees in those
+repositories. This finds retired/deleted-agent leftovers and worktrees you
+created by hand, including siblings outside the selected group. Rows show
+paths, branches, agent associations, and uncommitted-change badges where
+checked for cleanup.
+
+Discovery never deletes anything. Clean orphans and clean retired-agent
+worktrees are pre-ticked; dirty worktrees, worktrees belonging to other offline
+agents, and live-agent worktrees start unticked. Review the selection before
+removing it: removal is forced, so selecting a dirty worktree discards its
+uncommitted changes. Removing an offline agent's worktree also breaks its
+resume from that directory. **Also delete the feature branch** is checked by
+default and force-deletes removed worktrees' local branches; untick it to keep
+them. `main` and `master` branches are always kept.
+
+The daemon acts only on the selected paths and re-validates them against Git
+and live-agent state at execution time. It refuses the main checkout and any
+worktree occupied by a running agent, including agents in other groups or
+agents that started after the preview. **⟳ rescan** refreshes the preview.
+Separate, pre-ticked stale Git record entries prune bookkeeping only, without
+removing checkout directories or branches.
+
+This repo-wide sweep is separate from the associated-worktree cleanup offered
+when retiring or deleting an agent: that cleanup targets the agent's own
+worktree, while the sweep lets you review leftovers across the repositories
+without retiring or deleting agents.
+
 ## Switching between worktrees
 
 `switch` (aliases `s`, `checkout`, `c`) prints the target worktree's path. A
