@@ -48,8 +48,7 @@ In order across the top:
 |---|---|
 | Groups | The home view: fleet roster, spawning, live status |
 | Terminals | Web-terminal multiplexer; hidden until a pane is open |
-| Automations | Exports, cron jobs, standing orders, triggers |
-| Processes | Process template editor (feature-flagged) |
+| Automations | Exports, cron jobs, standing orders, triggers, and (feature-flagged) Processes |
 | Plugins | Shell-step plugin lists with status lamps |
 | Access | Permissions, slug registry, sudo (three subtabs) |
 | Messages | All agent mail, human notifications, access requests |
@@ -67,7 +66,7 @@ to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile
 and speed prefilled; the group remains editable and defaults to the last used
 group. Fast mode uses a higher-cost service tier.
-Processes appears only with `features.processes`. A theme-gated **Vegas** button appears in the slop and
+Automations' Processes subtab appears only with `features.processes`. A theme-gated **Vegas** button appears in the slop and
 wizard themes (or via `slop.vegas_in_regular_mode`).
 
 The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
@@ -392,7 +391,8 @@ surfaces drive.
 
 ## Processes
 
-Feature-flagged behind `features.processes`. A single Templates subtab lists
+A subtab of Automations (`/automations/processes`), feature-flagged behind
+`features.processes`. A single Templates view lists
 templates (rename, describe, versions, delete), creates new ones, and can hand
 one to a process scribe agent via "Edit with agent". The graph editor covers
 Task / Decision / Parallel / Wait / Start / End nodes, human | agent | program

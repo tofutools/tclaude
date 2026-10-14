@@ -463,7 +463,7 @@ export function initNavHistory() {
 
   // Restore the tab (no-op when it's the already-active default), and rewrite
   // the current history entry so it carries the full stack + a canonical path
-  // (a bare "/" stays "/"; "/costs" stays "/costs").
+  // (a bare "/" stays "/"; a retired "/costs" heals to "/usage/costs").
   activate(loc);
   // activate() may have corrected the location in place (a peer view refusing
   // a tab or subtab), so canonicalise from the stack, not the parsed URL.
