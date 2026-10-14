@@ -116,7 +116,7 @@ function visibleMemberCols() {
 function memberColDeviationCount() {
   return Object.entries(deviations()).filter(([key, value]) => {
     const c = colByKey(key);
-    return c?.hideable && !!value !== defaultHidden(c);
+    return c?.hideable && columnAvailable(c) && !!value !== defaultHidden(c);
   }).length;
 }
 

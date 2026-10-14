@@ -1549,3 +1549,36 @@ test('missing extension status has a diagnostic badge only while online', async 
   assert.doesNotMatch(host.textContent, /status missing/);
   await offline.unmount();
 });
+
+test('the column menu recomputes when processes turn on or off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  // The Process column's availability reads body.hide-processes, which the
+  // column store sees only when the menu's options are rebuilt.
+  let available = false;
+  const state = createGroupsState({
+    prefs: memoryPrefs(), resetOffsets: () => {}, reorder: (groups) => groups,
+    columns: {
+      list: () => (available ? [{ key: 'role', label: 'Role' }, { key: 'process', label: 'Process' }] : [{ key: 'role', label: 'Role' }]),
+      hidden: () => false, setHidden: () => {}, deviationCount: () => 0,
+    },
+  });
+  state.initialize();
+  state.publish(snapshot([{ name: 'alpha', members: [] }]));
+  const source = { context: harness.signals.signal(null), status: harness.signals.signal('idle'), error: harness.signals.signal(''), refresh: () => Promise.resolve() };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  t.after(() => host.remove());
+  await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${{}} processSource=${source} />`, host);
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
+
+  available = true;
+  await harness.act(() => state.publish({ ...snapshot([{ name: 'alpha', members: [] }]), processes_enabled: true }));
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role', 'process']);
+
+  available = false;
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
+  assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
+});

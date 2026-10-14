@@ -286,6 +286,15 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     document.addEventListener('tclaude:snapshot', poll);
     return () => document.removeEventListener('tclaude:snapshot', poll);
   }, [processesEnabled, processSource]);
+  // The Process member column is available only while processes are on
+  // (body.hide-processes, which signals cannot track), so the column menu's
+  // cached options recompute when the feature flips.
+  const processesSeen = useRef(processesEnabled);
+  useEffect(() => {
+    if (processesSeen.current === processesEnabled) return;
+    processesSeen.current = processesEnabled;
+    state.rerender();
+  }, [processesEnabled]);
 
   // The drag-and-drop hints and member-table chrome belong to the Agents lens.
   useEffect(() => {
