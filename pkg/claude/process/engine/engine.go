@@ -85,7 +85,7 @@ func AdvanceAndPlan(checkpoint Checkpoint, definition *Definition) (Checkpoint, 
 	if !ok {
 		return next, nil, committed > 0, nil
 	}
-	command := programCommand(next.RunID, node, nextAttempt(next, node.id))
+	command := taskCommand(next.RunID, node, nextAttempt(next, node.id))
 	planned, err := apply(next, definition, Transition{Kind: TransitionCommandPlanned, Command: &command})
 	if err != nil {
 		return Checkpoint{}, nil, false, err
@@ -244,7 +244,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		if ceiling := executableAttemptCeiling(next, definition, node); attempt > ceiling {
 			return invalid("node %q has no attempt %d within its budget of %d", node.id, attempt, ceiling)
 		}
-		expected := programCommand(next.RunID, node, attempt)
+		expected := taskCommand(next.RunID, node, attempt)
 		if !commandsEqual(*transition.Command, expected) {
 			return invalid("planned command does not match deterministic command for node %q", node.id)
 		}
@@ -1030,18 +1030,34 @@ func verdictAllowed(node definitionNode, verdict string) bool {
 	return slices.Contains(node.verdicts, verdict)
 }
 
-// programCommand mints the deterministic request for one attempt of one task.
+// taskCommand mints the deterministic request for one attempt of one task.
 // The attempt is part of the identity, so two attempts of the same node in the
 // same run never share a command id and an observation of the older one can
-// never match the newer outbox entry.
-func programCommand(runID string, node definitionNode, attempt int) Command {
-	return Command{
-		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_%d_program", len(runID), runID, len(node.id), node.id, attempt),
-		Kind:    CommandProgram,
+// never match the newer outbox entry. The kind suffix keeps a program and an
+// agent request for the same (run, node, attempt) distinct.
+func taskCommand(runID string, node definitionNode, attempt int) Command {
+	kind := node.commandKind()
+	command := Command{
+		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_%d_%s", len(runID), runID, len(node.id), node.id, attempt, kind),
+		Kind:    kind,
 		NodeID:  node.id,
 		Attempt: attempt,
-		Program: cloneProgramCommand(node.program),
 	}
+	if node.agent != nil {
+		agent := *node.agent
+		command.Agent = &agent
+	} else {
+		command.Program = cloneProgramCommand(node.program)
+	}
+	return command
+}
+
+// commandKind is the outbox kind a prepared task node plans.
+func (node definitionNode) commandKind() CommandKind {
+	if node.agent != nil {
+		return CommandAgent
+	}
+	return CommandProgram
 }
 
 // nextAttempt is the attempt number a fresh command for this node would carry.
@@ -1144,6 +1160,10 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 func cloneCommand(command Command) Command {
 	clone := command
 	clone.Program = cloneProgramCommand(command.Program)
+	if command.Agent != nil {
+		agent := *command.Agent
+		clone.Agent = &agent
+	}
 	return clone
 }
 

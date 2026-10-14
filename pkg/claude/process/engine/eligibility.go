@@ -95,8 +95,11 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		// wait between attempts, or reusing a possibly poisoned performer session
 		// — keeps its own path-specific diagnostic.
 		if node.Retry != nil {
-			if node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerProgram {
-				add("unsupported_retry", path+".retry", "only program task retries are executable in this engine yet")
+			agentTask := node.Type == model.NodeTypeTask && node.Performer != nil &&
+				node.Performer.Kind == model.PerformerAgent && !node.IsCompound()
+			if node.Type != model.NodeTypeTask || node.Performer == nil ||
+				(node.Performer.Kind != model.PerformerProgram && !agentTask) {
+				add("unsupported_retry", path+".retry", "only program and agent task retries are executable in this engine yet")
 			} else {
 				if node.Retry.MaxAttempts <= 0 {
 					add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
@@ -108,7 +111,9 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				if strings.TrimSpace(node.Retry.Backoff) != "" {
 					add("unsupported_retry", path+".retry.backoff", "retry backoff waits are not executable in this engine yet")
 				}
-				if model.RetryMode(node.Retry) != model.RetryModeFreshAttempt {
+				// An agent performer is a live session the daemon tracks, so it is the
+				// one performer that can be handed its own failure back.
+				if model.RetryMode(node.Retry) != model.RetryModeFreshAttempt && !agentTask {
 					add("unsupported_retry", path+".retry.onFail",
 						"only "+model.RetryModeFreshAttempt+" retries are executable in this engine yet; "+
 							model.RetryModeFeedbackSameSession+" needs a performer session this engine does not keep")
@@ -156,10 +161,15 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				add("unsupported_routing", path+".next", "a start node requires exactly one outgoing route in this engine")
 			}
 		case model.NodeTypeTask:
-			if node.Performer == nil || node.Performer.Kind != model.PerformerProgram {
-				add("unsupported_performer", path+".performer.kind", "this engine executes only program task performers")
-			} else if node.Performer.Contact != nil {
+			switch {
+			case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent):
+				add("unsupported_performer", path+".performer.kind", "this engine executes only program and agent task performers")
+			case node.Performer.Contact != nil:
 				add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
+			case node.Performer.Kind == model.PerformerAgent && node.IsCompound():
+				add("unsupported_performer", path+".performer.kind", "agent performers on staged (plan/check/review) tasks are not executable in this engine yet")
+			case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
+				add("unsupported_timeout", path+".performer.timeout", "agent performer timeouts are not executable in this engine yet")
 			}
 			if len(node.Next) != 1 {
 				add("unsupported_routing", path+".next", "a task requires exactly one outgoing route in this engine")

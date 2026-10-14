@@ -28,8 +28,12 @@ const (
 	// operator resolution. Without it a parked run has no honest coarse summary:
 	// it is running, has nothing outstanding, and nothing an engine pass can
 	// push, so a driver would have to call that state an error.
-	ActionBlocked  ActionKind = "blocked"
-	ActionTerminal ActionKind = "terminal"
+	ActionBlocked ActionKind = "blocked"
+	// ActionAwaitPerformer reports a run whose only live work is agent
+	// performer commands waiting for their performers to report back. Nothing
+	// is ambiguous and nothing can be pushed: the run waits like a decision.
+	ActionAwaitPerformer ActionKind = "await_performer"
+	ActionTerminal       ActionKind = "terminal"
 )
 
 // EngineActor attributes durable evidence the engine produced by itself — an
@@ -51,6 +55,7 @@ var (
 	ErrInvalidDecisionInput = errors.New("invalid process decision input")
 
 	ErrInvalidResolutionInput = errors.New("invalid process blocked resolution input")
+	ErrInvalidAgentReport     = errors.New("invalid process agent report")
 )
 
 // Decision input mirrors the evidence-payload scale used elsewhere: verdicts
@@ -99,6 +104,10 @@ type CommandState struct {
 	// Executing is true while the owner still holds a live permission for this
 	// entry — it has been handed to a worker, or is about to be. False means
 	// the entry is ambiguous and needs explicit reconciliation.
+	//
+	// An agent command is always accounted for: it is not a program this
+	// process runs, so a cold load cannot make it ambiguous. Its performer and
+	// delivery state live in the daemon's dispatch record.
 	Executing bool
 }
 
@@ -216,10 +225,12 @@ func (r *Run) Action() Action {
 			return action
 		}
 	}
-	if len(r.checkpoint.Commands) > 0 {
-		command := cloneCommand(r.checkpoint.Commands[0])
-		action.Kind, action.Command = ActionDispatch, &command
-		return action
+	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind != engine.CommandAgent {
+			command := cloneCommand(r.checkpoint.Commands[i])
+			action.Kind, action.Command = ActionDispatch, &command
+			return action
+		}
 	}
 	if engine.Runnable(r.checkpoint, r.definition) {
 		action.Kind = ActionContinue
@@ -233,6 +244,11 @@ func (r *Run) Action() Action {
 	}
 	if len(r.checkpoint.Blocked) > 0 {
 		action.Kind = ActionBlocked
+		return action
+	}
+	if len(r.checkpoint.Commands) > 0 {
+		command := cloneCommand(r.checkpoint.Commands[0])
+		action.Kind, action.Command = ActionAwaitPerformer, &command
 		return action
 	}
 	if r.checkpoint.Status == engine.RunRunning {
@@ -267,9 +283,25 @@ func (r *Run) Commands() []CommandState {
 	for i := range r.checkpoint.Commands {
 		command := cloneCommand(r.checkpoint.Commands[i])
 		_, live := r.dispatches[command.NodeID]
-		states = append(states, CommandState{Command: command, Executing: live})
+		states = append(states, CommandState{Command: command, Executing: live || command.Kind == engine.CommandAgent})
 	}
 	return states
+}
+
+// AgentCommands reports every outstanding agent performer command. Each one
+// occupies a concurrency slot until its performer reports back, exactly like a
+// program a worker is running.
+func (r *Run) AgentCommands() []engine.Command {
+	if r == nil {
+		return nil
+	}
+	var commands []engine.Command
+	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind == engine.CommandAgent {
+			commands = append(commands, cloneCommand(r.checkpoint.Commands[i]))
+		}
+	}
+	return commands
 }
 
 // AwaitingDecisions reports every branch currently parked on a human.
@@ -410,7 +442,7 @@ func Reissue(run *Run, actor, selector string) (*Dispatch, error) {
 	if err := validateReconciliationActor(actor); err != nil {
 		return nil, err
 	}
-	command, err := reconcileCommand(run, selector)
+	command, err := reconcileCommand(run, selector, false)
 	if err != nil {
 		return nil, err
 	}
@@ -427,11 +459,15 @@ func Reissue(run *Run, actor, selector string) (*Dispatch, error) {
 // RecordOutcome durably applies an operator-supplied outcome to one ambiguous
 // command, named by selector exactly as in Reissue. It is the only
 // reconciliation path other than explicit reissue.
+//
+// It also accepts an outstanding agent command: a person may always settle an
+// agent's node in its place (human preemption). The performer's own later
+// report then no longer matches an outstanding command and is refused as stale.
 func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) error {
 	if err := validateReconciliationActor(actor); err != nil {
 		return err
 	}
-	command, err := reconcileCommand(run, selector)
+	command, err := reconcileCommand(run, selector, true)
 	if err != nil {
 		return err
 	}
@@ -617,18 +653,20 @@ func validateDecisionInput(input DecisionInput) error {
 //
 // Only unaccounted entries are reconcilable: a command whose program this
 // process is still running is not ambiguous, and letting an operator record an
-// outcome for it would race the real observation.
+// outcome for it would race the real observation. includeAgent additionally
+// admits outstanding agent commands, for the operator-outcome path only: an
+// agent is not a program, so reissuing one is a redelivery the dispatcher owns.
 //
 // An empty selector is the single-command convenience. With more than one
 // candidate it fails closed rather than reconciling a branch at random — the
 // operator has to say which one they mean.
-func reconcileCommand(run *Run, selector string) (engine.Command, error) {
+func reconcileCommand(run *Run, selector string, includeAgent bool) (engine.Command, error) {
 	if run == nil || run.definition == nil {
 		return engine.Command{}, ErrInvalidRun
 	}
 	var candidates []engine.Command
 	for _, state := range run.Commands() {
-		if !state.Executing {
+		if !state.Executing || (includeAgent && state.Command.Kind == engine.CommandAgent) {
 			candidates = append(candidates, state.Command)
 		}
 	}
@@ -654,6 +692,9 @@ func reconcileCommand(run *Run, selector string) (engine.Command, error) {
 // process no longer holds a live permission for.
 func (r *Run) firstUnaccountedCommand() (engine.Command, bool) {
 	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind == engine.CommandAgent {
+			continue
+		}
 		if _, live := r.dispatches[r.checkpoint.Commands[i].NodeID]; !live {
 			return cloneCommand(r.checkpoint.Commands[i]), true
 		}
@@ -793,7 +834,11 @@ func advanceEvidence(command *engine.Command) []db.ProcessRunEvent {
 	if command == nil {
 		return nil
 	}
-	return []db.ProcessRunEvent{event("program_prepared", command, EngineActor,
+	kind := "program_prepared"
+	if command.Kind == engine.CommandAgent {
+		kind = "agent_prepared"
+	}
+	return []db.ProcessRunEvent{event(kind, command, EngineActor,
 		preparedEvidence{Command: cloneCommand(*command)})}
 }
 
@@ -1054,6 +1099,10 @@ type preparedEvidence struct {
 
 func cloneCommand(command engine.Command) engine.Command {
 	command.Program.Args = append([]string(nil), command.Program.Args...)
+	if command.Agent != nil {
+		agent := *command.Agent
+		command.Agent = &agent
+	}
 	return command
 }
 

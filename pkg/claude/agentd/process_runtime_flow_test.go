@@ -723,7 +723,7 @@ func TestProcessRuntimeUnsupportedTemplateReturnsClearDiagnostic(t *testing.T) {
 	f, _ := processRuntimeFlow(t)
 	tmpl := processRuntimeTemplate("", 1)
 	task := tmpl.Nodes["task-01"]
-	task.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Do the work"}
+	task.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do the work?"}
 	tmpl.Nodes["task-01"] = task
 	createdTemplate := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/templates", processEditResponse{Template: tmpl})
 	require.Equal(t, http.StatusCreated, createdTemplate.Code, createdTemplate.Body.String())
@@ -738,7 +738,7 @@ func TestProcessRuntimeUnsupportedTemplateReturnsClearDiagnostic(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), `"code":"process_run_invalid"`)
 	assert.Contains(t, refused.Body.String(), "nodes.task-01.performer.kind")
-	assert.Contains(t, refused.Body.String(), "executes only program task performers")
+	assert.Contains(t, refused.Body.String(), "executes only program and agent task performers")
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 }
 

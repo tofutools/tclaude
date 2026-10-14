@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -147,7 +150,7 @@ func TestExecutableRetryBudgetIsCapped(t *testing.T) {
 	}
 	checkpoint.Nodes["task"] = NodeRunning
 	checkpoint.Attempts = map[string]int{"task": maxExecutableRetryAttempts}
-	checkpoint.Commands = []Command{programCommand(checkpoint.RunID,
+	checkpoint.Commands = []Command{taskCommand(checkpoint.RunID,
 		definition.nodes[definition.index["task"]], maxExecutableRetryAttempts)}
 	if err := ValidateCheckpoint(checkpoint, definition); err != nil {
 		t.Fatalf("an attempt at the cap must load: %v", err)
@@ -340,12 +343,12 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "agent performer",
-			code: "unsupported_performer",
+			name: "agent performer timeout",
+			code: "unsupported_timeout",
 			tmpl: func() *model.Template {
 				tmpl := sequentialTemplate("task")
 				node := tmpl.Nodes["task"]
-				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Do it"}
+				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Do it", Timeout: "5m"}
 				tmpl.Nodes["task"] = node
 				return tmpl
 			},
@@ -481,4 +484,76 @@ func hasCode(diagnostics model.Diagnostics, code string) bool {
 		}
 	}
 	return false
+}
+
+func TestAgentTaskPerformerIsEligibleAndPlansAgentCommand(t *testing.T) {
+	tmpl := sequentialTemplate("task")
+	node := tmpl.Nodes["task"]
+	node.Performer = &model.Performer{Kind: model.PerformerAgent, Profile: "dev",
+		Prompt: "Fix {{ params.branch }}", Assignee: "alice", Spawn: model.SpawnAllowed}
+	node.Retry = &model.RetryPolicy{MaxAttempts: 2, OnFail: model.RetryModeFeedbackSameSession}
+	tmpl.Nodes["task"] = node
+	tmpl.Params = map[string]model.Param{"branch": {Type: "string"}}
+	assertAuthoringValid(t, tmpl)
+	if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+		t.Fatalf("agent task should be eligible: %+v", diagnostics)
+	}
+	definition, err := Prepare(tmpl, map[string]string{"branch": "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := Initialize("run_agent", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, command, _, err := AdvanceAndPlan(checkpoint, definition)
+	if err != nil || command == nil {
+		t.Fatalf("plan: %v %v", command, err)
+	}
+	if command.Kind != CommandAgent || command.Agent == nil || command.Attempt != 1 {
+		t.Fatalf("expected agent attempt 1 command, got %+v", command)
+	}
+	want := AgentCommand{Profile: "dev", Prompt: "Fix main", Assignee: "alice", Spawn: true,
+		RetryMode: model.RetryModeFeedbackSameSession}
+	if *command.Agent != want {
+		t.Fatalf("agent binding = %+v, want %+v", *command.Agent, want)
+	}
+	if !strings.HasSuffix(command.ID, "_1_agent") {
+		t.Fatalf("command id %q must be attempt- and kind-qualified", command.ID)
+	}
+	encoded, err := json.Marshal(planned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"program"`) {
+		t.Fatalf("an agent command must not encode an empty program request: %s", encoded)
+	}
+	decoded, err := DecodeCheckpoint(encoded, definition)
+	if err != nil {
+		t.Fatalf("agent command checkpoint must round-trip the load boundary: %v", err)
+	}
+	// A failed report inside the budget re-readies the node for a fresh attempt.
+	failed, err := Apply(decoded, definition, Transition{Kind: TransitionProgramObserved,
+		Observation: &ProgramObservation{CommandID: command.ID, NodeID: "task", Outcome: ProgramFailed, ExitCode: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, retry, _, err := AdvanceAndPlan(failed, definition)
+	if err != nil || retry == nil || retry.Attempt != 2 || retry.Kind != CommandAgent {
+		t.Fatalf("expected agent attempt 2, got %+v %v", retry, err)
+	}
+}
+
+func TestAgentPerformerOnCompoundTaskIsIneligible(t *testing.T) {
+	tmpl := sequentialTemplate("task")
+	node := tmpl.Nodes["task"]
+	node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Do it"}
+	node.Review = &model.Step{ID: "rev", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}
+	tmpl.Nodes["task"] = node
+	diagnostics := CheckEligibility(tmpl)
+	if !slices.ContainsFunc(diagnostics, func(d model.Diagnostic) bool {
+		return d.Code == "unsupported_performer" && d.Path == "nodes.task.performer.kind"
+	}) {
+		t.Fatalf("agent do performer on a compound must be ineligible: %+v", diagnostics)
+	}
 }
