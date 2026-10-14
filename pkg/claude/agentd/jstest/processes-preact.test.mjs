@@ -45,7 +45,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.deepEqual(body.slugs, ['process.templates.read', 'process.templates.manage']);
   assert.equal(body.exclusive, true, 'the two process-template grants are the complete effective capability set');
   assert.deepEqual({ url: body.task_ref_url, label: body.task_ref_label }, {
-    url: 'https://dashboard.example/processes/templates', label: 'process: release-flow',
+    url: 'https://dashboard.example/automations/processes/templates', label: 'process: release-flow',
   });
   assert.match(body.brief, new RegExp(sourceHash));
   assert.match(body.brief, /BEGIN HUMAN REQUEST.*Fix the focused validation issue.*END HUMAN REQUEST/s);

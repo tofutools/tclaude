@@ -1118,7 +1118,8 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 	for _, needle := range []string{
 		`<a data-tab="processes"`,
 		`id="processes-root"`,
-		`data-process-subtab="templates"`,
+		`active=${PROCESSES_SUBTAB}`,
+		`nav [data-tab="processes"] { display: none; }`,
 		`id="process-editor-canvas"`,
 		`data-process-mount="editor"`,
 		"name === 'templates' ? '/v1/process/templates'",

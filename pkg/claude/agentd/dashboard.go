@@ -367,7 +367,8 @@ func handleDashboardStatic() http.Handler {
 // (js/nav-history.js) can restore the view on reload or a bookmarked deep link.
 // Only the FIRST path segment is validated here; the client normalizes any
 // deeper subtab/selection segments (/access/sudo,
-// /processes/templates/<template-id> for an open process editor).
+// /automations/processes/templates/<template-id> for an open process editor;
+// /processes/... is the pre-nesting alias the client heals in place).
 //
 // Kept in sync with ROUTABLE_TABS in js/nav-history.js. Terminals is
 // deliberately absent because it is served by its OWN handler

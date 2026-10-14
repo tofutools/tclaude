@@ -61,7 +61,7 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 		"/", "/dashboard", "/automations", "/automations/standing-orders", "/automations/triggers",
 		"/jobs", // historical alias remains reload-safe
 		"/processes", "/access", "/access/sudo",
-		"/processes/runs/run-42", "/usage", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",
+		"/processes/runs/run-42", "/automations/processes", "/automations/processes/templates/release-train", "/usage", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",
 	} {
 		rec := authedGet(path)
 		assert.Equal(t, http.StatusOK, rec.Code, "GET %s should serve the SPA; body=%s", path, rec.Body.String())

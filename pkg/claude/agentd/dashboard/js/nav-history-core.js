@@ -49,7 +49,10 @@ export const KNOWN_TABS = new Set([
 // sub-navigation. These tabs have one today:
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
-//   - Processes: the template library/editor.
+//   - Processes: the template library/editor. Processes renders as a subtab
+//     of Automations (/automations/processes/...) but keeps its own internal
+//     tab id, so its location model is unchanged; only toPath/fromPath know
+//     about the nesting.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -258,7 +261,9 @@ export function toPath(loc) {
   if (l.tab === 'jobs') {
     return '/automations' + (l.subtab ? '/' + l.subtab : '');
   }
-  const segs = [l.tab];
+  // Processes is presented as an Automations subtab, so its canonical route
+  // nests under /automations; the internal tab id stays "processes".
+  const segs = l.tab === 'processes' ? ['automations', 'processes'] : [l.tab];
   if (l.subtab) segs.push(l.subtab);
   if (l.selection) segs.push(encodeURIComponent(l.selection));
   // The default bare view reads best as "/" rather than "/groups".
@@ -293,7 +298,12 @@ export function fromPath(pathname) {
   let [tab, second, third] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
-  if (tab === 'automations') tab = 'jobs';
+  // /automations/processes/... is the Processes view nested under
+  // Automations. The pre-nesting /processes/... route parses the same way and
+  // is healed in place to the canonical form.
+  if (tab === 'automations' && second === 'processes') {
+    [tab, second, third] = ['processes', third, parts[3]];
+  } else if (tab === 'automations') tab = 'jobs';
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (skynet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();

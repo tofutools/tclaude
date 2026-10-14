@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
-import { isModifiedClick } from './helpers.js';
+import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAutomationsEntry } from './automations-subnav.js';
 import { registerCommandProvider } from './command-registry.js';
 import { buildProcessEditorCommands } from './process-command-registry.js';
 import { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } from './process-template-dnd.js';
@@ -115,9 +115,11 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
   useEffect(() => { if (current.active) void actions.refreshActive(); }, [current.active]);
   useEffect(() => { const poll = () => { const view = state.view.value; if (view.active && view.canvas?.kind === 'editor') void actions.observeTemplateHeads(); }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   useEffect(() => { const reselected = (event) => { if (event.detail?.tab === 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:tab-reselected', reselected); return () => document.removeEventListener('tclaude:tab-reselected', reselected); }, []);
-  const navigate = async (event) => { if (isModifiedClick(event)) return; event.preventDefault(); await actions.activateSubtab('templates'); };
   const spec = current.canvas;
-  return html`<div class="processes-island"><div class="process-subnav" role="tablist" aria-label="Process views"><a class="process-subtab active" data-process-subtab="templates" href="/processes/templates" role="tab" aria-selected="true" onClick=${navigate}>Templates</a><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
+  // Processes is an Automations subtab: render the shared Automations row with
+  // Processes active. Re-picking Processes returns to the template list.
+  const selectEntry = (key) => { if (key === PROCESSES_SUBTAB) void actions.activateSubtab('templates'); else openAutomationsEntry(key); };
+  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
 }
 
 export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {

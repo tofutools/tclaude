@@ -2,11 +2,11 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { JOBS_COLS } from './sort.js';
-import { JOBS_KINDS, JOBS_PAGE_SIZES, jobsLocation } from './jobs-state.js';
-import { toPath } from './nav-history-core.js';
+import { JOBS_PAGE_SIZES } from './jobs-state.js';
+import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAutomationsEntry } from './automations-subnav.js';
 import { cronRunSucceeded, formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
-import { idTooltip, isModifiedClick, relTime, shortAgentId } from './helpers.js';
+import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { JobsCronDialogRoot } from './jobs-dialog-island.js';
 import { JobsStandingOrderDialogRoot } from './jobs-standing-order-dialog-island.js';
@@ -386,13 +386,6 @@ function EmptyJobs({ kind }) {
   </div>`;
 }
 
-const JOB_KIND_LABELS = {
-  all: 'All',
-  'export': 'Exports',
-  cron: 'Cron jobs',
-  'standing-order': 'Standing orders',
-  trigger: 'Triggers',
-};
 const JOB_KIND_COUNT_LABELS = {
   'export': ['export', 'exports'],
   cron: ['cron job', 'cron jobs'],
@@ -403,8 +396,7 @@ export function JobsApp({ state, actions }) {
   const current = state.view.value;
   const triggersKnown = current.dashboard != null;
   const triggersEnabled = current.dashboard?.triggers_enabled === true;
-  const visibleKinds = !triggersKnown || triggersEnabled
-    ? JOBS_KINDS : JOBS_KINDS.filter((kind) => kind !== 'trigger');
+  const subnavEntries = automationsSubnavEntries(current.dashboard);
   const displayKind = triggersKnown && !triggersEnabled && current.kind === 'trigger' ? 'all' : current.kind;
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
@@ -440,25 +432,13 @@ export function JobsApp({ state, actions }) {
       detail: { location: state.location.value },
     }));
   };
-  const selectKind = (event, value) => {
-    if (isModifiedClick(event)) return;
-    event.preventDefault();
-    activateKind(value);
-  };
-  const keyDownKind = (event, value) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    activateKind(value);
+  const selectEntry = (key) => {
+    if (key === PROCESSES_SUBTAB) openAutomationsEntry(key);
+    else activateKind(key);
   };
 
   return html`<div class="jobs-island">
-    <div class="jobs-subnav" role="tablist" aria-label="Automation views">
-      ${visibleKinds.map((kind) => html`<a href=${toPath(jobsLocation(kind))}
-        class=${`jobs-subtab${displayKind === kind ? ' active' : ''}`}
-        role="tab" aria-selected=${displayKind === kind ? 'true' : 'false'}
-        onClick=${(event) => selectKind(event, kind)}
-        onKeyDown=${(event) => keyDownKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
-    </div>
+    <${AutomationsSubnav} entries=${subnavEntries} active=${displayKind} onSelect=${selectEntry} />
     ${displayKind !== 'trigger' && html`<div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"

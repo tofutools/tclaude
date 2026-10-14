@@ -295,7 +295,11 @@
        the badge counts the live terminals. -->
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
-  <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
+  <!-- Processes lives under Automations: its sub-nav entry there is the
+       visible way in, so this anchor is permanently CSS-hidden. It stays the
+       routing/activation target (bindTabs, the router's activate) for the
+       still-separate #tab-processes section. -->
+  <a data-tab="processes" href="/automations/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔧</span> <span class="tab-title">Contraptions</span></span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
