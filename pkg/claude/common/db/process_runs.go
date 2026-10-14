@@ -756,8 +756,15 @@ func ListProcessRunSummaries(afterID string, limit int, filter ProcessRunFilter)
 		return nil, err
 	}
 	where, filterArgs := processRunFilterSQL(filter)
-	args := append([]any{MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes, afterID}, filterArgs...)
+	args := append([]any{afterID}, filterArgs...)
 	args = append(args, limit)
+	return queryProcessRunSummaries(d, `WHERE id > ?`+where+` ORDER BY id LIMIT ?`, limit, args...)
+}
+
+// queryProcessRunSummaries runs the bounded metadata projection with the
+// given tail (WHERE/ORDER/LIMIT) and its arguments.
+func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...any) ([]ProcessRunSummary, error) {
+	args := append([]any{MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes}, tailArgs...)
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
@@ -766,12 +773,12 @@ func ListProcessRunSummaries(afterID string, limit int, filter ProcessRunFilter)
 		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
 		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
 		`+processRunScopeColumnsSelect+`
-		FROM process_runs WHERE id > ?`+where+` ORDER BY id LIMIT ?`, args...)
+		FROM process_runs `+tail, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	runs := make([]ProcessRunSummary, 0, limit)
+	runs := make([]ProcessRunSummary, 0, capacity)
 	for rows.Next() {
 		var id, templateRef, status sql.NullString
 		var createdAt, updatedAt dbTimestamp

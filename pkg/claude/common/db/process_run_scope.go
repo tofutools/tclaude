@@ -231,3 +231,39 @@ func RescopeProcessRun(runID string, next ProcessRunScope, actor string) (Proces
 	next.Owner, next.State = current.Owner, ProcessRunScopeBound
 	return next, nil
 }
+
+// MaxProcessRunContextRuns bounds one in-context read: the scoped,
+// non-terminal runs the dashboard overlays project per poll.
+const MaxProcessRunContextRuns = 64
+
+// ListScopedActiveProcessRuns returns the most recently updated non-terminal
+// runs bound to a group or an agent, newest first, at most limit of them. It
+// is the candidate set of the in-context read model; unscoped runs stay in
+// the Processes list only.
+func ListScopedActiveProcessRuns(limit int) ([]ProcessRunSummary, error) {
+	if limit <= 0 || limit > MaxProcessRunContextRuns {
+		return nil, fmt.Errorf("%w: context page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunContextRuns)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryProcessRunSummaries(d, `WHERE scope_kind != 'none'
+		AND status NOT IN ('completed', 'failed', 'canceled')
+		ORDER BY updated_at DESC, id LIMIT ?`, limit, limit)
+}
+
+// ListRecentTerminalGroupProcessRuns returns the most recently finished
+// group-scoped runs, newest first — the Done bucket of the in-context read.
+func ListRecentTerminalGroupProcessRuns(limit int) ([]ProcessRunSummary, error) {
+	if limit <= 0 || limit > MaxProcessRunContextRuns {
+		return nil, fmt.Errorf("%w: context page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunContextRuns)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryProcessRunSummaries(d, `WHERE scope_kind = 'group'
+		AND status IN ('completed', 'failed', 'canceled')
+		ORDER BY updated_at DESC, id LIMIT ?`, limit, limit)
+}

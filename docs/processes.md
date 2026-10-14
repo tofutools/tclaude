@@ -153,7 +153,19 @@ belongs to; completed history is kept. Demoting a group-scoped run to agent
 scope is not supported.
 
 Unscoped runs need no migration and appear only in the Processes list, not
-in the Groups or Terminals overlays. Visibility is unchanged:
+in the Groups or Terminals overlays.
+
+**Runs in context.** The dashboard overlays poll `GET /v1/process/context`
+alongside the snapshot. It returns one mini-graph projection per scoped run
+(authored nodes with kind, state, work-step index and performer; edges with
+their disposition; the current nodes) in a `runs` map, and refers to them by
+id: per group `active`, `needsYou` (awaiting a decision, blocked, needing
+reconciliation) and the recently finished `done`; per agent its current step
+(`index` of `total`) in each run bound to it; and a top-level `orphaned`
+list. It is bounded (the 64 most recently updated scoped runs, 8 per bucket,
+48 nodes per run). The human and holders of `process.runs.read` see every
+scoped run; another agent sees its own groups' runs and the runs bound to
+itself. Visibility is unchanged:
 `process.runs.read` (which group owners hold) still gates the run surfaces.
 
 ## What executes today
