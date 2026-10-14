@@ -66,129 +66,152 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		})
 	}
 
-	for _, nodeID := range sortedNodeIDs(tmpl) {
-		node := tmpl.Nodes[nodeID]
-		path := "nodes." + nodeID
+	// checkScope admits one graph scope: the template, or a subprocess body
+	// whose run-state ids carry idPrefix and whose diagnostics carry pathPrefix.
+	var checkScope func(scope *model.Template, idPrefix, pathPrefix string)
+	checkScope = func(scope *model.Template, idPrefix, pathPrefix string) {
+		for _, authoredID := range sortedNodeIDs(scope) {
+			node := scope.Nodes[authoredID]
+			nodeID := idPrefix + authoredID
+			path := pathPrefix + "nodes." + authoredID
 
-		// Every node a run can name has to fit the durable evidence envelope,
-		// authored or derived. Authoring bounds the id CHARSET but not its length,
-		// so without this a template with a long id is created and then wedges: the
-		// evidence row for that node can never be written, and no transition it
-		// takes part in can commit.
-		if len(nodeID) > model.MaxExecutableNodeIDBytes {
-			add("node_id_limit", path, fmt.Sprintf(
-				"this node id is %d bytes, above the %d-byte executable node id ceiling",
-				len(nodeID), model.MaxExecutableNodeIDBytes))
-		}
+			// Every node a run can name has to fit the durable evidence envelope,
+			// authored or derived. Authoring bounds the id CHARSET but not its length,
+			// so without this a template with a long id is created and then wedges: the
+			// evidence row for that node can never be written, and no transition it
+			// takes part in can commit.
+			if len(nodeID) > model.MaxExecutableNodeIDBytes {
+				add("node_id_limit", path, fmt.Sprintf(
+					"this node id is %d bytes, above the %d-byte executable node id ceiling",
+					len(nodeID), model.MaxExecutableNodeIDBytes))
+			}
 
-		// Both authored join policies are executable. join: all activates once the
-		// complete candidate input set has settled with at least one arrival;
-		// join: any activates on the first arrival, and its losing branches keep
-		// running to their own settled outcome and arrive late at the reducer.
-		// A program task may declare a bounded retry budget, and the SAME shape is
-		// admitted whether or not it declares stages: for a plain task a failed
-		// attempt inside the budget re-readies that node, and for a compound the
-		// budget is its one rework budget — it bounds do-stage executions whether
-		// a do program failed or a check or review gate sent the work back. Only
-		// that shape is admitted. Everything else the authored policy can say — a
-		// retry on a node kind this engine does not execute, a per-stage retry, a
-		// wait between attempts, or reusing a possibly poisoned performer session
-		// — keeps its own path-specific diagnostic.
-		if node.Retry != nil {
-			agentTask := node.Type == model.NodeTypeTask && node.Performer != nil &&
-				node.Performer.Kind == model.PerformerAgent && !node.IsCompound()
-			if node.Type != model.NodeTypeTask || node.Performer == nil ||
-				(node.Performer.Kind != model.PerformerProgram && !agentTask) {
-				add("unsupported_retry", path+".retry", "only program and agent task retries are executable in this engine yet")
-			} else {
-				if node.Retry.MaxAttempts <= 0 {
-					add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
-				} else if node.Retry.MaxAttempts > maxExecutableRetryAttempts {
-					add("unsupported_retry", path+".retry.maxAttempts", fmt.Sprintf(
-						"an executable retry budget is at most %d attempts including the first; got %d, and this engine retries immediately with no backoff wait to throttle it",
-						maxExecutableRetryAttempts, node.Retry.MaxAttempts))
+			// Both authored join policies are executable. join: all activates once the
+			// complete candidate input set has settled with at least one arrival;
+			// join: any activates on the first arrival, and its losing branches keep
+			// running to their own settled outcome and arrive late at the reducer.
+			// A program task may declare a bounded retry budget, and the SAME shape is
+			// admitted whether or not it declares stages: for a plain task a failed
+			// attempt inside the budget re-readies that node, and for a compound the
+			// budget is its one rework budget — it bounds do-stage executions whether
+			// a do program failed or a check or review gate sent the work back. Only
+			// that shape is admitted. Everything else the authored policy can say — a
+			// retry on a node kind this engine does not execute, a per-stage retry, a
+			// wait between attempts, or reusing a possibly poisoned performer session
+			// — keeps its own path-specific diagnostic.
+			if node.Retry != nil {
+				agentTask := node.Type == model.NodeTypeTask && node.Performer != nil &&
+					node.Performer.Kind == model.PerformerAgent && !node.IsCompound()
+				if node.Type != model.NodeTypeTask || node.Performer == nil ||
+					(node.Performer.Kind != model.PerformerProgram && !agentTask) {
+					add("unsupported_retry", path+".retry", "only program and agent task retries are executable in this engine yet")
+				} else {
+					if node.Retry.MaxAttempts <= 0 {
+						add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
+					} else if node.Retry.MaxAttempts > maxExecutableRetryAttempts {
+						add("unsupported_retry", path+".retry.maxAttempts", fmt.Sprintf(
+							"an executable retry budget is at most %d attempts including the first; got %d, and this engine retries immediately with no backoff wait to throttle it",
+							maxExecutableRetryAttempts, node.Retry.MaxAttempts))
+					}
+					if strings.TrimSpace(node.Retry.Backoff) != "" {
+						add("unsupported_retry", path+".retry.backoff", "retry backoff waits are not executable in this engine yet")
+					}
+					// An agent performer is a live session the daemon tracks, so it is the
+					// one performer that can be handed its own failure back.
+					if model.RetryMode(node.Retry) != model.RetryModeFreshAttempt && !agentTask {
+						add("unsupported_retry", path+".retry.onFail",
+							"only "+model.RetryModeFreshAttempt+" retries are executable in this engine yet; "+
+								model.RetryModeFeedbackSameSession+" needs a performer session this engine does not keep")
+					}
 				}
-				if strings.TrimSpace(node.Retry.Backoff) != "" {
-					add("unsupported_retry", path+".retry.backoff", "retry backoff waits are not executable in this engine yet")
+			}
+			if node.Plan != nil {
+				if node.Plan.Retry != nil {
+					add("unsupported_retry", path+".plan.retry", "stage retries are not executable in this engine yet")
 				}
-				// An agent performer is a live session the daemon tracks, so it is the
-				// one performer that can be handed its own failure back.
-				if model.RetryMode(node.Retry) != model.RetryModeFreshAttempt && !agentTask {
-					add("unsupported_retry", path+".retry.onFail",
-						"only "+model.RetryModeFreshAttempt+" retries are executable in this engine yet; "+
-							model.RetryModeFeedbackSameSession+" needs a performer session this engine does not keep")
+				if node.Plan.ApprovalRetry != nil {
+					add("unsupported_retry", path+".plan.approvalRetry", "approval retries are not executable in this engine yet")
 				}
 			}
-		}
-		if node.Plan != nil {
-			if node.Plan.Retry != nil {
-				add("unsupported_retry", path+".plan.retry", "stage retries are not executable in this engine yet")
+			for index, check := range node.Checks {
+				if check.Retry != nil {
+					add("unsupported_retry", fmt.Sprintf("%s.checks[%d].retry", path, index), "stage retries are not executable in this engine yet")
+				}
 			}
-			if node.Plan.ApprovalRetry != nil {
-				add("unsupported_retry", path+".plan.approvalRetry", "approval retries are not executable in this engine yet")
+			if node.Review != nil && node.Review.Retry != nil {
+				add("unsupported_retry", path+".review.retry", "stage retries are not executable in this engine yet")
 			}
-		}
-		for index, check := range node.Checks {
-			if check.Retry != nil {
-				add("unsupported_retry", fmt.Sprintf("%s.checks[%d].retry", path, index), "stage retries are not executable in this engine yet")
+			if node.Plan != nil || len(node.Checks) > 0 || node.Review != nil {
+				// Compound stages execute only where they mean something: on a task
+				// node, which is the only kind model.ExpandNode derives stages for.
+				if node.Type != model.NodeTypeTask {
+					add("unsupported_compound_stages", path, "plan, check, and review stages are executable only on task nodes")
+				} else {
+					addStageDiagnostics(add, path, nodeID, node)
+				}
 			}
-		}
-		if node.Review != nil && node.Review.Retry != nil {
-			add("unsupported_retry", path+".review.retry", "stage retries are not executable in this engine yet")
-		}
-		if node.Plan != nil || len(node.Checks) > 0 || node.Review != nil {
-			// Compound stages execute only where they mean something: on a task
-			// node, which is the only kind model.ExpandNode derives stages for.
-			if node.Type != model.NodeTypeTask {
-				add("unsupported_compound_stages", path, "plan, check, and review stages are executable only on task nodes")
-			} else {
-				addStageDiagnostics(add, path, nodeID, node)
+			if node.Wait != nil && node.Type != model.NodeTypeWait {
+				add("unsupported_wait", path+".wait", "wait configuration is not executable in this engine yet")
 			}
-		}
-		if node.Wait != nil && node.Type != model.NodeTypeWait {
-			add("unsupported_wait", path+".wait", "wait configuration is not executable in this engine yet")
-		}
-		if len(node.Captures) > 0 {
-			add("unsupported_captures", path+".captures", "runtime captures are not executable in this engine yet")
-		}
-		if node.Performer != nil && node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision {
-			add("unsupported_performer", path+".performer", "only task and decision nodes may declare performers in this engine")
-		}
+			if len(node.Captures) > 0 {
+				add("unsupported_captures", path+".captures", "runtime captures are not executable in this engine yet")
+			}
+			if node.Performer != nil && node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision {
+				add("unsupported_performer", path+".performer", "only task and decision nodes may declare performers in this engine")
+			}
 
-		switch node.Type {
-		case model.NodeTypeStart:
-			if len(node.Next) != 1 {
-				add("unsupported_routing", path+".next", "a start node requires exactly one outgoing route in this engine")
+			switch node.Type {
+			case model.NodeTypeStart:
+				if len(node.Next) != 1 {
+					add("unsupported_routing", path+".next", "a start node requires exactly one outgoing route in this engine")
+				}
+			case model.NodeTypeTask:
+				switch {
+				case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent):
+					add("unsupported_performer", path+".performer.kind", "this engine executes only program and agent task performers")
+				case node.Performer.Contact != nil:
+					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
+				case node.Performer.Kind == model.PerformerAgent && node.IsCompound():
+					add("unsupported_performer", path+".performer.kind", "agent performers on staged (plan/check/review) tasks are not executable in this engine yet")
+				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
+					add("unsupported_timeout", path+".performer.timeout", "agent performer timeouts are not executable in this engine yet")
+				}
+				if len(node.Next) != 1 {
+					add("unsupported_routing", path+".next", "a task requires exactly one outgoing route in this engine")
+				}
+			case model.NodeTypeDecision:
+				if node.Performer == nil || node.Performer.Kind != model.PerformerHuman {
+					add("unsupported_performer", path+".performer.kind", "this engine executes only human deciders; agent deciders are not executable yet")
+				} else if node.Performer.Contact != nil {
+					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
+				}
+			case model.NodeTypeEnd:
+			case model.NodeTypeParallel:
+				// Engine-owned: completing a ready fork settles every authored branch
+				// as arrived. Authoring validation already proved the degree and
+				// structured-scope contract, so nothing is re-checked here.
+			case model.NodeTypeWait:
+				add("unsupported_wait", path+".type", "wait nodes are not executable in this engine yet")
+			case model.NodeTypeSubprocess:
+				// A subprocess executes its body as namespaced nodes of this run, so
+				// the body has to be executable on exactly the same terms. A
+				// template reference executes only once run creation has embedded the
+				// referenced template (model.ResolveSubprocessRefs).
+				body, ok := node.Subprocess.Body()
+				if !ok {
+					add("unresolved_subprocess", path+".subprocess.templateRef",
+						"a subprocess template reference executes only after run creation resolves it")
+					break
+				}
+				bodyPath := path + ".subprocess."
+				if !node.Subprocess.IsInline() {
+					bodyPath += "resolved."
+				}
+				checkScope(body, nodeID+model.SubprocessNodeIDSeparator, bodyPath)
 			}
-		case model.NodeTypeTask:
-			switch {
-			case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent):
-				add("unsupported_performer", path+".performer.kind", "this engine executes only program and agent task performers")
-			case node.Performer.Contact != nil:
-				add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
-			case node.Performer.Kind == model.PerformerAgent && node.IsCompound():
-				add("unsupported_performer", path+".performer.kind", "agent performers on staged (plan/check/review) tasks are not executable in this engine yet")
-			case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
-				add("unsupported_timeout", path+".performer.timeout", "agent performer timeouts are not executable in this engine yet")
-			}
-			if len(node.Next) != 1 {
-				add("unsupported_routing", path+".next", "a task requires exactly one outgoing route in this engine")
-			}
-		case model.NodeTypeDecision:
-			if node.Performer == nil || node.Performer.Kind != model.PerformerHuman {
-				add("unsupported_performer", path+".performer.kind", "this engine executes only human deciders; agent deciders are not executable yet")
-			} else if node.Performer.Contact != nil {
-				add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
-			}
-		case model.NodeTypeEnd:
-		case model.NodeTypeParallel:
-			// Engine-owned: completing a ready fork settles every authored branch
-			// as arrived. Authoring validation already proved the degree and
-			// structured-scope contract, so nothing is re-checked here.
-		case model.NodeTypeWait:
-			add("unsupported_wait", path+".type", "wait nodes are not executable in this engine yet")
 		}
 	}
+	checkScope(tmpl, "", "")
 	// The entry node's own kind decides how the engine initializes it, so any
 	// kind this layer already admits is admissible here too. Authoring
 	// validation reports an undeclared start before this layer runs; the guard
@@ -284,9 +307,9 @@ func addStagePerformerDiagnostics(add func(code, path, message string), path str
 // never disagree with what preparation actually appends.
 func expandedNodeCount(tmpl *model.Template) int {
 	count := 0
-	for nodeID, node := range tmpl.Nodes {
+	model.WalkNodes(tmpl, func(nodeID string, node model.Node) {
 		count += 1 + len(model.ExpandNode(nodeID, node))
-	}
+	})
 	return count
 }
 

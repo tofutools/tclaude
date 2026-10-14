@@ -1325,9 +1325,16 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := fs.GetTemplate(ctx, head.Ref)
+	stored, err := fs.GetTemplate(ctx, head.Ref)
 	if err != nil {
 		return nil, err
+	}
+	// Subprocess template references are pinned and embedded here, once: the
+	// run snapshot then carries every body it executes, so preparation and a
+	// cold load never read the template store again.
+	tmpl, err := model.ResolveSubprocessRefs(stored, processSubprocessResolver(ctx, fs))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", db.ErrProcessRunInvalid, err)
 	}
 	params := request.Params
 	if params == nil {
@@ -1450,6 +1457,26 @@ func normalizeProcessRunAuthorizations(profiles []string) ([]string, error) {
 	return normalized, nil
 }
 
+// processSubprocessResolver loads a referenced subprocess template from the
+// store: the pinned version when one is authored, the head otherwise.
+func processSubprocessResolver(ctx context.Context, fs *store.FS) model.TemplateResolver {
+	return func(id, version string) (*model.Template, string, error) {
+		ref := id + "@" + version
+		if version == "" {
+			head, err := fs.GetTemplateHead(ctx, id)
+			if err != nil {
+				return nil, "", err
+			}
+			ref = head.Ref
+		}
+		tmpl, err := fs.GetTemplate(ctx, ref)
+		if err != nil {
+			return nil, "", err
+		}
+		return tmpl, strings.TrimPrefix(ref, id+"@"), nil
+	}
+}
+
 func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []string) []string {
 	allowed := make(map[string]struct{}, len(authorized))
 	for _, profile := range authorized {
@@ -1464,9 +1491,11 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 			missingSet[performer.Profile] = struct{}{}
 		}
 	}
-	for _, node := range tmpl.Nodes {
+	// WalkNodes descends into subprocess bodies: their programs run as part of
+	// this run, so they need the same authorization up front.
+	model.WalkNodes(tmpl, func(_ string, node model.Node) {
 		if node.Type != model.NodeTypeTask {
-			continue
+			return
 		}
 		// A compound task dispatches one program per derived stage, not just the
 		// parent's do performer, so every stage profile has to be authorized
@@ -1483,7 +1512,7 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 		if node.Review != nil {
 			require(&node.Review.Performer)
 		}
-	}
+	})
 	missing := make([]string, 0, len(missingSet))
 	for profile := range missingSet {
 		missing = append(missing, profile)

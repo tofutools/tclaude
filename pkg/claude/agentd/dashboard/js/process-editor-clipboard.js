@@ -24,7 +24,7 @@ const MAX_JSON_ITEMS = 32_768;
 const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const NODE_FIELDS = new Set([
   'type', 'join', 'name', 'description', 'doc', 'performer', 'plan', 'checks',
-  'review', 'retry', 'wait', 'next', 'result', 'captures', 'metadata',
+  'review', 'retry', 'wait', 'next', 'result', 'captures', 'metadata', 'subprocess',
 ]);
 const STEP_FIELDS = new Set([
   'id', 'name', 'description', 'doc', 'performer', 'approval', 'approvalRetry', 'retry',
@@ -151,6 +151,12 @@ export function validateProcessEditNode(value) {
   if (Object.hasOwn(value, 'metadata')) {
     if (!isRecord(value.metadata)) wireShapeReject();
     validateJSONValue(value.metadata);
+  }
+  // A subprocess body is a whole nested template; the server validates its
+  // semantics, so the boundary only bounds and shape-checks it here.
+  if (Object.hasOwn(value, 'subprocess')) {
+    if (!isRecord(value.subprocess)) wireShapeReject();
+    validateJSONValue(value.subprocess);
   }
   return value;
 }

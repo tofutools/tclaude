@@ -204,6 +204,34 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			if err := completeAndSettle(&next, definition, node.parent, arrivesAt(soleOutcome(definition, parent))); err != nil {
 				return Checkpoint{}, err
 			}
+		case definitionSubprocess:
+			// Activating a subprocess starts its body at the body's entry, exactly
+			// as Initialize starts a run: the entry's own kind decides what ready
+			// means, so a decision entry takes its obligation here. The node
+			// settles NO edge yet: its authored route belongs to the body exit.
+			entry := definition.nodes[node.entry]
+			if status := next.Nodes[entry.id]; status != NodePending {
+				return invalid("subprocess %q cannot start its body at %q from %q", node.id, entry.id, status)
+			}
+			next.Nodes[node.id] = NodeRunning
+			next.Nodes[entry.id] = NodeReady
+			if entry.kind == definitionDecision {
+				addObligation(&next, entry.id)
+			}
+		case definitionSubprocessExit:
+			// A body end node is the ONE path that completes its subprocess node,
+			// through the outcome its out-port names, exactly once.
+			owner := definition.nodes[node.scope]
+			if status := next.Nodes[owner.id]; status != NodeRunning {
+				return invalid("subprocess exit %q requires a running subprocess %q; got %q", node.id, owner.id, status)
+			}
+			if kind, nodeID, remains := scopedWorkRemains(next, definition, index); remains {
+				return invalid("subprocess exit %q cannot complete while node %q %s", node.id, nodeID, kind)
+			}
+			next.Nodes[node.id] = NodeDone
+			if err := completeAndSettle(&next, definition, node.scope, arrivesAt(node.exitOutcome)); err != nil {
+				return Checkpoint{}, err
+			}
 		case definitionEnd:
 			if err := requireNoWorkRemains(next, definition, node.id); err != nil {
 				return Checkpoint{}, err
@@ -594,6 +622,42 @@ func remainingWork(checkpoint Checkpoint, definition *Definition, endNodeID stri
 	return "", "", false
 }
 
+// scopedWorkRemains names one live node of a subprocess body other than the
+// given exit: ready, running, or blocked. A command, an awaited decision, and a
+// parked branch are each carried by such a node, so the body's index range is
+// the whole question; it is consulted only for a ready exit.
+func scopedWorkRemains(checkpoint Checkpoint, definition *Definition, exitIndex int) (kind, nodeID string, remains bool) {
+	exit := definition.nodes[exitIndex]
+	owner := definition.nodes[exit.scope]
+	for index := exit.scope + 1; index < owner.scopeEnd; index++ {
+		if index == exitIndex {
+			continue
+		}
+		other := definition.nodes[index]
+		switch status := checkpoint.Nodes[other.id]; status {
+		case NodeReady, NodeRunning, NodeBlocked:
+			return "is " + string(status), other.id, true
+		}
+	}
+	return "", "", false
+}
+
+// skipSubprocessBody closes the body of a subprocess node that will never
+// activate. The body is one contiguous prepared range, so this is a scan of
+// that range and of the edges leaving it, with no settlement to propagate:
+// body edges never leave the body.
+func skipSubprocessBody(next *Checkpoint, definition *Definition, index int) {
+	owner := definition.nodes[index]
+	for inner := index + 1; inner < owner.scopeEnd; inner++ {
+		node := definition.nodes[inner]
+		next.Nodes[node.id] = NodeSkipped
+		for _, edgeIndex := range node.outgoing {
+			edge := definition.edges[edgeIndex]
+			next.Edges[edge.from][edge.outcome] = EdgeNotTaken
+		}
+	}
+}
+
 // outgoingArrivals selects which authored outgoing edges of a completing node
 // arrive. Routing nodes — start, program tasks, decisions — take exactly one
 // authored outcome; an engine-owned parallel fork takes every branch at once.
@@ -723,6 +787,11 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 			// pending forever in a run that is otherwise finished.
 			for _, childIndex := range target.children {
 				next.Nodes[definition.nodes[childIndex].id] = NodeSkipped
+			}
+			// A subprocess that will never activate closes its whole body the same
+			// way: every body node is skipped and every body edge not taken.
+			if target.kind == definitionSubprocess {
+				skipSubprocessBody(next, definition, targetIndex)
 			}
 			for _, edgeIndex := range target.outgoing {
 				if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
@@ -987,7 +1056,14 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 			continue
 		}
 		switch node.kind {
-		case definitionStart, definitionParallel, definitionCompound, definitionStageDone:
+		case definitionStart, definitionParallel, definitionCompound, definitionStageDone, definitionSubprocess:
+			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
+		case definitionSubprocessExit:
+			// The subprocess-scoped twin of the end-node rule below: a body exit
+			// waits for its own body's live work, never for the rest of the run.
+			if _, _, remains := scopedWorkRemains(checkpoint, definition, definition.index[node.id]); remains {
+				continue
+			}
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
 		case definitionEnd:
 			// A join: any winner reaches the end while its losing branches are

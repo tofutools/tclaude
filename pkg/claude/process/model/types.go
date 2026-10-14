@@ -16,6 +16,9 @@ const (
 	NodeTypeStart    NodeType = "start"
 	NodeTypeEnd      NodeType = "end"
 	NodeTypeParallel NodeType = "parallel"
+	// NodeTypeSubprocess runs a nested process graph — inline or a reference
+	// to another stored template — as one node of its parent. See Subprocess.
+	NodeTypeSubprocess NodeType = "subprocess"
 )
 
 type JoinPolicy string
@@ -80,7 +83,10 @@ type Node struct {
 	// only in v1 — the runtime capture plumbing is a later ticket; validation
 	// keeps names id-shaped and unique so they can become references later.
 	Captures []string `json:"captures,omitempty" yaml:"captures,omitempty"`
-	Metadata Metadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	// Subprocess is the nested graph of a subprocess node, and is only valid on
+	// that node type.
+	Subprocess *Subprocess `json:"subprocess,omitempty" yaml:"subprocess,omitempty"`
+	Metadata   Metadata    `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 type Step struct {

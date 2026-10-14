@@ -44,6 +44,15 @@ const (
 	// expansion. Advancing it is what completes the parent and settles the
 	// parent's authored outgoing route, exactly once.
 	definitionStageDone
+	// definitionSubprocess is an authored subprocess node. Its body is prepared
+	// as namespaced nodes appended contiguously right after it; advancing the
+	// node starts the body at its entry, and the node stays running until a
+	// body end node completes it.
+	definitionSubprocess
+	// definitionSubprocessExit is an end node of a subprocess body. Advancing it
+	// completes the owning subprocess node through the outcome its out-port
+	// names, which is the one way a body leaves.
+	definitionSubprocessExit
 )
 
 type definitionNode struct {
@@ -108,6 +117,18 @@ type definitionNode struct {
 	// gated by a person", which is what the plan-stage ceiling rule turns on. Both
 	// are prepared once so neither question is ever a walk of the child list.
 	approvalGate int
+	// scope is the prepared index of the subprocess node whose body holds this
+	// node, and -1 for a node of the template's own graph. Compound stages share
+	// their parent's scope.
+	scope int
+	// scopeEnd is, on a subprocess node, one past the prepared index of the last
+	// node of its body: the body is exactly the range (index, scopeEnd). It is
+	// -1 everywhere else.
+	scopeEnd int
+	// entry is a subprocess node's prepared body entry index, and -1 elsewhere.
+	entry int
+	// exitOutcome is the parent outcome a subprocess exit node leaves through.
+	exitOutcome string
 }
 
 type definitionEdge struct {
@@ -132,14 +153,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	if err := RequireEligible(tmpl); err != nil {
 		return nil, err
 	}
-	order, err := topologicalOrder(tmpl)
-	if err != nil {
-		return nil, err
-	}
-	definition := &Definition{
-		nodes: make([]definitionNode, 0, len(order)),
-		index: make(map[string]int, len(order)),
-	}
+	definition := &Definition{index: make(map[string]int, len(tmpl.Nodes))}
 	// appendNode is the single insertion point, so the id->index map and the
 	// prepared order cannot disagree. Authoring rejects every child-id collision
 	// before this runs (model.validateExpansionCollisions); the guard is here so
@@ -154,14 +168,67 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		definition.nodes = append(definition.nodes, prepared)
 		return index, nil
 	}
+	// nexts holds each authored node's next map with namespaced targets, so the
+	// edge pass below never has to find a node's scope again.
+	nexts := make(map[int]model.Next, len(tmpl.Nodes))
+	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts); err != nil {
+		return nil, err
+	}
+	for fromIndex := range definition.nodes {
+		from := &definition.nodes[fromIndex]
+		// Derived stages have no authored edges, and the engine gives them no
+		// synthetic ones: their sequence is the parent's ordered child list. A
+		// subprocess exit has none either: it completes its owning node.
+		if from.parent >= 0 || from.kind == definitionSubprocessExit {
+			continue
+		}
+		next := nexts[fromIndex]
+		for _, outcome := range sortedOutcomes(next) {
+			toIndex, ok := definition.index[next[outcome]]
+			if !ok {
+				return nil, fmt.Errorf("%w: edge %q/%q targets unknown node", ErrInvalidDefinition, from.id, outcome)
+			}
+			edgeIndex := len(definition.edges)
+			definition.edges = append(definition.edges, definitionEdge{
+				from: from.id, outcome: outcome, to: next[outcome],
+				fromIndex: fromIndex, toIndex: toIndex,
+			})
+			from.outgoing = append(from.outgoing, edgeIndex)
+		}
+	}
+	for edgeIndex, edge := range definition.edges {
+		to := &definition.nodes[edge.toIndex]
+		to.incoming = append(to.incoming, edgeIndex)
+		if to.joinAny {
+			definition.joinAnyIncoming = append(definition.joinAnyIncoming, edgeIndex)
+		}
+	}
+	return definition, nil
+}
+
+// prepareScope prepares one graph scope — the template, or a subprocess body
+// namespaced under prefix — in deterministic topological order. owner is the
+// subprocess node whose body this is, and scope its prepared index (nil and -1
+// for the template itself). Each subprocess body is appended contiguously right
+// after its node, so a body is always one index range.
+func prepareScope(definition *Definition, tmpl *model.Template, params map[string]string, prefix string,
+	scope int, owner *model.Node, appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	order, err := topologicalOrder(tmpl)
+	if err != nil {
+		return err
+	}
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
+		id := prefix + nodeID
 		prepared := definitionNode{
-			id:           nodeID,
+			id:           id,
 			parent:       -1,
 			doAnchor:     -1,
 			planAnchor:   -1,
 			approvalGate: -1,
+			scope:        scope,
+			scopeEnd:     -1,
+			entry:        -1,
 			joinAll:      node.Join == model.JoinAll,
 			joinAny:      node.Join == model.JoinAny,
 		}
@@ -184,28 +251,49 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			prepared.maxAttempts = model.RetryBudget(node.Retry)
 			prepared.retryAuthored = node.Retry != nil
 			if node.Performer.Kind == model.PerformerAgent {
-				agent, err := bindAgent(nodeID, *node.Performer, node.Retry, params)
+				agent, err := bindAgent(id, *node.Performer, node.Retry, params)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				prepared.agent = agent
 				break
 			}
-			program, err := bindProgram(nodeID, *node.Performer, params)
+			program, err := bindProgram(id, *node.Performer, params)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			prepared.program = program
 		case model.NodeTypeDecision:
 			prepared.kind = definitionDecision
 			prepared.verdicts = sortedOutcomes(node.Next)
 		case model.NodeTypeEnd:
+			if owner != nil {
+				// A body end node leaves the subprocess through its out-port.
+				outcome, ok := owner.Subprocess.OutputOutcome(nodeID, owner.Next)
+				if !ok {
+					return fmt.Errorf("%w: subprocess end %q has no out-port outcome", ErrInvalidDefinition, id)
+				}
+				prepared.kind = definitionSubprocessExit
+				prepared.exitOutcome = outcome
+				break
+			}
 			prepared.kind = definitionEnd
 			prepared.terminal = terminalStatus(node.Result)
+		case model.NodeTypeSubprocess:
+			prepared.kind = definitionSubprocess
 		}
 		parentIndex, err := appendNode(prepared)
 		if err != nil {
-			return nil, err
+			return err
+		}
+		if prepared.kind != definitionSubprocessExit {
+			nexts[parentIndex] = namespacedNext(node.Next, prefix)
+		}
+		if prepared.kind == definitionSubprocess {
+			if err := prepareSubprocess(definition, parentIndex, node, params, appendNode, nexts); err != nil {
+				return err
+			}
+			continue
 		}
 		if prepared.kind != definitionCompound {
 			continue
@@ -213,13 +301,14 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		// Derived stages are appended immediately after their parent, so the
 		// prepared order stays a single deterministic sequence and a compound's
 		// stages sit exactly where the parent did.
-		for _, spec := range model.ExpandNode(nodeID, node) {
+		for _, spec := range model.ExpandNode(id, node) {
 			// Every stage but the do stage is a single fail-fast attempt:
 			// eligibility rejects stage retry and approvalRetry policies, so no
 			// other child carries an authored budget.
 			child := definitionNode{
 				id: spec.ChildID, parent: parentIndex, doAnchor: -1, planAnchor: -1,
 				approvalGate: -1, stage: spec.Stage, maxAttempts: 1,
+				scope: scope, scopeEnd: -1, entry: -1,
 			}
 			switch spec.Stage {
 			case model.StageDone:
@@ -240,7 +329,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 				child.kind = definitionTask
 				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				child.program = program
 			}
@@ -254,7 +343,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			}
 			childIndex, err := appendNode(child)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
 			switch spec.Stage {
@@ -267,46 +356,54 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			}
 		}
 		if definition.nodes[parentIndex].doAnchor < 0 {
-			return nil, fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, nodeID)
+			return fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, id)
 		}
 		// An approval gate whose plan child is missing would be a decision nothing
 		// could ever derive a window identity for. Expansion only ever emits the
 		// gate directly after the plan stage, so this fails closed on a caller that
 		// reached preparation with an expansion this engine did not derive.
 		if parent := definition.nodes[parentIndex]; parent.approvalGate >= 0 && parent.planAnchor < 0 {
-			return nil, fmt.Errorf("%w: compound %q expanded an approval gate without a plan stage",
-				ErrInvalidDefinition, nodeID)
+			return fmt.Errorf("%w: compound %q expanded an approval gate without a plan stage",
+				ErrInvalidDefinition, id)
 		}
 	}
-	for fromIndex := range definition.nodes {
-		from := &definition.nodes[fromIndex]
-		// Derived stages have no authored edges, and the engine gives them no
-		// synthetic ones: their sequence is the parent's ordered child list.
-		if from.parent >= 0 {
-			continue
-		}
-		next := tmpl.Nodes[from.id].Next
-		for _, outcome := range sortedOutcomes(next) {
-			toIndex, ok := definition.index[next[outcome]]
-			if !ok {
-				return nil, fmt.Errorf("%w: edge %q/%q targets unknown node", ErrInvalidDefinition, from.id, outcome)
-			}
-			edgeIndex := len(definition.edges)
-			definition.edges = append(definition.edges, definitionEdge{
-				from: from.id, outcome: outcome, to: next[outcome],
-				fromIndex: fromIndex, toIndex: toIndex,
-			})
-			from.outgoing = append(from.outgoing, edgeIndex)
-		}
+	return nil
+}
+
+// prepareSubprocess prepares one subprocess node's body right after it: the
+// body's params are bound from this scope's params through its in-ports, and
+// its nodes are namespaced under the node's own id.
+func prepareSubprocess(definition *Definition, index int, node model.Node, params map[string]string,
+	appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	id := definition.nodes[index].id
+	body, ok := node.Subprocess.Body()
+	if !ok {
+		return fmt.Errorf("%w: subprocess %q references template %q, which was not resolved",
+			ErrInvalidDefinition, id, node.Subprocess.TemplateRef)
 	}
-	for edgeIndex, edge := range definition.edges {
-		to := &definition.nodes[edge.toIndex]
-		to.incoming = append(to.incoming, edgeIndex)
-		if to.joinAny {
-			definition.joinAnyIncoming = append(definition.joinAnyIncoming, edgeIndex)
-		}
+	prefix := id + model.SubprocessNodeIDSeparator
+	if err := prepareScope(definition, body, node.Subprocess.BindInputs(body, params), prefix, index, &node, appendNode, nexts); err != nil {
+		return err
 	}
-	return definition, nil
+	entry, ok := definition.index[prefix+body.Start]
+	if !ok {
+		return fmt.Errorf("%w: subprocess %q has no prepared entry", ErrInvalidDefinition, id)
+	}
+	definition.nodes[index].entry = entry
+	definition.nodes[index].scopeEnd = len(definition.nodes)
+	return nil
+}
+
+// namespacedNext returns a next map whose targets carry a scope prefix.
+func namespacedNext(next model.Next, prefix string) model.Next {
+	if prefix == "" || next == nil {
+		return next
+	}
+	namespaced := make(model.Next, len(next))
+	for outcome, target := range next {
+		namespaced[outcome] = prefix + target
+	}
+	return namespaced
 }
 
 // topologicalOrder returns every node exactly once, the entry node first, in a

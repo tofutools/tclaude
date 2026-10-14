@@ -226,90 +226,122 @@ func rawNormalizedGraphCardinality(root *yaml.Node) (NormalizedGraphCardinality,
 		}
 		return counts, rawGraphCounted, nil
 	}
-	nodes, status = structuralNode(nodes, aliasSteps)
-	if status != rawGraphCounted {
-		recordStructuralIssue(rawGraphUnsafeAlias, "nodes")
-		return counts, rawGraphRejected, structuralDiagnostics
-	}
-	if nodes.Kind != yaml.MappingNode {
-		return counts, rawGraphUncountable, structuralDiagnostics
-	}
-	if key := mappingMergeKey(nodes, aliasSteps); key != nil {
-		recordStructuralDiagnostic(mergeKeyDiag(key, "nodes"))
-	}
-	seenNodes := make(map[string]struct{}, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
-	nextCounts := make(map[*yaml.Node]rawNextCountResult, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
-	for index := len(nodes.Content) - 2; index >= 0; index -= 2 {
-		// Every surviving mapping entry consumes a normalized-node slot even
-		// when its key is malformed. Key decoding determines identity and the
-		// diagnostic, never whether hostile graph work is charged.
-		counts.Nodes = saturatingAdd(counts.Nodes, 1, MaxNormalizedNodes)
-		nodeID, nodeKeyStatus := structuralMappingKey(nodes.Content[index], aliasSteps)
-		nodePath := "nodes"
-		if nodeKeyStatus == rawGraphCounted {
-			if _, duplicate := seenNodes[nodeID]; duplicate {
+	nextCounts := make(map[*yaml.Node]rawNextCountResult)
+	// countNodes charges one nodes mapping and, depth-bounded, every subprocess
+	// body nested in it: a body is executed as part of its template, so an
+	// anchored body aliased into many subprocess nodes is charged once per
+	// occurrence, exactly like an anchored next map.
+	var countNodes func(nodes *yaml.Node, nodesPath string, depth int) (rawGraphCardinalityStatus, bool)
+	countNodes = func(nodes *yaml.Node, nodesPath string, depth int) (rawGraphCardinalityStatus, bool) {
+		nodes, status := structuralNode(nodes, aliasSteps)
+		if status != rawGraphCounted {
+			recordStructuralIssue(rawGraphUnsafeAlias, nodesPath)
+			return rawGraphRejected, false
+		}
+		if nodes.Kind != yaml.MappingNode {
+			return rawGraphUncountable, true
+		}
+		if key := mappingMergeKey(nodes, aliasSteps); key != nil {
+			recordStructuralDiagnostic(mergeKeyDiag(key, nodesPath))
+		}
+		seenNodes := make(map[string]struct{}, min(len(nodes.Content)/2, MaxNormalizedNodes+1))
+		for index := len(nodes.Content) - 2; index >= 0; index -= 2 {
+			// Every surviving mapping entry consumes a normalized-node slot even
+			// when its key is malformed. Key decoding determines identity and the
+			// diagnostic, never whether hostile graph work is charged.
+			counts.Nodes = saturatingAdd(counts.Nodes, 1, MaxNormalizedNodes)
+			nodeID, nodeKeyStatus := structuralMappingKey(nodes.Content[index], aliasSteps)
+			nodePath := nodesPath
+			if nodeKeyStatus == rawGraphCounted {
+				if _, duplicate := seenNodes[nodeID]; duplicate {
+					continue
+				}
+				seenNodes[nodeID] = struct{}{}
+				nodePath = joinPath(nodesPath, nodeID)
+			} else if nodeKeyStatus == rawGraphAliasUnsafe {
+				recordStructuralIssue(rawGraphUnsafeAlias, nodesPath)
+			} else {
+				recordStructuralIssue(rawGraphInvalidKey, nodesPath)
+			}
+			if counts.Edges > MaxNormalizedEdges {
 				continue
 			}
-			seenNodes[nodeID] = struct{}{}
-			nodePath = joinPath("nodes", nodeID)
-		} else if nodeKeyStatus == rawGraphAliasUnsafe {
-			recordStructuralIssue(rawGraphUnsafeAlias, "nodes")
-		} else {
-			recordStructuralIssue(rawGraphInvalidKey, "nodes")
-		}
-		if counts.Edges > MaxNormalizedEdges {
-			continue
-		}
-		node, nodeStatus := structuralNode(nodes.Content[index+1], aliasSteps)
-		if nodeStatus != rawGraphCounted {
-			recordStructuralIssue(rawGraphUnsafeAlias, nodePath)
-			continue
-		}
-		if node.Kind != yaml.MappingNode {
-			continue
-		}
-		if key := mappingMergeKey(node, aliasSteps); key != nil {
-			recordStructuralDiagnostic(mergeKeyDiag(key, nodePath))
-		}
-		next, nodeIssue := mappingValue(node, "next", aliasSteps)
-		recordStructuralIssue(nodeIssue, nodePath)
-		if next == nil {
-			continue
-		}
-		next, nextStatus := structuralNode(next, aliasSteps)
-		if nextStatus != rawGraphCounted {
-			recordStructuralIssue(rawGraphUnsafeAlias, joinPath(nodePath, "next"))
-			continue
-		}
-		if next.Kind == yaml.ScalarNode {
-			target, ok := decodedStructuralScalar(next)
-			if !ok {
+			node, nodeStatus := structuralNode(nodes.Content[index+1], aliasSteps)
+			if nodeStatus != rawGraphCounted {
+				recordStructuralIssue(rawGraphUnsafeAlias, nodePath)
+				continue
+			}
+			if node.Kind != yaml.MappingNode {
+				continue
+			}
+			if key := mappingMergeKey(node, aliasSteps); key != nil {
+				recordStructuralDiagnostic(mergeKeyDiag(key, nodePath))
+			}
+			if depth < MaxSubprocessDepth+1 {
+				subprocess, subprocessIssue := mappingValue(node, "subprocess", aliasSteps)
+				recordStructuralIssue(subprocessIssue, nodePath)
+				if subprocess != nil {
+					subprocessPath := joinPath(nodePath, "subprocess")
+					if subprocess, subprocessStatus := structuralNode(subprocess, aliasSteps); subprocessStatus != rawGraphCounted {
+						recordStructuralIssue(rawGraphUnsafeAlias, subprocessPath)
+					} else if subprocess.Kind == yaml.MappingNode {
+						body, bodyIssue := mappingValue(subprocess, "nodes", aliasSteps)
+						recordStructuralIssue(bodyIssue, subprocessPath)
+						if body != nil {
+							if bodyStatus, keepGoing := countNodes(body, joinPath(subprocessPath, "nodes"), depth+1); !keepGoing {
+								return bodyStatus, false
+							}
+						}
+					}
+				}
+			}
+			next, nodeIssue := mappingValue(node, "next", aliasSteps)
+			recordStructuralIssue(nodeIssue, nodePath)
+			if next == nil {
+				continue
+			}
+			next, nextStatus := structuralNode(next, aliasSteps)
+			if nextStatus != rawGraphCounted {
+				recordStructuralIssue(rawGraphUnsafeAlias, joinPath(nodePath, "next"))
+				continue
+			}
+			if next.Kind == yaml.ScalarNode {
+				target, ok := decodedStructuralScalar(next)
+				if !ok {
+					recordStructuralIssue(rawGraphInvalidShape, joinPath(nodePath, "next"))
+					continue
+				}
+				if target != "" {
+					counts.Edges = saturatingAdd(counts.Edges, 1, MaxNormalizedEdges)
+				}
+				continue
+			}
+			if next.Kind != yaml.MappingNode {
 				recordStructuralIssue(rawGraphInvalidShape, joinPath(nodePath, "next"))
 				continue
 			}
-			if target != "" {
-				counts.Edges = saturatingAdd(counts.Edges, 1, MaxNormalizedEdges)
+			result, cached := nextCounts[next]
+			if !cached {
+				result = rawNextEdgeCount(next, aliasSteps)
+				nextCounts[next] = result
 			}
-			continue
+			// The cached issue is relative to the shared next map. Bind it to the
+			// authoritative occurrence being traversed, never to the anchor site.
+			recordStructuralIssue(result.issue, joinPath(nodePath, "next"))
+			// A cached anchored map still contributes once per referring node;
+			// caching bounds traversal without memoizing away alias multiplicity.
+			counts.Edges = saturatingAdd(counts.Edges, result.count, MaxNormalizedEdges)
+			if counts.Nodes > MaxNormalizedNodes && counts.Edges > MaxNormalizedEdges {
+				return rawGraphCounted, false
+			}
 		}
-		if next.Kind != yaml.MappingNode {
-			recordStructuralIssue(rawGraphInvalidShape, joinPath(nodePath, "next"))
-			continue
+		return rawGraphCounted, true
+	}
+	if status, _ := countNodes(nodes, "nodes", 0); status != rawGraphCounted {
+		if status == rawGraphRejected {
+			return counts, rawGraphRejected, structuralDiagnostics
 		}
-		result, cached := nextCounts[next]
-		if !cached {
-			result = rawNextEdgeCount(next, aliasSteps)
-			nextCounts[next] = result
-		}
-		// The cached issue is relative to the shared next map. Bind it to the
-		// authoritative occurrence being traversed, never to the anchor site.
-		recordStructuralIssue(result.issue, joinPath(nodePath, "next"))
-		// A cached anchored map still contributes once per referring node;
-		// caching bounds traversal without memoizing away alias multiplicity.
-		counts.Edges = saturatingAdd(counts.Edges, result.count, MaxNormalizedEdges)
-		if counts.Nodes > MaxNormalizedNodes && counts.Edges > MaxNormalizedEdges {
-			break
-		}
+		return counts, rawGraphUncountable, structuralDiagnostics
 	}
 	if len(structuralDiagnostics) > 0 {
 		return counts, rawGraphRejected, structuralDiagnostics
@@ -613,6 +645,7 @@ const (
 	yamlMappingParam
 	yamlMappingNodes
 	yamlMappingNode
+	yamlMappingSubprocess
 	yamlMappingMetadata
 	yamlMappingFreeform
 	yamlMappingTyped
@@ -639,8 +672,21 @@ func yamlMappingChildContext(context yamlMappingContext, key string) yamlMapping
 	case yamlMappingNodes:
 		return yamlMappingNode
 	case yamlMappingNode:
-		if key == "metadata" {
+		switch key {
+		case "metadata":
 			return yamlMappingMetadata
+		case "subprocess":
+			return yamlMappingSubprocess
+		}
+		return yamlMappingTyped
+	case yamlMappingSubprocess:
+		// A subprocess body is a nested scope: its params and nodes take the
+		// same contexts as the template's own.
+		switch key {
+		case "params":
+			return yamlMappingParams
+		case "nodes":
+			return yamlMappingNodes
 		}
 		return yamlMappingTyped
 	case yamlMappingMetadata, yamlMappingFreeform:
@@ -786,8 +832,17 @@ func NormalizeEdges(tmpl *Template) []Edge {
 	return edges
 }
 
+// SemanticHash is the authored identity of a template. Subprocess bodies that
+// run creation embedded (Subprocess.Resolved) are runtime pins, not authored
+// meaning, so they are left out: a run snapshot hashes to the ref of the
+// template it was created from.
 func SemanticHash(tmpl *Template) (string, error) {
-	data, err := CanonicalSemanticJSON(tmpl)
+	if tmpl == nil {
+		return "", fmt.Errorf("nil process template")
+	}
+	authored := cloneTemplate(tmpl)
+	stripResolvedSubprocesses(&authored)
+	data, err := CanonicalSemanticJSON(&authored)
 	if err != nil {
 		return "", err
 	}
@@ -1033,6 +1088,14 @@ func normalizeTemplate(tmpl *Template) {
 		if node.Metadata == nil {
 			node.Metadata = Metadata{}
 		}
+		if sp := node.Subprocess; sp != nil && sp.IsInline() {
+			body := Template{Params: sp.Params, Nodes: sp.Nodes}
+			normalizeTemplate(&body)
+			sp.Params, sp.Nodes = body.Params, body.Nodes
+		}
+		if sp := node.Subprocess; sp != nil && sp.Resolved != nil {
+			normalizeTemplate(sp.Resolved)
+		}
 		tmpl.Nodes[id] = node
 	}
 }
@@ -1063,6 +1126,7 @@ func cloneTemplate(tmpl *Template) Template {
 				}
 				value.Metadata = metadata
 			}
+			value.Subprocess = cloneSubprocess(value.Subprocess)
 			clone.Nodes[key] = value
 		}
 	}
