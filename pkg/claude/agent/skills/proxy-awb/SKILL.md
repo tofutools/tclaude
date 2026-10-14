@@ -118,7 +118,7 @@ tclaude proxy awb comment list awb-a3f9c1 --compact   # what has already been sa
 tclaude proxy awb comment add awb-a3f9c1 --key agent7-findings-v1 \
   --body-file findings.md
 tclaude proxy awb update awb-a3f9c1 --description-file findings.md
-tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
+tclaude proxy awb update awb-a3f9c1 --commit-hash 1234abc
 tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
 tclaude proxy awb label add awb-a3f9c1 tokeniser
 tclaude proxy awb close awb-a3f9c1 --reason "Guard against empty token stream"
@@ -220,6 +220,11 @@ Relation flags read *"the new issue — relation — the named issue"*, the sing
 convention of the whole tool. Only `blocked-by` drives readiness; `has-parent`
 is decomposition, `discovered-from` is provenance, `related` is a loose
 association with no behaviour attached.
+
+A newly created issue might be picked up immediately by another agent if it is ready 
+(status open and not blocked). If the issue is blocked, then create it with `--blocked-by` 
+rather than adding that relation later. If the issue is to be worked on later, create it with
+`--backlog`. If you intend to work on the issue yourself directly, create it with `--claim`.
 
 **Everything you write is attributed to the operator's AWB account.** An issue
 you create is a real ticket in their tracker. Prefer updating the existing issue

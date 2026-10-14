@@ -152,7 +152,7 @@ const (
 	// Implementation metadata uses AWB's own bounds. The validators below
 	// deliberately reproduce AWB's rules so the proxy never accepts a value the
 	// server will reject.
-	minAWBCommitHashLen     = 8
+	minAWBCommitHashLen     = 7
 	maxAWBCommitHashLen     = 128
 	maxAWBPullRequestURLLen = 1000
 
