@@ -307,6 +307,11 @@ function insideLabelLayout(node) {
       return { x: -20, y: -15, width: 40, height: 30, centerY: 0, maxUnits: 4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
     case 'end':
       return { x: -21, y: -15, width: 42, height: 30, centerY: 0, maxUnits: 4.2, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    case 'port-in':
+    case 'port-out':
+      return { x: -22, y: -15, width: 44, height: 30, centerY: 0, maxUnits: 4.4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    case 'subprocess':
+      return { x: -62, y: -24, width: 124, height: 40, centerY: -4, maxUnits: 9, maxLines: 2, lineHeight: 15, className: '' };
     default:
       return { x: -70, y: -25, width: 140, height: 50, centerY: 0, maxUnits: 10.2, maxLines: 3, lineHeight: 16, className: '' };
   }
@@ -397,6 +402,20 @@ function renderShape(parent, node) {
         svgElement('circle', { class: 'process-node-shape process-shape-end', cx: 0, cy: 0, r: node.width / 2 }),
         svgElement('circle', { class: 'process-end-inner', cx: 0, cy: 0, r: node.width / 2 - 7 }),
       );
+      break;
+    case 'subprocess': {
+      // ▣: a framed box — the nested graph — with a drill-in affordance.
+      const w = node.width; const hgt = node.height;
+      parent.append(
+        svgElement('rect', { class: 'process-node-shape process-shape-subprocess', x: -w / 2, y: -hgt / 2, width: w, height: hgt, rx: 10 }),
+        svgElement('rect', { class: 'process-subprocess-frame', x: -w / 2 + 5, y: -hgt / 2 + 5, width: w - 10, height: hgt - 10, rx: 7 }),
+        svgElement('path', { class: 'process-subprocess-mark', d: `M ${w / 2 - 24} ${hgt / 2 - 20} h 10 v 10 h -10 Z M ${w / 2 - 21} ${hgt / 2 - 17} h 4 v 4 h -4 Z` }),
+      );
+      break;
+    }
+    case 'port-in':
+    case 'port-out':
+      parent.append(svgElement('circle', { class: `process-node-shape process-shape-port process-shape-${node.type}`, cx: 0, cy: 0, r: node.width / 2 }));
       break;
     default:
       parent.append(svgElement('rect', {

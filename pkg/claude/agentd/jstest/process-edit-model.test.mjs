@@ -809,7 +809,7 @@ test('clipboard insertion revalidates hostile payloads before history or state c
 });
 
 test('palette data is well-formed: known primitive types, internally consistent snippets', () => {
-  const types = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
+  const types = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
   for (const primitive of PALETTE_PRIMITIVES) assert.ok(types.has(primitive.type), primitive.type);
   assert.ok(PALETTE_PRIMITIVES.some(primitive => primitive.type === 'parallel'));
   for (const snippet of PALETTE_SNIPPETS) {

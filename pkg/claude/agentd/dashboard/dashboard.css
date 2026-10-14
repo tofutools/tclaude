@@ -17664,6 +17664,12 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-shape-end { fill: var(--pg-bg); stroke-width: 4; }
 .process-end-inner { fill: none; stroke-width: 1.5; }
 .process-shape-decision { fill: var(--pg-node-strong); }
+.process-shape-subprocess { fill: var(--pg-node-strong); stroke-width: 2.5; }
+.process-subprocess-frame { fill: none; stroke: var(--pg-border); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.process-subprocess-mark { fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .7; vector-effect: non-scaling-stroke; pointer-events: none; }
+.process-shape-port { fill: var(--pg-bg); stroke: var(--pg-accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.process-shape-port-out { stroke: #3fb950; }
+.process-node-port-in, .process-node-port-out { cursor: default; }
 .process-shape-parallel { fill: var(--pg-node-strong); }
 .process-parallel-mark {
   fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round;
