@@ -12,7 +12,7 @@ import {
 } from './process-kit.js';
 import {
   RUN_FILTERS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
-  normalizeRunFilter, processContext, processRunApi, runNeedsYou, withPerformerNames,
+  normalizeRunFilter, processContext, processRunApi, runNeedsYou, unauthorizedProfiles, withPerformerNames,
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
@@ -38,12 +38,18 @@ function memberInitial(member) {
   return [...String(memberName(member) || '?')][0].toUpperCase();
 }
 
-// StartRunForm starts a group-scoped run: pick a template, POST it with the
-// group pre-filled. Errors (a template needing params, a missing grant) show
-// inline; the created run appears on the next context refresh.
+// StartRunForm starts a group-scoped run: pick a template, fill its params,
+// and explicitly authorize the program profiles it runs under (never
+// pre-ticked: authorizing host program execution is the human's call), then
+// POST it with the group pre-filled. Refusals show inline; a refusal naming
+// unauthorized profiles (a referenced template's) adds them to the list. The
+// created run appears on the next context refresh.
 function StartRunForm({ group, api, source, onClose, wizard }) {
   const [templates, setTemplates] = useState(null);
   const [templateId, setTemplateId] = useState('');
+  const [needs, setNeeds] = useState({ params: [], programProfiles: [] });
+  const [values, setValues] = useState({});
+  const [authorized, setAuthorized] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -55,21 +61,44 @@ function StartRunForm({ group, api, source, onClose, wizard }) {
     }).catch((cause) => { if (live) { setTemplates([]); setError(cause.message); } });
     return () => { live = false; };
   }, [api]);
+  useEffect(() => {
+    let live = true;
+    setNeeds({ params: [], programProfiles: [] });
+    setValues({});
+    setAuthorized(new Set());
+    setError('');
+    if (!templateId || typeof api.templateRequirements !== 'function') return () => { live = false; };
+    api.templateRequirements(templateId).then((found) => {
+      if (live) setNeeds({ params: found.params || [], programProfiles: found.programProfiles || [] });
+    }).catch(() => { /* the start refusal will say what is missing */ });
+    return () => { live = false; };
+  }, [api, templateId]);
+  const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
   const start = async (event) => {
     event.preventDefault();
-    if (!templateId || busy) return;
+    if (!templateId || busy || missing.length) return;
     setBusy(true);
     setError('');
     try {
-      await api.startGroupRun({ templateId, group: group.name });
+      await api.startGroupRun({ templateId, group: group.name, params: values, authorizeProgramProfiles: [...authorized] });
       onClose();
       void source.refresh();
     } catch (cause) {
+      const named = unauthorizedProfiles(cause.message);
+      if (named.length) {
+        setNeeds((current) => ({ ...current, programProfiles: [...new Set([...current.programProfiles, ...named])].sort() }));
+      }
       setError(cause.message);
     } finally {
       setBusy(false);
     }
   };
+  const toggleProfile = (profile, on) => setAuthorized((current) => {
+    const next = new Set(current);
+    if (on) next.add(profile);
+    else next.delete(profile);
+    return next;
+  });
   const label = wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`;
   return html`<form class="gp-start-form" aria-label=${label} onSubmit=${start}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
@@ -81,8 +110,25 @@ function StartRunForm({ group, api, source, onClose, wizard }) {
       : html`<select aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
         ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
       </select>`}
-    <button type="submit" class="primary" disabled=${busy || !templateId}>${busy ? 'starting…' : 'start'}</button>
+    <button type="submit" class="primary" disabled=${busy || !templateId || missing.length > 0}
+      title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
     <button type="button" onClick=${onClose}>cancel</button>
+    ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
+      ${needs.params.map((param) => html`<label key=${param.name} class="gp-start-param" title=${param.description}>
+        <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
+        <input type=${param.type === 'number' ? 'number' : 'text'} data-start-param=${param.name} disabled=${busy}
+          placeholder=${param.default || param.type} value=${values[param.name] ?? ''}
+          onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [param.name]: value })); }} />
+      </label>`)}
+    </div>`}
+    ${needs.programProfiles.length > 0 && html`<div class="gp-start-profiles" role="group" aria-label="Program authorization">
+      <span class="gp-start-note">${wizard ? 'This rite runs host programs as:' : 'This process runs host programs under:'}</span>
+      ${needs.programProfiles.map((profile) => html`<label key=${profile || '(default)'} class="gp-start-profile">
+        <input type="checkbox" data-start-profile=${profile} disabled=${busy} checked=${authorized.has(profile)}
+          onChange=${(event) => toggleProfile(profile, event.currentTarget.checked)} />
+        authorize <code>${profile || '(default profile)'}</code>
+      </label>`)}
+    </div>`}
     ${error && html`<span class="gp-start-error" role="alert">${error}</span>`}
   </form>`;
 }

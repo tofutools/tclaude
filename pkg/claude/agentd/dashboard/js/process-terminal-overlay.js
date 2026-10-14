@@ -20,7 +20,7 @@ import {
   ProcessMiniGraph, ProcessPauseControl, ProcessPausedChip, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
   normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
-import { ProcessAgentStepper, isAgentScopedTo } from './process-agent-stepper.js';
+import { ProcessAgentStepper, isAgentScopedTo, namedScope } from './process-agent-stepper.js';
 
 export { reassignableNode };
 
@@ -243,7 +243,7 @@ export function ProcessRunPopover({ run, agentId, actions = {}, bounds = null, c
     return html`<${ProcessAgentStepper} run=${run} agentId=${agentId} bounds=${bounds} actions=${actions}
       onGraph=${() => setGraph(true)} onClose=${onClose} />`;
   }
-  return html`<${ProcessRunGraphPopover} run=${run} agentId=${agentId} actions=${actions} onClose=${onClose}
+  return html`<${ProcessRunGraphPopover} run=${run} agentId=${agentId} agentName=${bounds?.name || ''} actions=${actions} onClose=${onClose}
     candidatesFor=${candidatesFor} onStepper=${stepper ? () => setGraph(false) : null} />`;
 }
 
@@ -292,7 +292,7 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
   </span>`;
 }
 
-function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidatesFor = null, onStepper = null }) {
+function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, onClose, candidatesFor = null, onStepper = null }) {
   const view = runIconView(run, agentId);
   const node = view.node;
   // A run bound to the agent may be at a step someone else performs; the
@@ -321,7 +321,7 @@ function ProcessRunGraphPopover({ run, agentId, actions = {}, onClose, candidate
       <div class="pk-run-popover-head">
         <${ProcessRunIcon} run=${run} performerId=${agentId} small=${true} />
         <b class="pk-run-popover-name">${runName(run)}</b>
-        <${ProcessScopeChip} scope=${run.scope} />
+        <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, agentName)} />
         <${ProcessStateChip} state=${view.state} label=${`${run.status || view.state}${age ? ` ${age}` : ''}`} />
         <${ProcessPausedChip} run=${run} />
         <button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>

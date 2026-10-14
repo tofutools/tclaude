@@ -172,6 +172,70 @@ scoped run; another agent sees its own groups' runs and the runs bound to
 itself. Visibility is unchanged:
 `process.runs.read` (which group owners hold) still gates the run surfaces.
 
+## In the dashboard
+
+With `features.processes` on, the dashboard covers the whole loop: authoring,
+starting a run in a group or for one agent, following it, and acting on it.
+All of it goes through the same daemon routes and permissions as the CLI.
+
+**Authoring** (Automations › Processes, then open a template). The graph
+editor has the node inspector, live validation, undo/redo, snippets and
+versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
+things there are specific to processes:
+
+- **Co-design with a scribe.** *Edit with agent* docks the template's scribe
+  beside the canvas: chat with it there (its replies come back as it finishes
+  a turn) or switch the dock to its terminal. The dock's context actions send
+  it the selection, a node to explain, the focused validation issue, or a
+  description to draft from. When the scribe saves a version, *Review on
+  canvas* paints it over your draft (added, changed, removed) and you accept
+  or reject each change; your own unsaved edits are never overwritten, and
+  conflicting edits are flagged rather than merged silently.
+- **Subprocesses.** A ▣ node runs a nested graph (see
+  [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
+  in place: a breadcrumb and a minimap of the parent show where you are, the
+  dashed port nodes are its contract (⇄ ports binds body params and maps body
+  ends onto the ▣ node's outcomes), and Esc or Alt+↑ goes back up. The
+  palette's outline lists every nested body. *⇪ extract as template* saves a
+  body as its own template and turns the node into a reference to it.
+- **Composing on the canvas.** The palette also lists your other templates:
+  drop one (or any node kind) on the canvas, or onto a connector to splice it
+  in between. *⊞ expand* draws a ▣ node's body on the parent canvas as a
+  framed group whose nodes you edit in context; *⊟ collapse* folds it back.
+  Select a region and choose *▣ wrap as subprocess…* to fold it into one ▣
+  node — the ports come from the connectors crossing its boundary — and
+  *⇲ unwrap* inlines a body again.
+
+**Starting a run.** In Groups, switch the focus to **Processes** and use
+*+ start process* on a group: pick a template, fill its params, and tick the
+program profiles you authorize it to run under (never pre-ticked). The run is
+group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.
+
+**Following it.**
+
+- **Groups › Agents** — each group header counts running, waiting-on-you and
+  planned runs, and each member row's Process column shows a *run › node*
+  badge for every run the agent works in (amber when parked on a human gate,
+  dashed when queued).
+- **Groups › Processes** — each group's runs as live graph cards with the
+  agents on the nodes they perform, needs-you first. *open ›* focuses one run:
+  the live graph, a docked inspector (approve or request changes on a human
+  gate, the node's history), the group's agents as a performer dock, and the
+  run's ⏸ pause / ▶ resume.
+- **Terminals** — a pane whose agent takes part in a run shows a small
+  top-right cluster of run icons (ring = run state, badge = this agent's step
+  i/n), repeated on the tab. An icon opens a popover with the mini-graph and
+  the agent's node lit, its contract, what feeds it and what waits on it, and
+  the run actions. A run bound to that agent opens instead as a vertical
+  stepper with a bounds strip (working dir, sandbox, grants, spend, identity),
+  flagging steps that leave the agent's sandbox.
+
+**Acting on it.** Decide human gates from the run focus or the popover;
+reassign an agent node by dragging a member from the performer dock onto it
+(or *reassign node* in the Terminals popover); pause and resume from the run
+focus, the popover, or the stepper. Each maps to the CLI verb of the same
+name and needs the same permission.
+
 ## What executes today
 
 - **Sequential task chains** starting at any executable node kind — top-level

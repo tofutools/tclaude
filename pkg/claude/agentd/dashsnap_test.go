@@ -785,7 +785,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-focus-processes",
 			Title:   "Groups — Processes focus",
-			Caption: "Mock G6-A: the Processes focus (/groups/processes) swaps the member tables for the run-graph placeholder until the G3 cards land; the filter bar stays.",
+			Caption: "Mock G6-A: the Processes focus (/groups/processes) swaps the member tables for each group's run cards from the live read model (none running in this fixture); the filter bar stays.",
 			// The focus is set through the island's signal rather than a click,
 			// so this capture does not persist the pref and leak the Processes
 			// focus into later states that boot on bare Groups.
@@ -797,7 +797,9 @@ func baseStates() []dashsnap.State {
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var processes = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
   if (!processes || processes.getAttribute('aria-pressed') !== 'true') throw new Error('Processes focus is not selected');
-  if (!document.querySelector('[data-groups-processes-placeholder]')) throw new Error('Processes placeholder missing');
+  var gDeadline = Date.now() + 3000;
+  while (!document.querySelector('[data-groups-processes]') && Date.now() < gDeadline) await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  if (!document.querySelector('[data-groups-processes]')) throw new Error('Processes run view missing');
   if (document.querySelector('#groups-list details[data-group-key]')) throw new Error('member tables still shown in Processes focus');
 })();`,
 			SettleMS: 200,
@@ -805,7 +807,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "groups-processes-running",
 			Title:    "Groups — Processes focus run cards",
-			Caption:  "Mock G3: each group renders its live runs as graph cards (needs-you first, scope chip, duration, template/owner), performer avatars on nodes, a busy/idle avatar strip on the group header, and an empty group saying so. Run context is a fixture (jstest/process-context-fixture.json) until the read model lands.",
+			Caption:  "Mock G3: each group renders its live runs as graph cards (needs-you first, scope chip, duration, template/owner), performer avatars on nodes, a busy/idle avatar strip on the group header, and an empty group saying so. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
 			InitJS:   processContextFixtureInitJS(),
 			JS:       showGroups + groupsProcessesJS(""),
 			SettleMS: 300,
@@ -813,7 +815,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-processes-blocked-start",
 			Title:   "Groups — blocked run + scoped start",
-			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list.",
+			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list: it asks for the template's params (required ones marked) and lists program profiles to authorize, never pre-ticked.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + groupsProcessesJS(`
   var migrate = document.querySelector('[data-process-run-card="run_migrate"]');
@@ -823,7 +825,12 @@ func baseStates() []dashsnap.State {
   while (!document.querySelector('.gp-start-form select, .gp-start-form .gp-start-note:not(:empty)') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
-  if (!document.querySelector('.gp-start-form')) throw new Error('start form did not open');`),
+  if (!document.querySelector('.gp-start-form')) throw new Error('start form did not open');
+  while (!document.querySelector('.gp-start-form [data-start-param="issue"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('.gp-start-form [data-start-param="issue"]')) throw new Error('the template\'s required param is not asked for');
+  if (!document.querySelector('.gp-start-form button[type="submit"]').disabled) throw new Error('start is enabled with a required param empty');`),
 			SettleMS: 300,
 		},
 		{
@@ -841,7 +848,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-agents-process-badges",
 			Title:   "Groups — process chips and member badges",
-			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the G3 fixture until the read model lands.",
+			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + expandGroups + `return (async function(){
   var deadline = Date.now() + 4000;
@@ -860,7 +867,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "groups-run-focus",
 			Title:    "Groups — single-run focus",
-			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag one onto an agent node to reassign it), with the run's ⏸ pause / ▶ resume control in the header. Run context and detail are fixtures until the read model lands.",
+			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag one onto an agent node to reassign it), with the run's ⏸ pause / ▶ resume control in the header. Run context and detail are recorded projections of the read model and run API, so the state is deterministic.",
 			InitJS:   processContextFixtureInitJS() + processRunDetailInitJS(),
 			JS:       showGroups + groupsProcessesJS(groupsRunFocusJS),
 			SettleMS: 300,
@@ -2100,7 +2107,7 @@ setTimeout(function(){
   var chooser=document.querySelector('.process-node-chooser');
   if(!chooser||document.activeElement!==chooser.querySelector('.process-node-chooser-input')) throw new Error('edge-drop chooser did not open or focus');
   var commandIDs=Array.from(chooser.querySelectorAll('[role="option"]')).map(function(option){return option.dataset.commandId;}).sort();
-  var expectedIDs=['process.create.decision','process.create.end','process.create.parallel','process.create.start','process.create.task','process.create.wait'];
+  var expectedIDs=['process.create.decision','process.create.end','process.create.parallel','process.create.start','process.create.subprocess','process.create.task','process.create.wait'];
   if(JSON.stringify(commandIDs)!==JSON.stringify(expectedIDs)) throw new Error('edge-drop chooser vocabulary incomplete: '+JSON.stringify(commandIDs));`),
 			SettleMS: 1100,
 		},
@@ -2185,17 +2192,42 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-browser-inspector-reveal",
+			Title:   "Process editor — the clicked node stays in view",
+			Caption: "Real Chrome input: clicking the rightmost node docks its inspector, which narrows the canvas; the editor pans just enough that the clicked node is not clipped under the new column.",
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null); await editorPaint(); ed.graph.fit(); await editorPaint();`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
+				{Kind: "eval", JS: `return (async function(){
+  await new Promise(function(r){ setTimeout(r, 250); });
+  var ed=window.__browserEd;
+  if(ed.snapshot().selection?.id!=='ship') throw new Error('ship not selected');
+  var inspector=document.querySelector('[data-node-inspector="ship"]');
+  if(!inspector) throw new Error('inspector did not open');
+  var shape=document.querySelector('.process-node[data-node-id="ship"] .process-node-shape').getBoundingClientRect();
+  var hit=document.elementFromPoint(shape.left+shape.width/2, shape.top+shape.height/2);
+  if(!hit||!hit.closest('[data-node-id="ship"]')) throw new Error('ship is hidden under the inspector');
+})();`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-node-click",
 			Title:   "Process editor — trusted node click + Delete",
 			Caption: "Real Chrome input: an inspector edit commits on blur, the next node click remains selected after pointer capture retargeting, and Delete confirms/removes that node.",
 			JS: processEditorStateJS(`ed.setSelection({type:'node',id:'begin'}); window.__browserEd=ed;
   await editorPaint();
-  var input=document.querySelector('.process-editor-inspector .process-inspector-input');
+  var input=document.querySelector('[data-node-inspector] [data-node-field="meta.name"]');
   if(!input) throw new Error('node inspector input missing');
+  // The docked inspector covers the canvas's right edge, where the fit put
+  // ship: centre the view between the two nodes so the click lands on it.
+  var laid=ed.graph.layoutSnapshot().nodes, b=laid.find(function(n){return n.id==='begin';}), sh=laid.find(function(n){return n.id==='ship';});
+  ed.graph.centerOn((b.x+sh.x)/2,(b.y+sh.y)/2);
+  await editorPaint();
   input.value='';`),
 			Actions: []dashsnap.BrowserAction{
-				{Kind: "click", Selector: ".process-inspector-input"},
-				{Kind: "input", Selector: ".process-inspector-input", Text: "Renamed begin"},
+				{Kind: "click", Selector: `[data-node-inspector] [data-node-field="meta.name"]`},
+				{Kind: "input", Selector: `[data-node-inspector] [data-node-field="meta.name"]`, Text: "Renamed begin"},
 				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
   var selection=ed.snapshot().selection;
