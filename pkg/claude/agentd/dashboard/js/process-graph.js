@@ -1867,6 +1867,18 @@ export class ProcessGraph {
     return true;
   }
 
+  // revealPoint pans only when graph point (x, y) sits outside the viewport
+  // (less a margin), so stepping through nearby items keeps the view steady.
+  revealPoint(x, y, margin = 60) {
+    const rect = this.svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const sx = this.view.x + x * this.view.k;
+    const sy = this.view.y + y * this.view.k;
+    const inset = Math.min(margin, rect.width / 4, rect.height / 4);
+    if (sx >= inset && sx <= rect.width - inset && sy >= inset && sy <= rect.height - inset) return false;
+    return this.centerOn(x, y);
+  }
+
   focusNode(id) {
     this.raiseNode(id);
     const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(id))}"]`);

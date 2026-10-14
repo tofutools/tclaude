@@ -55,9 +55,10 @@ import {
 } from './process-connection-feedback.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import {
-  processScribeContextPreview, processScribeEditorContext,
-  processScribeHandoff, processScribePrompt,
+  PROCESS_SCRIBE_CHAT_SUBJECT, processScribeChatMessage, processScribeContextPreview,
+  processScribeEditorContext, processScribeHandoff, processScribePrompt,
 } from './process-scribe.js';
+import { dashPrefs } from './prefs.js';
 import {
   createProcessSnippet, deleteProcessSnippet, loadProcessSnippets, renameProcessSnippet,
 } from './process-snippet-library.js';
@@ -107,6 +108,16 @@ export function hasNonCollapsedDOMSelection(event) {
 // pending reload: the review's three-way diff was computed against it.
 function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending || editor.diffReview);
+}
+
+const SCRIBE_DOCK_MODE_PREF = 'tclaude.dash.processEditor.scribeMode';
+
+function readScribeDockMode() {
+  try {
+    return dashPrefs.getItem(SCRIBE_DOCK_MODE_PREF) === 'terminal' ? 'terminal' : 'chat';
+  } catch {
+    return 'chat';
+  }
 }
 
 function externalBusyReason(editor) {
@@ -182,6 +193,9 @@ export class ProcessTemplateEditor {
     // bounded counts and the current change cross into the snapshot.
     this.diffReview = null;
     this.paletteHidden = false;
+    // Docked scribe (E4): open state is per editor; the chat/terminal mode is
+    // a remembered per-browser preference.
+    this.scribeDock = { open: false, mode: readScribeDockMode() };
     this.customSnippets = [];
     this.snippetLibrary = { loading: true, error: '', generation: 0, pendingID: '', creating: false };
     this.snippetLoadSeq = 0;
@@ -286,6 +300,7 @@ export class ProcessTemplateEditor {
       diff: this.diffReviewSnapshot(),
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
+      scribeDock: { ...this.scribeDock, available: !!this.options.scribeDock },
       snippets: {
         ...this.snippetLibrary,
         items: this.customSnippets.map(({ payload, ...metadata }) => ({ ...metadata })),
@@ -645,11 +660,7 @@ export class ProcessTemplateEditor {
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
     const decorated = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
-    const review = this.diffReview;
-    const graph = review ? overlayDraftDiff(decorated, {
-      theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
-    }) : decorated;
-    this.graph?.setGraph(graph, { fit });
+    this.graph?.setGraph(this.overlayGraph(decorated), { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
     this.setSelection(this.selection);
@@ -885,6 +896,16 @@ export class ProcessTemplateEditor {
 
   // ---- proposal review (draft diff overlay) --------------------------------
 
+  // overlayGraph paints an open review over a (validation-decorated) graph.
+  // Every repaint goes through here — the validation round's included — so a
+  // late diagnostics response cannot wipe the proposal off the canvas.
+  overlayGraph(graph) {
+    const review = this.diffReview;
+    return review ? overlayDraftDiff(graph, {
+      theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
+    }) : graph;
+  }
+
   diffReviewSnapshot() {
     const review = this.diffReview;
     if (!review) return { open: false };
@@ -941,8 +962,8 @@ export class ProcessTemplateEditor {
     };
     this.externalReviewOpen = false;
     this.setSelection(null);
-    this.refresh();
-    this.focusDiffChange();
+    // Open on the whole proposal; stepping then pans only as needed.
+    this.refresh({ fit: true });
     return true;
   }
 
@@ -990,7 +1011,7 @@ export class ProcessTemplateEditor {
         && candidate.outcome === change.edge.outcome && candidate.diff);
       point = edge?.label || layout.nodes.find((node) => node.id === change.edge.from);
     }
-    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) this.graph.centerOn(point.x, point.y);
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) this.graph.revealPoint(point.x, point.y);
   }
 
   reviewStillCurrent(review) {
@@ -1104,6 +1125,77 @@ export class ProcessTemplateEditor {
     if (changes.length) {
       this.status(`Merged version ${shortHash(view.semanticHash)}: ${counts.accepted} accepted, ${counts.rejected} rejected.`
         + `${clean ? '' : ' Your draft differs from that version; Save to keep your choices.'}`);
+    }
+  }
+
+  // ---- docked scribe (chat + terminal) -------------------------------------
+
+  toggleScribeDock(open = !this.scribeDock.open) {
+    if (this.destroyed || !this.options.scribeDock) return false;
+    this.scribeDock = { ...this.scribeDock, open: !!open };
+    this.updateChrome?.();
+    return true;
+  }
+
+  setScribeDockMode(mode) {
+    if (this.destroyed || (mode !== 'chat' && mode !== 'terminal')) return false;
+    this.scribeDock = { ...this.scribeDock, mode };
+    try { dashPrefs.setItem(SCRIBE_DOCK_MODE_PREF, mode); } catch { /* preference only */ }
+    this.updateChrome?.();
+    return true;
+  }
+
+  // scribeDockContext is what the context chips and actions offer right now.
+  scribeDockContext() {
+    const items = selectionItems(this.selection);
+    const nodes = items.filter((item) => item.type === 'node');
+    const errors = (this.validation?.mapped?.entries || []).filter((entry) => entry.severity === 'error').length;
+    return {
+      selection: items.length,
+      singleNode: nodes.length === 1 && items.length === 1 ? (this.model.node(nodes[0].id)?.name || nodes[0].id) : '',
+      errors,
+      hasIssue: !!this.validation?.currentIssue?.(),
+      saved: !!(this.model.template.id || '').trim(),
+    };
+  }
+
+  // sendToScribe mails the docked scribe: plain chat, or a context action
+  // carrying the same bounded editor context a summon brief uses. The scribe
+  // answers by saving a new version, reviewed on the canvas; local edits are
+  // never handed over, so a dirty draft stays put and conflicts surface in
+  // the review instead of being overwritten.
+  async sendToScribe(scribe, { kind = 'chat', prompt = '' } = {}) {
+    if (this.destroyed) return { error: 'The editor is closed.' };
+    if (!scribe?.convId) return { error: 'No live scribe for this template.' };
+    let context = null;
+    try {
+      if (kind !== 'chat') {
+        const id = (this.model.template.id || '').trim();
+        if (!id) throw new Error('Save this template once first: a scribe works on a stored template.');
+        const handoff = processScribeHandoff({
+          kind: 'template', id, currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
+        });
+        context = processScribeEditorContext({
+          kind: kind === 'explain' ? 'selection' : kind, handoff, template: this.model.template, edges: this.model.edges,
+          selection: selectionItems(this.selection),
+          diagnostic: kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null,
+        });
+      }
+      const body = processScribeChatMessage({
+        prompt: prompt || (kind === 'explain'
+          ? 'Explain what the selected node does, what feeds it and where its outcomes lead. Do not change anything.'
+          : processScribePrompt(kind === 'chat' ? 'template' : kind)),
+        context,
+      });
+      const response = await fetch('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: scribe.convId, subject: PROCESS_SCRIBE_CHAT_SUBJECT, body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      return { ok: true };
+    } catch (error) {
+      return { error: error?.message || String(error) };
     }
   }
 
@@ -1674,6 +1766,20 @@ export class ProcessTemplateEditor {
   onEditorKeyDown(event) {
     if (event.defaultPrevented) return;
     const inInput = isProcessEditorFormControl(event.target);
+    if (this.diffReview && !inInput && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const review = {
+        a: () => this.decideDiff(undefined, 'accept'),
+        r: () => this.decideDiff(undefined, 'reject'),
+        j: () => this.stepDiff(1),
+        k: () => this.stepDiff(-1),
+        Escape: () => this.closeDiffReview(),
+      }[event.key.length === 1 ? event.key.toLowerCase() : event.key];
+      if (review) {
+        event.preventDefault();
+        void review();
+        return;
+      }
+    }
     if ((event.ctrlKey || event.metaKey) && !inInput) {
       const key = event.key.toLowerCase();
       if (key === 'z' && !event.shiftKey) {
