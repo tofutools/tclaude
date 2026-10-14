@@ -97,6 +97,11 @@ modal opened from here, not a tab. Drag and drop works throughout: nest and
 reorder groups, move rows between groups, drag a row to the bin to retire it,
 drag it back to reinstate.
 
+For repo-wide cleanup, choose **🧹 cleanup worktrees…** in a group's `⚙`
+actions menu, or **🧹 Review worktrees across all groups…** from the top-level
+**clean up** dialog. See [Dashboard cleanup sweep](worktrees.md#dashboard-cleanup-sweep)
+for discovery scope, selection defaults, and removal safeguards.
+
 ### The member row
 
 The row's `⚙` menu includes **export debug info**, a direct JSON download that

@@ -1855,3 +1855,29 @@ CREATE TABLE 'agent_messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term
 CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
+
+CREATE TABLE process_agent_dispatches (
+	run_id         TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
+	command_id     TEXT NOT NULL CHECK(length(CAST(command_id AS BLOB)) BETWEEN 1 AND 1024),
+	node_id        TEXT NOT NULL CHECK(length(CAST(node_id AS BLOB)) BETWEEN 1 AND 512),
+	attempt        INTEGER NOT NULL CHECK(attempt >= 1),
+	state          TEXT NOT NULL CHECK(state IN ('pending', 'needs_performer', 'delivered', 'reported', 'closed')),
+	agent_id       TEXT NOT NULL DEFAULT '',
+	resolution     TEXT NOT NULL DEFAULT '',
+	wait_reason    TEXT NOT NULL DEFAULT '',
+	message_id     INTEGER NOT NULL DEFAULT 0,
+	deliveries     INTEGER NOT NULL DEFAULT 0,
+	report_outcome TEXT NOT NULL DEFAULT '',
+	report_note    TEXT NOT NULL DEFAULT '',
+	created_at     INTEGER NOT NULL,
+	updated_at     INTEGER NOT NULL,
+	delivered_at   INTEGER,
+	reported_at    INTEGER,
+	PRIMARY KEY (run_id, command_id)
+) STRICT;
+
+CREATE INDEX idx_process_agent_dispatches_agent
+	ON process_agent_dispatches(agent_id, state);
+
+CREATE INDEX idx_process_agent_dispatches_open
+	ON process_agent_dispatches(state) WHERE state IN ('pending', 'needs_performer', 'delivered', 'reported');

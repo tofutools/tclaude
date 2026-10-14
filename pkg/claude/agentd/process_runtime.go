@@ -56,12 +56,20 @@ var (
 )
 
 // processRunInput is one authenticated external input for a run's single state
-// owner. Exactly one member is set: this is a typed union of the two things an
-// operator can hand a live run, NOT a generic event bus. A third kind arriving
-// is the point at which to reach for a small typed-union cleanup instead.
+// owner. Exactly one member is set: this is a typed union of the things an
+// operator or a performer can hand a live run, NOT a generic event bus.
 type processRunInput struct {
-	decision   *executor.DecisionInput
-	resolution *executor.ResolutionInput
+	decision    *executor.DecisionInput
+	resolution  *executor.ResolutionInput
+	agentReport *executor.AgentReport
+	// outcome is an operator-recorded outcome for an agent command: human
+	// preemption of a performer, which must not wait for sibling programs.
+	outcome *processRunOutcomeInput
+}
+
+type processRunOutcomeInput struct {
+	selector string
+	outcome  executor.RecordedOutcome
 }
 
 // cancels reports whether this input gives the run up — the one input an
@@ -79,8 +87,12 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.RecordDecision(run, actor, *i.decision)
 	case i.resolution != nil:
 		return executor.ResolveBlocked(run, actor, *i.resolution)
+	case i.agentReport != nil:
+		return executor.RecordAgentReport(run, actor, *i.agentReport)
+	case i.outcome != nil:
+		return executor.RecordOutcome(run, actor, i.outcome.selector, i.outcome.outcome)
 	default:
-		return fmt.Errorf("process run input names neither a decision nor a blocked resolution")
+		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
 }
 
@@ -248,8 +260,11 @@ type processRunView struct {
 	Commands          []processRunCommandView  `json:"commands"`
 	Blocked           []processRunBlockedView  `json:"blocked"`
 	Scope             processRunScopeView      `json:"scope"`
-	CreatedAt         time.Time                `json:"createdAt"`
-	UpdatedAt         time.Time                `json:"updatedAt"`
+	// Performers is every agent node attempt's performer, oldest attempt first
+	// per node: who was chosen, how, and what they reported.
+	Performers []processRunPerformerView `json:"performers"`
+	CreatedAt  time.Time                 `json:"createdAt"`
+	UpdatedAt  time.Time                 `json:"updatedAt"`
 }
 
 // processRunDecisionView presents one awaited decision with its selectable
@@ -282,17 +297,26 @@ type processRunBlockedView struct {
 // while this daemon still accounts for the program, and needs_reconcile once it
 // does not — the two are indistinguishable in SQLite alone, which is exactly
 // why a cold load reports every entry as the latter.
+//
+// An agent command is never ambiguous: its State is its dispatch state
+// (pending, needs_performer, delivered, reported), and Performer says who has
+// it.
 type processRunCommandView struct {
-	CommandID string `json:"commandId"`
-	NodeID    string `json:"nodeId"`
-	Profile   string `json:"profile,omitempty"`
-	Program   string `json:"program"`
-	State     string `json:"state"`
+	CommandID string                   `json:"commandId"`
+	NodeID    string                   `json:"nodeId"`
+	Kind      engine.CommandKind       `json:"kind"`
+	Attempt   int                      `json:"attempt"`
+	Profile   string                   `json:"profile,omitempty"`
+	Program   string                   `json:"program"`
+	State     string                   `json:"state"`
+	Performer *processRunPerformerView `json:"performer,omitempty"`
 }
 
 const (
 	processCommandExecuting      = "executing"
 	processCommandNeedsReconcile = "needs_reconcile"
+	processCommandNeedsPerformer = "needs_performer"
+	processCommandAwaitPerformer = "awaiting_performer"
 )
 
 type processRunSummaryView struct {
@@ -558,16 +582,25 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	if fillErr != nil && (!committed || !errors.Is(fillErr, executor.ErrNeedsReconcile)) {
 		return false, fillErr
 	}
+	// An input may have doomed the run while agents still hold attempts: they
+	// are withdrawn here, by the owner, so the run can drain.
+	withdrawDrainingAgentCommands(runID, run)
+	dispatches = startProcessAgentDispatches(runID, run, dispatches)
 	if len(dispatches) == 0 {
 		if fillErr != nil {
 			// Committed, but another branch still needs a human before anything
 			// can be planned. The action succeeded; nothing started.
 			return false, nil
 		}
+		if len(run.AgentCommands()) > 0 {
+			// Agent performers hold the run's slots, or are the only live work.
+			// Their reports, not a driver, move the run next.
+			return false, nil
+		}
 		switch run.Action().Kind {
 		case executor.ActionNeedsReconcile:
 			return false, executor.ErrNeedsReconcile
-		case executor.ActionAwaitDecision, executor.ActionBlocked, executor.ActionTerminal:
+		case executor.ActionAwaitDecision, executor.ActionBlocked, executor.ActionAwaitPerformer, executor.ActionTerminal:
 			// Parked on a human or an operator, or over. Nothing started, and
 			// nothing is wrong: the run waits for its next external input.
 			return false, nil
@@ -588,6 +621,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 // did not reach are simply left ready.
 func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]*executor.Dispatch, error) {
 	var dispatches []*executor.Dispatch
+	// An outstanding agent command occupies a slot exactly like a running
+	// program, so a wide fan-out never puts more performers to work at once
+	// than programs. Callers count only the programs they have in flight.
+	capacity -= len(run.AgentCommands())
 	for range capacity {
 		dispatch, err := claim.plan(func() (*executor.Dispatch, error) { return executor.Prepare(run) })
 		if err != nil {
@@ -599,6 +636,27 @@ func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]
 		dispatches = append(dispatches, dispatch)
 	}
 	return dispatches, nil
+}
+
+// startProcessAgentDispatches hands every agent command among pending to the
+// performer dispatcher and returns the program dispatches left for workers. An
+// agent command is not executed by this owner: its durable outbox entry is
+// accounted for by its dispatch record, so the live permission is dropped.
+func startProcessAgentDispatches(runID string, run *executor.Run, pending []*executor.Dispatch) []*executor.Dispatch {
+	programs := pending[:0:0]
+	agents := false
+	for _, dispatch := range pending {
+		if dispatch.Command().Kind == engine.CommandAgent {
+			executor.Abandon(run, dispatch)
+			agents = true
+			continue
+		}
+		programs = append(programs, dispatch)
+	}
+	if agents {
+		kickProcessAgentDispatch(runID)
+	}
+	return programs
 }
 
 // drive is the run's single state owner. It is the ONLY goroutine that touches
@@ -615,6 +673,7 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 	results := make(chan processRunProgramResult, processRunConcurrency)
 	inFlight := 0
 	start := func(pending []*executor.Dispatch) {
+		pending = startProcessAgentDispatches(runID, claim.run, pending)
 		for _, dispatch := range pending {
 			// Authorize the command this dispatch actually executes, not the one
 			// a run-level view happens to surface first: the outbox is plural, so
@@ -679,6 +738,7 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// ordinary observations, so nothing is lost or assumed.
 			if applyErr == nil && claim.run.Draining() {
 				claim.cancelWorkers()
+				withdrawDrainingAgentCommands(runID, claim.run)
 			}
 		}
 		// Work already planned runs to its observation, but an owner whose
@@ -690,7 +750,15 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			start(pending)
 			continue
 		}
-		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
+		// fillProcessRun already counts outstanding agent commands, so only the
+		// pending programs take a slot here.
+		pendingPrograms := 0
+		for _, dispatch := range pending {
+			if dispatch.Command().Kind != engine.CommandAgent {
+				pendingPrograms++
+			}
+		}
+		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-pendingPrograms)
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -723,6 +791,7 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		// The killed programs still come back as ordinary observations, so
 		// nothing is lost or assumed.
 		claim.cancelWorkers()
+		withdrawDrainingAgentCommands(runID, claim.run)
 	}
 	if err != nil {
 		// The worker is gone either way, so this branch can no longer be
@@ -793,6 +862,8 @@ func (m *processRunManager) shutdown(ctx context.Context) error {
 func startProcessRunRuntime(stop <-chan struct{}) {
 	go func() {
 		sweepProcessRuns()
+		// A restart rediscovers every in-flight agent dispatch here.
+		sweepProcessAgentDispatches()
 		ticker := time.NewTicker(processRunFallbackInterval)
 		defer ticker.Stop()
 		for {
@@ -801,6 +872,7 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 				return
 			case <-ticker.C:
 				sweepProcessRuns()
+				sweepProcessAgentDispatches()
 			}
 		}
 	}()
@@ -1109,10 +1181,22 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	selector := strings.TrimSpace(request.NodeID)
 	setAuditDetail(r, "run: "+runID+", command node: "+stripControl(selector)+
 		", outcome: "+stripControl(string(request.Outcome)))
+	outcome := executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note}
 	started, err := processRuns.begin(runID, processRunStart{
-		mode: processRunRecordOutcome, actor: string(actor), selector: selector,
-		outcome: executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note},
+		mode: processRunRecordOutcome, actor: string(actor), selector: selector, outcome: outcome,
 	})
+	if errors.Is(err, errProcessRunClaimed) {
+		// A live owner is driving sibling programs. Its executing programs are
+		// never reconcilable, so routing the outcome through the owner can only
+		// settle an agent command: human preemption of a performer.
+		started, err = processRuns.submit(runID, string(actor), processRunInput{
+			outcome: &processRunOutcomeInput{selector: selector, outcome: outcome}})
+		if errors.Is(err, executor.ErrNoReconciliation) {
+			// The selected command is a program the owner is executing: it is
+			// not the operator's to settle while the run is claimed.
+			err = errProcessRunClaimed
+		}
+	}
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -1437,21 +1521,45 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 	// is precisely why a cold load calls every outstanding command ambiguous.
 	// The live claim is the only thing that knows which ones it owns; see
 	// loadProcessRunView for how that reading is kept conservative.
+	performerByCommand, performers, err := processRunPerformerViews(record.ID)
+	if err != nil {
+		return processRunView{}, err
+	}
 	commands := make([]processRunCommandView, 0, len(checkpoint.Commands))
 	needsReconcile := false
 	anyExecuting := false
+	needsPerformer := false
+	awaitingPerformer := false
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
-		state := processCommandNeedsReconcile
+		view := processRunCommandView{
+			CommandID: command.ID, NodeID: command.NodeID, Kind: command.Kind, Attempt: command.Attempt,
+			Profile: command.Program.Profile, Program: command.Program.Run,
+		}
+		if command.Kind == engine.CommandAgent {
+			if command.Agent != nil {
+				view.Profile = command.Agent.Profile
+			}
+			view.State = db.ProcessDispatchPending
+			if performer, ok := performerByCommand[command.ID]; ok {
+				view.State = performer.State
+				view.Performer = &performer
+			}
+			if view.State == db.ProcessDispatchNeedsPerformer {
+				needsPerformer = true
+			} else {
+				awaitingPerformer = true
+			}
+			commands = append(commands, view)
+			continue
+		}
+		view.State = processCommandNeedsReconcile
 		if _, live := accounted[command.NodeID]; live {
-			state, anyExecuting = processCommandExecuting, true
+			view.State, anyExecuting = processCommandExecuting, true
 		} else {
 			needsReconcile = true
 		}
-		commands = append(commands, processRunCommandView{
-			CommandID: command.ID, NodeID: command.NodeID,
-			Profile: command.Program.Profile, Program: command.Program.Run, State: state,
-		})
+		commands = append(commands, view)
 	}
 
 	awaitingDecisions := make([]processRunDecisionView, 0, len(checkpoint.AwaitingDecisions))
@@ -1512,10 +1620,14 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		action = processCommandNeedsReconcile
 	case anyExecuting:
 		action = processCommandExecuting
+	case needsPerformer:
+		action = processCommandNeedsPerformer
 	case awaiting != nil:
 		action = "awaiting_decision"
 	case len(blocked) > 0:
 		action = "blocked"
+	case awaitingPerformer:
+		action = processCommandAwaitPerformer
 	case checkpoint.Status != engine.RunRunning:
 		action = "terminal"
 	case claimed:
@@ -1527,7 +1639,7 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
-		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope),
+		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }

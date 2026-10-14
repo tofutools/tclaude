@@ -71,11 +71,38 @@ type processRunBlockedJSON struct {
 }
 
 type processRunCommandJSON struct {
-	CommandID string `json:"commandId"`
-	NodeID    string `json:"nodeId"`
-	Profile   string `json:"profile"`
-	Program   string `json:"program"`
-	State     string `json:"state"`
+	CommandID string                   `json:"commandId"`
+	NodeID    string                   `json:"nodeId"`
+	Kind      engine.CommandKind       `json:"kind"`
+	Attempt   int                      `json:"attempt"`
+	Profile   string                   `json:"profile"`
+	Program   string                   `json:"program"`
+	State     string                   `json:"state"`
+	Performer *processRunPerformerJSON `json:"performer,omitempty"`
+}
+
+// processRunPerformerJSON mirrors the daemon's per-attempt performer view.
+type processRunPerformerJSON struct {
+	NodeID     string `json:"nodeId"`
+	Attempt    int    `json:"attempt"`
+	State      string `json:"state"`
+	AgentID    string `json:"agentId"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Resolution string `json:"resolution"`
+	WaitReason string `json:"waitReason"`
+	Outcome    string `json:"outcome"`
+}
+
+// performerLabel is the PROGRAM column of an agent command: who performs it.
+func (c processRunCommandJSON) performerLabel() string {
+	if c.Performer == nil || c.Performer.AgentID == "" {
+		return "agent: -"
+	}
+	if c.Performer.Name != "" {
+		return "agent: " + c.Performer.Name
+	}
+	return "agent: " + c.Performer.AgentID
 }
 
 // processRunScopeJSON mirrors the daemon's run scope binding.
@@ -810,10 +837,19 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		tw := newTable(out)
 		fmt.Fprintln(tw, "NODE\tSTATE\tPROFILE\tPROGRAM\tCOMMAND")
 		for _, command := range run.Commands {
+			program := command.Program
+			if command.Kind == engine.CommandAgent {
+				program = command.performerLabel()
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", command.NodeID, command.State,
-				displayProcessEventField(command.Profile), command.Program, command.CommandID)
+				displayProcessEventField(command.Profile), displayProcessEventField(program), command.CommandID)
 		}
 		_ = tw.Flush()
+		for _, command := range run.Commands {
+			if command.Performer != nil && command.Performer.WaitReason != "" {
+				fmt.Fprintf(out, "%s waits: %s\n", command.NodeID, displayProcessEventField(command.Performer.WaitReason))
+			}
+		}
 	}
 	if len(run.Blocked) > 0 {
 		fmt.Fprintln(out, "blocked:")

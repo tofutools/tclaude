@@ -109,9 +109,8 @@ type ProcessRunScope struct {
 func (s ProcessRunScope) Orphaned() bool { return s.State == ProcessRunScopeOrphaned }
 
 // ProcessRunFilter narrows a summary listing. Zero values match everything;
-// set fields combine with AND. Performer currently matches agent-scoped runs
-// bound to that agent — the only performer a run records until per-node
-// performer dispatch lands.
+// set fields combine with AND. Performer matches runs bound to that agent and
+// runs with a node attempt dispatched to it.
 type ProcessRunFilter struct {
 	GroupID   int64
 	AgentID   string
@@ -828,7 +827,9 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// classify as empty via COALESCE(json_array_length(...), 0) = 0.
 	//
 	// An outstanding program command always excludes the run: it needs explicit
-	// reconciliation, not a resume.
+	// reconciliation, not a resume. An outstanding AGENT command does not: it is
+	// accounted for by its dispatch record and simply occupies a slot while its
+	// performer works, so a sibling ready branch keeps the run runnable.
 	//
 	// An orphaned run (its bound group or agent is gone) is excluded too: it is
 	// parked for a human to re-scope, never resumed by the fallback.
@@ -856,7 +857,10 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
 			AND scope_state = 'bound'
-			AND COALESCE(json_array_length(checkpoint_json, '$.commands'), 0) = 0
+			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
+					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
+						WHERE json_extract(value, '$.kind') IS NOT 'agent')
+					ELSE 0 END = 0
 			AND CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')
 						WHERE value = 'ready')

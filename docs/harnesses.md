@@ -931,7 +931,8 @@ pane). Only the pi process itself can hold the channel: a process pi started
 the agent and kept on resume; a launch without it is told so, and its extension
 stops asking.
 
-**Not yet.** `ask` and prompt-based name refinement are still to come.
+`tclaude ask` and prompt-based name refinement are supported; see
+[Asking questions](ask.md) for pi's one-shot behavior.
 
 ## Related pages
 

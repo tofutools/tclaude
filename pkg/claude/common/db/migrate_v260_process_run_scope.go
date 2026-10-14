@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// migrateV258toV259 binds every process run to a context scope: none (the
+// migrateV259toV260 binds every process run to a context scope: none (the
 // pre-scope behaviour), a group, or an agent. The binding is fixed at start
 // and never re-scoped silently; scope_state flips to 'orphaned' when the
 // bound group or agent goes away, which parks the run for a human.
@@ -14,10 +14,10 @@ import (
 // stable agent_id (it survives reincarnate and compact). owner is the actor
 // ref that started the run; existing rows backfill it from their run_created
 // evidence row, which has always recorded the creating actor.
-func migrateV258toV259(d *sql.DB) error {
+func migrateV259toV260(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v258→v259 (process run scope): begin: %w", err)
+		return fmt.Errorf("migrate v259→v260 (process run scope): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -36,11 +36,11 @@ func migrateV258toV259(d *sql.DB) error {
 	for _, column := range columns {
 		var present int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_runs') WHERE name = ?`, column.name).Scan(&present); err != nil {
-			return fmt.Errorf("migrate v258→v259 (inspect process_runs): %w", err)
+			return fmt.Errorf("migrate v259→v260 (inspect process_runs): %w", err)
 		}
 		if present == 0 {
 			if _, err := tx.Exec(column.ddl); err != nil {
-				return fmt.Errorf("migrate v258→v259 (add %s): %w", column.name, err)
+				return fmt.Errorf("migrate v259→v260 (add %s): %w", column.name, err)
 			}
 		}
 	}
@@ -58,13 +58,13 @@ func migrateV258toV259(d *sql.DB) error {
 			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
 			WHERE scope_kind != 'none';
 	`); err != nil {
-		return fmt.Errorf("migrate v258→v259 (backfill owner, index scope): %w", err)
+		return fmt.Errorf("migrate v259→v260 (backfill owner, index scope): %w", err)
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 259`); err != nil {
-		return fmt.Errorf("migrate v258→v259 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 260`); err != nil {
+		return fmt.Errorf("migrate v259→v260 (version): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v258→v259 (commit): %w", err)
+		return fmt.Errorf("migrate v259→v260 (commit): %w", err)
 	}
 	return nil
 }

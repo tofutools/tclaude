@@ -653,6 +653,190 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 	})
 }
 
+// managedSpawn is a fully authorized, not-yet-launched managed spawn: the
+// launch group and parameters every policy check below has already approved.
+type managedSpawn struct {
+	group  *db.AgentGroup
+	params spawnParams
+}
+
+// planManagedSpawn performs every authorization, guardrail, rate, role, cwd,
+// and sandbox check of a daemon-initiated spawn with profileName into g on
+// behalf of ownerConv ("" for an operator-authored principal, which is then
+// rate-limited as ratePrincipal). It launches nothing: the caller reserves its
+// own tracking record and then calls executeSpawn(plan.group, plan.params).
+//
+// capacity, when set, is the caller's own live-worker bound, evaluated after
+// the owner's permission is established and before any rate slot is taken. A
+// non-empty status refuses the spawn with that status and detail.
+//
+// On refusal it returns a nil plan with a machine status and a human detail.
+func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, ownerConv, ratePrincipal,
+	name, initialMessage string, capacity func() (status, detail string)) (*managedSpawn, string, string) {
+	profile, err := db.ResolveSpawnProfile(profileName)
+	if err != nil {
+		return nil, "io", err.Error()
+	}
+	if profile == nil {
+		return nil, "profile_not_found", fmt.Sprintf("spawn profile %q does not exist", profileName)
+	}
+	if fail := profileSpawnFailure(profile, ownerConv); fail != nil {
+		return nil, "permission_denied", fail.Msg
+	}
+	allowAnyGroup := false
+	// A managed worker never selects a sandbox profile of its own, so the
+	// sandbox_profile dimension is described by the ambient assignment it will
+	// inherit. Without that this whole path is unreachable for an owner whose
+	// spawn grant carries a sandbox_profile scope: the dimension would be
+	// undescribed and fail closed on every firing.
+	sandboxProfileForScope := ambientSandboxProfileName(g)
+	sandboxScopePinned := false
+	if ownerConv != "" {
+		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
+			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
+		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
+		if authErr != nil {
+			return nil, "io", authErr.Error()
+		}
+		if !allowed {
+			return nil, "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name)
+		}
+		allowAnyGroup = authorizedSlug == PermAgentSpawn
+		sandboxScopePinned = scopePinsDimension(req, ownerConv, authorizedSlug,
+			ctx, ScopeDimSandboxProfile)
+	}
+	if capacity != nil {
+		if status, detail := capacity(); status != "" {
+			return nil, status, detail
+		}
+	}
+	recorder := httptest.NewRecorder()
+	if !checkSpawnGuardrails(recorder, g, ownerConv, allowAnyGroup) {
+		return nil, "guardrail_denied", strings.TrimSpace(recorder.Body.String())
+	}
+	claimed := claimSpawnRateSlot(recorder, ownerConv)
+	if ownerConv == "" {
+		claimed = claimDaemonSpawnRateSlot(recorder, ratePrincipal)
+	}
+	if !claimed {
+		return nil, "rate_limited", strings.TrimSpace(recorder.Body.String())
+	}
+
+	roles := roleRefs
+	if len(roles) == 0 {
+		roles = profile.RoleRefs
+	}
+	profileContext := profile.StartupContext
+	overrides := map[string]db.PermissionOverride{}
+	for slug, v := range profile.PermissionOverrides {
+		overrides[slug] = v
+	}
+	roleLabel := profile.Role
+	for _, ref := range roles {
+		role, roleErr := db.GetRole(ref)
+		if roleErr != nil {
+			return nil, "io", roleErr.Error()
+		}
+		if role == nil {
+			return nil, "invalid_role", fmt.Sprintf("role %q does not exist", ref)
+		}
+		if roleLabel == "" {
+			roleLabel = role.Name
+		}
+		profileContext = appendRoleBlock(profileContext, role.Brief)
+		for _, grant := range role.Permissions {
+			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+			if prior, ok := overrides[grant.Slug]; ok && prior != candidate {
+				return nil, "invalid_role", "roles grant incompatible scopes for " + grant.Slug
+			}
+			overrides[grant.Slug] = candidate
+		}
+	}
+	if ownerConv != "" && len(overrides) > 0 {
+		if resolvePermission(ownerConv, PermPermissionsGrant) != permAllow {
+			return nil, "permission_denied", "spawn profile/roles confer permissions but owner lacks " + PermPermissionsGrant
+		}
+		if err := checkGrantAttenuation(ownerConv, grantConferee{descendantByConstruction: true}, conferredGrantsFromOverrides(overrides)); err != nil {
+			return nil, "permission_denied", err.Error()
+		}
+	}
+	isOwner := profile.IsOwner != nil && *profile.IsOwner
+	if ownerConv != "" && isOwner {
+		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+		ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+		allowed, _, _ := permissionAllowsAction(req, ownerConv, PermGroupsOwnersManage, ctx)
+		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsOwnersManage).Resolution != permDeny {
+			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsOwnersManage, ctx)
+		}
+		if !allowed {
+			return nil, "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage
+		}
+	}
+	cwd := strings.TrimSpace(g.DefaultCwd)
+	if cwd == "" && ownerConv != "" {
+		if s, _ := db.FindSessionByConvID(ownerConv); s != nil {
+			cwd = s.Cwd
+		}
+	}
+	if cwd == "" {
+		return nil, "invalid_cwd", "target group and owning principal provide no launch directory"
+	}
+	if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
+		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
+	}
+
+	p := spawnParams{Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
+		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
+	includeGroup := profile.IncludeGroupDefaultContext == nil || *profile.IncludeGroupDefaultContext
+	if includeGroup {
+		p.GroupContext = g.DefaultContext
+	}
+	profileGroup := *g
+	profileGroup.DefaultProfile = profile.Name
+	if fail := applyDefaultProfile(&profileGroup, &p); fail != nil {
+		return nil, "spawn_failed", fail.Msg
+	}
+	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
+	// The owner's grant was conditioned on the inherited sandbox profile, so
+	// refuse when the spawn profile resolves a launch that would not enforce
+	// it. Only a scope-pinned owner is bound: an unscoped grant or group
+	// ownership never traded on the profile, and a daemon-owned firing
+	// (ownerConv == "") answered to no grant at all.
+	if sandboxScopePinned &&
+		sandboxProfileTierInert(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
+		return nil, "permission_denied", fmt.Sprintf(
+			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
+			sandboxProfileForScope, profile.Name)
+	}
+	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
+		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
+		if err != nil {
+			return nil, "spawn_failed", err.Error()
+		}
+	}
+	if ownerConv != "" {
+		parent, readErr := db.AgentEffectiveSandboxConfigForConv(ownerConv)
+		if readErr != nil {
+			return nil, "io", readErr.Error()
+		}
+		if parent == nil && sandboxpolicy.HasCapabilities(snapshot) {
+			return nil, "permission_denied", "owning principal predates effective sandbox snapshots"
+		}
+		if parent != nil {
+			validated, valErr := ensureAgentDirectoriesForRelaunch(*parent)
+			if valErr != nil {
+				return nil, "spawn_failed", valErr.Error()
+			}
+			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
+				return nil, "permission_denied", containErr.Error()
+			}
+		}
+	}
+	p.EffectiveSandbox = &snapshot
+	return &managedSpawn{group: &profileGroup, params: p}, "", ""
+}
+
 type managedWorkerSource struct {
 	RuleID        int64
 	FiringID      int64
@@ -679,119 +863,6 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 			return "permission_denied", err.Error(), ""
 		}
 	}
-	profile, err := db.ResolveSpawnProfile(spec.Profile)
-	if err != nil {
-		return "io", err.Error(), ""
-	}
-	if profile == nil {
-		return "profile_not_found", fmt.Sprintf("spawn profile %q does not exist", spec.Profile), ""
-	}
-	if fail := profileSpawnFailure(profile, ownerConv); fail != nil {
-		return "permission_denied", fail.Msg, ""
-	}
-	allowAnyGroup := false
-	// A managed worker never selects a sandbox profile of its own, so the
-	// sandbox_profile dimension is described by the ambient assignment it will
-	// inherit. Without that this whole path is unreachable for an owner whose
-	// spawn grant carries a sandbox_profile scope: the dimension would be
-	// undescribed and fail closed on every firing.
-	sandboxProfileForScope := ambientSandboxProfileName(g)
-	sandboxScopePinned := false
-	if ownerConv != "" {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
-			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
-		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
-		if authErr != nil {
-			return "io", authErr.Error(), ""
-		}
-		if !allowed {
-			return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
-		}
-		allowAnyGroup = authorizedSlug == PermAgentSpawn
-		sandboxScopePinned = scopePinsDimension(req, ownerConv, authorizedSlug,
-			ctx, ScopeDimSandboxProfile)
-	}
-	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
-		return "io", err.Error(), ""
-	} else if n >= spec.MaxLiveWorkers {
-		return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers), ""
-	}
-	recorder := httptest.NewRecorder()
-	if !checkSpawnGuardrails(recorder, g, ownerConv, allowAnyGroup) {
-		return "guardrail_denied", strings.TrimSpace(recorder.Body.String()), ""
-	}
-	claimed := claimSpawnRateSlot(recorder, ownerConv)
-	if ownerConv == "" {
-		claimed = claimDaemonSpawnRateSlot(recorder, source.RatePrincipal)
-	}
-	if !claimed {
-		return "rate_limited", strings.TrimSpace(recorder.Body.String()), ""
-	}
-
-	roles := spec.RoleRefs
-	if len(roles) == 0 {
-		roles = profile.RoleRefs
-	}
-	profileContext := profile.StartupContext
-	overrides := map[string]db.PermissionOverride{}
-	for slug, v := range profile.PermissionOverrides {
-		overrides[slug] = v
-	}
-	roleLabel := profile.Role
-	for _, ref := range roles {
-		role, roleErr := db.GetRole(ref)
-		if roleErr != nil {
-			return "io", roleErr.Error(), ""
-		}
-		if role == nil {
-			return "invalid_role", fmt.Sprintf("role %q does not exist", ref), ""
-		}
-		if roleLabel == "" {
-			roleLabel = role.Name
-		}
-		profileContext = appendRoleBlock(profileContext, role.Brief)
-		for _, grant := range role.Permissions {
-			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
-			if prior, ok := overrides[grant.Slug]; ok && prior != candidate {
-				return "invalid_role", "roles grant incompatible scopes for " + grant.Slug, ""
-			}
-			overrides[grant.Slug] = candidate
-		}
-	}
-	if ownerConv != "" && len(overrides) > 0 {
-		if resolvePermission(ownerConv, PermPermissionsGrant) != permAllow {
-			return "permission_denied", "spawn profile/roles confer permissions but owner lacks " + PermPermissionsGrant, ""
-		}
-		if err := checkGrantAttenuation(ownerConv, grantConferee{descendantByConstruction: true}, conferredGrantsFromOverrides(overrides)); err != nil {
-			return "permission_denied", err.Error(), ""
-		}
-	}
-	isOwner := profile.IsOwner != nil && *profile.IsOwner
-	if ownerConv != "" && isOwner {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-		allowed, _, _ := permissionAllowsAction(req, ownerConv, PermGroupsOwnersManage, ctx)
-		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsOwnersManage).Resolution != permDeny {
-			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsOwnersManage, ctx)
-		}
-		if !allowed {
-			return "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage, ""
-		}
-	}
-	cwd := strings.TrimSpace(g.DefaultCwd)
-	if cwd == "" && ownerConv != "" {
-		if s, _ := db.FindSessionByConvID(ownerConv); s != nil {
-			cwd = s.Cwd
-		}
-	}
-	if cwd == "" {
-		return "invalid_cwd", "target group and owning principal provide no launch directory", ""
-	}
-	if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
-		return "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd), ""
-	}
-
 	name := triggerlogic.RenderTemplate(spec.NameTemplate, event, g.Name)
 	if strings.TrimSpace(name) == "" {
 		if event.AgentID != "" {
@@ -800,54 +871,19 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 			name = fmt.Sprintf("trigger-%d-pr-%d", rule.ID, event.PRNumber)
 		}
 	}
-	p := spawnParams{Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: triggerlogic.RenderTemplate(spec.InstructionTemplate, event, g.Name),
-		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
-	includeGroup := profile.IncludeGroupDefaultContext == nil || *profile.IncludeGroupDefaultContext
-	if includeGroup {
-		p.GroupContext = g.DefaultContext
-	}
-	profileGroup := *g
-	profileGroup.DefaultProfile = profile.Name
-	if fail := applyDefaultProfile(&profileGroup, &p); fail != nil {
-		return "spawn_failed", fail.Msg, ""
-	}
-	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
-	// The owner's grant was conditioned on the inherited sandbox profile, so
-	// refuse when the spawn profile resolves a launch that would not enforce
-	// it. Only a scope-pinned owner is bound: an unscoped grant or group
-	// ownership never traded on the profile, and a daemon-owned firing
-	// (ownerConv == "") answered to no grant at all.
-	if sandboxScopePinned &&
-		sandboxProfileTierInert(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
-		return "permission_denied", fmt.Sprintf(
-			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
-			sandboxProfileForScope, profile.Name), ""
-	}
-	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
-		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
-		if err != nil {
-			return "spawn_failed", err.Error(), ""
-		}
-	}
-	if ownerConv != "" {
-		parent, readErr := db.AgentEffectiveSandboxConfigForConv(ownerConv)
-		if readErr != nil {
-			return "io", readErr.Error(), ""
-		}
-		if parent == nil && sandboxpolicy.HasCapabilities(snapshot) {
-			return "permission_denied", "owning principal predates effective sandbox snapshots", ""
-		}
-		if parent != nil {
-			validated, valErr := ensureAgentDirectoriesForRelaunch(*parent)
-			if valErr != nil {
-				return "spawn_failed", valErr.Error(), ""
+	plan, status, detail := planManagedSpawn(g, spec.Profile, spec.RoleRefs, ownerConv, source.RatePrincipal,
+		name, triggerlogic.RenderTemplate(spec.InstructionTemplate, event, g.Name), func() (string, string) {
+			if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
+				return "io", err.Error()
+			} else if n >= spec.MaxLiveWorkers {
+				return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers)
 			}
-			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
-				return "permission_denied", containErr.Error(), ""
-			}
-		}
+			return "", ""
+		})
+	if plan == nil {
+		return status, detail, ""
 	}
-	p.EffectiveSandbox = &snapshot
+	profileGroup, p := plan.group, plan.params
 	p.AgentID = db.NewAgentID()
 	worker := &db.TriggerWorker{RuleID: source.RuleID, FiringID: source.FiringID,
 		CronJobID: source.CronJobID, CronRunID: source.CronRunID,
@@ -859,7 +895,7 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	if err != nil {
 		return "spawn_failed", "reserve trigger worker: " + err.Error(), ""
 	}
-	out, fail := executeSpawn(&profileGroup, p)
+	out, fail := executeSpawn(profileGroup, p)
 	if fail != nil {
 		_ = db.CompleteTriggerWorker(workerID, "failed", fail.Msg, time.Now().UTC())
 		return "spawn_failed", fail.Msg, ""
