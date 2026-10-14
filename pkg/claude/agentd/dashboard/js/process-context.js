@@ -186,3 +186,45 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
 }
 
 export const processRunApi = createProcessRunApi();
+
+// RUN_EVENT_PAGES caps how many 16-event pages one events read walks, so a
+// long run's first open costs a bounded number of requests; later polls
+// continue from the last sequence seen.
+export const RUN_EVENT_PAGES = 8;
+
+// createRunDetailApi is the single-run focus's seam (G5): the run's durable
+// view (awaited decisions with their verdicts, blocked branches), its evidence
+// events, and the manual decision a human gate waits for.
+export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } = {}) {
+  const runPath = (runId) => `/v1/process/runs/${encodeURIComponent(runId)}`;
+  return {
+    getRun: (runId) => processRequest(runPath(runId), {}, fetchImpl),
+    // listEvents reads the events after `after`, oldest first; `more` says
+    // the page cap stopped the walk early.
+    async listEvents(runId, after = 0) {
+      const events = [];
+      let cursor = after;
+      for (let page = 0; page < RUN_EVENT_PAGES; page++) {
+        const body = await processRequest(`${runPath(runId)}/events${cursor ? `?after=${cursor}` : ''}`, {}, fetchImpl);
+        events.push(...(body.events || []));
+        if (!body.next) return { events, more: false };
+        cursor = body.next;
+      }
+      return { events, more: true };
+    },
+    // decide records a human gate's verdict against the awaited window
+    // (attempt) the inspector read, so a stale click is refused, not replayed.
+    async decide(runId, { nodeId, verdict, evidence = '', attempt = 0, attemptKey = newAttemptKey() }) {
+      const path = `${runPath(runId)}/decide`;
+      const request = { nodeId, verdict };
+      if (evidence) request.evidence = evidence;
+      if (attempt) request.attempt = attempt;
+      const body = JSON.stringify(request);
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+  };
+}
+
+export const runDetailApi = createRunDetailApi();

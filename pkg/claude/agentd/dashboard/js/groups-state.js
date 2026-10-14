@@ -185,6 +185,9 @@ export function createGroupsState({
   const focus = signal('agents');
   // Running | Planned | Done | All over the Processes lens's run cards.
   const processFilter = signal('running');
+  // The single-run focus (G5): { group, runId } while one run is open in the
+  // Processes lens, else null. Session-only: a reload lands on the cards.
+  const focusedRun = signal(null);
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
@@ -268,6 +271,13 @@ export function createGroupsState({
     if (focus.value === next) return;
     focus.value = next;
     prefs.setItem(GROUPS_FOCUS_PREF, next);
+  }
+
+  function setFocusedRun(value) {
+    const next = value?.group && value?.runId ? { group: String(value.group), runId: String(value.runId) } : null;
+    const prev = focusedRun.value;
+    if (prev?.group === next?.group && prev?.runId === next?.runId) return;
+    focusedRun.value = next;
   }
 
   function setProcessFilter(value) {
@@ -374,9 +384,9 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, focus, processFilter, renderRevision,
+    standingOrdersDialog, subview, routeSelection, focus, processFilter, focusedRun, renderRevision,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,

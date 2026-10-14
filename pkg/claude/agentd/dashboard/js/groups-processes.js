@@ -5,7 +5,7 @@
 // and renders through the shared process UI kit (process-kit.js).
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
@@ -15,6 +15,7 @@ import {
   normalizeRunFilter, processContext, processRunApi, runNeedsYou, withPerformerNames,
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
+import { GroupsRunFocus } from './groups-run-focus.js';
 
 const html = htm.bind(h);
 
@@ -99,7 +100,7 @@ function GroupAvatarStrip({ members, busy, wizard }) {
   </span>`;
 }
 
-function RunCard({ run, entry, nameOf, wizard }) {
+function RunCard({ run, entry, nameOf, wizard, onOpen }) {
   const named = withPerformerNames(run, nameOf);
   const state = runState(named);
   const terminal = state === 'done' || state === 'failed';
@@ -114,6 +115,8 @@ function RunCard({ run, entry, nameOf, wizard }) {
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
       <span class="gp-spacer"></span>
       ${runNeedsYou(named, entry) && html`<span class="pk-chip pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
+      <button type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
+        title=${wizard ? `Gaze into ${runName(named)}` : `Open ${runName(named)}: live graph, node inspector and performers`}>${wizard ? 'gaze ›' : 'open ›'}</button>
     </div>
     <div class="gp-card-body"><${ProcessMiniGraph} run=${named} wizard=${wizard} /></div>
     ${named.truncated && html`<div class="gp-card-note">Graph truncated: open the run for every node.</div>`}
@@ -130,7 +133,7 @@ function PlannedRow({ item, wizard }) {
   </span>`;
 }
 
-function GroupRuns({ group, roster, context, filter, wizard, api, source }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocusRun }) {
   const [starting, setStarting] = useState(false);
   const entry = groupContextEntry(context, group);
   const { runs, planned } = groupRunsFor(context, entry, filter);
@@ -150,7 +153,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source }) {
         title=${wizard ? `Begin a rite bound to ${group.name}` : `Start a process run scoped to ${group.name}`}>${wizard ? '+ begin a rite' : '+ start process'}</button>`}
     </div>
     ${starting && html`<${StartRunForm} group=${group} api=${api} source=${source} wizard=${wizard} onClose=${() => setStarting(false)} />`}
-    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} />`)}
+    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard}
+      onOpen=${(runId) => onFocusRun({ group: group.name, runId })} />`)}
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
     ${!runs.length && !planned.length && html`<div class="gp-empty">${filter === 'all'
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
@@ -160,6 +164,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source }) {
 
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -172,6 +177,30 @@ export function GroupsProcessesFocus({
   const status = source.status.value;
   const context = source.context.value;
   const realGroups = (groups || []).filter((group) => !group.virtual);
+  // An open run shows in the single-run focus; its group comes from the full
+  // roster so a Groups search cannot strand it.
+  const focusGroup = focusedRun && (rosters.get(focusedRun.group) || realGroups.find((group) => group.name === focusedRun.group));
+  // A run whose group is gone closes rather than hiding and popping back.
+  const strandedRun = status === 'ready' && focusedRun && !focusGroup;
+  useEffect(() => { if (strandedRun) onFocusRun(null); }, [strandedRun]);
+  // Closing the focus hands keyboard focus back to the card that opened it.
+  const lastRun = useRef(null);
+  useEffect(() => {
+    const previous = lastRun.current;
+    lastRun.current = focusedRun?.runId || null;
+    if (previous && !focusedRun) {
+      const opener = [...document.querySelectorAll('[data-process-open]')].find((el) => el.dataset.processOpen === previous);
+      opener?.focus?.();
+    }
+  }, [focusedRun?.runId]);
+  if (status === 'ready' && focusGroup) {
+    return html`<div class="gp-focus" data-groups-processes>
+      ${source.error.value && html`<span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span>`}
+      <${GroupsRunFocus} group=${focusGroup} roster=${rosters.get(focusGroup.name)} context=${context} runId=${focusedRun.runId}
+        wizard=${wizard} source=${source} api=${runApi} onClose=${() => onFocusRun(null)}
+        onSelectRun=${(runId) => onFocusRun({ group: focusGroup.name, runId })} />
+    </div>`;
+  }
   return html`<div class="gp-focus" data-groups-processes>
     <div class="gp-toolbar">
       <div class="gp-filter" role="group" aria-label=${wizard ? 'Rite filter' : 'Process filter'}>
@@ -184,7 +213,7 @@ export function GroupsProcessesFocus({
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
     ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
-    ${status === 'ready' && realGroups.map((group) => html`<${GroupRuns} key=${group.name} group=${group} roster=${rosters.get(group.name)} context=${context} filter=${current} wizard=${wizard} api=${api} source=${source} />`)}
+    ${status === 'ready' && realGroups.map((group) => html`<${GroupRuns} key=${group.name} group=${group} roster=${rosters.get(group.name)} context=${context} filter=${current} wizard=${wizard} api=${api} source=${source} onFocusRun=${onFocusRun} />`)}
     ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}
   </div>`;
 }
