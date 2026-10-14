@@ -8,6 +8,7 @@ import { attachmentHref, bodilessNotice, messageAttachments } from './human-atta
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
+import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 
 const html = htm.bind(h);
@@ -112,6 +113,7 @@ function Attachment({ message }) {
     const filename = attachment.filename || 'attachment';
     return html`<div class="human-notification-drawer-attachment" key=${attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
+      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
       <a class="human-notification-drawer-file-link" href=${href}
         download=${attachment.filename || ''} title=${`Download ${filename}`}>
         <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
