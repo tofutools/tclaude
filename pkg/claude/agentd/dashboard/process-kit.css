@@ -127,6 +127,7 @@ button.pk-run-badge:focus-visible, button.pk-run-icon:focus-visible, button.pk-g
 .pk-run-badge.pk-state-waiting { border-color: color-mix(in srgb, var(--pk-waiting) 55%, transparent); background: color-mix(in srgb, var(--pk-waiting) 13%, transparent); color: var(--pk-waiting-text); }
 .pk-run-badge.pk-state-failed { border-color: color-mix(in srgb, var(--pk-failed) 55%, transparent); background: color-mix(in srgb, var(--pk-failed) 10%, transparent); color: var(--pk-failed-text); }
 .pk-run-badge.pk-state-planned, .pk-run-badge.pk-state-done { border-color: var(--pk-line); background: transparent; color: var(--pk-muted); }
+.pk-run-badge.pk-state-planned { border-style: dashed; }
 .pk-run-badge.pk-scope-agent .pk-run-glyph { color: var(--pk-agent-text); }
 
 /* Overlay run icon with a state ring */

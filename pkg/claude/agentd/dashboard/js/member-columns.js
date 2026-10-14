@@ -33,9 +33,16 @@ import { MEMBER_COLS } from './sort.js';
 // the column's default (mirrors the sort state's single-key storage).
 const COLS_LS_KEY = 'tclaude.dash.members.hidden';
 
+// columnAvailable drops feature-gated columns while their feature is off:
+// the Process column exists only while features.processes is on, which
+// processes.js mirrors onto body.hide-processes.
+function columnAvailable(c) {
+  return !c.processes || !globalThis.document?.body?.classList.contains('hide-processes');
+}
+
 // hideableMemberCols: the columns the menu offers to hide, in table order.
 function hideableMemberCols() {
-  return MEMBER_COLS.filter((c) => c.hideable);
+  return MEMBER_COLS.filter((c) => c.hideable && columnAvailable(c));
 }
 
 // colByKey resolves a column spec by key (null if unknown / not a real col).
@@ -99,7 +106,7 @@ function setMemberColHidden(key, hidden) {
 // the exact, ordered column list that BOTH the header and every row render
 // through.
 function visibleMemberCols() {
-  return MEMBER_COLS.filter((c) => !(c.hideable && memberColHidden(c.key)));
+  return MEMBER_COLS.filter((c) => columnAvailable(c) && !(c.hideable && memberColHidden(c.key)));
 }
 
 // memberColDeviationCount counts the hideable columns whose current

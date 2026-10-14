@@ -199,6 +199,8 @@ const MEMBER_COLS = [
   { key: 'id',     label: 'ID',          col: 'id',     hideable: true, defaultHidden: true },
   { key: 'title',  label: 'Name',        col: 'title' },
   { key: 'state',  label: 'State',       col: 'state',  hideable: true },
+  // Process badges (G1): only offered while features.processes is on.
+  { key: 'process', label: 'Process',    wizardLabel: 'Rite', hideable: true, processes: true },
   { key: 'last',   label: 'Last',        col: 'last',   hideable: true },
   { key: 'age',    label: 'Age',         col: 'age',    hideable: true },
   { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },

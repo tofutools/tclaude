@@ -218,14 +218,17 @@ export function kindLabel(kind, wizard = false) {
 }
 
 // runIconView is the data behind a terminal-overlay icon and the run badge.
-export function runIconView(run, performerID = '') {
+// `nodeID` pins the named node when the caller already knows it (the read
+// model's per-agent index); it then drives the ring like a performer's node.
+export function runIconView(run, performerID = '', nodeID = '') {
   const steps = runSteps(run);
-  const node = currentRunNode(run, performerID);
+  const pinned = nodeID ? steps.find((step) => step.id === String(nodeID)) : null;
+  const node = pinned || currentRunNode(run, performerID);
   const scope = normalizeScope(run?.scope);
   // From a performer's point of view the ring shows that performer's node;
   // a terminal run status still wins so a dead run never reads as live.
   const overall = runState(run);
-  const mine = performerID && node && performs(node, performerID) ? node.state : '';
+  const mine = pinned ? pinned.state : performerID && node && performs(node, performerID) ? node.state : '';
   const state = overall === 'failed' || overall === 'done' || !mine || mine === 'skipped' ? overall : mine;
   const position = node ? steps.findIndex((step) => step.id === node.id) + 1 : 0;
   const name = runName(run);
@@ -434,8 +437,8 @@ export function ProcessStepStrip({ run }) {
 
 // ProcessRunBadge is the agent-row badge `◈ run › Node ▪▪▫`. With onOpen it
 // is a button that opens the run from this performer's point of view.
-export function ProcessRunBadge({ run, performerId = '', onOpen = null }) {
-  const view = runIconView(run, performerId);
+export function ProcessRunBadge({ run, performerId = '', nodeId = '', onOpen = null }) {
+  const view = runIconView(run, performerId, nodeId);
   const cls = `pk-run-badge pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}`;
   const body = html`<span class="pk-run-glyph" aria-hidden="true">${view.glyph}</span><span class="pk-run-name">${runName(run)}</span>${view.node && html`<span class="pk-sep" aria-hidden="true">›</span><b class="pk-run-node">${view.node.label}</b>`}<${ProcessStepStrip} run=${run} />`;
   if (typeof onOpen === 'function') {

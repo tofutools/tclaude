@@ -9,6 +9,7 @@ import {
   SLOP_SYMBOLS,
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import { MemberProcessCell } from './groups-process-indicators.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import {
   humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
@@ -1200,6 +1201,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     case 'branch': return html`<td><${BranchCell} member=${member} /></td>`;
     case 'role': return html`<td><${RoleCell} member=${member} group=${group} actions=${actions} /></td>`;
     case 'task': return html`<td class="task-cell"><${TaskCell} member=${member} /></td>`;
+    case 'process': return html`<td class="process-cell"><${MemberProcessCell} member=${member} group=${group} snapshot=${snapshot} /></td>`;
     case 'descr': return html`<td class="descr-cell"><${DescrCell} member=${member} group=${group} actions=${actions} /></td>`;
     default: return html`<td></td>`;
   }

@@ -11,6 +11,7 @@
 import { h } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
+import { activeRunCount, processContext } from './process-context.js';
 
 const html = htm.bind(h);
 
@@ -80,8 +81,9 @@ export function useGroupsFocusRestore(state, doc = document) {
   }, [state, doc]);
 }
 
-export function GroupsFocusSwitch({ state, groups, wizard = false }) {
+export function GroupsFocusSwitch({ state, groups, wizard = false, source = processContext }) {
   if (!processesFocusAvailable(state.snapshot.value)) return null;
+  const runs = source.status.value === 'ready' ? activeRunCount(source.context.value) : null;
   const focus = effectiveGroupsFocus(state);
   const segment = (value, glyph, plain, arcane, count, title) => html`<button
       type="button"
@@ -93,7 +95,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false }) {
     ><span aria-hidden="true">${glyph}</span> ${wizard ? arcane : plain}${count != null && html` <span class="groups-focus-count">${count}</span>`}</button>`;
   return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
     ${segment('agents', '👥', 'Agents', 'Familiars', agentCount(groups), 'Agents focus: member tables, with process state as small indicators')}
-    ${segment('processes', '◈', 'Processes', 'Rites', null, 'Processes focus: run graphs per group, with agents as avatars on the nodes they perform')}
+    ${segment('processes', '◈', 'Processes', 'Rites', runs, 'Processes focus: run graphs per group, with agents as avatars on the nodes they perform')}
   </div>`;
 }
 

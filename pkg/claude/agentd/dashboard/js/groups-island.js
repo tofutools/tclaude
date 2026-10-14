@@ -11,6 +11,7 @@ import {
   GroupsFocusSwitch, effectiveGroupsFocus, useGroupsFocusRestore,
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
+import { processContext } from './process-context.js';
 
 const html = htm.bind(h);
 
@@ -273,6 +274,18 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
       (group.key || group.name) === hoveredGroupKey);
     if (!present) setHoveredGroupKey(null);
   }, [current.groups, hoveredGroupKey]);
+
+  // Both lenses read the process context: Processes for its cards, Agents for
+  // the G1 header chips and row badges. One fetch per snapshot poll.
+  const processesEnabled = state.snapshot.value?.processes_enabled === true;
+  useEffect(() => {
+    if (!processesEnabled) return undefined;
+    const source = processSource || processContext;
+    void source.refresh();
+    const poll = () => { void source.refresh(); };
+    document.addEventListener('tclaude:snapshot', poll);
+    return () => document.removeEventListener('tclaude:snapshot', poll);
+  }, [processesEnabled, processSource]);
 
   // The drag-and-drop hints and member-table chrome belong to the Agents lens.
   useEffect(() => {

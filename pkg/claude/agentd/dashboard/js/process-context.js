@@ -57,6 +57,13 @@ export function createProcessContextSource({ fetchImpl = (...args) => fetch(...a
 
 export const processContext = createProcessContextSource();
 
+// activeRunCount counts distinct live runs across every group's index.
+export function activeRunCount(context) {
+  const ids = new Set();
+  for (const entry of context?.groups || []) for (const id of entry.active || []) ids.add(id);
+  return ids.size;
+}
+
 // groupContextEntry finds a snapshot group's entry by name, then by id.
 export function groupContextEntry(context, group) {
   const entries = context?.groups || [];

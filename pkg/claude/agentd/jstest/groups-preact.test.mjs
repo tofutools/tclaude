@@ -974,6 +974,8 @@ test('native member rows preserve the legacy field, capability and selector matr
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(fullSnapshot);
+  // Processes are off (the shell's boot class), so the gated Process column is absent.
+  harness.document.body.classList.add('hide-processes');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
   const table = host.querySelector('details[data-group-key="alpha"] table');
