@@ -2052,6 +2052,16 @@ func StartFederationAwayApprovalForTest(id, conv string, timeout time.Duration) 
 // and the flow's normal tmux subprocess simulator and SQLite state.
 func RefreshHostMetricsForTest() { refreshHostMetrics() }
 
+// SetCatalogBuiltHookForTest runs fn after each federation catalog is built
+// and before it is sent, while that peer's catalog lock is held.
+func SetCatalogBuiltHookForTest(fn func(*proto.CatalogPayload)) func() {
+	catalogBuiltHook.Lock()
+	old := catalogBuiltHook.fn
+	catalogBuiltHook.fn = fn
+	catalogBuiltHook.Unlock()
+	return func() { catalogBuiltHook.Lock(); catalogBuiltHook.fn = old; catalogBuiltHook.Unlock() }
+}
+
 // SetStatusGatherHookForTest blocks/counts the common production gather.
 func SetStatusGatherHookForTest(fn func()) func() {
 	statusHook.Lock()

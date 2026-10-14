@@ -488,6 +488,7 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) bool {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)
 		return false
 	}
+	catalogBuiltTestHook(cat)
 	delivered := rt.sendControl(peer, proto.KindCatalog, "", cat)
 	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
 	// Wake only to populate the initial static probe; later catalogs read cache.
@@ -498,6 +499,23 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) bool {
 		rt.wakeNodes()
 	}
 	return delivered
+}
+
+// catalogBuiltHook lets flow tests hold a built catalog while its per-peer
+// catalog lock is still held, i.e. a slow build under old trust. nil in
+// production.
+var catalogBuiltHook struct {
+	sync.RWMutex
+	fn func(*proto.CatalogPayload)
+}
+
+func catalogBuiltTestHook(cat *proto.CatalogPayload) {
+	catalogBuiltHook.RLock()
+	fn := catalogBuiltHook.fn
+	catalogBuiltHook.RUnlock()
+	if fn != nil {
+		fn(cat)
+	}
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups

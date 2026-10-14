@@ -69,16 +69,22 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 	fedEventually(t, "initial restricted catalog received", func() bool {
 		return len(p.envelopes(proto.KindCatalog)) > 0
 	})
-	agentd.ResetStatusSnapshotForTest()
 
-	// Catalog construction has already selected the unrestricted groups when
-	// it gathers their statuses. Hold that gather so a concurrent downgrade
-	// has the opportunity to publish its withdrawal first on the broken path.
+	// Hold the first catalog built under unrestricted trust after it selected
+	// its groups but before it is sent, while it still owns the peer's catalog
+	// lock, so a concurrent downgrade has the opportunity to publish its
+	// withdrawal first on the broken path. Holding the built catalog, rather
+	// than the status gather, pins exactly that build: the federation status
+	// ticker also gathers outside any catalog lock once the peer is
+	// unrestricted, and a build can reuse a gather another goroutine started.
 	building := make(chan struct{})
 	released := make(chan struct{})
 	var enter, leave sync.Once
 	release := func() { leave.Do(func() { close(released) }) }
-	restore := agentd.SetStatusGatherHookForTest(func() {
+	restore := agentd.SetCatalogBuiltHookForTest(func(cat *proto.CatalogPayload) {
+		if len(cat.Groups) == 0 {
+			return
+		}
 		enter.Do(func() { close(building) })
 		<-released
 	})
@@ -90,7 +96,7 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 	select {
 	case <-building:
 	case <-time.After(5 * time.Second):
-		t.Fatal("unrestricted catalog did not reach the status gather")
+		t.Fatal("unrestricted catalog was not built")
 	}
 	before := len(p.envelopes(proto.KindCatalog))
 	setFedTrustLevel(t, fh, "restricted")

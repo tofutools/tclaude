@@ -1653,8 +1653,10 @@ setTimeout(function(){
 		processConnectionFeedbackState(
 			"process-editor-connection-invalid",
 			"Process editor — invalid connection target reason",
-			".process-node-ports[data-node-id=\"begin\"] .process-port-in",
+			// Start has no input (#1328), so the input-to-input drag runs from
+			// End's input to a seeded task's input.
 			".process-node-ports[data-node-id=\"ship\"] .process-port-in",
+			".process-node-ports[data-node-id=\"review\"] .process-port-in",
 			"invalid", "Connect this input to an output port or another node body.",
 		),
 		{
@@ -1739,15 +1741,20 @@ setTimeout(function(){
     var clip = node && node.querySelector('.process-node-label-clip rect');
     var input = ports && ports.querySelector('.process-port-in');
     var output = ports && ports.querySelector('.process-port-out');
-    if (!node||!ports||!shape||!label||!clip||!input||!output) throw new Error(spec.type+' inside-label fixture incomplete');
+    // Start and End are single-sided (#1328): no input on Start, no output on End.
+    var wantsIn=spec.type!=='start',wantsOut=spec.type!=='end';
+    if (!node||!ports||!shape||!label||!clip||(wantsIn&&!input)||(wantsOut&&!output)) throw new Error(spec.type+' inside-label fixture incomplete');
+    if ((!wantsIn&&input)||(!wantsOut&&output)) throw new Error(spec.type+' rendered a port its kind does not offer');
     if (node.querySelector('.process-node-label-peripheral')) throw new Error(spec.type+' restored a peripheral label');
     if (!node.getAttribute('aria-label').startsWith(spec.name+', '+spec.type)) throw new Error(spec.type+' lost its full accessible name');
-    if (input.getAttribute('aria-label')!=='Input port for '+spec.name||output.getAttribute('aria-label')!=='Output port for '+spec.name) throw new Error(spec.type+' port accessible name changed');
+    // The live aria-label appends the drag instruction; the base name is stable.
+    var portName=function(port){return port.getAttribute('data-base-aria-label')||port.getAttribute('aria-label');};
+    if ((input&&portName(input)!=='Input port for '+spec.name)||(output&&portName(output)!=='Output port for '+spec.name)) throw new Error(spec.type+' port accessible name changed');
     var shapeBox=shape.getBBox(),x=Number(clip.getAttribute('x')),y=Number(clip.getAttribute('y')),
       width=Number(clip.getAttribute('width')),height=Number(clip.getAttribute('height'));
     if (x<shapeBox.x-.1||x+width>shapeBox.x+shapeBox.width+.1||y<shapeBox.y-.1||y+height>shapeBox.y+shapeBox.height+.1) throw new Error(spec.type+' label frame escaped the fixed shape bbox');
-	    var inBottom=Number(input.getAttribute('cy'))+Number(input.getAttribute('r'));
-	    var outTop=Number(output.getAttribute('cy'))-Number(output.getAttribute('r'));
+	    var inBottom=input?Number(input.getAttribute('cy'))+Number(input.getAttribute('r')):-Infinity;
+	    var outTop=output?Number(output.getAttribute('cy'))-Number(output.getAttribute('r')):Infinity;
 	    if (y<=inBottom||y+height>=outTop) throw new Error(spec.type+' label frame overlaps an input/output port band');
 	    if (label.getAttribute('clip-path')!=='url(#'+clip.parentElement.id+')') throw new Error(spec.type+' label is not hard-clipped to its verified interior frame');
 	    Array.from(label.querySelectorAll('tspan')).forEach(function(line) {
@@ -1756,10 +1763,11 @@ setTimeout(function(){
 	    var ratio=contrast(getComputedStyle(label).fill,getComputedStyle(shape).fill);
     if (ratio<4.5) throw new Error(spec.type+' label contrast is '+ratio.toFixed(2)+':1');
   });
-  ['start-label','end-label'].forEach(function(id) {
-    var node=document.querySelector('.process-node[data-node-id="'+id+'"]'),clip=node.querySelector('.process-node-label-clip rect'),ports=document.querySelector('.process-node-ports[data-node-id="'+id+'"]');
-    if (Number(clip.getAttribute('y'))<=Number(ports.querySelector('.process-port-in').getAttribute('cy'))+6) throw new Error(id+' smallest-shape input band is not clear');
-    if (Number(clip.getAttribute('y'))+Number(clip.getAttribute('height'))>=Number(ports.querySelector('.process-port-out').getAttribute('cy'))-6) throw new Error(id+' smallest-shape output band is not clear');
+  // The smallest shapes are Start (output only) and End (input only).
+  [['start-label','.process-port-out'],['end-label','.process-port-in']].forEach(function(pair) {
+    var id=pair[0],node=document.querySelector('.process-node[data-node-id="'+id+'"]'),clip=node.querySelector('.process-node-label-clip rect'),port=document.querySelector('.process-node-ports[data-node-id="'+id+'"] '+pair[1]);
+    var top=Number(clip.getAttribute('y')),bottom=top+Number(clip.getAttribute('height')),cy=Number(port.getAttribute('cy'));
+    if (pair[1]==='.process-port-in'?top<=cy+6:bottom>=cy-6) throw new Error(id+' smallest-shape port band is not clear');
   });`),
 			SettleMS: 1100,
 		},
@@ -1834,12 +1842,16 @@ setTimeout(function(){
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down-at", JS: `var r=document.querySelector('.process-node-ports[data-node-id="ship"] .process-port-in').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`},
 				{Kind: "move-to-at", JS: `return window.__edgeDrop.drop;`, Steps: 6},
+				// Drag-time connection feedback hit-tests every frame; baseline
+				// them so only pointerup's own hit test is asserted below.
+				{Kind: "eval", JS: `return new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(function(){
+  window.__edgeDrop.beforeUp=window.__edgeDrop.hitTests;window.__edgeDrop.lastHit=null;resolve(true);});});});`},
 				{Kind: "mouse-up"},
 				{Kind: "eval", JS: `var state=window.__edgeDrop,chooser=document.querySelector('.process-node-chooser');
-  if(state.hitTests!==1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG');
+  if(state.hitTests!==state.beforeUp+1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG (hitTests='+state.hitTests+', beforeUp='+state.beforeUp+', lastHit='+(state.lastHit&&state.lastHit.outerHTML.slice(0,120))+')');
   if(!chooser) throw new Error('trusted empty-canvas pointerup did not open the chooser');
   var end=chooser.querySelector('[data-command-id="process.create.end"]');
-  if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing edges')) throw new Error('input direction did not clearly disable End');
+  if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing connections')) throw new Error('input direction did not clearly disable End');
   var hint=end.querySelector('.process-node-chooser-hint'),hintStyle=getComputedStyle(hint),optionStyle=getComputedStyle(end),surfaceStyle=getComputedStyle(chooser);
   if(optionStyle.opacity!=='1'||hintStyle.opacity!=='1') throw new Error('disabled reason is opacity-dimmed');
   var rgb=function(value){var parts=value.match(/[\d.]+/g).slice(0,3).map(Number);return parts;};
@@ -1927,6 +1939,8 @@ setTimeout(function(){
 				{Kind: "eval", JS: `var state=window.__focusFrame,active=document.activeElement;
   if(active===state.root||active===state.svg||active===state.sink) throw new Error('Tab landed on the editor frame, SVG, or shortcut sink');
   if(!state.root.contains(active)) throw new Error('Tab did not enter an element inside the graph');
+  // Delete acts on the selection, not on focus: select the node, then focus it.
+  window.__focusEd.setSelection({type:'node',id:'begin'});
   var node=document.querySelector('.process-node[data-node-id="begin"]');node.focus();window.__focusInvoker=node;`},
 				{Kind: "key", Key: "Delete"},
 				{Kind: "eval", JS: `if(!document.querySelector('#process-editor-choice-modal')) throw new Error('Delete confirmation did not open');`},
@@ -2137,12 +2151,12 @@ setTimeout(function(){
 			Key:     "process-editor-browser-edge-click",
 			Title:   "Process editor — trusted edge click + Delete",
 			Caption: "Real Chrome input: pointer capture still resolves the clicked connector, opens its edge inspector, and confirmed Delete removes exactly that edge.",
-			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null);`),
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null); await editorPaint(); await editorPaint();`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
   var selection=ed.snapshot().selection;
-  if(selection?.type!=='edge') throw new Error('trusted edge click did not select an edge');
+  if(selection?.type!=='edge') throw new Error('trusted edge click did not select an edge: '+JSON.stringify(selection));
   if(!document.querySelector('.process-editor-inspector .process-inspector-kind')?.textContent.includes('edge')) throw new Error('edge inspector missing');
   window.__edgeKey=[selection.from,selection.outcome];`},
 				{Kind: "key", Key: "Delete"},
@@ -2157,19 +2171,20 @@ setTimeout(function(){
 			Key:     "process-editor-browser-modifier-click",
 			Title:   "Process editor — trusted modifier multi-select",
 			Caption: "Real Chrome input: Ctrl-click toggles a node and connector into the same selection while marquee remains node-only.",
-			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null);`),
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null); await editorPaint(); await editorPaint();`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
 				{Kind: "eval", JS: `return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); }).then(function(){
   var selection=window.__browserEd.snapshot().selection;
-  if(selection?.type!=='node'||selection.id!=='begin') throw new Error('trusted node click did not settle before modifier gesture');
+  if(selection?.type!=='node'||selection.id!=='begin') throw new Error('trusted node click did not settle before modifier gesture: '+JSON.stringify(selection));
 });`},
 				{Kind: "key-down", Key: "Control"},
 				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
 				{Kind: "key-up", Key: "Control"},
 				{Kind: "eval", JS: `var selection=window.__browserEd.snapshot().selection,items=selection?.items||[];
   if(selection?.type!=='multi'||items.length!==2) throw new Error('trusted modifier click did not create two-item selection');
-  if(document.querySelectorAll('.process-graph-svg .is-selected').length!==2) throw new Error('multi-selection highlights out of sync');`},
+  // Count canonical items only; the raised node's front-layer copy repeats its highlight.
+  if(document.querySelectorAll('.process-graph-svg .is-selected:not(.process-front-copy)').length!==2) throw new Error('multi-selection highlights out of sync '+Array.from(document.querySelectorAll('.process-graph-svg .is-selected')).map(function(e){return e.getAttribute('class');}).join('|'));`},
 			},
 			SettleMS: 300,
 		},
@@ -3313,11 +3328,15 @@ func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, 
 	caption := "TCL-563: a trusted connector drag exposes the shared source/valid/invalid action vocabulary, delayed bounded tooltip, accessible reason, unchanged port geometry, and readable regular/wizard contrast."
 	return dashsnap.State{
 		Key: key, Title: title, Caption: caption,
-		JS: processEditorStateJS(fmt.Sprintf(`var source=document.querySelector(%q),target=document.querySelector(%q);
+		JS: processEditorStateJS(fmt.Sprintf(`ed.model.template.nodes.review={type:'task',name:'review'};
+  ed.model.layout.nodes.review={x:220,y:300};
+  ed.refresh({fit:true});
+  await editorPaint(); await editorPaint();
+  var source=document.querySelector(%q),target=document.querySelector(%q);
   if(!source||!target) throw new Error('connection feedback fixture ports missing');
   var geometry=function(port){return [port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')].join(':');};
   window.__connectionFeedback={sourceSelector:%q,targetSelector:%q,state:%q,message:%q,
-    before:Array.from(document.querySelectorAll('.process-port')).map(geometry)};`, sourceSelector, targetSelector, sourceSelector, targetSelector, state, message)),
+    before:Array.from(document.querySelectorAll('.process-port-layer .process-port')).map(geometry)};`, sourceSelector, targetSelector, sourceSelector, targetSelector, state, message)),
 		Actions: []dashsnap.BrowserAction{
 			{Kind: "mouse-down", Selector: sourceSelector},
 			{Kind: "eval", JS: `var fixture=window.__connectionFeedback,root=document.querySelector('.process-graph'),tip=root.querySelector('.process-action-tooltip');
@@ -3337,8 +3356,10 @@ func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, 
   if(getComputedStyle(tip).pointerEvents!=='none') throw new Error('tooltip blocks graph input');
   var rootRect=root.getBoundingClientRect(),tipRect=tip.getBoundingClientRect();
   if(tipRect.left<rootRect.left-1||tipRect.right>rootRect.right+1||tipRect.top<rootRect.top-1||tipRect.bottom>rootRect.bottom+1||tipRect.width>301) throw new Error('tooltip escaped its bounded graph surface');
-  var after=Array.from(document.querySelectorAll('.process-port')).map(function(port){return [port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')].join(':');});
-  if(JSON.stringify(after)!==JSON.stringify(fixture.before)||after.some(function(value){return !value.endsWith(':6');})) throw new Error('feedback changed connector geometry');
+  // Canonical ports only: the raised source node's front-layer copy is a paint
+  // duplicate, not a geometry change.
+  var after=Array.from(document.querySelectorAll('.process-port-layer .process-port')).map(function(port){return [port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')].join(':');});
+  if(JSON.stringify(after)!==JSON.stringify(fixture.before)||after.some(function(value){return !value.endsWith(':6');})) throw new Error('feedback changed connector geometry '+JSON.stringify(fixture.before)+' -> '+JSON.stringify(after));
   var rgb=function(value){var parts=String(value).match(/[\d.]+/g);if(!parts||parts.length<3)throw new Error('unparseable colour '+value);return parts.slice(0,3).map(Number);};
   var luminance=function(value){return rgb(value).map(function(channel){channel/=255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);}).reduce(function(total,channel,index){return total+channel*[.2126,.7152,.0722][index];},0);};
   var contrast=function(a,b){var x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
@@ -3488,14 +3509,16 @@ func processEditorLayeringState(key, title string) dashsnap.State {
   if(state.root.querySelector('.process-front-node-layer > [data-node-id]')?.dataset.nodeId!=='ship') throw new Error('keyboard-focused node was not raised');`},
 			{Kind: "key", Key: "Tab"},
 			{Kind: "eval", JS: `var state=window.__layering,active=document.activeElement;
-  if(!active||active.dataset.port!=='in'||active.closest('[data-node-id]')?.dataset.nodeId!=='begin'||active.closest('.process-port-layer')!==state.portLayer) throw new Error('Tab did not continue from canonical nodes to canonical ports');
+  // Start is single-sided (#1328), so begin's only port is its output.
+  if(!active||active.dataset.port!=='out'||active.closest('[data-node-id]')?.dataset.nodeId!=='begin'||active.closest('.process-port-layer')!==state.portLayer) throw new Error('Tab did not continue from canonical nodes to canonical ports');
   if(active.getAttribute('role')!=='button'||active.getAttribute('tabindex')!=='0'||!active.getAttribute('aria-label')) throw new Error('canonical port accessibility ownership changed');
   if(state.root.querySelector('.process-front-port-layer > [data-node-id]')?.dataset.nodeId!=='begin') throw new Error('keyboard-focused port did not raise its owning node');`},
 			{Kind: "key", Key: "Tab"},
 			{Kind: "eval", JS: `return new Promise(function(resolve,reject){var state=window.__layering,active=document.activeElement;
-  try{if(!active||active.dataset.port!=='out'||active.closest('[data-node-id]')?.dataset.nodeId!=='begin') throw new Error('canonical port traversal changed after click history');
+  // End is single-sided too, so the next canonical port is ship's input.
+  try{if(!active||active.dataset.port!=='in'||active.closest('[data-node-id]')?.dataset.nodeId!=='ship') throw new Error('canonical port traversal changed after click history');
   state.ed.refresh();requestAnimationFrame(function(){requestAnimationFrame(function(){try{
-    var restored=document.activeElement;if(!restored||restored.dataset.port!=='out'||restored.closest('[data-node-id]')?.dataset.nodeId!=='begin'||restored.closest('.process-port-layer')!==state.portLayer) throw new Error('rerender did not restore canonical port focus');
+    var restored=document.activeElement;if(!restored||restored.dataset.port!=='in'||restored.closest('[data-node-id]')?.dataset.nodeId!=='ship'||restored.closest('.process-port-layer')!==state.portLayer) throw new Error('rerender did not restore canonical port focus');
     if(JSON.stringify(Array.from(state.nodeLayer.querySelectorAll('[tabindex="0"]')).concat(Array.from(state.portLayer.querySelectorAll('[tabindex="0"]'))).map(function(element){return element.closest('[data-node-id]').dataset.nodeId+':'+(element.dataset.port||'node');}))!==state.traversal) throw new Error('rerender changed canonical traversal');
     var fit=state.root.querySelector('.process-fit-button');fit.focus();state.ed.graph.setGraph(state.ed.validation.decorate(state.ed.model.graph()),{resetInteractionLayering:true});
     if(state.root.querySelector('.process-front-node-layer').childElementCount||state.root.querySelector('.process-front-port-layer').childElementCount) throw new Error('explicit whole-model reset retained reused node IDs');
