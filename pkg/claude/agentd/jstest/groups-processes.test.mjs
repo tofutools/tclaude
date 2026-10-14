@@ -156,3 +156,28 @@ test('the context source maps 404 to unavailable and keeps the last good context
   assert.equal(mod.formatRunDuration('2026-10-12T10:00:00Z', now), '2d 2h');
   assert.equal(mod.formatRunDuration('', now), '');
 });
+
+test('a Groups search narrows the groups shown, not the busy strip or performer names', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-processes.js');
+  const filtered = [{ name: 'frontend-squad', members: [GROUPS[0].members[0]] }];
+  const mounted = await harness.mount(harness.html`<${mod.GroupsProcessesFocus} groups=${filtered} allGroups=${GROUPS}
+    source=${fakeSource(harness)} filter="running" />`);
+  const fe = mounted.container.querySelector('[data-process-group="frontend-squad"]');
+  assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
+  assert.equal(fe.querySelector('[data-process-node="checkout"] .pk-avatar').getAttribute('title'), 'fe-dev-forms');
+});
+
+test('starting a run posts the group with idempotency headers', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/process-context.js');
+  const calls = [];
+  const api = mod.createProcessRunApi({ fetchImpl: async (path, init) => { calls.push({ path, init }); return { ok: true, status: 201, json: async () => ({ runId: 'run_new' }) }; } });
+  assert.deepEqual(await api.startGroupRun({ templateId: 'tpl_a', group: 'frontend-squad', attemptKey: '11111111-2222-4333-8444-555555555555' }), { runId: 'run_new' });
+  const [{ path, init }] = calls;
+  assert.equal(path, '/v1/process/runs');
+  assert.equal(init.method, 'POST');
+  assert.deepEqual(JSON.parse(init.body), { templateId: 'tpl_a', group: 'frontend-squad', authorizeProgramProfiles: [] });
+  assert.equal(init.headers['Idempotency-Key'], '11111111-2222-4333-8444-555555555555');
+  assert.match(init.headers['X-Tclaude-Request-Digest'], /^[0-9a-f]{64}$/);
+});

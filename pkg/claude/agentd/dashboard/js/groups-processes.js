@@ -130,11 +130,13 @@ function PlannedRow({ item, wizard }) {
   </span>`;
 }
 
-function GroupRuns({ group, context, filter, wizard, api, source }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, source }) {
   const [starting, setStarting] = useState(false);
   const entry = groupContextEntry(context, group);
   const { runs, planned } = groupRunsFor(context, entry, filter);
-  const members = (group.members || []).filter((member) => memberKey(member));
+  // The roster is the group's full membership: the Groups search narrows
+  // which groups show, never who is busy or how performers are named.
+  const members = ((roster || group).members || []).filter((member) => memberKey(member));
   const names = new Map(members.map((member) => [memberKey(member), memberName(member)]));
   const nameOf = (ref) => names.get(ref) || '';
   const busy = busyPerformers(groupRunsFor(context, entry, 'running').runs);
@@ -157,8 +159,9 @@ function GroupRuns({ group, context, filter, wizard, api, source }) {
 }
 
 export function GroupsProcessesFocus({
-  groups, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
+  groups, allGroups = null, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
 }) {
+  const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
   useEffect(() => {
     void source.refresh();
@@ -181,7 +184,7 @@ export function GroupsProcessesFocus({
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
     ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
-    ${status === 'ready' && realGroups.map((group) => html`<${GroupRuns} key=${group.name} group=${group} context=${context} filter=${current} wizard=${wizard} api=${api} source=${source} />`)}
+    ${status === 'ready' && realGroups.map((group) => html`<${GroupRuns} key=${group.name} group=${group} roster=${rosters.get(group.name)} context=${context} filter=${current} wizard=${wizard} api=${api} source=${source} />`)}
     ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}
   </div>`;
 }

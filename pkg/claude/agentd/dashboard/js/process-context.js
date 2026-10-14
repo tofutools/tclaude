@@ -13,6 +13,7 @@
 // answers 404 and the source reports `unavailable` rather than an error.
 
 import { signal } from '@preact/signals';
+import { idempotentRequestHeaders } from './request-idempotency.js';
 
 export const PROCESS_CONTEXT_PATH = '/v1/process/context';
 
@@ -138,6 +139,16 @@ export function formatRunDuration(fromISO, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+function newAttemptKey() {
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 async function processRequest(path, init, fetchImpl) {
   const response = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store', ...init });
   const body = await response.json().catch(() => ({}));
@@ -155,11 +166,13 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // A group-scoped start: POST /v1/process/runs with the group by name
     // (process.runs.start covering the group; the human always passes).
-    async startGroupRun({ templateId, group }) {
-      return processRequest('/v1/process/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId, group, authorizeProgramProfiles: [] }),
+    // `attemptKey` makes a retried submit of the same attempt replay rather
+    // than start a second run.
+    async startGroupRun({ templateId, group, attemptKey = newAttemptKey() }) {
+      const path = '/v1/process/runs';
+      const body = JSON.stringify({ templateId, group, authorizeProgramProfiles: [] });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
   };
