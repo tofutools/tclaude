@@ -157,3 +157,15 @@ test('a validation round during the review keeps the proposal painted', async (t
   await harness.act(() => editor.validation.applyDiagnostics([]));
   assert.ok(host.querySelector('[data-node-id="gate"].is-diff-added'), 'diagnostics repaint keeps the overlay');
 });
+
+test('undoing a partial merge never reads as saved', async (t) => {
+  const { editor, arrive, bar, click } = await openEditor(t);
+  await arrive();
+  await click('.process-editor-external [data-review-on-canvas]');
+  await click('[data-diff-action="reject"]', bar());
+  await click('[data-diff-action="accept-all"]', bar());
+  assert.ok(editor.dirty);
+  editor.applyHistory('undo');
+  assert.equal(editor.model.node('gate'), undefined);
+  assert.ok(editor.dirty, 'old content on the reviewed CAS base must stay dirty');
+});
