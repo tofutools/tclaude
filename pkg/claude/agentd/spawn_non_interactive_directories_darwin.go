@@ -1,14 +1,16 @@
 package agentd
 
 import (
-	"os/exec"
+	"golang.org/x/sys/unix"
 	"strings"
 )
 
 func readOneShotBootIdentity() string {
-	data, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
+	// Use the immutable boot-session UUID, not wall-clock boot time, and
+	// query the kernel directly rather than trusting the daemon's PATH.
+	data, err := unix.Sysctl("kern.bootsessionuuid")
 	if err != nil {
 		return ""
 	} // Missing evidence cannot authorize cleanup.
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(data)
 }

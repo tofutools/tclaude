@@ -119,7 +119,8 @@ Sandbox-profile `agent_directories` receive fresh private per-run bindings and
 writable grants. Ordered `pre_launch` blocks run after profile environment
 export and before the harness, with the same authority as an interactive launch:
 inside the outer sandbox for `tclaude-layer`/`stacked`, in the host bootstrap
-shell for `harness-builtin`/`resource-only`/`off`. Bash is required for scripts;
+shell for `harness-builtin`/`resource-only`. `off` omits sandbox profiles, as it
+does for interactive workers, so profile setup is not applied. Bash is required for scripts;
 a failed block aborts launch and names the block.
 
 The existing process-group/cgroup reaper handles completion, failure, timeout,
