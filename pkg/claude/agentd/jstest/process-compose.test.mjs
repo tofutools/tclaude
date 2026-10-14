@@ -131,3 +131,31 @@ test('an expanded body is drawn in place and edited in context', () => {
   model.collapseSubprocess('qa');
   assert.ok(model.graph().nodes.some((n) => n.id === 'qa'));
 });
+
+test('review fixes: stale next maps, nested param scopes, island entries', () => {
+  // The edit view ships root nodes with their stored next maps; a connector
+  // deleted in the editor must not come back inside the body.
+  const v = chain();
+  v.template.nodes.b.next = { pass: 'c', alt: 'd' };
+  const model = new ProcessEditModel(v);
+  const id = wrapSelection(model, ['b', 'c'], { name: 'W' });
+  assert.deepEqual(model.saveBody().template.nodes[id].subprocess.nodes.b.next, { pass: 'c' });
+
+  // A nested ▣'s body params are its own: neither wrapped nor substituted.
+  const nested = new ProcessEditModel(chain());
+  const qa = insertNode(nested, 'subprocess', { x: 0, y: 300, name: 'QA' });
+  nested.updateNode(qa, (node) => {
+    node.subprocess.params = { q: { type: 'string' } };
+    node.subprocess.inputs = { q: 'lit' };
+    node.subprocess.nodes.start.performer = undefined;
+    node.subprocess.nodes.run = { type: 'task', performer: { kind: 'program', run: 'echo {{ params.q }}' } };
+  });
+  assert.deepEqual(wrapPlan(nested, [qa]).params, [], 'a nested body param is not a wrapper param');
+
+  // An island starts where nothing inside leads.
+  const island = new ProcessEditModel(chain());
+  island.addNode('task', { id: 'review', x: 0, y: 400 });
+  island.addNode('task', { id: 'apply', x: 200, y: 400 });
+  island.addEdge('review', 'pass', 'apply');
+  assert.equal(wrapPlan(island, ['apply', 'review']).entry, 'review');
+});

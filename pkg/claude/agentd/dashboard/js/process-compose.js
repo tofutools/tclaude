@@ -33,6 +33,23 @@ function slug(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+|-+$/g, '').slice(0, 48);
 }
 
+// ownScope splits a node into what this scope's params can reach and the
+// nested body that has params of its own: a ▣ node's inputs bind from this
+// scope, but its body's nodes and params refer to the body's params.
+function ownScope(node) {
+  if (node?.type !== 'subprocess' || !node.subprocess) return { own: node, nested: null };
+  const { nodes, params, ...ports } = node.subprocess;
+  return { own: { ...node, subprocess: ports }, nested: { nodes, params } };
+}
+
+function withNested(own, nested) {
+  if (!nested) return own;
+  const out = { ...own, subprocess: { ...own.subprocess } };
+  if (nested.params !== undefined) out.subprocess.params = nested.params;
+  if (nested.nodes !== undefined) out.subprocess.nodes = nested.nodes;
+  return out;
+}
+
 // subprocessDepth is how many body levels a node brings along (0 for any
 // non-▣ node or a referenced body).
 function subprocessDepth(node) {
@@ -141,7 +158,8 @@ export function wrapPlan(model, ids) {
   if (entries.length > 1) {
     throw new Error(`The selection is entered at ${entries.length} nodes (${entries.join(', ')}); a subprocess has one start. Select a region entered through one node.`);
   }
-  const entry = entries[0] || [...selected].sort()[0];
+  // An island (no connector in) starts at a node nothing inside leads to.
+  const entry = entries[0] || [...selected].sort().find((id) => !internal.some((edge) => edge.to === id)) || [...selected].sort()[0];
   for (const edge of [...incoming, ...outgoing]) model.assertEdgeEditable(edge);
 
   const bodyIDs = new Set(selected);
@@ -165,7 +183,9 @@ export function wrapPlan(model, ids) {
     ends.push(exit);
   }
   const refs = new Set();
-  for (const id of selected) for (const match of JSON.stringify(model.template.nodes[id]).matchAll(PARAM_REF)) refs.add(match[1]);
+  for (const id of selected) {
+    for (const match of JSON.stringify(ownScope(model.template.nodes[id]).own).matchAll(PARAM_REF)) refs.add(match[1]);
+  }
   return { selected, entry, incoming, outgoing, internal, exits: ends, params: [...refs].sort() };
 }
 
@@ -179,7 +199,9 @@ export function wrapSelection(model, ids, { name = '', position } = {}) {
   const id = model.uniqueNodeID(slug(label) || 'subprocess');
   const next = scopeState(model);
 
-  const bodyNodes = Object.fromEntries([...plan.selected].map((nodeID) => [nodeID, clone(model.template.nodes[nodeID])]));
+  // Connectors live in edges; a root node's next map is the stale view the
+  // server sent and must not resurrect into the body (scopeNodes strips it).
+  const bodyNodes = scopeNodes({ nodes: Object.fromEntries([...plan.selected].map((nodeID) => [nodeID, model.template.nodes[nodeID]])) });
   const bodyEdges = [{ from: '', outcome: START_OUTCOME, to: plan.entry }, ...clone(plan.internal)];
   const outputs = {};
   for (const exit of plan.exits) {
@@ -293,8 +315,9 @@ export function unwrapSubprocess(model, id, { origin } = {}) {
   }
   const substitute = (value) => {
     if (!substitutions.size) return value;
-    return JSON.parse(JSON.stringify(value).replace(PARAM_REF, (match, param) => (
-      substitutions.has(param) ? JSON.stringify(substitutions.get(param)).slice(1, -1) : match)));
+    const { own, nested } = ownScope(value);
+    return withNested(JSON.parse(JSON.stringify(own).replace(PARAM_REF, (match, param) => (
+      substitutions.has(param) ? JSON.stringify(substitutions.get(param)).slice(1, -1) : match))), nested);
   };
 
   const next = scopeState(model);

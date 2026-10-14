@@ -1449,7 +1449,10 @@ export class ProcessTemplateEditor {
   // so matching on from/outcome — which the layout spreads through — is the
   // only stable lookup.
   laidEdge(from, outcome) {
-    return this.graph?.layoutSnapshot().edges.find((edge) => edge.from === from && edge.outcome === outcome);
+    // A connector leaving an expanded ▣ is drawn from a body end; source
+    // carries its real identity.
+    return this.graph?.layoutSnapshot().edges.find((edge) => (edge.source?.from ?? edge.from) === from
+      && (edge.source?.outcome ?? edge.outcome) === outcome);
   }
 
   setSelection(selection) {
@@ -2015,8 +2018,9 @@ export class ProcessTemplateEditor {
       createReason: busyReason || 'Adding nodes is not allowed in this view.',
       canEdit: !pending && (templateSelected || (!!one && oneEditable)),
       editReason: busyReason || (!hasSelection ? 'Select one item first.' : selected.length > 1 ? 'Edit one item at a time.' : 'The selected item is read-only.'),
-      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length,
-      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : 'Only node selections can be duplicated.'),
+      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length
+        && !selectedNodes.some((item) => this.model.nestedTarget?.(item.id)),
+      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : selectedNodes.some((item) => this.model.nestedTarget?.(item.id)) ? 'Collapse the expanded subprocess to duplicate its nodes.' : 'Only node selections can be duplicated.'),
       canWrap: !pending && this.model.config.canInsert && selectedNodes.length > 0 && !wrapBlocker(this.model, this.selection),
       wrapReason: busyReason || wrapBlocker(this.model, this.selection) || 'Adding nodes is not allowed in this view.',
       expandable: one?.type === 'node' && this.model.canExpand?.(one.id) ? one.id : '',
