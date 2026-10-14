@@ -126,6 +126,50 @@ function externalBusyReason(editor) {
     : 'An external template reload is in progress.';
 }
 
+// ---- subprocess scopes (E1) ---------------------------------------------------
+
+// Scope ports are drawn as read-only pseudo nodes. Their ids start with '@',
+// which no authored node id can (ids are [a-z0-9][a-z0-9._-]*).
+export const SCOPE_PORT_PREFIX = '@';
+export const SCOPE_PORT_IN = '@in';
+
+export function isScopePortID(id) {
+  return String(id || '').startsWith(SCOPE_PORT_PREFIX);
+}
+
+const NO_PORTS = Object.freeze({ in: false, out: false });
+
+// overlayScopePorts adds the open subprocess's contract to its body graph:
+// one in-port feeding the body's start, and one out-port per parent outcome
+// fed by the end nodes mapped onto it (an unmapped end leaves through the
+// parent's only outcome, as at runtime).
+export function overlayScopePorts(graph, ports) {
+  if (!ports) return graph;
+  const out = { nodes: [...(graph?.nodes || [])], edges: [...(graph?.edges || [])] };
+  const bound = ports.params.filter((param) => ports.inputs[param]).length;
+  out.nodes.push({ id: SCOPE_PORT_IN, type: 'port-in', label: ports.params.length ? `in · ${bound}/${ports.params.length}` : 'in', portAvailability: NO_PORTS, scopePort: true });
+  if (ports.start) out.edges.push({ id: `${SCOPE_PORT_IN}:start`, from: SCOPE_PORT_IN, to: ports.start, outcome: 'start', scopePort: true });
+  for (const outcome of ports.outcomes) {
+    out.nodes.push({ id: `${SCOPE_PORT_PREFIX}out:${outcome}`, type: 'port-out', label: outcome, portAvailability: NO_PORTS, scopePort: true });
+  }
+  for (const end of ports.ends) {
+    const outcome = ports.outputs[end] || (ports.outcomes.length === 1 ? ports.outcomes[0] : '');
+    if (!outcome || !ports.outcomes.includes(outcome)) continue;
+    out.edges.push({ id: `${SCOPE_PORT_PREFIX}${end}:${outcome}`, from: end, to: `${SCOPE_PORT_PREFIX}out:${outcome}`, outcome, scopePort: true });
+  }
+  return out;
+}
+
+// scopeMinimap keeps a bounded picture of the parent graph at drill-in time.
+function scopeMinimap(layout, currentID) {
+  const nodes = (layout?.nodes || []).slice(0, 200).filter((node) => !isScopePortID(node.id)).map((node) => ({
+    id: node.id, x: node.x, y: node.y, width: node.width, height: node.height, type: node.type, current: node.id === currentID,
+  }));
+  const edges = (layout?.edges || []).slice(0, 400).filter((edge) => Array.isArray(edge.points) && edge.points.length > 1)
+    .map((edge) => ({ points: edge.points.map((point) => ({ x: point.x, y: point.y })) }));
+  return { nodes, edges };
+}
+
 function graphInteraction(editor) {
   return editor.graph?.interactionSnapshot?.() || { generation: 0, active: false };
 }
@@ -192,6 +236,10 @@ export class ProcessTemplateEditor {
     // ours, view, changes, decisions, cursor }. Private controller state; only
     // bounded counts and the current change cross into the snapshot.
     this.diffReview = null;
+    // Subprocess drill-in (E1): one parent-graph minimap per open scope, and
+    // whether the open scope's port panel is showing.
+    this.scopeMinimaps = [];
+    this.scopePortsOpen = false;
     this.paletteHidden = false;
     // Docked scribe (E4): open state is per editor; the chat/terminal mode is
     // a remembered per-browser preference.
@@ -298,6 +346,7 @@ export class ProcessTemplateEditor {
         diffReview: !!this.diffReview,
       },
       diff: this.diffReviewSnapshot(),
+      scope: this.scopeSnapshot(),
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
       scribeDock: { ...this.scribeDock, available: !!this.options.scribeDock },
@@ -894,6 +943,135 @@ export class ProcessTemplateEditor {
     }
   }
 
+  // ---- subprocess drill-in (E1) ---------------------------------------------
+
+  scopeSnapshot() {
+    const model = this.model;
+    const depth = model.frames.length;
+    if (this.scopeMinimaps.length > depth) this.scopeMinimaps.length = depth;
+    return {
+      depth,
+      trail: model.scopeTrail(),
+      ports: depth ? model.scopePorts() : null,
+      portsOpen: !!(depth && this.scopePortsOpen),
+      minimap: depth ? this.scopeMinimaps[depth - 1] || null : null,
+      outline: model.outline(),
+    };
+  }
+
+  enterSubprocess(id) {
+    if (this.destroyed || externalInteractionPending(this)) return false;
+    const node = this.model.node(id);
+    if (node?.type !== 'subprocess') return false;
+    if (node.subprocess?.templateRef) {
+      this.status(`${node.name || id} runs the template ${node.subprocess.templateRef}; open that template to edit its graph.`);
+      return false;
+    }
+    if (!this.model.canEnterScope(id)) {
+      this.status('Subprocesses nest at most 4 levels deep.', true);
+      return false;
+    }
+    this.scopeMinimaps.length = this.model.frames.length;
+    this.scopeMinimaps.push(scopeMinimap(this.graph?.layoutSnapshot(), id));
+    this.model.enterScope(id);
+    this.selection = null;
+    this.scopePortsOpen = false;
+    this.refresh({ fit: true });
+    this.status(`Inside ${node.name || id}. Esc or ↑ exit returns to the parent graph.`);
+    return true;
+  }
+
+  exitSubprocess(levels = 1) {
+    if (this.destroyed || !this.model.inScope || externalInteractionPending(this)) return false;
+    let id = '';
+    for (let i = 0; i < levels && this.model.inScope; i += 1) {
+      id = this.model.exitScope();
+      this.scopeMinimaps.pop();
+    }
+    this.scopePortsOpen = false;
+    this.selection = id ? { type: 'node', id } : null;
+    this.refresh({ fit: true });
+    this.status('');
+    return true;
+  }
+
+  goToScopeDepth(depth) {
+    const levels = this.model.frames.length - Math.max(0, depth);
+    return levels > 0 ? this.exitSubprocess(levels) : false;
+  }
+
+  // revealOutlineNode navigates to the scope holding a node (path = the ▣
+  // ids above it) and selects it.
+  revealOutlineNode(path = [], id = '') {
+    if (this.destroyed || externalInteractionPending(this)) return false;
+    const current = this.model.scopePath();
+    let common = 0;
+    while (common < current.length && common < path.length && current[common] === path[common]) common += 1;
+    if (current.length > common) this.exitSubprocess(current.length - common);
+    for (const step of path.slice(common)) if (!this.enterSubprocess(step)) return false;
+    if (id && this.model.node(id)) {
+      this.setSelection({ type: 'node', id });
+      queueMicrotask(() => this.graph?.focusNode?.(id));
+    }
+    return true;
+  }
+
+  toggleScopePorts(open = !this.scopePortsOpen) {
+    if (this.destroyed || !this.model.inScope) return false;
+    this.scopePortsOpen = !!open;
+    if (open) this.setSelection(null);
+    else this.updateChrome();
+    return true;
+  }
+
+  setScopeInput(param, expression) {
+    return this.mutate(() => this.model.setScopeInput(param, expression)) !== undefined;
+  }
+
+  setScopeOutput(end, outcome) {
+    return this.mutate(() => this.model.setScopeOutput(end, outcome)) !== undefined;
+  }
+
+  // extractSubprocess saves the open inline body as a new stored template
+  // and swaps the ▣ node to reference it (ports kept). The swap is an
+  // ordinary undoable edit of this draft; the new template already exists.
+  async extractSubprocess() {
+    if (this.destroyed || !this.model.inScope || this.savePending || externalInteractionPending(this)) return false;
+    const nodeId = this.model.scopePath().at(-1);
+    const label = this.model.scopeTrail().at(-1).label;
+    const name = await this.nameSnippetModal({ title: 'Extract subgraph as a template', submitLabel: 'Extract', initialName: label });
+    if (name == null || this.destroyed) return false;
+    let body;
+    try {
+      body = this.model.extractableBody(name);
+    } catch (error) {
+      this.status(error.message, true);
+      return false;
+    }
+    const guardedModel = this.model;
+    const guardedPath = this.model.scopePath().join('/');
+    let created;
+    try {
+      const response = await fetch('/v1/process/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      created = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(created.message || created.error || `${response.status} ${response.statusText}`);
+    } catch (error) {
+      this.status(`Could not extract the subgraph: ${error.message}`, true);
+      return false;
+    }
+    if (this.destroyed) return false;
+    if (this.model !== guardedModel || this.model.scopePath().join('/') !== guardedPath || !created.id) {
+      this.status(`Saved the subgraph as template ${created.id || name}, but the editor moved on; reference it from the ▣ node yourself.`, true);
+      return false;
+    }
+    this.exitSubprocess(1);
+    if (this.mutate(() => this.model.replaceSubprocessWithRef(nodeId, created.id)) === undefined) return false;
+    this.status(`Extracted into template ${name} (${created.id}); this node now references it. Save to keep the change.`);
+    return true;
+  }
+
   // ---- proposal review (draft diff overlay) --------------------------------
 
   // overlayGraph paints an open review over a (validation-decorated) graph.
@@ -901,9 +1079,10 @@ export class ProcessTemplateEditor {
   // late diagnostics response cannot wipe the proposal off the canvas.
   overlayGraph(graph) {
     const review = this.diffReview;
-    return review ? overlayDraftDiff(graph, {
+    const painted = review ? overlayDraftDiff(graph, {
       theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
     }) : graph;
+    return this.model.inScope ? overlayScopePorts(painted, this.model.scopePorts()) : painted;
   }
 
   diffReviewSnapshot() {
@@ -945,6 +1124,7 @@ export class ProcessTemplateEditor {
       this.status('Close the open editor dialog before reviewing the proposal.', true);
       return false;
     }
+    if (this.model.inScope) this.exitSubprocess(this.model.frames.length);
     const ours = this.model.saveBody();
     const changes = diffTemplateDrafts({ base: this.loadedView, ours, theirs: view });
     if (!changes.length) {
@@ -1218,6 +1398,7 @@ export class ProcessTemplateEditor {
 
   setSelection(selection) {
     if (this.destroyed) return;
+    if (selection) this.scopePortsOpen = false;
     // Template metadata is editor chrome, not a graph entity. Keep it outside
     // process-selection's node/edge-only normalization while explicitly
     // clearing the canvas highlight. A refresh replays this same branch;
@@ -1243,6 +1424,10 @@ export class ProcessTemplateEditor {
 
   onNodeClick({ node, event }) {
     if (!node) return;
+    if (isScopePortID(node.id)) {
+      if (!this.diffReview) this.toggleScopePorts(true);
+      return;
+    }
     if (this.diffReview) {
       const change = draftChangeForNode(this.diffReview.changes, node.id);
       if (change) this.setDiffCursor(change.id);
@@ -1257,7 +1442,8 @@ export class ProcessTemplateEditor {
   // node's structured editing surface. In-place rename stays available via
   // the inspector's label input.
   onNodeDblClick({ node }) {
-    if (!node || this.diffReview) return;
+    if (!node || this.diffReview || isScopePortID(node.id)) return;
+    if (this.model.node(node.id)?.type === 'subprocess' && this.enterSubprocess(node.id)) return;
     this.setSelection({ type: 'node', id: node.id });
     this.openNodeSettings(node.id);
   }
@@ -1308,6 +1494,10 @@ export class ProcessTemplateEditor {
 
   onEdgeClick({ edge, event }) {
     if (!edge) return;
+    if (isScopePortID(edge.from) || isScopePortID(edge.to)) {
+      if (!this.diffReview) this.toggleScopePorts(true);
+      return;
+    }
     if (this.diffReview) {
       const change = draftChangeForEdge(this.diffReview.changes, edge.from, edge.outcome);
       if (change) this.setDiffCursor(change.id);
@@ -1324,6 +1514,14 @@ export class ProcessTemplateEditor {
   commitNodeDrag({ starts, delta, moved = true }) {
     if (this.destroyed || !this.graph) return;
     if (!moved || !starts?.length || !delta) return;
+    // Scope ports are laid out, never pinned: a dragged port snaps back.
+    if (starts.some((start) => isScopePortID(start.id))) {
+      starts = starts.filter((start) => !isScopePortID(start.id));
+      if (!starts.length) {
+        this.refresh();
+        return;
+      }
+    }
     // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
     // graph units, so scale by the zoom before comparing — at high zoom a
     // small visible drag is a tiny graph-unit delta and must still commit.
@@ -1798,6 +1996,13 @@ export class ProcessTemplateEditor {
     // belong to that panel: deleting the node from under a focused ✕ or ↑ is
     // never what Delete/Backspace meant there.
     const inInspector = !!event.target?.closest?.('[data-node-inspector]');
+    // Leaving a subgraph: Alt+↑ always, Esc once nothing is selected.
+    if (this.model?.inScope && !inInput && !event.ctrlKey && !event.metaKey
+        && ((event.key === 'ArrowUp' && event.altKey) || (event.key === 'Escape' && !this.selection && !event.altKey))) {
+      event.preventDefault();
+      this.exitSubprocess(1);
+      return;
+    }
     if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && !inInspector && this.selection) {
       event.preventDefault();
       this.deleteSelection();

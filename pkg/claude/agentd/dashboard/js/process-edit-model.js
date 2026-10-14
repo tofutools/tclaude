@@ -423,10 +423,10 @@ export class ProcessEditModel {
     return true;
   }
 
-  // replaceScopeWithRef swaps an inline body for a reference to a template
-  // the body was just extracted into, keeping the ports. Root-level edit.
+  // replaceSubprocessWithRef swaps an inline body (a node of the CURRENT
+  // scope) for a reference to the template it was extracted into, keeping
+  // the ports.
   replaceSubprocessWithRef(id, templateRef) {
-    if (this.inScope) throw new Error('exit the subprocess before replacing its body');
     const node = this.template.nodes[id];
     if (node?.type !== 'subprocess' || !isInlineSubprocess(node.subprocess)) throw new Error(`node ${id} has no inline body`);
     if (!templateRef) throw new Error('template id is required');
