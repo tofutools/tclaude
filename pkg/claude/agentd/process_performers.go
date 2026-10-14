@@ -73,9 +73,6 @@ type processRunScope struct {
 	Paused bool
 }
 
-// processRunPausedWaitReason is why a paused run's undelivered attempt waits.
-const processRunPausedWaitReason = "the run is paused"
-
 // processOwnerOperator is the run owner for runs the operator started.
 const processOwnerOperator = "human:operator"
 
@@ -345,11 +342,15 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 		slog.Warn("process performers: scope lookup failed", "run", row.RunID, "error", err)
 		return
 	}
+	if scope.Paused {
+		// A paused run starts no new agent turn. The attempt stays as it is —
+		// not needs_performer, which would ask a human for a performer — and
+		// resume's dispatch pass delivers it.
+		return
+	}
 	var choice processPerformerChoice
 	if scope.Orphaned {
 		choice.waitReason = "the run is orphaned: its scope target is gone"
-	} else if scope.Paused {
-		choice.waitReason = processRunPausedWaitReason
 	} else {
 		previous := previousProcessDispatch(row)
 		body := processDispatchMessage(row.RunID, command, "")

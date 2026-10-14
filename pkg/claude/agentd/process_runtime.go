@@ -543,6 +543,17 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	}
 	// A paused run still records what arrives — outcomes, reports, verdicts —
 	// but plans nothing new. A reissue IS a new command, so it waits too.
+	// The planning gate makes this pause read and the planning below one step
+	// against a concurrent pause (see processRunPauseGate).
+	processRunPauseGate.RLock()
+	planningGated := true
+	ungatePlanning := func() {
+		if planningGated {
+			planningGated = false
+			processRunPauseGate.RUnlock()
+		}
+	}
+	defer ungatePlanning()
 	paused, err := processRunPaused(runID)
 	if err != nil {
 		return false, err
@@ -603,6 +614,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	default:
 		err = fmt.Errorf("unknown process run start mode")
 	}
+	ungatePlanning()
 	if err != nil {
 		return false, err
 	}
@@ -789,8 +801,9 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 				pendingPrograms++
 			}
 		}
-		refreshProcessRunHold(runID, claim.run)
+		ungate := gateProcessRunPlanning(runID, claim.run)
 		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-pendingPrograms)
+		ungate()
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -810,10 +823,11 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		executor.Abandon(claim.run, result.dispatch)
 		return nil
 	}
-	refreshProcessRunHold(runID, claim.run)
+	ungate := gateProcessRunPlanning(runID, claim.run)
 	next, err := claim.plan(func() (*executor.Dispatch, error) {
 		return executor.Observe(claim.run, result.dispatch, result.result)
 	})
+	ungate()
 	// Best-effort sibling cancellation, decided on the run rather than on this
 	// observation: with authored retries a failed program is ordinarily just one
 	// attempt ending, and the branch is re-readied for the next one. Cancelling
@@ -1156,7 +1170,7 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	started, err := processRuns.begin(runID, processRunStart{mode: processRunResume})
+	started, err := resumeProcessRun(runID, unpaused)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return

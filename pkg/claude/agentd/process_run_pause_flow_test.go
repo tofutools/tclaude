@@ -350,3 +350,34 @@ func TestProcessEpic_ScopeDispatchReportReassignPauseResume(t *testing.T) {
 	assert.Equal(t, 1, countKind(kinds, "run_resumed"))
 	assert.Equal(t, 3, countKind(kinds, "agent_reported"))
 }
+
+// Scenario: an agent attempt that is still undelivered when the run is paused
+// stays undelivered — a member who could take it joins, the dispatch sweep
+// runs, and nobody is handed a turn — and resume delivers it.
+func TestProcessRunPause_HoldsUndeliveredAgentTurnUntilResume(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	putProcessRuntimeTemplate(t, root, performerTemplate("pause-undelivered", devPerformer(), nil))
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_pause_undelivered", "templateId": "pause-undelivered", "group": "crew", "authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	view := showPerformerRun(t, f, "run_pause_undelivered")
+	require.Len(t, view.Commands, 1)
+	assert.Equal(t, db.ProcessDispatchNeedsPerformer, view.Commands[0].State, "nobody in the group can take it yet")
+
+	paused := pauseRun(t, f.Mux, pauseHumanReq(t), "run_pause_undelivered", "pause", http.StatusOK)
+	require.True(t, paused.Changed)
+	const joiner = "pjoi-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", joiner, "dave", "dev", "idle")
+	agentd.SweepProcessAgentDispatchesForTest()
+	held := showPerformerRun(t, f, "run_pause_undelivered")
+	assert.NotEqual(t, db.ProcessDispatchDelivered, held.Commands[0].State)
+	assert.Empty(t, processInbox(t, joiner), "a paused run hands out no new turn")
+
+	resumed := pauseRun(t, f.Mux, pauseHumanReq(t), "run_pause_undelivered", "resume", http.StatusAccepted)
+	assert.True(t, resumed.Unpaused)
+	delivered := showPerformerRun(t, f, "run_pause_undelivered")
+	assert.Equal(t, db.ProcessDispatchDelivered, delivered.Commands[0].State)
+	assert.Len(t, processInbox(t, joiner), 1)
+}

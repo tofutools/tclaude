@@ -338,8 +338,8 @@ turns or program commands, while attempts already in flight finish and their
 outcomes and reports are recorded. Decisions are still accepted; what they
 make ready waits too. A paused run's `paused` field says who paused it and
 when, its `action` reads `paused` unless something still needs a human, an
-undelivered agent attempt waits with the reason "the run is paused", and
-reassigning (which would start a new turn) is refused until it is resumed.
+undelivered agent attempt stays undelivered, and reassigning (which would
+start a new turn) is refused until it is resumed.
 `tclaude process resume <run-id>` (`POST /v1/process/runs/{id}/resume`)
 releases the pause and plans what waited. Both need the same permission as
 `decide`, are idempotent, and record `run_paused` / `run_resumed` evidence; a
