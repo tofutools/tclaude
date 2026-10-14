@@ -8,6 +8,8 @@ import { severityGlyph } from './process-validation.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
+import { ScribeDock } from './process-scribe-dock.js';
+import { DiffReviewBar } from './process-diff-review.js';
 import { ParamsDialog } from './process-params-dialog.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
@@ -147,7 +149,10 @@ function Header({ controller, view }) {
     <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
     <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
     <button class="process-action" type="button" title="Process commands (Ctrl/Cmd-K)" aria-label="Open process commands (Ctrl/Cmd-K)" onClick=${() => controller.openCommands()}>⌘K commands</button>
-    <button class="process-action process-scribe-action" type="button" disabled=${externalPending || pending.save} title="Open an agent scoped to this exact process template" onClick=${() => controller.requestScribe('template')}>
+    <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"
+      disabled=${!view.scribeDock?.available && (externalPending || pending.save)} aria-pressed=${view.scribeDock?.available ? String(!!view.scribeDock.open) : undefined}
+      title=${view.scribeDock?.available ? 'Co-design this template with its scoped process scribe (chat or terminal)' : 'Open an agent scoped to this exact process template'}
+      onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
     </button>
     <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version (Ctrl/Cmd+S)" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
@@ -209,6 +214,9 @@ function ExternalChange({ controller, view }) {
         ${change.kind === 'dirty' ? 'Reload & discard' : 'Apply update'}
       </button>
       ${change.kind === 'dirty' && html`<button class="process-action" type="button" disabled=${pending || view.pending.save} onClick=${() => controller.keepExternalChange()}>Keep editing</button>`}
+      <button class="process-action primary" type="button" data-review-on-canvas disabled=${pending || view.pending.save || view.diff?.open}
+        title="Show this version on the canvas and accept or reject each change; your local edits stay until you decide"
+        onClick=${() => controller.openDiffReview()}>Review on canvas</button>
     </div>
     ${change.reviewOpen && html`<div class="process-external-review">
       <div class="process-external-graph-summary">${review?.graph || (change.reviewPending ? 'Loading the exact polled generation…' : 'Change summary unavailable; retry Review changes.')}</div>
@@ -489,7 +497,9 @@ export function ProcessEditorApp({ controller }) {
         <${Issues} controller=${controller} issues=${view.issues} />
       </div>
       <${NodeInspector} controller=${controller} view=${view} />
+      <${ScribeDock} controller=${controller} view=${view} />
     </div>
+    <${DiffReviewBar} controller=${controller} view=${view} />
     <${Inspector} controller=${controller} view=${view} />
   </div><${EditorModal} controller=${controller} descriptor=${view.modal} /></${Fragment}>`;
 }

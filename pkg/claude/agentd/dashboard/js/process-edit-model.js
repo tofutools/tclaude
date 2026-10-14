@@ -834,6 +834,30 @@ export class ProcessEditModel {
     };
   }
 
+  // adoptReviewedGeneration applies a reviewed three-way merge
+  // (process-draft-diff.js) as ONE undoable mutation and rebases the CAS base
+  // onto the reviewed generation: its changes are now part of this draft,
+  // whether accepted or deliberately rejected. clean marks the merge as
+  // byte-for-byte that saved generation; otherwise the draft stays dirty and
+  // a later Save writes the human's choices on top of it.
+  adoptReviewedGeneration({ template, edges, layout } = {}, { ref, sourceHash, semanticHash } = {}, { clean = false } = {}) {
+    this.begin();
+    const id = this.template.id;
+    this.template = clone(template) || {};
+    this.template.id = id;
+    if (!this.template.nodes) this.template.nodes = {};
+    if (!this.template.params) this.template.params = {};
+    this.edges = clone(edges) || [];
+    this.layout = clone(layout) || {};
+    if (!this.layout.nodes) this.layout.nodes = {};
+    this.sourceHash = sourceHash || '';
+    this.currentRef = ref || '';
+    this.semanticHash = semanticHash || '';
+    // Not clean: the CAS base moved to the reviewed version, so no undo
+    // snapshot (whose content predates it) may ever read as saved again.
+    this.savedRev = clean ? this.rev : -1;
+  }
+
   // markSaved baselines dirty at savedAtRev -- the rev captured when the save
   // payload was built. Edits made while the POST was in flight keep the model
   // dirty because their revs are minted after savedAtRev.

@@ -208,6 +208,7 @@ var peerViewLocalRoutes = []string{
 	"/api/sandbox-profiles",
 	"/api/sandbox-profiles/{name}",
 	"/api/scribe",
+	"GET /api/scribe/{agent}/chat",
 	"/api/shutdown",
 	"/api/slop/channel",
 	"/api/slop/nowplaying",
