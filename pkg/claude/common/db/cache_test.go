@@ -50,7 +50,9 @@ func TestLoadDashboardUsageCaches(t *testing.T) {
 	assert.Nil(t, copilot)
 	assert.False(t, hasHistory)
 
-	fetchedAt := time.Date(2026, 7, 16, 10, 0, 0, 123_000_000, time.UTC)
+	// Anchor to now: LoadDashboardUsageCaches only counts quota history inside
+	// the retention window, so a fixed calendar date ages out and fails.
+	fetchedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour + 123*time.Millisecond)
 	lastAttemptAt := fetchedAt.Add(time.Minute)
 	require.NoError(t, SaveUsageCache(
 		json.RawMessage(`{"five_hour":{"pct":42}}`), fetchedAt, lastAttemptAt,
