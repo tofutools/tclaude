@@ -72,6 +72,12 @@ type processRunOutcomeInput struct {
 	outcome  executor.RecordedOutcome
 }
 
+// cancels reports whether this input gives the run up — the one input an
+// orphaned run still accepts.
+func (i processRunInput) cancels() bool {
+	return i.resolution != nil && i.resolution.Action == engine.ResolveCancel
+}
+
 // apply commits this input against the run. It is called only by the run's
 // owner — either the live claim's driver goroutine or the fresh claim a
 // begin() took — so it is never a second writer.
@@ -253,6 +259,7 @@ type processRunView struct {
 	AwaitingDecisions []processRunDecisionView `json:"awaitingDecisions"`
 	Commands          []processRunCommandView  `json:"commands"`
 	Blocked           []processRunBlockedView  `json:"blocked"`
+	Scope             processRunScopeView      `json:"scope"`
 	// Performers is every agent node attempt's performer, oldest attempt first
 	// per node: who was chosen, how, and what they reported.
 	Performers []processRunPerformerView `json:"performers"`
@@ -313,12 +320,13 @@ const (
 )
 
 type processRunSummaryView struct {
-	ID           string           `json:"id"`
-	TemplateRef  string           `json:"templateRef"`
-	Status       engine.RunStatus `json:"status"`
-	StateVersion int64            `json:"stateVersion"`
-	CreatedAt    time.Time        `json:"createdAt"`
-	UpdatedAt    time.Time        `json:"updatedAt"`
+	ID           string              `json:"id"`
+	TemplateRef  string              `json:"templateRef"`
+	Status       engine.RunStatus    `json:"status"`
+	StateVersion int64               `json:"stateVersion"`
+	Scope        processRunScopeView `json:"scope"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
 }
 
 type processRunEventView struct {
@@ -335,6 +343,10 @@ type processRunCreateRequest struct {
 	TemplateID               string            `json:"templateId"`
 	Params                   map[string]string `json:"params,omitempty"`
 	AuthorizeProgramProfiles []string          `json:"authorizeProgramProfiles"`
+	// Group or Agent (at most one) binds the run's scope; neither leaves it
+	// unscoped. Both accept the selectors the agent CLI uses elsewhere.
+	Group string `json:"group,omitempty"`
+	Agent string `json:"agent,omitempty"`
 }
 
 type processRunOutcomeRequest struct {
@@ -502,6 +514,16 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		}
 	}()
 
+	// An orphaned run is parked for a human to re-scope: nothing — resume,
+	// sweep, or operator input — may advance it until then. Canceling it is
+	// the one input that still applies, since it only gives the run up.
+	orphaned, err := processRunOrphaned(runID)
+	if err != nil {
+		return false, err
+	}
+	if orphaned && (start.mode != processRunApplyInput || !start.input.cancels()) {
+		return false, errProcessRunOrphaned
+	}
 	run := prepared
 	if run == nil {
 		run, err = executor.LoadRun(runID)
@@ -695,6 +717,18 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// program result is serialized here rather than by a lock: whichever
 			// the select takes first commits first, and the loser sees the state
 			// the winner left behind.
+			//
+			// The orphan gate applies here as in beginRun, so an input is not
+			// accepted merely because programs happened to still be in flight.
+			if !request.input.cancels() {
+				if orphaned, err := processRunOrphaned(runID); err != nil || orphaned {
+					if err == nil {
+						err = errProcessRunOrphaned
+					}
+					request.reply <- err
+					break
+				}
+			}
 			applyErr := request.input.apply(claim.run, request.actor)
 			request.reply <- applyErr
 			// An operator cancel dooms the run from HERE rather than from an
@@ -706,6 +740,15 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 				claim.cancelWorkers()
 				withdrawDrainingAgentCommands(runID, claim.run)
 			}
+		}
+		// Work already planned runs to its observation, but an owner whose
+		// run lost its scope target plans nothing further.
+		if orphaned, err := processRunOrphaned(runID); err != nil || orphaned {
+			if err != nil {
+				slog.Warn("process runtime: scope check failed; not planning", "run", runID, "error", err)
+			}
+			start(pending)
+			continue
 		}
 		// fillProcessRun already counts outstanding agent commands, so only the
 		// pending programs take a slot here.
@@ -843,6 +886,11 @@ func sweepProcessRuns() {
 	if !processRoutesEnabled() {
 		return
 	}
+	if count, err := db.OrphanProcessRunsWithMissingScope(); err != nil {
+		slog.Warn("process runtime: scope orphan sweep failed", "error", err)
+	} else if count > 0 {
+		slog.Info("process runtime: orphaned runs whose scope target is gone", "runs", count)
+	}
 	processRuns.mu.Lock()
 	after := processRuns.sweepCursor
 	processRuns.mu.Unlock()
@@ -903,7 +951,11 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	runs, err := db.ListProcessRunSummaries(after, limit)
+	filter, ok := processRunListFilter(w, r)
+	if !ok {
+		return
+	}
+	runs, err := db.ListProcessRunSummaries(after, limit, filter)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -913,6 +965,7 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		views = append(views, processRunSummaryView{
 			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef,
 			Status: engine.RunStatus(runs[i].Status), StateVersion: runs[i].StateVersion,
+			Scope:     processRunScopeViewOf(runs[i].Scope),
 			CreatedAt: runs[i].CreatedAt, UpdatedAt: runs[i].UpdatedAt,
 		})
 	}
@@ -934,7 +987,7 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	// expressible through the same identifier operators use to create runs and
 	// lets them survive routine template version updates.
 	templateID := strings.TrimSpace(request.TemplateID)
-	caller, ok := requirePermission(w, r, PermProcessRunsManage, ActionContext{ProcessTemplate: templateID})
+	caller, scope, ok := authorizeProcessRunCreate(w, r, request, templateID)
 	if !ok {
 		return
 	}
@@ -944,7 +997,8 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	run, err := createProcessRun(r.Context(), request, string(actor))
+	scope.Owner = string(actor)
+	run, err := createProcessRun(r.Context(), request, string(actor), scope)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -966,7 +1020,14 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 
 func processRunCreateAuditDetail(request processRunCreateRequest) string {
 	profiles, _ := json.Marshal(request.AuthorizeProgramProfiles)
-	return "template: " + strings.TrimSpace(request.TemplateID) + ", authorized profiles: " + string(profiles)
+	detail := "template: " + strings.TrimSpace(request.TemplateID) + ", authorized profiles: " + string(profiles)
+	if group := strings.TrimSpace(request.Group); group != "" {
+		detail += ", group: " + stripControl(group)
+	}
+	if bound := strings.TrimSpace(request.Agent); bound != "" {
+		detail += ", agent: " + stripControl(bound)
+	}
+	return detail
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
@@ -1251,7 +1312,7 @@ func stripControl(value string) string {
 	}, value)
 }
 
-func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
+func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string, scope db.ProcessRunScope) (*executor.Run, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
 		return nil, fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
@@ -1317,7 +1378,11 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	payload, err := json.Marshal(struct {
 		TemplateRef           string   `json:"templateRef"`
 		ProgramAuthorizations []string `json:"programAuthorizations"`
-	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations})
+		ScopeKind             string   `json:"scopeKind"`
+		ScopeGroupID          int64    `json:"scopeGroupId,omitempty"`
+		ScopeAgentID          string   `json:"scopeAgentId,omitempty"`
+	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations,
+		ScopeKind: scope.Kind, ScopeGroupID: scope.GroupID, ScopeAgentID: scope.AgentID})
 	if err != nil {
 		return nil, err
 	}
@@ -1325,7 +1390,7 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: paramsJSON, ProgramAuthorizationsJSON: authorizationsJSON,
 		Status: string(checkpoint.Status), StateVersion: db.InitialProcessRunStateVersion,
-		CheckpointJSON: checkpointJSON,
+		CheckpointJSON: checkpointJSON, Scope: scope,
 	}
 	createdAt := time.Now().UTC()
 	initialEvents := []db.ProcessRunEvent{{
@@ -1353,7 +1418,7 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		ID: record.ID, TemplateRef: record.TemplateRef, TemplateSnapshotJSON: record.TemplateSnapshotJSON,
 		ParamsJSON: record.ParamsJSON, ProgramAuthorizationsJSON: record.ProgramAuthorizationsJSON,
 		Status: record.Status, CheckpointJSON: record.CheckpointJSON,
-		InitialEvents: initialEvents,
+		Scope: record.Scope, InitialEvents: initialEvents,
 	})
 	if err != nil {
 		return nil, err
@@ -1578,6 +1643,8 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 	// a parked branch, and the plural fields above stay addressable regardless.
 	action := "runnable"
 	switch {
+	case record.Scope.Orphaned() && checkpoint.Status == engine.RunRunning:
+		action = "orphaned"
 	case needsReconcile:
 		action = processCommandNeedsReconcile
 	case anyExecuting:
@@ -1601,7 +1668,7 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
-		Blocked: blocked, Performers: performers,
+		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
@@ -1657,6 +1724,10 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "process_run_not_found", err.Error())
 	case errors.Is(err, db.ErrProcessRunExists):
 		writeError(w, http.StatusConflict, "process_run_exists", err.Error())
+	case errors.Is(err, errProcessRunOrphaned):
+		writeError(w, http.StatusConflict, "process_run_orphaned", err.Error())
+	case errors.Is(err, db.ErrProcessRunRescope):
+		writeError(w, http.StatusConflict, "process_run_rescope", err.Error())
 	case errors.Is(err, errProcessRunClaimed):
 		writeError(w, http.StatusConflict, "process_run_claimed", err.Error())
 	case errors.Is(err, errProcessRunCapacity):
