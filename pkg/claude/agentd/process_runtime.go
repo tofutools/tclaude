@@ -62,6 +62,14 @@ type processRunInput struct {
 	decision    *executor.DecisionInput
 	resolution  *executor.ResolutionInput
 	agentReport *executor.AgentReport
+	// outcome is an operator-recorded outcome for an agent command: human
+	// preemption of a performer, which must not wait for sibling programs.
+	outcome *processRunOutcomeInput
+}
+
+type processRunOutcomeInput struct {
+	selector string
+	outcome  executor.RecordedOutcome
 }
 
 // apply commits this input against the run. It is called only by the run's
@@ -75,6 +83,8 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.ResolveBlocked(run, actor, *i.resolution)
 	case i.agentReport != nil:
 		return executor.RecordAgentReport(run, actor, *i.agentReport)
+	case i.outcome != nil:
+		return executor.RecordOutcome(run, actor, i.outcome.selector, i.outcome.outcome)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
@@ -697,7 +707,15 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 				withdrawDrainingAgentCommands(runID, claim.run)
 			}
 		}
-		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
+		// fillProcessRun already counts outstanding agent commands, so only the
+		// pending programs take a slot here.
+		pendingPrograms := 0
+		for _, dispatch := range pending {
+			if dispatch.Command().Kind != engine.CommandAgent {
+				pendingPrograms++
+			}
+		}
+		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-pendingPrograms)
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -1102,10 +1120,22 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	selector := strings.TrimSpace(request.NodeID)
 	setAuditDetail(r, "run: "+runID+", command node: "+stripControl(selector)+
 		", outcome: "+stripControl(string(request.Outcome)))
+	outcome := executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note}
 	started, err := processRuns.begin(runID, processRunStart{
-		mode: processRunRecordOutcome, actor: string(actor), selector: selector,
-		outcome: executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note},
+		mode: processRunRecordOutcome, actor: string(actor), selector: selector, outcome: outcome,
 	})
+	if errors.Is(err, errProcessRunClaimed) {
+		// A live owner is driving sibling programs. Its executing programs are
+		// never reconcilable, so routing the outcome through the owner can only
+		// settle an agent command: human preemption of a performer.
+		started, err = processRuns.submit(runID, string(actor), processRunInput{
+			outcome: &processRunOutcomeInput{selector: selector, outcome: outcome}})
+		if errors.Is(err, executor.ErrNoReconciliation) {
+			// The selected command is a program the owner is executing: it is
+			// not the operator's to settle while the run is claimed.
+			err = errProcessRunClaimed
+		}
+	}
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return

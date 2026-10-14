@@ -84,10 +84,16 @@ func validateAgentReport(report AgentReport) error {
 	if report.Outcome != engine.ProgramSucceeded && report.Outcome != engine.ProgramFailed {
 		return fmt.Errorf("%w: outcome must be %s or %s", ErrInvalidAgentReport, engine.ProgramSucceeded, engine.ProgramFailed)
 	}
-	if len(report.Note) > MaxAgentReportNoteBytes || !utf8.ValidString(report.Note) {
+	return ValidateAgentReportNote(report.Note)
+}
+
+// ValidateAgentReportNote checks a performer's report note: bounded UTF-8 with
+// no control characters other than line breaks and tabs.
+func ValidateAgentReportNote(note string) error {
+	if len(note) > MaxAgentReportNoteBytes || !utf8.ValidString(note) {
 		return fmt.Errorf("%w: note must be at most %d bytes of UTF-8", ErrInvalidAgentReport, MaxAgentReportNoteBytes)
 	}
-	for _, value := range report.Note {
+	for _, value := range note {
 		if unicode.IsControl(value) && value != '\n' && value != '\r' && value != '\t' {
 			return fmt.Errorf("%w: note cannot contain control characters other than line breaks and tabs", ErrInvalidAgentReport)
 		}

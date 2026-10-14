@@ -70,12 +70,15 @@ type processRunScope struct {
 	Orphaned bool
 }
 
+// processOwnerOperator is the run owner for runs the operator started.
+const processOwnerOperator = "human:operator"
+
 // processRunScopeOf resolves a run's scope. Until run scopes persist, every run
 // is unscoped and owned by whoever created it.
 var processRunScopeOf = defaultProcessRunScope
 
 func defaultProcessRunScope(runID string) (processRunScope, error) {
-	scope := processRunScope{Kind: processScopeNone, Owner: "human:operator"}
+	scope := processRunScope{Kind: processScopeNone, Owner: processOwnerOperator}
 	events, err := db.ListProcessRunEvents(runID, 0, 1)
 	if err != nil {
 		return scope, err
@@ -164,13 +167,21 @@ func sweepProcessAgentDispatches() {
 // with its durable checkpoint: rows for new commands, delivery for unresolved
 // ones, re-resolution for lost performers, recovery of committed-but-unapplied
 // reports, withdrawal from a draining run, and closure of settled commands.
+//
+// The checkpoint is read under processDispatchMu. Rows are only created under
+// that lock, so the snapshot always covers every open row: a snapshot read
+// before the lock could predate a command another pass has since delivered,
+// and would close that live dispatch for good.
 func reconcileProcessRunAgentDispatches(runID string) error {
+	processDispatchMu.Lock()
 	record, err := db.GetProcessRun(runID)
 	if err != nil {
+		processDispatchMu.Unlock()
 		return err
 	}
 	var checkpoint engine.Checkpoint
 	if err := json.Unmarshal(record.CheckpointJSON, &checkpoint); err != nil {
+		processDispatchMu.Unlock()
 		return fmt.Errorf("decode checkpoint: %w", err)
 	}
 	outstanding := map[string]engine.Command{}
@@ -182,7 +193,6 @@ func reconcileProcessRunAgentDispatches(runID string) error {
 
 	var withdraw []engine.Command
 	var reapply []db.ProcessAgentDispatch
-	processDispatchMu.Lock()
 	for _, command := range sortedCommands(outstanding) {
 		if _, err := db.EnsureProcessAgentDispatch(runID, command.ID, command.NodeID, command.Attempt); err != nil {
 			processDispatchMu.Unlock()
@@ -270,6 +280,14 @@ func processPerformerLostReason(scope processRunScope, agentID string) string {
 	performer, err := db.GetAgent(agentID)
 	if err != nil {
 		return ""
+	}
+	if performer == nil {
+		// A spawned performer whose launch is still pending has no agent row
+		// yet. It is starting, not lost; only a spawn that died is.
+		if pending, err := db.GetPendingSpawnByAgentID(agentID); err != nil || pending != nil {
+			return ""
+		}
+		return "performer " + agentID + " never started"
 	}
 	if !performer.Active() {
 		return "performer " + agentID + " was retired"
@@ -491,10 +509,15 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			}
 		}
 		if spec.Assignee != "" {
-			if candidate := processAgentBySelector(spec.Assignee); candidate != nil {
-				return processPerformerChoice{candidate: candidate, resolution: processResolutionAssignee}
+			candidate := processAgentBySelector(spec.Assignee)
+			if candidate == nil {
+				return processPerformerChoice{waitReason: fmt.Sprintf("assignee %q is not an active agent", spec.Assignee)}
 			}
-			return processPerformerChoice{waitReason: fmt.Sprintf("assignee %q is not an active agent", spec.Assignee)}
+			if !processOwnerMayTask(scope.Owner, *candidate) {
+				return processPerformerChoice{waitReason: fmt.Sprintf(
+					"assignee %q shares no group with the run owner", spec.Assignee)}
+			}
+			return processPerformerChoice{candidate: candidate, resolution: processResolutionAssignee}
 		}
 		return processPerformerChoice{waitReason: "an unscoped run has no members to perform this node: " +
 			"name an assignee, or start the run scoped to a group or an agent"}
@@ -636,6 +659,26 @@ func processAgentBySelector(selector string) *processPerformerCandidate {
 	}
 	candidate, _ := processBoundCandidate(resolved.AgentID)
 	return candidate
+}
+
+// processOwnerMayTask reports whether an unscoped run's owner may hand a node
+// to this agent. The daemon delivers on the owner's behalf, so an agent owner
+// reaches only itself and agents it shares a group with — the same reach its
+// own messages have. The operator reaches every agent.
+func processOwnerMayTask(owner string, candidate processPerformerCandidate) bool {
+	ownerAgent, ok := strings.CutPrefix(owner, "agent:")
+	if !ok {
+		return owner == processOwnerOperator
+	}
+	if ownerAgent == candidate.AgentID {
+		return true
+	}
+	ownerConv, _ := db.CurrentConvForAgent(ownerAgent)
+	if ownerConv == "" {
+		return false
+	}
+	shared, err := db.SharedGroupsForConvs(ownerConv, candidate.ConvID)
+	return err == nil && len(shared) > 0
 }
 
 // processCandidateMatches reports whether an assignee names this agent: by
@@ -814,9 +857,10 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Note = strings.TrimSpace(request.Note)
-	if len(request.Note) > executor.MaxAgentReportNoteBytes {
-		writeError(w, http.StatusUnprocessableEntity, "process_report_note",
-			fmt.Sprintf("note must be at most %d bytes", executor.MaxAgentReportNoteBytes))
+	// Validate before the report is recorded: a recorded report the executor
+	// then refuses could never be applied or corrected.
+	if err := executor.ValidateAgentReportNote(request.Note); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_report_note", err.Error())
 		return
 	}
 	setAuditDetail(r, "run: "+stripControl(request.RunID)+", node: "+stripControl(request.NodeID)+

@@ -2,12 +2,16 @@ package agentd_test
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,6 +115,13 @@ func startPerformerRun(t *testing.T, f *testharness.Flow, root, runID string, tm
 func showPerformerRun(t *testing.T, f *testharness.Flow, runID string) performerRunView {
 	t.Helper()
 	agentd.WaitForProcessDispatchForTest()
+	return peekPerformerRun(t, f, runID)
+}
+
+// peekPerformerRun reads the run view without waiting for background passes,
+// for a test that holds a run's live owner on purpose.
+func peekPerformerRun(t *testing.T, f *testharness.Flow, runID string) performerRunView {
+	t.Helper()
 	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+runID, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var view performerRunView
@@ -252,6 +263,12 @@ func TestProcessPerformer_ReportAuthenticationAndIdempotency(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, human.Code, human.Body.String())
 
 	assert.Equal(t, engine.RunRunning, showPerformerRun(t, f, "run_auth").Status, "refused reports change nothing")
+
+	// A note the executor would refuse is refused before it is recorded, so
+	// the performer can simply report again.
+	bad := reportAs(t, f, performer, map[string]any{"outcome": "failed", "note": "boom \u001b[31mred"})
+	assert.Equal(t, http.StatusUnprocessableEntity, bad.Code, bad.Body.String())
+	assert.Contains(t, bad.Body.String(), "process_report_note")
 
 	// The performer's single open node needs no selector.
 	first := reportAs(t, f, performer, map[string]any{"outcome": "succeeded"})
@@ -542,6 +559,16 @@ func TestProcessPerformer_UnscopedRunNeedsAssignee(t *testing.T) {
 	require.NotNil(t, view.Commands[0].Performer)
 	assert.Equal(t, alice, view.Commands[0].Performer.AgentID)
 	assert.Equal(t, "assignee", view.Commands[0].Performer.Resolution)
+
+	// An agent-owned run reaches only agents its owner shares a group with:
+	// the daemon delivers on the owner's behalf.
+	f.HaveGroup("elsewhere")
+	owner := havePerformerAgent(t, f, "elsewhere", "ownr-1111-2222-3333-4444", "owen", "lead", "idle")
+	foreign := startPerformerRun(t, f, root, "run_foreign", performerTemplate("foreign", assigned, nil),
+		agentd.ProcessRunScopeForTest{Kind: "none", Owner: "agent:" + owner})
+	assert.Equal(t, "needs_performer", foreign.Action)
+	assert.Contains(t, foreign.Commands[0].Performer.WaitReason, "shares no group with the run owner")
+	assert.Len(t, processInbox(t, conv), 1, "only the operator-owned run reached alice")
 }
 
 // Scenario: a person settles an agent's node in its place (human
@@ -617,4 +644,59 @@ func TestProcessPerformer_DoomedRunWithdrawsAgentAttempt(t *testing.T) {
 
 	late := reportAs(t, f, performer, map[string]any{"runId": "run_withdraw", "nodeId": performerNode, "outcome": "succeeded"})
 	assert.Equal(t, http.StatusConflict, late.Code, late.Body.String())
+}
+
+// Scenario: a person settles an agent's node while a sibling program branch is
+// still running. The run is claimed by its live owner, so the outcome is
+// routed through that owner instead of being refused as claimed.
+func TestProcessPerformer_HumanPreemptionWhileSiblingProgramRuns(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const performer = "pclm-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", performer, "alice", "dev", "idle")
+	agentNode := devPerformer()
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "preempt-claimed", Start: "start",
+		Nodes: map[string]model.Node{
+			"start":       {Type: model.NodeTypeStart, Next: model.Next{"next": "fork"}},
+			"fork":        {Type: model.NodeTypeParallel, Next: model.Next{"agent": performerNode, "program": "slow"}},
+			performerNode: {Type: model.NodeTypeTask, Performer: &agentNode, Next: model.Next{"next": "join"}},
+			"slow": {Type: model.NodeTypeTask, Next: model.Next{"next": "join"},
+				Performer: &model.Performer{Kind: model.PerformerProgram, Profile: "safe", Run: "true"}},
+			"join": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "success"},
+		},
+	}
+	putProcessRuntimeTemplate(t, root, tmpl)
+	// The sibling program holds the run's live owner until the test lets go.
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		<-release
+		return processObservation(dispatch.Command(), engine.ProgramSucceeded, 0), nil
+	}))
+	t.Cleanup(letGo) // before restoring the hook, which waits for the runtime
+	t.Cleanup(agentd.SetProcessRunScopeForTest("run_preempt_claimed", agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID}))
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_preempt_claimed", "templateId": "preempt-claimed", "authorizeProgramProfiles": []string{"safe"},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	require.Eventually(t, func() bool {
+		return len(peekPerformerRun(t, f, "run_preempt_claimed").Performers) == 1
+	}, 5*time.Second, 10*time.Millisecond, "the agent node is delivered while the program runs: %+v",
+		peekPerformerRun(t, f, "run_preempt_claimed"))
+
+	rec := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_preempt_claimed/record-outcome", map[string]any{
+		"nodeId": performerNode, "outcome": "succeeded", "note": "done by hand",
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	assert.Equal(t, engine.RunRunning, peekPerformerRun(t, f, "run_preempt_claimed").Status, "the program is still running")
+
+	letGo()
+	agentd.WaitForProcessRunRuntimeForTest()
+	agentd.SweepProcessAgentDispatchesForTest()
+	view := showPerformerRun(t, f, "run_preempt_claimed")
+	assert.Equal(t, engine.RunCompleted, view.Status, "%+v", view)
+	require.Len(t, view.Performers, 1)
+	assert.Equal(t, db.ProcessDispatchClosed, view.Performers[0].State)
 }
