@@ -171,6 +171,7 @@ export class ProcessTemplateEditor {
     this.statusState = { message: '', error: false };
     this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
     this.inspectorFocusRequest = 0;
+    this.nodeFocusRequest = 0;
     this.modalState = null;
     this.modalGeneration = 0;
     this.modalHandle = null;
@@ -275,6 +276,7 @@ export class ProcessTemplateEditor {
       inline: { ...this.inlineState },
       edgePin: this.edgePinView(),
       inspectorFocusRequest: this.inspectorFocusRequest,
+      nodeFocusRequest: this.nodeFocusRequest,
       external: {
         ...structuredClone(externalChange),
         // The exact view remains private controller state for Apply Update.
@@ -931,34 +933,26 @@ export class ProcessTemplateEditor {
     return true;
   }
 
-  // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296
-  // editability seam decides the mode: a node the view may not edit renders
-  // the exact same component read-only — the viewer's detail card.
+  // openNodeSettings is the logical zoom into one node (double-click, Enter,
+  // a configuration-required add): it selects the node and focuses the docked
+  // node inspector (E3), which renders read-only when the editability seam
+  // says the node may not be edited.
   async openNodeSettings(nodeId) {
     if (this.destroyed || externalInteractionPending(this)) return false;
     if (!this.model.node(nodeId)) return false;
-    const current = this.modalDispose;
-    if (current) {
-      const closed = current.requestClose
-        ? await current.requestClose()
-        : (current(null), true);
-      if (!closed || this.abort?.signal.aborted) return false;
-    }
-    if (!this.model.node(nodeId)) return false;
-    const mode = this.model.config.nodeEditable(nodeId) ? 'edit' : 'view';
-    if (!this.snapshotSignal) {
-      const { openNodeDialog } = await import('./process-node-dialog.js');
-      const dispose = openNodeDialog({
-        model: this.model, nodeId, mode,
-        onMutated: () => this.refresh?.(),
-        onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
-        confirmDiscard: this.options.confirmDiscard,
-      });
-      this.modalDispose = dispose;
-    } else {
-      this.openModal({ kind: 'node', nodeId, mode });
-    }
+    this.setSelection({ type: 'node', id: nodeId });
+    this.nodeFocusRequest += 1;
+    this.publish();
     return true;
+  }
+
+  // editNode is the node inspector's single mutation gate: one undoable,
+  // live-validated edit through ProcessEditModel.updateNode. Returns false
+  // when the edit was refused (read-only node, a mutator error, a pending
+  // external reload), with the reason on the status line.
+  editNode(nodeId, mutate) {
+    if (this.destroyed) return false;
+    return this.mutate(() => this.model.updateNode(nodeId, mutate)) !== undefined;
   }
 
   onEdgeClick({ edge, event }) {
@@ -1428,7 +1422,11 @@ export class ProcessTemplateEditor {
         return;
       }
     }
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && this.selection) {
+    // Keys aimed at the docked node inspector (its buttons, block handles)
+    // belong to that panel: deleting the node from under a focused ✕ or ↑ is
+    // never what Delete/Backspace meant there.
+    const inInspector = !!event.target?.closest?.('[data-node-inspector]');
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && !inInspector && this.selection) {
       event.preventDefault();
       this.deleteSelection();
     }
