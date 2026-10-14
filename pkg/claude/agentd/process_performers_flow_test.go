@@ -7,6 +7,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -713,4 +714,73 @@ func TestProcessPerformer_HumanPreemptionWhileSiblingProgramRuns(t *testing.T) {
 	assert.Equal(t, engine.RunCompleted, view.Status, "%+v", view)
 	require.Len(t, view.Performers, 1)
 	assert.Equal(t, db.ProcessDispatchClosed, view.Performers[0].State)
+}
+
+// Scenario: `runs ls --performer` finds a run through a node attempt
+// dispatched to the agent, not only through an agent-scope binding.
+func TestProcessPerformer_PerformerFilterFindsDispatchedRuns(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	alice := havePerformerAgent(t, f, "crew", "pfil-1111-2222-3333-4444", "alice", "dev", "idle")
+	bob := havePerformerAgent(t, f, "crew", "pfil-5555-2222-3333-4444", "bob", "reviewer", "idle")
+	startPerformerRun(t, f, root, "run_filtered", performerTemplate("filtered", devPerformer(), nil),
+		agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID})
+
+	assert.Equal(t, []string{"run_filtered"}, listScopedRuns(t, f, url.Values{"performer": {alice}}))
+	assert.Empty(t, listScopedRuns(t, f, url.Values{"performer": {bob}}))
+}
+
+// Scenario: a run started scoped to a group through the real API (no scope
+// test hook) dispatches by the persisted scope, and the in-context read model
+// shows the node's dispatch: who has it, the attempt, and when the turn was
+// injected. The performer reference names the dispatched agent.
+func TestProcessPerformer_PersistedGroupScopeAndContextDispatch(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	alice := havePerformerAgent(t, f, "crew", "pctx-1111-2222-3333-4444", "alice", "dev", "idle")
+	putProcessRuntimeTemplate(t, root, performerTemplate("in-context", devPerformer(), nil))
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_ctx", "templateId": "in-context", "group": "crew", "authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	agentd.WaitForProcessDispatchForTest()
+
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var context struct {
+		Runs map[string]struct {
+			Nodes []struct {
+				ID        string `json:"id"`
+				Performer struct {
+					Ref string `json:"ref"`
+				} `json:"performer"`
+				Dispatch *struct {
+					AgentID     string     `json:"agentId"`
+					Name        string     `json:"name"`
+					Attempt     int        `json:"attempt"`
+					State       string     `json:"state"`
+					DeliveredAt *time.Time `json:"deliveredAt"`
+				} `json:"dispatch"`
+			} `json:"nodes"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, rec, &context)
+	run, ok := context.Runs["run_ctx"]
+	require.True(t, ok, rec.Body.String())
+	var found bool
+	for _, node := range run.Nodes {
+		if node.ID != performerNode {
+			assert.Nil(t, node.Dispatch, node.ID)
+			continue
+		}
+		found = true
+		require.NotNil(t, node.Dispatch)
+		assert.Equal(t, alice, node.Dispatch.AgentID)
+		assert.Equal(t, "alice", node.Dispatch.Name)
+		assert.Equal(t, 1, node.Dispatch.Attempt)
+		assert.Equal(t, db.ProcessDispatchDelivered, node.Dispatch.State)
+		assert.NotNil(t, node.Dispatch.DeliveredAt)
+		assert.Equal(t, alice, node.Performer.Ref)
+	}
+	assert.True(t, found)
 }

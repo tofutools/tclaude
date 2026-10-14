@@ -93,7 +93,7 @@ export function stepperRows(run, agentId, now = Date.now()) {
           row.detail.push(node.state === 'planned' ? 'will be injected as a turn' : 'waiting to be injected');
         }
         if (Number(dispatch?.attempt) > 1) row.detail.push(`loop ×${dispatch.attempt}`);
-        if (!row.here && performer) row.detail.push(`performed by ${performer}`);
+        if (!row.here && performer) row.detail.push(`performed by ${dispatch?.name || performer}`);
         if (dispatch?.state === 'needs_performer' && dispatch.waitReason) row.warning = dispatch.waitReason;
         break;
       }

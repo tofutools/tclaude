@@ -69,6 +69,10 @@ type processProjectionNode struct {
 	State     string                     `json:"state"`
 	Index     int                        `json:"index,omitempty"`
 	Performer processProjectionPerformer `json:"performer"`
+	// Dispatch is the agent node's latest attempt as performer dispatch
+	// recorded it: who has it, which attempt (the loop count), and when the
+	// turn was injected. Absent until the node is first dispatched.
+	Dispatch *processProjectionDispatch `json:"dispatch,omitempty"`
 	// Description is the authored node description, clipped to
 	// processProjectionDescriptionRunes so a run's projection stays small.
 	Description string `json:"description,omitempty"`
@@ -85,13 +89,22 @@ func clipProjectionText(text string, limit int) string {
 }
 
 // processProjectionPerformer names who performs a node. Kind is agent,
-// human, program or engine. Ref is the bound agent_id for an agent node of
-// an agent-scoped run, "unassigned" for any other agent node until
-// per-node performer dispatch assigns one, and the program profile for a
-// program node.
+// human, program or engine. Ref is, for an agent node, the agent its latest
+// attempt is dispatched to, else the bound agent_id of an agent-scoped run,
+// else "unassigned"; for a program node it is the program profile.
 type processProjectionPerformer struct {
 	Kind string `json:"kind"`
 	Ref  string `json:"ref,omitempty"`
+}
+
+// processProjectionDispatch is one agent node's latest dispatched attempt.
+type processProjectionDispatch struct {
+	AgentID     string     `json:"agentId,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	Attempt     int        `json:"attempt"`
+	State       string     `json:"state"`
+	WaitReason  string     `json:"waitReason,omitempty"`
+	DeliveredAt *time.Time `json:"deliveredAt,omitempty"`
 }
 
 // processProjectionEdge is one authored (from, label) → to edge with its
@@ -585,6 +598,12 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			states[authored] = state
 		}
 	}
+	// Performers lists attempts oldest first per node, so the last one per
+	// node is its latest dispatch.
+	dispatched := make(map[string]processRunPerformerView, len(run.Performers))
+	for _, performer := range run.Performers {
+		dispatched[performer.NodeID] = performer
+	}
 	projection.Nodes = make([]processProjectionNode, len(s.nodes))
 	for i, node := range s.nodes {
 		node.State = states[node.ID]
@@ -595,6 +614,15 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			node.Performer.Ref = "unassigned"
 			if run.Scope.Kind == db.ProcessRunScopeAgent {
 				node.Performer.Ref = run.Scope.AgentID
+			}
+			if latest, ok := dispatched[node.ID]; ok {
+				node.Dispatch = &processProjectionDispatch{
+					AgentID: latest.AgentID, Name: latest.Name, Attempt: latest.Attempt,
+					State: latest.State, WaitReason: latest.WaitReason, DeliveredAt: latest.DeliveredAt,
+				}
+				if latest.AgentID != "" {
+					node.Performer.Ref = latest.AgentID
+				}
 			}
 		}
 		if processNodeStateRank[node.State] >= processNodeStateRank[string(engine.NodeReady)] &&

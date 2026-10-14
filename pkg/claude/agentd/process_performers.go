@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -59,9 +60,8 @@ const (
 	processResolutionSameSession = "same_session"
 )
 
-// processRunScope is the slice of a run's scope binding dispatch needs. It is
-// the shape of db.ProcessRunScope (tcl-mrhhuc); the seam below exists so this
-// file does not depend on that column set before it lands.
+// processRunScope is the slice of a run's persisted scope binding
+// (db.ProcessRunScope) that dispatch needs.
 type processRunScope struct {
 	Kind     string
 	GroupID  int64
@@ -73,18 +73,22 @@ type processRunScope struct {
 // processOwnerOperator is the run owner for runs the operator started.
 const processOwnerOperator = "human:operator"
 
-// processRunScopeOf resolves a run's scope. Until run scopes persist, every run
-// is unscoped and owned by whoever created it.
+// processRunScopeOf resolves a run's scope. It is a variable only so flow tests
+// can bind a scope without going through run creation.
 var processRunScopeOf = defaultProcessRunScope
 
 func defaultProcessRunScope(runID string) (processRunScope, error) {
-	scope := processRunScope{Kind: processScopeNone, Owner: processOwnerOperator}
-	events, err := db.ListProcessRunEvents(runID, 0, 1)
+	stored, err := db.GetProcessRunScope(runID)
 	if err != nil {
-		return scope, err
+		return processRunScope{Kind: processScopeNone, Owner: processOwnerOperator}, err
 	}
-	if len(events) == 1 && events[0].Kind == "run_created" && events[0].Actor != "" {
-		scope.Owner = events[0].Actor
+	scope := processRunScope{Kind: stored.Kind, GroupID: stored.GroupID, AgentID: stored.AgentID,
+		Owner: stored.Owner, Orphaned: stored.Orphaned()}
+	if scope.Kind == "" {
+		scope.Kind = processScopeNone
+	}
+	if scope.Owner == "" {
+		scope.Owner = processOwnerOperator
 	}
 	return scope, nil
 }
@@ -995,6 +999,9 @@ type processRunPerformerView struct {
 	WaitReason string `json:"waitReason,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	Note       string `json:"note,omitempty"`
+	// DeliveredAt is when the node prompt reached the performer's inbox: the
+	// turn injected into its conversation.
+	DeliveredAt *time.Time `json:"deliveredAt,omitempty"`
 }
 
 // processRunPerformerViews projects a run's dispatch history.
@@ -1011,6 +1018,10 @@ func processRunPerformerViews(runID string) (map[string]processRunPerformerView,
 			NodeID: row.NodeID, Attempt: row.Attempt, CommandID: row.CommandID, State: row.State,
 			AgentID: row.AgentID, Resolution: row.Resolution, WaitReason: row.WaitReason,
 			Outcome: row.ReportOutcome, Note: row.ReportNote,
+		}
+		if !row.DeliveredAt.IsZero() {
+			delivered := row.DeliveredAt
+			view.DeliveredAt = &delivered
 		}
 		if row.AgentID != "" {
 			view.Status = "retired"

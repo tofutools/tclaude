@@ -113,8 +113,8 @@ Every run is bound to a context when it starts, and keeps that binding:
 The run's **owner** is whoever started it (`human:operator` or
 `agent:<agent_id>`). `tclaude process show` prints the scope and owner;
 `tclaude process runs ls` adds a SCOPE column and filters with `--group`,
-`--agent` and `--performer`. Until per-node performer dispatch lands,
-`--performer` matches agent-scoped runs bound to that agent.
+`--agent` and `--performer`. `--performer` matches runs bound to that agent
+and runs with a node attempt dispatched to it.
 
 **Who may start a scoped run.**
 
