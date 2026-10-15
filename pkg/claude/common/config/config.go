@@ -1143,7 +1143,10 @@ func (c *Config) ScribeProfileName() string {
 // Vertex AI is billed per token and shows as real spend, a Google sign-in is
 // shown as a WHAT-IF estimate; "api" and "subscription" force either side.
 type CostConfig struct {
-	EstimateFactor *float64 `json:"estimate_factor,omitempty"`
+	// Spend limits use unscaled API ledger estimates; zero disables a period.
+	DailyLimitUSD   float64  `json:"daily_limit_usd,omitempty"`
+	MonthlyLimitUSD float64  `json:"monthly_limit_usd,omitempty"`
+	EstimateFactor  *float64 `json:"estimate_factor,omitempty"`
 	// HarnessFactors replace EstimateFactor for a harness. An explicit 1 is
 	// meaningful: it disables adjustment even when the default is higher.
 	HarnessFactors     map[string]float64 `json:"harness_factors,omitempty"`
@@ -1227,7 +1230,7 @@ func ValidCostFactorHarness(name string) bool {
 
 // Empty reports whether the optional cost block can be omitted.
 func (c *CostConfig) Empty() bool {
-	return c == nil || (c.EstimateFactor == nil && len(c.HarnessFactors) == 0 && !c.ShowOnSubscription && c.GeminiBilling == "")
+	return c == nil || (c.DailyLimitUSD == 0 && c.MonthlyLimitUSD == 0 && c.EstimateFactor == nil && len(c.HarnessFactors) == 0 && !c.ShowOnSubscription && c.GeminiBilling == "")
 }
 
 // OpenCodeConfig tunes tclaude's OpenCode integration.
@@ -3847,6 +3850,11 @@ func Validate(c *Config) []string {
 	}
 
 	if cc := c.Cost; cc != nil {
+		for name, value := range map[string]float64{"daily_limit_usd": cc.DailyLimitUSD, "monthly_limit_usd": cc.MonthlyLimitUSD} {
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				errs = append(errs, "cost."+name+" must be a finite non-negative USD amount (0 disables)")
+			}
+		}
 		switch strings.TrimSpace(cc.GeminiBilling) {
 		case "", GeminiBillingAuto, GeminiBillingAPI, GeminiBillingSubscription:
 		default:

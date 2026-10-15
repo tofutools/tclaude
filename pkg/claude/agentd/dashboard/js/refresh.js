@@ -5,6 +5,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
+import { renderSpendLimitBanner } from './spend-limits.js';
 import { $, $$, isModifiedClick } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import {
@@ -246,6 +247,7 @@ export async function refresh(options) {
     // a degraded snapshot cannot close panes or consume a later retirement.
     reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
+    renderSpendLimitBanner(data.usage?.spend_limits || []);
     // The access banner goes first: a renderer below that throws must not
     // leave it showing a request that is long gone.
     renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);

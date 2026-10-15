@@ -95,5 +95,29 @@ when disabled. Dashboard display multipliers never change these raw amounts.
 Cost data covers recorded tclaude sessions, not the provider's entire invoice.
 Model attribution follows the dashboard's Costs view: each conversation/day slice uses the
 last observed model. `generated_at` is the response time, not proof that all
-sessions have recently reported costs. No configured monetary budget or hard
-spending enforcement is provided by these queries.
+sessions have recently reported costs. These queries do not enforce spending limits. Configurable alert thresholds
+are described below.
+
+## Estimated spend limits and alerts
+
+Set **Config → Costs → Spend limits** in the dashboard, or edit the `cost`
+block in `~/.tclaude/config.json` (also available through `tclaude config`):
+
+```json
+{"cost":{"daily_limit_usd":20,"monthly_limit_usd":300}}
+```
+
+Limits are global across harnesses on this instance. Zero or an absent setting
+turns off that period. Daily and monthly periods follow the daemon's local
+calendar. The dashboard shows a banner at 80% and at 100%; each threshold also
+sends one notification through the existing notify-human path to Messages and,
+if enabled, desktop notifications. Threshold records survive daemon restarts,
+message deletion, and edits to limits. A jump past both thresholds records both.
+The daemon checks on its usage timer even when the dashboard is closed; checks
+use the latest recorded ledger, so newly reported costs can arrive later.
+
+Amounts are **estimates from the API cost ledger**, before display multipliers.
+Subscription WHAT-IF equivalents are excluded; subscription plans may not map
+to actual charges. These are per-instance estimates, not a provider invoice or
+model-gateway budgets. Alerts do not stop or confirm spawns; a soft spawn gate
+is a possible follow-up.
