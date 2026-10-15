@@ -169,20 +169,34 @@ type workflowImportJSON struct {
 	Templates []struct {
 		Ref        string `json:"ref"`
 		ID         string `json:"id"`
+		ImportRef  string `json:"importRef"`
+		ImportID   string `json:"importId"`
 		Head       bool   `json:"head"`
 		Status     string `json:"status"`
 		CurrentRef string `json:"currentRef"`
 	} `json:"templates"`
+	RoleMap []struct {
+		Name   string   `json:"name"`
+		Steps  []string `json:"steps"`
+		Target string   `json:"target"`
+		Mapped bool     `json:"mapped"`
+		Known  bool     `json:"known"`
+	} `json:"roleMap"`
+	Group        string `json:"group"`
+	Pinned       bool   `json:"pinned"`
 	Updates      int    `json:"updates"`
 	Applied      bool   `json:"applied"`
 	ReviewDigest string `json:"reviewDigest"`
 }
 
 type processTemplatesImportParams struct {
-	File     string `pos:"true" help:"Path to a .pwf file ('-' reads stdin)."`
-	Yes      bool   `long:"yes" short:"y" optional:"true" help:"Import after showing the review instead of stopping at the preview."`
-	Replace  bool   `long:"replace" optional:"true" help:"Make the imported versions current where this node already has the template with different content."`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
+	File     string   `pos:"true" help:"Path to a .pwf file ('-' reads stdin)."`
+	Yes      bool     `long:"yes" short:"y" optional:"true" help:"Import after showing the review instead of stopping at the preview."`
+	Replace  bool     `long:"replace" optional:"true" help:"Make the imported versions current where this node already has the template with different content."`
+	Rename   bool     `long:"rename" optional:"true" help:"Import a template whose id this node already uses with different content under a new id (<id>-2, ...) instead of replacing it; references inside the workflow follow."`
+	MapRole  []string `long:"map-role" optional:"true" help:"Use a local role for one the workflow asks for, as <workflow role>=<local role> (repeatable). Rewrites the imported steps' role and fallback profile."`
+	Group    string   `long:"group" optional:"true" help:"Pin the imported process to this group's saved processes."`
+	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processTemplatesImportCmd() *cobra.Command {
@@ -215,8 +229,17 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	choices, err := workflowImportChoices(p)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	var view workflowImportJSON
-	if err := DaemonPostRawWithOptions("/v1/process/import", pwf.MediaType, data, nil, &view, DaemonOpts{AskHuman: ask}); err != nil {
+	path := "/v1/process/import"
+	if len(choices) > 0 {
+		path += "?" + choices.Encode()
+	}
+	if err := DaemonPostRawWithOptions(path, pwf.MediaType, data, nil, &view, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -227,32 +250,86 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 	for _, s := range view.Signatures {
 		fmt.Fprintf(stdout, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
 	}
-	fmt.Fprintln(stdout, "Templates:")
-	for _, t := range view.Templates {
-		line := fmt.Sprintf("  %-10s %s", shown(t.Status), shown(t.Ref))
-		if t.CurrentRef != "" {
-			line += " (here now: " + shown(t.CurrentRef) + ")"
-		}
-		fmt.Fprintln(stdout, line)
-	}
+	renderImportChanges(stdout, &view)
 	if !p.Yes {
 		fmt.Fprintln(stdout, "Preview only; nothing was imported. Re-run with --yes to import.")
 		return rcOK
 	}
 	if view.Updates > 0 && !p.Replace {
-		fmt.Fprintf(stderr, "Error: %d template(s) already exist here with different content; re-run with --replace to make the imported versions current.\n", view.Updates)
+		fmt.Fprintf(stderr, "Error: %d template(s) already exist here with different content; re-run with --replace to make the imported versions current, or --rename to import them under new ids.\n", view.Updates)
 		return rcInvalidArg
 	}
-	path := "/v1/process/import?apply=1&review=" + url.QueryEscape(view.ReviewDigest)
+	choices.Set("apply", "1")
+	choices.Set("review", view.ReviewDigest)
 	if p.Replace {
-		path += "&replace=1"
+		choices.Set("replace", "1")
 	}
+	path = "/v1/process/import?" + choices.Encode()
 	if err := DaemonPostRawWithOptions(path, pwf.MediaType, data, nil, &view, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Imported %q. Start it with: tclaude process run %s\n", view.Title, shown(view.RootID))
+	if view.Pinned {
+		fmt.Fprintf(stdout, "Pinned to group %s.\n", shown(view.Group))
+	}
 	return rcOK
+}
+
+// workflowImportChoices are the importer's choices as the import's query.
+// The daemon applies them to the preview and the apply alike, so the review
+// shows exactly what an apply stores.
+func workflowImportChoices(p *processTemplatesImportParams) (url.Values, error) {
+	q := url.Values{}
+	for _, m := range p.MapRole {
+		from, to, ok := strings.Cut(m, "=")
+		if !ok || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+			return nil, fmt.Errorf("--map-role %q: want <workflow role>=<local role>", m)
+		}
+		q.Add("map", strings.TrimSpace(from)+"="+strings.TrimSpace(to))
+	}
+	if p.Rename {
+		q.Set("rename", "1")
+	}
+	if g := strings.TrimSpace(p.Group); g != "" {
+		q.Set("group", g)
+	}
+	return q, nil
+}
+
+// renderImportChanges prints the role mapping and what importing stores
+// here, renamed and rewritten templates included.
+func renderImportChanges(out io.Writer, view *workflowImportJSON) {
+	if len(view.RoleMap) > 0 {
+		fmt.Fprintln(out, "Roles here:")
+		for _, r := range view.RoleMap {
+			line := "  " + shown(r.Name)
+			if r.Mapped {
+				line += " -> " + shown(r.Target)
+			}
+			if !r.Known {
+				line += " (nothing here has this role or profile yet; map it with --map-role " + shown(r.Name) + "=<local>)"
+			}
+			fmt.Fprintln(out, line)
+		}
+	}
+	fmt.Fprintln(out, "Templates:")
+	for _, t := range view.Templates {
+		line := fmt.Sprintf("  %-10s %s", shown(t.Status), shown(t.Ref))
+		switch {
+		case t.ImportID != "" && t.ImportID != t.ID:
+			line += " as " + shown(t.ImportRef) + " (renamed)"
+		case t.ImportRef != "":
+			line += " as " + shown(t.ImportRef) + " (roles mapped)"
+		}
+		if t.CurrentRef != "" {
+			line += " (here now: " + shown(t.CurrentRef) + "; --rename imports it under a new id instead)"
+		}
+		fmt.Fprintln(out, line)
+	}
+	if view.Group != "" {
+		fmt.Fprintf(out, "Pins the process to group %s.\n", shown(view.Group))
+	}
 }
 
 // shown makes a file-controlled string safe to print in a review: anything

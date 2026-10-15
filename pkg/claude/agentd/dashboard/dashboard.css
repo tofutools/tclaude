@@ -20584,5 +20584,9 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-status.is-new { color: #56d364; }
 .pwf-replace { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin-top: 6px; font-size: 12.5px; text-align: left; }
 .pwf-replace input { flex: none; width: auto; margin: 0; }
+.pwf-roles li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.pwf-role-map, .pwf-group { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; padding: 2px 6px; font-size: 12.5px; }
+.pwf-role-unknown { font-size: 11.5px; color: #f2cc60; }
 .pwf-import-dialog .modal-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
 body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }

@@ -275,7 +275,10 @@ subprocess steps reference into a Portable Workflow Format file (read slug).
 `inspect <file.pwf>` verifies and summarizes one offline. `import <file.pwf>`
 shows the review (signer, roles, every command it would run, what changes
 here) and stops; only `--yes` imports, and `--replace` is needed to replace a
-template that exists with different content (manage slug). Never pass `--yes`
-or `--replace` on an agent's own judgement: show the review to the human and
+template that exists with different content (manage slug). `--rename`
+imports such a template under a new id instead, `--map-role a=b` maps a role
+the workflow asks for onto a local one, and `--group <name>` pins the import
+to a group; each is part of the review. Never pass `--yes`, `--replace` or
+these choices on an agent's own judgement: show the review to the human and
 let them decide. Importing stores templates only and never starts a run.
 Prefer roles over `assignee` in templates meant to be shared.

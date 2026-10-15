@@ -144,6 +144,16 @@ type pwfImportView struct {
 	Assignees  []pwf.Use             `json:"assignees"`
 	Humans     []string              `json:"humans"`
 	Templates  []pwfTemplateImported `json:"templates"`
+	// RoleMap lists every role name the agent steps use (the role they ask
+	// for and the profile a fallback spawns) and what they use after the
+	// import; LocalRoles are the names a role can be mapped to here.
+	RoleMap    []pwfRoleMapping `json:"roleMap"`
+	LocalRoles []string         `json:"localRoles"`
+	// Rename and Group echo the importer's choices; Pinned reports that an
+	// applied import pinned the root to Group.
+	Rename bool   `json:"rename,omitempty"`
+	Group  string `json:"group,omitempty"`
+	Pinned bool   `json:"pinned,omitempty"`
 	// Updates counts templates whose local head the import would move; an
 	// import with updates needs replace.
 	Updates int  `json:"updates"`
@@ -171,18 +181,24 @@ type pwfSignatureView struct {
 //   - version: a pinned non-head version; it is stored without touching
 //     the local head.
 type pwfTemplateImported struct {
-	Ref    string `json:"ref"`
-	ID     string `json:"id"`
-	Name   string `json:"name,omitempty"`
-	Head   bool   `json:"head"`
-	Status string `json:"status"`
+	Ref string `json:"ref"`
+	ID  string `json:"id"`
+	// ImportRef and ImportID are the template as it is stored here when the
+	// role mapping or a rename rewrote it; empty when stored as carried.
+	ImportRef string `json:"importRef,omitempty"`
+	ImportID  string `json:"importId,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Head      bool   `json:"head"`
+	Status    string `json:"status"`
 	// CurrentRef is the local head when Status is update.
 	CurrentRef string `json:"currentRef,omitempty"`
 }
 
 // POST /v1/process/import[?apply=1&review=<digest>[&replace=1]] with a .pwf
-// body. Without apply it is a preview and changes nothing; an apply must
-// carry the reviewDigest of the preview it acts on.
+// body, plus the importer's choices on both the preview and the apply:
+// map=<role>=<local> (repeated), rename=1 and group=<name> (see
+// pwfImportOptions). Without apply it is a preview and changes nothing; an
+// apply must carry the reviewDigest of the preview it acts on.
 func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
 	if !ok {
@@ -199,17 +215,56 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_pwf", err.Error())
 		return
 	}
+	q := r.URL.Query()
+	opts, err := parsePWFImportOptions(q)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	uses := pwfRoleUses(archive)
+	for from := range opts.RoleMap {
+		if uses[from] == nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("the workflow asks for no role %q", from))
+			return
+		}
+	}
+	var group *db.AgentGroup
+	if opts.Group != "" {
+		if group, ok = resolveProcessGroupForPin(w, r, opts.Group); !ok {
+			return
+		}
+		opts.Group = group.Name
+	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	view, err := pwfImportPreview(r.Context(), fs, archive, data)
+	planned, _, err := pwfImportPlan(r.Context(), fs, archive, opts)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_import", err.Error())
+		return
+	}
+	local, err := pwfLocalRoleNames(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
 	}
-	q := r.URL.Query()
+	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, uses, local)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
+		return
+	}
+	if group != nil {
+		// Refuse a full group before anything is stored.
+		if full, err := db.ProcessGroupPinsFull(group.ID, view.RootID); err != nil {
+			writeError(w, http.StatusInternalServerError, "process_group_pin", err.Error())
+			return
+		} else if full {
+			writeError(w, http.StatusConflict, "process_group_pin", db.ErrProcessGroupPinsFull.Error())
+			return
+		}
+	}
 	if q.Get("apply") != "1" {
 		writeProcessJSON(w, http.StatusOK, view)
 		return
@@ -250,7 +305,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, row := range rows {
-		tmpl := archive.Templates[row.Ref].Parsed
+		tmpl := planned[row.Ref].Tmpl
 		switch row.Status {
 		case "identical":
 			continue
@@ -260,7 +315,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 			expected := ""
 			if row.Status == "update" {
 				// Replace only the head that was reviewed.
-				head, herr := fs.GetTemplateHeadGeneration(r.Context(), row.ID)
+				head, herr := fs.GetTemplateHeadGeneration(r.Context(), tmpl.ID)
 				if herr != nil {
 					err = herr
 					break
@@ -279,26 +334,57 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	view.Applied = true
-	slog.Info("process workflow imported", "root", view.Root, "templates", len(view.Templates), "actor", actor)
+	if group != nil {
+		if err := db.PinProcessToGroup(group.ID, view.RootID); err != nil {
+			writeProcessJSON(w, http.StatusConflict, map[string]any{
+				"error":   "process_group_pin",
+				"message": "the workflow was imported, but pinning it to the group failed: " + err.Error(),
+				"preview": view,
+			})
+			return
+		}
+		view.Pinned = true
+	}
+	slog.Info("process workflow imported", "root", view.Root, "templates", len(view.Templates), "actor", actor, "group", view.Group)
 	writeProcessJSON(w, http.StatusOK, view)
 }
 
-func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []byte) (pwfImportView, error) {
+// pwfImportPreview says what importing the planned templates changes here.
+// RootID is the root's id as stored (renamed, when it was).
+func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []byte, planned map[string]*pwfPlanned,
+	opts pwfImportOptions, uses map[string][]string, local []string) (pwfImportView, error) {
 	wf := a.Workflow
 	view := pwfImportView{
-		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: a.Root().Parsed.ID, Readme: string(a.Readme),
+		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
 		Params: wf.Params, Roles: wf.Roles, Programs: wf.Programs, Assignees: wf.Assignees, Humans: wf.Humans,
-		Signatures: pwfSignatureViews(a.Signatures),
+		Signatures: pwfSignatureViews(a.Signatures), RoleMap: []pwfRoleMapping{}, LocalRoles: local,
+		Rename: opts.Rename, Group: opts.Group,
 	}
-	for _, ref := range a.Order {
-		t := a.Templates[ref]
-		row := pwfTemplateImported{Ref: ref, ID: t.Parsed.ID, Name: t.Parsed.Name, Head: t.Head}
+	known := map[string]bool{}
+	for _, name := range local {
+		known[name] = true
+	}
+	for _, name := range sortedKeysOf(uses) {
+		target, mapped := opts.RoleMap[name]
+		if !mapped {
+			target = name
+		}
+		view.RoleMap = append(view.RoleMap, pwfRoleMapping{Name: name, Steps: uses[name], Target: target, Mapped: mapped, Known: known[target]})
+	}
+	for _, fileRef := range a.Order {
+		t := a.Templates[fileRef]
+		p := planned[fileRef]
+		ref := p.Ref
+		row := pwfTemplateImported{Ref: fileRef, ID: t.Parsed.ID, Name: t.Parsed.Name, Head: t.Head}
+		if ref != fileRef {
+			row.ImportRef, row.ImportID = ref, p.ID
+		}
 		_, storedErr := fs.GetTemplate(ctx, ref)
 		stored := storedErr == nil
 		if storedErr != nil && !errors.Is(storedErr, store.ErrNotFound) && !errors.Is(storedErr, os.ErrNotExist) {
 			return view, storedErr
 		}
-		head, headErr := fs.GetTemplateHead(ctx, t.Parsed.ID)
+		head, headErr := fs.GetTemplateHead(ctx, p.ID)
 		hasHead := headErr == nil
 		if headErr != nil && !errors.Is(headErr, store.ErrNotFound) && !errors.Is(headErr, os.ErrNotExist) {
 			return view, headErr
@@ -321,8 +407,9 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 	digest := sha256.New()
 	digest.Write(data)
 	for _, row := range view.Templates {
-		fmt.Fprintf(digest, "\n%s %s %s", row.Ref, row.Status, row.CurrentRef)
+		fmt.Fprintf(digest, "\n%s %s %s %s", row.Ref, row.ImportRef, row.Status, row.CurrentRef)
 	}
+	fmt.Fprintf(digest, "\n%s", opts.digestKey())
 	view.ReviewDigest = hex.EncodeToString(digest.Sum(nil))
 	return view, nil
 }
