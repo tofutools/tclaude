@@ -50,7 +50,6 @@ const (
 	authoredOpenPRReviewInterval = 60 * time.Second
 	// prReviewsMaxReviewers bounds one PR's reviewer list in cache and snapshot.
 	prReviewsMaxReviewers = 20
-	prReviewSourceSearch  = "search"
 )
 
 // authoredOpenPRReviewsFetchedAt is the unix-nano time of the last successful
