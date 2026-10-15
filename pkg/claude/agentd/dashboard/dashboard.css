@@ -18945,6 +18945,22 @@ body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
 body.wizard .psd-mode.is-active { background: #7c5cff; }
 @media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
+/* A remembered width never squeezes the canvas: the same 60% share the
+   drag clamps to also holds at render time and when the window shrinks. */
+.process-scribe-dock { max-width: 60%; min-width: min(260px, 60%); }
+/* The dock's resize separator: a full-height 6px track on its canvas edge,
+   a thin line that turns blue on hover, focus or drag. */
+.psd-resize {
+  flex: none; width: 6px; margin-right: -6px; position: relative; z-index: 1; cursor: col-resize;
+  touch-action: none; user-select: none; background: transparent;
+}
+.psd-resize:hover, .psd-resize:focus-visible, .psd-resize.is-dragging {
+  background: linear-gradient(to right, transparent 2px, #1f6feb 2px, #1f6feb 4px, transparent 4px);
+  outline: none;
+}
+body.wizard .psd-resize:hover, body.wizard .psd-resize:focus-visible, body.wizard .psd-resize.is-dragging {
+  background: linear-gradient(to right, transparent 2px, #7c5cff 2px, #7c5cff 4px, transparent 4px);
+}
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
 .process-node-detail-head {
   display: flex;
@@ -20164,8 +20180,15 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-planned-source { color: #6e7681; font-size: 10px; }
 .gp-empty { color: #8b949e; font-size: 12px; margin: 0 0 8px 18px; }
 /* The Processes perspective inside the shared groups tree (mocks P2/P3). */
-.subtable > .gp-group .gp-card, .subtable > .gp-group .gp-planned-list, .subtable > .gp-group .gp-empty { margin-left: 0; }
-.subtable > .gp-group .gp-group-head { padding: 4px 0 8px; }
+/* The tree sits in a block wrapper, not the flex column, so its rows'
+   margins collapse and a group (open or not, empty or not) takes the same
+   space as in Agents: the head row matches .group-header-actions and the
+   empty note the member table's one-line placeholder. */
+.gp-tree { display: block; }
+.subtable > .gp-group { padding: 0; }
+.subtable > .gp-group .gp-card, .subtable > .gp-group .gp-planned-list { margin-left: 0; }
+.subtable > .gp-group .gp-empty { margin: 0; }
+.subtable > .gp-group .gp-group-head { padding: 0; margin: 0 0 8px; }
 .gp-member-runs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .gp-member-runs-label { color: #8b949e; font-size: 11px; }
 .gp-member-run { display: inline-flex; align-items: center; gap: 4px; }

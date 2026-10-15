@@ -15,11 +15,16 @@
 // does lands in the editor draft without an explicit accept.
 //
 // Scribe bodies are untrusted text and are rendered as text only.
+//
+// The dock's width is resizable: a separator on its canvas edge drags it
+// (or arrow keys step it), double-click resets it, and the chosen width is a
+// sticky dashboard pref like every other tclaude.dash.* setting.
 
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { PROCESS_SCRIBE_PROMPT_MAX, processScribeChatLive, processScribeChatTranscript } from './process-scribe.js';
+import { dashPrefs } from './prefs.js';
 
 const html = htm.bind(h);
 
@@ -27,6 +32,94 @@ export const SCRIBE_CHAT_POLL_MS = 2500;
 // While a turn is open the read is re-polled faster, so its progress streams.
 export const SCRIBE_CHAT_LIVE_POLL_MS = 1000;
 const DRAFT_PREFIX = 'Draft a process that ';
+
+export const SCRIBE_DOCK_WIDTH_PREF = 'tclaude.dash.processEditor.scribeWidth';
+export const SCRIBE_DOCK_MIN_WIDTH = 260;
+export const SCRIBE_DOCK_MAX_WIDTH = 760;
+const SCRIBE_DOCK_KEY_STEP = 24;
+// The dock never takes more than this share of the editor body, so the
+// canvas stays usable however wide the saved width is.
+const SCRIBE_DOCK_MAX_SHARE = 0.6;
+
+// clampDockWidth bounds a dock width to [min, max], where max also respects
+// the editor body's width when it is known (> 0).
+export function clampDockWidth(width, bodyWidth = 0) {
+  let max = SCRIBE_DOCK_MAX_WIDTH;
+  if (bodyWidth > 0) max = Math.max(SCRIBE_DOCK_MIN_WIDTH, Math.min(max, Math.floor(bodyWidth * SCRIBE_DOCK_MAX_SHARE)));
+  return Math.round(Math.min(max, Math.max(SCRIBE_DOCK_MIN_WIDTH, width)));
+}
+
+function loadDockWidth() {
+  try {
+    const width = Number(dashPrefs.getItem(SCRIBE_DOCK_WIDTH_PREF));
+    return Number.isFinite(width) && width > 0 ? clampDockWidth(width) : null;
+  } catch {
+    return null; // missing or unreadable pref: the CSS default width
+  }
+}
+
+function saveDockWidth(width) {
+  try {
+    if (width == null) dashPrefs.removeItem(SCRIBE_DOCK_WIDTH_PREF);
+    else dashPrefs.setItem(SCRIBE_DOCK_WIDTH_PREF, String(width));
+  } catch { /* preference only */ }
+}
+
+// useDockWidth owns the dock's width: null is the CSS default. The separator
+// drags with pointer capture and commits the pref once, on release.
+function useDockWidth(dockRef) {
+  const [width, setWidth] = useState(loadDockWidth);
+  const live = useRef(width);
+  live.current = width;
+  const bodyWidth = () => dockRef.current?.parentElement?.clientWidth || 0;
+  const currentWidth = () => live.current ?? (dockRef.current?.offsetWidth || 320);
+  const onPointerDown = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    handle.classList.add('is-dragging');
+    const startX = event.clientX;
+    const startWidth = currentWidth();
+    let moved = false;
+    const onMove = (move) => {
+      // The dock sits right of the canvas: dragging left widens it.
+      const next = clampDockWidth(startWidth - (move.clientX - startX), bodyWidth());
+      moved = true;
+      live.current = next;
+      setWidth(next);
+    };
+    const onUp = () => {
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      handle.classList.remove('is-dragging');
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      if (moved) saveDockWidth(live.current);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+  const onKeyDown = (event) => {
+    let next;
+    if (event.key === 'ArrowLeft') next = currentWidth() + SCRIBE_DOCK_KEY_STEP;
+    else if (event.key === 'ArrowRight') next = currentWidth() - SCRIBE_DOCK_KEY_STEP;
+    else if (event.key === 'Home') next = SCRIBE_DOCK_MIN_WIDTH;
+    else if (event.key === 'End') next = SCRIBE_DOCK_MAX_WIDTH;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    next = clampDockWidth(next, bodyWidth());
+    setWidth(next);
+    saveDockWidth(next);
+  };
+  const reset = () => {
+    setWidth(null);
+    saveDockWidth(null);
+  };
+  return { width, onPointerDown, onKeyDown, reset };
+}
 
 // dockScribe picks the scribe scoped to this template: a live one first.
 export function dockScribe(scribes, templateId) {
@@ -130,6 +223,8 @@ export function ScribeDock({ controller, view }) {
   const poke = useRef(null);
   const input = useRef(null);
   const terminalOpened = useRef('');
+  const dockRef = useRef(null);
+  const resize = useDockWidth(dockRef);
   const chatOn = !!(dock?.open && dock.mode === 'chat' && scribe);
   const chat = useScribeChat(scribe?.agentId || '', chatOn, api?.fetchChat || defaultFetchChat, poke);
   useEffect(() => {
@@ -165,7 +260,14 @@ export function ScribeDock({ controller, view }) {
   const external = view.external;
   const proposal = (external?.kind === 'clean' || external?.kind === 'dirty') && !view.diff?.open;
 
-  return html`<aside class="process-scribe-dock process-scroll-surface" aria-label="Process scribe" data-scribe-dock=${dock.mode}>
+  const bodyWidth = dockRef.current?.parentElement?.clientWidth || 0;
+  const shownWidth = resize.width ?? (dockRef.current?.offsetWidth || 320);
+  return html`<div class="psd-resize" role="separator" aria-orientation="vertical" tabindex="0"
+    aria-label="Resize scribe panel" title="Drag to resize the scribe panel; double-click to reset"
+    aria-valuemin=${SCRIBE_DOCK_MIN_WIDTH} aria-valuemax=${clampDockWidth(SCRIBE_DOCK_MAX_WIDTH, bodyWidth)} aria-valuenow=${shownWidth}
+    data-scribe-resize onPointerDown=${resize.onPointerDown} onKeyDown=${resize.onKeyDown} onDblClick=${resize.reset}></div>
+  <aside ref=${dockRef} class="process-scribe-dock process-scroll-surface" aria-label="Process scribe" data-scribe-dock=${dock.mode}
+    style=${resize.width ? { width: `${resize.width}px` } : undefined}>
     <div class="psd-head">
       <div class="psd-title-row">
         <strong class="psd-title">${scribe ? scribe.name : 'Process scribe'}</strong>
@@ -182,7 +284,10 @@ export function ScribeDock({ controller, view }) {
       ${scribe && html`<div class="psd-scope">scope: ${scribe.scopeLabel}</div>`}
     </div>
 
-    ${!scribe && html`<div class="psd-summon">
+    ${!scribe && dock.starting && html`<div class="psd-summon" role="status">
+      <p>Starting the scribe in the background…</p>
+    </div>`}
+    ${!scribe && !dock.starting && html`<div class="psd-summon">
       <p>No scribe is scoped to this template yet.</p>
       <button type="button" class="process-action primary" disabled=${!context.saved}
         title=${context.saved ? 'Summon a scribe scoped to this template' : 'Save the template once first'}

@@ -39,6 +39,7 @@ type scribeSummonResp struct {
 	ConvID    string `json:"conv_id"`
 	Reused    bool   `json:"reused"`
 	FocusMode string `json:"focus_mode"`
+	FocusWS   string `json:"focus_ws"`
 }
 
 // stubScribeTerminal records how many times a scribe window was opened and
@@ -356,6 +357,48 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 		reusedAudit[agentd.PermProcessTemplatesRead].GrantedBy)
 	assert.Equal(t, grants[agentd.PermProcessTemplatesManage],
 		reusedAudit[agentd.PermProcessTemplatesManage].GrantedBy)
+}
+
+// Scenario: every dashboard summon starts the scribe in tmux only, like a
+// regular spawn, and never pops a native window over the web UI. Without a
+// dock (template modal, sandbox profiles, the process library) the dashboard
+// gets the in-browser terminal pane; the process editor's dock asks for a
+// background start and gets no terminal at all, for a fresh or reused scribe.
+func TestScribeSummon_DashboardNeverOpensNativeWindow(t *testing.T) {
+	newFlow(t)
+	opens := stubScribeTerminal(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	post := func(body map[string]any) scribeSummonResp {
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/scribe", body))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+	library := func(id string, background bool) map[string]any {
+		return map[string]any{
+			"name": "process-scribe", "exclusive": true, "background": background,
+			"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+			"scope": map[string]any{"kind": "process-template", "id": id},
+			"brief": "Process-template authoring brief.",
+		}
+	}
+
+	plain := post(map[string]any{"name": "template-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "Template brief."})
+	assert.Equal(t, "browser", plain.FocusMode, "a dockless summon opens the in-browser pane")
+	assert.Equal(t, "/api/open-window-ws/"+plain.ConvID, plain.FocusWS)
+
+	exclusive := post(library("", false))
+	assert.Equal(t, "browser", exclusive.FocusMode, "an exclusive dockless summon opens the in-browser pane too")
+
+	docked := post(library("release-flow", true))
+	assert.False(t, docked.Reused)
+	assert.Empty(t, docked.FocusMode, "a docked editor's background summon reports no terminal")
+	reused := post(library("release-flow", true))
+	assert.True(t, reused.Reused)
+	assert.Equal(t, docked.ConvID, reused.ConvID)
+	assert.Empty(t, reused.FocusMode, "a background reuse reports no terminal")
+
+	assert.Zero(t, *opens, "no native terminal window is opened from the dashboard")
 }
 
 func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {

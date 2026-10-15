@@ -30,6 +30,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   const result = await actions.summonScribe({
     kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false,
   }, {
+    background: true,
     prompt: 'Fix the focused validation issue.',
     context: {
       version: 1, kind: 'current-diagnostic',
@@ -44,6 +45,8 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   assert.deepEqual(body.scope, { kind: 'process-template', id: 'release-flow' });
   assert.deepEqual(body.slugs, ['process.templates.read', 'process.templates.manage']);
   assert.equal(body.exclusive, true, 'the two process-template grants are the complete effective capability set');
+  assert.equal(body.background, true, 'a docked editor\'s scribe starts in tmux only; the dock is its surface');
+  assert.doesNotMatch(body.brief, /"background"/, 'the flag is not part of the brief');
   assert.deepEqual({ url: body.task_ref_url, label: body.task_ref_label }, {
     url: 'https://dashboard.example/automations/processes/templates', label: 'process: release-flow',
   });
@@ -91,6 +94,13 @@ test('process scribe actions send bounded structured scope, exact grants, and re
     confirm: async () => true,
     fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Unavailable', json: async () => ({ message: 'spawn binary missing' }) }),
   });
+  const libraryRequests = [];
+  const library = createProcessesActions({
+    state, dashboardOrigin: 'https://dashboard.example', notify() {}, confirm: async () => true,
+    fetchImpl: async (path, options) => { libraryRequests.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ name: 'process-scribe-lib', conv_id: 'lib-conv' }) }; },
+  });
+  await library.summonScribe({ kind: 'library' });
+  assert.equal(libraryRequests[0].background, false, 'the library scribe has no dock, so it keeps its terminal');
   assert.equal(await failed.summonScribe({ kind: 'library' }), null);
   assert.match(state.notice.value, /Process scribe unavailable: spawn binary missing/);
   assert.match(notices.at(-1)[0], /Check the agent daemon and Ask & scribe defaults, then retry/);
