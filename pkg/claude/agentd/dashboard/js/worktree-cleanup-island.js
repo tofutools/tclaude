@@ -19,7 +19,6 @@ import {
   selectedPrunableRepos,
   visibleWorktrees,
   worktreeCleanupSummary,
-  worktreeMatches,
 } from './worktree-cleanup-model.js';
 
 const html = htm.bind(h);
@@ -334,12 +333,12 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       <div class="cleanup-toolbar">
         <button type="button" id="worktree-cleanup-select-all" disabled=${busy || locked}
           onClick=${() => {
-            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), true);
+            replaceChoices(visible, true);
             replacePruneChoices(visiblePruneRepos, true);
           }}>select all</button>
         <button type="button" id="worktree-cleanup-select-none" disabled=${busy || locked}
           onClick=${() => {
-            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), false);
+            replaceChoices(visible, false);
             replacePruneChoices(visiblePruneRepos, false);
           }}>select none</button>
         <button type="button" id="worktree-cleanup-rescan" disabled=${busy || locked}

@@ -121,7 +121,7 @@ func scanSweepSignals(ctx context.Context, root string, rows []sweepWorktree) {
 		}
 		if row.Unpushed != nil && *row.Unpushed > 0 {
 			row.Checked = false
-			row.Reason = "commits absent from upstream/base — review before deleting"
+			row.Reason = strings.ReplaceAll(row.Reason, "safe to remove", "review before deleting") + "; commits absent from upstream/base"
 		}
 		if !row.IsMain && row.Category != "live" {
 			if row.Merged != nil && *row.Merged {

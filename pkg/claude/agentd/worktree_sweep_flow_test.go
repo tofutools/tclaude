@@ -971,7 +971,7 @@ func TestWorktreeSweep_RealGitSignals(t *testing.T) {
 	git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
 	git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	paths := map[string]string{}
-	for _, branch := range []string{"merged", "unpublished", "published", "gone", "stale", "live"} {
+	for _, branch := range []string{"merged", "unpublished", "published", "ahead", "gone", "stale", "live"} {
 		path := filepath.Join(root, branch)
 		paths[branch] = path
 		git(repo, "worktree", "add", "-b", branch, path)
@@ -979,11 +979,14 @@ func TestWorktreeSweep_RealGitSignals(t *testing.T) {
 			git(path, "commit", "--allow-empty", "-m", branch)
 		}
 	}
-	for _, branch := range []string{"published", "gone"} {
+	for _, branch := range []string{"published", "ahead", "gone"} {
 		git(repo, "update-ref", "refs/remotes/origin/"+branch, branch)
 		git(repo, "branch", "--set-upstream-to=origin/"+branch, branch)
 	}
 	git(repo, "update-ref", "-d", "refs/remotes/origin/gone")
+	git(paths["ahead"], "commit", "--allow-empty", "-m", "ahead of upstream")
+	detached := filepath.Join(root, "detached")
+	git(repo, "worktree", "add", "--detach", detached, "main")
 	old := time.Now().Add(-45 * 24 * time.Hour)
 	for _, branch := range []string{"stale", "live"} {
 		require.NoError(t, os.Chtimes(paths[branch], old, old))
@@ -993,7 +996,8 @@ func TestWorktreeSweep_RealGitSignals(t *testing.T) {
 	f.HaveAliveSession(conv, "signal-session", "signal-tmux", paths["live"])
 	f.HaveEnrolledAgent(conv)
 	f.HaveGroup("signals")
-	require.NoError(t, func() error { _, err := db.SetAgentGroupDefaultCwd("signals", repo); return err }())
+	_, err := db.SetAgentGroupDefaultCwd("signals", repo)
+	require.NoError(t, err)
 	rows := byPath(discoverWorktrees(t, agentd.BuildDashboardHandlerForTest(), "signals").Worktrees)
 	merged := rows[paths["merged"]]
 	require.NotNil(t, merged.Merged)
@@ -1009,6 +1013,13 @@ func TestWorktreeSweep_RealGitSignals(t *testing.T) {
 	published := rows[paths["published"]]
 	require.NotNil(t, published.Unpushed)
 	assert.Zero(t, *published.Unpushed)
+	ahead := rows[paths["ahead"]]
+	require.NotNil(t, ahead.Unpushed)
+	assert.Equal(t, 1, *ahead.Unpushed)
+	assert.False(t, ahead.Checked)
+	require.NotNil(t, rows[detached].Merged)
+	assert.True(t, *rows[detached].Merged)
+	assert.True(t, rows[detached].PotentiallyDangling)
 	gone := rows[paths["gone"]]
 	assert.True(t, gone.UpstreamGone)
 	require.NotNil(t, gone.Unpushed)

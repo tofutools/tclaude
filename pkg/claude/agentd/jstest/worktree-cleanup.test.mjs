@@ -441,3 +441,46 @@ test('TCL-487 handoff lock remains reserved through every Preact cleanup close p
     });
   }
 });
+
+test('dangling view shows reasons and risk badges without selecting hidden worktrees', async (t) => {
+  const { harness, host, pending } = await mountCleanup(t, {
+    scan: async () => ({ repoRoots: ['/repo'], worktrees: [
+      worktree('/merged', { merged: true, potentially_dangling: true, dangling_reason: 'merged into refs/heads/main' }),
+      worktree('/stale', { stale: true, unpushed_commits: 2, checked: false,
+        potentially_dangling: true, dangling_reason: 'no recent activity (30 days)' }),
+      worktree('/recent'),
+    ] }),
+  });
+  const toggle = [...host.querySelectorAll('button')].find((button) => /Potentially dangling/.test(button.textContent));
+  assert.ok(toggle);
+  assert.match(host.textContent, /2 unpublished/);
+  assert.match(host.textContent, /Potentially dangling: merged into refs\/heads\/main/);
+  toggle.click();
+  await flush(harness);
+  assert.equal(checkbox(host, '/recent'), null);
+  assert.ok(checkbox(host, '/merged'));
+  assert.equal(isChecked(host, '/stale'), false);
+  assert.match(host.querySelector('#worktree-cleanup-count').textContent, /2 of 3 worktrees/);
+  host.querySelector('#worktree-cleanup-select-none').click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/merged'), false);
+  assert.equal(isChecked(host, '/stale'), false);
+  toggle.click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/recent'), true, 'select none leaves hidden selection unchanged');
+  // Clear all choices, then ensure select all in the dangling view also
+  // respects visibility, including hidden worktrees that are unsafe by default.
+  host.querySelector('#worktree-cleanup-select-none').click();
+  await flush(harness);
+  toggle.click();
+  await flush(harness);
+  host.querySelector('#worktree-cleanup-select-all').click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/merged'), true);
+  assert.equal(isChecked(host, '/stale'), true);
+  toggle.click();
+  await flush(harness);
+  assert.equal(isChecked(host, '/recent'), false, 'select all does not select hidden rows');
+  host.querySelector('#worktree-cleanup-cancel').click();
+  assert.equal(await pending, null);
+});
