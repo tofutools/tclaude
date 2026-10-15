@@ -7,12 +7,13 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
@@ -82,7 +83,7 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), paf.Limits{})
+	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: the daemon wrote an unreadable workflow: %v\n", err)
 		return rcIOFailure
@@ -131,7 +132,7 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	a, err := pwf.Open(bytes.NewReader(data), int64(len(data)), paf.Limits{})
+	a, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
@@ -151,7 +152,7 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		fmt.Fprintln(stdout, "Signature: none (valid but unverified)")
 	}
 	for _, s := range a.Signatures {
-		fmt.Fprintf(stdout, "Signature: %s by key %s (this offline check does not say whose key it is; import shows that)\n", s.Status, s.Signature.KeyID)
+		fmt.Fprintf(stdout, "Signature: %s by key %s (this offline check does not say whose key it is; import shows that)\n", s.Status, shown(s.Signature.KeyID))
 	}
 	return rcOK
 }
@@ -172,8 +173,9 @@ type workflowImportJSON struct {
 		Status     string `json:"status"`
 		CurrentRef string `json:"currentRef"`
 	} `json:"templates"`
-	Updates int  `json:"updates"`
-	Applied bool `json:"applied"`
+	Updates      int    `json:"updates"`
+	Applied      bool   `json:"applied"`
+	ReviewDigest string `json:"reviewDigest"`
 }
 
 type processTemplatesImportParams struct {
@@ -223,13 +225,13 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		fmt.Fprintln(stdout, "Signature: none (unverified)")
 	}
 	for _, s := range view.Signatures {
-		fmt.Fprintf(stdout, "Signature: %s, key %s (%s)\n", s.Status, s.KeyID, s.Trust)
+		fmt.Fprintf(stdout, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
 	}
 	fmt.Fprintln(stdout, "Templates:")
 	for _, t := range view.Templates {
-		line := fmt.Sprintf("  %-10s %s", t.Status, t.Ref)
+		line := fmt.Sprintf("  %-10s %s", shown(t.Status), shown(t.Ref))
 		if t.CurrentRef != "" {
-			line += " (here now: " + t.CurrentRef + ")"
+			line += " (here now: " + shown(t.CurrentRef) + ")"
 		}
 		fmt.Fprintln(stdout, line)
 	}
@@ -241,7 +243,7 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		fmt.Fprintf(stderr, "Error: %d template(s) already exist here with different content; re-run with --replace to make the imported versions current.\n", view.Updates)
 		return rcInvalidArg
 	}
-	path := "/v1/process/import?apply=1"
+	path := "/v1/process/import?apply=1&review=" + url.QueryEscape(view.ReviewDigest)
 	if p.Replace {
 		path += "&replace=1"
 	}
@@ -249,19 +251,40 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Imported %q. Start it with: tclaude process run %s\n", view.Title, view.RootID)
+	fmt.Fprintf(stdout, "Imported %q. Start it with: tclaude process run %s\n", view.Title, shown(view.RootID))
 	return rcOK
+}
+
+// shown makes a file-controlled string safe to print in a review: anything
+// with control characters (which could redraw the terminal and fake what the
+// review says) is shown quoted, escapes visible.
+func shown(v string) string {
+	for _, r := range v {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return strconv.Quote(v)
+		}
+	}
+	return v
+}
+
+func shownAll(vs []string) string {
+	out := make([]string, len(vs))
+	for i, v := range vs {
+		out[i] = shown(v)
+	}
+	return strings.Join(out, ", ")
 }
 
 // renderWorkflow prints the review a person needs before trusting a
 // workflow: what it is, its inputs, the roles it asks for, every command it
-// would run, and the steps that are not portable.
+// would run, and the steps that are not portable. Every string comes from
+// the file, so each goes through shown.
 func renderWorkflow(out io.Writer, wf pwf.Workflow) {
-	fmt.Fprintf(out, "Workflow: %s\n", wf.Title)
+	fmt.Fprintf(out, "Workflow: %s\n", shown(wf.Title))
 	if wf.Summary != "" {
-		fmt.Fprintf(out, "  %s\n", wf.Summary)
+		fmt.Fprintf(out, "  %s\n", shown(wf.Summary))
 	}
-	fmt.Fprintf(out, "Root: %s (%d template(s))\n", wf.Root, len(wf.Templates))
+	fmt.Fprintf(out, "Root: %s (%d template(s))\n", shown(wf.Root), len(wf.Templates))
 	if len(wf.Params) > 0 {
 		fmt.Fprintln(out, "Inputs:")
 		for _, p := range wf.Params {
@@ -269,27 +292,31 @@ func renderWorkflow(out io.Writer, wf pwf.Workflow) {
 			if p.Required {
 				req = ", required"
 			}
-			fmt.Fprintf(out, "  %s (%s%s)\n", p.Name, p.Type, req)
+			fmt.Fprintf(out, "  %s (%s%s)\n", shown(p.Name), shown(p.Type), req)
 		}
 	}
 	if len(wf.Roles) > 0 {
 		fmt.Fprintln(out, "Agent roles:")
 		for _, r := range wf.Roles {
-			fmt.Fprintf(out, "  %s: %s\n", r.Name, strings.Join(r.Steps, ", "))
+			fmt.Fprintf(out, "  %s: %s\n", shown(r.Name), shownAll(r.Steps))
 		}
 	}
 	if len(wf.Humans) > 0 {
-		fmt.Fprintf(out, "Asks you: %s\n", strings.Join(wf.Humans, ", "))
+		fmt.Fprintf(out, "Asks you: %s\n", shownAll(wf.Humans))
 	}
 	if len(wf.Programs) == 0 {
 		fmt.Fprintln(out, "Commands: none")
 	} else {
 		fmt.Fprintln(out, "Commands it would run (each needs its profile authorized when a run starts):")
 		for _, p := range wf.Programs {
-			fmt.Fprintf(out, "  %s [%s]: %s\n", p.Step, p.Profile, strings.TrimSpace(p.Run+" "+strings.Join(p.Args, " ")))
+			args := make([]string, len(p.Args))
+			for i, a := range p.Args {
+				args[i] = shown(a)
+			}
+			fmt.Fprintf(out, "  %s [%s]: %s\n", shown(p.Step), shown(p.Profile), strings.TrimSpace(shown(p.Run)+" "+strings.Join(args, " ")))
 		}
 	}
 	for _, a := range wf.Assignees {
-		fmt.Fprintf(out, "Not portable: %s name agent %q\n", strings.Join(a.Steps, ", "), a.Name)
+		fmt.Fprintf(out, "Not portable: %s name agent %s\n", shownAll(a.Steps), strconv.Quote(a.Name))
 	}
 }

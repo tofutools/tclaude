@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,6 +30,16 @@ const pwfRootSource = "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\n
 	"  merge:\n    type: task\n    performer:\n      kind: program\n      profile: git\n      run: gh\n      args: [pr, merge]\n    next:\n      pass: done\n" +
 	"  done:\n    type: end\n"
 
+// pwfApply previews a file and applies exactly that review.
+func pwfApply(t *testing.T, f *testharness.Flow, file []byte, extra string) *httptest.ResponseRecorder {
+	t.Helper()
+	prev := pwfRaw(t, f, http.MethodPost, "/v1/process/import", file)
+	require.Equal(t, http.StatusOK, prev.Code, prev.Body.String())
+	var view pwfImportResponse
+	testharness.DecodeJSON(t, prev, &view)
+	return pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1&review="+view.ReviewDigest+extra, file)
+}
+
 func pwfRaw(t *testing.T, f *testharness.Flow, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
@@ -42,8 +53,9 @@ type pwfImportResponse struct {
 	Roles     []pwf.Use
 	Programs  []pwf.Program
 	Updates   int
-	Applied   bool
-	Templates []struct {
+	Applied      bool
+	ReviewDigest string
+	Templates    []struct {
 		Ref, ID, Status, CurrentRef string
 		Head                        bool
 	}
@@ -94,7 +106,7 @@ func TestProcessWorkflowExportImportRoundTrip(t *testing.T) {
 	gone := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-ship", nil)
 	assert.Equal(t, http.StatusNotFound, gone.Code, "a preview never stores anything")
 
-	applied := pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1", file)
+	applied := pwfApply(t, f, file, "")
 	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
 	testharness.DecodeJSON(t, applied, &view)
 	assert.True(t, view.Applied)
@@ -111,10 +123,10 @@ func TestProcessWorkflowExportImportRoundTrip(t *testing.T) {
 	testharness.DecodeJSON(t, cur, &head)
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-review", map[string]any{"source": edited, "sourceHash": head.SourceHash})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	conflict := pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1", file)
+	conflict := pwfApply(t, f, file, "")
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 	assert.Contains(t, conflict.Body.String(), "replace")
-	replaced := pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1&replace=1", file)
+	replaced := pwfApply(t, f, file, "&replace=1")
 	require.Equal(t, http.StatusOK, replaced.Code, replaced.Body.String())
 	testharness.DecodeJSON(t, replaced, &view)
 	for _, row := range view.Templates {
@@ -137,4 +149,68 @@ func TestProcessWorkflowExportUnknownTemplate(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
 	rec := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/nope/export", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// A file carrying a pinned older version and the head of the same template
+// imports cleanly onto a node that has neither, with the head current.
+func TestProcessWorkflowImportPinnedAndHeadOnAFreshNode(t *testing.T) {
+	f, root := processAuthoringFlow(t)
+	save := func(id, source, sourceHash string) string {
+		rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/"+id, map[string]any{"source": source, "sourceHash": sourceHash})
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var out struct{ Ref, SemanticHash, SourceHash string }
+		testharness.DecodeJSON(t, rec, &out)
+		return out.SemanticHash + " " + out.SourceHash
+	}
+	v1 := save("pwf-review", pwfChildSource, "")
+	var v1Hash, v1Source string
+	_, _ = fmt.Sscan(v1, &v1Hash, &v1Source)
+	save("pwf-review", pwfChildSource+"description: second\n", v1Source)
+	pinned := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: pwf-both\nstart: s\n" +
+		"nodes:\n  s:\n    type: start\n    next:\n      pass: a\n" +
+		"  a:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-review\n      version: sha256:" + v1Hash + "\n      inputs:\n        target: x\n    next:\n      pass: b\n" +
+		"  b:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-review\n      inputs:\n        target: y\n    next:\n      pass: done\n" +
+		"  done:\n    type: end\n"
+	save("pwf-both", pinned, "")
+	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-both/export", nil)
+	require.Equal(t, http.StatusOK, exp.Code, exp.Body.String())
+	file := exp.Body.Bytes()
+	headBefore := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-review", nil)
+	var want struct{ CurrentRef string }
+	testharness.DecodeJSON(t, headBefore, &want)
+
+	require.NoError(t, os.RemoveAll(root))
+	applied := pwfApply(t, f, file, "")
+	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
+	headAfter := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-review", nil)
+	var got struct{ CurrentRef string }
+	testharness.DecodeJSON(t, headAfter, &got)
+	assert.Equal(t, want.CurrentRef, got.CurrentRef, "the imported head is current, not the pinned older version")
+}
+
+// An apply acts only on the review it names: a local save after the review
+// makes it stale, so nothing unreviewed is replaced.
+func TestProcessWorkflowImportRefusesAStaleReview(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-review", map[string]any{"source": pwfChildSource})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-review/export", nil)
+	require.Equal(t, http.StatusOK, exp.Code, exp.Body.String())
+	file := exp.Body.Bytes()
+
+	prev := pwfRaw(t, f, http.MethodPost, "/v1/process/import", file)
+	var view pwfImportResponse
+	testharness.DecodeJSON(t, prev, &view)
+	cur := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-review", nil)
+	var head struct{ SourceHash string }
+	testharness.DecodeJSON(t, cur, &head)
+	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-review",
+		map[string]any{"source": pwfChildSource + "description: edited after the review\n", "sourceHash": head.SourceHash})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	stale := pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1&replace=1&review="+view.ReviewDigest, file)
+	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	assert.Contains(t, stale.Body.String(), "process_import_review_stale")
+	missing := pwfRaw(t, f, http.MethodPost, "/v1/process/import?apply=1&replace=1", file)
+	assert.Equal(t, http.StatusConflict, missing.Code, "an apply without a review is refused")
 }

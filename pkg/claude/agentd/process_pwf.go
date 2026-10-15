@@ -3,6 +3,8 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -146,6 +148,10 @@ type pwfImportView struct {
 	// import with updates needs replace.
 	Updates int  `json:"updates"`
 	Applied bool `json:"applied"`
+	// ReviewDigest binds an apply to this exact review: the file and what
+	// importing it would change here. Apply must send it back as ?review=,
+	// and is refused if anything moved in between (e.g. a local save).
+	ReviewDigest string `json:"reviewDigest"`
 }
 
 type pwfSignatureView struct {
@@ -174,8 +180,9 @@ type pwfTemplateImported struct {
 	CurrentRef string `json:"currentRef,omitempty"`
 }
 
-// POST /v1/process/import[?apply=1[&replace=1]] with a .pwf body. Without
-// apply it is a preview and changes nothing.
+// POST /v1/process/import[?apply=1&review=<digest>[&replace=1]] with a .pwf
+// body. Without apply it is a preview and changes nothing; an apply must
+// carry the reviewDigest of the preview it acts on.
 func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
 	if !ok {
@@ -187,7 +194,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("a workflow file is at most %d bytes", maxPWFUpload))
 		return
 	}
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), paf.Limits{})
+	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_pwf", err.Error())
 		return
@@ -197,7 +204,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	view, err := pwfImportPreview(r.Context(), fs, archive)
+	view, err := pwfImportPreview(r.Context(), fs, archive, data)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
@@ -205,6 +212,14 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if q.Get("apply") != "1" {
 		writeProcessJSON(w, http.StatusOK, view)
+		return
+	}
+	if q.Get("review") != view.ReviewDigest {
+		writeProcessJSON(w, http.StatusConflict, map[string]any{
+			"error":   "process_import_review_stale",
+			"message": "what this import would change is not what was reviewed (a template changed here since); review it again",
+			"preview": view,
+		})
 		return
 	}
 	if view.Updates > 0 && q.Get("replace") != "1" {
@@ -220,8 +235,21 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_actor", err.Error())
 		return
 	}
+	// Heads first: on a node without the id, a pinned older version stored
+	// first would become the head and make the imported head look like a
+	// conflict.
+	rows := make([]*pwfTemplateImported, 0, len(view.Templates))
 	for i := range view.Templates {
-		row := &view.Templates[i]
+		if view.Templates[i].Head {
+			rows = append(rows, &view.Templates[i])
+		}
+	}
+	for i := range view.Templates {
+		if !view.Templates[i].Head {
+			rows = append(rows, &view.Templates[i])
+		}
+	}
+	for _, row := range rows {
 		tmpl := archive.Templates[row.Ref].Parsed
 		switch row.Status {
 		case "identical":
@@ -231,9 +259,14 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		case "new", "update":
 			expected := ""
 			if row.Status == "update" {
+				// Replace only the head that was reviewed.
 				head, herr := fs.GetTemplateHeadGeneration(r.Context(), row.ID)
 				if herr != nil {
 					err = herr
+					break
+				}
+				if head.Ref != row.CurrentRef {
+					err = fmt.Errorf("the local head moved to %s since the review", head.Ref)
 					break
 				}
 				expected = head.SourceHash
@@ -250,7 +283,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, view)
 }
 
-func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive) (pwfImportView, error) {
+func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []byte) (pwfImportView, error) {
 	wf := a.Workflow
 	view := pwfImportView{
 		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: a.Root().Parsed.ID, Readme: string(a.Readme),
@@ -285,6 +318,12 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive) (pwfImp
 		}
 		view.Templates = append(view.Templates, row)
 	}
+	digest := sha256.New()
+	digest.Write(data)
+	for _, row := range view.Templates {
+		fmt.Fprintf(digest, "\n%s %s %s", row.Ref, row.Status, row.CurrentRef)
+	}
+	view.ReviewDigest = hex.EncodeToString(digest.Sum(nil))
 	return view, nil
 }
 

@@ -144,6 +144,14 @@ type WriteOptions struct {
 	Limits    paf.Limits
 }
 
+// DefaultLimits bound what a PWF reader accepts. A workflow is a handful of
+// small text files, so these are far below PAF's (which carries whole
+// conversations): a small, highly compressed file can never make a reader
+// allocate more than MaxArchiveBytes.
+func DefaultLimits() paf.Limits {
+	return paf.Limits{MaxArchiveBytes: 32 << 20, MaxMetadataBytes: 1 << 20, MaxRecordBytes: 1 << 20, MaxEntries: 1000}
+}
+
 // Archive is an opened and fully verified PWF file.
 type Archive struct {
 	Manifest    Manifest
@@ -379,7 +387,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	}
 	limits := opts.Limits
 	if limits == (paf.Limits{}) {
-		limits = paf.DefaultLimits()
+		limits = DefaultLimits()
 	}
 	zw := zip.NewWriter(out)
 	man := Manifest{Format: Format, PwfVersion: Version, Kind: KindWorkflow, CreatedAt: created.UTC().Truncate(time.Second).Format(time.RFC3339),
@@ -453,7 +461,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 // the caller's decision: an unsigned file is valid but unverified.
 func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	if limits == (paf.Limits{}) {
-		limits = paf.DefaultLimits()
+		limits = DefaultLimits()
 	}
 	if size > limits.MaxArchiveBytes {
 		return nil, fmt.Errorf("pwf: file exceeds %d bytes", limits.MaxArchiveBytes)
@@ -638,8 +646,13 @@ func checkText(title, summary string) error {
 	if len(summary) > maxSummary {
 		return fmt.Errorf("pwf: summary exceeds %d bytes", maxSummary)
 	}
+	for _, r := range summary {
+		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return errors.New("pwf: summary has control characters")
+		}
+	}
 	for _, r := range title {
-		if r < 0x20 || r == 0x7f {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
 			return errors.New("pwf: title has control characters")
 		}
 	}

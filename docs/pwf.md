@@ -30,7 +30,9 @@ tclaude agent process-templates export ship-feature -o - > x.pwf
 tclaude agent process-templates export ship-feature --version sha256:<hex> --title "Ship a feature"
 ```
 
-The file is signed with this node's federation key when the node has one.
+Exporting an older version (`--version`) makes that version the current one
+wherever the file is imported. The file is signed with this node's federation
+key when the node has one.
 Exporting never creates a key. A step that names one specific agent (an
 `assignee`) is exported as written, but it is not portable: the importing node
 has different agents, so export points those steps out and they wait there
@@ -53,7 +55,9 @@ tclaude agent process-templates import ship-feature.pwf          # review only
 tclaude agent process-templates import ship-feature.pwf --yes    # import
 ```
 
-Without `--yes`, import stops at the review. The review adds what only the
+Without `--yes`, import stops at the review. An import applies exactly what
+was reviewed: if a template changes here between the review and the import,
+the import is refused and you review again. The review adds what only the
 receiving node knows: whether the signing key is this node, a known federation
 peer or unknown, and what importing would change for each template:
 
@@ -95,7 +99,9 @@ A PWF file is a ZIP archive (extension `.pwf`, media type
 every other entry except `signatures/*` listed in the manifest with its byte
 length and SHA-256, safe relative entry names, regular files only, bounded
 sizes, duplicate JSON keys refused, and local headers that agree with the
-central directory. Entries outside the layout below are refused.
+central directory. Entries outside the layout below are refused. A workflow
+is a few small text files, so readers bound it far below PAF: tclaude accepts
+at most 32 MiB of uncompressed content and 1,000 entries, and 1 MiB per entry.
 
 ### Layout
 
@@ -138,7 +144,8 @@ a 0.1 reader refuses a file that requires any.
 
 Schema: [`workflow.schema.json`](pwf/schema/v0.1/workflow.schema.json).
 
-`title` and `summary` are free text from the exporter. Everything else is
+`title` and `summary` are free text from the exporter, without control
+characters (the summary may contain newlines and tabs). Everything else is
 derived from the templates, and a reader recomputes it and refuses a file
 whose `workflow.json` disagrees. That makes it safe to show a review from
 `workflow.json` alone.

