@@ -58,7 +58,9 @@ function useScribeChat(agentId, enabled, fetchChat, pokeRef) {
       let open = false;
       try {
         const read = chatRead(await fetchChat(agentId, abort.signal));
-        open = !!read.live;
+        // Fast only while there is progress to show: a turn whose transcript
+        // cannot be read, or one that never got a reply, falls back.
+        open = !!read.live?.items?.length;
         if (!stopped) setState({ ...read, error: '', loaded: true });
       } catch (error) {
         if (!stopped && error?.name !== 'AbortError') setState((prev) => ({ ...prev, error: error?.message || String(error), loaded: true }));
@@ -87,13 +89,24 @@ function LiveTurn({ live }) {
 
 function ChatLog({ messages, live, loaded, error, pendingSend }) {
   const log = useRef(null);
+  // Live progress follows the bottom only while the reader is there, so
+  // scrolling up to re-read an earlier reply is not undone every poll.
+  const atBottom = useRef(true);
   const liveSize = (live?.items || []).reduce((sum, item) => sum + item.text.length, 0);
   useLayoutEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
-  }, [messages.length, pendingSend, liveSize]);
+    atBottom.current = true;
+  }, [messages.length, pendingSend]);
+  useLayoutEffect(() => {
+    if (log.current && atBottom.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [liveSize]);
+  const onScroll = (event) => {
+    const el = event.currentTarget;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
   const last = messages.at(-1);
   const working = pendingSend || last?.role === 'human' || !!live;
-  return html`<div ref=${log} class="psd-log process-scroll-surface" role="log" aria-live="polite" aria-label="Scribe conversation">
+  return html`<div ref=${log} onScroll=${onScroll} class="psd-log process-scroll-surface" role="log" aria-live="polite" aria-label="Scribe conversation">
     ${!loaded && html`<p class="psd-empty">Loading the conversation…</p>`}
     ${loaded && !messages.length && !error && html`<p class="psd-empty">Ask for a change in plain words. The scribe saves a new version, and you accept or reject each change on the canvas.</p>`}
     ${messages.map((message) => html`<div key=${message.id} class=${`psd-msg is-${message.role}`} data-scribe-msg=${message.role}>

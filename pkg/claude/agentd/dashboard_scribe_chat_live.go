@@ -1,7 +1,11 @@
 package agentd
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,24 +19,35 @@ import (
 // The scribe chat's live tail (tcl-fbxfwa). The Stop hook records a scribe's
 // final message only when its turn ends, so a long turn used to show nothing
 // but "scribe is working…". While a turn is open, the chat read also decodes
-// the tail of the scribe's own harness transcript and returns what the scribe
-// has said and done so far in this turn: its text, plus a one-line summary of
-// each tool call. The dock re-reads it on every poll and replaces it wholesale;
-// the recorded reply supersedes it once the turn ends.
+// the scribe's own harness transcript and returns what the scribe has said and
+// done so far in this turn: its text, plus a one-line summary of each tool
+// call. The dock re-reads it on every poll and replaces it wholesale; the
+// recorded reply supersedes it once the turn ends.
 //
 // It is served only through the scribe chat read, so it inherits that read's
 // scribe-only gate and never becomes a general transcript surface. A harness
 // whose history cannot be decoded degrades to the old behavior, with the
 // reason in live.unavailable.
+//
+// The dock polls about once a second while there is progress to show, so a
+// decode is reused until the transcript changes: a JSONL transcript the conv
+// index locates is keyed by its size and mtime, so an idle poll costs a stat;
+// any other is decoded at most every scribeLiveReuse.
 
 const (
 	scribeLiveMaxItems     = 40
 	scribeLiveMaxTextBytes = 4 << 10
 	scribeLiveMaxToolBytes = 160
 	scribeLiveMaxBytes     = 24 << 10
-	// A transcript that could not be found is not looked for again for this
-	// long: finding it can mean scanning a harness's whole store.
-	scribeLiveMissTTL = 10 * time.Second
+	// scribeLiveKeep bounds the candidates kept per decode: more than one
+	// turn's worth, so the since-filter still has the whole open turn.
+	scribeLiveKeep = 4 * scribeLiveMaxItems
+	// scribeLiveReuse is how long a decode without a file identity, or one
+	// that failed, is reused. Finding a transcript can mean scanning a
+	// harness's whole store.
+	scribeLiveReuse = 5 * time.Second
+	// scribeLiveEvict drops cache entries no dock has read for this long.
+	scribeLiveEvict = time.Minute
 )
 
 type scribeLiveItem struct {
@@ -47,14 +62,32 @@ type scribeLive struct {
 	Unavailable string           `json:"unavailable,omitempty"`
 }
 
+// scribeLiveCandidate is an item of the decoded transcript, before the
+// open-turn filter. afterHuman marks an item that follows the transcript's
+// last operator message; it decides for entries without a timestamp.
+type scribeLiveCandidate struct {
+	item       scribeLiveItem
+	afterHuman bool
+}
+
+type scribeLiveDecode struct {
+	mu       sync.Mutex
+	key      string // file identity; "" when the transcript has none
+	at       time.Time
+	read     time.Time
+	cands    []scribeLiveCandidate
+	dropped  bool
+	reason   string
+	resolved bool
+}
+
 var (
-	scribeLiveMissMu sync.Mutex
-	scribeLiveMisses = map[string]scribeLiveMiss{}
+	scribeLiveMu    sync.Mutex
+	scribeLiveCache = map[string]*scribeLiveDecode{}
 )
 
-type scribeLiveMiss struct {
-	reason string
-	at     time.Time
+func unavailableScribeLive(reason string) *scribeLive {
+	return &scribeLive{Items: []scribeLiveItem{}, Unavailable: reason}
 }
 
 // scribeLiveTail returns what agentID's current conversation has produced
@@ -62,64 +95,112 @@ type scribeLiveMiss struct {
 func scribeLiveTail(agentID string, since time.Time) *scribeLive {
 	convID, err := db.CurrentConvForAgent(agentID)
 	if err != nil || convID == "" {
-		return &scribeLive{Items: []scribeLiveItem{}, Unavailable: "the scribe has no conversation yet"}
+		return unavailableScribeLive("the scribe has no conversation yet")
 	}
 	h := harnessForConv(convID)
 	if !h.SupportsTranscript() {
-		return &scribeLive{Items: []scribeLiveItem{}, Unavailable: "the " + h.Name + " harness cannot show a turn before it ends"}
+		return unavailableScribeLive("the " + h.Name + " harness cannot show a turn before it ends")
 	}
-	if reason, ok := scribeLiveRecentMiss(convID); ok {
-		return &scribeLive{Items: []scribeLiveItem{}, Unavailable: reason}
+	if h.Name == harness.OpenCodeName {
+		// OpenCode's history is read through an `opencode export`
+		// subprocess, far too heavy to run on every poll.
+		return unavailableScribeLive("OpenCode's progress shows when the turn ends")
 	}
-	cwd := ""
-	if rows, err := db.FindSessionsByConvID(convID); err == nil {
-		for _, s := range rows {
-			if s.Cwd != "" {
-				cwd = s.Cwd
-				break
+	d := scribeLiveEntry(convID)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.read = time.Now()
+	path, key := scribeLiveFileKey(convID, h)
+	fresh := d.resolved && ((key != "" && key == d.key) || (key == "" && d.key == "" && time.Since(d.at) < scribeLiveReuse))
+	if d.reason != "" && key != "" && key == d.key {
+		fresh = time.Since(d.at) < scribeLiveReuse // a failed decode is retried, but not on every poll
+	}
+	if !fresh {
+		d.key, d.at, d.resolved = key, time.Now(), true
+		d.cands, d.dropped, d.reason = nil, false, ""
+		t, err := decodeScribeLive(h, convID, path)
+		if err != nil {
+			d.reason = "the scribe's transcript cannot be read yet"
+		} else {
+			d.cands, d.dropped = scribeLiveCandidates(t)
+		}
+	}
+	if d.reason != "" {
+		return unavailableScribeLive(d.reason)
+	}
+	return scribeLiveSince(d.cands, d.dropped, since)
+}
+
+func scribeLiveEntry(convID string) *scribeLiveDecode {
+	scribeLiveMu.Lock()
+	defer scribeLiveMu.Unlock()
+	for id, d := range scribeLiveCache {
+		if d.mu.TryLock() {
+			stale := time.Since(d.read) > scribeLiveEvict
+			d.mu.Unlock()
+			if stale {
+				delete(scribeLiveCache, id)
 			}
 		}
 	}
-	t, err := harness.DecodeHistory(h, convID, cwd)
+	d, ok := scribeLiveCache[convID]
+	if !ok {
+		d = &scribeLiveDecode{}
+		scribeLiveCache[convID] = d
+	}
+	return d
+}
+
+// scribeLiveFileKey identifies a JSONL transcript the conv index locates by
+// path, size and mtime. Other transcripts have no key.
+func scribeLiveFileKey(convID string, h *harness.Harness) (string, string) {
+	if h.Name != harness.DefaultName && h.Name != harness.CodexName {
+		return "", ""
+	}
+	row, err := db.GetConvIndex(convID)
+	if err != nil || row == nil || row.FullPath == "" || (row.Harness != "" && row.Harness != h.Name) {
+		return "", ""
+	}
+	info, err := os.Stat(row.FullPath)
 	if err != nil {
-		reason := "the scribe's transcript cannot be read yet"
-		scribeLiveRememberMiss(convID, reason)
-		return &scribeLive{Items: []scribeLiveItem{}, Unavailable: reason}
+		return "", ""
 	}
-	return scribeLiveFromTranscript(t, since)
+	return row.FullPath, row.FullPath + "|" + strconv.FormatInt(info.Size(), 10) + "|" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
 }
 
-func scribeLiveRecentMiss(convID string) (string, bool) {
-	scribeLiveMissMu.Lock()
-	defer scribeLiveMissMu.Unlock()
-	miss, ok := scribeLiveMisses[convID]
-	if !ok || time.Since(miss.at) > scribeLiveMissTTL {
-		delete(scribeLiveMisses, convID)
-		return "", false
-	}
-	return miss.reason, true
-}
-
-func scribeLiveRememberMiss(convID, reason string) {
-	scribeLiveMissMu.Lock()
-	defer scribeLiveMissMu.Unlock()
-	for id, miss := range scribeLiveMisses {
-		if time.Since(miss.at) > scribeLiveMissTTL {
-			delete(scribeLiveMisses, id)
+// decodeScribeLive decodes the scribe's history. A JSONL transcript is read
+// up to its last complete line: the harness may be part-way through
+// appending a record, and a torn line must not fail the whole read.
+func decodeScribeLive(h *harness.Harness, convID, path string) (*transcript.Transcript, error) {
+	if path == "" {
+		cwd := ""
+		if rows, err := db.FindSessionsByConvID(convID); err == nil {
+			for _, s := range rows {
+				if s.Cwd != "" {
+					cwd = s.Cwd
+					break
+				}
+			}
 		}
+		return harness.DecodeHistory(h, convID, cwd)
 	}
-	scribeLiveMisses[convID] = scribeLiveMiss{reason: reason, at: time.Now()}
+	streaming, ok := h.History.(harness.StreamingHistoryTransfer)
+	if !ok {
+		return nil, errors.New("history cannot be streamed")
+	}
+	r, err := streaming.Open(convID, "")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	return h.Transcript.Decode(&completeLinesReader{r: bufio.NewReader(r)}, convID)
 }
 
-// scribeLiveFromTranscript keeps the agent's text and tool calls of the open
-// turn. An entry is part of it when it is newer than the last recorded reply;
-// an entry without a timestamp counts when it follows the last operator
-// message in the transcript, which is the best a format without times allows.
-// The newest items win when the tail is over its bounds.
-func scribeLiveFromTranscript(t *transcript.Transcript, since time.Time) *scribeLive {
-	out := &scribeLive{Items: []scribeLiveItem{}}
+// scribeLiveCandidates lists the agent's text and tool calls in t, newest
+// scribeLiveKeep of them, and whether older ones were left out.
+func scribeLiveCandidates(t *transcript.Transcript) ([]scribeLiveCandidate, bool) {
 	if t == nil {
-		return out
+		return nil, false
 	}
 	lastHuman := -1
 	for i, e := range t.Entries {
@@ -127,27 +208,51 @@ func scribeLiveFromTranscript(t *transcript.Transcript, since time.Time) *scribe
 			lastHuman = i
 		}
 	}
+	var out []scribeLiveCandidate
 	for i, e := range t.Entries {
 		if e.Role != transcript.RoleAssistant {
 			continue
 		}
-		if e.Time.IsZero() {
-			if i < lastHuman {
-				continue
-			}
-		} else if !since.IsZero() && !e.Time.After(since) {
-			continue
-		}
+		after := lastHuman >= 0 && i > lastHuman
 		for _, b := range e.Blocks {
 			switch b.Kind {
 			case transcript.BlockText:
 				if text := strings.TrimSpace(b.Text); text != "" {
-					out.Items = append(out.Items, scribeLiveItem{Kind: "text", Text: clipUTF8(text, scribeLiveMaxTextBytes), At: e.Time})
+					out = append(out, scribeLiveCandidate{scribeLiveItem{Kind: "text", Text: clipUTF8(text, scribeLiveMaxTextBytes), At: e.Time}, after})
 				}
 			case transcript.BlockToolCall:
-				out.Items = append(out.Items, scribeLiveItem{Kind: "tool", Text: scribeToolSummary(b), At: e.Time})
+				out = append(out, scribeLiveCandidate{scribeLiveItem{Kind: "tool", Text: scribeToolSummary(b), At: e.Time}, after})
 			}
 		}
+	}
+	if n := len(out); n > scribeLiveKeep {
+		return out[n-scribeLiveKeep:], true
+	}
+	return out, false
+}
+
+// scribeLiveSince keeps the open turn's items. An item is part of it when it
+// is newer than the last recorded reply; one without a timestamp counts when
+// it follows the last operator message in the transcript, which is the best a
+// format without times allows. The newest items win when the tail is over its
+// bounds.
+func scribeLiveSince(cands []scribeLiveCandidate, dropped bool, since time.Time) *scribeLive {
+	out := &scribeLive{Items: []scribeLiveItem{}}
+	first := true
+	for i, c := range cands {
+		if c.item.At.IsZero() {
+			if !c.afterHuman {
+				continue
+			}
+		} else if !since.IsZero() && !c.item.At.After(since) {
+			continue
+		}
+		if first {
+			// Older candidates the decode left out may have belonged to
+			// this turn too only when the first kept one does.
+			out.Truncated, first = dropped && i == 0, false
+		}
+		out.Items = append(out.Items, c.item)
 	}
 	if n := len(out.Items); n > scribeLiveMaxItems {
 		out.Items, out.Truncated = out.Items[n-scribeLiveMaxItems:], true

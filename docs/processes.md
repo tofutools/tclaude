@@ -224,7 +224,8 @@ things there are specific to processes:
 - **Co-design with a scribe.** *Edit with agent* docks the template's scribe
   beside the canvas: chat with it there (while it works, what it has written
   so far and a one-line note per tool call stream in, read from its own
-  transcript; its final reply replaces them when the turn ends) or switch the
+  transcript, on every harness but OpenCode; its final reply replaces them
+  when the turn ends) or switch the
   dock to its terminal. The dock's context actions send
   it the selection, a node to explain, the focused validation issue, or a
   description to draft from. When the scribe saves a version, *Review on

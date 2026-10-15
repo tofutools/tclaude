@@ -126,6 +126,12 @@ func TestDashboardScribeChat_StreamsTheOpenTurnFromTheTranscript(t *testing.T) {
 	}})
 	record("user", now.Add(3*time.Second), []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": "{\"secret\":\"tool output\"}"}})
 	record("assistant", now.Add(4*time.Second), text("Adding the gate."))
+	// The harness is part-way through appending its next record.
+	torn, err := os.OpenFile(jsonl, os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = torn.WriteString(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"half`)
+	require.NoError(t, torn.Close())
+	require.NoError(t, err)
 	body = chat()
 	require.NotNil(t, body.Live)
 	got := make([]string, 0, len(body.Live.Items))
