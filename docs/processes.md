@@ -260,6 +260,20 @@ With `features.processes` on, the dashboard covers the whole loop: authoring,
 starting a run in a group or for one agent, following it, and acting on it.
 All of it goes through the same daemon routes and permissions as the CLI.
 
+**Quick start** (Groups › Processes). Before your first process, a group
+with no processes shows *Get started* in its body; afterwards (or once you
+dismiss it) it folds to *No processes yet · Get started ▸*. From it, pick a starter (filled from the group's roles and
+members), reuse a library template, or begin a blank step list. The step
+list edits a process as numbered steps, each done by a specific agent, any
+member with a role, you, or a command; your answers to a *you* step branch to
+later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
+start inputs and who each step would use now update as you edit. A command
+step runs on this host only after you tick *Allow step N to run* for its
+program profile. *Start now*
+saves the steps as a template and starts it in the group; *open in graph
+editor* saves it and opens it below. A process the step list cannot show
+(parallel, wait or subprocess nodes) opens in the graph editor instead.
+
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
 versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three

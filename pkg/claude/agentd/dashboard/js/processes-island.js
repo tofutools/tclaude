@@ -6,6 +6,7 @@ import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAuto
 import { registerCommandProvider } from './command-registry.js';
 import { buildProcessEditorCommands } from './process-command-registry.js';
 import { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } from './process-template-dnd.js';
+import { takeProcessDraft } from './process-draft-handoff.js';
 import { WorkflowExportButton, WorkflowImportButton } from './process-workflow-share.js';
 
 const html = htm.bind(h);
@@ -82,7 +83,7 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
   useEffect(() => {
     let disposed = false; let editor = null;
     const loadEditor = openEditor || (async (mount, value) => (await import('./process-editor.js')).openTemplateEditor(mount, value));
-    loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, config: { confirmDiscard, isShortcutActive: () => state.view.value.active, onOpenTemplates: () => actions?.activateSubtab?.('templates'), onOpenTemplate: actions?.openReferencedTemplate, templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe, scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null, describeActor: actions?.describeActor, onOpenActor: actions?.openActor } })
+    loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, config: { readableOpen: !!spec.readable, confirmDiscard, isShortcutActive: () => state.view.value.active, onOpenTemplates: () => actions?.activateSubtab?.('templates'), onOpenTemplate: actions?.openReferencedTemplate, templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe, scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null, describeActor: actions?.describeActor, onOpenActor: actions?.openActor } })
       .then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); })
       .catch((cause) => { if (!disposed) { setError(cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };
@@ -135,6 +136,24 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   };
   document.addEventListener('tclaude:restore-location', restore);
   registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
+  // A process handed over from Groups › Processes (the quick start) opens in
+  // the full editor: a template it just created, or the new-template dialog.
+  const takeDraft = () => {
+    const draft = takeProcessDraft();
+    if (draft?.create) actions.openCreate();
+    else if (draft?.id) {
+      // The editor may hold unsaved edits of another template; the draft is
+      // already saved, so declining only leaves it in Templates.
+      void Promise.resolve(actions.canLeaveEditor ? actions.canLeaveEditor() : true).then((ok) => {
+        if (ok) return actions.openEditor(draft.id, false, draft.name || '', { view: draft.view, readable: true });
+        state.setNotice?.(`${draft.name || draft.id} is saved in Templates.`);
+        return undefined;
+      });
+    }
+  };
+  document.addEventListener('tclaude:process-draft', takeDraft);
+  registerCleanup(() => document.removeEventListener('tclaude:process-draft', takeDraft));
+  takeDraft();
   setProcessTemplateDeleteHandler((spec) => actions.deleteTemplate(spec));
   const unbindTemplateDnd = bindProcessTemplateDnd();
   registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });

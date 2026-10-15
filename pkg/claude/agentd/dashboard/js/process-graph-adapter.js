@@ -17,7 +17,7 @@ export class ProcessGraphAdapter {
     graph = { nodes: [], edges: [] }, ariaLabel = '', events = {}, connectionFeedback,
     connectionFeedbackPreparation,
     actionFeedbackDelay, keyboardFeedbackDelay,
-    interactionLayering = false,
+    interactionLayering = false, readableZoom,
   } = {}) {
     this.host = host;
     this.events = events;
@@ -43,6 +43,7 @@ export class ProcessGraphAdapter {
       actionFeedbackDelay,
       keyboardFeedbackDelay,
       interactionLayering,
+      readableZoom,
       onInteractionStart: () => { this.interactionGeneration += 1; },
       onInteractionEnd: () => { this.interactionGeneration += 1; },
       onNodeClick: emit('nodeClick'),

@@ -221,6 +221,27 @@ test('command zoom helpers preserve the viewport center and reset to 100%', () =
   assert.equal(transforms.length, 2);
 });
 
+test('a readable open fits a small graph but floors a tall one at the zoom floor, start centred near the top', () => {
+  const fake = (height) => ({
+    view: { x: 0, y: 0, k: 1 },
+    svg: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) },
+    layout: {
+      bounds: { x: 0, y: 0, width: 300, height },
+      nodes: [{ id: 'start', type: 'start', x: 150, y: 40, height: 58, layer: 0 }, { id: 'a', type: 'task', x: 150, y: height - 40, height: 68, layer: 1 }],
+    },
+    applyView() {},
+    fitToView: ProcessGraph.prototype.fitToView,
+  });
+  const small = fake(400);
+  assert.equal(ProcessGraph.prototype.fitReadable.call(small, 0.8), false, 'a graph that fits readably keeps the fit');
+  assert.ok(small.view.k >= 0.8);
+  const tall = fake(2400);
+  assert.equal(ProcessGraph.prototype.fitReadable.call(tall, 0.8), true);
+  assert.equal(tall.view.k, 0.8);
+  assert.equal(tall.view.x + 150 * 0.8, 400, 'the start node is centred across');
+  assert.equal(tall.view.y + (40 - 29) * 0.8, 44, 'and its top sits at the padding');
+});
+
 test('editor wheel pans while Ctrl-wheel pinches, and viewer wheel still zooms', () => {
   const graph = (options) => ({
     options, view: { x: 10, y: 20, k: 1 },
