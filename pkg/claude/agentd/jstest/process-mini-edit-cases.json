@@ -1825,7 +1825,7 @@
       "performer": {
        "kind": "agent",
        "role": "dev",
-       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+       "prompt": "Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR."
       }
      },
      "review": {
@@ -1850,30 +1850,15 @@
        "ask": "Ship {{params.issue}}? Read the review on the PR.",
        "choices": [
         "ship",
-        "rework",
+        "changes",
         "hold"
        ]
-      }
-     },
-     "rework": {
-      "type": "task",
-      "name": "Rework",
-      "performer": {
-       "kind": "agent",
-       "role": "dev",
-       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
-      }
-     },
-     "final-say": {
-      "type": "decision",
-      "name": "Final say",
-      "performer": {
-       "kind": "human",
-       "ask": "Ship the reworked {{params.issue}}?",
-       "choices": [
-        "ship",
-        "hold"
-       ]
+      },
+      "loops": {
+       "changes": {
+        "maxIterations": 3,
+        "onExhausted": "hold"
+       }
       }
      },
      "merge": {
@@ -1932,26 +1917,11 @@
     },
     {
      "from": "approve",
-     "outcome": "rework",
-     "to": "rework"
+     "outcome": "changes",
+     "to": "implement"
     },
     {
      "from": "approve",
-     "outcome": "hold",
-     "to": "stopped"
-    },
-    {
-     "from": "rework",
-     "outcome": "next",
-     "to": "final-say"
-    },
-    {
-     "from": "final-say",
-     "outcome": "ship",
-     "to": "merge"
-    },
-    {
-     "from": "final-say",
      "outcome": "hold",
      "to": "stopped"
     },
@@ -1965,7 +1935,7 @@
     "nodes": {}
    }
   },
-  "loop-final-say-hold": {
+  "loop-approve-rounds": {
    "template": {
     "apiVersion": "tclaude.dev/v1alpha1",
     "kind": "ProcessTemplate",
@@ -1988,7 +1958,7 @@
       "performer": {
        "kind": "agent",
        "role": "dev",
-       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+       "prompt": "Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR."
       }
      },
      "review": {
@@ -2008,34 +1978,14 @@
        "ask": "Ship {{params.issue}}? Read the review on the PR.",
        "choices": [
         "ship",
-        "rework",
-        "hold"
-       ]
-      }
-     },
-     "rework": {
-      "type": "task",
-      "name": "Rework",
-      "performer": {
-       "kind": "agent",
-       "role": "dev",
-       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
-      }
-     },
-     "final-say": {
-      "type": "decision",
-      "name": "Final say",
-      "performer": {
-       "kind": "human",
-       "ask": "Ship the reworked {{params.issue}}?",
-       "choices": [
-        "ship",
+        "changes",
         "hold"
        ]
       },
       "loops": {
-       "hold": {
-        "maxIterations": 4
+       "changes": {
+        "maxIterations": 4,
+        "onExhausted": "hold"
        }
       }
      },
@@ -2090,28 +2040,13 @@
     },
     {
      "from": "approve",
-     "outcome": "rework",
-     "to": "rework"
+     "outcome": "changes",
+     "to": "implement"
     },
     {
      "from": "approve",
      "outcome": "hold",
      "to": "stopped"
-    },
-    {
-     "from": "rework",
-     "outcome": "next",
-     "to": "final-say"
-    },
-    {
-     "from": "final-say",
-     "outcome": "ship",
-     "to": "merge"
-    },
-    {
-     "from": "final-say",
-     "outcome": "hold",
-     "to": "implement"
     },
     {
      "from": "merge",
