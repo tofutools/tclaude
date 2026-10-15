@@ -250,7 +250,9 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 	require.Len(t, launches, 1)
 	argv := strings.Join(launches[0], " ")
 	assert.NotContains(t, argv, "private-password")
-	assert.NotContains(t, argv, "43210")
+	// The whole host:port, not the bare port: a random temp-dir name in argv
+	// can contain the port's digits.
+	assert.NotContains(t, argv, "127.0.0.1:43210")
 
 	pane := parseNewSession(t, launches[0]).pane
 	shell := clcommon.BootstrapShellArgv()
