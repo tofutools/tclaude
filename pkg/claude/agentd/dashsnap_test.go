@@ -808,10 +808,48 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "groups-processes-running",
 			Title:    "Groups — Processes focus run cards",
-			Caption:  "Mock G3 / P2: the groups tree in the Processes perspective — each group's summary row counts its runs, and its body renders its own live runs as graph cards (needs-you first, scope chip, duration, template/owner) with performer avatars on nodes and a busy/idle avatar strip, after its nested subgroups; an empty group says so. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
+			Caption:  "Mock G3 / P2: the groups tree in the Processes perspective — each group's summary row counts its runs, and its body renders its own live runs as graph cards (needs-you first, scope chip, duration, template/owner) with performer avatars on nodes and a busy/idle avatar strip, after its nested subgroups; a group without processes offers Get started. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
 			InitJS:   processContextFixtureInitJS(),
 			JS:       showGroups + groupsProcessesJS(""),
 			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-get-started",
+			Title:   "Groups — Processes quick start: Get started",
+			Caption: "Mock Q1 (tcl-7p6bgt): a group with no processes shows Get started in its body. Four starters arrive filled from the group's roster (roles first, then members), library templates can be reused, and a blank step list or the full graph editor is one click away. Describing the flow in words is a later ticket (tcl-m23mb2), so its box is a disabled stub.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var panel = document.querySelector('[data-quickstart="infra-crew"]');
+  var deadline = Date.now() + 3000;
+  while (!panel.querySelector('[data-reuse-template]') && Date.now() < deadline) { await new Promise(function(resolve){ setTimeout(resolve, 40); }); }
+  if (panel.querySelectorAll('[data-starter]').length !== 4) throw new Error('Get started lacks its four starters');
+  if (!panel.querySelector('[data-reuse-template]')) throw new Error('Get started lacks the library templates');
+  document.querySelector('details[data-group-key="frontend-squad"] .gp-group').querySelectorAll('[data-process-run-card]').forEach(function(card){ card.style.display = 'none'; });
+  panel.scrollIntoView({block: 'center'});`),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-step-editor",
+			Title:   "Groups — Processes quick start: step list",
+			Caption: "Mock Q2 (tcl-7p6bgt): the Build → review → ship starter opened as an inline step list. Each step has a Who picker (a specific agent, any member with a role, you, or a command), you-steps branch on their answers to later steps (one rework round, then you decide), {{issue}} in a prompt became a start input, and the preview, the start inputs and who it will use now update live. The server validates the draft as it changes; nothing runs until Start.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(stepEditorJS(`
+  editor.scrollIntoView({block: 'start'});`)),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-step-editor-graph",
+			Title:   "Groups — Processes quick start: open in graph editor",
+			Caption: "Open in graph editor hands the unsaved step list to Automations › Processes as a new, unsaved template, so anything the step list cannot show is one click away.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(stepEditorJS(`
+  editor.querySelector('[data-step-open-graph]').click();
+  var until = Date.now() + 5000;
+  while (!document.querySelector('#process-editor-view .process-node[data-node-id="approve"], #process-editor-view [data-node-id="approve"]') && Date.now() < until) {
+    await new Promise(function(resolve){ setTimeout(resolve, 50); });
+  }
+  if (!document.querySelector('#process-editor-view [data-node-id="approve"]')) throw new Error('the graph editor did not open the handed-off draft');`)),
+			SettleMS: 600,
 		},
 		{
 			Key:     "groups-processes-blocked-start",
@@ -5645,10 +5683,28 @@ const groupsRunFocusJS = `
 // cards, opens the tree's groups, then runs extraJS with `groups` in scope.
 func groupsProcessesJS(extraJS string) string {
 	return groupsProcessesTreeJS(`
-  var empty = document.querySelector('[data-process-group="infra-crew"] .gp-empty');
-  if (!empty) throw new Error('the empty group does not say so');
+  if (!document.querySelector('[data-process-group="infra-crew"] [data-quickstart="infra-crew"]')) throw new Error('the group without processes does not offer Get started');
   if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
 `+extraJS, true)
+}
+
+// stepEditorJS opens infra-crew's Build → review → ship starter as a step
+// list, fills its start input and waits for the server's validation, then
+// runs extraJS with `editor` bound.
+func stepEditorJS(extraJS string) string {
+	return `
+  document.querySelector('[data-quickstart="infra-crew"] [data-starter="build-review-ship"]').click();
+  await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  var editor = document.querySelector('[data-step-editor="infra-crew"]');
+  if (!editor) throw new Error('the starter did not open the step list');
+  var issue = editor.querySelector('[data-start-param="issue"]');
+  if (!issue) throw new Error('{{issue}} is not a start input');
+  issue.value = 'JOH-412 · checkout times out on slow carts';
+  issue.dispatchEvent(new Event('input', {bubbles: true}));
+  await new Promise(function(resolve){ setTimeout(resolve, 900); });
+  if (editor.querySelector('.gq-problem, .gq-problems')) throw new Error('the starter draft has validation problems: ' + editor.querySelector('.gq-problem, .gq-problems').textContent);
+  if (editor.querySelector('[data-step-start]').disabled) throw new Error('Start stays disabled: ' + editor.querySelector('[data-step-start]').title);
+  document.querySelector('details[data-group-key="frontend-squad"] .gp-group').querySelectorAll('[data-process-run-card]').forEach(function(card){ card.style.display = 'none'; });` + extraJS
 }
 
 // groupsProcessesTreeJS is groupsProcessesJS without the fixture's

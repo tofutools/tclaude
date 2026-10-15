@@ -20213,6 +20213,98 @@ body.wizard .gp-start-form { background: #140f28; border-color: rgba(122, 93, 17
 body.wizard .gp-start, body.wizard .gp-start-form button, body.wizard .gp-start-form select { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
 
+/* Groups › Processes quick start (js/groups-quickstart.js, mocks Q1/Q2):
+   the Get started panel and the inline step-list editor. Section elements are
+   hidden by default dashboard rules, so both set display explicitly. */
+.gq-start, .gq-editor { display: block; margin: 4px 0 12px 18px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; }
+.gq-start { padding: 14px 16px; }
+.gq-start h3 { margin: 0 0 4px; font-size: 14px; color: #e6edf3; }
+.gq-sub, .gq-hint { margin: 0; font-size: 12px; color: #8b949e; }
+.gq-hint { margin-top: 8px; font-size: 11.5px; }
+.gq-ask { display: flex; gap: 8px; margin: 10px 0 4px; }
+.gq-ask-in { flex: 1; font: inherit; font-size: 13px; border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px; background: #0d1117; color: #e6edf3; }
+.gq-ask-in:disabled { opacity: .7; }
+.gq-sec { margin: 14px 0 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #8b949e; }
+.gq-sec .gq-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.gq-starters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.gq-starter { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; font: inherit; cursor: pointer;
+  border: 1px solid #30363d; border-radius: 9px; padding: 10px 12px; background: #161b22; color: #c9d1d9; }
+.gq-starter:hover, .gq-starter:focus-visible { border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88, 166, 255, .14); outline: none; }
+.gq-starter-title { font-weight: 700; color: #e6edf3; }
+.gq-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; }
+.gq-flow i { font-style: normal; color: #6e7681; }
+.gq-note, .gq-dim { font-size: 11.5px; color: #8b949e; }
+.gq-tag { font-size: 10.5px; border: 1px solid #30363d; border-radius: 4px; padding: 0 5px; color: #8b949e; }
+.gq-reuse, .gq-add, .gq-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gq-spacer { flex: 1; }
+.gq-chip, .gq-btn, .gq-link { font: inherit; font-size: 12px; cursor: pointer; }
+.gq-chip, .gq-btn { border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; }
+.gq-chip:hover, .gq-btn:hover:not(:disabled) { border-color: #58a6ff; }
+.gq-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.gq-btn:disabled { opacity: .55; cursor: default; }
+.gq-link { background: transparent; border: 0; padding: 0; color: #58a6ff; }
+.gq-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 420px); }
+.gq-main { padding: 12px 16px; border-right: 1px solid #21262d; min-width: 0; }
+.gq-side { padding: 12px 16px; min-width: 0; }
+.gq-side .gq-sec:first-child { margin-top: 0; }
+.gq-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.gq-name { font: inherit; font-weight: 700; font-size: 15px; color: #e6edf3; background: transparent; border: 0; border-bottom: 1px dashed #4b5a6e; padding: 0 2px; min-width: 180px; }
+.gq-name:focus-visible { outline: none; border-bottom-color: #58a6ff; }
+.gq-step { display: grid; grid-template-columns: 22px 22px minmax(0, 1fr) minmax(170px, 230px) auto; gap: 8px; align-items: start;
+  padding: 9px 8px; margin-bottom: 6px; border: 1px solid #21262d; border-radius: 8px; background: #0d1117; }
+.gq-step.has-problem { border-color: #da3633; }
+.gq-n { color: #6e7681; font-size: 11px; text-align: right; padding-top: 4px; }
+.gq-glyph { padding-top: 2px; }
+.gq-step-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gq-step-name { font: inherit; font-weight: 600; color: #e6edf3; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
+.gq-step-text { font: inherit; font-size: 12px; color: #c9d1d9; background: #0b0f14; border: 1px solid #21262d; border-radius: 6px; padding: 4px 6px; resize: vertical; min-height: 34px; }
+.gq-step-name:hover, .gq-step-name:focus-visible, .gq-step-text:focus-visible { border-color: #30363d; outline: none; }
+.gq-step[data-step-kind="command"] .gq-step-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gq-answers { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: #8b949e; }
+.gq-answers-in input { font: inherit; font-size: 11.5px; margin-left: 6px; width: 60%; border: 1px solid #30363d; border-radius: 4px; padding: 1px 6px; background: #0b0f14; color: #e6edf3; }
+.gq-then { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: #8b949e; }
+.gq-then-link select, .gq-who-select, .gq-fallback select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 2px 6px; background: #161b22; color: #e6edf3; }
+.gq-who-select { width: 100%; }
+.gq-answer { color: #e3b341; }
+.gq-res { margin-top: 3px; font-size: 10.5px; color: #6e7681; }
+.gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
+.gq-row-act { display: flex; flex-direction: column; gap: 2px; }
+.gq-row-act button { font: inherit; font-size: 11px; line-height: 1; padding: 2px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #8b949e; cursor: pointer; }
+.gq-row-act button:hover:not(:disabled), .gq-row-act button:focus-visible { border-color: #30363d; color: #e6edf3; }
+.gq-row-act button:disabled { opacity: .35; cursor: default; }
+.gq-problem, .gq-problems, .gq-error { font-size: 11.5px; color: #ff7b72; }
+.gq-problems, .gq-error { margin-top: 8px; }
+.gq-empty { padding: 10px 8px; color: #8b949e; font-size: 12px; }
+.gq-add { padding: 6px 8px; font-size: 12px; color: #8b949e; }
+.gq-fallback { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; font-size: 12px; color: #c9d1d9; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; }
+.gq-preview { margin: 4px 0; overflow-x: auto; overflow-y: hidden; }
+.gq-preview-fit { transform-origin: top left; width: max-content; }
+.gq-params, .gq-profiles { display: flex; flex-direction: column; gap: 6px; }
+.gq-param { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #c9d1d9; }
+.gq-param b { color: #ff7b72; }
+.gq-param input { flex: 1; min-width: 0; font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 8px; background: #0d1117; color: #e6edf3; }
+.gq-profile { font-size: 12px; color: #e3b341; }
+.gq-whonow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #c9d1d9; }
+.gq-whonow b { color: #e6edf3; font-weight: 600; }
+.gq-foot { margin-top: 14px; }
+@media (max-width: 1100px) {
+  .gq-editor { grid-template-columns: minmax(0, 1fr); }
+  .gq-main { border-right: 0; border-bottom: 1px solid #21262d; }
+}
+@media (max-width: 700px) {
+  .gq-step { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .gq-glyph { display: none; }
+  .gq-who { grid-column: 2 / 3; }
+}
+body.wizard .gq-start, body.wizard .gq-editor { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
+body.wizard .gq-starter, body.wizard .gq-step { background: #181226; border-color: rgba(122, 93, 176, 0.35); }
+body.wizard .gq-starter:hover, body.wizard .gq-starter:focus-visible { border-color: #d4af37; box-shadow: 0 0 0 3px rgba(212, 175, 55, .14); }
+body.wizard .gq-chip, body.wizard .gq-btn, body.wizard .gq-who-select, body.wizard .gq-then-link select, body.wizard .gq-fallback select { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
+body.wizard .gq-btn.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
+body.wizard .gq-ask-in, body.wizard .gq-step-text, body.wizard .gq-param input, body.wizard .gq-answers-in input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
+body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176, 0.35); }
+body.wizard .gq-link { color: #d4af37; }
+
 /* Groups › Agents focus process indicators (js/groups-process-indicators.js, mock G1). */
 .gpi-chips { display: inline-flex; gap: 6px; }
 .gpi-chip { cursor: pointer; font: inherit; font-size: 11px; }

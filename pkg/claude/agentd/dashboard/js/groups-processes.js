@@ -22,6 +22,9 @@ import {
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
 import { agentRunIndex, groupProcessCounts } from './groups-process-indicators.js';
+import { GetStarted, StepListEditor, defaultNotify, openInGraphEditor } from './groups-quickstart.js';
+import { groupRoster } from './process-quickstart.js';
+import { handOffProcessDraft } from './process-draft-handoff.js';
 
 const html = htm.bind(h);
 
@@ -50,7 +53,7 @@ function memberInitial(member) {
 // POST it with the group pre-filled. Refusals show inline; a refusal naming
 // unauthorized profiles (a referenced template's) adds them to the list. The
 // created run appears on the next context refresh.
-function StartRunForm({ group, api, source, onClose, wizard }) {
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '' }) {
   const [templates, setTemplates] = useState(null);
   const [templateId, setTemplateId] = useState('');
   const [needs, setNeeds] = useState({ params: [], programProfiles: [] });
@@ -63,7 +66,7 @@ function StartRunForm({ group, api, source, onClose, wizard }) {
     api.listTemplates().then((rows) => {
       if (!live) return;
       setTemplates(rows);
-      setTemplateId(rows[0]?.id || '');
+      setTemplateId(rows.some((row) => row.id === initialTemplateId) ? initialTemplateId : rows[0]?.id || '');
     }).catch((cause) => { if (live) { setTemplates([]); setError(cause.message); } });
     return () => { live = false; };
   }, [api]);
@@ -230,8 +233,11 @@ function MemberRuns({ entries, label, onOpen }) {
   </div>`;
 }
 
-function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocusRun }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocusRun, notify }) {
   const [starting, setStarting] = useState(false);
+  // quick is the quick start: null, 'pick' (the Get started panel opened on a
+  // group that has processes) or {list, origin} (the step-list editor).
+  const [quick, setQuick] = useState(null);
   const entry = groupContextEntry(context, group);
   const { runs, planned } = groupRunsFor(context, entry, filter);
   // The roster is the group's full membership: the Groups search narrows
@@ -243,18 +249,38 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
   const memberRuns = memberRunEntries(context, members, filter, new Set(runs.map((run) => run.runId)));
   const label = FILTER_LABELS[filter][wizard ? 1 : 0].toLowerCase();
   const open = (runId) => onFocusRun({ group: group.name, runId });
+  // A group with no runs at all, in any state, gets the Get started panel.
+  const everything = groupRunsFor(context, entry, 'all');
+  const fresh = !everything.runs.length && !everything.planned.length && !memberRunEntries(context, members, 'all').length;
+  const editing = quick && typeof quick === 'object';
+  const picking = !editing && !starting && (quick === 'pick' || fresh);
+  const people = groupRoster({ members }, busy);
+  const quickStart = editing
+    ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin}
+        api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)} />`
+    : picking && html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
+        onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
+        onOpenGraph=${(view, name) => (view
+          ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
+          : handOffProcessDraft({ create: true }))}
+        onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }} />`;
   return html`<div class="gp-group" data-process-group=${group.name}>
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
       <span class="gp-spacer"></span>
-      ${!starting && html`<button type="button" class="gp-start" data-process-start=${group.name} onClick=${() => setStarting(true)}
+      ${!fresh && !quick && !starting && html`<button type="button" class="gp-start" data-process-new=${group.name} onClick=${() => setQuick('pick')}
+        title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? '+ new rite' : '+ new process'}</button>`}
+      ${!starting && html`<button type="button" class="gp-start" data-process-start=${group.name} onClick=${() => { setQuick(null); setStarting(true); }}
         title=${wizard ? `Begin a rite bound to ${group.name}` : `Start a process run scoped to ${group.name}`}>${wizard ? '+ begin a rite' : '+ start process'}</button>`}
+      ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
     </div>
-    ${starting && html`<${StartRunForm} group=${group} api=${api} source=${source} wizard=${wizard} onClose=${() => setStarting(false)} />`}
+    ${starting && html`<${StartRunForm} group=${group} api=${api} source=${source} wizard=${wizard}
+      initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}
+    ${quickStart}
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Familiar rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && !memberRuns.length && html`<div class="gp-empty">${filter === 'all'
+    ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty">${filter === 'all'
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
   </div>`;
@@ -276,7 +302,7 @@ export function GroupProcessBody({ group }) {
   if (!perspective) return null;
   return html`<${GroupRuns} group=${group} roster=${perspective.rosters.get(group.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} />`;
 }
 
 // ungroupedRuns are the agent-scoped runs of Ungrouped's agents, the only
@@ -360,7 +386,7 @@ function findFocusGroup(focusedRun, rosters, groups) {
 // groups tree -- under the ProcessesPerspective it reads.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
-  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -395,7 +421,7 @@ export function GroupsProcessesFocus({
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, source, onFocusRun, rosters };
+  const perspective = { context, filter: current, wizard, api, source, onFocusRun, rosters, notify };
   return html`<div class="gp-focus" data-groups-processes>
     <div class="gp-toolbar">
       <div class="gp-filter" role="group" aria-label=${wizard ? 'Rite filter' : 'Process filter'}>

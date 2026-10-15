@@ -6,6 +6,7 @@ import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAuto
 import { registerCommandProvider } from './command-registry.js';
 import { buildProcessEditorCommands } from './process-command-registry.js';
 import { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } from './process-template-dnd.js';
+import { takeProcessDraft } from './process-draft-handoff.js';
 
 const html = htm.bind(h);
 
@@ -134,6 +135,16 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   };
   document.addEventListener('tclaude:restore-location', restore);
   registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
+  // A process handed over from Groups › Processes (the quick start) opens in
+  // the full editor: a template it just created, or the new-template dialog.
+  const takeDraft = () => {
+    const draft = takeProcessDraft();
+    if (draft?.create) actions.openCreate();
+    else if (draft?.id) void actions.openEditor(draft.id, false, draft.name || '', { view: draft.view });
+  };
+  document.addEventListener('tclaude:process-draft', takeDraft);
+  registerCleanup(() => document.removeEventListener('tclaude:process-draft', takeDraft));
+  takeDraft();
   setProcessTemplateDeleteHandler((spec) => actions.deleteTemplate(spec));
   const unbindTemplateDnd = bindProcessTemplateDnd();
   registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });

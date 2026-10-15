@@ -217,6 +217,25 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       const body = await processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, {}, fetchImpl);
       return templateStartRequirements(body.template || {});
     },
+    // createTemplate stores a new template from an edit view and returns the
+    // created {id, ref, ...}; the store mints the id. `listed` is sent only
+    // when given, so a daemon without library listing still accepts it.
+    async createTemplate({ template, edges, layout }, { listed, attemptKey = newAttemptKey() } = {}) {
+      const path = '/v1/process/templates';
+      const { id: _id, ...rest } = template;
+      const body = JSON.stringify({ template: rest, edges, layout, ...(listed === undefined ? {} : { listed }) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // validateTemplate reads the server's diagnostics for an unsaved view.
+    async validateTemplate({ template, edges, layout }) {
+      const body = await processRequest('/v1/process/validate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: { ...template, id: template.id || 'draft' }, edges, layout }),
+      }, fetchImpl);
+      return body.diagnostics || [];
+    },
     async startGroupRun({ templateId, group, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));

@@ -76,7 +76,8 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
 
   assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
   assert.deepEqual([...fe.querySelectorAll('.gp-member.busy')].map((a) => a.getAttribute('title').split(' · ')[0]), ['fe-dev-forms', 'fe-dev-charts']);
-  assert.equal(group('infra-crew').querySelector('.gp-empty').textContent, 'No running processes.');
+  assert.equal(group('infra-crew').querySelector('.gp-empty'), null, 'a group with no runs at all gets Get started instead');
+  assert.ok(group('infra-crew').querySelector('[data-quickstart="infra-crew"]'));
   assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
   assert.equal(root.querySelector('[data-process-filter="running"]').getAttribute('aria-pressed'), 'true');
 });
