@@ -2758,6 +2758,20 @@ setTimeout(function(){
 			SettleMS: 1200,
 		},
 		{
+			Key:     "process-scribe-dock-resized",
+			Title:   "Process editor — docked scribe, widened",
+			Caption: "The dock's canvas edge is a resize separator: drag it (or use arrow keys while it has focus) between 260px and 760px, at most 60% of the editor. The width is a sticky dashboard pref; double-click resets it.",
+			JS: scribeDockStateJS("chat", false, `  var handle = document.querySelector('[data-scribe-resize]');
+  if (!handle) throw new Error('resize separator missing');
+  var before = document.querySelector('.process-scribe-dock').offsetWidth;
+  handle.focus();
+  for (var i = 0; i < 6; i++) handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true}));
+  await editorPaint(); await editorPaint();
+  var after = document.querySelector('.process-scribe-dock').offsetWidth;
+  if (after <= before) throw new Error('dock did not widen: ' + before + ' -> ' + after);`),
+			SettleMS: 1200,
+		},
+		{
 			Key:      "process-scribe-dock-terminal",
 			Title:    "Process editor — docked scribe, terminal mode",
 			Caption:  "Terminal mode keeps the same context actions but hands the conversation to the scribe's own terminal pane (openTerminalPane); messages sent from the dock arrive there.",
