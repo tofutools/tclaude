@@ -4,7 +4,7 @@
 // mirrors `tclaude agent process-templates import`: an import applies exactly
 // the reviewed preview (its reviewDigest) and never starts a run.
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { downloadBlob } from './paf-model.js';
@@ -45,10 +45,25 @@ export async function exportWorkflow(id, { fetchImpl = fetch, download = downloa
   return '';
 }
 
+// importQuery spells the importer's choices the way the daemon reviews them:
+// role mappings, rename on an id collision, and a group to pin the process to.
+// They go on the preview and the apply alike, so the reviewed digest covers
+// them.
+export function importQuery(choices = {}) {
+  const params = new URLSearchParams();
+  for (const [from, to] of Object.entries(choices.roleMap || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    if (to && to !== from) params.append('map', `${from}=${to}`);
+  }
+  if (choices.rename) params.set('rename', '1');
+  if (choices.group) params.set('group', choices.group);
+  return params.toString();
+}
+
 // previewImport posts the file without apply: the daemon verifies it and
 // says what importing would change here, writing nothing.
-export async function previewImport(bytes, { fetchImpl = fetch } = {}) {
-  const response = await fetchImpl('/v1/process/import', {
+export async function previewImport(bytes, { choices = {}, fetchImpl = fetch } = {}) {
+  const query = importQuery(choices);
+  const response = await fetchImpl(`/v1/process/import${query ? `?${query}` : ''}`, {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': PWF_TYPE }, body: bytes,
   });
   if (!response.ok) throw new Error(await errorText(response));
@@ -56,8 +71,9 @@ export async function previewImport(bytes, { fetchImpl = fetch } = {}) {
 }
 
 // applyImport imports exactly the reviewed preview.
-export async function applyImport(bytes, preview, { replace = false, fetchImpl = fetch } = {}) {
-  const query = `apply=1&review=${encodeURIComponent(preview.reviewDigest || '')}${replace ? '&replace=1' : ''}`;
+export async function applyImport(bytes, preview, { replace = false, choices = {}, fetchImpl = fetch } = {}) {
+  const extra = importQuery(choices);
+  const query = `apply=1&review=${encodeURIComponent(preview.reviewDigest || '')}${replace ? '&replace=1' : ''}${extra ? `&${extra}` : ''}`;
   const response = await fetchImpl(`/v1/process/import?${query}`, {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': PWF_TYPE }, body: bytes,
   });
@@ -86,7 +102,12 @@ export function importReview(preview) {
   } else if (signatures.length) {
     signer = 'The signature does not verify: treat this file as unsigned.';
   }
-  const templates = (preview.templates || []).map((t) => ({ ...t, label: STATUS_TEXT[t.status] || t.status }));
+  const templates = (preview.templates || []).map((t) => {
+    let label = STATUS_TEXT[t.status] || t.status;
+    if (t.importId && t.importId !== t.id) label += `, as ${t.importId}`;
+    else if (t.importRef) label += ', roles mapped';
+    return { ...t, label };
+  });
   return {
     title: preview.title || preview.rootId || 'Workflow',
     summary: preview.summary || '',
@@ -94,6 +115,9 @@ export function importReview(preview) {
     trusted: valid.some((s) => s.trust === 'this node' || (s.trust || '').startsWith('known peer')),
     params: preview.params || [],
     roles: preview.roles || [],
+    roleMap: preview.roleMap || [],
+    localRoles: preview.localRoles || [],
+    renamed: templates.some((t) => t.importId && t.importId !== t.id),
     humans: preview.humans || [],
     programs: (preview.programs || []).map((p) => ({ ...p, command: [p.run, ...(p.args || [])].map(displayArg).join(' ') })),
     assignees: preview.assignees || [],
@@ -103,19 +127,49 @@ export function importReview(preview) {
   };
 }
 
-function ImportDialog({ file, bytes, preview: initialPreview, onClose, onImported }) {
+// processGroupNames lists the groups a process can be pinned to.
+async function processGroupNames(fetchImpl = fetch) {
+  const response = await fetchImpl('/v1/process/context', { credentials: 'same-origin' });
+  if (!response.ok) return [];
+  const body = await response.json().catch(() => ({}));
+  return (body.groups || []).map((g) => g.group).filter(Boolean);
+}
+
+function ImportDialog({ file, bytes, preview: initialPreview, group: initialGroup = '', onClose, onImported }) {
   const [preview, setPreview] = useState(initialPreview);
   const review = importReview(preview);
   const [replace, setReplace] = useState(false);
+  const [choices, setChoices] = useState({ roleMap: {}, rename: false, group: initialGroup });
+  const [groups, setGroups] = useState([]);
+  const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const latest = useRef(0);
+  useEffect(() => { processGroupNames().then(setGroups, () => setGroups([])); }, []);
+  // Every choice changes what an import stores, so it is reviewed again
+  // before Import applies it.
+  const choose = async (next) => {
+    const merged = { ...choices, ...next };
+    setChoices(merged);
+    setError('');
+    setReviewing(true);
+    const seq = ++latest.current;
+    try {
+      const fresh = await previewImport(bytes, { choices: merged });
+      if (seq === latest.current) setPreview(fresh);
+    } catch (err) {
+      if (seq === latest.current) setError(err?.message || String(err));
+    } finally {
+      if (seq === latest.current) setReviewing(false);
+    }
+  };
   const blocked = review.updates > 0 && !replace;
   const submit = async () => {
-    if (busy || blocked || review.nothingToDo) return;
+    if (busy || reviewing || blocked || (review.nothingToDo && !choices.group)) return;
     setBusy(true);
     setError('');
     try {
-      const result = await applyImport(bytes, preview, { replace });
+      const result = await applyImport(bytes, preview, { replace, choices });
       onImported?.(result);
       onClose();
     } catch (err) {
@@ -125,6 +179,11 @@ function ImportDialog({ file, bytes, preview: initialPreview, onClose, onImporte
       if (err?.body?.preview) {
         setPreview(err.body.preview);
         setReplace(false);
+        if (err.body.preview.applied) {
+          setError(err.message);
+          setBusy(false);
+          return;
+        }
         setError(`${err.message} The review below is updated; check it again.`);
       } else {
         setError(err?.message || String(err));
@@ -142,22 +201,37 @@ function ImportDialog({ file, bytes, preview: initialPreview, onClose, onImporte
       ${review.programs.length === 0 ? html`<p class="muted">None. Every step is an agent or you.</p>` : html`<ul class="pwf-commands">${review.programs.map((p) => html`<li key=${p.step} data-pwf-command=${p.step}><code>${p.command}</code> <span class="muted">· ${p.step} · program profile <b>${p.profile || 'default'}</b></span></li>`)}</ul>
       <p class="muted">Nothing runs on import. Starting a run asks you to allow each program profile first.</p>`}
     </div>
-    ${review.roles.length > 0 && html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
+    ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
+        <b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span>
+        <label class="pwf-role-map">use <select data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
+          onChange=${(e) => choose({ roleMap: { ...choices.roleMap, [r.name]: e.currentTarget.value } })}>
+          <option value=${r.name}>${r.name} (as named)</option>
+          ${review.localRoles.filter((n) => n !== r.name).map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
+        </select></label>
+        ${!r.known && html`<span class="pwf-role-unknown" data-pwf-role-unknown>nothing here has ${r.target} yet</span>`}</li>`)}</ul>
+      <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one. Mapping rewrites the imported steps.</p></div>`
+    : review.roles.length > 0 && html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one.</p></div>`}
     ${review.humans.length > 0 && html`<div class="pwf-section"><h4>Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
     ${review.params.length > 0 && html`<div class="pwf-section"><h4>Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
     ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps wait until reassigned.</li>`)}</ul></div>`}
     <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
-      ${review.updates > 0 && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
+      ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
+      ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
+    ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4>Save to a group</h4>
+      <label class="pwf-group">Pin it to <select data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
+        <option value="">no group (library only)</option>
+        ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
+      </select></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      <button class="primary" type="button" data-pwf-import disabled=${busy || blocked || review.nothingToDo} onClick=${submit}>${review.nothingToDo ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
+      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
   </${Overlay}>`;
 }
 
 // WorkflowImportButton picks a .pwf file, previews it and opens the review.
-export function WorkflowImportButton({ onImported }) {
+export function WorkflowImportButton({ group = '', onImported }) {
   const input = useRef(null);
   const [state, setState] = useState(null);
   const [error, setError] = useState('');
@@ -172,7 +246,7 @@ export function WorkflowImportButton({ onImported }) {
     }
     try {
       const bytes = new Uint8Array(await picked.arrayBuffer());
-      setState({ file: picked.name, bytes, preview: await previewImport(bytes) });
+      setState({ file: picked.name, bytes, preview: await previewImport(bytes, { choices: { group } }) });
     } catch (err) {
       setError(`Cannot import ${picked.name}: ${err?.message || err}`);
     }
@@ -181,7 +255,7 @@ export function WorkflowImportButton({ onImported }) {
     <input ref=${input} type="file" accept=".pwf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
     <button id="process-workflow-import-btn" class="process-action" type="button" title="Import a shared .pwf workflow file: you review what it runs before anything is stored" onClick=${() => input.current?.click()}>⤒ import workflow</button>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
-    ${state && html`<${ImportDialog} ...${state} onClose=${() => setState(null)} onImported=${onImported} />`}
+    ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;
 }
 

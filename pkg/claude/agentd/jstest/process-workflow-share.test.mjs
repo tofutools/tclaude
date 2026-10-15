@@ -21,6 +21,8 @@ const PREVIEW = Object.freeze({
   updates: 1, applied: false, reviewDigest: 'digest-1',
 });
 
+const CONTEXT_RESPONSE = { ok: true, status: 200, json: async () => ({ groups: [{ group: 'webshop' }, { group: 'infra' }] }) };
+
 test('importReview: signer, commands and what changes', async (t) => {
   const harness = await createPreactHarness(t);
   const { importReview } = await harness.importDashboardModule('js/process-workflow-share.js');
@@ -42,6 +44,7 @@ test('import flow: preview, replace consent, then apply the reviewed digest', as
   const calls = [];
   const previous = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url) === '/v1/process/context') return CONTEXT_RESPONSE;
     calls.push({ url: String(url), method: init.method, type: init.headers?.['Content-Type'] });
     return { ok: true, status: 200, json: async () => (String(url).includes('apply=1') ? { ...PREVIEW, applied: true } : PREVIEW) };
   };
@@ -96,6 +99,7 @@ test('import flow: a stale review shows the fresh preview and refreshes the list
   const fresh = { ...PREVIEW, updates: 0, reviewDigest: 'digest-2', templates: [{ ref: 'ship@sha256:aa', id: 'ship', head: true, status: 'new' }] };
   const previous = globalThis.fetch;
   globalThis.fetch = async (url) => {
+    if (String(url) === '/v1/process/context') return CONTEXT_RESPONSE;
     calls.push(String(url));
     if (calls.length === 2) {
       return { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ error: 'process_import_review_stale', message: 'The workflow changed since the review.', preview: fresh }) };
@@ -122,4 +126,74 @@ test('import flow: a stale review shows the fresh preview and refreshes the list
   await harness.act(async () => { doc.querySelector('[data-pwf-import]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.equal(calls[2], '/v1/process/import?apply=1&review=digest-2');
   assert.equal(refreshes.at(-1)?.applied, true);
+});
+
+test('importQuery: role mappings, rename and group, in a stable order', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { importQuery, importReview } = await harness.importDashboardModule('js/process-workflow-share.js');
+  assert.equal(importQuery({}), '');
+  assert.equal(importQuery({ roleMap: { reviewer: 'qa', dev: 'dev', build: 'eng' }, rename: true, group: 'webshop' }),
+    'map=build%3Deng&map=reviewer%3Dqa&rename=1&group=webshop', 'a role mapped to itself is not sent');
+  const review = importReview({ ...PREVIEW, templates: [
+    { ref: 'ship@sha256:aa', id: 'ship', importRef: 'ship-2@sha256:dd', importId: 'ship-2', head: true, status: 'new' },
+    { ref: 'review@sha256:bb', id: 'review', importRef: 'review@sha256:ee', importId: 'review', head: true, status: 'new' },
+  ] });
+  assert.equal(review.templates[0].label, 'new here, as ship-2');
+  assert.equal(review.templates[1].label, 'new here, roles mapped');
+  assert.equal(review.renamed, true);
+});
+
+test('import flow: each choice is reviewed again, and the apply carries the reviewed choices', async (t) => {
+  const harness = await createPreactHarness(t);
+  const calls = [];
+  const withRoles = {
+    ...PREVIEW,
+    roleMap: [{ name: 'dev', steps: ['ship:build'], target: 'dev', mapped: false, known: false }],
+    localRoles: ['engineer', 'qa'],
+  };
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url) === '/v1/process/context') return CONTEXT_RESPONSE;
+    calls.push(String(url));
+    const u = String(url);
+    const digest = `digest-${calls.length}`;
+    const renamed = u.includes('rename=1');
+    const body = { ...withRoles, reviewDigest: digest, updates: renamed ? 0 : 1, rename: renamed,
+      templates: renamed ? [{ ref: 'review@sha256:bb', id: 'review', importId: 'review-2', importRef: 'review-2@sha256:ff', head: true, status: 'new' }] : withRoles.templates,
+      roleMap: u.includes('map=dev%3Dengineer') ? [{ ...withRoles.roleMap[0], target: 'engineer', mapped: true, known: true }] : withRoles.roleMap,
+      applied: u.includes('apply=1') };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  const { WorkflowImportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const { container } = await harness.mount(harness.html`<${WorkflowImportButton} onImported=${() => {}} />`);
+  const input = container.querySelector('[data-pwf-file]');
+  Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'ship.pwf', size: 3, arrayBuffer: async () => new Uint8Array([1]).buffer }] });
+  const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); };
+  await harness.act(async () => { harness.fireEvent(input, 'change'); await settle(); });
+  await harness.act(settle);
+  const doc = harness.document;
+  assert.ok(doc.querySelector('[data-pwf-role-unknown]'), 'a role nothing here has is flagged');
+
+  const roleSelect = doc.querySelector('[data-pwf-role-map="dev"]');
+  Object.defineProperty(roleSelect, 'value', { configurable: true, value: 'engineer' });
+  await harness.act(async () => { harness.fireEvent(roleSelect, 'change'); await settle(); });
+  assert.equal(calls.at(-1), '/v1/process/import?map=dev%3Dengineer');
+  assert.equal(doc.querySelector('[data-pwf-role-unknown]'), null);
+
+  const rename = doc.querySelector('[data-pwf-rename]');
+  rename.checked = true;
+  await harness.act(async () => { harness.fireEvent(rename, 'change'); await settle(); });
+  assert.equal(calls.at(-1), '/v1/process/import?map=dev%3Dengineer&rename=1');
+  assert.equal(doc.querySelector('[data-pwf-replace]'), null, 'renaming needs no replace consent');
+  assert.match(doc.querySelector('[data-pwf-template="review"]').textContent, /as review-2/);
+
+  const group = doc.querySelector('[data-pwf-group]');
+  Object.defineProperty(group, 'value', { configurable: true, value: 'webshop' });
+  await harness.act(async () => { harness.fireEvent(group, 'change'); await settle(); });
+  const reviewed = calls.length;
+  assert.equal(calls.at(-1), '/v1/process/import?map=dev%3Dengineer&rename=1&group=webshop');
+
+  await harness.act(async () => { doc.querySelector('[data-pwf-import]').click(); await settle(); });
+  assert.equal(calls.at(-1), `/v1/process/import?apply=1&review=digest-${reviewed}&map=dev%3Dengineer&rename=1&group=webshop`);
 });
