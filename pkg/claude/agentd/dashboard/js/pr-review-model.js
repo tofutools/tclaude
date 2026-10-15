@@ -41,7 +41,8 @@ export function prReviewLabel(reviews) {
   switch (state) {
     case 'approved': return approved > 0 ? String(approved) : '';
     case 'changes': return changes > 0 ? String(changes) : '';
-    case 'required': return approved > 0 ? `${approved} · review` : 'review';
+    // The amber ◷ alone reads as "waiting"; the hover panel has the detail.
+    case 'required': return '';
     case 'none': return 'no reviews';
     default: return '';
   }
