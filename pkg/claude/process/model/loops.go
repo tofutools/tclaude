@@ -195,12 +195,12 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 					"maxIterations is the most rounds the loop runs and must be %d..%d; got %d",
 					MinLoopIterations, MaxLoopIterations, bound.MaxIterations))
 			}
-			switch exhausted := strings.TrimSpace(bound.OnExhausted); {
-			case exhausted == "":
+			switch exhausted := strings.TrimSpace(bound.OnExhausted); exhausted {
+			case "":
 				if free == 0 {
 					add("loop_exhaustion", outcomePath, "with every outcome going back, a used-up loop has no way on; name onExhausted or add an outcome that leaves the loop")
 				}
-			case exhausted == outcome:
+			case outcome:
 				add("loop_exhaustion", outcomePath+".onExhausted", "onExhausted must name another outcome than the one that goes back")
 			default:
 				if _, ok := node.Next[exhausted]; !ok {

@@ -153,7 +153,7 @@ loops and validate reachability, outcome vocabulary, and loop budgets.
 The graph is acyclic except where a decision sends work back. Bound that
 outcome in the decision's `loops`, keyed by outcome:
 
-```yaml
+```yml
 decide:
   type: decision
   performer: {kind: human, ask: "Approve the change?"}
