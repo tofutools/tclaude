@@ -7,7 +7,7 @@ const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json'
 
 const GROUPS = [
   { name: 'frontend-squad', members: [
-    { conv_id: 'c1', agent_id: 'agt_fe_lead', title: 'fe-lead' },
+    { conv_id: 'c1', agent_id: 'agt_fe_lead', title: 'fe-lead', online: true, state: { status: 'working' } },
     { conv_id: 'c2', agent_id: 'agt_fe_forms', title: 'fe-dev-forms' },
     { conv_id: 'c3', agent_id: 'agt_fe_charts', title: 'fe-dev-charts' },
   ] },
@@ -73,7 +73,7 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   const migrate = fe.querySelector('[data-process-run-card="run_migrate"]');
   assert.ok(migrate.querySelector('[data-process-node="apply"].pk-state-waiting'), 'a blocked node reads as blocked on human');
 
-  assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
+  assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 in processes · 1 working · 0 idle');
   assert.deepEqual([...fe.querySelectorAll('.gp-member.busy')].map((a) => a.getAttribute('title').split(' · ')[0]), ['fe-dev-forms', 'fe-dev-charts']);
   // Processes run elsewhere, so the empty group folds Get started to a line.
   assert.ok(group('infra-crew').querySelector('[data-quickstart-folded="infra-crew"]'), 'an empty group folds Get started once processes exist');
@@ -183,7 +183,7 @@ test('a Groups search narrows the groups shown, not the busy strip or performer 
   const filtered = [{ name: 'frontend-squad', members: [GROUPS[0].members[0]] }];
   const { group } = await mountFocus(t, { groups: filtered, allGroups: GROUPS });
   const fe = group('frontend-squad');
-  assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
+  assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 in processes · 1 working · 0 idle');
   assert.equal(fe.querySelector('[data-process-node="checkout"] .pk-avatar').getAttribute('title'), 'fe-dev-forms');
 });
 
@@ -336,4 +336,80 @@ test('Get started shows in full only before the first process, folds when dismis
   await harness.act(async () => { infra().querySelector('[data-quickstart-expand]').click(); });
   await settle(harness);
   assert.ok(infra().querySelector('[data-quickstart="infra-crew"]'), 'Get started ▸ opens the panel again');
+});
+
+test('the avatar strip reads each member\'s real status, not just process work', async (t) => {
+  const { group, mod } = await mountFocus(t);
+  const { memberAvailability } = mod;
+  const busy = new Set(['agt_p']);
+  const of = (member) => memberAvailability({ agent_id: 'agt_x', ...member }, busy);
+  assert.equal(of({ agent_id: 'agt_p', online: true, state: { status: 'idle' } }), 'process');
+  assert.equal(of({ online: true, state: { status: 'working' } }), 'working');
+  assert.equal(of({ online: true, state: { status: 'main_agent_idle' } }), 'working');
+  assert.equal(of({ online: true, state: { status: 'awaiting_permission' } }), 'waiting');
+  assert.equal(of({ online: true, state: { status: 'idle' } }), 'idle');
+  assert.equal(of({ online: false, state: { status: 'idle' } }), 'offline');
+
+  const infra = group('infra-crew');
+  assert.equal(infra.querySelector('.gp-strip-text').textContent, '0 idle · 1 offline');
+  assert.equal(group('frontend-squad').querySelector('.gp-member.is-working').getAttribute('title'), 'fe-lead · working on other tasks (not in a process)');
+});
+
+test('the group row mirrors the Agents row: agent process, group process, resume all, pause all', async (t) => {
+  const started = [];
+  const api = {
+    listTemplates: async () => [{ id: 'tpl_a', name: 'Alpha' }],
+    startGroupRun: async (request) => { started.push(request); return { runId: 'run_new' }; },
+  };
+  const calls = [];
+  const runApi = {
+    pause: async (runId) => { calls.push(['pause', runId]); if (runId === 'run_migrate') throw new Error('refused'); },
+    resume: async (runId) => { calls.push(['resume', runId]); },
+  };
+  const context = { ...FIXTURE, runs: { ...FIXTURE.runs, run_release: { ...FIXTURE.runs.run_release, paused: { by: 'human' } } } };
+  const notes = [];
+  const harness = await createPreactHarness(t);
+  const [mod, list, interactions] = await Promise.all([
+    harness.importDashboardModule('js/groups-processes.js'),
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
+  ]);
+  const source = fakeSource(harness, { context });
+  const snapshot = { processes_enabled: true, groups: GROUPS.filter((group) => !group.virtual) };
+  const { container } = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
+    <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS} source=${source} filter="done" api=${api} runApi=${runApi}
+      notify=${(message, isError) => notes.push([message, isError])} onFocusRun=${() => {}}>
+      <${list.GroupsNativeList} groups=${GROUPS} snapshot=${snapshot} actions=${{}} />
+    <//>
+  <//>`);
+  const fe = container.querySelector('[data-process-group="frontend-squad"]');
+  const pause = fe.querySelector('[data-process-pause-all]');
+  const resume = fe.querySelector('[data-process-resume-all]');
+  // The Done filter hides live runs, but the controls still count them.
+  assert.match(pause.title, /^Pause 2 running processes/);
+  assert.match(resume.title, /^Resume 1 paused process:/);
+  const infra = container.querySelector('[data-process-group="infra-crew"]');
+  assert.equal(infra.querySelector('[data-process-pause-all]').disabled, true);
+  assert.equal(infra.querySelector('[data-process-resume-all]').disabled, true);
+
+  await harness.act(async () => { pause.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.deepEqual(calls.map(([kind, id]) => `${kind}:${id}`).sort(), ['pause:run_migrate', 'pause:run_reindex']);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0][0], /^Could not pause 1 of 2 processes: .*refused/);
+  await harness.act(async () => { fe.querySelector('[data-process-resume-all]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.deepEqual(calls.at(-1), ['resume', 'run_release']);
+
+  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start-agent="frontend-squad"]'), 'click'));
+  await settle(harness);
+  const form = fe.querySelector('form.gp-start-form[data-start-scope="agent"]');
+  assert.equal(form.getAttribute('aria-label'), 'Start a process for one agent in frontend-squad');
+  const agent = form.querySelector('select[data-start-agent]');
+  assert.deepEqual([...agent.options].map((o) => o.textContent), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
+  Object.defineProperty(agent, 'value', { configurable: true, writable: true, value: 'agt_fe_charts' });
+  await harness.act(() => harness.fireEvent(agent, 'change'));
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  await settle(harness);
+  assert.equal(started.length, 1);
+  assert.equal(started[0].agent, 'agt_fe_charts');
+  assert.equal(started[0].group, undefined, 'an agent-scoped run names no group');
 });

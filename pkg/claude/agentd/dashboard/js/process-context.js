@@ -283,11 +283,13 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       }, fetchImpl);
       return body.diagnostics || [];
     },
-    async startGroupRun({ templateId, group, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
+    // startGroupRun starts a run scoped to a group, or to one agent when
+    // agent is given instead.
+    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
       const body = JSON.stringify({
-        templateId, group, ...(Object.keys(filled).length ? { params: filled } : {}),
+        templateId, ...(agent ? { agent } : { group }), ...(Object.keys(filled).length ? { params: filled } : {}),
         authorizeProgramProfiles: [...authorizeProgramProfiles],
       });
       return processRequest(path, {

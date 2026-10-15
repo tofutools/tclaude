@@ -17,7 +17,7 @@ import {
 } from './process-kit.js';
 import {
   DEFAULT_RUN_FILTER, RUN_KINDS, RUN_KIND_LABELS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
-  normalizeRunFilter, processContext, processRunApi, runFilterHas, runFilterKinds, runNeedsYou,
+  normalizeRunFilter, processContext, processRunApi, runDetailApi, runFilterHas, runFilterKinds, runNeedsYou,
   unauthorizedProfiles, withPerformerNames,
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
@@ -57,7 +57,11 @@ function memberInitial(member) {
 // POST it with the group pre-filled. Refusals show inline; a refusal naming
 // unauthorized profiles (a referenced template's) adds them to the list. The
 // created run appears on the next context refresh.
-function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '' }) {
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null }) {
+  // members set means an agent-scoped run: the operator picks which member
+  // the run is bound to, and its steps run as that agent's work.
+  const agentScoped = Array.isArray(members);
+  const [agent, setAgent] = useState(() => (agentScoped ? memberKey(members.find((member) => member.agent_id)) : ''));
   const [templates, setTemplates] = useState(null);
   const [templateId, setTemplateId] = useState('');
   const [needs, setNeeds] = useState({ params: [], programProfiles: [] });
@@ -101,11 +105,12 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
   const start = async (event) => {
     event.preventDefault();
-    if (!templateId || busy || missing.length) return;
+    if (!templateId || busy || missing.length || (agentScoped && !agent)) return;
     setBusy(true);
     setError('');
     try {
-      await api.startGroupRun({ templateId, group: group.name, params: values, authorizeProgramProfiles: [...authorized] });
+      const scope = agentScoped ? { agent } : { group: group.name };
+      await api.startGroupRun({ templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized] });
       markQuickStart();
       onClose();
       void source.refresh();
@@ -125,10 +130,20 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     else next.delete(profile);
     return next;
   });
-  const label = wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`;
-  return html`<form class="gp-start-form" aria-label=${label} onSubmit=${start}
+  const label = agentScoped
+    ? (wizard ? `Begin a rite for one familiar of ${group.name}` : `Start a process for one agent in ${group.name}`)
+    : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
+  const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
+  return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <span class="pk-chip pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>
+    ${agentScoped
+    ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'familiar-bound' : 'agent scope'}</span>
+      ${agents.length
+        ? html`<select aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
+          ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
+        </select>`
+        : html`<span class="gp-start-note">${wizard ? 'No familiar here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
+    : html`<span class="pk-chip pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
     ? html`<span class="gp-start-note">Loading templates…</span>`
     : templates.length === 0 && !error
@@ -136,7 +151,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       : html`<select aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
         ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
       </select>`}
-    <button type="submit" class="primary" disabled=${busy || !templateId || missing.length > 0}
+    <button type="submit" class="primary" disabled=${busy || !templateId || missing.length > 0 || (agentScoped && !agent)}
       title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
     <button type="button" onClick=${onClose}>cancel</button>
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
@@ -159,16 +174,47 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   </form>`;
 }
 
+// memberAvailability says what a member could do with a process step right
+// now: performing one already ('process'), busy on other work ('working'),
+// waiting on the human ('waiting'), free to start at once ('idle'), or
+// powered off ('offline'). Process work comes first: it is what this
+// perspective is about. Other states read the same agent status the Agents
+// perspective's state pill shows.
+export function memberAvailability(member, busy) {
+  if (busy.has(memberKey(member))) return 'process';
+  if (!member?.online) return 'offline';
+  const state = member.state || {};
+  if (state.recovery_status && state.recovery_status !== 'recovered') return 'working';
+  const status = state.status || '';
+  if (status === 'awaiting_input' || status === 'awaiting_permission') return 'waiting';
+  return status === '' || status === 'idle' ? 'idle' : 'working';
+}
+
+const AVAILABILITY = [
+  // [state, strip text, wizard strip text, avatar tooltip]
+  ['process', 'in processes', 'bound to rites', 'performing a process step'],
+  ['working', 'working', 'at other labours', 'working on other tasks (not in a process)'],
+  ['waiting', 'waiting on you', 'awaiting your word', 'waiting on you: a question or permission prompt'],
+  ['idle', 'idle', 'at rest', 'idle: can take a step now'],
+  ['offline', 'offline', 'slumbering', 'offline'],
+];
+
 function GroupAvatarStrip({ members, busy, wizard }) {
   if (!members.length) return null;
-  const busyCount = members.filter((member) => busy.has(memberKey(member))).length;
+  const states = members.map((member) => memberAvailability(member, busy));
+  const count = (state) => states.filter((value) => value === state).length;
+  // Idle is the number that matters (who can start a step now), so it always
+  // shows; the other states only when some member is in them.
+  const parts = AVAILABILITY.filter(([state]) => state === 'idle' || count(state) > 0)
+    .map(([state, plain, rite]) => `${count(state)} ${wizard ? rite : plain}`);
   return html`<span class="gp-avatar-strip">
-    <span class="pk-avatars">${members.map((member) => {
-      const isBusy = busy.has(memberKey(member));
-      return html`<span key=${memberKey(member)} class=${`pk-avatar gp-member ${isBusy ? 'busy' : 'idle'}`}
-        title=${`${memberName(member)} · ${isBusy ? 'performing a process step' : 'free'}`}>${memberInitial(member)}</span>`;
+    <span class="pk-avatars">${members.map((member, i) => {
+      const state = states[i];
+      const tip = AVAILABILITY.find(([value]) => value === state)[3];
+      return html`<span key=${memberKey(member)} class=${`pk-avatar gp-member is-${state}${state === 'process' ? ' busy' : ''}`}
+        data-availability=${state} title=${`${memberName(member)} · ${tip}`}>${memberInitial(member)}</span>`;
     })}</span>
-    <span class="gp-strip-text">${busyCount} ${wizard ? 'bound to rites' : 'busy in processes'} · ${members.length - busyCount} free</span>
+    <span class="gp-strip-text">${parts.join(' · ')}</span>
   </span>`;
 }
 
@@ -238,7 +284,71 @@ function MemberRuns({ entries, label, onOpen }) {
   </div>`;
 }
 
-function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocusRun, notify }) {
+// The run-control icons mirror the Agents perspective's spawn / subgroup
+// glyphs with a play mark in place of the plus: start a process for one
+// agent, or for the whole group.
+function RunIcon({ group = false }) {
+  return group
+    ? html`<svg class="subgroup-ico" viewBox="0 0 28 24" width="17" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="3"></circle><circle cx="15" cy="7" r="3"></circle><path d="M1 21v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2"></path><path d="M12 14h3a5 5 0 0 1 5 5v2"></path><path d="M21 6l6 4-6 4z" fill="currentColor"></path></svg>`
+    : html`<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><path d="M17 7l6 4-6 4z" fill="currentColor"></path></svg>`;
+}
+
+// liveGroupRuns are the runs pause all / resume all act on: the group's own
+// live runs and its members' agent-scoped runs, whatever the run filter
+// shows, so the result never depends on what happens to be visible.
+export function liveGroupRuns(context, entry, members) {
+  const own = groupRunsFor(context, entry, 'running').runs;
+  const seen = new Set(own.map((run) => run.runId));
+  const agentRuns = memberRunEntries(context, members, 'running', seen).map((item) => item.run);
+  return [...own, ...agentRuns].filter((run) => !['done', 'failed'].includes(runState(run)));
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 'es'}`;
+}
+
+// RunControls is the Processes perspective's version of the Agents row
+// (spawn agent, create subgroup, power on, shutdown), in the same places:
+// start a process for one agent, start one for the group, resume every
+// paused run, pause every running one. Pause stands in for shutdown because
+// it is reversible: work in flight finishes, nothing new is dispatched until
+// resume. Ending runs (cancel) is deliberately not one click away.
+function RunControls({ group, runs, wizard, runApi, source, notify, onStart }) {
+  const [busy, setBusy] = useState('');
+  const pausable = runs.filter((run) => !run.paused);
+  const resumable = runs.filter((run) => run.paused);
+  const bulk = async (kind, targets) => {
+    if (busy || !targets.length) return;
+    setBusy(kind);
+    const results = await Promise.allSettled(targets.map((run) => runApi[kind](run.runId)));
+    const failed = results.map((result, i) => [result, targets[i]]).filter(([result]) => result.status === 'rejected');
+    setBusy('');
+    void source.refresh();
+    if (failed.length) {
+      const first = failed[0];
+      (notify || defaultNotify)(`Could not ${kind} ${failed.length} of ${plural(targets.length, 'process')}: ${runName(first[1])}: ${first[0].reason?.message || first[0].reason}`, true);
+    }
+  };
+  const shared = { 'data-group': group.name };
+  return html`<div class="group-header-actions gp-run-controls">
+    <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
+      title=${wizard ? `Begin a rite for one familiar of ${group.name}` : `Agent process: start a process for one agent in ${group.name}; its steps run as that agent's work`}
+      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
+    <button type="button" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
+      title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: start a process for the whole group; any member with the role can take a step`}
+      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span></button>
+    <span class="group-actions">
+      <button type="button" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
+        onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
+        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
+      <button type="button" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
+        onClick=${() => bulk('pause', pausable)} aria-label="Pause every running process in this group"
+        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>
+    </span>
+  </div>`;
+}
+
+function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes) or {list, origin} (the step-list editor).
@@ -277,17 +387,19 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
       : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <button type="button" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸</button></div>`;
+  const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
   return html`<div class="gp-group" data-process-group=${group.name}>
+    <${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)} wizard=${wizard} runApi=${runApi}
+      source=${source} notify=${notify} onStart=${startScope} />
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
       <span class="gp-spacer"></span>
       ${!fresh && !quick && !starting && html`<button type="button" class="gp-start" data-process-new=${group.name} onClick=${() => setQuick('pick')}
         title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? '+ new rite' : '+ new process'}</button>`}
-      ${!starting && html`<button type="button" class="gp-start" data-process-start=${group.name} onClick=${() => { setQuick(null); setStarting(true); }}
-        title=${wizard ? `Begin a rite bound to ${group.name}` : `Start a process run scoped to ${group.name}`}>${wizard ? '+ begin a rite' : '+ start process'}</button>`}
       ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
     </div>
-    ${starting && html`<${StartRunForm} group=${group} api=${api} source=${source} wizard=${wizard}
+    ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
+      members=${starting.scope === 'agent' ? members : null}
       initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}
     ${quickStart}
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
@@ -315,7 +427,7 @@ export function GroupProcessBody({ group }) {
   if (!perspective) return null;
   return html`<${GroupRuns} group=${group} roster=${perspective.rosters.get(group.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} />`;
 }
 
 // ungroupedRuns are the agent-scoped runs of Ungrouped's agents, the only
@@ -432,7 +544,7 @@ export function GroupsProcessesFocus({
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, source, onFocusRun, rosters, notify };
+  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify };
   return html`<div class="gp-focus" data-groups-processes>
     ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}

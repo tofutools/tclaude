@@ -20224,8 +20224,15 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-group-head { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
 .gp-group-name { font-weight: 700; font-size: 15px; color: #e6edf3; }
 .gp-avatar-strip { display: inline-flex; align-items: center; gap: 8px; }
-.gp-member.idle { opacity: .45; }
+/* Avatar availability: a process step (blue ring) wins over the agent's own
+   status, which matches the Agents perspective's state pills: working green,
+   waiting-on-you red, idle plain (free now), offline dimmed. */
 .gp-member.busy { box-shadow: 0 0 0 2px #58a6ff; }
+.gp-member.is-working { box-shadow: 0 0 0 2px #3fb950; }
+.gp-member.is-waiting { box-shadow: 0 0 0 2px #ff7b72; }
+.gp-member.is-offline { opacity: .35; }
+.gp-run-controls .group-actions button:disabled { opacity: .4; cursor: default; }
+.gp-run-controls .group-actions button:disabled:hover { border-color: #2a3340; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
 .gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
 .gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
