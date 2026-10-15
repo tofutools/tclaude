@@ -285,6 +285,10 @@ func TestOpenCodeModels_RefreshRateIsFloored(t *testing.T) {
 	assert.Empty(t, openCodeModels{}.Models())
 	require.Eventually(t, func() bool { return calls.Load() == 1 },
 		2*time.Second, 10*time.Millisecond)
+	// The stub has been entered, but the refresh only stores its result
+	// after it returns; wait for that, or the store below races the backdate.
+	require.Eventually(t, backgroundRefreshIdle,
+		2*time.Second, time.Millisecond)
 
 	// A failed refresh stamps the entry, so the TTL alone would hold it off —
 	// force it stale to prove the RATE floor is what stops the next fork.
