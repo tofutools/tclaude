@@ -24,19 +24,8 @@ export function prReviewState(reviews) {
   }
 }
 
-export function prReviewGlyph(state) {
-  switch (state) {
-    case 'approved': return '✓';
-    case 'changes': return '±';
-    // One clock for "waiting": amber when branch protection blocks the merge
-    // (required), grey when nobody has reviewed and nothing requires it (none).
-    case 'required':
-    case 'none': return '◷';
-    default: return '';
-  }
-}
-
-// prReviewLabel is the pill's text after the glyph.
+// prReviewLabel is the count after the pill's person icon. The icon's colour
+// carries the state, so only approvals and change requests add a number.
 export function prReviewLabel(reviews) {
   const state = prReviewState(reviews);
   const approved = Number(reviews?.approved || 0);
@@ -44,7 +33,6 @@ export function prReviewLabel(reviews) {
   switch (state) {
     case 'approved': return approved > 0 ? String(approved) : '';
     case 'changes': return changes > 0 ? String(changes) : '';
-    // The amber ◷ alone reads as "waiting"; the hover panel has the detail.
     case 'required': return '';
     case 'none': return '';
     default: return '';

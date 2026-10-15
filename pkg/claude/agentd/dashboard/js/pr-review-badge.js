@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { safeCheckURL, touchOnly, usePanelPlacement } from './pr-checks-hover.js';
 import {
-  prReviewDecisionText, prReviewGlyph, prReviewLabel, prReviewState, prReviewStateText,
+  prReviewDecisionText, prReviewLabel, prReviewState, prReviewStateText,
   prReviewSummaryLine, relativeAge,
 } from './pr-review-model.js';
 
@@ -88,6 +88,15 @@ function PRReviewPanel({ prURL, prNumber, reviews, panelID, headingID, panelRef,
   `;
 }
 
+// PersonIcon is the review pill's glyph: a reviewer silhouette drawn with
+// currentColor, so the state colour applies and it renders the same on every
+// font. A person rather than a ✓ keeps it distinct from the CI pill beside it.
+function PersonIcon() {
+  return html`<svg class="rv-person" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+    <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-5.5 6.5c0-2.9 2.5-4.5 5.5-4.5s5.5 1.6 5.5 4.5c0 .3-.2.5-.5.5H3a.5.5 0 0 1-.5-.5Z" />
+  </svg>`;
+}
+
 // PRReviewBadge renders nothing until something is known about the PR's
 // reviews, and nothing for a draft or a closed/merged PR — none of those is
 // waiting on a review decision.
@@ -116,7 +125,6 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   if (!prURL || !state || ['draft', 'merged', 'closed'].includes(prState)) return null;
   const panelID = `rv-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
-  const glyph = prReviewGlyph(state);
   const label = prReviewLabel(reviews);
   const who = prNumber ? `#${prNumber}` : 'this pull request';
 
@@ -150,7 +158,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
           close();
         }}
       >
-        ${glyph ? html`<span class="ci-glyph" aria-hidden="true">${glyph}</span>` : null}
+        <${PersonIcon} />
         ${label ? html`<span class="ci-count">${label}</span>` : null}
       </a>
       ${open ? html`

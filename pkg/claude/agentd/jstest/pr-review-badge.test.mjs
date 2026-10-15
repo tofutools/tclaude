@@ -75,7 +75,8 @@ test('the review pill opens a reviewer panel without fetching', async (t) => {
     const badges = mounted.container.querySelectorAll('.rv-badge');
     assert.equal(badges.length, 1, 'drafts and unknown reviews get no pill');
     assert.ok(badges[0].classList.contains('rv-changes'));
-    assert.match(badges[0].textContent, /±\s*1/);
+    assert.ok(badges[0].querySelector('svg.rv-person'), 'the pill is a person icon, not a ✓ like CI');
+    assert.equal(badges[0].textContent.trim(), '1', 'plus the count of change requests');
     assert.equal(badges[0].getAttribute('href'), PR);
 
     const root = mounted.container.querySelector('.rv-hover');

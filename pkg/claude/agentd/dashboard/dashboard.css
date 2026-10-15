@@ -1153,13 +1153,16 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
 .ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
 .ci-badge.ci-pending { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
-/* Review pill: the same pill as CI, coloured by review state. "No reviews"
-   is the same clock as "review required", but grey and dashed so it reads as
-   an absence rather than as a blocker. */
-.rv-badge.rv-approved { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
-.rv-badge.rv-changes { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
-.rv-badge.rv-required { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
-.rv-badge.rv-none { color: #6e7681; border-style: dashed; }
+/* Review pill: a person icon (plus a count for approvals or change
+   requests) coloured by review state. Borderless so it reads as people, not
+   as a second CI pill; the border returns on hover/focus like the CI pill's. */
+.ci-badge.rv-badge { gap: 2px; padding: 2px 2px; border-color: transparent; background: none; }
+.ci-badge.rv-badge:hover { border-color: currentColor; }
+.rv-person { width: 10px; height: 10px; fill: currentColor; display: block; }
+.rv-badge.rv-approved { color: #3fb950; }
+.rv-badge.rv-changes { color: #f85149; }
+.rv-badge.rv-required { color: #d29922; }
+.rv-badge.rv-none { color: #6e7681; }
 .rv-panel .rv-note-age { float: right; color: #6e7681; }
 /* Positioned against the VIEWPORT, with top/left/max-height written by the
    component. Absolute positioning hung the panel off a table row, so opening
@@ -1248,9 +1251,9 @@ body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
 body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
-body.wizard .rv-badge.rv-approved { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
-body.wizard .rv-badge.rv-changes { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
-body.wizard .rv-badge.rv-required { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
+body.wizard .rv-badge.rv-approved { color: #7ee08a; }
+body.wizard .rv-badge.rv-changes { color: #ff8a8a; }
+body.wizard .rv-badge.rv-required { color: #e8c15a; }
 body.wizard .ci-panel {
   border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
   color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
@@ -1277,6 +1280,12 @@ body.wizard .ci-panel::-webkit-scrollbar-thumb {
 }
 body.wizard .ci-panel::-webkit-scrollbar-thumb:hover { background: #9a7fd0; }
 body.slop .ci-badge { background: #210808; border-color: #684500; color: #d8b95e; }
+/* The skin's gold .ci-badge colour outranks the plain .rv-* state colours,
+   and the review pill's state is colour alone, so restate them here. */
+body.slop .rv-badge.rv-approved { color: #7ee08a; }
+body.slop .rv-badge.rv-changes { color: #ff8a8a; }
+body.slop .rv-badge.rv-required { color: #ffd700; }
+body.slop .rv-badge.rv-none { color: #8a6d3b; }
 body.slop .ci-panel {
   border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
   color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
