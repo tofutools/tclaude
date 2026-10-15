@@ -26,6 +26,7 @@ import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
 import { GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen } from './groups-quickstart.js';
+import { SavedProcesses } from './groups-saved-processes.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 
@@ -366,7 +367,8 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
-  // group that has processes) or {list, origin} (the step-list editor).
+  // group that has processes) or {list, origin, saved} (the step-list
+  // editor; saved when it edits one of the group's saved processes).
   const [quick, setQuick] = useState(null);
   // dismissed only re-renders this group at once; the pref folds the rest.
   const [, setDismissed] = useState(false);
@@ -381,9 +383,12 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const memberRuns = memberRunEntries(context, members, filter, new Set(runs.map((run) => run.runId)));
   const label = filterLabel(filter, wizard);
   const open = (runId) => onFocusRun({ group: group.name, runId });
-  // A group with no runs at all, in any state, gets the Get started panel.
+  const savedProcesses = entry?.processes || [];
+  // A group with no runs at all, in any state, and no saved processes gets
+  // the Get started panel.
   const everything = groupRunsFor(context, entry, 'all');
-  const fresh = !everything.runs.length && !everything.planned.length && !memberRunEntries(context, members, 'all').length;
+  const fresh = !everything.runs.length && !everything.planned.length && !savedProcesses.length
+    && !memberRunEntries(context, members, 'all').length;
   // Past the first run (a process exists anywhere, or the operator used or
   // dismissed the panel) an empty group folds Get started to one line.
   const folded = fresh && (quickStartSeen() || Object.keys(context?.runs || {}).length > 0);
@@ -391,7 +396,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
   const quickStart = editing
-    ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin}
+    ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)} />`
     : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
@@ -412,6 +417,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       <span class="gp-spacer"></span>
       ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
     </div>
+    ${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
+      wizard=${wizard} notify=${notify || defaultNotify} onNew=${() => { setStarting(false); setQuick('pick'); }}
+      onEdit=${({ list, saved, origin }) => { setStarting(false); setQuick({ list, saved, origin, key: Date.now() }); }} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
       initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}

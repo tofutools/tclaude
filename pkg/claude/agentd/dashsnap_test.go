@@ -890,6 +890,25 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:     "groups-processes-saved",
+			Title:   "Groups — Processes: saved processes",
+			Caption: "Mock Q3 (tcl-7p6bgt): a group's saved processes (Save to group, context groups[].processes in pin order) show as chips at the top of its body, under the group's head row. ▶ opens a start strip that asks only for the start inputs (a default arrives filled) and a consent per program profile, with Edit steps (reopens the step list; saving writes a new version), publish as template (only while unlisted) and remove.",
+			InitJS:  processContextFixtureInitJS() + processContextSavedProcessesInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var saved = document.querySelector('[data-saved-processes="frontend-squad"]');
+  if (!saved) throw new Error('frontend-squad lacks its saved-process chips');
+  if (saved.querySelectorAll('[data-saved-process]').length !== 2) throw new Error('expected two saved processes');
+  saved.querySelector('[data-saved-run="tpl_ship"]').click();
+  await new Promise(function(resolve){ setTimeout(resolve, 80); });
+  var strip = document.querySelector('[data-saved-strip="tpl_ship"]');
+  if (!strip) throw new Error('the start strip did not open');
+  if (strip.querySelector('[data-start-param="branch"]').value !== 'main') throw new Error('the default input is not filled');
+  if (!strip.querySelector('[data-saved-start]').disabled) throw new Error('Start is enabled with a required input empty');
+  if (!strip.querySelector('[data-start-blocked]')) throw new Error('Start lacks its one-line reason');
+  saved.scrollIntoView({block: 'start'});`),
+			SettleMS: 300,
+		},
+		{
 			Key:     "groups-processes-blocked-start",
 			Title:   "Groups — blocked run + scoped start",
 			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list: it asks for the template's params (required ones marked) and lists program profiles to authorize, never pre-ticked.",
@@ -5825,6 +5844,28 @@ func processContextSubgroupRunInitJS() string {
     fe.activeCount = fe.active.length;
     infra.needsYou = ['run_migrate'];
     infra.needsYouCount = 1;
+    return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+})();`
+}
+
+// processContextSavedProcessesInitJS saves two processes to the fixture's
+// frontend-squad (context groups[].processes). It wraps the fixture stub
+// installed before it.
+func processContextSavedProcessesInitJS() string {
+	return `(function(){
+  var prevFetch = window.fetch;
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var response = await prevFetch(input, init);
+    if (url.indexOf('/v1/process/context') === -1) return response;
+    var data = await response.json();
+    data.groups[0].processes = [
+      { templateId: 'tpl_ship', name: 'ship-feature', ref: 'tpl_ship@sha256:1', listed: false, steps: 4,
+        params: [{ name: 'issue', type: 'string', required: true }, { name: 'branch', type: 'string', required: false, default: 'main' }],
+        programProfiles: [''] },
+      { templateId: 'tpl_nightly', name: 'nightly-check', ref: 'tpl_nightly@sha256:1', listed: true, steps: 3, params: [], programProfiles: [] }
+    ];
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 })();`

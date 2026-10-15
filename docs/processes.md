@@ -270,9 +270,15 @@ later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
 start inputs and who each step would use now update as you edit. A command
 step runs on this host only after you tick *Allow step N to run* for its
 program profile. *Start now*
-saves the steps as a template and starts it in the group; *open in graph
-editor* saves it and opens it below. A process the step list cannot show
-(parallel, wait or subprocess nodes) opens in the graph editor instead.
+runs the steps once in the group (saved as an unlisted template, so a one-off
+run leaves nothing behind in the library or the group); *Save to <group>*
+keeps them as one of the group's processes; *Save to library* lists them for
+every group; *open in graph editor* saves them and opens them below. A
+group's saved processes show as chips at the top of its body: ▶ asks only for
+the start inputs and command consent and starts it, *✎ Edit steps* reopens it
+as a step list (saving writes a new version), and the strip also publishes it
+to the library or removes it from the group. A process the step list cannot
+show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
