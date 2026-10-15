@@ -280,3 +280,22 @@ test('Overview quota sparkline reads samples, the forecast and the reset', async
   assert.equal(mounted.container.querySelector('.usage-ov-spark-tip'), null);
   await mounted.unmount();
 });
+
+test('Overview spend chart: a click keeps reading the clicked day and leaving clears it', async (t) => {
+  const ctx = await setup(t, { usage_tab_visible: true, cost_tab_visible: true });
+  const { harness, state, quotaState, costsState } = ctx;
+  const { spendSlots } = await harness.importDashboardModule('js/usage-overview-charts.js');
+  const { slots } = spendSlots(costsState.view.value);
+  const day9 = slots.findIndex((slot) => slot.day === '2026-07-09');
+  const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
+    quotaState=${quotaState} costsState=${costsState} />`);
+  const plot = mounted.container.querySelector('.usage-ov-plot');
+  plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: slots.length * 10, height: 150 });
+  await harness.act(() => harness.fireEvent(plot, 'mousemove', { clientX: day9 * 10 + 5, clientY: 50 }));
+  await harness.act(() => harness.fireEvent(plot, 'mousedown'));
+  await harness.act(() => harness.fireEvent(plot, 'focus'));
+  assert.match(mounted.container.querySelector('.usage-ov-tip').textContent, /2026-07-09/);
+  await harness.act(() => harness.fireEvent(plot, 'mouseleave'));
+  assert.equal(mounted.container.querySelector('.usage-ov-tip'), null);
+  await mounted.unmount();
+});

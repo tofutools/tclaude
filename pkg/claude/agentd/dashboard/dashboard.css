@@ -10109,7 +10109,10 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-tip-sub { margin-top: 6px; padding-top: 4px; border-top: 1px solid #2a3340; color: #7d8590; }
 .usage-ov-tip-agent .cost-tip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9; }
 .usage-ov-tip-note { margin-top: 5px; color: #7d8590; font-size: 10px; }
-.usage-ov-spark-wrap { position: relative; cursor: crosshair; }
+.usage-ov-spark-wrap { position: relative; margin: 6px 0 2px; cursor: crosshair; }
+/* Inside the wrap the SVG must fill it exactly, so the HTML hover dot's
+   percentage top lands on the line. */
+.usage-ov-spark-wrap .usage-ov-spark { display: block; margin: 0; }
 .usage-ov-spark .guide { stroke: rgba(201, 209, 217, .45); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .usage-ov-spark .reset.hovered { stroke-width: 2; }
 .usage-ov-spark-tip { min-width: 0; }

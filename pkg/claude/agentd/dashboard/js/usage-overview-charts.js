@@ -4,7 +4,7 @@
 // at a fraction of the size, so an operator can analyse spend and quota from
 // the Overview without switching views.
 import { h } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   costProviderLabel, fmtExactUSD, fmtUSD, isWeekendKey, niceCeil, providerSegmentClass,
@@ -165,7 +165,10 @@ export function SpendChart({ costs, label }) {
   const [hover, setHover] = useState(null);
   const [legendFocus, setLegendFocus] = useState(null);
   const [announcement, setAnnouncement] = useState('');
-  const { slots, recorded } = spendSlots(costs);
+  // A click focuses the plot; that focus must not jump the readout away from
+  // the day under the pointer.
+  const pointerDown = useRef(false);
+  const { slots, recorded } = useMemo(() => spendSlots(costs), [costs]);
   const recordedCount = slots.filter((slot) => !slot.projected).length;
   if (!recordedCount) return html`<div class="usage-ov-chart empty">No days in span.</div>`;
   const W = SPEND_W;
@@ -216,15 +219,19 @@ export function SpendChart({ costs, label }) {
       : Math.max(0, Math.min(slots.length - 1, current + moves[event.key]));
     inspect(index, null, slotAnchor(index), true);
   };
-  const leave = () => { if (document.activeElement !== plot.current) setHover(null); };
+  const leave = () => setHover(null);
+  const focus = () => {
+    if (pointerDown.current) { pointerDown.current = false; return; }
+    inspect(recordedCount - 1, null, slotAnchor(recordedCount - 1), true);
+  };
   const summary = `${label} spend ${fmtExactUSD(recorded)}${costs.projection ? `, projected ${fmtExactUSD(costs.projection.total)}` : ''}. Focus and use Left and Right Arrow keys to inspect each day.`;
 
   return html`<div class="usage-ov-chart-wrap">
     <div class="usage-ov-chart">
       <div ref=${plot} class=${`usage-ov-plot${hover ? ' hovering' : ''}${focusProvider ? ' has-focus' : ''}`}
         role="img" tabIndex="0" aria-label=${summary}
-        onmousemove=${move} onmouseleave=${leave}
-        onfocus=${() => inspect(recordedCount - 1, null, slotAnchor(recordedCount - 1), true)}
+        onmousemove=${move} onmouseleave=${leave} onmousedown=${() => { pointerDown.current = true; }}
+        onfocus=${focus}
         onblur=${() => { setHover(null); setAnnouncement(''); }} onkeydown=${keydown}>
         <svg viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
           ${active && html`<rect class=${`hover-col${active.projected ? ' projected' : ''}`}
