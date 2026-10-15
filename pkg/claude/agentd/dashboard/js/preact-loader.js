@@ -8,6 +8,7 @@ const shellDescriptor = createIslandDescriptor({
   hosts: {
     activityHost: '#shell-activity-root',
     usageHost: '#shell-usage-root',
+    spendLimitHost: '#spend-limit-banner-root',
     statusHost: '#shell-status-root',
     notifyHost: '#shell-notify-root',
     creditsHost: '#shell-credits-root',

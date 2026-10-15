@@ -443,6 +443,9 @@ function populateConfigForm(cfg) {
 
   // Cost display multiplier — blank when unset (no adjustment); a stored
   // value shows as-is so the human sees exactly what's on disk.
+  for (const period of ['daily', 'monthly']) {
+    $(`#cfg-cost-${period}-limit`).value = cfg.cost?.[`${period}_limit_usd`] || '';
+  }
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
   for (const { key } of COST_FACTOR_HARNESSES) {
@@ -730,6 +733,13 @@ function assembleConfig() {
   // marshal as a spurious "cost": {} diff. A 0/negative is written so the
   // server's Validate surfaces the out-of-range error.
   const cost = (cfg.cost && typeof cfg.cost === 'object') ? cfg.cost : {};
+  for (const period of ['daily', 'monthly']) {
+    const raw = $(`#cfg-cost-${period}-limit`).value.trim();
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) throw new Error('Spend limits must be finite non-negative USD amounts');
+    if (value) cost[`${period}_limit_usd`] = value;
+    else delete cost[`${period}_limit_usd`];
+  }
   const cfRaw = $('#cfg-cost-factor').value.trim();
   const cf = cfgFloat('cfg-cost-factor', 1);
   if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;

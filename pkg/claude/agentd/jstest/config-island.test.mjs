@@ -90,6 +90,7 @@ test('Config load populates representative fields, conditions, notices, and roun
   ]);
   const config = {
     log_level: 'warn', terminal: 'ghostty', record_hooks: true, startup_timing: true,
+    cost: { daily_limit_usd: 12.5, monthly_limit_usd: 300 },
     ratelimit: { five_hour_percent_max_used: 88, seven_day_percent_max_used: 97.5, future_limit: 7 },
     agent: { spawn_max_per_hour: 3, sudo: { max_duration: '2h' } },
     slop: { volume: 0.4 },
@@ -121,6 +122,13 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.match(mounted.container.querySelector('#cfg-notice').textContent, /future_root/);
   const assembled = adapter.assembleConfig();
   assert.equal(assembled.ratelimit.future_limit, 7);
+  assert.equal(assembled.cost.daily_limit_usd, 12.5);
+  assert.equal(assembled.cost.monthly_limit_usd, 300);
+  const dailyLimit = mounted.container.querySelector('#cfg-cost-daily-limit');
+  dailyLimit.value = '';
+  assert.equal(adapter.assembleConfig().cost.daily_limit_usd, undefined);
+  dailyLimit.value = '-1';
+  assert.throws(() => adapter.assembleConfig(), /Spend limits must be finite non-negative/);
   assert.equal(assembled.slop.volume, 0.4);
   assert.deepEqual(assembled.agent.sudo, { max_duration: '2h' });
   assert.equal(assembled.dashboard.default_terminal, 'native');
