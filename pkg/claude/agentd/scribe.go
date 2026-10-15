@@ -76,9 +76,10 @@ type scribeSummonRequest struct {
 	TaskURL   string `json:"task_ref_url,omitempty"`
 	TaskLabel string `json:"task_ref_label,omitempty"`
 	// Background starts the scribe in its detached tmux session only, like a
-	// regular agent spawn: no terminal window is opened, for a fresh or a
-	// reused scribe. Callers with their own surface (the process editor's chat
-	// dock) set it and open a terminal pane on demand.
+	// regular agent spawn, and reports no terminal at all: callers with their
+	// own surface (the process editor's chat dock) set it and open a terminal
+	// pane on demand. The dashboard route never opens a native window either
+	// way; without Background it answers with the in-browser terminal pane.
 	Background bool `json:"background,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
@@ -102,6 +103,21 @@ var scribeScopePartPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 // scribeOutcome is summonScribe's result: the fresh or reused scribe's conv-id and the
 // open-window handshake (native vs the in-browser terminal fallback),
 // mirroring the spawn/open-window responses.
+// scribeFocus is how a summon surfaces the scribe's terminal.
+type scribeFocus int
+
+const (
+	// scribeFocusNative pops a native terminal window, falling back to the
+	// in-browser pane — the socket API's default.
+	scribeFocusNative scribeFocus = iota
+	// scribeFocusBrowser opens no window and answers with the in-browser
+	// terminal pane: the dashboard's default, so a summon never pops a window
+	// over the web UI.
+	scribeFocusBrowser
+	// scribeFocusNone opens nothing: the caller has its own surface.
+	scribeFocusNone
+)
+
 type scribeOutcome struct {
 	Name      string
 	ConvID    string
@@ -115,6 +131,12 @@ type scribeOutcome struct {
 // is exactly the bar handleGroupSpawn sets for a birth-time-granted spawn, so
 // no new privilege model is introduced.
 func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
+	summonScribeHTTP(w, r, scribeFocusNative)
+}
+
+// summonScribeHTTP serves a summon whose terminal, unless the body asks for a
+// background start, surfaces the way defaultFocus says.
+func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scribeFocus) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
@@ -239,7 +261,11 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newApprovalID()
 	granter := scribeSummonGranter(r, spawnerConvID, permissionGrantSudoID, correlationID)
-	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, body.Background, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
+	focus := defaultFocus
+	if body.Background {
+		focus = scribeFocusNone
+	}
+	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, focus, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -304,11 +330,14 @@ func canonicalScribeScope(scope *scribeReuseScope) (string, string) {
 // handleDashboardScribeAPI is the cookie-auth /api twin: the dashboard cookie +
 // Origin pin is the human-consent layer, so it stamps a synthetic human peer
 // and delegates to the shared handler (same pattern as dashboardSpawnInGroup).
+// A dashboard summon starts the scribe in tmux only, like a regular spawn, and
+// never pops a native window over the web UI: the browser terminal pane is
+// its surface unless the caller has its own (Background).
 func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	handleScribeSummon(w, asDashboardHumanPeer(r))
+	summonScribeHTTP(w, asDashboardHumanPeer(r), scribeFocusBrowser)
 }
 
 // scribeSummonMu serializes summons so two near-simultaneous clicks cannot
@@ -318,9 +347,9 @@ var scribeSummonMu sync.Mutex
 
 // summonScribe is the reusable core: ensure the scribe-kind group, reuse one
 // exact compatible structured scope when requested, or spawn a fresh uniquely
-// named agent in the shared pre-trusted workdir with birth-time grants. A
-// background summon never opens a terminal window.
-func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive, background bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
+// named agent in the shared pre-trusted workdir with birth-time grants. focus
+// says how the scribe's terminal surfaces.
+func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive bool, focus scribeFocus, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -334,7 +363,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 	// group and continues its independent editing task.
 	pruneDeadScribes(g)
 	if scopeKey != "" {
-		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel, background); reused != nil || reuseFail != nil {
+		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel, focus); reused != nil || reuseFail != nil {
 			return reused, reused != nil, reuseFail
 		}
 	}
@@ -363,7 +392,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
-	// AutoFocus, unless exclusive or background — opens its terminal window.
+	// AutoFocus, for a native non-exclusive summon — opens its terminal window.
 	// Synchronous (Async left false) so the conv-id materialises for the
 	// grants + the response.
 	p := spawnParams{
@@ -374,7 +403,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 		TaskLabel:           taskLabel,
 		Cwd:                 cwd,
 		InitialMessage:      brief,
-		AutoFocus:           !exclusive && !background,
+		AutoFocus:           !exclusive && focus == scribeFocusNative,
 		PermissionOverrides: overrides,
 		PermissionGranter:   granter,
 		SpawnedByConv:       spawnerConvID,
@@ -394,8 +423,8 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 	if outcome.FocusMode == "browser" {
 		out.FocusWS = spawnFocusWSPath(outcome.Label)
 	}
-	if exclusive && !background {
-		openScribeWindow(outcome.ConvID, out)
+	if exclusive || focus != scribeFocusNative {
+		focusScribe(outcome.ConvID, out, focus)
 	}
 	return out, false, nil
 }
@@ -417,7 +446,7 @@ func scribeScopeDescr(scopeKey string) string {
 // reuseScopedScribe returns the one alive, active, permission-compatible
 // scribe for scopeKey. The caller holds scribeSummonMu, making lookup plus
 // potential spawn idempotent across concurrent clicks.
-func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]db.PermissionOverride, brief, taskURL, taskLabel string, background bool) (*scribeOutcome, *spawnFailure) {
+func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]db.PermissionOverride, brief, taskURL, taskLabel string, focus scribeFocus) (*scribeOutcome, *spawnFailure) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "list reusable scribes: " + err.Error()}
@@ -467,9 +496,7 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]d
 			return nil, &spawnFailure{http.StatusInternalServerError, "brief", "refresh reusable scribe context: " + err.Error()}
 		}
 		out := &scribeOutcome{Name: agent.FreshTitle(member.ConvID), ConvID: member.ConvID}
-		if !background {
-			openScribeWindow(member.ConvID, out)
-		}
+		focusScribe(member.ConvID, out, focus)
 		return out, nil
 	}
 	return nil, nil
@@ -728,6 +755,20 @@ func killScribeSession(convID string) {
 		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
 			slog.Error("scribe: failed to kill unsafe capability-reducing scribe", "conv", short8(convID), "error", err)
 		}
+	}
+}
+
+// focusScribe surfaces a live scribe's terminal the way focus says.
+func focusScribe(convID string, out *scribeOutcome, focus scribeFocus) {
+	switch focus {
+	case scribeFocusNative:
+		openScribeWindow(convID, out)
+	case scribeFocusBrowser:
+		if pickAliveSession(convID) != nil {
+			out.FocusMode = "browser"
+			out.FocusWS = "/api/open-window-ws/" + url.PathEscape(convID)
+		}
+	case scribeFocusNone:
 	}
 }
 

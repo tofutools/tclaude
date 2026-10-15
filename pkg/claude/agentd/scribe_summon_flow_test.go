@@ -39,6 +39,7 @@ type scribeSummonResp struct {
 	ConvID    string `json:"conv_id"`
 	Reused    bool   `json:"reused"`
 	FocusMode string `json:"focus_mode"`
+	FocusWS   string `json:"focus_ws"`
 }
 
 // stubScribeTerminal records how many times a scribe window was opened and
@@ -358,33 +359,46 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 		reusedAudit[agentd.PermProcessTemplatesManage].GrantedBy)
 }
 
-// Scenario: the process editor summons its scoped scribe in the background.
-// The scribe starts in tmux only, like a regular spawn: neither the fresh
-// summon nor the same-scope reuse opens a terminal window, and the response
-// carries no focus handshake.
-func TestScribeSummon_BackgroundOpensNoWindow(t *testing.T) {
-	f := newFlow(t)
+// Scenario: every dashboard summon starts the scribe in tmux only, like a
+// regular spawn, and never pops a native window over the web UI. Without a
+// dock (template modal, sandbox profiles, the process library) the dashboard
+// gets the in-browser terminal pane; the process editor's dock asks for a
+// background start and gets no terminal at all, for a fresh or reused scribe.
+func TestScribeSummon_DashboardNeverOpensNativeWindow(t *testing.T) {
+	newFlow(t)
 	opens := stubScribeTerminal(t)
-	post := func() scribeSummonResp {
-		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
-			map[string]any{
-				"name": "process-scribe", "exclusive": true, "background": true,
-				"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
-				"scope": map[string]any{"kind": "process-template", "id": "release-flow"},
-				"brief": "Background process-template authoring brief.",
-			})))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	post := func(body map[string]any) scribeSummonResp {
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/scribe", body))
 		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
 		return decodeScribeResp(t, rec)
 	}
-	first := post()
-	require.NotEmpty(t, first.ConvID)
-	assert.False(t, first.Reused)
-	assert.Empty(t, first.FocusMode, "a background summon reports no window")
-	second := post()
-	assert.True(t, second.Reused)
-	assert.Equal(t, first.ConvID, second.ConvID)
-	assert.Empty(t, second.FocusMode, "a background reuse reports no window")
-	assert.Zero(t, *opens, "no terminal window is opened for a background scribe")
+	library := func(id string, background bool) map[string]any {
+		return map[string]any{
+			"name": "process-scribe", "exclusive": true, "background": background,
+			"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+			"scope": map[string]any{"kind": "process-template", "id": id},
+			"brief": "Process-template authoring brief.",
+		}
+	}
+
+	plain := post(map[string]any{"name": "template-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "Template brief."})
+	assert.Equal(t, "browser", plain.FocusMode, "a dockless summon opens the in-browser pane")
+	assert.Equal(t, "/api/open-window-ws/"+plain.ConvID, plain.FocusWS)
+
+	exclusive := post(library("", false))
+	assert.Equal(t, "browser", exclusive.FocusMode, "an exclusive dockless summon opens the in-browser pane too")
+
+	docked := post(library("release-flow", true))
+	assert.False(t, docked.Reused)
+	assert.Empty(t, docked.FocusMode, "a docked editor's background summon reports no terminal")
+	reused := post(library("release-flow", true))
+	assert.True(t, reused.Reused)
+	assert.Equal(t, docked.ConvID, reused.ConvID)
+	assert.Empty(t, reused.FocusMode, "a background reuse reports no terminal")
+
+	assert.Zero(t, *opens, "no native terminal window is opened from the dashboard")
 }
 
 func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {
