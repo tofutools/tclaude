@@ -60,6 +60,8 @@ type processTemplateListJSON struct {
 	VersionCount  int                          `json:"versionCount"`
 	LatestVersion processTemplateVersionJSON   `json:"latestVersion"`
 	Versions      []processTemplateVersionJSON `json:"versions"`
+	// Listed is false for a template saved to a group but not published.
+	Listed bool `json:"listed"`
 }
 
 type processTemplateShowJSON struct {
@@ -90,6 +92,7 @@ type processTemplateSourceRequest struct {
 
 type processTemplatesLsParams struct {
 	JSON     bool   `long:"json" help:"Output the whole listing as JSON instead of the human table."`
+	All      bool   `long:"all" help:"Include templates saved to a group but not published to the library."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -97,7 +100,7 @@ func processTemplatesLsCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesLsParams]{
 		Use:         "ls",
 		Short:       "List stored process templates",
-		Long:        "Lists every stored process template as a human table, or as one JSON object with --json. The listing is bounded, so --json emits the complete collection in one document; there is no streaming variant.",
+		Long:        "Lists the process template library (with --all, also templates saved to a group but not published) as a human table, or as one JSON object with --json. The listing is bounded, so --json emits the complete collection in one document; there is no streaming variant.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesLsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -121,7 +124,11 @@ func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer
 	var response struct {
 		Templates []processTemplateListJSON `json:"templates"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/process/templates", nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
+	path := "/v1/process/templates"
+	if p.All {
+		path += "?all=1"
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

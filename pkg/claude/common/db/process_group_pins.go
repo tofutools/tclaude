@@ -105,6 +105,19 @@ func PinProcessToGroup(groupID int64, templateID string) error {
 	return tx.Commit()
 }
 
+// ProcessGroupPinsFull reports whether pinning templateID to a group would
+// exceed MaxProcessGroupPins: the group is full and does not already hold it.
+func ProcessGroupPinsFull(groupID int64, templateID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var count, held int
+	err = d.QueryRow(`SELECT COUNT(*), COALESCE(SUM(template_id = ?), 0) FROM process_group_pins WHERE group_id = ?`,
+		templateID, groupID).Scan(&count, &held)
+	return held == 0 && count >= MaxProcessGroupPins, err
+}
+
 // UnpinProcessFromGroup removes a template from a group's saved processes and
 // reports whether it was pinned.
 func UnpinProcessFromGroup(groupID int64, templateID string) (bool, error) {

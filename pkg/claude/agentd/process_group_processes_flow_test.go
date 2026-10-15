@@ -3,11 +3,14 @@ package agentd_test
 import (
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -196,4 +199,57 @@ func TestProcessGroupProcesses_SaveToGroupPublishPinAndList(t *testing.T) {
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
 	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/infra/processes", map[string]any{"templateId": nightly})
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// Scenario: an agent may pin only to a group it is a member or owner of.
+// Holding process.runs.read (implied for any group owner) shows every group's
+// runs but does not make another group's saved processes its to change.
+func TestProcessGroupProcesses_AgentPinsOnlyToItsOwnGroups(t *testing.T) {
+	f, root := processAuthoringFlow(t)
+	f.HaveGroup("webshop")
+	ops := f.HaveGroup("ops")
+	const member, owner = "memb-1111-2222-3333-4444", "ownr-1111-2222-3333-4444"
+	f.HaveAliveSession(member, "spwn-memb", "tmux-memb", f.TestCwd("memb"))
+	f.HaveMember("webshop", member)
+	f.HaveAliveSession(owner, "spwn-ownr", "tmux-ownr", f.TestCwd("ownr"))
+	f.HaveEnrolledAgent(owner)
+	require.NoError(t, db.AddAgentGroupOwner(ops.ID, owner, "<test>"))
+	for _, conv := range []string{member, owner} {
+		require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermProcessTemplatesManage, db.PermEffectGrant, "test"))
+	}
+	tmpl := shipFeatureTemplate("nightly")
+	tmpl.ID = "nightly"
+	putProcessRuntimeTemplate(t, root, tmpl)
+
+	pin := func(conv, group string) int {
+		t.Helper()
+		return agentReq(t, f, conv, http.MethodPost, "/v1/process/groups/"+group+"/processes", map[string]any{"templateId": "nightly"}).Code
+	}
+	assert.Equal(t, http.StatusOK, pin(member, "webshop"), "a member pins to its group")
+	assert.Equal(t, http.StatusOK, pin(owner, "ops"), "an owner pins to the group it owns")
+	assert.Equal(t, http.StatusNotFound, pin(owner, "webshop"), "owning another group is not enough")
+	assert.Equal(t, http.StatusNotFound, pin(member, "ops"))
+	rec := agentReq(t, f, owner, http.MethodDelete, "/v1/process/groups/webshop/processes/nightly", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "nor may it unpin there")
+}
+
+// Scenario: "Save to group" on a full group is refused before anything is
+// written, so no unlisted template is left behind.
+func TestProcessGroupProcesses_FullGroupRefusesBeforeSaving(t *testing.T) {
+	f, root := processAuthoringFlow(t)
+	g := f.HaveGroup("webshop")
+	for i := range db.MaxProcessGroupPins {
+		tmpl := shipFeatureTemplate("filler")
+		tmpl.ID = "filler-" + strconv.Itoa(i)
+		putProcessRuntimeTemplate(t, root, tmpl)
+		require.NoError(t, db.PinProcessToGroup(g.ID, tmpl.ID))
+	}
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates",
+		map[string]any{"template": shipFeatureTemplate("one-too-many"), "listed": false, "pinGroup": "webshop"})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	unlisted, err := db.ProcessTemplateUnlisted()
+	require.NoError(t, err)
+	assert.Empty(t, unlisted, "nothing was saved")
+	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/webshop/processes", map[string]any{"templateId": "filler-0"})
+	assert.Equal(t, http.StatusOK, rec.Code, "re-pinning a held template stays idempotent on a full group")
 }

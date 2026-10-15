@@ -397,7 +397,7 @@ func handleProcessTemplateCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
-	if !applyProcessTemplateMeta(w, parsed.Template.ID, body.Listed, pin) {
+	if !applyProcessTemplateMeta(w, parsed.Template.ID, commit.Ref, body.Listed, pin) {
 		return
 	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{
@@ -492,7 +492,7 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
-	if !applyProcessTemplateMeta(w, id, body.Listed, pin) {
+	if !applyProcessTemplateMeta(w, id, commit.Ref, body.Listed, pin) {
 		return
 	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{

@@ -388,7 +388,7 @@ func buildProcessContext(ctx context.Context, visible processContextVisible) (pr
 			g.Roles = r
 		}
 		if saved.fs != nil {
-			g.Processes = processGroupProcesses(ctx, saved.fs, group.ID, saved.unlisted)
+			g.Processes = saved.groupProcesses(ctx, group.ID)
 		}
 	}
 	for _, g := range groups {

@@ -39,19 +39,29 @@ type processTemplatePin struct {
 }
 
 // resolveProcessGroupForPin resolves a group by name for a pin change: it must
-// exist, be live, and be one the caller can see (a human, a holder of
-// process.runs.read, or a member).
+// exist and be live, and the caller must be the human, or an agent that is a
+// member or an owner of that group. A pin is a change to the group, so seeing
+// every group's runs (process.runs.read) is not enough to make one.
 func resolveProcessGroupForPin(w http.ResponseWriter, r *http.Request, name string) (*db.AgentGroup, bool) {
-	visible, ok := processContextVisibility(w, r)
-	if !ok {
-		return nil, false
-	}
 	group, err := db.GetAgentGroupByName(strings.TrimSpace(name))
-	if err != nil || group == nil || group.IsArchived() || (!visible.all && !visible.groups[group.ID]) {
+	if err != nil || group == nil || group.IsArchived() {
 		writeError(w, http.StatusNotFound, "not_found", "no such group")
 		return nil, false
 	}
-	return group, true
+	p := peerFromContext(r.Context())
+	if classify(p) == classHuman {
+		return group, true
+	}
+	if p.ConvID != "" {
+		if member, _ := db.FindMemberInGroup(group.ID, p.ConvID); member != nil {
+			return group, true
+		}
+		if owner, _ := db.IsAgentGroupOwner(group.ID, p.ConvID); owner {
+			return group, true
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found", "no such group")
+	return nil, false
 }
 
 func resolveProcessTemplatePin(w http.ResponseWriter, r *http.Request, name string) (*processTemplatePin, bool) {
@@ -62,16 +72,35 @@ func resolveProcessTemplatePin(w http.ResponseWriter, r *http.Request, name stri
 	if !ok {
 		return nil, false
 	}
+	// Refuse a full group before the template version is written, so a
+	// failed pin never leaves an unlisted template nobody can find.
+	if full, err := db.ProcessGroupPinsFull(group.ID, r.PathValue("id")); err != nil {
+		writeError(w, http.StatusInternalServerError, "process_group_pin", err.Error())
+		return nil, false
+	} else if full {
+		writeError(w, http.StatusConflict, "process_group_pin", db.ErrProcessGroupPinsFull.Error())
+		return nil, false
+	}
 	return &processTemplatePin{group: group}, true
 }
 
 // applyProcessTemplateMeta records a save's listing and pin after the
 // template version is committed.
-func applyProcessTemplateMeta(w http.ResponseWriter, templateID string, listed *bool, pin *processTemplatePin) bool {
+// A failure after the save still names the saved template (id and ref), so
+// the caller can retry the listing or pin instead of saving again.
+func applyProcessTemplateMeta(w http.ResponseWriter, templateID, ref string, listed *bool, pin *processTemplatePin) bool {
+	fail := func(status int, code, message string) bool {
+		body := map[string]any{"error": message, "code": code, "id": templateID}
+		if ref != "" {
+			body["ref"] = ref
+			body["error"] = "the template was saved, but " + message
+		}
+		writeProcessJSON(w, status, body)
+		return false
+	}
 	if listed != nil {
 		if err := db.SetProcessTemplateListed(templateID, *listed); err != nil {
-			writeError(w, http.StatusInternalServerError, "process_template_listing", err.Error())
-			return false
+			return fail(http.StatusInternalServerError, "process_template_listing", "recording its library listing failed: "+err.Error())
 		}
 	}
 	if pin != nil {
@@ -80,8 +109,7 @@ func applyProcessTemplateMeta(w http.ResponseWriter, templateID string, listed *
 			if errors.Is(err, db.ErrProcessGroupPinsFull) {
 				status = http.StatusConflict
 			}
-			writeError(w, status, "process_group_pin", "the template was saved, but pinning it failed: "+err.Error())
-			return false
+			return fail(status, "process_group_pin", "pinning it to the group failed: "+err.Error())
 		}
 	}
 	return true
@@ -134,7 +162,7 @@ func handleProcessGroupPin(w http.ResponseWriter, r *http.Request) {
 	if !ok || !processTemplateExists(w, r, body.TemplateID) {
 		return
 	}
-	if !applyProcessTemplateMeta(w, body.TemplateID, nil, &processTemplatePin{group: group}) {
+	if !applyProcessTemplateMeta(w, body.TemplateID, "", nil, &processTemplatePin{group: group}) {
 		return
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"group": group.Name, "templateId": body.TemplateID, "pinned": true})
@@ -212,6 +240,9 @@ type processGroupProcessParam struct {
 type processSavedTemplateStore struct {
 	fs       *store.FS
 	unlisted map[string]bool
+	// read memoizes each template read in this build: a template pinned to
+	// several groups is read once.
+	read map[string]*processGroupProcess
 }
 
 // processSavedTemplates opens the store for a context build. A store or
@@ -228,32 +259,45 @@ func processSavedTemplates() processSavedTemplateStore {
 		slog.Warn("process context: template listing unavailable", "error", err)
 		return processSavedTemplateStore{}
 	}
-	return processSavedTemplateStore{fs: fs, unlisted: unlisted}
+	return processSavedTemplateStore{fs: fs, unlisted: unlisted, read: map[string]*processGroupProcess{}}
 }
 
-// processGroupProcesses lists a group's saved processes in pin order. A pin
-// whose template can no longer be read is skipped.
-func processGroupProcesses(ctx context.Context, fs *store.FS, groupID int64, unlisted map[string]bool) []processGroupProcess {
+// groupProcesses lists a group's saved processes in pin order. A pin whose
+// template can no longer be read is skipped.
+func (s processSavedTemplateStore) groupProcesses(ctx context.Context, groupID int64) []processGroupProcess {
 	ids, err := db.ListProcessGroupPins(groupID)
 	if err != nil || len(ids) == 0 {
 		return []processGroupProcess{}
 	}
 	out := make([]processGroupProcess, 0, len(ids))
 	for _, id := range ids {
-		head, err := fs.GetTemplateHead(ctx, id)
-		if err != nil {
-			if !errors.Is(err, store.ErrNotFound) {
-				slog.Warn("process context: saved process unreadable", "template", id, "error", err)
-			}
-			continue
+		view, seen := s.read[id]
+		if !seen {
+			view = s.load(ctx, id)
+			s.read[id] = view
 		}
-		tmpl, err := fs.GetTemplate(ctx, head.Ref)
-		if err != nil || tmpl == nil {
-			continue
+		if view != nil {
+			out = append(out, *view)
 		}
-		out = append(out, processGroupProcessOf(tmpl, head.Ref, !unlisted[id]))
 	}
 	return out
+}
+
+// load reads one saved template's head; nil when it can no longer be read.
+func (s processSavedTemplateStore) load(ctx context.Context, id string) *processGroupProcess {
+	head, err := s.fs.GetTemplateHead(ctx, id)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("process context: saved process unreadable", "template", id, "error", err)
+		}
+		return nil
+	}
+	tmpl, err := s.fs.GetTemplate(ctx, head.Ref)
+	if err != nil || tmpl == nil {
+		return nil
+	}
+	view := processGroupProcessOf(tmpl, head.Ref, !s.unlisted[id])
+	return &view
 }
 
 func processGroupProcessOf(tmpl *model.Template, ref string, listed bool) processGroupProcess {
