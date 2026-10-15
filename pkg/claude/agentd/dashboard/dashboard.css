@@ -8063,6 +8063,9 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   font-family: inherit; cursor: pointer;
 }
 .cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+/* Saved-prompt picker: one line — the insert select takes the width and the
+   Manage button stays its natural size beside it. */
+.saved-prompts-controls > button { flex: 0 0 auto; white-space: nowrap; }
 .standing-order-target-picker > select { width: 100%; }
 .standing-order-field {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
@@ -9135,6 +9138,23 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cleanup-badge.cat-main { color: #7d8590; border-color: #2a3340; }
 .cleanup-badge.cat-stale { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.dirty { color: #f0883e; border-color: #5a3a1a; }
+/* Dangling-worktree signals: merged reads as the safe green, the review-first
+   signals (upstream gone, stale) as amber, and an unavailable scan stays muted
+   but dashed so it is not mistaken for a clean row. */
+.cleanup-badge.merged { color: #3fb950; border-color: #1d3a23; }
+.cleanup-badge.upstream-gone,
+.cleanup-badge.stale { color: #d29922; border-color: #4d3c12; }
+.cleanup-badge.signal-error { border-style: dashed; }
+/* Worktree rows can now carry several signal badges plus a dangling note:
+   let the badges wrap instead of crushing the path to nothing, and put the
+   note on its own line under the row rather than beside the label. */
+#worktree-cleanup-modal .cleanup-row { flex-wrap: wrap; }
+#worktree-cleanup-modal .cleanup-row label { flex-wrap: wrap; row-gap: 3px; }
+#worktree-cleanup-modal .cleanup-row .path { flex: 1 1 14em; }
+#worktree-cleanup-modal .cleanup-row .cleanup-dangling-note { flex: 1 1 100%; margin: 2px 0 0 25px; color: #d29922; }
+#worktree-cleanup-modal .cleanup-toolbar button { white-space: nowrap; }
+.cleanup-toolbar button.active,
+.cleanup-toolbar button[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
 .cleanup-prune-row { background: rgba(210, 153, 34, 0.035); }
 .cleanup-prune-note {
   margin: 5px 8px 0 25px; color: #7d8590; font-size: 11px; line-height: 1.4;
@@ -12416,10 +12436,11 @@ body.wizard .operator-message-overlay .operator-message-modal h3 {
 }
 body.wizard .operator-message-overlay :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
 body.wizard .operator-message-overlay .cron-create-target { color: #f3e6c0; }
-body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea) {
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea):focus { border-color: #a97bd6; }
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select):focus { border-color: #a97bd6; }
+body.wizard .operator-message-overlay .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
 body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -13342,6 +13363,12 @@ body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-row .path,
 body.wizard #worktree-cleanup-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button[aria-pressed="true"] {
+  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
+}
+body.wizard #worktree-cleanup-modal .cleanup-badge.merged { color: #7ee2a8; }
+body.wizard #worktree-cleanup-modal :is(.cleanup-badge.upstream-gone, .cleanup-badge.stale, .cleanup-dangling-note) { color: #d9b45a; }
 body.wizard #worktree-cleanup-modal .cleanup-row input[type=checkbox],
 body.wizard #worktree-cleanup-modal .delete-agent-wt input[type=checkbox] {
   accent-color: #a97bd6;
@@ -20221,5 +20248,44 @@ body.wizard .grf-run.selected { background: #241a40; border-left-color: #a97bd6;
 }
 td.process-cell { white-space: nowrap; }
 
-.spend-limit-banner { padding: 10px 12px; margin-bottom: 12px; border: 1px solid #d29922; border-radius: 6px; color: #d29922; font-size: 13px; }
-.spend-limit-banner.over-limit { border-color: #f85149; color: #f85149; }
+.spend-limit-banner { padding: 8px 12px; margin-bottom: 12px; border: 1px solid #4d3c12; border-left: 3px solid #d29922; border-radius: 6px; background: #161b22; color: #d29922; font-size: 13px; }
+.spend-limit-banner.over-limit { border-color: #4d1d1d; border-left-color: #f85149; color: #f85149; }
+body.wizard .spend-limit-banner {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: rgba(122, 93, 176, 0.5); border-left-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: #ffb3ad; }
+
+/* ─── Wizard saved-prompt library ───────────────────────────────────
+   The manager opens over the spawn dialog or the operator composer; give it
+   the same violet surface, parchment fields and gilded actions as those.
+   The manager renders inside #agent-spawn-modal (no portal), whose blanket
+   wizard button rule carries two ids. The doubled id ties it and wins by
+   coming later in this file (dashsnap asserts Save prompt stays primary). */
+body.wizard #saved-prompts-manage-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #saved-prompts-manage-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #saved-prompts-manage-modal :is(.modal-hint, .cron-create-label) { color: #b39ddb; }
+body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select) {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select):focus { border-color: #a97bd6; }
+body.wizard #saved-prompts-manage-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary):hover:not(:disabled) { background: #3a2a63; }
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0; border: 2px solid #d9b45a;
+}
+body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }

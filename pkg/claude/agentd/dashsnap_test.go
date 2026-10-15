@@ -3327,6 +3327,7 @@ if (!document.querySelector('#retire-ok[aria-busy="true"]')) throw new Error('re
 		},
 	}
 	states = append(states, skynetStates()...)
+	states = append(states, savedPromptAndSpendStates(showGroups, expandGroups)...)
 	return append(states, processGraphStates()...)
 }
 
