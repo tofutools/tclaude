@@ -181,3 +181,102 @@ test('pure Overview helpers', async (t) => {
   assert.equal(spanLabel({ span: '7d' }), 'Last 7d');
   assert.equal(spanLabel({ span: 'calmonth', monthLabel: 'June 2026' }), 'June 2026');
 });
+
+test('Overview spend chart inspects a day, a provider slice, the projection and the legend', async (t) => {
+  const ctx = await setup(t, { usage_tab_visible: true, cost_tab_visible: true });
+  const { harness, state, quotaState, costsState } = ctx;
+  const { spendSlots } = await harness.importDashboardModule('js/usage-overview-charts.js');
+  const { slots, recorded } = spendSlots(costsState.view.value);
+  assert.equal(recorded, 4);
+  const day10 = slots.findIndex((slot) => slot.day === '2026-07-10');
+  assert.equal(slots[day10].accumulated, 4, 'the running total includes earlier days');
+  assert.equal(slots[day10].agentCount, 2);
+  assert.deepEqual(slots[day10].top.map((agent) => agent.title), ['alpha', 'beta']);
+  const last = slots[slots.length - 1];
+  assert.equal(last.projected, true);
+  assert.equal(last.day, '2026-07-31');
+  assert.ok(Math.abs(last.accumulated - costsState.view.value.projection.total) < 1e-9,
+    'the projected running total lands on the projection the legend quotes');
+
+  const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
+    quotaState=${quotaState} costsState=${costsState} />`);
+  const plot = mounted.container.querySelector('.usage-ov-plot');
+  plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: slots.length * 10, height: 150 });
+  const tip = () => mounted.container.querySelector('.usage-ov-tip');
+  const hover = (index, target = plot) => harness.act(() => harness.fireEvent(target, 'mousemove', { clientX: index * 10 + 5, clientY: 50 }));
+
+  await hover(day10);
+  let text = tip().textContent.replace(/\s+/g, ' ');
+  assert.match(text, /2026-07-10 · Fri/);
+  assert.match(text, /claude\$2\.00codex\$1\.00day total\$3\.00accumulated\$4\.00share of span75\.0%/);
+  assert.match(text, /2 agentsalpha\$2\.00beta\$1\.00/, 'the day names its agents');
+  assert.ok(mounted.container.querySelector('.usage-ov-dot'), 'a marker sits on the running total');
+  assert.ok(mounted.container.querySelector('g.hovered'), 'the hovered day stands out');
+
+  const codexBar = mounted.container.querySelector('g.hovered rect[data-provider="codex"]');
+  await hover(day10, codexBar);
+  assert.match(tip().querySelector('.cost-series-focused').textContent, /codex/, 'the hovered slice is singled out');
+  assert.ok(codexBar.getAttribute('class').includes('focused'));
+
+  await hover(slots.length - 1);
+  text = tip().textContent.replace(/\s+/g, ' ');
+  assert.match(text, /2026-07-31 · Fri · projection/);
+  assert.match(text, /projected accumulated≈\$/);
+  assert.match(text, /average over \d+ recorded day/);
+
+  await harness.act(() => harness.fireEvent(plot, 'mouseleave'));
+  assert.equal(tip(), null);
+
+  await harness.act(() => harness.fireEvent(plot, 'focus'));
+  assert.match(tip().textContent, /2026-07-10/, 'focus inspects the latest recorded day');
+  await harness.act(() => harness.fireEvent(plot, 'keydown', { key: 'ArrowLeft' }));
+  assert.match(tip().textContent, /2026-07-09/);
+  assert.match(mounted.container.querySelector('.usage-ov-chart-status').textContent, /2026-07-09, \$1\.00 that day/);
+  await harness.act(() => harness.fireEvent(plot, 'keydown', { key: 'Escape' }));
+  assert.equal(tip(), null);
+
+  const legend = mounted.container.querySelector('.usage-ov-legend .legend-provider:nth-child(2)');
+  await harness.act(() => harness.fireEvent(legend, 'mouseenter'));
+  const focused = [...mounted.container.querySelectorAll('rect.bar.focused')];
+  assert.equal(focused.length, 1);
+  assert.equal(focused[0].getAttribute('data-provider'), 'codex', 'a legend entry singles out its provider');
+  await harness.act(() => harness.fireEvent(legend, 'mouseleave'));
+  assert.equal(mounted.container.querySelectorAll('rect.bar.focused').length, 0);
+  await mounted.unmount();
+});
+
+test('Overview quota sparkline reads samples, the forecast and the reset', async (t) => {
+  const ctx = await setup(t, { usage_tab_visible: true, cost_tab_visible: true });
+  const { harness, state, quotaState, costsState } = ctx;
+  const { sparkGeometry, sparkInspect } = await harness.importDashboardModule('js/usage-overview-charts.js');
+  const series = quotaPayload().series[0];
+  const at = (iso) => new Date(iso).getTime();
+  const now = at('2026-07-24T00:00:00Z');
+  const geometry = sparkGeometry(series.points, series.forecast, now);
+  const minute = 60_000;
+  assert.deepEqual(sparkInspect(series.points, geometry, at('2026-07-23T22:50:00Z'), minute),
+    { kind: 'observed', at: at('2026-07-23T23:00:00Z'), pct: 40, nearReset: false });
+  const forecast = sparkInspect(series.points, geometry, at('2026-07-24T00:45:00Z'), minute);
+  assert.equal(forecast.kind, 'forecast');
+  assert.equal(forecast.pct, 100, 'the forecast caps at the limit');
+  assert.equal(sparkInspect(series.points, geometry, at('2026-07-24T00:15:00Z'), minute).pct, 85);
+  assert.equal(sparkInspect(series.points, geometry, at('2026-07-24T03:00:00Z'), minute).nearReset, true);
+
+  const mounted = await harness.mount(harness.html`<${ctx.hubIsland.UsageHubApp} state=${state}
+    quotaState=${quotaState} costsState=${costsState} />`);
+  const wrap = mounted.container.querySelector('.usage-ov-spark-wrap');
+  wrap.getBoundingClientRect = () => ({ left: 0, top: 0, width: 240, height: 40 });
+  const ratio = (iso) => (at(iso) - geometry.from) / geometry.span * 240;
+  await harness.act(() => harness.fireEvent(wrap, 'mousemove', { clientX: ratio('2026-07-23T23:45:00Z'), clientY: 10 }));
+  let tip = mounted.container.querySelector('.usage-ov-spark-tip');
+  assert.match(tip.textContent, /Observed\s*70\.0%/);
+  assert.ok(mounted.container.querySelector('.usage-ov-spark .guide'));
+  await harness.act(() => harness.fireEvent(wrap, 'mousemove', { clientX: ratio('2026-07-24T00:15:00Z'), clientY: 10 }));
+  tip = mounted.container.querySelector('.usage-ov-spark-tip');
+  assert.match(tip.textContent, /Prediction\s*≈85%/);
+  assert.match(tip.textContent, /30\.0%\/h recent pace/);
+  assert.match(tip.textContent, /resets in 3h \(2h 45m after this\)/);
+  await harness.act(() => harness.fireEvent(wrap, 'mouseleave'));
+  assert.equal(mounted.container.querySelector('.usage-ov-spark-tip'), null);
+  await mounted.unmount();
+});
