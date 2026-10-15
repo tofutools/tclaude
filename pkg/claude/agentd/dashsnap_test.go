@@ -909,6 +909,40 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-processes-mini-editor",
+			Title:   "Groups — Processes: inline mini editor",
+			Caption: "Mock M1 (tcl-jqmrj5): ✎ on a saved-process chip opens it in place as a small graph, the same draft as the step list (☰ Steps / ◈ Graph) and the full editor (⤢). Here a step was added alongside Review (a parallel fan-out that joins at Approve) and named in the compact inspector; hovering Review shows its + after / ⑂ branch / ⫴ alongside handles, and right-clicking Merge opens the structure menu. Unsaved changes are summarized in the header; Save writes a new version against the opened one.",
+			InitJS:  processContextFixtureInitJS() + processContextSavedProcessesInitJS() + savedProcessTemplateInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var wait = async function(sel, ms){ var until = Date.now() + (ms || 3000); while (!document.querySelector(sel) && Date.now() < until) await new Promise(function(r){ setTimeout(r, 40); }); var el = document.querySelector(sel); if (!el) throw new Error('missing ' + sel); return el; };
+  var tick = function(){ return new Promise(function(r){ setTimeout(r, 60); }); };
+  document.querySelector('[data-saved-edit-graph="tpl_ship"]').click();
+  var card = await wait('[data-mini-editor="tpl_ship"]');
+  var at = function(id){ return card.querySelector('[data-process-node="' + id + '"]'); };
+  var menuOn = async function(id){ var r = at(id).getBoundingClientRect(); at(id).dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: r.right - 8, clientY: r.bottom - 4})); await tick(); };
+  await menuOn('review');
+  card.querySelector('.gm-menu [data-mini-menu="alongside"] [data-mini-kind="agent"]').click();
+  await tick();
+  var name = await wait('[data-mini-inspector="new-step"] [data-mini-name]');
+  name.value = 'Security check';
+  name.dispatchEvent(new Event('change', {bubbles: true}));
+  await tick();
+  at('review').click();
+  await tick();
+  at('review').dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
+  at('review').dispatchEvent(new MouseEvent('mouseenter', {bubbles: false}));
+  await tick();
+  card.scrollIntoView({block: 'start'});
+  await tick();
+  await menuOn('merge');
+  if (!card.querySelector('[data-mini-handles="review"]')) throw new Error('hovering Review shows no handles');
+  if (!card.querySelector('[data-mini-inspector="review"]')) throw new Error('the inspector did not open');
+  if (!card.querySelector('.gm-menu')) throw new Error('the structure menu did not open');
+  if (!/Security check/.test(at('new-step').textContent)) throw new Error('the alongside step was not renamed');
+  if (!card.querySelector('[data-mini-changes]')) throw new Error('no unsaved-change summary');`),
+			SettleMS: 500,
+		},
+		{
 			Key:     "groups-processes-blocked-start",
 			Title:   "Groups — blocked run + scoped start",
 			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list: it asks for the template's params (required ones marked) and lists program profiles to authorize, never pre-ticked.",
@@ -5867,6 +5901,28 @@ func processContextSavedProcessesInitJS() string {
       { templateId: 'tpl_nightly', name: 'nightly-check', ref: 'tpl_nightly@sha256:1', listed: true, steps: 3, params: [], programProfiles: [] }
     ];
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+})();`
+}
+
+// savedProcessTemplateInitJS serves GET /v1/process/templates/tpl_ship, the
+// saved ship-feature process, as the Build → review → ship starter the
+// dashboard builds. It wraps the fetch stubs installed before it.
+func savedProcessTemplateInitJS() string {
+	return `(function(){
+  var prevFetch = window.fetch;
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf('/v1/process/templates/tpl_ship') === -1 || (init && init.method && init.method !== 'GET')) return prevFetch(input, init);
+    var list = await import('/static/js/process-step-list.js');
+    var quick = await import('/static/js/process-quickstart.js');
+    var roster = [{ name: 'fe-dev-charts', id: 'a1', role: 'dev', online: true }, { name: 'fe-lead', id: 'a2', role: 'reviewer', online: true }];
+    var view = list.stepListToView(quick.STARTERS[0].build(roster).list);
+    view.template.id = 'tpl_ship';
+    view.template.name = 'ship-feature';
+    view.sourceHash = 'snap';
+    view.listed = false;
+    return new Response(JSON.stringify(view), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 })();`
 }

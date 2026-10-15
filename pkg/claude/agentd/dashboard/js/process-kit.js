@@ -577,8 +577,14 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 
 // ProcessMiniGraph renders a projected run read-only. `performerId` marks the
 // "you are here" node(s); `onNodeClick` turns nodes into buttons and
-// `selectedId` marks the one an inspector beside the graph describes.
-export function ProcessMiniGraph({ run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false }) {
+// `selectedId` marks the one an inspector beside the graph describes. An
+// editing surface (the inline mini editor) adds `onNodeContextMenu`,
+// `onNodeHover` (a node id, never cleared here) and `overlay`, a render prop
+// given the laid-out graph that draws extra positioned elements on top.
+export function ProcessMiniGraph({
+  run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false,
+  onNodeContextMenu = null, onNodeHover = null, overlay = null,
+}) {
   // Marker ids are per instance: the same run can be drawn on two surfaces
   // in one document, and a hidden copy must not own the visible arrowheads.
   const prefix = `pk-ah-${useId().replace(/[^A-Za-z0-9_-]/g, '_')}`;
@@ -595,8 +601,12 @@ export function ProcessMiniGraph({ run, compact = false, performerId = '', onNod
       : node.kind === 'decision'
         ? html`<span class="pk-gnode-label">${node.label}</span>`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />`;
+    const extra = {
+      ...(typeof onNodeContextMenu === 'function' ? { onContextMenu: (event) => onNodeContextMenu(node, event) } : {}),
+      ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
+    };
     if (typeof onNodeClick === 'function') {
-      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)}>${inner}</button>`;
+      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id}>${inner}</div>`;
   });
@@ -607,5 +617,6 @@ export function ProcessMiniGraph({ run, compact = false, performerId = '', onNod
     </svg>
     ${layout.edges.filter((edge) => edge.label).map((edge) => html`<span key=${`l:${edge.key}`} class="pk-elabel" style=${`left:${edge.labelX}px;top:${edge.labelY}px`}>${edge.label}</span>`)}
     ${nodes}
+    ${typeof overlay === 'function' ? overlay(layout) : null}
   </div>`;
 }

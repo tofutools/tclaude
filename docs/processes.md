@@ -280,7 +280,16 @@ every group; *open in graph editor* saves them and opens them below. A
 group's saved processes show as chips at the top of its body: ▶ asks only for
 the start inputs and command consent and starts it, *✎ Edit steps* reopens it
 as a step list (saving writes a new version), and the strip also publishes it
-to the library or removes it from the group. A process the step list cannot
+to the library or removes it from the group. *✎* on a chip opens the process in
+place as a small graph, the same draft as the step list (*☰ Steps* / *◈
+Graph*): hover a step for *+ after*, *⑂ branch* (a decision's new outcome) and
+*⫴ alongside* (a parallel fan-out that joins at the next step), click it for a
+compact inspector with the step list's fields, right-click it for structure
+(insert before or after, branch, run alongside, duplicate, change kind,
+delete), or drag *+* into empty space to add a step. *⤢ full editor* opens the
+same draft (saved first) in Automations › Processes, which also edits
+parallel, wait and subprocess nodes; *Save new version* writes it against the
+version it was opened at. A process the step list cannot
 show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 
 **Authoring** (Automations › Processes, then open a template). The graph

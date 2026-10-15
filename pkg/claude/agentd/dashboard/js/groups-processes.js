@@ -27,6 +27,7 @@ import {
 } from './groups-process-indicators.js';
 import { GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen } from './groups-quickstart.js';
 import { SavedProcesses } from './groups-saved-processes.js';
+import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 
@@ -372,8 +373,11 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
-  // group that has processes) or {list, origin, saved} (the step-list
-  // editor; saved when it edits one of the group's saved processes).
+  // group that has processes), {list, origin, saved} (the step-list editor;
+  // saved when it edits one of the group's saved processes) or {mode:
+  // 'graph', view, process} (the inline mini editor of a saved process).
+  // Both editors of a saved process carry `process` and `stored` (the view
+  // it was opened at), so ☰ Steps / ◈ Graph switch over the same draft.
   const [quick, setQuick] = useState(null);
   // dismissed only re-renders this group at once; the pref folds the rest.
   const [, setDismissed] = useState(false);
@@ -400,9 +404,22 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const editing = quick && typeof quick === 'object';
   const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
-  const quickStart = editing
+  const toGraph = ({ view, changed }) => setQuick({
+    mode: 'graph', key: Date.now(), process: quick.process, stored: quick.stored, changed,
+    view: { ...view, sourceHash: quick.saved?.sourceHash || '' },
+  });
+  const toSteps = ({ list, changed }) => setQuick({
+    list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
+    saved: { templateId: quick.process.templateId, sourceHash: quick.view.sourceHash || '', listed: !!quick.process.listed, changed },
+  });
+  const quickStart = editing && quick.mode === 'graph'
+    ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
+        view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
+        notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
+    : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
-        api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)} />`
+        api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
+        onGraph=${quick.saved && quick.process ? toGraph : null} />`
     : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
         onOpenGraph=${(view, name) => (view
@@ -424,7 +441,11 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     </div>
     ${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
-      onEdit=${({ list, saved, origin }) => { setStarting(false); setQuick({ list, saved, origin, key: Date.now() }); }} />`}
+      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
+      onEdit=${(edit) => {
+        setStarting(false);
+        setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
+      }} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
       initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}

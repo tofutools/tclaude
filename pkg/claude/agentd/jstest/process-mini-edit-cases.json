@@ -1,0 +1,1781 @@
+{
+ "cases": {
+  "after-implement-agent": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "new-step": {
+      "type": "task",
+      "name": "New step",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Do the thing."
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "new-step"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "new-step",
+     "outcome": "next",
+     "to": "review"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "after-start-you": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "decide": {
+      "type": "decision",
+      "name": "Decide",
+      "performer": {
+       "kind": "human",
+       "ask": "Do the thing.",
+       "choices": [
+        "continue"
+       ]
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "decide"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "decide",
+     "outcome": "continue",
+     "to": "implement"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "before-merge-command": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "command": {
+      "type": "task",
+      "name": "Command",
+      "performer": {
+       "kind": "program",
+       "run": "make",
+       "args": [
+        "test"
+       ]
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "command"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "command"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "command",
+     "outcome": "next",
+     "to": "merge"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "branch-approve-agent": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold",
+        "option"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "new-step": {
+      "type": "task",
+      "name": "New step",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Do the thing."
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "approve",
+     "outcome": "option",
+     "to": "new-step"
+    },
+    {
+     "from": "new-step",
+     "outcome": "next",
+     "to": "merge"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "alongside-review-agent": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      },
+      "join": "all"
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "new-step": {
+      "type": "task",
+      "name": "New step",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Do the thing."
+      }
+     },
+     "together": {
+      "type": "parallel",
+      "name": "Together"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "together"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "together",
+     "outcome": "review",
+     "to": "review"
+    },
+    {
+     "from": "together",
+     "outcome": "new-step",
+     "to": "new-step"
+    },
+    {
+     "from": "new-step",
+     "outcome": "next",
+     "to": "approve"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "alongside-last-command": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "check-fix",
+    "params": {},
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "check-fix": {
+      "type": "task",
+      "name": "Check & fix",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Run the tests. If any are red, fix them and push; if all are green, say so."
+      }
+     },
+     "verify": {
+      "type": "task",
+      "name": "Verify",
+      "performer": {
+       "kind": "program",
+       "run": "make",
+       "args": [
+        "test"
+       ]
+      }
+     },
+     "end": {
+      "type": "end",
+      "join": "all"
+     },
+     "command": {
+      "type": "task",
+      "name": "Command",
+      "performer": {
+       "kind": "program",
+       "run": "make",
+       "args": [
+        "test"
+       ]
+      }
+     },
+     "together": {
+      "type": "parallel",
+      "name": "Together"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "check-fix"
+    },
+    {
+     "from": "check-fix",
+     "outcome": "next",
+     "to": "together"
+    },
+    {
+     "from": "verify",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "together",
+     "outcome": "verify",
+     "to": "verify"
+    },
+    {
+     "from": "together",
+     "outcome": "command",
+     "to": "command"
+    },
+    {
+     "from": "command",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "duplicate-review": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "review-copy": {
+      "type": "task",
+      "name": "Review copy",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "review-copy"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "review-copy",
+     "outcome": "next",
+     "to": "approve"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "duplicate-approve": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     },
+     "approve-copy": {
+      "type": "decision",
+      "name": "Approve copy",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "approve-copy"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "approve-copy",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve-copy",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve-copy",
+     "outcome": "hold",
+     "to": "stopped"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "kind-implement-you": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "decision",
+      "name": "Implement",
+      "performer": {
+       "kind": "human",
+       "ask": "Implement {{params.issue}} on a branch and open a PR.",
+       "choices": [
+        "continue"
+       ]
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "continue",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "kind-approve-command": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "approve": {
+      "type": "task",
+      "name": "Approve",
+      "performer": {
+       "kind": "program",
+       "run": "make",
+       "args": [
+        "test"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "next",
+     "to": "merge"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "delete-review": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "approve"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "delete-approve": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "task",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "next",
+     "to": "merge"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  }
+ }
+}

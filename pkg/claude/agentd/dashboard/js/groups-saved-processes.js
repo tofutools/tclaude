@@ -12,7 +12,6 @@ import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
 import { defaultNotify, markQuickStart } from './groups-quickstart.js';
 
 const html = htm.bind(h);
@@ -71,17 +70,16 @@ function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClo
       onClose();
     });
   };
-  // A process the step list cannot show opens in the full graph editor.
+  // A process the step list cannot show opens as the inline graph.
   const edit = () => act('edit', async () => {
     const view = await api.getTemplate(process.templateId);
     const converted = viewToStepList(view);
     if (!converted.ok) {
-      notify(`${process.name} opens in the graph editor: ${converted.reason}`);
-      handOffProcessDraft({ id: process.templateId, name: process.name });
+      onEdit({ mode: 'graph', view, process });
       return;
     }
     onEdit({
-      list: converted.list,
+      list: converted.list, process, stored: view,
       saved: { templateId: process.templateId, sourceHash: String(view.sourceHash || ''), listed: view.listed ?? process.listed },
     });
   });
@@ -138,8 +136,24 @@ function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClo
 }
 
 // SavedProcesses is the group's saved-process chips and the open strip.
-export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, onEdit }) {
+// `editing` is the template id open in the inline editor below; ✎ opens one
+// there as a graph.
+export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', onEdit }) {
   const [open, setOpen] = useState('');
+  const [loading, setLoading] = useState('');
+  const editGraph = async (process) => {
+    if (loading) return;
+    setLoading(process.templateId);
+    try {
+      const view = await api.getTemplate(process.templateId);
+      setOpen('');
+      onEdit({ mode: 'graph', view, process });
+    } catch (cause) {
+      notify(`Could not open ${process.name}: ${cause.message}`, true);
+    } finally {
+      setLoading('');
+    }
+  };
   const current = processes.find((process) => process.templateId === open) || null;
   return html`<div class="gq-saved" data-saved-processes=${group.name}>
     <div class="gq-saved-row">
@@ -148,6 +162,10 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         data-saved-process=${process.templateId}>
         <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span>
         <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
+        ${editing === process.templateId
+    ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
+    : html`<button type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading}
+        aria-label=${`Edit ${process.name}`} title=${`Edit ${process.name} here as a graph`} onClick=${() => editGraph(process)}>✎</button>`}
         <button type="button" class="gq-saved-run" data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
           aria-label=${`Start ${process.name}`} title=${`Start ${process.name} in ${group.name}`}
           onClick=${() => setOpen(open === process.templateId ? '' : process.templateId)}>▶</button>

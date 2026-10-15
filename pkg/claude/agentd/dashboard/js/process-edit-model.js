@@ -1273,6 +1273,25 @@ export class ProcessEditModel {
     return { template, edges, layout, sourceHash: this.sourceHash };
   }
 
+  // applyDraft replaces the root content with an edited view as ONE undoable
+  // mutation, keeping the template id and the CAS base. The inline mini
+  // editor (process-mini-edit.js) computes each structural edit as a whole
+  // new view and lands it here, so undo, redo and dirty work as in the full
+  // editor.
+  applyDraft({ template, edges, layout } = {}) {
+    this.exitToRoot();
+    this.begin();
+    const id = this.template.id;
+    this.template = clone(template) || {};
+    this.template.id = id;
+    if (!this.template.nodes) this.template.nodes = {};
+    if (!this.template.params) this.template.params = {};
+    this.edges = clone(edges) || [];
+    this.layout = clone(layout) || {};
+    if (!this.layout.nodes) this.layout.nodes = {};
+    this.pruneEdgePins();
+  }
+
   // adoptReviewedGeneration applies a reviewed three-way merge
   // (process-draft-diff.js) as ONE undoable mutation and rebases the CAS base
   // onto the reviewed generation: its changes are now part of this draft,
