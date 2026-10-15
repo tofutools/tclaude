@@ -210,12 +210,17 @@ function GroupAvatarStrip({ members, busy, wizard }) {
   // shows; the other states only when some member is in them.
   const parts = AVAILABILITY.filter(([state]) => state === 'idle' || count(state) > 0)
     .map(([state, plain, rite]) => `${count(state)} ${wizard ? rite : plain}`);
+  // One icon per state in use, not one per member: a big group's row of
+  // overlapping ringed avatars was unreadable. The count sits bottom-right
+  // like the UI's other counters; the tooltip names the members.
   return html`<span class="gp-avatar-strip">
-    <span class="pk-avatars">${members.map((member, i) => {
-      const state = states[i];
-      const tip = AVAILABILITY.find(([value]) => value === state)[3];
-      return html`<span key=${memberKey(member)} class=${`pk-avatar gp-member is-${state}${state === 'process' ? ' busy' : ''}`}
-        data-availability=${state} title=${`${memberName(member)} · ${tip}`}>${memberInitial(member)}</span>`;
+    <span class="gp-avatar-states">${AVAILABILITY.filter(([state]) => count(state) > 0).map(([state, , , tip]) => {
+      const names = members.filter((_, i) => states[i] === state).map(memberName);
+      return html`<span key=${state} class=${`gp-member is-${state}${state === 'process' ? ' busy' : ''}`}
+        data-availability=${state} title=${`${names.length} ${tip}: ${names.join(', ')}`}>
+        <svg class="gp-member-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.2" r="3" /><path d="M2.4 14.6c0-3.4 2.5-5.6 5.6-5.6s5.6 2.2 5.6 5.6z" /></svg>
+        ${names.length > 1 && html`<span class="gp-member-count">${names.length}</span>`}
+      </span>`;
     })}</span>
     <span class="gp-strip-text">${parts.join(' · ')}</span>
   </span>`;

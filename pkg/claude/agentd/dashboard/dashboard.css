@@ -20229,10 +20229,14 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 /* Avatar availability: a process step (blue ring) wins over the agent's own
    status, which matches the Agents perspective's state pills: working green,
    waiting-on-you red, idle plain (free now), offline dimmed. */
+.gp-avatar-states { display: inline-flex; align-items: center; gap: 10px; padding: 2px; }
+.gp-member { position: relative; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; background: #30363d; color: #c9d1d9; }
+.gp-member-glyph { width: 13px; height: 13px; fill: currentColor; }
+.gp-member-count { position: absolute; bottom: -6px; right: -7px; min-width: 1.4em; padding: 0 3px; border-radius: 7px; background: #30363d; color: #fff; font-size: 9px; font-weight: 700; line-height: 1.2; text-align: center; box-shadow: 0 0 0 1.5px #0d1117; }
 .gp-member.busy { box-shadow: 0 0 0 2px #58a6ff; }
 .gp-member.is-working { box-shadow: 0 0 0 2px #3fb950; }
 .gp-member.is-waiting { box-shadow: 0 0 0 2px #ff7b72; }
-.gp-member.is-offline { opacity: .35; }
+.gp-member.is-offline .gp-member-glyph { opacity: .35; }
 .gp-run-controls .group-actions button:disabled { opacity: .4; cursor: default; }
 .gp-run-controls .group-actions button:disabled:hover { border-color: #2a3340; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
@@ -20267,6 +20271,7 @@ body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
+body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start, .gp-start-form button, .gp-start-form select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
 .gp-start:hover, .gp-start-form button:hover:not(:disabled) { border-color: #58a6ff; }
 .gp-start-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
