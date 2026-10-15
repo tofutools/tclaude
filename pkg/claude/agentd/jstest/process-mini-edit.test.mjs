@@ -62,6 +62,11 @@ test('insert after and before keep the main path connected', () => {
   const before = m.insertBefore(ship, 'merge', 'command');
   assert.equal(edge(before.view, 'approve', 'ship'), before.id, 'every edge into the step now enters the new one');
   assert.equal(edge(before.view, before.id, 'next'), 'merge');
+  // A branch rejoins at merge, so merge has two ways in; both move to the new step.
+  const branched = m.branch(ship, 'approve', 'agent');
+  const both = m.insertBefore(branched.view, 'merge', 'command');
+  assert.equal(edge(both.view, 'approve', 'ship'), both.id);
+  assert.equal(edge(both.view, branched.id, 'next'), both.id);
   assert.equal(m.canInsertBefore(ship, 'start'), 'nothing runs before the start');
   assert.equal(m.canInsertAfter(ship, 'end'), 'nothing runs after an end');
 });
