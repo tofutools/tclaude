@@ -28,6 +28,8 @@ type Definition struct {
 	// fallback is the template's process-wide agent fallback; subprocess
 	// bodies inherit it.
 	fallback *model.PerformerFallback
+	// loops are the bounded back edges (loops.go), in prepared scope order.
+	loops []definitionLoop
 }
 
 type definitionNodeKind uint8
@@ -132,6 +134,10 @@ type definitionNode struct {
 	entry int
 	// exitOutcome is the parent outcome a subprocess exit node leaves through.
 	exitOutcome string
+	// loops are the loops whose body holds this node, innermost first, and
+	// sourceOf the loops whose bounded edge leaves this decision.
+	loops    []int
+	sourceOf []int
 }
 
 type definitionEdge struct {
@@ -140,6 +146,10 @@ type definitionEdge struct {
 	to        string
 	fromIndex int
 	toIndex   int
+	// loop is the loop a bounded back edge belongs to, and -1 for every other
+	// edge. exitOf are the loops whose body this edge leaves.
+	loop   int
+	exitOf []int
 }
 
 // Prepare performs all immutable work once: complete authoring validation,
@@ -175,7 +185,8 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	// edge pass below never has to find a node's scope again.
 	nexts := make(map[int]model.Next, len(tmpl.Nodes))
 	definition.fallback = tmpl.Fallback
-	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts); err != nil {
+	var loops []pendingLoop
+	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts, &loops); err != nil {
 		return nil, err
 	}
 	for fromIndex := range definition.nodes {
@@ -200,7 +211,15 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			from.outgoing = append(from.outgoing, edgeIndex)
 		}
 	}
+	if err := prepareLoops(definition, loops); err != nil {
+		return nil, err
+	}
 	for edgeIndex, edge := range definition.edges {
+		// A bounded back edge is no candidate of its target: taking it starts a
+		// new round there instead of arriving (loops.go).
+		if edge.loop >= 0 {
+			continue
+		}
 		to := &definition.nodes[edge.toIndex]
 		to.incoming = append(to.incoming, edgeIndex)
 		if to.joinAny {
@@ -216,7 +235,8 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 // for the template itself). Each subprocess body is appended contiguously right
 // after its node, so a body is always one index range.
 func prepareScope(definition *Definition, tmpl *model.Template, params map[string]string, prefix string,
-	scope int, owner *model.Node, appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	scope int, owner *model.Node, appendNode func(definitionNode) (int, error), nexts map[int]model.Next,
+	loops *[]pendingLoop) error {
 	order, err := topologicalOrder(tmpl)
 	if err != nil {
 		return err
@@ -294,7 +314,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			nexts[parentIndex] = namespacedNext(node.Next, prefix)
 		}
 		if prepared.kind == definitionSubprocess {
-			if err := prepareSubprocess(definition, parentIndex, node, params, appendNode, nexts); err != nil {
+			if err := prepareSubprocess(definition, parentIndex, node, params, appendNode, nexts, loops); err != nil {
 				return err
 			}
 			continue
@@ -371,6 +391,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				ErrInvalidDefinition, id)
 		}
 	}
+	*loops = append(*loops, scopeLoops(tmpl, prefix)...)
 	return nil
 }
 
@@ -378,7 +399,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 // body's params are bound from this scope's params through its in-ports, and
 // its nodes are namespaced under the node's own id.
 func prepareSubprocess(definition *Definition, index int, node model.Node, params map[string]string,
-	appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	appendNode func(definitionNode) (int, error), nexts map[int]model.Next, loops *[]pendingLoop) error {
 	id := definition.nodes[index].id
 	body, ok := node.Subprocess.Body()
 	if !ok {
@@ -386,7 +407,7 @@ func prepareSubprocess(definition *Definition, index int, node model.Node, param
 			ErrInvalidDefinition, id, node.Subprocess.TemplateRef)
 	}
 	prefix := id + model.SubprocessNodeIDSeparator
-	if err := prepareScope(definition, body, node.Subprocess.BindInputs(body, params), prefix, index, &node, appendNode, nexts); err != nil {
+	if err := prepareScope(definition, body, node.Subprocess.BindInputs(body, params), prefix, index, &node, appendNode, nexts, loops); err != nil {
 		return err
 	}
 	entry, ok := definition.index[prefix+body.Start]
@@ -422,7 +443,10 @@ func topologicalOrder(tmpl *model.Template) ([]string, error) {
 		remaining[nodeID] = 0
 	}
 	for _, node := range tmpl.Nodes {
-		for _, target := range node.Next {
+		for outcome, target := range node.Next {
+			if _, bounded := node.Loops[outcome]; bounded {
+				continue
+			}
 			if _, ok := remaining[target]; ok {
 				remaining[target]++
 			}
@@ -445,6 +469,9 @@ func topologicalOrder(tmpl *model.Template) ([]string, error) {
 		order = append(order, current)
 		released := []string{}
 		for _, outcome := range sortedOutcomes(tmpl.Nodes[current].Next) {
+			if _, bounded := tmpl.Nodes[current].Loops[outcome]; bounded {
+				continue
+			}
 			target := tmpl.Nodes[current].Next[outcome]
 			remaining[target]--
 			if remaining[target] == 0 {
@@ -531,7 +558,9 @@ func (d *Definition) RequiredDecisionAttempt(checkpoint Checkpoint, nodeID strin
 	if attempt, ok := d.ApprovalAttempt(checkpoint, nodeID); ok {
 		return attempt
 	}
-	return 0
+	// An authored decision opens once, unless it is in a loop body: then each
+	// new round reopens it under the next window number (loops.go).
+	return checkpoint.Attempts[nodeID]
 }
 
 // DecisionEdge returns the structural authored edge one verdict selects.
@@ -776,6 +805,9 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if err := validateAttemptCeilings(checkpoint, definition); err != nil {
 		return err
 	}
+	if err := validateIterations(checkpoint, definition); err != nil {
+		return err
+	}
 	if err := validateAttempts(checkpoint, definition); err != nil {
 		return err
 	}
@@ -808,6 +840,13 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, attempt := range checkpoint.Attempts {
 		node, ok := definitionNodeByID(definition, nodeID)
+		// A decision in a loop body counts its windows here (loops.go).
+		if ok && node.kind == definitionDecision && node.parent < 0 && len(node.loops) > 0 {
+			if attempt < 1 {
+				return fmt.Errorf("%w: decision %q window %d must be positive", ErrInvalidCheckpoint, nodeID, attempt)
+			}
+			continue
+		}
 		if !ok || node.kind != definitionTask {
 			return fmt.Errorf("%w: attempts names %q, which is not a prepared program task", ErrInvalidCheckpoint, nodeID)
 		}
@@ -844,8 +883,9 @@ func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, ceiling := range checkpoint.AttemptCeilings {
 		node, ok := definitionNodeByID(definition, nodeID)
-		if !ok || node.kind != definitionTask || !node.retryAuthored {
-			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy",
+		// A loop's new round opens a fresh window for any task of its body.
+		if !ok || node.kind != definitionTask || (!node.retryAuthored && len(node.loops) == 0) {
+			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy or in a loop",
 				ErrInvalidCheckpoint, nodeID)
 		}
 		if ceiling <= node.maxAttempts {
@@ -944,7 +984,7 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 		// durable outbox entry that names any attempt other than its node's
 		// current one fails closed here — including one whose id and Attempt
 		// field agree with each other but not with the run's own state.
-		expected := taskCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
+		expected := taskCommand(checkpoint, definition, node, checkpoint.Attempts[command.NodeID])
 		if !commandsEqual(command, expected) {
 			return invalid("command does not match the deterministic bound request for node %q", command.NodeID)
 		}
@@ -1072,7 +1112,8 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 					return invalid("done node %q must have arrived outgoing edges", node.id)
 				}
 			case definitionDecision:
-				if out.arrived != 1 || out.notTaken != len(node.outgoing)-1 {
+				deferred := deferredOutgoing(checkpoint, definition, node)
+				if out.arrived != 1 || out.notTaken+deferred != len(node.outgoing)-1 {
 					return invalid("done decision %q must have exactly one chosen edge with every alternative closed", node.id)
 				}
 			case definitionEnd:
@@ -1085,7 +1126,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if len(node.incoming) == 0 || in.notTaken != len(node.incoming) {
 				return invalid("skipped node %q requires every incoming edge to be not taken", node.id)
 			}
-			if out.notTaken != len(node.outgoing) {
+			if out.notTaken+deferredOutgoing(checkpoint, definition, node) != len(node.outgoing) {
 				return invalid("skipped node %q requires every outgoing edge to be not taken", node.id)
 			}
 		case NodeFailed, NodeCanceled:
@@ -1227,6 +1268,19 @@ func validateEdgeShape(checkpoint Checkpoint, definition *Definition) error {
 	return nil
 }
 
+// deferredOutgoing counts a node's unresolved exits from a live loop: those
+// stay open until the loop's decision finishes (loops.go).
+func deferredOutgoing(checkpoint Checkpoint, definition *Definition, node definitionNode) int {
+	count := 0
+	for _, edgeIndex := range node.outgoing {
+		edge := definition.edges[edgeIndex]
+		if checkpoint.Edges[edge.from][edge.outcome] == EdgeUnresolved && deferredExit(checkpoint, definition, edgeIndex) {
+			count++
+		}
+	}
+	return count
+}
+
 func countDispositions(checkpoint Checkpoint, definition *Definition, edgeIndices []int) edgeCounts {
 	var counts edgeCounts
 	for _, edgeIndex := range edgeIndices {
@@ -1289,7 +1343,7 @@ func commandsEqual(left, right Command) bool {
 		return false
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
-		left.Attempt == right.Attempt &&
+		left.Attempt == right.Attempt && left.Round == right.Round && left.Rounds == right.Rounds &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&
 		left.Program.Timeout == right.Program.Timeout && slices.Equal(left.Program.Args, right.Program.Args)
 }

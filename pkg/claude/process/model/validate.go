@@ -51,6 +51,7 @@ func validateScope(tmpl *Template, edges []Edge, diagnostics *templateDiagnostic
 		func() Diagnostics { return validateParallelScopePlan(tmpl, edges) },
 		func() Diagnostics { return validateOutcomeRouting(tmpl) },
 		func() Diagnostics { return validateLoopBudgets(tmpl) },
+		func() Diagnostics { return validateLoops(tmpl, edges) },
 	} {
 		if !diagnostics.AddAll(validate()) {
 			return
@@ -973,7 +974,7 @@ func validatePoisonEscalations(tmpl *Template, diagnostics *templateDiagnosticCo
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	acyclicEdges := make([]Edge, 0, len(edges))
 	for _, edge := range edges {
-		if IsPoisonEscalationRetryEdge(tmpl, edge) {
+		if isCycleExemptEdge(tmpl, edge) {
 			continue
 		}
 		acyclicEdges = append(acyclicEdges, edge)
@@ -991,7 +992,8 @@ func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 		switch state[id] {
 		case active:
 			cycle := append(stack, id)
-			diagnostics = append(diagnostics, diagError("graph_cycle", "nodes."+id, "arbitrary graph cycles are not supported in v1: "+strings.Join(cycle, " -> ")))
+			diagnostics = append(diagnostics, diagError("graph_cycle", "nodes."+id, "this cycle has no bounded edge: "+strings.Join(cycle, " -> ")+
+				"; bound the decision outcome that goes back with loops: {<outcome>: {maxIterations: N}}"))
 			return
 		case done:
 			return

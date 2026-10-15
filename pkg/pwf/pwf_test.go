@@ -236,3 +236,43 @@ func TestSubprocessRefsSeesInlineBodies(t *testing.T) {
 	assert.Equal(t, "review-loop", refs[0].TemplateRef)
 	assert.Equal(t, model.NodeTypeSubprocess, tmpl.Nodes["review"].Type)
 }
+
+const loopSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: rework
+name: Rework until approved
+start: implement
+nodes:
+  implement:
+    type: task
+    performer: {kind: agent, profile: dev, prompt: Implement it}
+    next: review
+  review:
+    type: task
+    performer: {kind: agent, profile: reviewer, prompt: Review it}
+    next: decide
+  decide:
+    type: decision
+    performer: {kind: human, ask: "Ship it?"}
+    next: {approved: done, changes: implement, escalate: stuck}
+    loops:
+      changes: {maxIterations: 3, onExhausted: escalate}
+  done: {type: end, result: success}
+  stuck: {type: end, result: canceled}
+`
+
+func TestSummaryListsBoundedLoops(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{
+		Root:      refOf(t, loopSource),
+		Templates: []pwf.Template{{Source: []byte(loopSource), Head: true}},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)}))
+	a, err := open(t, buf.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.Loop{{Step: "rework:decide", Outcome: "changes", To: "rework:implement",
+		MaxIterations: 3, OnExhausted: "escalate"}}, a.Workflow.Loops)
+
+	plain, err := open(t, writeBundle(t))
+	require.NoError(t, err)
+	assert.Nil(t, plain.Workflow.Loops, "a workflow without loops carries no loops field")
+}

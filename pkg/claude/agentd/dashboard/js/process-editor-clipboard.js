@@ -24,8 +24,9 @@ const MAX_JSON_ITEMS = 32_768;
 const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const NODE_FIELDS = new Set([
   'type', 'join', 'name', 'description', 'doc', 'performer', 'plan', 'checks',
-  'review', 'retry', 'wait', 'next', 'result', 'captures', 'metadata', 'subprocess',
+  'review', 'retry', 'wait', 'next', 'loops', 'result', 'captures', 'metadata', 'subprocess',
 ]);
+const LOOP_FIELDS = new Set(['maxIterations', 'onExhausted']);
 const STEP_FIELDS = new Set([
   'id', 'name', 'description', 'doc', 'performer', 'approval', 'approvalRetry', 'retry',
 ]);
@@ -153,6 +154,14 @@ export function validateProcessEditNode(value) {
     validateOptionalStrings(value.wait, WAIT_FIELDS);
   }
   if (Object.hasOwn(value, 'next')) validateStringMap(value.next);
+  if (Object.hasOwn(value, 'loops')) {
+    if (!isRecord(value.loops)) wireShapeReject();
+    for (const bound of Object.values(value.loops)) {
+      validateWireRecord(bound, LOOP_FIELDS);
+      if (!Number.isInteger(bound.maxIterations)) wireShapeReject();
+      validateOptionalStrings(bound, ['onExhausted']);
+    }
+  }
   if (Object.hasOwn(value, 'captures')) validateStringList(value.captures);
   if (Object.hasOwn(value, 'metadata')) {
     if (!isRecord(value.metadata)) wireShapeReject();
@@ -237,9 +246,17 @@ function isSanctionedRetryEdge(edge, nodesByID, edgesBySource) {
     && firstFailTarget(edgesBySource, edge.to) === edge.from;
 }
 
+// A decision outcome bounded in its node's loops goes back on purpose
+// (tcl-eu70x9); the server validates the loop's shape.
+function isBoundedLoopEdge(edge, nodesByID) {
+  const source = nodesByID.get(edge.from);
+  return source?.type === 'decision' && isRecord(source.loops) && Object.hasOwn(source.loops, edge.outcome);
+}
+
 // v1 permits one engine-intercepted retry edge: a human poison-escalation
-// decision may retry the compound task whose fail edge entered it. Every other
-// directed cycle is incompatible with the process topology authority.
+// decision may retry the compound task whose fail edge entered it, and bounded
+// loop edges. Every other directed cycle is incompatible with the process
+// topology authority.
 function validateProcessSelectionTopology(nodes, edges) {
   const nodesByID = new Map(nodes.map((entry) => [entry.id, entry.node]));
   const edgesBySource = new Map();
@@ -254,7 +271,7 @@ function validateProcessSelectionTopology(nodes, edges) {
   const adjacency = new Map(nodes.map((entry) => [entry.id, []]));
   const indegree = new Map(nodes.map((entry) => [entry.id, 0]));
   for (const edge of edges) {
-    if (isSanctionedRetryEdge(edge, nodesByID, edgesBySource)) continue;
+    if (isSanctionedRetryEdge(edge, nodesByID, edgesBySource) || isBoundedLoopEdge(edge, nodesByID)) continue;
     adjacency.get(edge.from).push(edge.to);
     indegree.set(edge.to, indegree.get(edge.to) + 1);
   }

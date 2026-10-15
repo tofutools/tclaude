@@ -91,6 +91,20 @@ type Workflow struct {
 	Assignees []Use `json:"assignees"`
 	// Humans are steps a person performs (questions and sign-offs).
 	Humans []string `json:"humans"`
+	// Loops are the decision outcomes that send work back for another round,
+	// with their round limits (tcl-eu70x9). Omitted when there are none, so a
+	// workflow without loops reads exactly as before.
+	Loops []Loop `json:"loops,omitempty"`
+}
+
+// Loop is one bounded back edge: Step's Outcome goes back to To for at most
+// MaxIterations rounds, then follows OnExhausted (or is refused without one).
+type Loop struct {
+	Step          string `json:"step"`
+	Outcome       string `json:"outcome"`
+	To            string `json:"to"`
+	MaxIterations int    `json:"maxIterations"`
+	OnExhausted   string `json:"onExhausted,omitempty"`
 }
 
 type TemplateEntry struct {
@@ -308,6 +322,13 @@ func Summarize(root string, byRef map[string]*Template, order []string) Workflow
 			}
 			if node.Review != nil {
 				visit("/review", &node.Review.Performer)
+			}
+			// A target in a subprocess body is namespaced like the step.
+			scope := t.ID + ":" + id[:strings.LastIndex(id, model.SubprocessNodeIDSeparator)+1]
+			for _, outcome := range sortedKeys(node.Loops) {
+				bound := node.Loops[outcome]
+				w.Loops = append(w.Loops, Loop{Step: step, Outcome: outcome, To: scope + node.Next[outcome],
+					MaxIterations: bound.MaxIterations, OnExhausted: bound.OnExhausted})
 			}
 		})
 	}

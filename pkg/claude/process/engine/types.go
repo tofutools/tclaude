@@ -129,6 +129,11 @@ type Checkpoint struct {
 	// authored-size window WITHOUT resetting or reusing an attempt number. That
 	// is what keeps attempt identity monotonic across an operator retry.
 	AttemptCeilings map[string]int `json:"attemptCeilings,omitempty"`
+	// Iterations counts, per bounded back edge (source node, then outcome),
+	// how often the edge was taken in the current round of the loops around
+	// it; the loop's round is that count plus one. Sparse: a run whose loops
+	// never went back encodes nothing. See loops.go.
+	Iterations map[string]map[string]int `json:"iterations,omitempty"`
 }
 
 // FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
@@ -224,6 +229,10 @@ type Command struct {
 	Attempt int            `json:"attempt"`
 	Program ProgramCommand `json:"program,omitzero"`
 	Agent   *AgentCommand  `json:"agent,omitempty"`
+	// Round and Rounds place a command of a loop body: the round of its
+	// innermost loop and that loop's limit. Zero outside loops.
+	Round  int `json:"round,omitempty"`
+	Rounds int `json:"rounds,omitempty"`
 }
 
 // AgentCommand is the fully bound request for one agent performer attempt.

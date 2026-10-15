@@ -340,6 +340,26 @@ test('setEdgeOutcome renames and blocks collisions', () => {
   assert.throws(() => model.setEdgeOutcome('build', 'fail', 'ok'), /already has a connector labelled "ok"/);
 });
 
+test('a loop bound follows its connector through a rename and goes with it on delete', () => {
+  const input = view();
+  input.template.nodes.decide = {
+    type: 'decision',
+    loops: { changes: { maxIterations: 3, onExhausted: 'stop' } },
+  };
+  input.edges.push(
+    { from: 'build', outcome: 'review', to: 'decide' },
+    { from: 'decide', outcome: 'changes', to: 'build' },
+    { from: 'decide', outcome: 'stop', to: 'ship' },
+  );
+  const model = new ProcessEditModel(input);
+  model.setEdgeOutcome('decide', 'changes', 'rework');
+  model.setEdgeOutcome('decide', 'stop', 'give-up');
+  assert.deepEqual(model.template.nodes.decide.loops,
+    { rework: { maxIterations: 3, onExhausted: 'give-up' } });
+  model.deleteEdge('decide', 'rework');
+  assert.equal(model.template.nodes.decide.loops, undefined);
+});
+
 test('deleteNode drops touching edges; rewire redirects incoming to the primary successor', () => {
   const dropped = new ProcessEditModel(view());
   dropped.deleteNode('build');

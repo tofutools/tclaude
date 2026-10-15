@@ -150,7 +150,7 @@ func TestExecutableRetryBudgetIsCapped(t *testing.T) {
 	}
 	checkpoint.Nodes["task"] = NodeRunning
 	checkpoint.Attempts = map[string]int{"task": maxExecutableRetryAttempts}
-	checkpoint.Commands = []Command{taskCommand(checkpoint.RunID,
+	checkpoint.Commands = []Command{taskCommand(checkpoint, definition,
 		definition.nodes[definition.index["task"]], maxExecutableRetryAttempts)}
 	if err := ValidateCheckpoint(checkpoint, definition); err != nil {
 		t.Fatalf("an attempt at the cap must load: %v", err)

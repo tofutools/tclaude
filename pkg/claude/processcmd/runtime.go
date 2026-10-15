@@ -663,7 +663,7 @@ type processDecideParams struct {
 	Node     string `long:"node" help:"Awaited decision node id"`
 	Verdict  string `long:"verdict" help:"Authored outcome label to select"`
 	Evidence string `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision"`
-	Attempt  int    `long:"attempt" optional:"true" help:"Exact approval window from tclaude process show; only a plan-approval gate has one"`
+	Attempt  int    `long:"attempt" optional:"true" help:"Exact decision window from tclaude process show: a plan-approval gate's, or a loop decision's from round two on; omitted, a loop decision takes its current window"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 
@@ -674,7 +674,8 @@ func processDecideCmd() *cobra.Command {
 		Long: "Selects exactly one authored outcome edge of the awaited decision node and closes every alternative. " +
 			"A compound's plan-approval gate is decided the same way, with approve readying the do stage and rework " +
 			"sending the plan back for one more run; because that window reopens, its verdict must also name the exact " +
-			"--attempt tclaude process show reports. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
+			"--attempt tclaude process show reports. A decision in a bounded loop reopens every round; --attempt pins the " +
+			"verdict to one round's window. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processDecideParams, _ *cobra.Command, _ []string) {
 			exitProcessRuntime(runProcessDecide(p, os.Stdout, os.Stderr), os.Stderr)

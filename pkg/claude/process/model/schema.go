@@ -10,13 +10,14 @@ import (
 var (
 	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "fallback", "start", "nodes", "layout")
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
-	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "captures", "subprocess", "metadata")
+	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "loops", "result", "captures", "subprocess", "metadata")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
 	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact")
 	fallbackFields   = stringSet("action", "profile")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
+	loopFields       = stringSet("maxIterations", "onExhausted")
 	layoutFields     = stringSet("nodes", "edges")
 	layoutNodeFields = stringSet("x", "y")
 	layoutEdgeFields = stringSet("pinned")
@@ -48,6 +49,8 @@ const (
 	schemaWait
 	schemaNext
 	schemaSubprocess
+	schemaLoopMap
+	schemaLoop
 	schemaCount
 )
 
@@ -132,6 +135,8 @@ func (w *schemaWalk) inspect(node *yaml.Node, schema schemaID) Diagnostics {
 		diagnostics = w.inspectMapValues(node, schemaLayoutEdgeOutcomeMap)
 	case schemaLayoutEdgeOutcomeMap:
 		diagnostics = w.inspectMapValues(node, schemaLayoutEdge)
+	case schemaLoopMap:
+		diagnostics = w.inspectMapValues(node, schemaLoop)
 	case schemaChecks:
 		diagnostics = w.inspectSequence(node, schemaStep)
 	case schemaNext:
@@ -315,6 +320,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return retryFields
 	case schemaWait:
 		return waitFields
+	case schemaLoop:
+		return loopFields
 	default:
 		return nil
 	}
@@ -347,6 +354,8 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaWait, true
 		case "next":
 			return schemaNext, true
+		case "loops":
+			return schemaLoopMap, true
 		case "subprocess":
 			return schemaSubprocess, true
 		}

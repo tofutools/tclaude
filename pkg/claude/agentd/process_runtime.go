@@ -270,8 +270,12 @@ type processRunView struct {
 	// ran as recorded when it was planned: working directory and sandbox, or
 	// unconfined. A node whose attempts ran unscoped is absent.
 	ProgramBounds map[string]processProgramBoundsView `json:"programBounds,omitempty"`
-	CreatedAt     time.Time                           `json:"createdAt"`
-	UpdatedAt     time.Time                           `json:"updatedAt"`
+	// Loops are the template's bounded back edges with the round each is in
+	// (tcl-eu70x9). Listed while a decision is awaited or a loop went back;
+	// the context projection carries rounds on every read.
+	Loops     []engine.LoopEdge `json:"loops,omitempty"`
+	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
@@ -291,8 +295,9 @@ func processRunPauseViewOf(scope db.ProcessRunScope) *processRunPauseView {
 // verdicts derived from the prepared definition; the durable checkpoint keeps
 // only the obligation identity.
 //
-// Attempt is the recurring half of that identity and appears only for a
-// plan-approval gate, whose window reopens once per human rework. It is DERIVED
+// Attempt is the recurring half of that identity and appears for a
+// plan-approval gate, whose window reopens once per human rework, and for a
+// decision in a loop body from its second round on (tcl-eu70x9). It is DERIVED
 // from the checkpoint's own plan attempt counter through the same accessor the
 // reducer checks against, so a caller reading it here and deciding with it can
 // never be told one number and refused for another. An authored decision opens
@@ -326,6 +331,8 @@ type processRunCommandView struct {
 	NodeID    string                   `json:"nodeId"`
 	Kind      engine.CommandKind       `json:"kind"`
 	Attempt   int                      `json:"attempt"`
+	Round     int                      `json:"round,omitempty"`
+	Rounds    int                      `json:"rounds,omitempty"`
 	Profile   string                   `json:"profile,omitempty"`
 	Program   string                   `json:"program"`
 	State     string                   `json:"state"`
@@ -394,7 +401,10 @@ type processRunDecideRequest struct {
 	NodeID   string `json:"nodeId"`
 	Verdict  string `json:"verdict"`
 	Evidence string `json:"evidence,omitempty"`
-	Attempt  int    `json:"attempt,omitempty"`
+	// Attempt is a pointer so an omitted window is told apart from window
+	// zero: omitted, an authored decision takes its current window, which a
+	// loop's decision moves on every round (tcl-eu70x9).
+	Attempt *int `json:"attempt,omitempty"`
 }
 
 type processRunResolveBlockedRequest struct {
@@ -1302,13 +1312,17 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
 	// The detail records the attempt (including refused input), so the raw
 	// request fields are neutralized before they reach the audit row.
+	attempt, attemptDetail := 0, "current"
+	if request.Attempt != nil {
+		attempt, attemptDetail = *request.Attempt, strconv.Itoa(*request.Attempt)
+	}
 	setAuditDetail(r, "run: "+runID+", decision node: "+stripControl(request.NodeID)+
 		", verdict: "+stripControl(request.Verdict)+
-		", attempt: "+strconv.Itoa(request.Attempt))
+		", attempt: "+attemptDetail)
 	started, err := processRuns.submit(runID, string(actor), processRunInput{
 		decision: &executor.DecisionInput{
 			NodeID: request.NodeID, Verdict: request.Verdict,
-			Evidence: request.Evidence, Attempt: request.Attempt,
+			Evidence: request.Evidence, Attempt: attempt, CurrentWindow: request.Attempt == nil,
 		}})
 	if err != nil {
 		writeProcessRuntimeError(w, err)
@@ -1636,6 +1650,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		command := checkpoint.Commands[i]
 		view := processRunCommandView{
 			CommandID: command.ID, NodeID: command.NodeID, Kind: command.Kind, Attempt: command.Attempt,
+			Round: command.Round, Rounds: command.Rounds,
 			Profile: command.Program.Profile, Program: command.Program.Run,
 		}
 		if command.Kind == engine.CommandAgent {
@@ -1665,11 +1680,13 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	}
 
 	awaitingDecisions := make([]processRunDecisionView, 0, len(checkpoint.AwaitingDecisions))
-	if len(checkpoint.AwaitingDecisions) > 0 {
+	var loops []engine.LoopEdge
+	if len(checkpoint.AwaitingDecisions) > 0 || len(checkpoint.Iterations) > 0 {
 		definition, err := prepareProcessRunDefinition(record)
 		if err != nil {
 			return processRunView{}, err
 		}
+		loops = definition.Loops(checkpoint)
 		for _, obligation := range checkpoint.AwaitingDecisions {
 			verdicts, ok := definition.DecisionVerdicts(obligation.NodeID)
 			if !ok {
@@ -1689,6 +1706,10 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 			if approval && attempt < 1 {
 				return processRunView{}, fmt.Errorf("%w: awaited approval gate %q has no recorded plan attempt",
 					executor.ErrInvalidRun, obligation.NodeID)
+			}
+			if !approval {
+				// A loop's decision reopens every round under a new window.
+				attempt = definition.RequiredDecisionAttempt(checkpoint, obligation.NodeID)
 			}
 			awaitingDecisions = append(awaitingDecisions,
 				processRunDecisionView{NodeID: obligation.NodeID, Verdicts: verdicts, Attempt: attempt})
@@ -1750,7 +1771,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
-		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds,
+		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
