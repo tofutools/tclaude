@@ -28,7 +28,10 @@ export function prReviewGlyph(state) {
   switch (state) {
     case 'approved': return '✓';
     case 'changes': return '±';
-    case 'required': return '◷';
+    // One clock for "waiting": amber when branch protection blocks the merge
+    // (required), grey when nobody has reviewed and nothing requires it (none).
+    case 'required':
+    case 'none': return '◷';
     default: return '';
   }
 }
@@ -41,8 +44,9 @@ export function prReviewLabel(reviews) {
   switch (state) {
     case 'approved': return approved > 0 ? String(approved) : '';
     case 'changes': return changes > 0 ? String(changes) : '';
-    case 'required': return approved > 0 ? `${approved} · review` : 'review';
-    case 'none': return 'no reviews';
+    // The amber ◷ alone reads as "waiting"; the hover panel has the detail.
+    case 'required': return '';
+    case 'none': return '';
     default: return '';
   }
 }

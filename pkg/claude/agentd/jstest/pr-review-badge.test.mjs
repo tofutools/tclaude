@@ -22,8 +22,8 @@ test('review state collapses decision and counts', async (t) => {
   assert.equal(prReviewState({ decision: 'approved' }), 'approved');
   assert.equal(prReviewState({ decision: 'review_required', approved: 1 }), 'required');
   assert.equal(prReviewLabel({ approved: 2 }), '2');
-  assert.equal(prReviewLabel({ decision: 'review_required', approved: 1 }), '1 · review');
-  assert.equal(prReviewLabel({ reviewers_known: true }), 'no reviews');
+  assert.equal(prReviewLabel({ decision: 'review_required', approved: 1 }), '', 'waiting is the icon alone');
+  assert.equal(prReviewLabel({ reviewers_known: true }), '', 'no reviews is the grey clock alone');
 
   assert.equal(readyToMerge({ checks: { state: 'passing' }, reviews: { approved: 1 } }), true);
   assert.equal(readyToMerge({ checks: { state: 'pending' }, reviews: { approved: 1 } }), false);

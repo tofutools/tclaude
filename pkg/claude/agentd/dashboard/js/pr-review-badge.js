@@ -137,7 +137,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
         draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
-        aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}. Opens the pull request on GitHub.`}
+        aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}, ${prReviewDecisionText(reviews.decision)}. Opens the pull request on GitHub.`}
         onClick=${(event) => {
           if (!touchOnly()) return;
           event.preventDefault();
