@@ -63,6 +63,7 @@ nav:
       - Operating remotely: remote.md
       - Federation: federation.md
       - Portable Agent Format: paf.md
+      - Portable Workflow Format: pwf.md
   - Confinement:
       - Sandboxing: sandboxing.md
       - Network filtering: network-filtering.md

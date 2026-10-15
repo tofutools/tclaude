@@ -16,12 +16,19 @@ const signatureContext = "paf-manifest-signature-v1\n"
 
 var keyIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-func signedMessage(manifest []byte) []byte {
-	return []byte(signatureContext + hexSHA256(manifest))
+func signedMessage(context string, manifest []byte) []byte {
+	return []byte(context + hexSHA256(manifest))
 }
 
 // Sign produces a detached signature over the exact manifest bytes.
 func Sign(manifest []byte, k SigningKey) (Signature, error) {
+	return SignContext(signatureContext, manifest, k)
+}
+
+// SignContext signs a manifest under a format's own domain-separation
+// prefix (for PAF "paf-manifest-signature-v1\n"), so a signature made for one
+// format can never verify a file of another.
+func SignContext(context string, manifest []byte, k SigningKey) (Signature, error) {
 	if len(k.Key) != ed25519.PrivateKeySize {
 		return Signature{}, errors.New("paf: invalid signing key")
 	}
@@ -34,7 +41,7 @@ func Sign(manifest []byte, k SigningKey) (Signature, error) {
 		KeyID:          k.KeyID,
 		Signer:         k.Signer,
 		ManifestSHA256: hexSHA256(manifest),
-		Signature:      ed25519.Sign(k.Key, signedMessage(manifest)),
+		Signature:      ed25519.Sign(k.Key, signedMessage(context, manifest)),
 	}, nil
 }
 
@@ -62,6 +69,11 @@ type SignatureResult struct {
 // manifest hash itself; manifest_sha256 is informational. Trust in the
 // signer is the caller's decision and must rest on PublicKey alone.
 func Verify(manifest []byte, s Signature) (SignatureStatus, error) {
+	return VerifyContext(signatureContext, manifest, s)
+}
+
+// VerifyContext is Verify under a format's own domain-separation prefix.
+func VerifyContext(context string, manifest []byte, s Signature) (SignatureStatus, error) {
 	if s.Alg != AlgEd25519 {
 		return SignatureUnsupported, nil
 	}
@@ -76,7 +88,7 @@ func Verify(manifest []byte, s Signature) (SignatureStatus, error) {
 	if len(s.PublicKey) != ed25519.PublicKeySize {
 		return SignatureInvalid, errors.New("public key has the wrong size")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(s.PublicKey), signedMessage(manifest), s.Signature) {
+	if !ed25519.Verify(ed25519.PublicKey(s.PublicKey), signedMessage(context, manifest), s.Signature) {
 		return SignatureInvalid, errors.New("signature does not match the manifest")
 	}
 	return SignatureValid, nil

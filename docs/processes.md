@@ -44,9 +44,24 @@ this page does not repeat them.
 
 Two permissions govern authoring, and neither executes anything:
 
-- `process.templates.read` — list, show, validate. Installed as an ordinary
+- `process.templates.read` — list, show, validate, export. Installed as an ordinary
   agent default by `tclaude setup --install-default-agent-permissions`.
-- `process.templates.manage` — save. Never a default.
+- `process.templates.manage` — save, import. Never a default.
+
+### Sharing workflows
+
+A process can be shared as a `.pwf` file that carries the template and every
+template its subprocess steps reference:
+
+```bash
+tclaude agent process-templates export <template-id>     # writes <template-id>.pwf
+tclaude agent process-templates inspect <file.pwf>       # offline check and summary
+tclaude agent process-templates import <file.pwf> --yes  # review, then import
+```
+
+Importing stores templates and never starts a run. The review lists every
+command the workflow would run, the roles it asks for and the signer. See
+[Portable Workflow Format](pwf.md).
 
 Two worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid

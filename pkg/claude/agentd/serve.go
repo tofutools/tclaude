@@ -1545,6 +1545,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
+	// Workflow sharing (.pwf): export a template with its references; preview
+	// or apply an import. Neither starts a run.
+	mux.HandleFunc("GET /v1/process/templates/{id}/export", processRoute(handleProcessTemplateExport))
+	mux.HandleFunc("POST /v1/process/import", processRoute(handleProcessImport))
 	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
 	// daemon-owned and SQLite-backed rather than part of filesystem authoring.
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))

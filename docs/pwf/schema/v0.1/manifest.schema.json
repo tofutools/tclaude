@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/pwf/schema/v0.1/manifest.schema.json",
+  "title": "PWF manifest.json",
+  "type": "object",
+  "required": ["format", "pwf_version", "kind", "created_at", "producer", "requires", "root", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "pwf"},
+    "pwf_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "kind": {"const": "workflow"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "producer": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"name": {"type": "string"}, "version": {"type": "string"}}
+    },
+    "requires": {"type": "array", "items": {"type": "string"}},
+    "root": {"$ref": "#/$defs/ref"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "bytes", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "maxLength": 255},
+          "bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "media_type": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ref": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}@sha256:[0-9a-f]{64}$"}
+  }
+}
