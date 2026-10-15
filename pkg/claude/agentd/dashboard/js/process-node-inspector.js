@@ -28,6 +28,12 @@ import { NodeField, NodeSelect, PerformerEditor } from './process-node-fields.js
 
 const html = htm.bind(h);
 
+// referencedTemplates lists the stored templates a node's diagnostics came
+// through (subprocess templateRefs), each once.
+export function referencedTemplates(diagnostics = []) {
+  return [...new Set(diagnostics.map((entry) => entry.templateRef).filter(Boolean))];
+}
+
 export const BLOCK_ORDER_PREF = 'tclaude.dash.processInspector.blockOrder.';
 
 // Prompt and Bounds own these performer fields; Performer shows the rest.
@@ -303,6 +309,9 @@ export function NodeInspector({ controller, view }) {
         ${!readOnly && html`<button class="process-action process-action-danger" type="button" onClick=${() => { controller.deleteSelection(); refocusCanvas(controller); }}>delete node</button>`}
       </div>
       ${diagnostics.length > 0 && html`<ul class="pni-diagnostics" aria-label="Issues on this node">${diagnostics.map((entry, i) => html`<li key=${i} class=${`pni-diag is-${entry.severity}`}>${entry.severity === 'error' ? '✕' : '⚠'} ${entry.message}</li>`)}</ul>`}
+      ${referencedTemplates(diagnostics).map((ref) => controller.options?.onOpenTemplate && html`<button key=${`open:${ref}`} type="button"
+        class="process-action pni-diag-open" data-diag-open-template=${ref} title="Problems in a stored template are fixed there, not in place"
+        onClick=${() => controller.options.onOpenTemplate(ref)}>open ${ref} to fix ↗</button>`)}
     </div>
     ${visible.map((key, index) => {
       const Body = BLOCK_BODIES[key];

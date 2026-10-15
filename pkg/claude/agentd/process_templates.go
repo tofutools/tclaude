@@ -75,6 +75,9 @@ type processEditDiag struct {
 	Severity model.Severity `json:"severity"`
 	Code     string         `json:"code"`
 	Message  string         `json:"message"`
+	// TemplateRef names the stored template a subprocess-reference
+	// diagnostic comes from; the editor offers to open it.
+	TemplateRef string `json:"templateRef,omitempty"`
 }
 
 type processEditModelError struct{ err error }
@@ -480,9 +483,15 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 		writeProcessEditParseError(w, err)
 		return
 	}
+	diagnostics := diagnosticsForEditor(parsed.Diagnostics, parsed.Template)
+	if !parsed.Diagnostics.HasErrors() {
+		if fs, err := store.NewFS(processStoreRoot()); err == nil {
+			diagnostics = append(diagnostics, templateRefDiagnostics(parsed.Template, processSubprocessResolver(r.Context(), fs))...)
+		}
+	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,
-		"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+		"diagnostics": diagnostics,
 	})
 }
 

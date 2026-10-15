@@ -178,6 +178,9 @@ export function mapDiagnostics(diagnostics, model) {
       message: String(diag.message || ''),
       targetId: String(diag.targetId || ''),
     };
+    // A problem found through a subprocess templateRef names that stored
+    // template, so the editor can offer to open it.
+    if (diag.templateRef) entry.templateRef = String(diag.templateRef);
     if (diag.scope === 'edge') {
       const target = scopedEdgeTarget(entry.targetId, scopePath, entry);
       if (target?.rollup && model?.node?.(target.from)) {
