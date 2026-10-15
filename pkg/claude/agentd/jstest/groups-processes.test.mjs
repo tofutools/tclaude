@@ -362,9 +362,17 @@ test('the group row mirrors the Agents row: agent process, group process, resume
     startGroupRun: async (request) => { started.push(request); return { runId: 'run_new' }; },
   };
   const calls = [];
+  const lists = [];
   const runApi = {
     pause: async (runId) => { calls.push(['pause', runId]); if (runId === 'run_migrate') throw new Error('refused'); },
     resume: async (runId) => { calls.push(['resume', runId]); },
+    // The full list holds a run the capped context did not carry.
+    listLiveRuns: async (filters) => {
+      lists.push(filters);
+      return [
+        { runId: 'run_release', paused: { by: 'human' } }, { runId: 'run_migrate' }, { runId: 'run_reindex' }, { runId: 'run_extra' },
+      ];
+    },
   };
   const context = { ...FIXTURE, runs: { ...FIXTURE.runs, run_release: { ...FIXTURE.runs.run_release, paused: { by: 'human' } } } };
   const notes = [];
@@ -393,9 +401,10 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   assert.equal(infra.querySelector('[data-process-resume-all]').disabled, true);
 
   await harness.act(async () => { pause.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.deepEqual(calls.map(([kind, id]) => `${kind}:${id}`).sort(), ['pause:run_migrate', 'pause:run_reindex']);
+  assert.deepEqual(lists[0], [{ group: 'frontend-squad' }, { agent: 'agt_fe_lead' }, { agent: 'agt_fe_forms' }, { agent: 'agt_fe_charts' }]);
+  assert.deepEqual(calls.map(([kind, id]) => `${kind}:${id}`).sort(), ['pause:run_extra', 'pause:run_migrate', 'pause:run_reindex']);
   assert.equal(notes.length, 1);
-  assert.match(notes[0][0], /^Could not pause 1 of 2 processes: .*refused/);
+  assert.match(notes[0][0], /^Could not pause 1 of 3 processes: .*refused/);
   await harness.act(async () => { fe.querySelector('[data-process-resume-all]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.deepEqual(calls.at(-1), ['resume', 'run_release']);
 

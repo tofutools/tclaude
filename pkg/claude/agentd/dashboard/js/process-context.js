@@ -353,6 +353,25 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     // pause holds the run: work in flight finishes, nothing new is
     // dispatched until resume releases it. Both are idempotent server-side.
     pause: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
+    // listLiveRuns walks every page of the run list for each filter ({group}
+    // or {agent}) and returns the running runs once each. The context read
+    // model caps how many runs a group or agent lists; acting on all of them
+    // needs the full list.
+    async listLiveRuns(filters) {
+      const found = new Map();
+      for (const filter of filters) {
+        let after = '';
+        do {
+          const query = new URLSearchParams({ ...filter, limit: '32', ...(after ? { after } : {}) });
+          const body = await processRequest(`/v1/process/runs?${query}`, {}, fetchImpl);
+          for (const run of body.runs || []) {
+            if (run.status === 'running' && !found.has(run.id)) found.set(run.id, { ...run, runId: run.id });
+          }
+          after = body.next || '';
+        } while (after);
+      }
+      return [...found.values()];
+    },
     resume: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
   };
 }

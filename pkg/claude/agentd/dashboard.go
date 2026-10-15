@@ -308,6 +308,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	// The single-run focus (G5) reads one run's durable view and evidence and
 	// records a human gate's verdict.
+	mux.HandleFunc("GET /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/events", dashboardProcessRoute(handleProcessRunEvents))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", dashboardProcessRoute(handleProcessRunDecide))
