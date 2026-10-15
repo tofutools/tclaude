@@ -80,7 +80,9 @@ test('a header graph opens the Processes focus on its filter without toggling th
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
   assert.equal(toggles, 0);
   assert.equal(state.focus.value, 'processes');
-  assert.equal(state.processFilter.value, 'planned');
+  state.setProcessFilter('done');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
+  assert.equal(state.processFilter.value, 'planned,done', 'the clicked kind is ticked without unticking the others');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
 });
 

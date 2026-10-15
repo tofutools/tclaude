@@ -361,19 +361,21 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   `);
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter groups' });
-  assert.equal(filter.placeholder, 'Filter (group name + member title/role/descr/cwd/branch)');
+  assert.equal(filter.placeholder, 'Filter groups & members');
+  assert.equal(filter.title, 'Matches group name + member title/role/descr/cwd/branch');
+  assert.equal(mounted.container.querySelector('#filter-groups-count'), null, 'no count while not filtering');
+  assert.equal(mounted.container.querySelector('#filter-groups-clear'), null, 'no × while not filtering');
   await harness.input(filter, 'alpha');
   assert.equal(state.view.value.groups.filter((group) => !group.virtual).length, 1);
-  const count = mounted.container.querySelector('#filter-groups-count');
-  assert.equal(count.querySelector('.theme-copy-regular').textContent, '1 / 2');
-  assert.equal(count.querySelector('.theme-copy-wizard').textContent, '1 / 2');
+  assert.equal(mounted.container.querySelector('#filter-groups-count').textContent, '1 / 2');
+  assert.ok(mounted.container.querySelector('#filter-groups-clear'));
   assert.equal(resets, 1);
 
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
   assert.equal(filter.getAttribute('aria-label'), 'Filter parties');
-  assert.equal(filter.placeholder, 'Filter (party name + familiar title/class/lore/grove/branch)');
+  assert.equal(filter.placeholder, 'Filter parties & familiars');
 
   const view = getByRole(mounted.container, 'button', { name: '▾ view' });
   await harness.act(() => harness.fireEvent(view, 'click'));
