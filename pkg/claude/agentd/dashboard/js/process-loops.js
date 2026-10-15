@@ -42,15 +42,56 @@ export function setLoopBound(node, outcome, bound) {
 }
 
 // edgeGoesBack reports whether the edge (from, outcome) leads back to work
-// before its source: its target reaches the source again along the other
-// edges, not counting edges that are bounded themselves. A self edge is not a
-// loop the server accepts, so it is not offered one either.
+// before its source: a back edge of a depth-first walk from the start, so its
+// target is still being walked when the edge is reached. On a cycle with two
+// decisions only the edge that closes the cycle goes back; bounding the other
+// would leave a loop entered past its top (the server's loop_entry). A self
+// edge is not a loop the server accepts, so it is not offered one either.
 //
 // edges are { from, outcome, to } with from '' for the start pseudo edge.
 export function edgeGoesBack(nodes, edges, from, outcome) {
   const edge = edges.find((candidate) => candidate.from === from && candidate.outcome === outcome);
   if (!edge || !from || edge.to === from || !nodes?.[edge.to]) return false;
-  return reachableFrom(nodes, edges, edge.to, edge).has(from);
+  return backEdges(nodes, edges).has(edge);
+}
+
+// backEdges walks depth first from the start, then from any node the start
+// does not reach in id order, and returns the edges that close a cycle.
+function backEdges(nodes, edges) {
+  const out = new Map();
+  for (const edge of edges) {
+    if (!edge.from) continue;
+    if (!out.has(edge.from)) out.set(edge.from, []);
+    out.get(edge.from).push(edge);
+  }
+  const roots = edges.filter((edge) => !edge.from).map((edge) => edge.to);
+  roots.push(...Object.keys(nodes || {}).sort((a, b) => a.localeCompare(b, 'en')));
+  const state = new Map();
+  const back = new Set();
+  for (const root of roots) {
+    if (state.has(root) || !nodes?.[root]) continue;
+    // Iterative so a long template cannot overflow the stack.
+    state.set(root, 'active');
+    const stack = [{ id: root, next: 0 }];
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      const outgoing = out.get(frame.id) || [];
+      if (frame.next >= outgoing.length) {
+        state.set(frame.id, 'done');
+        stack.pop();
+        continue;
+      }
+      const edge = outgoing[frame.next++];
+      if (!nodes[edge.to]) continue;
+      const seen = state.get(edge.to);
+      if (seen === 'active') back.add(edge);
+      else if (!seen) {
+        state.set(edge.to, 'active');
+        stack.push({ id: edge.to, next: 0 });
+      }
+    }
+  }
+  return back;
 }
 
 // reachableFrom is every node reachable from start along unbounded edges,

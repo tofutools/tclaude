@@ -12,7 +12,7 @@
 // (parallel, wait or subprocess nodes, or a start node with several edges)
 // converts to { ok: false, reason } so the caller opens the full editor.
 
-import { loopBound, setLoopBound } from './process-loops.js';
+import { LOOP_DEFAULT_ROUNDS, loopBound, setLoopBound } from './process-loops.js';
 
 export const STEP_LIST_START_OUTCOME = 'start';
 export const STEP_CONTINUE_OUTCOME = 'next';
@@ -475,7 +475,7 @@ export function removeStep(list, id) {
     ...step,
     links: step.links.map((link) => (link.to === id ? { ...link, to: retarget(at, link, step) } : link)).filter((link) => link.to),
   }));
-  return pruneStaleLoops({ ...list, steps });
+  return syncStepLoops({ ...list, steps });
 }
 
 export function moveStep(list, id, delta) {
@@ -485,7 +485,7 @@ export function moveStep(list, id, delta) {
   const steps = [...list.steps];
   const [moved] = steps.splice(index, 1);
   steps.splice(target, 0, moved);
-  return pruneStaleLoops({ ...list, steps });
+  return syncStepLoops({ ...list, steps });
 }
 
 // replaceStep swaps the step with the same id.
@@ -548,18 +548,23 @@ export function stepLoop(step, outcome) {
   return loopBound(step.node, outcome);
 }
 
-// pruneStaleLoops drops bounds whose answer no longer goes back: the step
-// moved above its target, or the link was retargeted forward.
-export function pruneStaleLoops(list) {
+// syncStepLoops keeps each decision's bounds in step with the order after a
+// move or removal: a bound whose answer no longer goes back is dropped, and an
+// answer that now goes back without one gets the default, so the list never
+// holds an unbounded cycle with no rounds control to fix it.
+export function syncStepLoops(list) {
   let changed = false;
   const steps = list.steps.map((step) => {
-    const loops = step.node.loops;
-    if (!loops) return step;
     let next = step;
-    for (const outcome of Object.keys(loops)) {
+    for (const outcome of Object.keys(step.node.loops || {})) {
       const to = step.links.find((link) => link.outcome === outcome)?.to;
       if (to && isBackLink(list, step.id, to)) continue;
       next = setStepLoop(next, outcome, null);
+      changed = true;
+    }
+    for (const link of step.links) {
+      if (!isBackLink(list, step.id, link.to) || loopBound(next.node, link.outcome)) continue;
+      next = setStepLoop(next, link.outcome, { maxIterations: LOOP_DEFAULT_ROUNDS, onExhausted: '' });
       changed = true;
     }
     return next;

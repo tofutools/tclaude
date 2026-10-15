@@ -177,10 +177,13 @@ function Answers({ list, step, onChange }) {
     if (!goesBack) next = setStepLoop(next, answer, null);
     onChange(next);
   };
-  const setRounds = (answer, text) => {
-    const rounds = normalizeRounds(text);
+  const setRounds = (answer, input) => {
+    const rounds = normalizeRounds(input.value);
     const bound = stepLoop(step, answer);
-    if (rounds == null || !bound) return;
+    if (!bound) return;
+    // Out of range: show the kept count again rather than a number that was
+    // never stored (the controlled value did not change, so no render would).
+    if (rounds == null) { input.value = String(bound.maxIterations); return; }
     onChange(setStepLoop(step, answer, { ...bound, maxIterations: rounds }));
   };
   const setExhausted = (answer, onExhausted) => {
@@ -202,7 +205,7 @@ function Answers({ list, step, onChange }) {
         </select></label>
         ${bound && html`<span class="gq-loop" data-loop=${answer}>at most
           <input type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
-            aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget.value)} />
+            aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget)} />
           rounds, then
           <select aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
             onChange=${(event) => setExhausted(answer, event.currentTarget.value)}>

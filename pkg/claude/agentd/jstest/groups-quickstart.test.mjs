@@ -222,7 +222,9 @@ test('an answer that goes back is a bounded loop with its rounds and what follow
   assert.ok(loop, 'going back shows the loop controls');
   const rounds = loop.querySelector('.gq-loop-rounds');
   assert.equal(rounds.value, '3', 'the default round limit');
-  await setValue(rounds, '4', 'change');
+  await setValue(rounds, '150', 'change');
+  assert.equal(steps(root)[1].querySelector('.gq-loop-rounds').value, '3', 'an out-of-range count shows the kept one again');
+  await setValue(steps(root)[1].querySelector('.gq-loop-rounds'), '4', 'change');
   await setValue(steps(root)[1].querySelector('[aria-label="When changes has used its rounds"]'), 'escalate', 'change');
   await click(editor.querySelector('[data-step-save-library]'));
   const view = api.calls.create.at(-1).view;

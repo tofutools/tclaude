@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  edgeGoesBack, exhaustionChoices, loopBound, loopEdgeSuffix, loopSummary, loopableEdge,
+  cycleFixEdge, edgeGoesBack, exhaustionChoices, loopBound, loopEdgeSuffix, loopSummary, loopableEdge,
   normalizeRounds, setLoopBound,
 } from '../dashboard/js/process-loops.js';
 
@@ -21,13 +21,13 @@ const edges = [
   { from: 'decide', outcome: 'approved', to: 'merge' },
 ];
 
-test('edgeGoesBack finds the edge closing a cycle, and a bounded edge is not a path', () => {
+test('edgeGoesBack finds the edge closing a cycle, bounded or not', () => {
   const graph = nodes();
   assert.equal(edgeGoesBack(graph, edges, 'decide', 'changes'), true);
   assert.equal(edgeGoesBack(graph, edges, 'decide', 'approved'), false);
-  assert.equal(edgeGoesBack(graph, edges, 'implement', 'next'), true, 'the forward edge also sits on the unbounded cycle');
+  assert.equal(edgeGoesBack(graph, edges, 'implement', 'next'), false, 'an edge on the cycle that does not close it goes forward');
   setLoopBound(graph.decide, 'changes', { maxIterations: 3 });
-  assert.equal(edgeGoesBack(graph, edges, 'implement', 'next'), false, 'once bounded, the cycle is the loop');
+  assert.equal(edgeGoesBack(graph, edges, 'decide', 'changes'), true, 'a bounded edge still goes back');
   assert.equal(edgeGoesBack(graph, edges, 'decide', 'changes'), true);
   assert.equal(loopableEdge(graph, edges, 'decide', 'changes'), true);
   assert.equal(loopableEdge(graph, edges, 'implement', 'next'), false);
@@ -59,4 +59,23 @@ test('round counts and labels', () => {
   assert.equal(loopEdgeSuffix(0), '');
   assert.equal(loopSummary({ maxIterations: 3, onExhausted: 'escalate' }), 'max 3 rounds, then escalate');
   assert.equal(loopSummary({ maxIterations: 2, onExhausted: '' }), 'max 2 rounds');
+});
+
+test('with two decisions on one cycle, only the edge closing it from the start goes back', () => {
+  // start -> approve -go-> work -> zcheck -redo-> approve. Bounding approve's
+  // "go" would make a loop entered at approve, past its top at work.
+  const graph = { approve: { type: 'decision' }, work: { type: 'task' }, zcheck: { type: 'decision' }, end: { type: 'end' } };
+  const cycle = [
+    { from: '', outcome: 'start', to: 'approve' },
+    { from: 'approve', outcome: 'go', to: 'work' },
+    { from: 'approve', outcome: 'no', to: 'end' },
+    { from: 'work', outcome: 'next', to: 'zcheck' },
+    { from: 'zcheck', outcome: 'redo', to: 'approve' },
+    { from: 'zcheck', outcome: 'ok', to: 'end' },
+  ];
+  assert.equal(loopableEdge(graph, cycle, 'approve', 'go'), false);
+  assert.equal(loopableEdge(graph, cycle, 'zcheck', 'redo'), true);
+  for (const id of ['approve', 'work', 'zcheck']) {
+    assert.deepEqual(cycleFixEdge(graph, cycle, id), { from: 'zcheck', outcome: 'redo' });
+  }
 });

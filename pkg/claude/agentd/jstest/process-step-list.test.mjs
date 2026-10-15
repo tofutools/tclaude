@@ -9,7 +9,7 @@ import {
   blankStepList, expandParamShorthand, forwardTargets, joinCommand, splitCommand, insertStep, moveStep, newStep, removeStep, replaceStep,
   setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
-  backTargetLabel, backTargets, isBackLink, pruneStaleLoops, setOutcomeLoop, setStepLoop, stepLoop,
+  backTargetLabel, backTargets, isBackLink, syncStepLoops, setOutcomeLoop, setStepLoop, stepLoop,
 } from '../dashboard/js/process-step-list.js';
 
 // viewOf builds an edit view from a template whose nodes carry `next`, the
@@ -383,8 +383,20 @@ test('loop bounds are set, follow their answers, and drop when they no longer go
   let moved = moveStep(list, 'decide', -2);
   assert.equal(moved.steps[0].id, 'decide');
   assert.equal(moved.steps[0].node.loops, undefined);
-  assert.equal(pruneStaleLoops(list), list, 'nothing stale, nothing changed');
+  assert.equal(syncStepLoops(list), list, 'nothing stale, nothing changed');
   moved = removeStep(list, 'implement');
   assert.deepEqual(moved.steps.find((s) => s.id === 'decide').node.loops, { changes: { maxIterations: 5 } },
     'the link retargets to review, which is still earlier');
+});
+
+test('a move that turns a decision answer back bounds it, so the list never holds an unbounded cycle', () => {
+  const { list } = viewToStepList(reviewLoop());
+  const decide = list.steps.findIndex((s) => s.id === 'decide');
+  const approvedTo = list.steps.find((s) => s.id === 'decide').links.find((l) => l.outcome === 'approved').to;
+  const target = list.steps.findIndex((s) => s.id === approvedTo);
+  assert.ok(target > decide, 'approved goes forward to start with');
+  const moved = moveStep(list, approvedTo, decide - target);
+  assert.deepEqual(stepLoop(moved.steps.find((s) => s.id === 'decide'), 'approved'), { maxIterations: 3, onExhausted: '' });
+  assert.deepEqual(stepLoop(moved.steps.find((s) => s.id === 'decide'), 'changes'), { maxIterations: 3, onExhausted: 'escalate' },
+    'an existing bound is kept');
 });
