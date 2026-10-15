@@ -35,7 +35,7 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	}
 
 	// Templates are now a drag SOURCE alongside profiles + roles.
-	must("new Set(['profiles', 'roles', 'templates'])", "templates joined the draggable dock kinds")
+	must("new Set(['profiles', 'roles', 'templates', 'processes'])", "templates (and library processes) joined the draggable dock kinds")
 
 	// The drop dispatch: a template drop opens the unified summon dialog via the
 	// exported opener; dock-dnd imports it from modal-templates.
