@@ -524,7 +524,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
           <button type="button" aria-pressed="true" class="on">☰ Steps</button>
           <button type="button" data-mini-graph title="Show the same draft as a graph"
-            onClick=${() => onGraph({ view, changed: created.current.key !== viewKey })}>◈ Graph</button>
+            onClick=${() => onGraph({ view, changed: created.current.key !== viewKey, sourceHash: created.current.sourceHash })}>◈ Graph</button>
         </span>`}
         <span class="gq-spacer"></span>
         ${origin && html`<span class="gq-dim">from starter ${origin}</span>`}

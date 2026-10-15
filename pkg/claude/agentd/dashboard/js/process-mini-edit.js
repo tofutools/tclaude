@@ -136,7 +136,12 @@ export function canRunAlongside(view, id) {
   if (!isStep(node)) return 'only a step runs alongside another';
   if (view.template.start === id || view.edges.some((edge) => edge.from === '' && edge.to === id)) return 'the first step has no step before it to fan out from';
   if (incoming(view, id).length !== 1) return 'it has several steps leading to it';
-  if (!mainEdge(view, id)) return 'it has no next step to join at';
+  const main = mainEdge(view, id);
+  if (!main) return 'it has no next step to join at';
+  // The fork must close where it opened: one way out of the step, into a
+  // node nothing else enters.
+  if (outgoing(view, id).length !== 1) return 'its other outcomes would leave the parallel branch';
+  if (incoming(view, main.to).length !== 1) return 'the next step is already where several paths meet';
   return '';
 }
 
@@ -163,7 +168,10 @@ export function insertBefore(view, id, kind) {
   const why = canInsertBefore(view, id);
   if (why) throw new Error(why);
   const next = copyView(view);
-  const added = addNode(next, newStepNode(kind));
+  const node = newStepNode(kind);
+  // A join belongs where the paths meet, which is now the new step.
+  if (next.template.nodes[id].join) node.join = next.template.nodes[id].join;
+  const added = addNode(next, node);
   for (const edge of next.edges) if (edge.to === id) edge.to = added;
   if (next.template.start === id) next.template.start = added;
   next.edges.push({ from: added, outcome: CONTINUE[kind], to: id });
@@ -292,12 +300,23 @@ function removeNode(view, id) {
   view.edges = view.edges.filter((edge) => edge.from !== id && edge.to !== id);
 }
 
+// canDelete says why a node cannot be deleted ('' when it can): the start,
+// or an end that steps still lead to.
+export function canDelete(view, id) {
+  const node = view.template.nodes[id];
+  if (!node) return 'no such step';
+  if (node.type === 'start') return 'the start cannot be deleted';
+  if (node.type === 'end' && incoming(view, id).length) return 'steps still end here; point them elsewhere first';
+  return '';
+}
+
 // deleteStep removes a step; what led to it goes where it continued, and a
 // start that pointed at it moves on too. Steps only it led to (a decision's
 // branches) go with it: `orphans` names them, so the menu can say so first.
 export function deleteStep(view, id) {
+  const why = canDelete(view, id);
+  if (why) throw new Error(why);
   const node = view.template.nodes[id];
-  if (!node || node.type === 'start') throw new Error('the start cannot be deleted');
   const next = copyView(view);
   const before = reachable(next);
   const main = mainEdge(next, id);
@@ -308,6 +327,8 @@ export function deleteStep(view, id) {
   }
   removeNode(next, id);
   if (next.template.start === id) next.template.start = target;
+  // A join moves on with the paths that met here.
+  if (node.join && target && next.template.nodes[target] && !next.template.nodes[target].join) next.template.nodes[target].join = node.join;
   // A parallel fan-out names its branches by outcome; two branches landing on
   // one step collapse to one.
   const seen = new Set();

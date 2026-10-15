@@ -404,10 +404,16 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const editing = quick && typeof quick === 'object';
   const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
-  const toGraph = ({ view, changed }) => setQuick({
-    mode: 'graph', key: Date.now(), process: quick.process, stored: quick.stored, changed,
-    view: { ...view, sourceHash: quick.saved?.sourceHash || '' },
-  });
+  // The step list may have saved a version (a refused start keeps it open):
+  // the graph continues from that one, so its CAS base is the newest.
+  const toGraph = ({ view, changed, sourceHash }) => {
+    const resaved = !!sourceHash && sourceHash !== quick.saved?.sourceHash;
+    setQuick({
+      mode: 'graph', key: Date.now(), process: quick.process, changed,
+      stored: resaved && !changed ? view : quick.stored,
+      view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '' },
+    });
+  };
   const toSteps = ({ list, changed }) => setQuick({
     list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
     saved: { templateId: quick.process.templateId, sourceHash: quick.view.sourceHash || '', listed: !!quick.process.listed, changed },

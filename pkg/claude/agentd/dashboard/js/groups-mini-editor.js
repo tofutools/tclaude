@@ -15,7 +15,7 @@ import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
 import {
-  addOutcome, branch, canBranch, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
+  addOutcome, branch, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   removeOutcome, renameOutcome, runAlongside, setOutcomeTarget, targetsFor, updateStep,
 } from './process-mini-edit.js';
@@ -140,7 +140,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
       <${KindChips} label="Change to" onPick=${(kind) => onRun(() => changeKind(view, id, kind))} /></div>`}
     <hr />
     ${item('delete', orphans.length ? `Delete step (and ${orphans.join(', ')}, only reached through it)` : 'Delete step',
-    node.type === 'start' ? 'the start cannot be deleted' : '', () => onRun(() => deleteStep(view, id)))}
+    canDelete(view, id), () => onRun(() => deleteStep(view, id)))}
   </div>`;
 }
 
@@ -207,6 +207,7 @@ export function MiniGraphEditor({
     setPicker(null);
     try {
       const result = op();
+      if (result.view === draft) return;
       apply(result, result.id && result.view.template.nodes[result.id] ? result.id : '');
     } catch (cause) {
       setError(cause.message);

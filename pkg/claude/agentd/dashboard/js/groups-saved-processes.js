@@ -29,7 +29,7 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', onEdit, onClose }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
@@ -117,8 +117,8 @@ function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClo
     <span class="gq-strip-acts">
     <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
     ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
-    <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy} onClick=${edit}
-      title="Edit the steps; saving writes a new version">${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
+    <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
+      title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
     ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
       title="List it in the template library, for every group to reuse">publish as template</button>`}
     ${confirmRemove
@@ -164,14 +164,14 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
         ${editing === process.templateId
     ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
-    : html`<button type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading}
-        aria-label=${`Edit ${process.name}`} title=${`Edit ${process.name} here as a graph`} onClick=${() => editGraph(process)}>✎</button>`}
+    : html`<button type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
+        aria-label=${`Edit ${process.name}`} title=${editing ? 'Save or cancel the open editor first' : `Edit ${process.name} here as a graph`} onClick=${() => editGraph(process)}>✎</button>`}
         <button type="button" class="gq-saved-run" data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
           aria-label=${`Start ${process.name}`} title=${`Start ${process.name} in ${group.name}`}
           onClick=${() => setOpen(open === process.templateId ? '' : process.templateId)}>▶</button>
       </span>`)}
     </div>
-    ${current && html`<${StartStrip} key=${current.templateId} group=${group} process=${current} api=${api} source=${source}
+    ${current && html`<${StartStrip} key=${current.templateId} editing=${editing} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;

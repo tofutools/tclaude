@@ -32,6 +32,8 @@ function cases() {
     'kind-approve-command': fill(m.changeKind(ship, 'approve', 'command')),
     'delete-review': m.deleteStep(ship, 'review').view,
     'delete-approve': m.deleteStep(ship, 'approve').view,
+    'before-join-agent': fill(m.insertBefore(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')),
+    'delete-join': m.deleteStep(fill(m.insertAfter(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')), 'approve').view,
   };
 }
 
@@ -120,4 +122,17 @@ test('the draft projects onto the kit: kinds, who lines, outcome labels', () => 
   assert.equal(run.edges.find((e) => e.from === 'implement').label, '', 'a plain pass is unlabelled');
   assert.equal(run.edges.find((e) => e.from === 'approve' && e.to === 'rework').label, 'rework');
   assert.deepEqual(m.changeSummary(ship, m.insertAfter(ship, 'implement', 'agent').view), ['added “New step”', 'Implement changed']);
+});
+
+test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
+  assert.match(m.canRunAlongside(ship, 'final-say'), /other outcomes/, 'its hold answer would leave the branch');
+  const fork = fill(m.runAlongside(ship, 'review', 'agent'));
+  assert.match(m.canRunAlongside(fork, 'review'), /several paths meet/, 'a branch of an open fork cannot fork again at its join');
+  const before = m.insertBefore(fork, 'approve', 'agent');
+  assert.equal(before.view.template.nodes[before.id].join, 'all', 'the new step is where the paths meet now');
+  assert.equal(before.view.template.nodes.approve.join, undefined);
+  const deleted = m.deleteStep(fill(m.insertAfter(fork, 'approve', 'agent')), 'approve').view;
+  assert.equal(deleted.template.nodes['new-step-2'].join, 'all', 'deleting the join hands it on');
+  assert.match(m.canDelete(ship, 'end'), /steps still end here/);
+  assert.throws(() => m.deleteStep(ship, 'end'), /steps still end here/);
 });

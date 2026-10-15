@@ -493,6 +493,7 @@ test('✎ opens a saved process in place as a graph of the same steps', async (t
   assert.deepEqual(api.calls.get, ['tmpl_ship']);
   assert.ok(card(), 'the mini editor opens in the group body');
   assert.ok(root.querySelector('[data-saved-editing="tmpl_ship"]'), 'the chip says it is being edited');
+  assert.ok(root.querySelector('[data-saved-edit-graph="tmpl_nightly"]').hasAttribute('disabled'), 'another process waits until this editor closes');
   for (const id of ['start', 'implement', 'review', 'approve', 'rework', 'final-say', 'merge', 'end']) assert.ok(node(id), `node ${id}`);
   assert.match(node('implement').textContent, /any dev/, 'a step says who does it');
   assert.ok(card().querySelector('[data-mini-save]').hasAttribute('disabled'), 'nothing to save yet');
@@ -589,4 +590,28 @@ test('dragging the + handle into empty space picks a kind for a step from it', a
   assert.equal(picker.dataset.miniPicker, 'branch', 'from a decision, the new step is a branch');
   await click(picker.querySelector('[data-mini-kind="agent"]'));
   assert.ok(node('new-step'));
+});
+
+test('◈ Graph after the step list saved a version continues from that version', async (t) => {
+  const api = fakeApi({ stored: { tmpl_ship: SHIP_VIEW }, startErrors: ['process program profiles require explicit authorization: ci'] });
+  const { root, click, setValue, settle, harness } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-edit]'));
+  const editor = root.querySelector('[data-step-editor-saved="tmpl_ship"]');
+  await setValue(steps(root)[0].querySelector('.gq-step-text'), 'Implement {{issue}} carefully.', 'change');
+  await setValue(editor.querySelector('[data-start-param="issue"]'), 'A-1');
+  const box = editor.querySelector('[data-start-profile=""]');
+  Object.defineProperty(box, 'checked', { configurable: true, value: true });
+  await setValue(box, true, 'change');
+  await click(editor.querySelector('[data-step-start]'));
+  assert.equal(api.calls.save.length, 1, 'the start saved a version, then was refused');
+  await click(editor.querySelector('[data-mini-graph]'));
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  assert.ok(card);
+  const review = card.querySelector('[data-process-node="review"]');
+  await harness.act(() => harness.fireEvent(review, 'contextmenu'));
+  await settle();
+  await click(card.querySelector('.gm-menu [data-mini-menu="duplicate"]'));
+  await click(card.querySelector('[data-mini-save]'));
+  assert.deepEqual(api.calls.save[1].options, { sourceHash: 'h2' }, 'saved against the version the step list wrote');
 });
