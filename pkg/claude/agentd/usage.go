@@ -55,7 +55,8 @@ type dashboardUsage struct {
 	// no rolling windows, and the dashboard then shows this figure
 	// instead of "usage: n/a". 0 means "no cost data" and renders
 	// nothing.
-	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	TotalCostUSD float64               `json:"total_cost_usd,omitempty"`
+	SpendLimits  []dashboardSpendLimit `json:"spend_limits,omitempty"`
 	// TodayCostUSD is the API cost recorded so far on the current local
 	// calendar day — the same delta walk as TotalCostUSD, windowed to
 	// today. Always ≤ TotalCostUSD. The top bar shows it as a "(today)"
@@ -141,6 +142,7 @@ func maybeRefreshUsage() {
 		slog.Debug("usage poller: config load failed; skipping Anthropic usage API refresh", "error", err)
 		return
 	}
+	pollSpendLimits(cfg)
 	if !cfg.PollAnthropicUsageAPI() {
 		return
 	}
@@ -184,12 +186,17 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	var hasRealCost bool
 	var costErr error
 	var costHistoryAvailable bool
+	var spendLimits []dashboardSpendLimit
 	timed("cost_history", func() {
 		rows, err := db.AllCostDailyRows()
 		costErr = err
 		costHistoryAvailable = err == nil
 		now := time.Now()
 		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
+		if err == nil {
+			month, today := dashboardCostTotalsFromDeltas(displayedCostDeltasFromRows(rows, false), now, "real")
+			spendLimits = evaluateSpendLimits(displayConfig, month, today, now)
+		}
 		if displayConfig != nil {
 			harnesses, harnessErr := db.SessionHarnesses()
 			if harnessErr != nil {
@@ -229,6 +236,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 	assembleStart := time.Now()
 	out := dashboardUsage{
 		TotalCostUSD:     totalCost,
+		SpendLimits:      spendLimits,
 		TodayCostUSD:     todayCost,
 		APICosts:         apiCosts,
 		WhatIfCosts:      whatIfCosts,

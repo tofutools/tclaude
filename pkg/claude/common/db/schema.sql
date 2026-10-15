@@ -1841,6 +1841,13 @@ CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 
+CREATE TABLE spend_alerts (
+ period TEXT NOT NULL,
+ period_start TEXT NOT NULL,
+ threshold INTEGER NOT NULL,
+ PRIMARY KEY (period, period_start, threshold)
+ );
+
 CREATE TABLE saved_prompts (
  name TEXT PRIMARY KEY NOT NULL,
  body TEXT NOT NULL

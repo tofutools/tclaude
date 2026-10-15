@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // worktree_sweep_flow_test.go exercises the repo-wide worktree janitor
@@ -43,6 +47,17 @@ type sweepAgentWire struct {
 }
 
 type sweepWorktreeWire struct {
+	BaseRef             string `json:"base_ref"`
+	Merged              *bool  `json:"merged"`
+	Unpushed            *int   `json:"unpushed_commits"`
+	UpstreamGone        bool   `json:"upstream_gone"`
+	LastCommit          int64  `json:"last_commit"`
+	LastActivity        int64  `json:"last_activity"`
+	Stale               bool   `json:"stale"`
+	SignalError         string `json:"signal_error"`
+	PotentiallyDangling bool   `json:"potentially_dangling"`
+	DanglingReason      string `json:"dangling_reason"`
+
 	Path     string           `json:"path"`
 	Name     string           `json:"name"`
 	Branch   string           `json:"branch"`
@@ -930,4 +945,98 @@ func TestWorktreeSweep_CleanupRemovesMissingRegisteredWorktrees(t *testing.T) {
 	}
 	assert.Equal(t, "removed_with_branch", results[attached])
 	assert.Equal(t, "removed", results[detached])
+}
+
+// Real Git fixtures exercise the discovery wire, including conservative
+// unpublished defaults and the distinction between stale and live worktrees.
+func TestWorktreeSweep_RealGitSignals(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	root := testutil.CanonicalTempDir(t)
+	repo := filepath.Join(root, "repo")
+	require.NoError(t, os.Mkdir(repo, 0755))
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2020-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2020-01-01T00:00:00Z", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return strings.TrimSpace(string(out))
+	}
+	git(repo, "init", "-b", "main")
+	git(repo, "config", "user.name", "Test")
+	git(repo, "config", "user.email", "test@example.com")
+	git(repo, "commit", "--allow-empty", "-m", "base")
+	git(repo, "remote", "add", "origin", "https://example.invalid/repo")
+	git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	paths := map[string]string{}
+	for _, branch := range []string{"merged", "unpublished", "published", "ahead", "gone", "stale", "live"} {
+		path := filepath.Join(root, branch)
+		paths[branch] = path
+		git(repo, "worktree", "add", "-b", branch, path)
+		if branch != "merged" && branch != "live" {
+			git(path, "commit", "--allow-empty", "-m", branch)
+		}
+	}
+	for _, branch := range []string{"published", "ahead", "gone"} {
+		git(repo, "update-ref", "refs/remotes/origin/"+branch, branch)
+		git(repo, "branch", "--set-upstream-to=origin/"+branch, branch)
+	}
+	git(repo, "update-ref", "-d", "refs/remotes/origin/gone")
+	git(paths["ahead"], "commit", "--allow-empty", "-m", "ahead of upstream")
+	detached := filepath.Join(root, "detached")
+	git(repo, "worktree", "add", "--detach", detached, "main")
+	old := time.Now().Add(-45 * 24 * time.Hour)
+	for _, branch := range []string{"stale", "live"} {
+		require.NoError(t, os.Chtimes(paths[branch], old, old))
+	}
+	const conv = "wsig-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "active")
+	f.HaveAliveSession(conv, "signal-session", "signal-tmux", paths["live"])
+	f.HaveEnrolledAgent(conv)
+	f.HaveGroup("signals")
+	_, err := db.SetAgentGroupDefaultCwd("signals", repo)
+	require.NoError(t, err)
+	rows := byPath(discoverWorktrees(t, agentd.BuildDashboardHandlerForTest(), "signals").Worktrees)
+	merged := rows[paths["merged"]]
+	require.NotNil(t, merged.Merged)
+	assert.True(t, *merged.Merged)
+	assert.True(t, merged.PotentiallyDangling)
+	assert.Contains(t, merged.DanglingReason, "merged")
+	assert.Equal(t, "refs/remotes/origin/main", merged.BaseRef)
+	unpublished := rows[paths["unpublished"]]
+	require.NotNil(t, unpublished.Unpushed)
+	assert.Equal(t, 1, *unpublished.Unpushed)
+	assert.False(t, unpublished.Checked)
+	assert.False(t, unpublished.PotentiallyDangling)
+	published := rows[paths["published"]]
+	require.NotNil(t, published.Unpushed)
+	assert.Zero(t, *published.Unpushed)
+	ahead := rows[paths["ahead"]]
+	require.NotNil(t, ahead.Unpushed)
+	assert.Equal(t, 1, *ahead.Unpushed)
+	assert.False(t, ahead.Checked)
+	require.NotNil(t, rows[detached].Merged)
+	assert.True(t, *rows[detached].Merged)
+	assert.True(t, rows[detached].PotentiallyDangling)
+	gone := rows[paths["gone"]]
+	assert.True(t, gone.UpstreamGone)
+	require.NotNil(t, gone.Unpushed)
+	assert.Equal(t, 1, *gone.Unpushed)
+	assert.False(t, gone.Checked)
+	stale := rows[paths["stale"]]
+	assert.True(t, stale.Stale)
+	assert.True(t, stale.PotentiallyDangling)
+	assert.Contains(t, stale.DanglingReason, "30 days")
+	assert.Positive(t, stale.LastCommit)
+	assert.Equal(t, old.Unix(), stale.LastActivity)
+	live := rows[paths["live"]]
+	assert.Equal(t, "live", live.Category)
+	assert.True(t, live.Stale)
+	assert.False(t, live.PotentiallyDangling)
+	assert.False(t, rows[repo].PotentiallyDangling)
+	for _, row := range rows {
+		assert.Empty(t, row.SignalError)
+	}
 }

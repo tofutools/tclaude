@@ -75,3 +75,17 @@ test('worktree model filters by path, branch, and agent identity and summarizes 
     removed: 0, pruned: 2, prune_remaining: 1, prune_failed: 1,
   }), 'removed 0 worktrees; pruned 2 stale Git records, 1 remains (1 repo failed/partial)');
 });
+
+test('potentially dangling filter preserves selection and combines with search', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/worktree-cleanup-model.js');
+  const rows = model.normalizeWorktreeCandidates([
+    { path: '/merged', potentially_dangling: true, merged: true, checked: true },
+    { path: '/stale', potentially_dangling: true, stale: true, unpushed_commits: 2, checked: false },
+    { path: '/live', category: 'live', checked: false },
+  ]);
+  assert.deepEqual(model.visibleWorktrees(rows, '', true).map((row) => row.path), ['/merged', '/stale']);
+  assert.deepEqual(model.visibleWorktrees(rows, 'stale', true).map((row) => row.path), ['/stale']);
+  assert.deepEqual(model.selectedWorktrees(rows).map((row) => row.path), ['/merged']);
+  assert.equal(rows[1].unpushed_commits, 2);
+});

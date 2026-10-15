@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV258toV259(d *sql.DB) error {
+func migrateV259toV260(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -12,7 +12,7 @@ func migrateV258toV259(d *sql.DB) error {
  name TEXT PRIMARY KEY NOT NULL,
  body TEXT NOT NULL
  );
- UPDATE schema_version SET version = 259;`)
+ UPDATE schema_version SET version = 260;`)
 	if err != nil {
 		return err
 	}

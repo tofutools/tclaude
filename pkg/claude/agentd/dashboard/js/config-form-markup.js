@@ -607,6 +607,13 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="costs" active=${active}>
+      <${Group} title="Spend limits">
+        ${['daily', 'monthly'].map(period => html`<${Setting} key=${period} title=${period === 'daily' ? 'Daily limit (USD)' : 'Monthly limit (USD)'} forId=${`cfg-cost-${period}-limit`} k=${`cost.${period}_limit_usd`}
+          summary="Estimated API ledger spend; blank or 0 disables. Warn at 80%, alert at 100%."
+          more=${html`Global across harnesses on this instance, using local calendar days/months. Amounts are unscaled cost-ledger estimates; subscription WHAT-IF amounts are excluded and subscription plans may not map to real charges. One notification per period and threshold, even after restarting the daemon or editing a limit. Spawns remain available.`}>
+          <${ConfigInput} type="number" id=${`cfg-cost-${period}-limit`} min="0" step="0.01" placeholder="Disabled" />
+        </${Setting}>`)}
+      </${Group}>
       <${Group} title="Cost display">
         <${Setting} title="Cost display multipliers" wide k="cost.estimate_factor"
           summary="Scale displayed dollar amounts across the dashboard, per harness. Recorded data stays unchanged."

@@ -19859,3 +19859,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .remote-inbox-item:hover { filter: brightness(1.25); }
 .remote-inbox-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
 #remote-inbox-reply { width: 100%; box-sizing: border-box; }
+
+.spend-limit-banner { padding: 10px 12px; margin-bottom: 12px; border: 1px solid #d29922; border-radius: 6px; color: #d29922; font-size: 13px; }
+.spend-limit-banner.over-limit { border-color: #f85149; color: #f85149; }
