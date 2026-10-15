@@ -232,6 +232,49 @@ test('an answer that goes back is a bounded loop with its rounds and what follow
   assert.ok(view.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'step'));
 });
 
+test('an agent step can decide: its verdicts loop like a person\'s answers', async (t) => {
+  const { root, api, click, setValue } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'agent-review-loop');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  assert.equal(steps(root)[0].querySelector('.gq-answers'), null, 'a plain agent step has no verdicts');
+  await click(steps(root)[1].querySelector('[data-step-decides]'));
+  const review = () => steps(root)[1];
+  const [work, id] = steps(root).map((el) => el.dataset.step);
+  assert.equal(review().querySelector('[data-step-decides]'), null);
+  assert.equal(review().querySelector('.gq-answers-in input').value, 'approve, changes');
+  await setValue(review().querySelector('[aria-label="After changes"]'), work, 'change');
+  assert.equal(review().querySelector('[data-loop="changes"] .gq-loop-rounds').value, '3', 'sending work back is a bounded loop');
+  await setValue(review().querySelector('.gq-who-select'), 'you', 'change');
+  assert.equal(review().querySelector('.gq-answers-in input').value, 'approve, changes', 'a person takes over the verdicts as answers');
+  await setValue(review().querySelector('.gq-who-select'), 'agent:review-bot', 'change');
+  assert.ok(review().querySelector('[data-loop="changes"]'), 'and an agent takes them back, loop and all');
+  await click(editor.querySelector('[data-step-save-library]'));
+  const view = api.calls.create.at(-1).view;
+  const node = view.template.nodes[id];
+  assert.equal(node.type, 'decision');
+  assert.equal(node.performer.kind, 'agent');
+  assert.equal(node.performer.choices, undefined, 'an agent decider names its verdicts only as outcomes');
+  assert.deepEqual(node.loops, { changes: { maxIterations: 3 } });
+  assert.equal(view.edges.find((e) => e.from === id && e.outcome === 'changes').to, work);
+  assert.ok(view.edges.some((e) => e.from === id && e.outcome === 'approve'));
+});
+
+test('an agent decider with no verdicts is a plain agent step again', async (t) => {
+  const { root, click, setValue, settle } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  await click(root.querySelector('[data-step-editor] [data-add-step="agent"]'));
+  await click(steps(root)[0].querySelector('[data-step-decides]'));
+  const verdicts = steps(root)[0].querySelector('.gq-answers-in input');
+  await setValue(verdicts, '');
+  await harness_blur(verdicts);
+  await settle();
+  assert.equal(steps(root)[0].querySelector('.gq-answers'), null);
+  assert.ok(steps(root)[0].querySelector('[data-step-decides]'));
+});
+
 async function harness_blur(el) {
   el.dispatchEvent(new el.ownerDocument.defaultView.Event('blur'));
 }

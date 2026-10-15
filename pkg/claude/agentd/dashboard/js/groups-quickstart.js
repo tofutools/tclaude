@@ -17,7 +17,7 @@ import {
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
   collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
-  stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop,
+  stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop, stepAnswers, AGENT_VERDICTS,
 } from './process-step-list.js';
 import {
   LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
@@ -152,8 +152,12 @@ export function WhoPicker({ step, roster, roles, onChange }) {
   </select>`;
 }
 
+// Answers edits a decision step's answers: a person's, or the verdicts an
+// agent decider picks between. Emptying an agent's verdicts makes it a plain
+// agent step again; a person always keeps one answer.
 function Answers({ list, step, onChange }) {
-  const answers = step.node.performer?.choices || [];
+  const agent = step.node.performer?.kind !== 'human';
+  const answers = stepAnswers(step);
   const [draft, setDraft] = useState(answers.join(', '));
   useEffect(() => { setDraft(answers.join(', ')); }, [answers.join('\u0000')]);
   const index = list.steps.findIndex((s) => s.id === step.id);
@@ -161,7 +165,7 @@ function Answers({ list, step, onChange }) {
   const targets = forwardTargets(list, step.id);
   const commit = () => {
     const next = draft.split(',').map((answer) => answer.trim()).filter(Boolean);
-    onChange(setStepChoices(step, next.length ? next : [YOU_CONTINUE], following));
+    onChange(setStepChoices(step, next.length || agent ? next : [YOU_CONTINUE], following));
   };
   const back = backTargets(list, step.id);
   const linkFor = (answer) => (answer === step.cont ? following : step.links.find((link) => link.outcome === answer)?.to || '');
@@ -191,7 +195,8 @@ function Answers({ list, step, onChange }) {
     if (bound) onChange(setStepLoop(step, answer, { ...bound, onExhausted }));
   };
   return html`<div class="gq-answers">
-    <label class="gq-answers-in">answers <input type="text" value=${draft} aria-label="Answers you can give, comma separated"
+    <label class="gq-answers-in">${agent ? 'verdicts' : 'answers'} <input type="text" value=${draft}
+      aria-label=${agent ? 'Verdicts the agent picks from, comma separated' : 'Answers you can give, comma separated'}
       onInput=${(event) => setDraft(event.currentTarget.value)} onBlur=${commit}
       onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></label>
     <div class="gq-then">${answers.map((answer) => {
@@ -222,10 +227,17 @@ function StepRow({ list, step, index, roster, roles, now, problems, onChange, on
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
   const text = collapseParamShorthand(stepText(step));
   const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test' }[kind];
+  const following = list.steps[index + 1]?.id || list.mainEnd;
+  // A decision keeps its answers across a switch between a person and an
+  // agent (an agent's lone "continue" is no decision); a command does not
+  // decide.
   const setWho = (who) => {
     let next = setStepWho(step, who);
+    const answers = stepAnswers(step);
     if (who.mode === 'you' && next.node.type !== 'decision') next = setStepChoices({ ...next, cont: YOU_CONTINUE }, [YOU_CONTINUE], '');
-    if (who.mode !== 'you' && next.node.type === 'decision') next = setStepChoices(next, [], '');
+    else if (who.mode === 'you') next = setStepChoices(next, answers, following);
+    else if (next.node.type === 'decision' && (who.mode === 'command' || (answers.length === 1 && answers[0] === YOU_CONTINUE))) next = setStepChoices(next, [], '');
+    else if (next.node.type === 'decision') next = setStepChoices(next, answers, following);
     onChange(next);
   };
   const taskLinks = !decision && step.links.length > 0;
@@ -237,7 +249,10 @@ function StepRow({ list, step, index, roster, roles, now, problems, onChange, on
         onInput=${(event) => onChange(setStepName(step, event.currentTarget.value))} />
       <textarea class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
         value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>
-      ${decision && kind === 'you' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
+      ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
+      ${!decision && kind === 'agent' && html`<button type="button" class="gq-link gq-decides" data-step-decides=${step.id}
+        title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
+        onClick=${() => onChange(setStepChoices(step, [...AGENT_VERDICTS], following))}>◇ agent decides</button>`}
       ${taskLinks && html`<div class="gq-then gq-then-ro">then: ${step.links.map((link) => `${link.outcome} → ${stepTargetLabel(list, link.to)}`).join(' · ')}</div>`}
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>
