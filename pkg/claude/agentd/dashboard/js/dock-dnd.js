@@ -38,6 +38,7 @@ import { $, $$ } from './helpers.js';
 import { wizWord } from './slop.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openSummonForDrop } from './modal-templates.js';
+import { pinToGroup } from './dock-processes.js';
 
 // Custom drag payload MIME. Intentionally NOT 'text/plain' — see the module
 // header: withholding text/plain is what makes dnd.js's member-row drop handler
@@ -47,7 +48,7 @@ const DOCK_DRAG_MIME = 'application/x-tclaude-dock-item';
 // templates (JOH-377 4/4). This set is the belt to dock.js's braces (its
 // SECTIONS `drag` flag) — a card whose kind isn't here is ignored on dragstart
 // even if some other code marked it draggable.
-const DRAGGABLE_KINDS = new Set(['profiles', 'roles', 'templates']);
+const DRAGGABLE_KINDS = new Set(['profiles', 'roles', 'templates', 'processes']);
 
 // Local gesture-routing state for the document-level hover/drop listeners.
 let dockDragActive = false;
@@ -74,6 +75,8 @@ const EMPTY_TARGET_SEL = '#groups-list';
 function dockTarget(e) {
   const box = e.target.closest(GROUP_TARGET_SEL);
   if (box) return { group: box.getAttribute('data-dnd-target-group') || '', box };
+  // A process template pins to a group, so only a real group is a target.
+  if (dockDragItem?.kind === 'processes') return null;
   // The virtual UNGROUPED box means "no group", so it's a natural, discoverable
   // target for a no-group spawn — same result as an empty-space drop (group '')
   // but on an obvious surface rather than the background gaps. Light the box
@@ -113,6 +116,7 @@ function dockPill(e, text) {
 function dockPillText(target) {
   if (!dockDragItem) return '';
   const { kind, name } = dockDragItem;
+  if (kind === 'processes') return `→ ${wizWord('pin', 'bind')} ${dockDragItem.label || name} → ${target.group}`;
   if (kind === 'templates') {
     return target.group
       ? `→ ${wizWord('deploy', 'summon')} ${name} → ${target.group}`
@@ -189,7 +193,7 @@ function bindDockDnd() {
     const name = card.getAttribute('data-dock-name');
     if (!kind || !name || !DRAGGABLE_KINDS.has(kind)) return;
     dockDragActive = true;
-    dockDragItem = { kind, name };
+    dockDragItem = { kind, name, label: card.getAttribute('data-dock-label') || name };
     dockDragSource?.removeEventListener('dragend', endDockDrag);
     dockDragSource = card;
     card.addEventListener('dragend', endDockDrag, { once: true });
@@ -254,6 +258,15 @@ function bindDockDnd() {
     // to the existing reinforce / instantiate / deploy paths by mode.
     if (item.kind === 'templates') {
       openSummonForDrop(item.name, group);
+      return;
+    }
+    // A process template pins to the group: it joins the group's saved
+    // processes. The library and the group's chips reload.
+    if (item.kind === 'processes') {
+      if (!group) return;
+      void pinToGroup(group, item.name)
+        .then(() => import('./refresh.js').then(({ toast }) => toast(`Pinned ${item.label || item.name} to ${group}`)))
+        .catch((error) => import('./refresh.js').then(({ toast }) => toast(`Could not pin ${item.label || item.name}: ${error.message}`, true)));
       return;
     }
     // Prefill grammar: a profile preselects the spawn Profile (JOH-350/210), a

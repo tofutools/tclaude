@@ -3328,6 +3328,34 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			SettleMS: 400,
 		},
 		{
+			Key:     "dock-processes-library",
+			Title:   "Palette dock — process library with a preview",
+			Caption: "tcl-rzik1e: the dock's last section lists process templates (version, steps · roles · commands, pinned groups). A card opens a preview with the graph, Start in…, Edit, Pin to group and share; ⤒ and a dropped .pwf import through the review.",
+			JS: showGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var of=window.fetch;
+  window.fetch=function(u,o){ return of(u,o).then(function(r){
+    var url=String(u&&u.url||u);
+    if(!/^\/v1\/process\/templates(\?|$)/.test(url)) return r;
+    return r.clone().json().then(function(b){ (b.templates||[]).forEach(function(t){ if(t.id==='release-train') t.pinnedGroups=['frontend-squad']; }); return new Response(JSON.stringify(b),{status:r.status,headers:{'Content-Type':'application/json'}}); });
+  }); };
+  var deadline=Date.now()+4000, sec;
+  while(!(sec=document.querySelector('.dock-processes')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!sec) throw new Error('no Processes section in the dock');
+  sec.open=false; await new Promise(function(r){ setTimeout(r,60); }); sec.open=true;
+  var card;
+  while(!((card=document.querySelector('.dock-process-card[data-dock-name="release-train"]')) && /frontend-squad/.test(card.textContent)) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!card) throw new Error('release-train is not in the library');
+  if(!/frontend-squad/.test(card.textContent)) throw new Error('pinned group chip missing');
+  var host=document.querySelector('#agent-dock .dock-inner')||document.querySelector('#agent-dock'); host.scrollTop=host.scrollHeight;
+  card.scrollIntoView({block:'center'});
+  card.querySelector('.dock-process-open').click();
+  while(!document.querySelector('.dock-process-preview .pk-mini-graph') && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!document.querySelector('.dock-process-preview .pk-mini-graph')) throw new Error('preview graph did not render');
+})();`,
+			SettleMS: 900,
+		},
+		{
 			// JOH-388 req 5: each category folds on its own. Collapse Templates
 			// to its header (chevron flips); Profiles + Roles stay expanded. The
 			// fold is set on the live keyed <details>; Preact preserves it across

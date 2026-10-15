@@ -4,6 +4,7 @@ import {
 } from 'preact/hooks';
 import htm from 'htm';
 import { wizWord } from './slop.js';
+import { DockProcesses } from './dock-processes.js';
 
 const html = htm.bind(h);
 
@@ -328,18 +329,24 @@ export function Dock({ host, state, sections, isSectionOpen, setSectionOpen }) {
     };
   }, [host]);
 
-  return sections.map((section) => html`
-    <${DockSection}
-      key=${section.key}
-      section=${section}
-      snapshot=${snapshot}
-      openMenu=${openMenu}
-      setOpenMenu=${setOpenMenu}
-      clipHost=${host}
-      isSectionOpen=${isSectionOpen}
-      setSectionOpen=${setSectionOpen}
-    />
-  `);
+  // The process library sits last, and only while Processes is enabled.
+  const groups = (snapshot?.groups || []).map((group) => group.name).filter(Boolean);
+  return [
+    ...sections.map((section) => html`
+      <${DockSection}
+        key=${section.key}
+        section=${section}
+        snapshot=${snapshot}
+        openMenu=${openMenu}
+        setOpenMenu=${setOpenMenu}
+        clipHost=${host}
+        isSectionOpen=${isSectionOpen}
+        setSectionOpen=${setSectionOpen}
+      />
+    `),
+    snapshot?.processes_enabled ? html`<${DockProcesses} key="processes" groups=${groups}
+      isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} />` : null,
+  ];
 }
 
 export function mountDockIsland({
