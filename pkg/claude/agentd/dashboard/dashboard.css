@@ -1251,8 +1251,6 @@ body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
 body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
-body.wizard .ci-badge.rv-badge,
-body.slop .ci-badge.rv-badge { border-color: transparent; background: none; }
 body.wizard .rv-badge.rv-approved { color: #7ee08a; }
 body.wizard .rv-badge.rv-changes { color: #ff8a8a; }
 body.wizard .rv-badge.rv-required { color: #e8c15a; }
@@ -1282,6 +1280,12 @@ body.wizard .ci-panel::-webkit-scrollbar-thumb {
 }
 body.wizard .ci-panel::-webkit-scrollbar-thumb:hover { background: #9a7fd0; }
 body.slop .ci-badge { background: #210808; border-color: #684500; color: #d8b95e; }
+/* The skin's gold .ci-badge colour outranks the plain .rv-* state colours,
+   and the review pill's state is colour alone, so restate them here. */
+body.slop .rv-badge.rv-approved { color: #7ee08a; }
+body.slop .rv-badge.rv-changes { color: #ff8a8a; }
+body.slop .rv-badge.rv-required { color: #ffd700; }
+body.slop .rv-badge.rv-none { color: #8a6d3b; }
 body.slop .ci-panel {
   border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
   color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
