@@ -207,15 +207,18 @@ test('reuse opens the start form with the template; the graph-shaped starter han
   assert.equal(handoff.takeProcessDraft(), null, 'a draft is handed off once');
 });
 
-test('a group with runs offers + new process instead of Get started', async (t) => {
+test('a group with runs builds a new process from the start form instead of Get started', async (t) => {
   const context = {
     runs: { run_1: { runId: 'run_1', name: 'nightly', status: 'running', nodes: [{ id: 'a', kind: 'task', state: 'running' }], edges: [], scope: { kind: 'group', group: 'webshop' } } },
     groups: [{ groupId: 1, group: 'webshop', active: ['run_1'], needsYou: [], done: [], planned: [], activeCount: 1 }], agents: [], orphaned: [],
   };
   const { root, click } = await mount(t, { context });
   assert.equal(root.querySelector('[data-quickstart]'), null);
+  assert.equal(root.querySelector('[data-process-new]'), null, 'no separate new-process button');
+  await click(root.querySelector('[data-process-start="webshop"]'));
   await click(root.querySelector('[data-process-new="webshop"]'));
   assert.ok(root.querySelector('[data-quickstart="webshop"]'));
+  assert.equal(root.querySelector('.gp-start-form'), null, 'building replaces the start form');
 });
 
 test('open in graph editor saves the steps first, then hands the stored template to the editor', async (t) => {

@@ -273,6 +273,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/starters",
 	"GET /api/starters/{name}",
 	"GET /api/templates/{name}/export",
+	"GET /v1/process/runs",
 	"GET /v1/process/runs/{id}",
 	"GET /v1/process/runs/{id}/events",
 	"GET /v1/process/template-heads",
