@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-// migrateV259toV260 adds process_agent_dispatches: the daemon's durable record
+// migrateV260toV261 adds process_agent_dispatches: the daemon's durable record
 // of which agent performs each outstanding agent command of a process run.
 //
 // The run checkpoint stays the authority on WHETHER a command is outstanding;
@@ -10,7 +10,7 @@ import "database/sql"
 // delivery, and the performer's report — so a restarted daemon rediscovers
 // every in-flight dispatch without re-resolving or re-delivering it. Rows cascade
 // with their run.
-func migrateV259toV260(d *sql.DB) error {
+func migrateV260toV261(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_process_agent_dispatches_agent
 	ON process_agent_dispatches(agent_id, state);
 CREATE INDEX IF NOT EXISTS idx_process_agent_dispatches_open
 	ON process_agent_dispatches(state) WHERE state IN ('pending', 'needs_performer', 'delivered', 'reported');
-UPDATE schema_version SET version=260;`)
+UPDATE schema_version SET version=261;`)
 	if err != nil {
 		return err
 	}

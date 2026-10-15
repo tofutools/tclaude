@@ -1,3 +1,4 @@
+import { SavedPromptPicker } from './saved-prompts.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -157,6 +158,8 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       <textarea ref=${bodyRef} id="operator-message-body" rows="6" maxlength="16384"
         placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck=${true} value=${body} readOnly=${busy}
         onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
+    <${SavedPromptPicker} value=${body} onChange=${setBody} textareaRef=${bodyRef}
+      disabled=${busy} confirmDiscard=${confirmDiscard}/>
     ${!allLive && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
         <button type="button" id="operator-message-attach-btn" disabled=${busy}

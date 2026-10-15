@@ -583,6 +583,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Submit a server-validated sandbox-profile draft for explicit human preview and save. Cannot persist or assign profiles and cannot launch agents. Intended for dashboard-summoned sandbox scribes.",
 	},
 	{
+		Slug:        PermPromptsManage,
+		Description: "Create, edit and delete global saved prompts. Reads are open; writes change shared operator text and are not default-granted.",
+	},
+	{
 		Slug:        PermRolesManage,
 		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief and default permission grants. Launch policy belongs to spawn profiles. Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
 	},

@@ -1864,6 +1864,11 @@ CREATE TABLE spend_alerts (
  PRIMARY KEY (period, period_start, threshold)
  );
 
+CREATE TABLE saved_prompts (
+ name TEXT PRIMARY KEY NOT NULL,
+ body TEXT NOT NULL
+ );
+
 CREATE TABLE process_agent_dispatches (
 	run_id         TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
 	command_id     TEXT NOT NULL CHECK(length(CAST(command_id AS BLOB)) BETWEEN 1 AND 1024),
