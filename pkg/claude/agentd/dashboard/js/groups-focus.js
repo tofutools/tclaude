@@ -86,6 +86,16 @@ export function useGroupsFocusRestore(state, doc = document) {
   }, [state, doc]);
 }
 
+// The Agents button's icon. An inline SVG rather than the 👥 emoji, whose
+// colour comes from the OS emoji font (dark purple on some systems, nearly
+// invisible on the selected button); CSS colours it like FlowIcon.
+function PeopleIcon() {
+  return html`<svg class="groups-focus-people" viewBox="0 0 20 16" aria-hidden="true">
+    <circle cx="7" cy="5" r="2.8" /><path d="M1.6 14.2c0-3.2 2.4-5.2 5.4-5.2s5.4 2 5.4 5.2z" />
+    <circle class="back" cx="13.6" cy="5.6" r="2.4" /><path class="back" d="M11.2 9.6c.7-.3 1.5-.5 2.4-.5 2.6 0 4.7 1.8 4.7 4.6v.5h-5" />
+  </svg>`;
+}
+
 // The Processes button's icon: the same small flow graph as the group
 // headers' process indicators (groups-process-indicators.js).
 function FlowIcon() {
@@ -136,7 +146,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
       onClick=${() => chooseGroupsFocus(state, value)}
     >${icon}${count != null && html`<span class="groups-focus-count">${count}</span>`}</button>`;
   return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
-    ${button('agents', html`<span aria-hidden="true">👥</span>`, 'Agents', 'Familiars', agentCount(groups),
+    ${button('agents', html`<${PeopleIcon} />`, 'Agents', 'Familiars', agentCount(groups),
       wizard ? 'Familiars: the party rosters' : 'Agents: member tables, with process state as small indicators')}
     <span class="groups-focus-runs">
       ${button('processes', html`<${FlowIcon} />`, 'Processes', 'Rites', runs,
