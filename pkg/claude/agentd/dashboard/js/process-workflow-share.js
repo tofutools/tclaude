@@ -18,6 +18,25 @@ async function errorText(response) {
   return body.message || body.error || `${response.status} ${response.statusText}`;
 }
 
+// importError keeps the response body: a stale-review conflict carries the
+// fresh preview to review again.
+async function importError(response) {
+  const body = await response.json().catch(() => ({}));
+  const err = new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+  err.status = response.status;
+  err.body = body;
+  return err;
+}
+
+// Programs run as argv without a shell, so the review shows each argument as
+// its own token: quoted when it holds spaces or quotes, with control and
+// bidi characters escaped so the text shown is the text that runs.
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/gu;
+export function displayArg(arg) {
+  const text = String(arg ?? '').replace(/\\/g, '\\\\').replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0).toString(16)}}`);
+  return text === '' || /[\s'"]/.test(text) ? `'${text.replace(/'/g, "'\\''")}'` : text;
+}
+
 // exportWorkflow downloads <id>.pwf. It resolves to '' or an error message.
 export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob } = {}) {
   const response = await fetchImpl(`/v1/process/templates/${encodeURIComponent(id)}/export`, { credentials: 'same-origin' });
@@ -42,7 +61,7 @@ export async function applyImport(bytes, preview, { replace = false, fetchImpl =
   const response = await fetchImpl(`/v1/process/import?${query}`, {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': PWF_TYPE }, body: bytes,
   });
-  if (!response.ok) throw new Error(await errorText(response));
+  if (!response.ok) throw await importError(response);
   return response.json();
 }
 
@@ -76,7 +95,7 @@ export function importReview(preview) {
     params: preview.params || [],
     roles: preview.roles || [],
     humans: preview.humans || [],
-    programs: (preview.programs || []).map((p) => ({ ...p, command: [p.run, ...(p.args || [])].join(' ').trim() })),
+    programs: (preview.programs || []).map((p) => ({ ...p, command: [p.run, ...(p.args || [])].map(displayArg).join(' ') })),
     assignees: preview.assignees || [],
     templates,
     updates: preview.updates || 0,
@@ -84,7 +103,8 @@ export function importReview(preview) {
   };
 }
 
-function ImportDialog({ file, bytes, preview, onClose, onImported }) {
+function ImportDialog({ file, bytes, preview: initialPreview, onClose, onImported }) {
+  const [preview, setPreview] = useState(initialPreview);
   const review = importReview(preview);
   const [replace, setReplace] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,7 +119,16 @@ function ImportDialog({ file, bytes, preview, onClose, onImported }) {
       onImported?.(result);
       onClose();
     } catch (err) {
-      setError(err?.message || String(err));
+      // A failed apply may have stored some templates, and a stale review
+      // returns the current preview: refresh the list and review again.
+      onImported?.(null);
+      if (err?.body?.preview) {
+        setPreview(err.body.preview);
+        setReplace(false);
+        setError(`${err.message} The review below is updated; check it again.`);
+      } else {
+        setError(err?.message || String(err));
+      }
       setBusy(false);
     }
   };

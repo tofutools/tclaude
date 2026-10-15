@@ -77,3 +77,49 @@ test('import flow: preview, replace consent, then apply the reviewed digest', as
   assert.equal(imported?.applied, true);
   assert.equal(doc.querySelector('[data-pwf-import]'), null, 'the dialog closes after importing');
 });
+
+test('displayArg: the review shows argv boundaries and invisible characters', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { displayArg, importReview } = await harness.importDashboardModule('js/process-workflow-share.js');
+  assert.equal(displayArg('merge'), 'merge');
+  assert.equal(displayArg('/tmp/x /home'), "'/tmp/x /home'");
+  assert.equal(displayArg(''), "''");
+  assert.equal(displayArg('a\nb'), 'a\\u{a}b');
+  assert.equal(displayArg('x‮y'), 'x\\u{202e}y');
+  const review = importReview({ ...PREVIEW, programs: [{ step: 's', run: 'rm', args: ['-rf', '/tmp/x /home'] }] });
+  assert.equal(review.programs[0].command, "rm -rf '/tmp/x /home'");
+});
+
+test('import flow: a stale review shows the fresh preview and refreshes the list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const calls = [];
+  const fresh = { ...PREVIEW, updates: 0, reviewDigest: 'digest-2', templates: [{ ref: 'ship@sha256:aa', id: 'ship', head: true, status: 'new' }] };
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length === 2) {
+      return { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ error: 'process_import_review_stale', message: 'The workflow changed since the review.', preview: fresh }) };
+    }
+    return { ok: true, status: 200, json: async () => (String(url).includes('apply=1') ? { ...fresh, applied: true } : PREVIEW) };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  const { WorkflowImportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const refreshes = [];
+  const { container } = await harness.mount(harness.html`<${WorkflowImportButton} onImported=${(result) => refreshes.push(result)} />`);
+  const input = container.querySelector('[data-pwf-file]');
+  Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'ship.pwf', size: 3, arrayBuffer: async () => new Uint8Array([1]).buffer }] });
+  await harness.act(async () => { harness.fireEvent(input, 'change'); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const doc = harness.document;
+  const replace = doc.querySelector('[data-pwf-replace]');
+  replace.checked = true;
+  await harness.act(() => harness.fireEvent(replace, 'change'));
+  await harness.act(async () => { doc.querySelector('[data-pwf-import]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  assert.deepEqual(refreshes, [null], 'a failed apply refreshes the list');
+  assert.match(doc.querySelector('[role="alert"]').textContent, /check it again/);
+  assert.equal(doc.querySelector('[data-pwf-replace]'), null, 'the fresh preview has no update to consent to');
+  await harness.act(async () => { doc.querySelector('[data-pwf-import]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(calls[2], '/v1/process/import?apply=1&review=digest-2');
+  assert.equal(refreshes.at(-1)?.applied, true);
+});
