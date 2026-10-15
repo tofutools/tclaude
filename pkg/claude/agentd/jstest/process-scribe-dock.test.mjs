@@ -22,7 +22,7 @@ function view() {
   };
 }
 
-async function openEditor(t, { scribes = [SCRIBE], chat = [] } = {}) {
+async function openEditor(t, { scribes = [SCRIBE], chat = [], width = null } = {}) {
   // Registered BEFORE the harness: after-hooks run FIFO, and the dock's chat
   // poll must stop while the DOM still exists, or its timer holds node open.
   let editor;
@@ -50,6 +50,8 @@ async function openEditor(t, { scribes = [SCRIBE], chat = [] } = {}) {
     harness.importDashboardModule('js/prefs.js'),
   ]);
   dashPrefs.removeItem('tclaude.dash.processEditor.scribeMode');
+  dashPrefs.removeItem('tclaude.dash.processEditor.scribeWidth');
+  if (width != null) dashPrefs.setItem('tclaude.dash.processEditor.scribeWidth', width);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const opened = [];
   const chatReads = [];
@@ -145,4 +147,72 @@ test('without a scoped scribe the dock offers to summon one', async (t) => {
   assert.equal(dock().querySelector('.psd-input'), null);
   await click('.psd-summon .process-action');
   assert.equal(summoned, 1);
+});
+
+test('the dock resizes by drag and keys, clamps, persists, and resets', async (t) => {
+  const { harness, dock, click, settle, dashPrefs } = await openEditor(t);
+  await click('.process-scribe-action');
+  await settle();
+  const handle = () => dock().previousElementSibling;
+  const width = () => /width:\s*(\d+px)/.exec(dock().getAttribute('style') || '')?.[1] || '';
+  assert.ok(handle().hasAttribute('data-scribe-resize'), 'the separator sits on the canvas edge of the dock');
+  assert.equal(handle().getAttribute('role'), 'separator');
+  assert.equal(width(), '', 'the CSS default width until resized');
+
+  // Dragging left widens the dock; the pref is written once, on release.
+  await harness.act(() => harness.fireEvent(handle(), 'pointerdown', { button: 0, clientX: 500, pointerId: 1 }));
+  await harness.act(() => harness.fireEvent(handle(), 'pointermove', { clientX: 400, pointerId: 1 }));
+  assert.equal(width(), '420px');
+  assert.equal(dashPrefs.getItem('tclaude.dash.processEditor.scribeWidth'), null, 'no pref write mid-drag');
+  await harness.act(() => harness.fireEvent(handle(), 'pointermove', { clientX: 2000, pointerId: 1 }));
+  assert.equal(width(), '260px', 'clamped to the minimum');
+  await harness.act(() => harness.fireEvent(handle(), 'pointerup', { pointerId: 1 }));
+  assert.equal(dashPrefs.getItem('tclaude.dash.processEditor.scribeWidth'), '260');
+  await harness.act(() => harness.fireEvent(handle(), 'pointermove', { clientX: 0, pointerId: 1 }));
+  assert.equal(width(), '260px', 'moves after release do nothing');
+
+  await harness.act(() => harness.fireEvent(handle(), 'keydown', { key: 'ArrowLeft' }));
+  assert.equal(width(), '284px');
+  await harness.act(() => harness.fireEvent(handle(), 'keydown', { key: 'End' }));
+  assert.equal(width(), '760px', 'clamped to the maximum');
+  assert.equal(dashPrefs.getItem('tclaude.dash.processEditor.scribeWidth'), '760');
+
+  await harness.act(() => harness.fireEvent(handle(), 'dblclick'));
+  assert.equal(width(), '');
+  assert.equal(dashPrefs.getItem('tclaude.dash.processEditor.scribeWidth'), null, 'reset drops the pref');
+});
+
+test('a remembered dock width is restored and clamped', async (t) => {
+  const { harness, dock, click, settle } = await openEditor(t, { width: '9999' });
+  const width = () => /width:\s*(\d+px)/.exec(dock().getAttribute('style') || '')?.[1] || '';
+  await click('.process-scribe-action');
+  await settle();
+  assert.equal(width(), '760px');
+  const { clampDockWidth } = await harness.importDashboardModule('js/process-scribe-dock.js');
+  assert.equal(clampDockWidth(700, 1000), 600, 'never more than 60% of the editor body');
+  assert.equal(clampDockWidth(100, 300), 260, 'the minimum wins on a very narrow body');
+});
+
+test('a successful summon opens the dock, starting until the scribe is listed', async (t) => {
+  const { editor, dock, settle } = await openEditor(t, { scribes: [] });
+  const handoffs = [];
+  editor.options.onScribe = async (anchor, options) => { handoffs.push(options); return { conv_id: 'x' }; };
+  editor.scribePreviewModal = async () => 'prompt';
+  assert.equal(dock(), null);
+  assert.equal(await editor.requestScribe('template'), true);
+  await settle();
+  assert.equal(handoffs[0].background, true, 'a docked editor asks for a background start');
+  assert.equal(editor.scribeDock.open, true);
+  assert.match(dock().textContent, /Starting the scribe/);
+  assert.equal(dock().querySelector('.psd-summon .process-action'), null, 'no second summon while it starts');
+});
+
+test('a cancelled or failed summon leaves the dock closed', async (t) => {
+  const { editor, dock, settle } = await openEditor(t);
+  editor.options.onScribe = async () => null;
+  editor.scribePreviewModal = async () => 'prompt';
+  assert.equal(await editor.requestScribe('template'), false);
+  await settle();
+  assert.equal(editor.scribeDock.open, false);
+  assert.equal(dock(), null);
 });

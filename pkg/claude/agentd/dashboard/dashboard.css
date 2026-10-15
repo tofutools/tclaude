@@ -18937,6 +18937,22 @@ body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
 body.wizard .psd-mode.is-active { background: #7c5cff; }
 @media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
+/* A remembered width never squeezes the canvas: the same 60% share the
+   drag clamps to also holds at render time and when the window shrinks. */
+.process-scribe-dock { max-width: 60%; min-width: min(260px, 60%); }
+/* The dock's resize separator: a full-height 6px track on its canvas edge,
+   a thin line that turns blue on hover, focus or drag. */
+.psd-resize {
+  flex: none; width: 6px; margin-right: -6px; position: relative; z-index: 1; cursor: col-resize;
+  touch-action: none; user-select: none; background: transparent;
+}
+.psd-resize:hover, .psd-resize:focus-visible, .psd-resize.is-dragging {
+  background: linear-gradient(to right, transparent 2px, #1f6feb 2px, #1f6feb 4px, transparent 4px);
+  outline: none;
+}
+body.wizard .psd-resize:hover, body.wizard .psd-resize:focus-visible, body.wizard .psd-resize.is-dragging {
+  background: linear-gradient(to right, transparent 2px, #7c5cff 2px, #7c5cff 4px, transparent 4px);
+}
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
 .process-node-detail-head {
   display: flex;
