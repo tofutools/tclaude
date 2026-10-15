@@ -8,9 +8,7 @@ on:
     # (stable agent_id, decoupled from conv_id) — same deal; drop it once it→main lands.
     # dnd-palette is the long-lived drag-and-drop-palette integration branch
     # (JOH-374..377) — same deal; drop it once dnd-palette→main lands.
-    # processes-in-context is the long-lived integration branch of awb epic
-    # tcl-g4qeen — same deal; drop it once processes-in-context→main lands.
-    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, processes-in-context]
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
 
 permissions:
   contents: read
