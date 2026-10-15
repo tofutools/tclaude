@@ -1,0 +1,38 @@
+{
+  "format": "pwf",
+  "pwf_version": "0.1",
+  "kind": "workflow",
+  "created_at": "2026-10-15T18:00:00Z",
+  "producer": {
+    "name": "tclaude",
+    "version": "example"
+  },
+  "requires": [],
+  "root": "ship-feature@sha256:173d254347c109551341667a07e1c75fb6fda25bb9dbdaf9b8dc39a6f11ffa4d",
+  "entries": [
+    {
+      "path": "workflow.json",
+      "bytes": 1226,
+      "sha256": "c0317f3c96eab708fb88b366e5c02f7172f944683370389e3c426585644abf46",
+      "media_type": "application/json"
+    },
+    {
+      "path": "README.md",
+      "bytes": 109,
+      "sha256": "86b655dc3392da5104e3030a1c2e992094800ee5a5a870f793d4b7e137a90e8d",
+      "media_type": "text/markdown"
+    },
+    {
+      "path": "templates/ship-feature/173d254347c109551341667a07e1c75fb6fda25bb9dbdaf9b8dc39a6f11ffa4d",
+      "bytes": 900,
+      "sha256": "c94aa6032f577c756bbb4d9c1fd34182183cda1b2b4e50714ea4096dd27994fa",
+      "media_type": "application/vnd.tclaude.process-template"
+    },
+    {
+      "path": "templates/review-loop/ca7a5c38f104829f8c5bab9f2cfbbc36c8fd9ccd88f3041450e95fdf519a8556",
+      "bytes": 362,
+      "sha256": "899c55730fb7312148575aa8eecb1649f7c9591dfded4973aa69bd409b65e39b",
+      "media_type": "application/vnd.tclaude.process-template"
+    }
+  ]
+}

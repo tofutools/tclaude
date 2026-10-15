@@ -7,3 +7,6 @@ pkg/claude/agentd/jstest/third_party/LICENSE-linkedom.txt -text
 
 # PAF examples are hashed and signed byte for byte.
 docs/paf/examples/** -text -whitespace
+
+# PWF examples are hashed and signed byte for byte too.
+docs/pwf/examples/** -text -whitespace

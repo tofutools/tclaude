@@ -164,12 +164,28 @@ func Open(r io.ReaderAt, size int64, opts Options) (*Archive, error) {
 }
 
 func (a *Archive) indexFiles(ra io.ReaderAt, size int64, files []*zip.File) error {
-	if len(files) > a.limits.MaxEntries+1+64 {
-		return errors.New("paf: too many archive entries")
+	indexed, err := IndexZip(ra, size, files, a.limits)
+	if err != nil {
+		return err
+	}
+	a.files = indexed
+	return nil
+}
+
+// IndexZip applies the container rules every reader of this family of
+// formats enforces (PAF, PWF): regular files only, valid unique names,
+// stored or deflated, bounded counts and sizes, and local headers that agree
+// with the central directory. It returns the files by name. manifest.json and
+// signatures/ are bounded by the metadata limit instead of the content total.
+func IndexZip(ra io.ReaderAt, size int64, files []*zip.File, limits Limits) (map[string]*zip.File, error) {
+	limits = limits.orDefault()
+	out := map[string]*zip.File{}
+	if len(files) > limits.MaxEntries+1+64 {
+		return nil, errors.New("paf: too many archive entries")
 	}
 	offsets, err := localHeaderOffsets(ra, size, len(files))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var total uint64
 	for _, f := range files {
@@ -177,40 +193,44 @@ func (a *Archive) indexFiles(ra io.ReaderAt, size int64, files []*zip.File) erro
 			continue
 		}
 		if !f.Mode().IsRegular() {
-			return fmt.Errorf("paf: entry %q is not a regular file", f.Name)
+			return nil, fmt.Errorf("paf: entry %q is not a regular file", f.Name)
 		}
 		if !ValidEntryPath(f.Name) {
-			return fmt.Errorf("paf: invalid entry name %q", f.Name)
+			return nil, fmt.Errorf("paf: invalid entry name %q", f.Name)
 		}
-		if _, dup := a.files[f.Name]; dup {
-			return fmt.Errorf("paf: duplicate entry %q", f.Name)
+		if _, dup := out[f.Name]; dup {
+			return nil, fmt.Errorf("paf: duplicate entry %q", f.Name)
 		}
 		if f.Method != zip.Store && f.Method != zip.Deflate {
-			return fmt.Errorf("paf: entry %q uses an unsupported compression method", f.Name)
+			return nil, fmt.Errorf("paf: entry %q uses an unsupported compression method", f.Name)
 		}
 		// The manifest and signatures are bounded by the metadata limit
 		// instead, matching what the writer counts.
 		if f.Name != ManifestPath && !strings.HasPrefix(f.Name, SignaturesDir) {
 			total += f.UncompressedSize64
-			if total > uint64(a.limits.MaxArchiveBytes) {
-				return fmt.Errorf("paf: uncompressed content exceeds %d bytes", a.limits.MaxArchiveBytes)
+			if total > uint64(limits.MaxArchiveBytes) {
+				return nil, fmt.Errorf("paf: uncompressed content exceeds %d bytes", limits.MaxArchiveBytes)
 			}
 		}
 		off, ok := offsets[f.Name]
 		if !ok {
-			return fmt.Errorf("paf: entry %q: local header does not match the central directory", f.Name)
+			return nil, fmt.Errorf("paf: entry %q: local header does not match the central directory", f.Name)
 		}
 		if err := checkLocalHeader(ra, size, f, off); err != nil {
-			return err
+			return nil, err
 		}
-		a.files[f.Name] = f
+		out[f.Name] = f
 	}
-	return nil
+	return out, nil
 }
 
 // readBounded reads a whole entry, refusing more than limit bytes and
 // verifying the decompressed size.
-func (a *Archive) readBounded(f *zip.File, limit int64) ([]byte, error) {
+func (a *Archive) readBounded(f *zip.File, limit int64) ([]byte, error) { return ReadBounded(f, limit) }
+
+// ReadBounded reads a whole entry, refusing more than limit bytes and
+// verifying the decompressed size.
+func ReadBounded(f *zip.File, limit int64) ([]byte, error) {
 	if f.UncompressedSize64 > uint64(limit) {
 		return nil, fmt.Errorf("paf: entry %q exceeds %d bytes", f.Name, limit)
 	}
