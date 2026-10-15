@@ -50,6 +50,7 @@ agents, and the daemon, read [Architecture](architecture.md).
 | Confine what agents can touch | [Sandboxing](sandboxing.md) and [network filtering](network-filtering.md) |
 | Give tokenless agents git/GitHub/Linear access | [Proxies](proxies.md) |
 | Run enforced multi-step workflows | [Processes](processes.md) |
+| Share a workflow as a file | [Portable Workflow Format](pwf.md) |
 | Status bars, usage reports, DB inspection | [Utilities](utilities.md) |
 
 ## Platform support
