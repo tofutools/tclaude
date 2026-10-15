@@ -249,6 +249,29 @@ export function stateLabel(state) {
   return PROCESS_STATES[normalizeNodeState(state)].label;
 }
 
+// programBounds reads where a program step's latest attempt ran, as the run
+// read model recorded it when the attempt was planned (node.bounds): its
+// working directory and sandbox, or unconfined, or why it could not run.
+// Null until a scoped run first plans the step. text is a one-line summary;
+// warning is set when the step runs outside any sandbox or cannot run at all.
+export function programBounds(node) {
+  const bounds = node?.bounds;
+  if (!bounds) return null;
+  const path = String(bounds.cwd || '').replace(/\/+$/, '');
+  const dir = path ? path.slice(path.lastIndexOf('/') + 1) || path : '';
+  const where = dir ? `in ${dir}` : 'in the daemon\'s directory';
+  const profiles = (bounds.profiles || []).filter(Boolean);
+  if (bounds.error) {
+    return { cwd: path, dir, confined: false, text: 'not started', warning: `cannot run inside the run's bounds: ${bounds.error}` };
+  }
+  if (bounds.sandbox === 'unconfined') {
+    const reason = bounds.reason ? ` (${bounds.reason})` : '';
+    return { cwd: path, dir, confined: false, text: `${where}, unconfined${reason}`, warning: `runs ${where} outside any sandbox${reason}` };
+  }
+  const sandbox = profiles.length ? `sandbox ${profiles.join(', ')}` : 'sandboxed';
+  return { cwd: path, dir, confined: true, text: `${where} · 🛡 ${sandbox}`, warning: '' };
+}
+
 export function kindLabel(kind, wizard = false) {
   const entry = PROCESS_NODE_KINDS[normalizeNodeKind(kind)];
   return wizard ? entry.wizardLabel : entry.label;

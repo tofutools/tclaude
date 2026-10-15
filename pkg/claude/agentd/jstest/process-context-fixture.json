@@ -32,7 +32,8 @@
       "scope": { "kind": "agent", "agentId": "agt_fe_charts", "group": "frontend-squad", "state": "bound" },
       "nodes": [
         { "id": "start", "kind": "start", "state": "done" },
-        { "id": "snapshot", "label": "Snapshot index", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done" },
+        { "id": "snapshot", "label": "Snapshot index", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "done",
+          "bounds": { "scope": "agent", "cwd": "/home/dev/git/webshop-charts", "sandbox": "tclaude-layer", "profiles": ["dev-net"], "attempt": 1 } },
         { "id": "backfill", "label": "Backfill shards", "kind": "task", "performer": { "kind": "agent", "ref": "agt_fe_charts", "name": "fe-dev-charts" }, "state": "running" },
         { "id": "verify", "label": "Verify recall@10", "kind": "task", "performer": { "kind": "program", "ref": "" }, "state": "pending" },
         { "id": "gate", "label": "≥ 0.92?", "kind": "decision", "state": "pending" },
