@@ -92,3 +92,50 @@ func TestProcessAgentDecider_SendsBackThenApproves(t *testing.T) {
 	assert.Equal(t, 2, countKind(kinds, "decision_recorded"))
 	assert.Equal(t, 1, countKind(kinds, "loop_iterated"))
 }
+
+// Scenario: an agent reviews a compound step. Its failed report sends the
+// work back to the implementer, who is told which stage sent it back and why,
+// in the same session; the second review passes.
+func TestProcessAgentReviewStage_SendsTheWorkBackWithItsReason(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	const dev, reviewer = "sdev-1111-2222-3333-4444", "srev-1111-2222-3333-4444"
+	alice := havePerformerAgent(t, f, "crew", dev, "alice", "dev", "idle")
+	havePerformerAgent(t, f, "crew", reviewer, "carol", "reviewer", "idle")
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "agent-reviewed", Start: "implement",
+		Nodes: map[string]model.Node{
+			"implement": {Type: model.NodeTypeTask, Next: model.Next{"next": "done"},
+				Performer: &model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Implement the feature."},
+				Retry:     &model.RetryPolicy{MaxAttempts: 3, OnFail: model.RetryModeFeedbackSameSession},
+				Review: &model.Step{ID: "review",
+					Performer: model.Performer{Kind: model.PerformerAgent, Role: "reviewer", Prompt: "Review the change."}}},
+			"done": {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}
+	const runID = "run_agent_review_stage"
+	startLoopRun(t, f, root, runID, tmpl)
+
+	reportLoopStep(t, f, dev, runID, "implement.do", 1)
+	rec := reportAs(t, f, reviewer, map[string]any{
+		"runId": runID, "nodeId": "implement.review", "attempt": 1, "outcome": "failed", "note": "needs tests for the empty input",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	performer := showPerformerRun(t, f, runID)
+	require.Len(t, performer.Commands, 1)
+	require.NotNil(t, performer.Commands[0].Performer)
+	assert.Equal(t, alice, performer.Commands[0].Performer.AgentID)
+	assert.Equal(t, "same_session", performer.Commands[0].Performer.Resolution)
+	inbox := processInbox(t, dev)
+	require.Len(t, inbox, 2)
+	assert.Contains(t, inbox[1].Body, "Sent back by implement.review")
+	assert.Contains(t, inbox[1].Body, "needs tests for the empty input")
+	assert.NotContains(t, inbox[1].Body, "Your previous attempt (1) failed", "the implementer's own attempt did not fail")
+
+	reportLoopStep(t, f, dev, runID, "implement.do", 2)
+	reportLoopStep(t, f, reviewer, runID, "implement.review", 2)
+	assert.Equal(t, engine.RunCompleted, showLoopRun(t, f, runID).Status)
+	kinds, _ := performerEventKinds(t, f, runID)
+	assert.Equal(t, 1, countKind(kinds, "stage_reset"))
+}

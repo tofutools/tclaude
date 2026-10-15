@@ -159,7 +159,7 @@ func assignProcessNodePerformer(runID, nodeID, selector, actor string) (*db.Proc
 		GroupID: scope.GroupID, ToConv: candidate.ConvID,
 		Subject: processDispatchSubject(runID, *command),
 		Body: processDispatchMessage(runID, *command, processAssignFeedback(*row, *command),
-			processLoopFeedback(runID, *command)),
+			processReworkContext(runID, *command)),
 	})
 	if err != nil {
 		// The released attempt is pending again, so the next pass resolves it
@@ -231,11 +231,8 @@ func processAssignFeedback(row db.ProcessAgentDispatch, command engine.Command) 
 		return ""
 	}
 	previous := previousProcessDispatch(row)
-	if previous == nil {
+	if previous == nil || processLoopReentry(command, previous) {
 		return ""
 	}
-	if previous.ReportNote == "" {
-		return "the previous attempt reported failure without a note"
-	}
-	return previous.ReportNote
+	return processRetryFeedback(*previous)
 }

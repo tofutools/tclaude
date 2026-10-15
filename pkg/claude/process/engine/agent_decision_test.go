@@ -2,7 +2,9 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -180,5 +182,56 @@ func TestHumanAndAgentDecidersPlanTheSameRounds(t *testing.T) {
 	}
 	if !reflect.DeepEqual(humanRan, agentRan) {
 		t.Fatalf("human round 2 = %#v\nagent round 2 = %#v", humanRan, agentRan)
+	}
+}
+
+// TestAgentReviewGateSendsTheWorkBack: an agent do stage and an agent review
+// gate. A failed review re-runs the do stage under the compound's budget,
+// exactly as a failed program gate does.
+func TestAgentReviewGateSendsTheWorkBack(t *testing.T) {
+	tmpl := sequentialTemplate("task")
+	node := tmpl.Nodes["task"]
+	node.Performer = &model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Do it"}
+	node.Retry = &model.RetryPolicy{MaxAttempts: 2, OnFail: model.RetryModeFeedbackSameSession}
+	node.Review = &model.Step{ID: "rev", Performer: model.Performer{Kind: model.PerformerAgent, Role: "reviewer", Prompt: "Review it"}}
+	tmpl.Nodes["task"] = node
+	definition := mustPrepare(t, tmpl, nil)
+	checkpoint, err := Initialize("run-agent-gate", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trail []string
+	step := func(succeed bool) {
+		t.Helper()
+		var command *Command
+		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
+		if command == nil {
+			t.Fatalf("nothing planned after %v", trail)
+		}
+		if command.Kind != CommandAgent || command.Agent == nil {
+			t.Fatalf("%s planned %#v", command.NodeID, command)
+		}
+		trail = append(trail, fmt.Sprintf("%s#%d", command.NodeID, command.Attempt))
+		transition := observed(command, ProgramSucceeded, 0)
+		if !succeed {
+			transition = observedWithError(command, "needs tests")
+		}
+		if checkpoint, err = Apply(checkpoint, definition, transition); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateCheckpoint(checkpoint, definition); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step(true)  // do
+	step(false) // review sends it back
+	step(true)  // do, attempt 2
+	step(true)  // review
+	checkpoint, _ = advanceAndPlan(t, checkpoint, definition)
+	if want := "task.do#1 task.review#1 task.do#2 task.review#2"; strings.Join(trail, " ") != want {
+		t.Fatalf("trail = %v, want %s", trail, want)
+	}
+	if checkpoint.Status != RunCompleted {
+		t.Fatalf("status = %q", checkpoint.Status)
 	}
 }

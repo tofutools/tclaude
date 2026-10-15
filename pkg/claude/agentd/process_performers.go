@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -367,7 +368,7 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 		choice.waitReason = "the run is orphaned: its scope target is gone"
 	} else {
 		previous := previousProcessDispatch(row)
-		loop := processLoopFeedback(row.RunID, command)
+		loop := processReworkContext(row.RunID, command)
 		body := processDispatchMessage(row.RunID, command, "", loop)
 		choice = resolveProcessPerformer(row.RunID, scope, command, previous, body)
 		if choice.feedback != "" {
@@ -470,10 +471,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 	feedbackMode := (spec.RetryMode == model.RetryModeFeedbackSameSession && previous != nil) || loopReentry
 	feedback := ""
 	if feedbackMode && !loopReentry {
-		feedback = previous.ReportNote
-		if feedback == "" {
-			feedback = "the previous attempt reported failure without a note"
-		}
+		feedback = processRetryFeedback(*previous)
 	}
 
 	switch scope.Kind {
@@ -1207,6 +1205,110 @@ func processRunPerformerViews(runID string, live processLiveness) (map[string]pr
 		views = append(views, view)
 	}
 	return byCommand, views, nil
+}
+
+// processRetryFeedback is what a feedback-same-session retry is handed about
+// the attempt before it. A previous attempt that succeeded did not fail: a
+// later stage sent the work back, and processGateFeedback says why.
+func processRetryFeedback(previous db.ProcessAgentDispatch) string {
+	if previous.ReportOutcome == string(engine.ProgramSucceeded) {
+		return ""
+	}
+	if previous.ReportNote == "" {
+		return "the previous attempt reported failure without a note"
+	}
+	return previous.ReportNote
+}
+
+// processReworkContext is why an attempt's work is being done again, beyond
+// its own failure: a loop round, or a check or review that sent it back.
+func processReworkContext(runID string, command engine.Command) string {
+	var parts []string
+	for _, part := range []string{processLoopFeedback(runID, command), processGateFeedback(runID, command)} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// processGateFeedback is what a compound's work stage is told when one of its
+// checks or its review sent the work back (the stage_reset evidence): which
+// stage, and what it reported. Empty for every other attempt.
+func processGateFeedback(runID string, command engine.Command) string {
+	if command.Attempt < 2 {
+		return ""
+	}
+	resets, err := db.ListLatestProcessRunNodeEvents(runID, "stage_reset")
+	if err != nil {
+		slog.Warn("process performers: stage feedback not read", "run", runID, "node", command.NodeID, "error", err)
+		return ""
+	}
+	gate := ""
+	for _, event := range resets {
+		var payload struct {
+			ParentNodeID    string `json:"parentNodeId"`
+			GateNodeID      string `json:"gateNodeId"`
+			WorkNodeID      string `json:"workNodeId"`
+			NextWorkAttempt int    `json:"nextWorkAttempt"`
+		}
+		if event.DecodePayload(&payload) == nil && payload.WorkNodeID == command.NodeID &&
+			payload.NextWorkAttempt == command.Attempt {
+			gate = payload.GateNodeID
+			break
+		}
+	}
+	if gate == "" {
+		return ""
+	}
+	text := fmt.Sprintf("## Sent back by %s\n\nA later stage of this step did not pass, so this work runs again.", gate)
+	reports, err := db.ListLatestProcessRunNodeEvents(runID, "agent_reported", "program_observed")
+	if err != nil {
+		return text
+	}
+	for _, event := range reports {
+		if event.NodeID != gate {
+			continue
+		}
+		// Only the fields read here: an agent report's note, or a program's
+		// failure and its error output.
+		var payload struct {
+			Observation struct {
+				Error string `json:"error"`
+			} `json:"observation"`
+			Note   string `json:"note"`
+			Stderr string `json:"stderr"`
+		}
+		if json.Unmarshal(event.PayloadJSON, &payload) != nil {
+			break
+		}
+		reason := payload.Note
+		if reason == "" {
+			reason = payload.Observation.Error
+			if stderr := strings.TrimSpace(payload.Stderr); stderr != "" {
+				reason += "\n\n" + processFeedbackTail(stderr)
+			}
+		}
+		if reason != "" {
+			text += " It reported:\n\n" + reason
+		}
+		break
+	}
+	return text
+}
+
+// processFeedbackTail keeps the end of a program's error output, where the
+// failure usually is, at the scale of a report note.
+func processFeedbackTail(output string) string {
+	const limit = 2048
+	if len(output) <= limit {
+		return output
+	}
+	cut := len(output) - limit
+	for cut < len(output) && !utf8.RuneStart(output[cut]) {
+		cut++
+	}
+	return "…" + output[cut:]
 }
 
 // processLoopReentry reports whether an attempt opens a new round of its

@@ -458,9 +458,14 @@ name and needs the same permission.
   task. Stages are derived from the pinned template on every load, never
   stored, so nothing can drift. The parent stays `running` while any stage is
   live and settles its single authored route exactly once, when `done`
-  completes; a failed stage fails the run like any fail-fast task. In this
-  slice every stage performer must be a program, and stage-level `retry` /
-  `approvalRetry` are not executable yet.
+  completes; a failed stage fails the run like any fail-fast task. With a
+  `retry` on the task, a failed check or review sends the work back instead:
+  the do stage runs again under the task's budget, followed by every stage up
+  to the one that failed. Stage performers are programs or agents — an agent
+  stage is dispatched like an agent task, and its `failed` report is a failed
+  stage. A do stage an agent performs is told which stage sent its work back
+  and what that stage reported. Stage-level `retry` / `approvalRetry` are not
+  executable yet.
 - **Human plan approval.** A compound whose `plan` declares `approval: human`
   gains one extra stage between plan and do, `<id>.plan.approval`: an awaited
   decision with the fixed verdicts `approve` and `rework`, decided through the
@@ -522,11 +527,10 @@ unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
 
 These authoring features are valid in a stored template but refused at run
 creation with a path-specific diagnostic, rather than failing later: human
-task performers; agent performers on compound (staged) tasks;
-agent performer `timeout`; retry backoff waits; same-session retry feedback
+task performers; agent performer `timeout`; retry backoff waits; same-session retry feedback
 for program tasks (`retry.onFail: feedback-same-session` is executable only
-for agent tasks); retries on compound stages; `plan.approvalRetry`; human or
-agent stage performers; poison handling; wait nodes; captures.
+for agent tasks); retries on compound stages; `plan.approvalRetry`; human
+stage performers; poison handling; wait nodes; captures.
 
 ## Agent performers
 

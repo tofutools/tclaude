@@ -67,7 +67,10 @@ func RecordAgentReport(run *Run, actor string, report AgentReport) error {
 		Performer   string                    `json:"performer,omitempty"`
 		Note        string                    `json:"note,omitempty"`
 	}{Observation: observation, Attempt: command.Attempt, Performer: report.Performer, Note: report.Note}
-	causal := []db.ProcessRunEvent{event("agent_reported", &command, actor, payload)}
+	// A failed agent check or review sends its compound's work back, exactly
+	// as a failed program gate does.
+	causal := append([]db.ProcessRunEvent{event("agent_reported", &command, actor, payload)},
+		causedStageReset(run.definition, command.NodeID, run.checkpoint, next)...)
 	if observation.Verdict != "" {
 		// The note is the decider's reasoning, and the next round's performer
 		// is handed it exactly as a person's evidence.

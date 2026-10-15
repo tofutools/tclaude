@@ -100,8 +100,10 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			// wait between attempts, or reusing a possibly poisoned performer session
 			// — keeps its own path-specific diagnostic.
 			if node.Retry != nil {
+				// A compound's budget is its do stage's, so an agent do stage is an
+				// agent task here too.
 				agentTask := node.Type == model.NodeTypeTask && node.Performer != nil &&
-					node.Performer.Kind == model.PerformerAgent && !node.IsCompound()
+					node.Performer.Kind == model.PerformerAgent
 				if node.Type != model.NodeTypeTask || node.Performer == nil ||
 					(node.Performer.Kind != model.PerformerProgram && !agentTask) {
 					add("unsupported_retry", path+".retry", "only program and agent task retries are executable in this engine yet")
@@ -171,8 +173,6 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 					add("unsupported_performer", path+".performer.kind", "this engine executes only program and agent task performers")
 				case node.Performer.Contact != nil:
 					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
-				case node.Performer.Kind == model.PerformerAgent && node.IsCompound():
-					add("unsupported_performer", path+".performer.kind", "agent performers on staged (plan/check/review) tasks are not executable in this engine yet")
 				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
 					add("unsupported_timeout", path+".performer.timeout", "agent performer timeouts are not executable in this engine yet")
 				}
@@ -291,16 +291,21 @@ func addStageIDDiagnostics(add func(code, path, message string), path, nodeID st
 	}
 }
 
-// addStagePerformerDiagnostics admits exactly the stage performer this engine
-// dispatches: a program with no contact schedule. Human and agent stage
-// performers stay ineligible until their real dispatch and gate semantics land.
+// addStagePerformerDiagnostics admits exactly the stage performers this engine
+// dispatches: a program, or an agent — dispatched like an agent task, whose
+// failed report on a check or review sends the work back exactly as a failed
+// program gate does — with no contact schedule. Human stage performers stay
+// ineligible; a person approves a plan through plan.approval instead.
 func addStagePerformerDiagnostics(add func(code, path, message string), path string, performer model.Performer) {
-	if performer.Kind != model.PerformerProgram {
-		add("unsupported_performer", path+".kind", "this engine executes only program stage performers")
+	if performer.Kind != model.PerformerProgram && performer.Kind != model.PerformerAgent {
+		add("unsupported_performer", path+".kind", "this engine executes only program and agent stage performers")
 		return
 	}
 	if performer.Contact != nil {
 		add("unsupported_contact", path+".contact", "performer contact schedules are not executable in this engine yet")
+	}
+	if performer.Kind == model.PerformerAgent && strings.TrimSpace(performer.Timeout) != "" {
+		add("unsupported_timeout", path+".timeout", "agent performer timeouts are not executable in this engine yet")
 	}
 }
 

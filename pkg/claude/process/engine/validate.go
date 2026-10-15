@@ -361,6 +361,20 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				child.verdicts = approvalVerdicts()
 			default:
 				child.kind = definitionTask
+				if spec.Performer.Kind == model.PerformerAgent {
+					// Only the do stage carries the compound's retry policy, and with
+					// it the on-fail mode its next attempt is dispatched under.
+					var retry *model.RetryPolicy
+					if spec.Stage == model.StageDo {
+						retry = node.Retry
+					}
+					agent, err := bindAgent(spec.ChildID, *spec.Performer, retry, params, definition.fallback)
+					if err != nil {
+						return err
+					}
+					child.agent = agent
+					break
+				}
 				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
 				if err != nil {
 					return err
