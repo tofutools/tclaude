@@ -217,7 +217,7 @@ function GroupAvatarStrip({ members, busy, wizard }) {
     <span class="gp-avatar-states">${AVAILABILITY.filter(([state]) => count(state) > 0).map(([state, , , tip]) => {
       const names = members.filter((_, i) => states[i] === state).map(memberName);
       return html`<span key=${state} class=${`gp-member is-${state}${state === 'process' ? ' busy' : ''}`}
-        data-availability=${state} title=${`${names.length} ${tip}: ${names.join(', ')}`}>
+        data-availability=${state} title=${`${names.length} ${tip} — ${names.join(', ')}`}>
         <svg class="gp-member-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.2" r="3" /><path d="M2.4 14.6c0-3.4 2.5-5.6 5.6-5.6s5.6 2.2 5.6 5.6z" /></svg>
         ${names.length > 1 && html`<span class="gp-member-count">${names.length}</span>`}
       </span>`;
