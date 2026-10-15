@@ -1,6 +1,9 @@
 package agentd_test
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -147,6 +150,22 @@ func TestProcessGroupProcesses_SaveToGroupPublishPinAndList(t *testing.T) {
 	assert.NotContains(t, view.Source, "listed")
 	require.NotNil(t, view.Listed)
 	assert.False(t, *view.Listed)
+	// Nor are they in a shared workflow file: no exported entry names the group.
+	rec = pwfRaw(t, f, http.MethodGet, "/v1/process/templates/"+ship+"/export", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	exported := rec.Body.Bytes()
+	archive, err := zip.NewReader(bytes.NewReader(exported), int64(len(exported)))
+	require.NoError(t, err)
+	require.NotEmpty(t, archive.File)
+	for _, entry := range archive.File {
+		r, err := entry.Open()
+		require.NoError(t, err)
+		data, err := io.ReadAll(r)
+		require.NoError(t, r.Close())
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "webshop", entry.Name)
+		assert.NotContains(t, string(data), "listed", entry.Name)
+	}
 
 	// Publish lists it in the library without a new version.
 	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/"+ship+"/listing", map[string]any{"listed": true})
