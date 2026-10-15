@@ -275,6 +275,22 @@ test('an agent decider with no verdicts is a plain agent step again', async (t) 
   assert.ok(steps(root)[0].querySelector('[data-step-decides]'));
 });
 
+test('an agent decider\'s approve follows the list as steps are added after it', async (t) => {
+  const { root, api, click, setValue } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'decide-then-more');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(steps(root)[0].querySelector('[data-step-decides]'));
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  const [decider, after] = steps(root).map((el) => el.dataset.step);
+  await click(editor.querySelector('[data-step-save-library]'));
+  const view = api.calls.create.at(-1)?.view;
+  assert.ok(view, 'the draft saves');
+  assert.equal(view.edges.find((e) => e.from === decider && e.outcome === 'approve').to, after, 'approve continues to the new step');
+  assert.equal(view.template.nodes[decider].loops, undefined);
+});
+
 async function harness_blur(el) {
   el.dispatchEvent(new el.ownerDocument.defaultView.Event('blur'));
 }

@@ -252,7 +252,7 @@ function StepRow({ list, step, index, roster, roles, now, problems, onChange, on
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
       ${!decision && kind === 'agent' && html`<button type="button" class="gq-link gq-decides" data-step-decides=${step.id}
         title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
-        onClick=${() => onChange(setStepChoices(step, [...AGENT_VERDICTS], following))}>◇ agent decides</button>`}
+        onClick=${() => onChange(setStepChoices({ ...step, cont: AGENT_VERDICTS[0] }, [...AGENT_VERDICTS], following))}>◇ agent decides</button>`}
       ${taskLinks && html`<div class="gq-then gq-then-ro">then: ${step.links.map((link) => `${link.outcome} → ${stepTargetLabel(list, link.to)}`).join(' · ')}</div>`}
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>
