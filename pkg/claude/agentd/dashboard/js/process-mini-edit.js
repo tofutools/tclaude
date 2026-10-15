@@ -59,15 +59,17 @@ function incoming(view, id) {
 }
 
 // mainEdge is the edge a step continues along: a task's pass edge, a
-// decision's first answer, a start's only edge.
+// decision's first answer that does not loop back, a start's only edge.
 export function mainEdge(view, id) {
   const out = outgoing(view, id);
   if (!out.length) return null;
   const node = view.template.nodes[id];
   if (node?.type === 'decision') {
-    const first = (node.performer?.choices || []).find((choice) => out.some((edge) => edge.outcome === choice));
-    if (first) return out.find((edge) => edge.outcome === first);
-    return out[0];
+    const forward = out.filter((edge) => !loopBound(node, edge.outcome));
+    const pool = forward.length ? forward : out;
+    const first = (node.performer?.choices || []).find((choice) => pool.some((edge) => edge.outcome === choice));
+    if (first) return pool.find((edge) => edge.outcome === first);
+    return pool[0];
   }
   return PASS_LABELS.map((label) => out.find((edge) => edge.outcome === label)).find(Boolean) || out[0];
 }
@@ -411,11 +413,26 @@ export function addOutcome(view, id, to) {
   return { view: syncLoops(next), id, outcome };
 }
 
-// removeOutcome drops one outcome of a decision (never its last).
+// canRemoveOutcome says why an outcome cannot go, or '': a decision keeps at
+// least one outcome, and one that does not loop back, so a used-up loop has
+// a way on.
+export function canRemoveOutcome(view, id, outcome) {
+  const out = outgoing(view, id);
+  if (out.length < 2) return 'a decision keeps at least one outcome';
+  const node = view.template.nodes[id];
+  if (!loopBound(node, outcome) && !out.some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome))) {
+    return 'its only outcome that does not loop back';
+  }
+  return '';
+}
+
+// removeOutcome drops one outcome of a decision (never its last, nor its
+// last way out of a loop).
 export function removeOutcome(view, id, outcome) {
+  const why = canRemoveOutcome(view, id, outcome);
+  if (why) throw new Error(why);
   const next = copyView(view);
   const decision = next.template.nodes[id];
-  if (outgoing(next, id).length < 2) throw new Error('a decision keeps at least one outcome');
   next.edges = next.edges.filter((edge) => !(edge.from === id && edge.outcome === outcome));
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).filter((c) => c !== outcome);
   dropStaleJoins(next);
@@ -458,22 +475,47 @@ export function outcomesOf(view, id) {
   return [...(main ? [main] : []), ...out.filter((edge) => edge !== main)].map((edge) => ({ outcome: edge.outcome, to: edge.to, main: edge === main }));
 }
 
+// loopBodies are the bounded loops of a view, each as the nodes its rounds
+// run again: those on a path from the loop's target to its decision.
+function loopBodies(view) {
+  const { nodes } = view.template;
+  const plain = view.edges.filter((edge) => edge.from && !loopBound(nodes[edge.from], edge.outcome));
+  const walk = (start, step) => {
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) {
+      for (const next of step(stack.pop())) if (!seen.has(next)) { seen.add(next); stack.push(next); }
+    }
+    return seen;
+  };
+  return view.edges.filter((edge) => edge.from && loopBound(nodes[edge.from], edge.outcome)).map((edge) => {
+    const ahead = walk(edge.to, (id) => plain.filter((e) => e.from === id).map((e) => e.to));
+    const behind = walk(edge.from, (id) => plain.filter((e) => e.to === id).map((e) => e.from));
+    return new Set([...ahead].filter((id) => behind.has(id)));
+  });
+}
+
 // targetsFor lists the nodes an outcome of `id` may lead to: every node but
 // the start and the step itself. Going back to earlier work is a decision's
-// bounded loop, so a task is offered only targets ahead of it (a backward
-// target it already has stays), and a decision's backward targets say so
-// (back: true).
+// bounded loop (back: true), offered while the decision keeps another way
+// on. A task is offered only targets ahead of it, and inside a loop only
+// targets in that loop, since only a decision leaves one. A target the
+// outcome already has always stays.
 export function targetsFor(view, id, outcome = '') {
-  const decision = view.template.nodes[id]?.type === 'decision';
+  const node = view.template.nodes[id];
+  const decision = node?.type === 'decision';
   const current = view.edges.find((edge) => edge.from === id && edge.outcome === outcome);
+  const otherWayOn = outgoing(view, id).some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome));
+  const within = decision ? [] : loopBodies(view).filter((body) => body.has(id));
   return Object.entries(view.template.nodes)
-    .filter(([nodeID, node]) => nodeID !== id && node.type !== 'start')
-    .map(([nodeID, node]) => {
+    .filter(([nodeID, target]) => nodeID !== id && target.type !== 'start')
+    .map(([nodeID, target]) => {
       const edges = current ? view.edges.map((edge) => (edge === current ? { ...edge, to: nodeID } : edge)) : view.edges;
       const back = !!current && edgeGoesBack(view.template.nodes, edges, id, outcome);
-      return { id: nodeID, back, label: node.type === 'end' ? `end${node.name ? ` (${node.name})` : ''}` : node.name || nodeID };
+      return { id: nodeID, back, label: target.type === 'end' ? `end${target.name ? ` (${target.name})` : ''}` : target.name || nodeID };
     })
-    .filter((target) => decision || !target.back || target.id === current?.to);
+    .filter((target) => target.id === current?.to
+      || (target.back ? decision && otherWayOn : within.every((body) => body.has(target.id))));
 }
 
 // setLoopRounds sets how many rounds a decision's backward outcome may run.

@@ -159,6 +159,22 @@ test('a decision answer sent back is a bounded loop; a task only goes forward', 
   assert.deepEqual(removed.template.nodes.approve.loops, { changes: { maxIterations: 5 } }, 'a removed fallback leaves no dangling onExhausted');
 });
 
+test('a loop keeps a way on, and its body only leaves through a decision', () => {
+  const looped = m.setOutcomeTarget(ship, 'approve', 'rework', 'implement').view;
+  const ids = (view, id, outcome) => m.targetsFor(view, id, outcome).map((t) => t.id);
+  assert.deepEqual(ids(looped, 'review', 'next'), ['approve'], 'a task in the loop stays in it');
+  assert.ok(ids(looped, 'merge', 'next').includes('end'), 'a task after the loop is unaffected');
+
+  const you = m.insertAfter(ship, 'review', 'you');
+  assert.ok(!m.targetsFor(you.view, you.id, 'continue').some((t) => t.back), 'a lone answer cannot loop: the loop would have no way on');
+  assert.equal(m.canRemoveOutcome(looped, 'approve', 'ship'), '', 'hold still leads on');
+  const onlyOut = m.removeOutcome(looped, 'approve', 'hold').view;
+  assert.match(m.canRemoveOutcome(onlyOut, 'approve', 'ship'), /does not loop back/);
+  assert.equal(m.canRemoveOutcome(onlyOut, 'approve', 'rework'), '');
+  assert.equal(m.mainEdge(m.setOutcomeTarget(ship, 'approve', 'ship', 'implement').view, 'approve').outcome, 'rework',
+    'the main path is a decision\'s first answer that does not loop');
+});
+
 test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
   assert.match(m.canRunAlongside(ship, 'final-say'), /other outcomes/, 'its hold answer would leave the branch');
   const fork = fill(m.runAlongside(ship, 'review', 'agent'));

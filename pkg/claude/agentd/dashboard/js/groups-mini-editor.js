@@ -17,7 +17,7 @@ import { ProcessEditModel } from './process-edit-model.js';
 import {
   addOutcome, branch, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
-  removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
+  canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText, stepWho, viewToStepList } from './process-step-list.js';
@@ -109,11 +109,11 @@ function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEd
         ${loopBound(node, outcome) && html`<label class="gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
           ≤<input type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
-        ${node.type === 'decision' && outcomes.length > 1 && html`<button type="button" class="gq-link" aria-label=${`Remove ${outcome}`}
+        ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<button type="button" class="gq-link" aria-label=${`Remove ${outcome}`}
           onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕</button>`}
       </span>`)}
       ${node.type === 'decision' && html`<button type="button" class="gm-add-outcome" data-mini-add-outcome title="Add an outcome"
-        onClick=${() => onApply(addOutcome(view, id, outcomes[0]?.to || targets.find((t) => view.template.nodes[t.id]?.type === 'end')?.id || targets[0]?.id))}>+</button>`}
+        onClick=${() => onApply(addOutcome(view, id, outcomes.find((o) => !loopBound(node, o.outcome))?.to || targets.find((t) => view.template.nodes[t.id]?.type === 'end')?.id || targets[0]?.id))}>+</button>`}
       ${!outcomes.length && html`<span class="gq-dim">nothing yet: hover the step for + after</span>`}
     </div></div>
     <div class="gm-row"><span class="gq-spacer"></span><button type="button" class="gq-link" onClick=${onClose}>done</button></div>
