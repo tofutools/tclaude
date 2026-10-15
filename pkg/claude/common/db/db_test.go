@@ -97,6 +97,17 @@ func TestOpenKeepsLegacyDatabaseWhilePreSplitDaemonIsLive(t *testing.T) {
 	legacySocket, err := net.Listen("unix", filepath.Join(home, ".tclaude-agentd.sock"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = legacySocket.Close() })
+	// Accept like a live daemon would, so repeated reachability probes never
+	// queue up in the listen backlog.
+	go func() {
+		for {
+			c, err := legacySocket.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
 	root := filepath.Join(home, ".tclaude")
 	require.NoError(t, os.MkdirAll(root, 0o700))
 	legacyPath := filepath.Join(root, "db.sqlite")
