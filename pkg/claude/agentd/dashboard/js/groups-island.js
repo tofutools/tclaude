@@ -96,45 +96,49 @@ export function GroupsControls({ state, actions }) {
     };
   }, []);
 
-  const regularCount = current.query
-    ? `${current.shownReal} / ${current.total}`
-    : `${current.total} group${current.total === 1 ? '' : 's'}`;
-  const wizardCount = current.query
-    ? `${current.shownReal} / ${current.total}`
-    : `${current.total} ${current.total === 1 ? 'party' : 'parties'}`;
+  // The match count and × live inside the search box, shown only while
+  // filtering. The count's live region stays mounted (hidden, empty) so the
+  // first count after typing is announced.
+  const filtering = Boolean(current.query);
 
   return html`
-    <input
-      ref=${inputRef}
-      id="filter-groups"
-      type="text"
-      aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
-      placeholder=${wizard
-        ? 'Filter (party name + familiar title/class/lore/grove/branch)'
-        : 'Filter (group name + member title/role/descr/cwd/branch)'}
-      autocomplete="off"
-      spellcheck=${false}
-      value=${current.query}
-      onInput=${(event) => {
-        state.setQuery(event.currentTarget.value);
-        queueRefresh();
-      }}
-    />
-    <span class="filter-count" id="filter-groups-count" aria-live="polite">
-      <span class="theme-copy-regular">${regularCount}</span>
-      <span class="theme-copy-wizard">${wizardCount}</span>
+    <span class=${`groups-search${filtering ? ' filtering' : ''}`}>
+      <span class="groups-search-icon" aria-hidden="true">🔍</span>
+      <input
+        ref=${inputRef}
+        id="filter-groups"
+        type="text"
+        aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
+        placeholder=${wizard ? 'Filter parties & familiars' : 'Filter groups & members'}
+        title=${wizard
+          ? 'Matches party name + familiar title/class/lore/grove/branch'
+          : 'Matches group name + member title/role/descr/cwd/branch'}
+        autocomplete="off"
+        spellcheck=${false}
+        value=${current.query}
+        onInput=${(event) => {
+          state.setQuery(event.currentTarget.value);
+          queueRefresh();
+        }}
+      />
+      <span class="filter-count" id="filter-groups-count" aria-live="polite" hidden=${!filtering}
+        title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
+      >${filtering ? `${current.shownReal} / ${current.total}` : ''}</span>
+      ${filtering && html`
+        <button
+          class="clear-filter"
+          id="filter-groups-clear"
+          type="button"
+          title=${wizard ? 'Clear party filter' : 'Clear filter'}
+          aria-label=${wizard ? 'Clear party filter' : 'Clear group filter'}
+          onClick=${() => {
+            state.setQuery('');
+            queueRefresh();
+            inputRef.current?.focus();
+          }}
+        >×</button>
+      `}
     </span>
-    <button
-      class="clear-filter"
-      id="filter-groups-clear"
-      title=${wizard ? 'Clear party filter' : 'Clear filter'}
-      aria-label=${wizard ? 'Clear party filter' : 'Clear group filter'}
-      onClick=${() => {
-        state.setQuery('');
-        queueRefresh();
-        inputRef.current?.focus();
-      }}
-    >×</button>
     <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
       <button
@@ -310,7 +314,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     ${focus === 'processes'
     ? html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
-      filter=${state.processFilter.value} onFilter=${state.setProcessFilter} source=${processSource}
+      filter=${state.processFilter.value} source=${processSource}
       focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`
     : tree}
     ${state.standingOrdersDialog.value && html`

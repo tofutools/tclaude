@@ -1,9 +1,11 @@
 // groups-focus.js -- the Groups tab's Agents | Processes focus switch (mock
 // G6, option A). The same group tree is shown through one of two lenses:
 // Agents keeps the member tables as the main content; Processes puts each
-// group's run graphs at the centre. The switch is a segmented control beside
-// the group filter, remembered as a dashboard pref, deep-linkable as
-// /groups/processes, and only offered while `features.processes` is on.
+// group's run graphs at the centre. The switch is a pair of icon buttons
+// beside the group filter, with count badges and the run-kind checklist
+// floating off the Processes icon. It is remembered as a dashboard pref,
+// deep-linkable as /groups/processes, and only offered while
+// `features.processes` is on.
 //
 // The Processes lens itself (the G3 run cards) lives in groups-processes.js;
 // GroupsProcessesPlaceholder stands in while this agentd serves no run context.
@@ -11,7 +13,10 @@
 import { h } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
-import { activeRunCount, processContext } from './process-context.js';
+import {
+  RUN_KINDS, RUN_KIND_LABELS, activeRunCount, normalizeRunFilter, processContext, runFilterHas, runKindCounts,
+  toggleRunKind,
+} from './process-context.js';
 
 const html = htm.bind(h);
 
@@ -81,21 +86,63 @@ export function useGroupsFocusRestore(state, doc = document) {
   }, [state, doc]);
 }
 
+// The Processes button's icon: the same small flow graph as the group
+// headers' process indicators (groups-process-indicators.js).
+function FlowIcon() {
+  return html`<svg class="groups-focus-flow" viewBox="0 0 22 16" aria-hidden="true">
+    <polyline points="3,10 11,5 19,10" />
+    <circle cx="3" cy="10" r="2.4" /><circle cx="11" cy="5" r="2.4" /><circle cx="19" cy="10" r="2.4" />
+  </svg>`;
+}
+
+// RunKindMenu is the run filter: a checklist of run kinds that floats under
+// the Processes button on hover or keyboard focus, so it takes no toolbar
+// row of its own. Unticking the last kind is refused (toggleRunKind).
+function RunKindMenu({ state, wizard, counts }) {
+  const filter = state.processFilter?.value;
+  return html`<div class="groups-run-menu" role="group" aria-label=${wizard ? 'Show rites' : 'Show processes'}>
+    <div class="groups-run-menu-head">${wizard ? 'Show rites' : 'Show processes'}</div>
+    ${RUN_KINDS.map((kind) => {
+      const checked = runFilterHas(filter, kind);
+      return html`<label key=${kind} class=${`groups-run-kind groups-run-kind-${kind}${checked ? ' checked' : ''}`}>
+        <input type="checkbox" data-process-filter=${kind} checked=${checked}
+          onChange=${(event) => {
+            const next = toggleRunKind(state.processFilter?.value, kind);
+            // A refused untick leaves the signal unchanged, so nothing
+            // re-renders: put the browser-cleared tick back by hand.
+            if (next === normalizeRunFilter(state.processFilter?.value)) event.currentTarget.checked = true;
+            state.setProcessFilter?.(next);
+          }} />
+        <span class="groups-run-dot" aria-hidden="true"></span>
+        <span class="groups-run-label">${RUN_KIND_LABELS[kind][wizard ? 1 : 0]}</span>
+        ${counts && html`<span class="groups-run-count">${counts[kind]}</span>`}
+      </label>`;
+    })}
+  </div>`;
+}
+
 export function GroupsFocusSwitch({ state, groups, wizard = false, source = processContext }) {
   if (!processesFocusAvailable(state.snapshot.value)) return null;
-  const runs = source.status.value === 'ready' ? activeRunCount(source.context.value) : null;
+  const ready = source.status.value === 'ready';
+  const runs = ready ? activeRunCount(source.context.value) : null;
   const focus = effectiveGroupsFocus(state);
-  const segment = (value, glyph, plain, arcane, count, title) => html`<button
+  const button = (value, icon, plain, arcane, count, title) => html`<button
       type="button"
       class=${`groups-focus-option${focus === value ? ' active' : ''}`}
       aria-pressed=${focus === value ? 'true' : 'false'}
+      aria-label=${`${wizard ? arcane : plain}${count != null ? ` ${count}` : ''}`}
       data-groups-focus=${value}
       title=${title}
       onClick=${() => chooseGroupsFocus(state, value)}
-    ><span aria-hidden="true">${glyph}</span> ${wizard ? arcane : plain}${count != null && html` <span class="groups-focus-count">${count}</span>`}</button>`;
+    >${icon}${count != null && html`<span class="groups-focus-count">${count}</span>`}</button>`;
   return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
-    ${segment('agents', '👥', 'Agents', 'Familiars', agentCount(groups), 'Agents focus: member tables, with process state as small indicators')}
-    ${segment('processes', '◈', 'Processes', 'Rites', runs, 'Processes focus: run graphs per group, with agents as avatars on the nodes they perform')}
+    ${button('agents', html`<span aria-hidden="true">👥</span>`, 'Agents', 'Familiars', agentCount(groups),
+      wizard ? 'Familiars: the party rosters' : 'Agents: member tables, with process state as small indicators')}
+    <span class="groups-focus-runs">
+      ${button('processes', html`<${FlowIcon} />`, 'Processes', 'Rites', runs,
+        wizard ? 'Rites: each party’s rites as graphs — hover to choose which to show' : 'Processes: run graphs per group — hover to choose which runs to show')}
+      <${RunKindMenu} state=${state} wizard=${wizard} counts=${ready ? runKindCounts(source.context.value) : null} />
+    </span>
   </div>`;
 }
 

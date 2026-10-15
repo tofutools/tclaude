@@ -87,6 +87,28 @@ test('switching to Processes swaps the list for the placeholder, persists and pu
   assert.equal(harness.document.body.classList.contains('groups-focus-processes'), false);
 });
 
+test('the Processes icon carries the run-kind checklist: running + planned by default, never empty, remembered', async (t) => {
+  const { harness, root, state, store } = await setup(t, { prefs: { 'tclaude.dash.groups.processes.filter': 'done' } });
+  assert.equal(state.processFilter.value, 'running,planned', 'the old single-select pref does not override the new default');
+  const menu = root.querySelector('.groups-focus-runs [role="group"][aria-label="Show processes"]');
+  assert.ok(menu, 'the checklist floats off the Processes icon');
+  const box = (kind) => menu.querySelector(`input[data-process-filter="${kind}"]`);
+  const ticked = (kind) => box(kind).hasAttribute('checked');
+  assert.deepEqual(['running', 'planned', 'done'].map(ticked), [true, true, false]);
+
+  await harness.act(() => harness.fireEvent(box('done'), 'change'));
+  assert.equal(state.processFilter.value, 'running,planned,done');
+  assert.equal(store.values.get('tclaude.dash.groups.processes.kinds'), 'running,planned,done');
+  await harness.act(() => harness.fireEvent(box('running'), 'change'));
+  await harness.act(() => harness.fireEvent(box('planned'), 'change'));
+  assert.equal(state.processFilter.value, 'done');
+  // As a browser does: the click clears the box before `change` fires.
+  box('done').checked = false;
+  await harness.act(() => harness.fireEvent(box('done'), 'change'));
+  assert.equal(state.processFilter.value, 'done', 'unticking the last kind is refused');
+  assert.equal(box('done').checked, true, 'the refused box is ticked again');
+});
+
 test('history restores set the focus; Route map restores leave it alone', async (t) => {
   const { harness, root, state, navigated } = await setup(t);
   const restore = (location) => harness.act(() => harness.document.dispatchEvent(

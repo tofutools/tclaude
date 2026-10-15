@@ -16,8 +16,9 @@ import {
   ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
-  RUN_FILTERS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
-  normalizeRunFilter, processContext, processRunApi, runNeedsYou, unauthorizedProfiles, withPerformerNames,
+  DEFAULT_RUN_FILTER, RUN_KINDS, RUN_KIND_LABELS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
+  normalizeRunFilter, processContext, processRunApi, runFilterHas, runFilterKinds, runNeedsYou,
+  unauthorizedProfiles, withPerformerNames,
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
@@ -27,12 +28,13 @@ import {
 
 const html = htm.bind(h);
 
-const FILTER_LABELS = Object.freeze({
-  running: ['Running', 'Unfolding'],
-  planned: ['Planned', 'Foretold'],
-  done: ['Done', 'Fulfilled'],
-  all: ['All', 'All'],
-});
+// filterLabel names the ticked kinds for the empty notes ("running or
+// planned"); '' when every kind is ticked.
+function filterLabel(filter, wizard) {
+  const kinds = runFilterKinds(filter);
+  if (kinds.length === RUN_KINDS.length) return '';
+  return kinds.map((kind) => RUN_KIND_LABELS[kind][wizard ? 1 : 0].toLowerCase()).join(' or ');
+}
 
 function memberName(member) {
   return member?.title || member?.agent_id || member?.conv_id || '';
@@ -204,7 +206,7 @@ function PlannedRow({ item, wizard }) {
 // as cards. The context indexes only live agent-scoped runs, so only the
 // filters that show live runs list them.
 function memberRunEntries(context, members, filter, shown = new Set()) {
-  if (filter !== 'running' && filter !== 'all') return [];
+  if (!runFilterHas(filter, 'running')) return [];
   const index = agentRunIndex(context);
   const seen = new Set(shown);
   const out = [];
@@ -243,7 +245,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
   const nameOf = (ref) => names.get(ref) || '';
   const busy = busyPerformers(groupRunsFor(context, entry, 'running').runs);
   const memberRuns = memberRunEntries(context, members, filter, new Set(runs.map((run) => run.runId)));
-  const label = FILTER_LABELS[filter][wizard ? 1 : 0].toLowerCase();
+  const label = filterLabel(filter, wizard);
   const open = (runId) => onFocusRun({ group: group.name, runId });
   return html`<div class="gp-group" data-process-group=${group.name}>
     <div class="gp-group-head">
@@ -256,7 +258,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Familiar rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && !memberRuns.length && html`<div class="gp-empty">${filter === 'all'
+    ${!runs.length && !planned.length && !memberRuns.length && html`<div class="gp-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
   </div>`;
@@ -292,11 +294,11 @@ export function UngroupedProcessBody({ group }) {
   if (!perspective) return null;
   const { wizard, filter } = perspective;
   const entries = ungroupedRuns(perspective, group);
-  const label = FILTER_LABELS[filter][wizard ? 1 : 0].toLowerCase();
+  const label = filterLabel(filter, wizard);
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
     <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
       onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
-    ${!entries.length && html`<div class="gp-empty">${filter === 'running' || filter === 'all'
+    ${!entries.length && html`<div class="gp-empty">${runFilterHas(filter, 'running')
       ? (wizard ? 'No unbound familiar walks a rite.' : 'No ungrouped agent runs a process.')
       : `No ${label} ${wizard ? 'rites' : 'processes'} outside groups.`}</div>`}
   </div>`;
@@ -354,11 +356,12 @@ function findFocusGroup(focusedRun, rosters, groups) {
     || null;
 }
 
-// GroupsProcessesFocus frames the Processes perspective: the run filter, the
-// load states, and either the single-run focus or `children` -- the shared
-// groups tree -- under the ProcessesPerspective it reads.
+// GroupsProcessesFocus frames the Processes perspective: the load states, and
+// either the single-run focus or `children` -- the shared groups tree --
+// under the ProcessesPerspective it reads. The run filter itself is the
+// checklist on the toolbar's Processes button (groups-focus.js).
 export function GroupsProcessesFocus({
-  groups, allGroups = null, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
+  groups, allGroups = null, filter = DEFAULT_RUN_FILTER, wizard = false, source = processContext, api = processRunApi,
   focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
@@ -396,14 +399,7 @@ export function GroupsProcessesFocus({
   }
   const perspective = { context, filter: current, wizard, api, source, onFocusRun, rosters };
   return html`<div class="gp-focus" data-groups-processes>
-    <div class="gp-toolbar">
-      <div class="gp-filter" role="group" aria-label=${wizard ? 'Rite filter' : 'Process filter'}>
-        ${RUN_FILTERS.map((value) => html`<button key=${value} type="button" data-process-filter=${value}
-          class=${current === value ? 'active' : ''} aria-pressed=${current === value ? 'true' : 'false'}
-          onClick=${() => onFilter(value)}>${FILTER_LABELS[value][wizard ? 1 : 0]}</button>`)}
-      </div>
-      ${source.error.value && status === 'ready' && html`<span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span>`}
-    </div>
+    ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
     ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}

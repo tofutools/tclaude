@@ -17,9 +17,11 @@ import {
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
 import { GROUPS_FOCUS_PREF, normalizeGroupsFocus } from './groups-focus.js';
-import { normalizeRunFilter } from './process-context.js';
+import { DEFAULT_RUN_FILTER, normalizeRunFilter } from './process-context.js';
 
-const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.filter';
+// The run filter became a checklist (process-context.js RUN_KINDS). A fresh
+// key, so a remembered single-select value never overrides the new default.
+const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.kinds';
 
 const FILTER_KEY = 'tclaude.dash.filter.groups';
 
@@ -183,8 +185,9 @@ export function createGroupsState({
   const routeSelection = signal('');
   // Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
   const focus = signal('agents');
-  // Running | Planned | Done | All over the Processes lens's run cards.
-  const processFilter = signal('running');
+  // The ticked run kinds (running / planned / done) over the Processes
+  // lens's run cards, as a canonical "running,planned" string.
+  const processFilter = signal(DEFAULT_RUN_FILTER);
   // The single-run focus (G5): { group, runId } while one run is open in the
   // Processes lens, else null. Session-only: a reload lands on the cards.
   const focusedRun = signal(null);

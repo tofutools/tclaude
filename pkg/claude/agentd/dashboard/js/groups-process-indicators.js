@@ -12,7 +12,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { ProcessRunBadge } from './process-kit.js';
-import { groupContextEntry, processContext } from './process-context.js';
+import { groupContextEntry, processContext, withRunKind } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
 import { chooseGroupsFocus } from './groups-focus.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
@@ -48,13 +48,15 @@ export function groupProcessCounts(entry) {
   };
 }
 
-// openGroupInProcesses switches to the Processes focus on `filter` and brings
+// openGroupInProcesses switches to the Processes focus with the `filter` kind
+// ticked and brings
 // the group's row into view, opened so its runs show (the open state is
 // shared with Agents, so a group folded there would hide them).
 export function openGroupInProcesses(groupName, filter = 'running', { doc = document } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
-  groups.setProcessFilter?.(filter);
+  // Tick the clicked kind without unticking the others.
+  groups.setProcessFilter?.(withRunKind(groups.processFilter?.value, filter));
   groups.setFocusedRun?.(null);
   chooseGroupsFocus(groups, 'processes', { doc });
   const reveal = () => {
