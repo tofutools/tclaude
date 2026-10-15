@@ -20350,3 +20350,26 @@ body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button.primar
   color: #f3e6c0; border: 2px solid #d9b45a;
 }
 body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Workflow sharing (.pwf): the import review. */
+.pwf-import-entry { display: inline-flex; align-items: center; gap: 8px; }
+.pwf-inline-error { font-size: 12px; }
+.pwf-import-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; color: #c9d1d9; background: #161b22; border: 1px solid #30363d; }
+.pwf-import-dialog h4 { margin: 0 0 4px; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; color: #8b949e; }
+.pwf-import-dialog ul { margin: 0; padding-left: 18px; }
+.pwf-import-dialog li { margin: 2px 0; }
+.pwf-file { margin: -4px 0 6px; font-size: 12px; overflow-wrap: anywhere; }
+.pwf-summary { margin: 0 0 8px; }
+.pwf-signer { margin: 0 0 10px; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; }
+.pwf-signer.is-trusted { background: #0f2a17; border: 1px solid #238636; color: #aff5b4; }
+.pwf-signer.is-untrusted { background: #2a2111; border: 1px solid #9e6a03; color: #f2cc60; }
+.pwf-section { margin: 0 0 12px; }
+.pwf-commands code { color: #ffa198; overflow-wrap: anywhere; }
+.pwf-param { display: inline-block; margin: 0 6px 4px 0; padding: 0 7px; border: 1px solid #30363d; border-radius: 10px; font-size: 12px; }
+.pwf-warn { border-left: 3px solid #9e6a03; padding-left: 10px; }
+.pwf-status { font-size: 11.5px; color: #8b949e; }
+.pwf-status.is-update { color: #f2cc60; }
+.pwf-status.is-new { color: #56d364; }
+.pwf-replace { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin-top: 6px; font-size: 12.5px; text-align: left; }
+.pwf-replace input { flex: none; width: auto; margin: 0; }
+.pwf-import-dialog .modal-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
+body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }

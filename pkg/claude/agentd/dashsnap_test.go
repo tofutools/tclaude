@@ -1575,6 +1575,34 @@ setTimeout(function(){
 			SettleMS: 900,
 		},
 		{
+			Key:     "processes-workflow-import",
+			Title:   "Processes — import a shared workflow",
+			Caption: "PWF: ⤒ import workflow previews a .pwf file and opens the review before anything is stored: signer trust, every command it would run with its program profile, the roles it asks for, steps that are not portable, and what changes here. Replacing an existing template needs explicit consent. Each template row gains a share (export) action.",
+			JS:      processTabJS(`[data-process-template="release-train"]`),
+			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `return (async function(){
+  var preview={title:'Ship a feature',summary:'A developer implements the issue, a reviewer checks it, you approve, and the PR is merged.',root:'ship-feature@sha256:173d',rootId:'ship-feature',
+    signatures:[{keyId:'pub_3f2a9c1e',status:'valid',trust:'unknown key'}],
+    params:[{name:'issue',type:'string',required:true}],
+    roles:[{name:'dev',steps:['ship-feature:build']},{name:'reviewer',steps:['review-loop:review']}],
+    programs:[{step:'ship-feature:merge',profile:'git',run:'gh',args:['pr','merge','--squash']}],
+    assignees:[{name:'checkout',steps:['ship-feature:build']}],humans:['ship-feature:approve'],
+    templates:[{ref:'ship-feature@sha256:173d',id:'ship-feature',name:'Ship feature',head:true,status:'new'},{ref:'review-loop@sha256:ca7a',id:'review-loop',name:'Review loop',head:true,status:'update',currentRef:'review-loop@sha256:0b1c'}],
+    updates:1,applied:false,reviewDigest:'d'};
+  var realFetch=window.fetch;
+  window.fetch=function(url,init){ if(String(url).indexOf('/v1/process/import')===0) return Promise.resolve(new Response(JSON.stringify(preview),{status:200,headers:{'Content-Type':'application/json'}})); return realFetch(url,init); };
+  if(!document.querySelector('[data-process-action="export"][data-id="release-train"]')) throw new Error('template row lacks the share action');
+  var input=document.querySelector('[data-pwf-file]');
+  if(!input) throw new Error('import workflow entry missing');
+  var dt=new DataTransfer(); dt.items.add(new File([new Uint8Array([80,75,3,4])],'ship-feature.pwf'));
+  input.files=dt.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+  var deadline=Date.now()+3000;
+  while(!document.querySelector('[data-pwf-command]') && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,40); });
+  if(!document.querySelector('[data-pwf-command="ship-feature:merge"]')) throw new Error('import review did not open');
+  if(!document.querySelector('[data-pwf-import]').disabled) throw new Error('an update must need replace consent');
+})();`}},
+			SettleMS: 500,
+		},
+		{
 			Key:     "processes-template-description-edit",
 			Title:   "Processes — inline description edit",
 			Caption: "TCL-600: the Templates list edits a template description in place, with the click-to-edit affordance swapped for a focused, skin-themed editor.",

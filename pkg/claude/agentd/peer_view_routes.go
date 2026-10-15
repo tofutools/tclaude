@@ -5,6 +5,9 @@ package agentd
 var peerViewLocalRoutes = []string{
 	// Process runs are this node's own; a peer view never serves them.
 	"GET /v1/process/context",
+	// Workflow files leave and enter this node's own template store.
+	"GET /v1/process/templates/{id}/export",
+	"POST /v1/process/import",
 	"POST /v1/process/runs/{id}/decide",
 	"POST /v1/process/runs/{id}/rescope",
 	"POST /v1/process/runs/{id}/pause",
