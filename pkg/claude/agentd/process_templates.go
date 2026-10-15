@@ -542,29 +542,40 @@ func processTemplateAuthor(callerConv string) (store.ActorRef, error) {
 }
 
 func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemplateEditView, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxProcessEditBody)
-	data, err := io.ReadAll(r.Body)
+	var body processTemplateEditView
+	present, err := decodeProcessEditBody(w, r, &body)
 	if err != nil {
 		return nil, err
 	}
+	body.layoutPresent = present
+	return &body, nil
+}
+
+// decodeProcessEditBody strictly decodes one edit-view-shaped request body
+// into target and reports whether it carried a layout.
+func decodeProcessEditBody(w http.ResponseWriter, r *http.Request, target any) (bool, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxProcessEditBody)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var body processTemplateEditView
-	if err := dec.Decode(&body); err != nil {
-		return nil, err
+	if err := dec.Decode(target); err != nil {
+		return false, err
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return nil, fmt.Errorf("request must contain one JSON value")
+			return false, fmt.Errorf("request must contain one JSON value")
 		}
-		return nil, err
+		return false, err
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
-		return nil, err
+		return false, err
 	}
-	_, body.layoutPresent = fields["layout"]
-	return &body, nil
+	_, present := fields["layout"]
+	return present, nil
 }
 
 func assembleProcessEditModel(body *processTemplateEditView) error {

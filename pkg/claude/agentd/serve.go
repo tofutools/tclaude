@@ -1545,6 +1545,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
+	mux.HandleFunc("POST /v1/process/resolve-preview", processRoute(handleProcessResolvePreview))
 	// Workflow sharing (.pwf): export a template with its references; preview
 	// or apply an import. Neither starts a run.
 	mux.HandleFunc("GET /v1/process/templates/{id}/export", processRoute(handleProcessTemplateExport))
