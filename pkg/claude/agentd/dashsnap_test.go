@@ -2406,10 +2406,10 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
-			Key:     "process-editor-auto-layout-before",
-			Title:   "Process editor — hand-placed mess before auto layout",
-			Caption: "Nodes dragged around by hand: every drag pins a position, so the graph drifts out of shape.",
-			JS: processEditorStateJS(autoLayoutMessJS + ` await editorPaint(); await editorPaint();`),
+			Key:      "process-editor-auto-layout-before",
+			Title:    "Process editor — hand-placed mess before auto layout",
+			Caption:  "Nodes dragged around by hand: every drag pins a position, so the graph drifts out of shape.",
+			JS:       processEditorStateJS(autoLayoutMessJS + ` await editorPaint(); await editorPaint();`),
 			SettleMS: 1100,
 		},
 		{
