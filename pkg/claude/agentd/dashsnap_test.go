@@ -857,7 +857,7 @@ func baseStates() []dashsnap.State {
   var parent = document.querySelector('details[data-group-key="`+tfTemplate+`"] > summary');
   if (!parent || !parent.querySelector('.gpi-chip')) throw new Error('the parent row lacks its own run counts');
   var total = parent.querySelector('.gp-subtree-total');
-  if (!total || !/in subgroups: 1 needs you/.test(total.textContent)) throw new Error('the collapsed parent lacks its subgroup total');`, false),
+  if (!total || !/in sub(groups|-parties): 1 (needs you|awaits you)/.test(total.textContent)) throw new Error('the collapsed parent lacks its subgroup total');`, false),
 			SettleMS: 300,
 		},
 		{
