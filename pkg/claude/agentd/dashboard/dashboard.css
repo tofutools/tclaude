@@ -1156,8 +1156,10 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 /* Review pill: a person icon (plus a count for approvals or change
    requests) coloured by review state. Borderless so it reads as people, not
    as a second CI pill; the border returns on hover/focus like the CI pill's. */
-.ci-badge.rv-badge { gap: 2px; margin-left: 2px; padding: 2px 2px; border-color: transparent; background: none; }
+.ci-badge.rv-badge { gap: 2px; margin-left: 0; padding: 2px 2px; border-color: transparent; background: none; }
 .ci-badge.rv-badge:hover { border-color: currentColor; }
+/* Centre the reviewer silhouette beside the CI pill. */
+.rv-hover { top: 2px; }
 .rv-person { width: 10px; height: 10px; fill: currentColor; display: block; }
 .rv-badge.rv-approved { color: #3fb950; }
 .rv-badge.rv-changes { color: #f85149; }
