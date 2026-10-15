@@ -42,7 +42,7 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
     issueCount
     nodes{
       ... on PullRequest{
-        number title url isDraft updatedAt
+        number title url isDraft updatedAt reviewDecision
         repository{nameWithOwner}
         commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
           __typename
@@ -55,6 +55,18 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
 
 const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!){\n" +
 	authoredOpenPRSearchFragment + "\n}"
+
+// authoredOpenPRReviewsSelection is the reviewer list spliced into the open
+// search right after reviewDecision when reviews are due (see prreviews.go).
+// It is a connection, so it costs one GraphQL point per search; the scalar
+// reviewDecision before it costs nothing and rides every tick.
+const authoredOpenPRReviewsSelection = `
+        latestOpinionatedReviews(first:20){nodes{state url submittedAt author{__typename login}}}`
+
+// withAuthoredOpenPRReviews widens a search query to fetch reviewer lists.
+func withAuthoredOpenPRReviews(query string) string {
+	return strings.Replace(query, "updatedAt reviewDecision", "updatedAt reviewDecision"+authoredOpenPRReviewsSelection, 1)
+}
 
 // authoredRecentPRGraphQLQuery adds a second aliased search when the "recently
 // closed" window is enabled, so the poller still makes ONE GitHub request per
@@ -90,6 +102,12 @@ type dashboardAuthoredOpenPR struct {
 	// Items in the open list leave both empty.
 	State    string `json:"state,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
+	// Reviews is stamped from the per-PR review cache at snapshot time, open
+	// items only (prreviews.go).
+	Reviews *prReviewSummary `json:"reviews,omitempty"`
+	// reviewObs is the search's review observation for this PR, handed from
+	// the resolver to the poller, which merges it into that cache.
+	reviewObs *prReviewObservation
 }
 
 // locallyKnownPR is a PR candidate learned from an agent's branch/startup
@@ -203,6 +221,9 @@ func pollAuthoredOpenPRs() error {
 		savePresentedPRCache(presentedPRCacheKey(view.Items[i].URL), view.Items[i].URL, presentedPRInfo{
 			Title: view.Items[i].Title, Number: view.Items[i].Number, URL: view.Items[i].URL, State: state, FetchedAt: now,
 		}, now)
+		if obs := view.Items[i].reviewObs; obs != nil {
+			savePRReviewObservation(view.Items[i].URL, *obs, now)
+		}
 		if view.Items[i].Checks == nil {
 			continue
 		}
@@ -297,13 +318,18 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	// terminal authored PRs. Groups uses the same response to retire merged
 	// badges, replacing its former independent GitHub Search poll.
 	fetchWindowDays := max(windowDays, 1)
-	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, fetchWindowDays, time.Now())...)
+	now := time.Now()
+	withReviews := authoredOpenPRReviewsDue(now)
+	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, fetchWindowDays, now, withReviews)...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
 	view, checksByURL, err := decodeAuthoredOpenPRGraphQL([]byte(out), login)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
+	}
+	if withReviews {
+		authoredOpenPRReviewsFetchedAt.Store(now.UnixNano())
 	}
 	view.RecentWindowDays = fetchWindowDays
 	for rawURL, info := range checksByURL {
@@ -317,7 +343,10 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 // qualifiers and the date arithmetic are unit-testable — a typo in `qr=`
 // would otherwise only show up as a silently empty recent list in production.
 // Every value lands in argv, never in a shell string.
-func authoredPRSearchArgs(login string, windowDays int, now time.Time) []string {
+//
+// withReviews adds each open PR's reviewer list (one extra GraphQL point); the
+// caller asks for it only every authoredOpenPRReviewInterval.
+func authoredPRSearchArgs(login string, windowDays int, now time.Time, withReviews bool) []string {
 	query := authoredOpenPRGraphQLQuery
 	extra := []string(nil)
 	if windowDays > 0 {
@@ -331,6 +360,9 @@ func authoredPRSearchArgs(login string, windowDays int, now time.Time) []string 
 			"-f", "qr=author:" + login + " is:closed type:pr closed:>=" + since + " sort:updated-desc",
 			"-F", "rfirst=" + strconv.Itoa(authoredRecentPRLimit),
 		}
+	}
+	if withReviews {
+		query = withAuthoredOpenPRReviews(query)
 	}
 	args := []string{
 		"api", "--hostname", "github.com", "graphql",
@@ -347,11 +379,25 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			Search struct {
 				IssueCount int `json:"issueCount"`
 				Nodes      []struct {
-					Number     int    `json:"number"`
-					Title      string `json:"title"`
-					URL        string `json:"url"`
-					IsDraft    bool   `json:"isDraft"`
-					UpdatedAt  string `json:"updatedAt"`
+					Number    int    `json:"number"`
+					Title     string `json:"title"`
+					URL       string `json:"url"`
+					IsDraft   bool   `json:"isDraft"`
+					UpdatedAt string `json:"updatedAt"`
+					// ReviewDecision is always selected; the reviewer list
+					// only on review ticks, so nil means "not fetched".
+					ReviewDecision           string `json:"reviewDecision"`
+					LatestOpinionatedReviews *struct {
+						Nodes []struct {
+							State       string `json:"state"`
+							URL         string `json:"url"`
+							SubmittedAt string `json:"submittedAt"`
+							Author      *struct {
+								Typename string `json:"__typename"`
+								Login    string `json:"login"`
+							} `json:"author"`
+						} `json:"nodes"`
+					} `json:"latestOpinionatedReviews"`
 					Repository struct {
 						NameWithOwner string `json:"nameWithOwner"`
 					} `json:"repository"`
@@ -427,6 +473,22 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			item.Checks = &info.Summary
 			checksByURL[item.URL] = info
 		}
+		obs := &prReviewObservation{
+			Decision: normalizePRReviewDecision(node.ReviewDecision), Source: prReviewSourceSearch,
+		}
+		if node.LatestOpinionatedReviews != nil {
+			obs.ReviewersFetched = true
+			for _, r := range node.LatestOpinionatedReviews.Nodes {
+				if r.Author == nil {
+					continue
+				}
+				if reviewer, ok := normalizePRReviewer(r.Author.Login, r.State, r.URL, r.SubmittedAt,
+					r.Author.Typename == "Bot"); ok {
+					obs.Reviewers = append(obs.Reviewers, reviewer)
+				}
+			}
+		}
+		item.reviewObs = obs
 		view.Items = append(view.Items, item)
 	}
 	sortAuthoredOpenPRs(view.Items)

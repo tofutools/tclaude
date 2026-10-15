@@ -58,7 +58,9 @@ type presentedPRView struct {
 	State     string `json:"state,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 	// Checks is the CI summary for this PR — counts only; see prchecks.go.
-	Checks    *prChecksSummary `json:"checks,omitempty"`
+	Checks *prChecksSummary `json:"checks,omitempty"`
+	// Reviews is the review status for this PR; see prreviews.go.
+	Reviews   *prReviewSummary `json:"reviews,omitempty"`
 	updatedAt time.Time
 }
 
@@ -154,6 +156,8 @@ type presentedPRInfo struct {
 	// the shared per-PR check key instead of here — same arrangement as
 	// repoBranchInfo.Checks. Resolver out-channel only, never persisted.
 	Checks *prChecksInfo `json:"-"`
+	// Reviews is the matching out-channel for the review fields (prr_ keys).
+	Reviews *prReviewObservation `json:"-"`
 }
 
 func presentedPRCacheFresh(rawURL string, now time.Time) bool {
@@ -212,6 +216,9 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 		checks.Summary = summarizePRChecks(checks.Checks, now)
 		savePRChecks(rawURL, checks)
 	}
+	if info.Reviews != nil {
+		savePRReviewObservation(rawURL, *info.Reviews, now)
+	}
 	savePresentedPRCache(key, rawURL, info, now)
 	if !ok || info.State == "" || agentID == "" {
 		return
@@ -223,7 +230,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup", gitProxyHardeningActive())
+	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup,reviewDecision,latestReviews", gitProxyHardeningActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -235,12 +242,14 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 		return livePresentedPRInfoWithoutChecks(rawURL)
 	}
 	var pr struct {
-		Number            int             `json:"number"`
-		Title             string          `json:"title"`
-		URL               string          `json:"url"`
-		State             string          `json:"state"`
-		IsDraft           bool            `json:"isDraft"`
-		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+		Number            int              `json:"number"`
+		Title             string           `json:"title"`
+		URL               string           `json:"url"`
+		State             string           `json:"state"`
+		IsDraft           bool             `json:"isDraft"`
+		StatusCheckRollup json.RawMessage  `json:"statusCheckRollup"`
+		ReviewDecision    string           `json:"reviewDecision"`
+		LatestReviews     []ghLatestReview `json:"latestReviews"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return presentedPRInfo{}, false
@@ -251,6 +260,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	checks := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
 	return presentedPRInfo{
 		Title: truncateAuthoredPRTitle(pr.Title), Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft), Checks: &checks,
+		Reviews: prReviewObservationFromGH(pr.ReviewDecision, pr.LatestReviews),
 	}, true
 }
 

@@ -8,6 +8,7 @@ import {
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
 import { fmtExactUSD, fmtUSD } from './costs-model.js';
+import { prReviewState, readyToMerge } from './pr-review-model.js';
 
 const USAGE_BAR_WIDTH = 8;
 
@@ -232,6 +233,8 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     // the Open and Unattached views, but leave it out of the attention signal
     // unless the operator opts into using drafts as part of that queue.
     if (pr?.draft && !includeDraftsInAttention) return false;
+    // A reviewer asking for changes is waiting on the author whatever CI says.
+    if (prReviewState(pr?.reviews) === 'changes') return true;
     const checks = pr?.checks;
     if (!checks || Number(checks.total || 0) === 0) return true;
     return checks.state === 'failing' || checks.state === 'passing';
@@ -239,6 +242,7 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
   const showingRecent = filter === 'recent' && recentWindowDays > 0;
   const filtered = showingRecent ? recent : all.filter((pr) => {
     if (filter === 'attention') return needsAttention(pr);
+    if (filter === 'ready') return readyToMerge(pr);
     if (filter === 'unattached') return !pr?.agent_id;
     return true;
   });
@@ -251,6 +255,7 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     updatedAt: source.updated_at || '',
     searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
     attention: all.filter(needsAttention).length,
+    ready: all.filter(readyToMerge).length,
     unattached: all.filter((pr) => !pr?.agent_id).length,
     hasDrafts: all.some((pr) => !!pr?.draft),
     recentCount: recent.length,

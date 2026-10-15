@@ -226,6 +226,7 @@ body.dock-open .open-prs.is-open::before {
    same purple/red vocabulary as the member table's PR links. */
 .open-pr-state-merged { background: #a371f7; }
 .open-pr-state-closed { background: #f85149; }
+.open-pr-badges { display: inline-flex; align-items: center; white-space: nowrap; }
 .open-pr-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .open-pr-title { overflow: hidden; color: #d6dde5; font-size: 12px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .open-pr-title:hover { color: #79c0ff; text-decoration: underline; }
@@ -1152,6 +1153,13 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
 .ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
 .ci-badge.ci-pending { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+/* Review pill: the same pill as CI, coloured by review state. "No reviews"
+   is dashed so it reads as an absence rather than as a result. */
+.rv-badge.rv-approved { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
+.rv-badge.rv-changes { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+.rv-badge.rv-required { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+.rv-badge.rv-none { color: #6e7681; border-style: dashed; }
+.rv-panel .rv-note-age { float: right; color: #6e7681; }
 /* Positioned against the VIEWPORT, with top/left/max-height written by the
    component. Absolute positioning hung the panel off a table row, so opening
    a tooltip on a row near the bottom stretched the dashboard's scroll area;
@@ -1239,6 +1247,9 @@ body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
 body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
+body.wizard .rv-badge.rv-approved { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
+body.wizard .rv-badge.rv-changes { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
+body.wizard .rv-badge.rv-required { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
 body.wizard .ci-panel {
   border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
   color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);

@@ -68,8 +68,11 @@ type repoLinksView struct {
 	// the per-check list is served on demand by /api/pr-checks so the 2s
 	// snapshot never carries it. nil when the PR's checks are unresolved
 	// (or the PR has none), which renders as no indicator at all.
-	BranchChecks     *prChecksSummary `json:"branch_checks,omitempty"`
-	StartupChecks    *prChecksSummary `json:"startup_checks,omitempty"`
+	BranchChecks  *prChecksSummary `json:"branch_checks,omitempty"`
+	StartupChecks *prChecksSummary `json:"startup_checks,omitempty"`
+	// Review status for the same badges; see prreviews.go. nil when unknown.
+	BranchReviews    *prReviewSummary `json:"branch_reviews,omitempty"`
+	StartupReviews   *prReviewSummary `json:"startup_reviews,omitempty"`
 	branchPRUpdated  time.Time
 	startupPRUpdated time.Time
 }
@@ -93,6 +96,9 @@ type repoBranchInfo struct {
 	// badges for one PR share a single answer. This field is only the
 	// resolver's out-channel to refreshBranchLink.
 	Checks *prChecksInfo `json:"-"`
+	// Reviews is the same kind of out-channel for the review fields, cached
+	// per PR identity under prr_ keys (prreviews.go).
+	Reviews *prReviewObservation `json:"-"`
 }
 
 // gitInfoResolver is the subprocess boundary for branch-link
@@ -427,6 +433,9 @@ func refreshBranchLink(repoDir, branch, key string) {
 		checks.Summary = summarizePRChecks(checks.Checks, checks.FetchedAt)
 		savePRChecks(info.PRURL, checks)
 	}
+	if info.PRURL != "" && info.Reviews != nil {
+		savePRReviewObservation(info.PRURL, *info.Reviews, info.FetchedAt)
+	}
 	if info.PRURL != "" && info.PRState != "" {
 		savePresentedPRCache(presentedPRCacheKey(info.PRURL), info.PRURL, presentedPRInfo{
 			Number: info.PRNumber, URL: info.PRURL, State: info.PRState, FetchedAt: info.FetchedAt,
@@ -569,7 +578,7 @@ func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repo
 		// leaves gh in the daemon's own cwd — out of the agent's work tree,
 		// which is the point, though it is the daemon's directory rather than
 		// an empty one. Same shape as the presented-PR resolvers in prs.go.
-		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch("", repo.OwnerRepo, branch)
+		info.PRNumber, info.PRURL, info.PRState, info.Checks, info.Reviews = ghPRForBranch("", repo.OwnerRepo, branch)
 	}
 	return info, true
 }
@@ -594,7 +603,7 @@ func legacyGitInfo(repoDir, branch string) (repoBranchInfo, bool) {
 	// skips the slowest call (`gh` hits the network) for the common
 	// case of an agent sitting on main.
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch(repoDir, "", branch)
+		info.PRNumber, info.PRURL, info.PRState, info.Checks, info.Reviews = ghPRForBranch(repoDir, "", branch)
 	}
 	return info, true
 }
@@ -687,9 +696,9 @@ func gitDefaultBranchWith(probe func(args ...string) string) string {
 // its own: the dashboard already pays for a `gh pr list` per branch PR per
 // branchLinkTTL, and asking for one more JSON field is free next to a
 // second network round-trip per PR.
-func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string, checks *prChecksInfo) {
+func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string, checks *prChecksInfo, reviews *prReviewObservation) {
 	if !safeBranchForGH(dir, branch) {
-		return 0, "", "", nil
+		return 0, "", "", nil, nil
 	}
 	out := runInDir(dir, "gh", ghPRListArgs(ownerRepo, branch, true)...)
 	if out == "" {
@@ -697,18 +706,21 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 		// rejects the field (old version, or a host that doesn't serve it)
 		// must not take the branch's PR number/URL/state down with it, so
 		// retry once for the fields that predate this feature.
-		return ghPRForBranchWithoutChecks(dir, ownerRepo, branch)
+		number, url, state, checks = ghPRForBranchWithoutChecks(dir, ownerRepo, branch)
+		return number, url, state, checks, nil
 	}
 	var prs []struct {
-		Number            int             `json:"number"`
-		URL               string          `json:"url"`
-		State             string          `json:"state"`
-		IsDraft           bool            `json:"isDraft"`
-		IsCrossRepository bool            `json:"isCrossRepository"`
-		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+		Number            int              `json:"number"`
+		URL               string           `json:"url"`
+		State             string           `json:"state"`
+		IsDraft           bool             `json:"isDraft"`
+		IsCrossRepository bool             `json:"isCrossRepository"`
+		StatusCheckRollup json.RawMessage  `json:"statusCheckRollup"`
+		ReviewDecision    string           `json:"reviewDecision"`
+		LatestReviews     []ghLatestReview `json:"latestReviews"`
 	}
 	if json.Unmarshal([]byte(out), &prs) != nil {
-		return 0, "", "", nil
+		return 0, "", "", nil, nil
 	}
 	pick := -1
 	for i := range prs {
@@ -724,11 +736,12 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 		}
 	}
 	if pick < 0 {
-		return 0, "", "", nil
+		return 0, "", "", nil, nil
 	}
 	resolved := parseStatusCheckRollup(prs[pick].StatusCheckRollup, time.Now())
 	return prs[pick].Number, prs[pick].URL,
-		prStateFromGH(prs[pick].State, prs[pick].IsDraft), &resolved
+		prStateFromGH(prs[pick].State, prs[pick].IsDraft), &resolved,
+		prReviewObservationFromGH(prs[pick].ReviewDecision, prs[pick].LatestReviews)
 }
 
 // ghPRListArgs builds the argv for a branch's pull-request lookup.
@@ -761,7 +774,7 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 func ghPRListArgs(ownerRepo, branch string, rich bool) []string {
 	fields := "number,url,state,isCrossRepository"
 	if rich {
-		fields += ",isDraft,statusCheckRollup"
+		fields += ",isDraft,statusCheckRollup,reviewDecision,latestReviews"
 	}
 	args := []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
 	if strings.TrimSpace(ownerRepo) != "" {
