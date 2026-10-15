@@ -18917,6 +18917,14 @@ body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
   padding: 6px 9px; border-radius: 10px; border: 1px solid #30363d; background: #161b22; color: #e6edf3;
 }
 .psd-msg.is-human .psd-msg-body { background: #1f3a5f; border-color: #1f6feb; }
+.psd-msg.is-live { gap: 4px; }
+.psd-msg.is-live .psd-msg-body { border-style: dashed; color: #c9d1d9; }
+.psd-live-tool, .psd-live-more {
+  margin: 0; font-size: 11.5px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.psd-live-tool::before { content: "▸ "; color: #58a6ff; }
+.psd-live-more { font-family: inherit; font-style: italic; }
 .psd-working { margin: 0; color: #8b949e; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .psd-dot { width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; animation: psd-pulse 1.2s ease-in-out infinite; }
 @keyframes psd-pulse { 50% { opacity: .25; } }

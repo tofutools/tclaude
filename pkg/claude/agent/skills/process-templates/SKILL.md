@@ -24,8 +24,9 @@ A scribe needs both independent slugs:
   default-permission installer grants this low-risk read slug. When it is
   absent, use `--ask-human 30s` on the individual read command for one-shot
   approval instead of asking the human to run the command manually.
-- `process.templates.manage` for `save`. It is not default-granted. Ask the
-  human to grant it, or use `save --ask-human 30s` for one-shot approval.
+- `process.templates.manage` for `save` and `import`. It is not
+  default-granted. Ask the human to grant it, or use `save --ask-human 30s`
+  for one-shot approval.
 
 Manage does not imply read. Owning a group does not imply either one — group
 ownership confers only the read-only `process.runs.read`, never template
@@ -266,3 +267,15 @@ Saving only persists canonical authoring content, selects a head with CAS, and
 records the socket peer's stable actor identity. It must never be used as an
 execution mechanism. Use `ls` and `show` to inspect the result through the same
 store and REST surface the dashboard consumes.
+
+## Sharing workflows (.pwf)
+
+`export <id> [-o file.pwf]` packs a template and every template its
+subprocess steps reference into a Portable Workflow Format file (read slug).
+`inspect <file.pwf>` verifies and summarizes one offline. `import <file.pwf>`
+shows the review (signer, roles, every command it would run, what changes
+here) and stops; only `--yes` imports, and `--replace` is needed to replace a
+template that exists with different content (manage slug). Never pass `--yes`
+or `--replace` on an agent's own judgement: show the review to the human and
+let them decide. Importing stores templates only and never starts a run.
+Prefer roles over `assignee` in templates meant to be shared.

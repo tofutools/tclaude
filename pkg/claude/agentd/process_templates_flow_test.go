@@ -32,6 +32,8 @@ func TestProcessTemplateRoutes404WhenFeatureOff(t *testing.T) {
 		{http.MethodGet, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/templates/example"},
 		{http.MethodPost, "/v1/process/validate"},
+		{http.MethodGet, "/v1/process/templates/example/export"},
+		{http.MethodPost, "/v1/process/import"},
 	} {
 		rec := processTemplateRequest(t, f, test.method, test.path, map[string]any{})
 		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", test.method, test.path, rec.Body.String())

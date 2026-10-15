@@ -151,7 +151,7 @@ test('context handoff is clearly delimited, CAS-safe, editable-prompt bounded, a
 });
 
 test('scribe chat messages are bounded and carry context only for actions', async () => {
-  const { processScribeChatMessage, processScribeChatTranscript, PROCESS_SCRIBE_PROMPT_MAX } = await import('../dashboard/js/process-scribe.js');
+  const { processScribeChatLive, processScribeChatMessage, processScribeChatTranscript, PROCESS_SCRIBE_PROMPT_MAX } = await import('../dashboard/js/process-scribe.js');
   assert.equal(processScribeChatMessage({ prompt: '  Rename build.  ' }), 'Rename build.');
   assert.throws(() => processScribeChatMessage({ prompt: '   ' }), /write a message/);
   assert.throws(() => processScribeChatMessage({ prompt: 'x'.repeat(PROCESS_SCRIBE_PROMPT_MAX + 1) }), /at most/);
@@ -163,4 +163,12 @@ test('scribe chat messages are bounded and carry context only for actions', asyn
     { id: 'x', role: 'system', body: 'dropped' }, { role: 'scribe', body: 'no id' },
   ] }).map((m) => [m.id, m.role, m.body]), [['h1', 'human', 'hi'], ['s1', 'scribe', '<b>x</b>']]);
   assert.deepEqual(processScribeChatTranscript(null), []);
+  assert.equal(processScribeChatLive({ messages: [] }), null, 'no live tail when no turn is open');
+  const live = processScribeChatLive({ live: { truncated: true, unavailable: 7, items: [
+    { kind: 'text', text: 'so far' }, { kind: 'tool', text: 'Bash: ls' }, { kind: 'thinking', text: 'dropped' }, { kind: 'text', text: '' },
+  ] } });
+  assert.deepEqual(live.items.map((i) => [i.kind, i.text]), [['text', 'so far'], ['tool', 'Bash: ls']]);
+  assert.equal(live.truncated, true);
+  assert.equal(live.unavailable, '');
+  assert.deepEqual(processScribeChatLive({ live: { items: null, unavailable: 'cannot read' } }), { items: [], truncated: false, unavailable: 'cannot read' });
 });

@@ -1,0 +1,51 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: ship-feature
+name: Ship feature
+description: Implement, review, approve, merge.
+start: begin
+params:
+  issue:
+    type: string
+    required: true
+nodes:
+  begin:
+    type: start
+    next:
+      pass: build
+  build:
+    type: task
+    performer:
+      kind: agent
+      profile: dev
+      assignee: checkout
+      prompt: Implement {{ params.issue }}
+    next:
+      pass: review
+  review:
+    type: subprocess
+    subprocess:
+      templateRef: review-loop
+      inputs:
+        target: "{{ params.issue }}"
+    next:
+      pass: approve
+  approve:
+    type: decision
+    performer:
+      kind: human
+      ask: Ship it?
+    next:
+      ship: merge
+      hold: done
+  merge:
+    type: task
+    performer:
+      kind: program
+      profile: git
+      run: gh
+      args: [pr, merge, --squash]
+    next:
+      pass: done
+  done:
+    type: end
