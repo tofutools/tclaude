@@ -271,7 +271,7 @@ type processRunView struct {
 	// unconfined. A node whose attempts ran unscoped is absent.
 	ProgramBounds map[string]processProgramBoundsView `json:"programBounds,omitempty"`
 	CreatedAt     time.Time                           `json:"createdAt"`
-	UpdatedAt time.Time            `json:"updatedAt"`
+	UpdatedAt     time.Time                           `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
