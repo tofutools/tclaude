@@ -842,7 +842,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           flag is listed here; when a feature graduates, its flag disappears.`}>
         <${Setting} title="Processes" forId="cfg-feature-processes" k="features.processes"
           summary=${html`enable the in-development <strong>Processes</strong> feature`}
-          more="BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt.">
+          more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
           <${Toggle} id="cfg-feature-processes" />
         </${Setting}>
         <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
