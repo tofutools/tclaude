@@ -36,7 +36,7 @@ test('starters fill roles from the roster, then members, then nobody', () => {
   const [buildReview] = STARTERS;
   const roles = buildReview.build(fixture.roster);
   assert.deepEqual(roles.uses, ['dev', 'reviewer']);
-  assert.deepEqual(stepWho(roles.list.steps[0]), { mode: 'role', role: 'dev', legacy: true });
+  assert.deepEqual(stepWho(roles.list.steps[0]), { mode: 'role', role: 'dev' });
   const plain = [{ name: 'ann', id: 'a', role: '', online: true }, { name: 'bob', id: 'b', role: '', online: true }];
   const members = buildReview.build(plain);
   assert.deepEqual(members.uses, ['ann', 'bob'], 'distinct members for implement and review');
@@ -57,8 +57,9 @@ test('the roster, its roles and the Who options', () => {
   assert.deepEqual(groupRoles(roster), [{ role: 'dev', count: 2 }, { role: 'reviewer', count: 1 }]);
   const options = whoOptions(roster);
   assert.deepEqual(options.map((o) => o.value), ['agent:checkout', 'agent:search', 'agent:review-bot', 'role:dev', 'role:reviewer', 'anyone', 'you', 'command']);
-  assert.equal(options.find((o) => o.value === 'anyone').disabled, true, 'anyone free waits for the backend selector');
-  assert.equal(whoOptions(roster, { anyone: true }).find((o) => o.value === 'anyone').disabled, false);
+  assert.ok(!options.find((o) => o.value === 'anyone').disabled, 'anyone free is a real selector');
+  assert.deepEqual(whoOptions(roster, { roles: [{ role: 'qa', count: 1 }] }).filter((o) => o.group === 'role').map((o) => o.value),
+    ['role:qa', 'anyone'], 'the process context\'s roles win over the roster\'s');
   assert.deepEqual(options.slice(0, 3).map((o) => o.detail), ['dev · idle', 'dev · working', 'reviewer · offline']);
   for (const value of ['agent:checkout', 'role:dev', 'anyone', 'you', 'command']) assert.equal(whoValue(whoFromValue(value)), value);
 });
@@ -78,4 +79,10 @@ test('who-now guesses the performer the way the resolver ranks them', () => {
   assert.equal(whoNow(step({ kind: 'human', ask: 'x' }), roster).label, 'you');
   assert.equal(whoNow(step({ kind: 'program', run: 'make' }), roster).label, 'a command');
   assert.equal(whoNow(step({ kind: 'agent', prompt: 'x' }), roster).label, 'nobody yet');
+  const qa = step({ kind: 'agent', role: 'qa', prompt: 'x' });
+  assert.equal(whoNow(qa, roster, { fallback: { action: 'spawn' }, defaultSpawnProfile: 'sonnet-dev' }).spawns, 'sonnet-dev',
+    'the process fallback spawns the group default');
+  assert.equal(whoNow(qa, roster, { fallback: { action: 'spawn' } }).waits, true, 'with no profile to spawn, it waits');
+  assert.equal(whoNow(qa, roster, { fallback: { action: 'fail' } }).fails, true);
+  assert.equal(whoNow(step({ kind: 'agent', anyone: true, prompt: 'x' }), roster).label, 'search');
 });

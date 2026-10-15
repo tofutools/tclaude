@@ -17,10 +17,11 @@ const GROUPS = [
 
 const EMPTY_CONTEXT = { runs: {}, groups: [{ groupId: 1, group: 'webshop', active: [], needsYou: [], done: [], planned: [] }], agents: [], orphaned: [] };
 
-function fakeApi({ createError = null, createErrorBody = null, startErrors = [], stored = {} } = {}) {
-  const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [] };
+function fakeApi({ createError = null, createErrorBody = null, startErrors = [], stored = {}, preview = null } = {}) {
+  const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [], preview: [] };
   return {
     calls,
+    ...(preview ? { resolvePreview: async (view, group) => { calls.preview.push({ view, group }); return { group, nodes: preview(view) }; } } : {}),
     getTemplate: async (id) => { calls.get.push(id); return stored[id]; },
     saveTemplate: async (id, view, options) => { calls.save.push({ id, view, options }); return { ref: `${id}@sha256:2`, sourceHash: 'h2' }; },
     publishTemplate: async (id) => { calls.publish.push(id); return { id, listed: true }; },
@@ -431,4 +432,39 @@ test('a save whose pin failed keeps the stored template, so a retry only pins it
   await click(editor.querySelector('[data-step-save-group]'));
   assert.equal(api.calls.create.length, 1, 'no second template');
   assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
+});
+
+test('who-now reads the server\'s resolve-preview; the process fallback and anyone free are pickable', async (t) => {
+  const api = fakeApi({ preview: (view) => Object.fromEntries(Object.entries(view.template.nodes)
+    .filter(([, node]) => node.performer?.kind === 'agent')
+    .map(([id, node]) => [id, node.performer.anyone
+      ? { agentId: 'agt_search', name: 'search', reason: 'anyone in the group, idle now' }
+      : { spawnProfile: 'sonnet-dev', reason: 'no member has role "qa"; spawns one with profile sonnet-dev' }])) });
+  const context = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev', roles: [{ role: 'qa', count: 0 }] }] };
+  const { root, click, setValue, settle } = await mount(t, { api, context });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  const who = steps(root)[0].querySelector('.gq-who-select');
+  const anyone = [...who.querySelectorAll('option')].find((option) => option.value === 'anyone');
+  assert.equal(anyone.hasAttribute('disabled'), false, 'anyone free is a real choice');
+  assert.ok([...who.querySelectorAll('option')].some((option) => option.value === 'role:qa'), 'roles come from the process context');
+  await setValue(who, 'role:qa', 'change');
+  const fallback = editor.querySelector('[data-process-fallback] select');
+  assert.equal(editor.querySelector('[data-process-fallback]').dataset.processFallback, 'wait');
+  assert.match(fallback.querySelector('option[value="spawn"]').textContent, /spawn one with profile sonnet-dev/);
+  await setValue(fallback, 'spawn', 'change');
+  assert.equal(editor.querySelector('[data-process-fallback]').dataset.processFallback, 'spawn');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await settle();
+  const last = api.calls.preview.at(-1);
+  assert.equal(last.group, 'webshop');
+  assert.deepEqual(last.view.template.fallback, { action: 'spawn' }, 'the fallback is the process\'s, in the template');
+  assert.deepEqual(last.view.template.nodes[steps(root)[0].dataset.step].performer.role, 'qa');
+  assert.match(editor.querySelector('.gq-whonow').textContent, /a new sonnet-dev · step 1/, 'who-now is the server\'s answer');
+  await setValue(steps(root)[0].querySelector('.gq-who-select'), 'anyone', 'change');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await settle();
+  assert.match(editor.querySelector('.gq-whonow').textContent, /search · step 1/);
 });

@@ -6,6 +6,7 @@
 //   { runs: { <runId>: projection },
 //     groups: [{ groupId, group, active: [runId], needsYou: [runId], done: [runId],
 //                planned: [{ source, id, templateId, name, nextAt }], activeCount, needsYouCount,
+//                defaultSpawnProfile, roles: [{ role, count }],
 //                processes: [{ templateId, name, ref, listed, steps, params, programProfiles }] }],
 //     agents: [{ agentId, runs: [{ runId, nodeId, index, total, state }] }],
 //     orphaned: [runId], truncated }
@@ -324,6 +325,15 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async unpinProcess(group, templateId) {
       return processRequest(`/v1/process/groups/${encodeURIComponent(group)}/processes/${encodeURIComponent(templateId)}`, {
         method: 'DELETE',
+      }, fetchImpl);
+    },
+    // resolvePreview asks who would take each agent step of an unsaved view
+    // if it started in `group` now: {nodes: {<nodeId>: {agentId, name,
+    // reason, spawnProfile, waits, fails}}}. A dry run with no effects.
+    async resolvePreview({ template, edges, layout }, group) {
+      return processRequest('/v1/process/resolve-preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: { ...template, id: template.id || 'draft' }, edges, layout, group }),
       }, fetchImpl);
     },
     // validateTemplate reads the server's diagnostics for an unsaved view.

@@ -265,9 +265,12 @@ with no processes shows *Get started* in its body; afterwards (or once you
 dismiss it) it folds to *No processes yet · Get started ▸*. From it, pick a starter (filled from the group's roles and
 members), reuse a library template, or begin a blank step list. The step
 list edits a process as numbered steps, each done by a specific agent, any
-member with a role, you, or a command; your answers to a *you* step branch to
+member with a role, anyone free in the group, you, or a command; one line sets
+what an agent step does when no member can take it (wait, spawn the group's
+default spawn profile, or fail: the template's `fallback`); your answers to a *you* step branch to
 later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
-start inputs and who each step would use now update as you edit. A command
+start inputs and who each step would use now (the daemon's resolve-preview,
+a dry run of the group rules) update as you edit. A command
 step runs on this host only after you tick *Allow step N to run* for its
 program profile. *Start now*
 runs the steps once in the group (saved as an unlisted template, so a one-off

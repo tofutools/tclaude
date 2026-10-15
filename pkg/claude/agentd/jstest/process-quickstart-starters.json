@@ -38,7 +38,7 @@
       "name": "Implement",
       "performer": {
        "kind": "agent",
-       "profile": "dev",
+       "role": "dev",
        "prompt": "Implement {{params.issue}} on a branch and open a PR."
       }
      },
@@ -47,7 +47,7 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "profile": "reviewer",
+       "role": "reviewer",
        "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
       }
      },
@@ -69,7 +69,7 @@
       "name": "Rework",
       "performer": {
        "kind": "agent",
-       "profile": "dev",
+       "role": "dev",
        "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
       }
      },
@@ -218,7 +218,7 @@
       "performer": {
        "kind": "agent",
        "prompt": "Do part 1 of the plan for {{params.goal}}.",
-       "profile": "dev"
+       "role": "dev"
       }
      },
      "part-2": {
@@ -227,7 +227,7 @@
       "performer": {
        "kind": "agent",
        "prompt": "Do part 2 of the plan for {{params.goal}}.",
-       "profile": "dev"
+       "role": "dev"
       }
      },
      "part-3": {
@@ -236,7 +236,7 @@
       "performer": {
        "kind": "agent",
        "prompt": "Do part 3 of the plan for {{params.goal}}.",
-       "profile": "dev"
+       "role": "dev"
       }
      }
     }
@@ -314,7 +314,7 @@
       "name": "Check & fix",
       "performer": {
        "kind": "agent",
-       "profile": "dev",
+       "role": "dev",
        "prompt": "Run the tests. If any are red, fix them and push; if all are green, say so."
       }
      },
@@ -394,7 +394,7 @@
       "name": "Do it",
       "performer": {
        "kind": "agent",
-       "profile": "dev",
+       "role": "dev",
        "prompt": "Do {{params.task}}."
       }
      },
@@ -415,7 +415,7 @@
       "name": "Rework",
       "performer": {
        "kind": "agent",
-       "profile": "dev",
+       "role": "dev",
        "prompt": "The human asked for a rework of {{params.task}}. This is the one rework round."
       }
      },

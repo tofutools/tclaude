@@ -316,9 +316,9 @@ const AGENT_FIELDS = ['assignee', 'role', 'anyone', 'profile', 'spawn', 'prompt'
 
 // setStepWho returns the step with its performer switched to who. Fields the
 // new kind cannot carry are dropped; the step's text moves to the new kind's
-// text field. `legacyRoles` writes a role as performer.profile (today's
-// role + spawn-profile field) until the backend has performer.role.
-export function setStepWho(step, who, { legacyRoles = true } = {}) {
+// text field. A role is performer.role; `legacyRoles` writes it the old way,
+// as performer.profile, for a daemon without performer selectors.
+export function setStepWho(step, who, { legacyRoles = false } = {}) {
   const node = clone(step.node);
   const old = node.performer || {};
   const text = stepText(step);
@@ -350,8 +350,11 @@ export function setStepWho(step, who, { legacyRoles = true } = {}) {
       if (legacyRoles) performer.profile = who.role;
       else performer.role = who.role;
     } else if (who.mode === 'anyone') performer.anyone = true;
-    if (who.mode !== 'role' && legacyRoles && old.kind === 'agent' && old.profile && !old.assignee && !old.role && !old.anyone) {
+    const legacyRole = old.kind === 'agent' && old.profile && !old.assignee && !old.role && !old.anyone;
+    if (legacyRole && (who.mode !== 'role' || !legacyRoles)) {
       // A legacy profile named the role; it does not survive a switch away.
+      // Its spawn opt-in spawned that profile, which a step fallback keeps.
+      if (old.spawn === 'allowed' && !old.fallback) performer.fallback = { action: 'spawn', profile: old.profile };
       delete performer.profile;
       delete performer.spawn;
     }

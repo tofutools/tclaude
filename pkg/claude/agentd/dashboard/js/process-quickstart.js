@@ -153,7 +153,7 @@ function withStopEnd(list, stepID, outcome) {
 function agentPerformer(who, prompt) {
   const performer = { kind: 'agent', prompt };
   if (who.mode === 'agent') performer.assignee = who.agent;
-  if (who.mode === 'role') performer.profile = who.role;
+  if (who.mode === 'role') performer.role = who.role;
   return performer;
 }
 
@@ -189,12 +189,13 @@ function fanOutView(lead, dev) {
 }
 
 // whoOptions are the Who picker's choices for a roster: specific agents, the
-// roles it holds, anyone free (once the backend has it), you, and a command.
-export function whoOptions(roster, { anyone = false } = {}) {
+// roles the group holds (`roles`, the process context's [{role, count}], else
+// the roster's), anyone free, you, and a command.
+export function whoOptions(roster, { roles = null } = {}) {
   return [
     ...roster.map((m) => ({ value: `agent:${m.name}`, group: 'agent', label: m.name, detail: `${m.role || 'member'} · ${memberState(m)}` })),
-    ...groupRoles(roster).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
-    { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: anyone ? 'first idle' : 'coming soon', disabled: !anyone },
+    ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
+    { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: 'idle first, then the least busy' },
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
   ];
@@ -218,28 +219,44 @@ export function whoFromValue(value) {
   return { mode: value };
 }
 
+// stepFallback is what an agent step does when no member can take it: its
+// own fallback, the process's, the legacy spawn opt-in, else wait.
+export function stepFallback(step, templateFallback = null) {
+  const performer = step?.node?.performer || {};
+  if (performer.fallback?.action) return { action: performer.fallback.action, profile: performer.fallback.profile || '' };
+  if (templateFallback?.action) return { action: templateFallback.action, profile: templateFallback.profile || '' };
+  if (performer.spawn === 'allowed' && performer.profile) return { action: 'spawn', profile: performer.profile };
+  return { action: 'wait', profile: '' };
+}
+
 // whoNow guesses who a step uses if the run started now: the named agent, the
-// first idle member with the role, or what happens when nobody can.
-export function whoNow(step, roster) {
+// first idle member with the role, or what its fallback does when nobody can.
+// The server's resolve-preview replaces this guess once it answers.
+export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = '' } = {}) {
   const who = stepWho(step);
-  const spawn = step.node?.performer?.spawn === 'allowed';
+  const nobody = (label, why) => {
+    const { action, profile } = stepFallback(step, fallback);
+    const spawned = profile || defaultSpawnProfile;
+    if (action === 'spawn' && spawned) return { label: `a new ${spawned}`, detail: `${why}: spawns profile ${spawned}`, spawns: spawned };
+    if (action === 'fail') return { label, detail: `${why}: the step fails`, waits: true, fails: true };
+    return { label, detail: `${why}: the step waits`, waits: true };
+  };
   if (who.mode === 'you') return { label: 'you', detail: 'the run waits for your answer' };
   if (who.mode === 'command') return { label: 'a command', detail: 'runs on this host' };
   if (who.mode === 'agent') {
     const member = roster.find((m) => m.name === who.agent || m.id === who.agent);
-    if (!member) return { label: who.agent, detail: 'not in this group: the step waits', waits: true };
+    if (!member) return nobody(who.agent, 'not in this group');
     return { label: member.name, detail: memberState(member), member };
   }
   if (who.mode === 'role') {
     const matching = roster.filter((m) => m.role.toLowerCase() === who.role.toLowerCase() && m.online);
     const member = matching.find((m) => !m.busy) || matching[0];
     if (member) return { label: member.name, detail: member.busy ? `${memberState(member)} (any ${who.role})` : `idle (any ${who.role})`, member };
-    if (spawn) return { label: `a new ${who.role}`, detail: `spawns profile ${who.role}`, spawns: who.role };
-    return { label: `any ${who.role}`, detail: 'nobody has the role: the step waits', waits: true };
+    return nobody(`any ${who.role}`, 'nobody has the role');
   }
   if (who.mode === 'anyone') {
     const member = roster.find((m) => m.online && !m.busy) || roster.find((m) => m.online);
-    return member ? { label: member.name, detail: 'first free member', member } : { label: 'anyone', detail: 'nobody is online: the step waits', waits: true };
+    return member ? { label: member.name, detail: member.busy ? 'least busy member' : 'first free member', member } : nobody('anyone', 'nobody is online');
   }
   return { label: 'nobody yet', detail: 'pick who does this step', waits: true };
 }
