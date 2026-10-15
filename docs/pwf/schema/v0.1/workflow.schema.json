@@ -45,7 +45,22 @@
         "properties": {"step": {"type": "string"}, "profile": {"type": "string"}, "run": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}}}
       }
     },
-    "humans": {"type": "array", "items": {"type": "string"}}
+    "humans": {"type": "array", "items": {"type": "string"}},
+    "loops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "outcome", "to", "maxIterations"],
+        "additionalProperties": false,
+        "properties": {
+          "step": {"type": "string"},
+          "outcome": {"type": "string"},
+          "to": {"type": "string"},
+          "maxIterations": {"type": "integer", "minimum": 2, "maximum": 100},
+          "onExhausted": {"type": "string"}
+        }
+      }
+    }
   },
   "$defs": {
     "uses": {

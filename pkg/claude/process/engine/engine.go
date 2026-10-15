@@ -85,7 +85,7 @@ func AdvanceAndPlan(checkpoint Checkpoint, definition *Definition) (Checkpoint, 
 	if !ok {
 		return next, nil, committed > 0, nil
 	}
-	command := taskCommand(next.RunID, node, nextAttempt(next, node.id))
+	command := taskCommand(next, definition, node, nextAttempt(next, node.id))
 	planned, err := apply(next, definition, Transition{Kind: TransitionCommandPlanned, Command: &command})
 	if err != nil {
 		return Checkpoint{}, nil, false, err
@@ -272,7 +272,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		if ceiling := executableAttemptCeiling(next, definition, node); attempt > ceiling {
 			return invalid("node %q has no attempt %d within its budget of %d", node.id, attempt, ceiling)
 		}
-		expected := taskCommand(next.RunID, node, attempt)
+		expected := taskCommand(next, definition, node, attempt)
 		if !commandsEqual(*transition.Command, expected) {
 			return invalid("planned command does not match deterministic command for node %q", node.id)
 		}
@@ -414,6 +414,10 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// so a verdict a human formed against an earlier window is refused — both
 		// while that window is still pending and once the next one has opened.
 		required, approval := definition.ApprovalAttempt(next, node.id)
+		if !approval {
+			// Zero for a one-shot decision; a loop's decision reopens per round.
+			required = next.Attempts[node.id]
+		}
 		// A gate whose plan never ran has no window to be the current one, and
 		// zero — what the derivation would otherwise report — is precisely what an
 		// authored decision requires, so this would fail OPEN rather than closed.
@@ -451,7 +455,19 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			break
 		}
-		if err := completeAndSettle(&next, definition, index, arrivesAt(decision.Verdict)); err != nil {
+		// A bounded outcome goes back for another round while rounds remain,
+		// and past the limit follows the loop's onExhausted outcome instead.
+		route, iterate, err := routeDecision(next, definition, node, decision.Verdict)
+		if err != nil {
+			return Checkpoint{}, err
+		}
+		if iterate >= 0 {
+			if err := iterateLoop(&next, definition, iterate); err != nil {
+				return Checkpoint{}, err
+			}
+			break
+		}
+		if err := completeAndSettle(&next, definition, index, arrivesAt(route)); err != nil {
 			return Checkpoint{}, err
 		}
 	case TransitionBlockedResolved:
@@ -722,6 +738,12 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
 			return fmt.Errorf("%w: edge %q/%q is already settled", ErrInvalidTransition, edge.from, edge.outcome)
 		}
+		// An exit of a live loop stays open: the loop may go round again and
+		// reach the work it leads to after all. closeLoopExits settles it once
+		// the loop's decision finishes.
+		if disposition == EdgeNotTaken && deferredExit(*next, definition, edgeIndex) {
+			return nil
+		}
 		// A join: any reducer is won by the first arrival that settles into it,
 		// and only by that one. Every later arrival is real evidence that the
 		// branch got there — so it is not not_taken — but it is late. Deciding
@@ -746,10 +768,28 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		queue = append(queue, edge.toIndex)
 		return nil
 	}
+	// closeLoopExits settles the exits a finished loop decision held open.
+	closeLoopExits := func(sourceIndex int) error {
+		for _, li := range definition.nodes[sourceIndex].sourceOf {
+			for _, exit := range definition.loops[li].exits {
+				edge := definition.edges[exit]
+				if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
+					continue
+				}
+				if err := settleEdge(exit, EdgeNotTaken); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	for _, edgeIndex := range node.outgoing {
 		if err := settleEdge(edgeIndex, arrivals.disposition(definition.edges[edgeIndex].outcome)); err != nil {
 			return err
 		}
+	}
+	if err := closeLoopExits(index); err != nil {
+		return err
 	}
 	for len(queue) > 0 {
 		targetIndex := queue[0]
@@ -797,6 +837,9 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 				if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
 					return err
 				}
+			}
+			if err := closeLoopExits(targetIndex); err != nil {
+				return err
 			}
 		case target.joinAll || counts.arrived == 1:
 			next.Nodes[target.id] = NodeReady
@@ -1111,13 +1154,22 @@ func verdictAllowed(node definitionNode, verdict string) bool {
 // same run never share a command id and an observation of the older one can
 // never match the newer outbox entry. The kind suffix keeps a program and an
 // agent request for the same (run, node, attempt) distinct.
-func taskCommand(runID string, node definitionNode, attempt int) Command {
+//
+// A command of a loop body also names its round. The round cannot move while
+// the command is outstanding — a new round starts only once its whole body has
+// finished — so the load boundary re-derives the same command.
+func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionNode, attempt int) Command {
+	runID := checkpoint.RunID
 	kind := node.commandKind()
 	command := Command{
 		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_%d_%s", len(runID), runID, len(node.id), node.id, attempt, kind),
 		Kind:    kind,
 		NodeID:  node.id,
 		Attempt: attempt,
+	}
+	if round, ok := definition.RoundOf(checkpoint, node.id); ok {
+		command.Round, command.Rounds = round.Round, round.Of
+		command.LoopFrom, command.LoopOutcome = round.From, round.Outcome
 	}
 	if node.agent != nil {
 		agent := *node.agent
@@ -1217,6 +1269,12 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	if len(checkpoint.AttemptCeilings) > 0 {
 		clone.AttemptCeilings = make(map[string]int, len(checkpoint.AttemptCeilings))
 		maps.Copy(clone.AttemptCeilings, checkpoint.AttemptCeilings)
+	}
+	if len(checkpoint.Iterations) > 0 {
+		clone.Iterations = make(map[string]map[string]int, len(checkpoint.Iterations))
+		for from, outcomes := range checkpoint.Iterations {
+			clone.Iterations[from] = maps.Clone(outcomes)
+		}
 	}
 	if len(checkpoint.AwaitingDecisions) > 0 {
 		clone.AwaitingDecisions = append([]DecisionObligation(nil), checkpoint.AwaitingDecisions...)

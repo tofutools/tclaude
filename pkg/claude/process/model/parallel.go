@@ -12,9 +12,15 @@ func validateJoinAndDegree(tmpl *Template, edges []Edge) Diagnostics {
 		return nil
 	}
 	inbound := make(map[string]int, len(tmpl.Nodes))
+	// A join reduces forward branches: a bounded back edge starts a new round
+	// at its target rather than arriving as one more candidate.
+	joinable := make(map[string]int, len(tmpl.Nodes))
 	for _, edge := range edges {
 		if edge.From != "" {
 			inbound[edge.To]++
+			if !IsBoundedLoopEdge(tmpl, edge) {
+				joinable[edge.To]++
+			}
 		}
 	}
 	var diagnostics Diagnostics
@@ -32,7 +38,7 @@ func validateJoinAndDegree(tmpl *Template, edges []Edge) Diagnostics {
 		switch node.Join {
 		case "":
 		case JoinAll, JoinAny:
-			if inbound[nodeID] < 2 {
+			if joinable[nodeID] < 2 {
 				diagnostics = append(diagnostics, diagError("join_degree", path+".join", "join requires at least two normalized inbound edges"))
 			}
 		default:
@@ -80,7 +86,7 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 		indegree[nodeID] = 0
 	}
 	for _, edge := range edges {
-		if edge.From == "" || IsPoisonEscalationRetryEdge(tmpl, edge) {
+		if edge.From == "" || isCycleExemptEdge(tmpl, edge) {
 			continue
 		}
 		if _, fromOK := tmpl.Nodes[edge.From]; !fromOK {

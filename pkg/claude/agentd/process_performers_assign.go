@@ -158,7 +158,8 @@ func assignProcessNodePerformer(runID, nodeID, selector, actor string) (*db.Proc
 	messageID, err := queueAgentMessage(&db.AgentMessage{
 		GroupID: scope.GroupID, ToConv: candidate.ConvID,
 		Subject: processDispatchSubject(runID, *command),
-		Body:    processDispatchMessage(runID, *command, processAssignFeedback(*row, *command)),
+		Body: processDispatchMessage(runID, *command, processAssignFeedback(*row, *command),
+			processLoopFeedback(runID, *command)),
 	})
 	if err != nil {
 		// The released attempt is pending again, so the next pass resolves it

@@ -588,8 +588,17 @@ export class ProcessEditModel {
   // freeOutcome reuses a name as soon as it is free. It also covers incoming
   // edges dropped by a node delete, which no per-path cleanup handled.
   pruneEdgePins() {
-    if (!this.layout.edges) return;
     const live = new Set(this.edges.map((edge) => `${edge.from}\u0000${edge.outcome}`));
+    // A loop bound (node.loops, keyed by outcome) belongs to its connector
+    // the same way a pin does, and goes with it.
+    for (const [id, node] of Object.entries(this.template.nodes || {})) {
+      if (!node?.loops) continue;
+      for (const outcome of Object.keys(node.loops)) {
+        if (!live.has(`${id}\u0000${outcome}`)) delete node.loops[outcome];
+      }
+      if (!Object.keys(node.loops).length) delete node.loops;
+    }
+    if (!this.layout.edges) return;
     for (const [from, byOutcome] of Object.entries(this.layout.edges)) {
       // Namespaced keys ("qa/unit") pin edges inside nested bodies; their own
       // scope prunes them, and withoutScope drops them with the ▣ node.
@@ -1005,6 +1014,17 @@ export class ProcessEditModel {
     if (pinned !== undefined) {
       this.writeEdgePin(from, oldOutcome, undefined);
       this.writeEdgePin(from, newOutcome, pinned);
+    }
+    // So does a loop bound, and an onExhausted that names the old outcome.
+    const loops = this.template.nodes[from]?.loops;
+    if (loops) {
+      if (loops[oldOutcome]) {
+        loops[newOutcome] = loops[oldOutcome];
+        delete loops[oldOutcome];
+      }
+      for (const bound of Object.values(loops)) {
+        if (bound?.onExhausted === oldOutcome) bound.onExhausted = newOutcome;
+      }
     }
   }
 

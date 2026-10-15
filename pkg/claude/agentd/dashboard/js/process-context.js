@@ -392,11 +392,12 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // decide records a human gate's verdict against the awaited window
     // (attempt) the inspector read, so a stale click is refused, not replayed.
-    async decide(runId, { nodeId, verdict, evidence = '', attempt = 0, attemptKey = newAttemptKey() }) {
+    // Without an attempt the daemon takes the decision's current window.
+    async decide(runId, { nodeId, verdict, evidence = '', attempt, attemptKey = newAttemptKey() }) {
       const path = `${runPath(runId)}/decide`;
       const request = { nodeId, verdict };
       if (evidence) request.evidence = evidence;
-      if (attempt) request.attempt = attempt;
+      if (Number.isInteger(attempt)) request.attempt = attempt;
       const body = JSON.stringify(request);
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,

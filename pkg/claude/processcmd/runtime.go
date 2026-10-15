@@ -663,8 +663,11 @@ type processDecideParams struct {
 	Node     string `long:"node" help:"Awaited decision node id"`
 	Verdict  string `long:"verdict" help:"Authored outcome label to select"`
 	Evidence string `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision"`
-	Attempt  int    `long:"attempt" optional:"true" help:"Exact approval window from tclaude process show; only a plan-approval gate has one"`
+	Attempt  int    `long:"attempt" optional:"true" help:"Exact decision window from tclaude process show: a plan-approval gate's, or a loop decision's from round two on; omitted, a loop decision takes its current window"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	// attemptSet records that --attempt was given, so --attempt 0 pins a
+	// loop decision's first window instead of meaning "current".
+	attemptSet bool
 }
 
 func processDecideCmd() *cobra.Command {
@@ -674,9 +677,11 @@ func processDecideCmd() *cobra.Command {
 		Long: "Selects exactly one authored outcome edge of the awaited decision node and closes every alternative. " +
 			"A compound's plan-approval gate is decided the same way, with approve readying the do stage and rework " +
 			"sending the plan back for one more run; because that window reopens, its verdict must also name the exact " +
-			"--attempt tclaude process show reports. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
+			"--attempt tclaude process show reports. A decision in a bounded loop reopens every round; --attempt pins the " +
+			"verdict to one round's window. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *processDecideParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *processDecideParams, cmd *cobra.Command, _ []string) {
+			p.attemptSet = cmd.Flags().Changed("attempt")
 			exitProcessRuntime(runProcessDecide(p, os.Stdout, os.Stderr), os.Stderr)
 		},
 	}.ToCobra()
@@ -701,8 +706,12 @@ func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
 		NodeID   string `json:"nodeId"`
 		Verdict  string `json:"verdict"`
 		Evidence string `json:"evidence,omitempty"`
-		Attempt  int    `json:"attempt,omitempty"`
-	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence, Attempt: p.Attempt}
+		Attempt  *int   `json:"attempt,omitempty"`
+	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence}
+	if p.attemptSet || p.Attempt != 0 {
+		attempt := p.Attempt
+		request.Attempt = &attempt
+	}
 	var response struct {
 		Started bool           `json:"started"`
 		Run     processRunJSON `json:"run"`

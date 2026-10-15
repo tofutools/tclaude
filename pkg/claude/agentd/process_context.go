@@ -82,6 +82,10 @@ type processProjectionNode struct {
 	// Description is the authored node description, clipped to
 	// processProjectionDescriptionRunes so a run's projection stays small.
 	Description string `json:"description,omitempty"`
+	// Round and Rounds place a node of a loop body: the round its innermost
+	// loop is in, out of that loop's limit (tcl-eu70x9). Absent elsewhere.
+	Round  int `json:"round,omitempty"`
+	Rounds int `json:"rounds,omitempty"`
 }
 
 const processProjectionDescriptionRunes = 160
@@ -126,6 +130,9 @@ type processProjectionEdge struct {
 	Label string `json:"label"`
 	State string `json:"state"`
 	Back  bool   `json:"back,omitempty"`
+	// MaxIterations is a bounded back edge's round limit (tcl-eu70x9), for
+	// labelling it "≤N×".
+	MaxIterations int `json:"maxIterations,omitempty"`
 }
 
 type processContextView struct {
@@ -458,6 +465,10 @@ type processProjectionSkeleton struct {
 	stepOrder  map[string]int
 	steps      int
 	truncated  bool
+	// loops are the template's bounded loops, and innermost each body node's
+	// tightest one.
+	loops     []model.Loop
+	innermost map[string]int
 }
 
 var processProjectionSkeletons = struct {
@@ -571,9 +582,20 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 				skeleton.truncated = true
 				continue
 			}
-			skeleton.edges = append(skeleton.edges, processProjectionEdge{
-				From: from, To: to, Label: label, Back: back[[2]string{from, label}],
-			})
+			edge := processProjectionEdge{From: from, To: to, Label: label, Back: back[[2]string{from, label}]}
+			if bound, ok := tmpl.Nodes[from].Loops[label]; ok {
+				edge.Back, edge.MaxIterations = true, bound.MaxIterations
+			}
+			skeleton.edges = append(skeleton.edges, edge)
+		}
+	}
+	skeleton.loops = model.Loops(tmpl, model.NormalizeEdges(tmpl))
+	skeleton.innermost = map[string]int{}
+	for index, loop := range skeleton.loops {
+		for _, id := range loop.Body {
+			if current, ok := skeleton.innermost[id]; !ok || len(loop.Body) < len(skeleton.loops[current].Body) {
+				skeleton.innermost[id] = index
+			}
 		}
 	}
 	skeleton.ids = append(skeleton.ids, order...)
@@ -709,6 +731,10 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 		}
 		if bounds, ok := bounded[node.ID]; ok {
 			node.Bounds = &bounds
+		}
+		if index, ok := s.innermost[node.ID]; ok {
+			loop := s.loops[index]
+			node.Round, node.Rounds = run.Checkpoint.Iterations[loop.From][loop.Outcome]+1, loop.MaxIterations
 		}
 		if processNodeStateRank[node.State] >= processNodeStateRank[string(engine.NodeReady)] &&
 			node.State != string(engine.NodeFailed) && node.State != string(engine.NodeCanceled) {

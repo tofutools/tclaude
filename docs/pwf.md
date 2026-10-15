@@ -190,6 +190,9 @@ whose `workflow.json` disagrees. That makes it safe to show a review from
 - `programs`: every command step, as `{step, profile, run, args}`.
 - `assignees`: steps that name one specific agent.
 - `humans`: steps a person performs.
+- `loops`: decision outcomes that send work back for another round, as
+  `{step, outcome, to, maxIterations, onExhausted}`. Omitted when the
+  templates have none.
 
 A step is named `<template-id>:<node-id>`, with a nested subprocess node's id
 namespaced as the runtime does, and a compound task's stages suffixed

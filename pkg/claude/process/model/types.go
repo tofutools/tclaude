@@ -100,7 +100,10 @@ type Node struct {
 	Retry       *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
 	Wait        *WaitConfig  `json:"wait,omitempty" yaml:"wait,omitempty"`
 	Next        Next         `json:"next,omitempty" yaml:"next,omitempty"`
-	Result      string       `json:"result,omitempty" yaml:"result,omitempty"`
+	// Loops bounds the outcomes of a decision that go back to earlier work,
+	// keyed by outcome (tcl-eu70x9). See LoopBound.
+	Loops  map[string]LoopBound `json:"loops,omitempty" yaml:"loops,omitempty"`
+	Result string               `json:"result,omitempty" yaml:"result,omitempty"`
 	// Captures names the outputs a task node publishes for downstream nodes
 	// (design §2: performer input = instructions + upstream captures). Names
 	// only in v1 — the runtime capture plumbing is a later ticket; validation

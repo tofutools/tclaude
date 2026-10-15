@@ -148,6 +148,33 @@ Keep node ids stable during ordinary edits. Every non-end reachable node needs
 a route that the runtime can take. Use bounded `retry.maxAttempts` for retry
 loops and validate reachability, outcome vocabulary, and loop budgets.
 
+### Review loops (going back for another round)
+
+The graph is acyclic except where a decision sends work back. Bound that
+outcome in the decision's `loops`, keyed by outcome:
+
+```yml
+decide:
+  type: decision
+  performer: {kind: human, ask: "Approve the change?"}
+  next: {approved: merge, changes: implement, escalate: ask-owner}
+  loops:
+    changes: {maxIterations: 3, onExhausted: escalate}
+```
+
+- `maxIterations` (2..100) is the most rounds the work between the target
+  (`implement`) and the decision runs. Each round re-runs that whole body as
+  fresh attempts; the decider's evidence note is handed to the re-run agent
+  step, in the same performer session when it can.
+- `onExhausted` names another outcome of the same decision to follow when the
+  rounds are used up. Without it, the outcome that goes back is refused after
+  the last round and the decider has to pick another one.
+- Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
+  error. The body is entered only at the target, left only through decisions,
+  holds no `join: any`, and two loops nest or are disjoint.
+- Only decisions take `loops`. Rename or delete the outcome together with its
+  `loops` entry.
+
 ### Performers
 
 Every performer starts with `kind` and may use shared `profile`, `timeout`, and
@@ -260,7 +287,7 @@ retains successive layout-only authoring events that share one semantic ref.
 Treat every error diagnostic as blocking and fix it before save. Review
 warnings deliberately; do not suppress them by deleting unrelated content.
 Unknown fields, duplicate keys, bad ids, unreachable nodes, missing targets,
-unbounded retry loops, undeclared params, wrong-kind performer fields, and
+unbounded retry loops, cycles with no bounded `loops` outcome, undeclared params, wrong-kind performer fields, and
 invalid durations all surface through validation.
 
 Saving only persists canonical authoring content, selects a head with CAS, and

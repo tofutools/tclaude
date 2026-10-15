@@ -367,10 +367,11 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 		choice.waitReason = "the run is orphaned: its scope target is gone"
 	} else {
 		previous := previousProcessDispatch(row)
-		body := processDispatchMessage(row.RunID, command, "")
+		loop := processLoopFeedback(row.RunID, command)
+		body := processDispatchMessage(row.RunID, command, "", loop)
 		choice = resolveProcessPerformer(row.RunID, scope, command, previous, body)
 		if choice.feedback != "" {
-			body = processDispatchMessage(row.RunID, command, choice.feedback)
+			body = processDispatchMessage(row.RunID, command, choice.feedback, loop)
 		}
 		switch {
 		case choice.candidate != nil:
@@ -463,9 +464,12 @@ func previousProcessDispatch(row db.ProcessAgentDispatch) *db.ProcessAgentDispat
 func resolveProcessPerformer(runID string, scope processRunScope, command engine.Command,
 	previous *db.ProcessAgentDispatch, body string) processPerformerChoice {
 	spec := command.Agent
-	feedbackMode := spec.RetryMode == model.RetryModeFeedbackSameSession && previous != nil
+	// A new loop round goes back to the performer of the round before, which
+	// is handed the decider's feedback in its own session (processLoopFeedback).
+	loopReentry := processLoopReentry(command, previous)
+	feedbackMode := (spec.RetryMode == model.RetryModeFeedbackSameSession && previous != nil) || loopReentry
 	feedback := ""
-	if feedbackMode {
+	if feedbackMode && !loopReentry {
 		feedback = previous.ReportNote
 		if feedback == "" {
 			feedback = "the previous attempt reported failure without a note"
@@ -795,10 +799,18 @@ func processDispatchSubject(runID string, command engine.Command) string {
 // its performer. The identity block and the report commands are fixed text;
 // the prompt is the template's bound instruction, with control characters
 // other than line breaks and tabs removed.
-func processDispatchMessage(runID string, command engine.Command, feedback string) string {
+//
+// loop is the round feedback of a node in a loop body (processLoopFeedback).
+func processDispatchMessage(runID string, command engine.Command, feedback, loop string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the performer of a process node.\n\n")
 	fmt.Fprintf(&b, "Run:     %s\nNode:    %s\nAttempt: %d\n", runID, command.NodeID, command.Attempt)
+	if command.Round > 0 {
+		fmt.Fprintf(&b, "Round:   %d of at most %d\n", command.Round, command.Rounds)
+	}
+	if loop != "" {
+		fmt.Fprintf(&b, "\n%s\n", sanitizeProcessText(loop))
+	}
 	if feedback != "" {
 		fmt.Fprintf(&b, "\nYour previous attempt (%d) failed. Its report said:\n%s\n", command.Attempt-1,
 			sanitizeProcessText(feedback))
@@ -1145,4 +1157,53 @@ func processRunPerformerViews(runID string, live processLiveness) (map[string]pr
 		views = append(views, view)
 	}
 	return byCommand, views, nil
+}
+
+// processLoopReentry reports whether an attempt opens a new round of its
+// loop: its node finished the round before successfully, so this attempt is
+// not a retry of a failure.
+func processLoopReentry(command engine.Command, previous *db.ProcessAgentDispatch) bool {
+	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded)
+}
+
+// processLoopFeedback is what a performer in a later round of a loop is told
+// about why the work came back: the round, and the feedback the decider sent
+// it back with (the loop_iterated evidence). Empty in a first round.
+func processLoopFeedback(runID string, command engine.Command) string {
+	if command.Round < 2 {
+		return ""
+	}
+	events, err := db.ListLatestProcessRunNodeEvents(runID, "loop_iterated")
+	if err != nil {
+		slog.Warn("process performers: loop feedback not read", "run", runID, "node", command.NodeID, "error", err)
+		return ""
+	}
+	for _, event := range events {
+		// The executor's loopEvidencePayload, field for field: the payload
+		// decode is strict.
+		var payload struct {
+			From          string `json:"from"`
+			Outcome       string `json:"outcome"`
+			To            string `json:"to"`
+			Round         int    `json:"round"`
+			MaxIterations int    `json:"maxIterations"`
+			OnExhausted   string `json:"onExhausted,omitempty"`
+			Feedback      string `json:"feedback,omitempty"`
+		}
+		// Only the command's own innermost loop: with nested loops another
+		// loop's row can carry the same round number.
+		if event.DecodePayload(&payload) != nil || payload.Round != command.Round ||
+			payload.From != command.LoopFrom || payload.Outcome != command.LoopOutcome {
+			continue
+		}
+		text := fmt.Sprintf("## Sent back for round %d of %d\n\n%q decided %q, so this work runs again.",
+			command.Round, command.Rounds, payload.From, payload.Outcome)
+		if payload.Feedback != "" {
+			text += " Its feedback:\n\n" + payload.Feedback
+		} else {
+			text += " It left no feedback."
+		}
+		return text
+	}
+	return ""
 }

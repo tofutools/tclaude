@@ -92,6 +92,47 @@ Pins and the listing live in tclaude's database, never in the template: a
 template's hashes are the same whether or not it is pinned or listed, and an
 exported template carries no group. Deleting a template removes its pins.
 
+### Review loops
+
+A process graph is acyclic, except where a decision sends work back for
+another round. The canonical shape — implement, review, then decide: approve,
+or go back with changes at most three times, and escalate once the rounds are
+used up:
+
+```yaml
+start: implement
+nodes:
+  implement:
+    type: task
+    performer: {kind: agent, role: dev, prompt: "Implement {{ params.issue }}."}
+    next: review
+  review:
+    type: task
+    performer: {kind: agent, role: reviewer, prompt: "Review the change."}
+    next: decide
+  decide:
+    type: decision
+    performer: {kind: human, ask: "Approve, or send it back with changes?"}
+    next: {approved: merge, changes: implement, escalate: ask-owner}
+    loops:
+      changes: {maxIterations: 3, onExhausted: escalate}
+  # merge, ask-owner, and the end nodes follow
+```
+
+`loops` bounds a decision outcome that goes back, keyed by outcome.
+`maxIterations` (2..100) is the most rounds the loop's body runs: the nodes on
+the paths from the outcome's target (`implement`) to the decision. Taking the
+outcome with rounds left starts the next round — every body node runs again as
+a fresh attempt, attempt numbers keep counting up, and the decision opens a
+new window. Past the last round the decision follows `onExhausted` instead;
+with no `onExhausted`, the outcome is refused and the decider picks another.
+
+Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
+error that says how to bound it. To keep a round well defined, a loop body is
+entered only at its target, left only through decisions, holds no
+`join: any`, and two loops' bodies nest or are disjoint. An inner loop starts
+its count over with each round of the loop around it.
+
 Two worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
 authoring-shape templates and pass template validation, but note that they use
@@ -366,7 +407,7 @@ name and needs the same permission.
   `start` names the entry node, and a separate `start`-typed node is optional.
 - **Exclusive decisions** with human deciders: the verdict selects exactly one
   authored outcome edge and closes the alternatives. Authored decisions open
-  exactly once and need no `--attempt`.
+  once — unless they are in a loop body — and need no `--attempt`.
 - **Parallel fan-out** (`type: parallel`) reduced by `join: all` or
   `join: any`. Branches execute concurrently, bounded to four external
   programs at a time; ready branches past the bound wait for a slot. A branch
@@ -451,6 +492,16 @@ name and needs the same permission.
   any other.
 - **Agent performers** (`performer.kind: agent` on a plain task) — see
   [Agent performers](#agent-performers) below.
+- **Bounded review loops** (see [Review loops](#review-loops)). The decider's
+  evidence note is handed to the agent step the work goes back to, together
+  with the round (`Round: 2 of at most 3`), and that step goes back to the
+  same performer when it can. `show --json` lists each loop with its round
+  under `loops` and puts `round`/`rounds` on commands; the process context
+  carries `round`/`rounds` on loop nodes and `maxIterations` on the edge that
+  goes back. Each round is recorded as `loop_iterated` evidence, and a used-up
+  loop as `loop_exhausted`. A decision in a loop body reopens every round, so
+  `show` reports its `attempt` window from round two on; `decide` without
+  `--attempt` takes the current window.
 
 One sizing rule applies only to running: a run records durable evidence per
 node, and that row bounds node ids at 256 bytes. Run creation refuses a

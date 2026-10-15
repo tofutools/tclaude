@@ -176,6 +176,9 @@ type DecisionInput struct {
 	Verdict  string
 	Evidence string
 	Attempt  int
+	// CurrentWindow says the caller named no window: an authored decision
+	// then takes its current one. A plan-approval gate still needs Attempt.
+	CurrentWindow bool
 }
 
 // ResolutionInput is one attempt at resolving a parked branch. It is bound to
@@ -529,6 +532,9 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	if run == nil || run.definition == nil {
 		return ErrInvalidRun
 	}
+	if _, approval := run.definition.ApprovalAttempt(run.checkpoint, input.NodeID); input.CurrentWindow && !approval {
+		input.Attempt = run.definition.RequiredDecisionAttempt(run.checkpoint, input.NodeID)
+	}
 	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
 		Kind: engine.TransitionDecisionRecorded,
 		Decision: &engine.DecisionRecord{
@@ -545,7 +551,14 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	// it: its verdict moves the compound's own stage sequence. For an authored
 	// decision the edge is the whole point of the verdict, so a missing one stays
 	// the fail-closed contradiction it always was.
-	if chosen, ok := run.definition.DecisionEdge(input.NodeID, input.Verdict); ok {
+	loopStep, looped := run.definition.LoopStepOf(input.NodeID, input.Verdict, run.checkpoint, next)
+	route := input.Verdict
+	if looped && loopStep.Exhausted {
+		// Past its last round the outcome followed the loop's onExhausted
+		// edge, and that is the edge the verdict chose.
+		route = loopStep.Loop.OnExhausted
+	}
+	if chosen, ok := run.definition.DecisionEdge(input.NodeID, route); ok {
 		payload.ChosenEdge = &chosen
 	} else if _, approval := run.definition.ApprovalAttempt(run.checkpoint, input.NodeID); !approval {
 		return fmt.Errorf("%w: decision %q has no edge for verdict %q", ErrInvalidRun, input.NodeID, input.Verdict)
@@ -555,8 +568,39 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	// the verdict that caused it; every other decision pays one map lookup.
 	causal := append([]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)},
 		causedStageReset(run.definition, input.NodeID, run.checkpoint, next)...)
+	if looped {
+		causal = append(causal, loopEvidence(input, loopStep))
+	}
 	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
 	return persistEvents(run, next, events)
+}
+
+// loopEvidence records what a verdict did to its loop (tcl-eu70x9): the round
+// it started, or the limit it hit. The verdict's evidence travels with it:
+// it is what the decider sent the work back with, and the next round's
+// performer is handed it from here.
+func loopEvidence(input DecisionInput, step engine.LoopStep) db.ProcessRunEvent {
+	kind := "loop_iterated"
+	if step.Exhausted {
+		kind = "loop_exhausted"
+	}
+	return eventForNode(kind, step.Loop.To, EngineActor, loopEvidencePayload{
+		From: step.Loop.From, Outcome: step.Loop.Outcome, To: step.Loop.To,
+		Round: step.Loop.Round, MaxIterations: step.Loop.MaxIterations,
+		OnExhausted: step.Loop.OnExhausted, Feedback: input.Evidence,
+	})
+}
+
+// loopEvidencePayload is the body of loop_iterated and loop_exhausted rows.
+// Round is the round just started, or for an exhausted loop the last one run.
+type loopEvidencePayload struct {
+	From          string `json:"from"`
+	Outcome       string `json:"outcome"`
+	To            string `json:"to"`
+	Round         int    `json:"round"`
+	MaxIterations int    `json:"maxIterations"`
+	OnExhausted   string `json:"onExhausted,omitempty"`
+	Feedback      string `json:"feedback,omitempty"`
 }
 
 // decisionEvidencePayload is the human-facing record of one verdict. ChosenEdge

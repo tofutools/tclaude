@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -1119,6 +1120,7 @@ func cloneTemplate(tmpl *Template) Template {
 				}
 				value.Next = next
 			}
+			value.Loops = maps.Clone(value.Loops)
 			if value.Metadata != nil {
 				metadata := make(Metadata, len(value.Metadata))
 				for metadataKey, metadataValue := range value.Metadata {

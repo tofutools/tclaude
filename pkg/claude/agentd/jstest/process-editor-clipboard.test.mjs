@@ -108,6 +108,22 @@ test('validator rejects duplicate identities, outcome pairs, and missing referen
   }
 });
 
+test('a bounded loop edge copies; its bound must be well shaped', () => {
+  const loop = envelope({
+    nodes: [
+      { id: 'build', node: { type: 'task' }, position: { x: 0, y: 0 } },
+      { id: 'decide', node: { type: 'decision', loops: { changes: { maxIterations: 3, onExhausted: 'stop' } } }, position: { x: 10, y: 0 } },
+    ],
+    edges: [{ from: 'build', outcome: 'pass', to: 'decide' }, { from: 'decide', outcome: 'changes', to: 'build' }],
+  });
+  assert.deepEqual(parseProcessSelection(serializeProcessSelection(loop)), validateProcessSelectionPayload(loop));
+  for (const loops of [{ changes: { maxIterations: '3' } }, { changes: { maxIterations: 3, rounds: 1 } }, { changes: 3 }]) {
+    assert.throws(() => validateProcessSelectionPayload(envelope({
+      nodes: [{ id: 'bad', node: { type: 'decision', loops }, position: { x: 0, y: 0 } }], edges: [],
+    })), /incompatible process node data/);
+  }
+});
+
 test('validator rejects edit-wire-incompatible nested node shapes', () => {
   const cases = [
     { type: 'task', checks: {} },
