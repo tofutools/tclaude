@@ -3,7 +3,8 @@
 // group's body, one per process saved to the group (context
 // groups[].processes, in pin order). ▶ opens a start strip that asks only for
 // the process's start inputs and command consent, then starts it in the
-// group. The strip also edits the steps, publishes the process to the
+// group (a new one is built from the group's process buttons). The strip
+// also edits the steps, publishes the process to the
 // template library, or removes it from the group.
 
 import { h } from 'preact';
@@ -115,7 +116,9 @@ function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClo
         onChange=${(event) => toggle(profile, event.currentTarget.checked)} />
       <span>Allow its commands to run on this host <span class="gq-dim">(program profile: ${profile || 'default'})</span></span>
     </label>`)}
+    <span class="gq-strip-acts">
     <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
+    ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
     <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy} onClick=${edit}
       title="Edit the steps; saving writes a new version">${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
     ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
@@ -127,15 +130,15 @@ function StartStrip({ group, process, api, source, wizard, notify, onEdit, onClo
         <button type="button" class="gq-link" onClick=${() => setConfirmRemove(false)}>keep</button></span>`
     : html`<button type="button" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => setConfirmRemove(true)}
       title=${`Remove ${process.name} from ${group.name}'s processes`}>remove</button>`}
+    </span>
     <span class="gq-spacer"></span>
     <button type="button" class="gq-link" aria-label="Close" onClick=${onClose}>✕</button>
-    ${blockedWhy && html`<div class="gq-why" data-start-blocked>▶ ${blockedWhy}</div>`}
     ${error && html`<div class="gq-error" role="alert">${error}</div>`}
   </form>`;
 }
 
 // SavedProcesses is the group's saved-process chips and the open strip.
-export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, onNew, onEdit }) {
+export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, onEdit }) {
   const [open, setOpen] = useState('');
   const current = processes.find((process) => process.templateId === open) || null;
   return html`<div class="gq-saved" data-saved-processes=${group.name}>
@@ -149,8 +152,6 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           aria-label=${`Start ${process.name}`} title=${`Start ${process.name} in ${group.name}`}
           onClick=${() => setOpen(open === process.templateId ? '' : process.templateId)}>▶</button>
       </span>`)}
-      <button type="button" class="gq-link" data-saved-new=${group.name} onClick=${onNew}
-        title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name}`}>＋ new</button>
     </div>
     ${current && html`<${StartStrip} key=${current.templateId} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}

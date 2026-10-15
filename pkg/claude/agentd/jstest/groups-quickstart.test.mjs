@@ -344,6 +344,7 @@ test('saved processes show as chips; ▶ asks for the inputs and consent, then s
   const saved = root.querySelector('[data-saved-processes="webshop"]');
   assert.deepEqual([...saved.querySelectorAll('[data-saved-process]')].map((el) => el.dataset.savedProcess), ['tmpl_ship', 'tmpl_nightly']);
   assert.match(saved.querySelector('[data-saved-process="tmpl_nightly"]').textContent, /nightly-check\s*3 steps/);
+  assert.equal(saved.querySelector('[data-saved-new]'), null, 'new processes are built from the group process buttons');
   await click(saved.querySelector('[data-saved-run="tmpl_ship"]'));
   const strip = root.querySelector('[data-saved-strip="tmpl_ship"]');
   assert.ok(strip, 'the start strip opens');

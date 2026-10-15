@@ -418,7 +418,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
     </div>
     ${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
-      wizard=${wizard} notify=${notify || defaultNotify} onNew=${() => { setStarting(false); setQuick('pick'); }}
+      wizard=${wizard} notify=${notify || defaultNotify}
       onEdit=${({ list, saved, origin }) => { setStarting(false); setQuick({ list, saved, origin, key: Date.now() }); }} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}

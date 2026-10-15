@@ -892,7 +892,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-processes-saved",
 			Title:   "Groups — Processes: saved processes",
-			Caption: "Mock Q3 (tcl-7p6bgt): a group's saved processes (Save to group, context groups[].processes in pin order) show as chips at the top of its body, under the group's head row. ▶ opens a start strip that asks only for the start inputs (a default arrives filled) and a consent per program profile, with Edit steps (reopens the step list; saving writes a new version), publish as template (only while unlisted) and remove.",
+			Caption: "Mock Q3 (tcl-7p6bgt): a group's saved processes (Save to group, context groups[].processes in pin order) show as chips at the top of its body, under the group's head row. ▶ opens a start strip that asks only for the start inputs (a default arrives filled) and a consent per program profile,, Start with its blocked reason inline, then Edit steps (reopens the step list; saving writes a new version), publish as template (only while unlisted) and remove in one cluster. New processes are built from the group's process buttons, so the row has no + new.",
 			InitJS:  processContextFixtureInitJS() + processContextSavedProcessesInitJS(),
 			JS: showGroups + groupsProcessesJS(`
   var saved = document.querySelector('[data-saved-processes="frontend-squad"]');
