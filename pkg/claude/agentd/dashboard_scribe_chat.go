@@ -15,8 +15,10 @@ import (
 // A scribe is talked to through operator mail (POST /api/operator-message);
 // what it says back is its final message of each turn, which the Stop hook
 // records for scribes only (db.RecordScribeTurnReply). This read merges both
-// halves into one bounded, time-ordered transcript. It serves scribes only, so
-// it never becomes a general "read any agent's replies" surface.
+// halves into one bounded, time-ordered transcript, plus — while a turn is
+// open — a live tail of what the scribe has done so far in it. It serves
+// scribes only, so it never becomes a general "read any agent's replies"
+// surface.
 
 var scribeChatAgentRE = regexp.MustCompile(`^agt_[0-9a-f]{32}$`)
 
@@ -66,5 +68,17 @@ func handleDashboardScribeChat(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, scribeChatEntry{ID: "s" + strconv.FormatInt(reply.ID, 10), Role: "scribe", Body: reply.Body, At: reply.CreatedAt})
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].At.Before(entries[j].At) })
-	writeJSON(w, http.StatusOK, map[string]any{"agent_id": agentID, "messages": entries})
+	resp := map[string]any{"agent_id": agentID, "messages": entries}
+	// A turn is open while the human spoke last; only then is the live tail
+	// of the scribe's transcript worth reading (dashboard_scribe_chat_live.go).
+	if n := len(entries); n > 0 && entries[n-1].Role == "human" {
+		var since time.Time
+		for _, reply := range replies {
+			if reply.CreatedAt.After(since) {
+				since = reply.CreatedAt
+			}
+		}
+		resp["live"] = scribeLiveTail(agentID, since)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

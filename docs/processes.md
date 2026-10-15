@@ -44,9 +44,24 @@ this page does not repeat them.
 
 Two permissions govern authoring, and neither executes anything:
 
-- `process.templates.read` — list, show, validate. Installed as an ordinary
+- `process.templates.read` — list, show, validate, export. Installed as an ordinary
   agent default by `tclaude setup --install-default-agent-permissions`.
-- `process.templates.manage` — save. Never a default.
+- `process.templates.manage` — save, import. Never a default.
+
+### Sharing workflows
+
+A process can be shared as a `.pwf` file that carries the template and every
+template its subprocess steps reference:
+
+```bash
+tclaude agent process-templates export <template-id>     # writes <template-id>.pwf
+tclaude agent process-templates inspect <file.pwf>       # offline check and summary
+tclaude agent process-templates import <file.pwf> --yes  # review, then import
+```
+
+Importing stores templates and never starts a run. The review lists every
+command the workflow would run, the roles it asks for and the signer. See
+[Portable Workflow Format](pwf.md).
 
 Two worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
@@ -236,10 +251,12 @@ versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
 things there are specific to processes:
 
 - **Co-design with a scribe.** *Edit with agent* docks the template's scribe
-  beside the canvas: chat with it there (its replies come back as it finishes
-  a turn) or switch the dock to its terminal. The dock's context actions send
-  it the selection, a node to explain, the focused validation issue, or a
-  description to draft from. When the scribe saves a version, *Review on
+  beside the canvas: chat with it there (while it works, what it has written
+  so far and a one-line note per tool call stream in, read from its own
+  transcript, on every harness but OpenCode; its final reply replaces them
+  when the turn ends) or switch the dock to its terminal. The dock's context
+  actions send it the selection, a node to explain, the focused validation
+  issue, or a description to draft from. When the scribe saves a version, *Review on
   canvas* paints it over your draft (added, changed, removed) and you accept
   or reject each change; your own unsaved edits are never overwritten, and
   conflicting edits are flagged rather than merged silently.

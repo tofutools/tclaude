@@ -1,0 +1,23 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: review-loop
+name: Review loop
+start: s
+params:
+  target:
+    type: string
+nodes:
+  s:
+    type: start
+    next:
+      pass: review
+  review:
+    type: task
+    performer:
+      kind: agent
+      profile: reviewer
+      prompt: Review {{ params.target }}
+    next:
+      pass: done
+  done:
+    type: end

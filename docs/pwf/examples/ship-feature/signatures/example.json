@@ -1,0 +1,11 @@
+{
+  "alg": "ed25519",
+  "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
+  "key_id": "example",
+  "signer": {
+    "kind": "publisher",
+    "name": "example"
+  },
+  "manifest_sha256": "4245266892d167b094854f48b868e48a276b3cdbc5aa2230369036bbf2aa4a9d",
+  "signature": "i0fGSPOh6Wp/s40o0C8agwQKHUpzrZ2HGYeQC4s7Rf4kYwCHbVCcatqzW3TcIKzxvge386swoa6l5/MncLtDBg=="
+}

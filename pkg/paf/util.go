@@ -184,6 +184,10 @@ func checkNoDuplicateKeys(b []byte) error {
 	return nil
 }
 
+// DecodeStrict decodes one JSON document after refusing duplicate object
+// keys at any depth, so every reader parses the same signed content.
+func DecodeStrict(b []byte, v any) error { return decodeStrict(b, v) }
+
 // decodeStrict decodes one JSON document after the duplicate-key check.
 func decodeStrict(b []byte, v any) error {
 	if err := checkNoDuplicateKeys(b); err != nil {

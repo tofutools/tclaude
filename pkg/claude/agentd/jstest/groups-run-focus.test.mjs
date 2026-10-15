@@ -375,7 +375,7 @@ test('a member badge opens its run; a header chip goes back to the cards', async
   const on = { processes_enabled: true };
   const mounted = await harness.mount(harness.html`<div>
     <${indicators.MemberProcessCell} member=${{ agent_id: 'agt_fe_lead' }} group=${GROUPS[0]} snapshot=${on} source=${source} />
-    <${indicators.GroupProcessChips} group=${GROUPS[0]} snapshot=${on} source=${source} />
+    <${indicators.GroupProcessGraphs} group=${GROUPS[0]} snapshot=${on} source=${source} />
   </div>`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('.pk-run-badge'), 'click'));
   assert.equal(state.focus.value, 'processes');

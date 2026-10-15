@@ -1,0 +1,63 @@
+{
+  "title": "Ship a feature",
+  "summary": "Implement, review, approve, merge.",
+  "root": "ship-feature@sha256:173d254347c109551341667a07e1c75fb6fda25bb9dbdaf9b8dc39a6f11ffa4d",
+  "templates": [
+    {
+      "ref": "ship-feature@sha256:173d254347c109551341667a07e1c75fb6fda25bb9dbdaf9b8dc39a6f11ffa4d",
+      "id": "ship-feature",
+      "name": "Ship feature",
+      "head": true
+    },
+    {
+      "ref": "review-loop@sha256:ca7a5c38f104829f8c5bab9f2cfbbc36c8fd9ccd88f3041450e95fdf519a8556",
+      "id": "review-loop",
+      "name": "Review loop",
+      "head": true
+    }
+  ],
+  "params": [
+    {
+      "name": "issue",
+      "type": "string",
+      "required": true
+    }
+  ],
+  "roles": [
+    {
+      "name": "dev",
+      "steps": [
+        "ship-feature:build"
+      ]
+    },
+    {
+      "name": "reviewer",
+      "steps": [
+        "review-loop:review"
+      ]
+    }
+  ],
+  "programs": [
+    {
+      "step": "ship-feature:merge",
+      "profile": "git",
+      "run": "gh",
+      "args": [
+        "pr",
+        "merge",
+        "--squash"
+      ]
+    }
+  ],
+  "assignees": [
+    {
+      "name": "checkout",
+      "steps": [
+        "ship-feature:build"
+      ]
+    }
+  ],
+  "humans": [
+    "ship-feature:approve"
+  ]
+}

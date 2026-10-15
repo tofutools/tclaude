@@ -25,13 +25,16 @@ func processTemplatesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "process-templates",
 		Short:       "Author process templates through agentd",
-		Long:        "List, show, validate, and CAS-save process-template YAML through agentd. Reads require process.templates.read; save requires process.templates.manage. Saving never executes or instantiates a process.",
+		Long:        "List, show, validate, and CAS-save process-template YAML through agentd, and share processes as .pwf workflow files (export, inspect, import). Reads and export require process.templates.read; save and import require process.templates.manage. Saving or importing never executes or instantiates a process.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			processTemplatesLsCmd(),
 			processTemplatesShowCmd(),
 			processTemplatesValidateCmd(),
 			processTemplatesSaveCmd(),
+			processTemplatesExportCmd(),
+			processTemplatesInspectCmd(),
+			processTemplatesImportCmd(),
 		},
 	}.ToCobra()
 }
