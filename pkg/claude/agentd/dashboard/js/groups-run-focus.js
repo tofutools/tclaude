@@ -15,7 +15,7 @@ import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
-  kindLabel, miniGraphLayout, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
+  kindLabel, miniGraphLayout, programBounds, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
@@ -196,6 +196,7 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
   const upstream = edges.filter((edge) => String(edge.to) === node.id).map((edge) => byId.get(String(edge.from))).filter(Boolean);
   const downstream = edges.filter((edge) => String(edge.from) === node.id).map((edge) => byId.get(String(edge.to))).filter(Boolean);
   const view = detail.view;
+  const bounds = programBounds(node);
   const decision = (view?.awaitingDecisions || []).find((item) => String(item.nodeId) === node.id);
   const blocked = (view?.blocked || []).find((item) => String(item.nodeId) === node.id);
   const history = detail.events.filter((event) => String(event.nodeId || '') === node.id).slice(-HISTORY_ROWS);
@@ -208,6 +209,7 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
     <${ProcessStateChip} state=${node.state} label=${decision ? (wizard ? 'awaits your word' : 'waiting on you') : stateLabel(node.state)} />
     <dl class="grf-facts">
       <dt>${wizard ? 'bearer' : 'performer'}</dt><dd>${performerText(node, nameOf, wizard)}</dd>
+      ${bounds && html`<dt>runs</dt><dd class=${bounds.warning ? 'grf-blocked' : ''} title=${bounds.cwd || undefined} data-run-bounds>${bounds.warning || bounds.text}</dd>`}
       <dt>upstream</dt><dd>${neighbours(upstream)}</dd>
       <dt>downstream</dt><dd>${neighbours(downstream)}</dd>
       ${blocked && html`<dt>blocked</dt><dd class="grf-blocked">${blocked.reason || 'parked on an operator'}</dd>`}

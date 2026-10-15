@@ -92,6 +92,8 @@ type Run struct {
 	// advances and the outcomes of attempts already in flight, but plans no
 	// new task command until it is released.
 	held bool
+	// bounds resolves where each program command runs; see SetProgramBounds.
+	bounds ProgramBoundsResolver
 }
 
 // Hold pauses (true) or releases (false) the run's planning. It is owner-only
@@ -140,6 +142,7 @@ type Dispatch struct {
 	owner   *Run
 	runID   string
 	command engine.Command
+	bounds  *ProgramBounds
 	claimed atomic.Bool
 	spent   atomic.Bool
 }
@@ -434,15 +437,16 @@ func Prepare(run *Run) (*Dispatch, error) {
 	// An advance has no triggering input of its own: the settlement it commits
 	// is what wins a join, and everything advanceEvidence reports — a parked
 	// branch, a planned command — is downstream of that.
+	bounds := run.programBounds(command)
 	events := commitEvidence(run.definition, run.checkpoint, next,
-		nil, advanceEvidence(command), true)
+		nil, advanceEvidence(command, bounds), true)
 	if err := persistEvents(run, next, events); err != nil {
 		return nil, err
 	}
 	if command == nil {
 		return nil, nil
 	}
-	return run.grant(*command), nil
+	return run.grant(*command, bounds), nil
 }
 
 // Reissue durably records the operator's explicit retry decision before it
@@ -458,14 +462,18 @@ func Reissue(run *Run, actor, selector string) (*Dispatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The bounds are evaluated again: a reissue is a new attempt, dispatched
+	// into whatever the run's scope narrows it to now.
+	bounds := run.programBounds(&command)
 	payload := struct {
-		Decision  string `json:"decision"`
-		CommandID string `json:"commandId"`
-	}{Decision: "reissue", CommandID: command.ID}
+		Decision  string         `json:"decision"`
+		CommandID string         `json:"commandId"`
+		Bounds    *ProgramBounds `json:"bounds,omitempty"`
+	}{Decision: "reissue", CommandID: command.ID, Bounds: bounds}
 	if err := persist(run, run.checkpoint, event("program_reissued", &command, actor, payload)); err != nil {
 		return nil, err
 	}
-	return run.grant(command), nil
+	return run.grant(command, bounds), nil
 }
 
 // RecordOutcome durably applies an operator-supplied outcome to one ambiguous
@@ -716,8 +724,8 @@ func (r *Run) firstUnaccountedCommand() (engine.Command, bool) {
 
 // grant records a live permission for one durable command. The caller must
 // already have committed that command.
-func (r *Run) grant(command engine.Command) *Dispatch {
-	dispatch := &Dispatch{owner: r, runID: r.id, command: cloneCommand(command)}
+func (r *Run) grant(command engine.Command, bounds *ProgramBounds) *Dispatch {
+	dispatch := &Dispatch{owner: r, runID: r.id, command: cloneCommand(command), bounds: bounds}
 	if r.dispatches == nil {
 		r.dispatches = make(map[string]*Dispatch, 1)
 	}
@@ -842,7 +850,10 @@ func eventForNode(kind, nodeID, actor string, payload any) db.ProcessRunEvent {
 // derives them once for the whole commit — and neither is the fallback row for
 // an advance that produced nothing, which commitEvidence owns because only it
 // can see whether anything else was recorded.
-func advanceEvidence(command *engine.Command) []db.ProcessRunEvent {
+//
+// bounds is where a program command will run, recorded on its attempt; nil for
+// an agent command or an unscoped run.
+func advanceEvidence(command *engine.Command, bounds *ProgramBounds) []db.ProcessRunEvent {
 	if command == nil {
 		return nil
 	}
@@ -851,7 +862,7 @@ func advanceEvidence(command *engine.Command) []db.ProcessRunEvent {
 		kind = "agent_prepared"
 	}
 	return []db.ProcessRunEvent{event(kind, command, EngineActor,
-		preparedEvidence{Command: cloneCommand(*command)})}
+		preparedEvidence{Command: cloneCommand(*command), Bounds: bounds})}
 }
 
 // awaitedEvidence is the human-facing record of every decision window this
@@ -1107,6 +1118,7 @@ type joinArrivalEvidence struct {
 
 type preparedEvidence struct {
 	Command engine.Command `json:"command"`
+	Bounds  *ProgramBounds `json:"bounds,omitempty"`
 }
 
 func cloneCommand(command engine.Command) engine.Command {
@@ -1128,6 +1140,15 @@ func (d *Dispatch) Command() engine.Command {
 		return engine.Command{}
 	}
 	return cloneCommand(d.command)
+}
+
+// Bounds is where this permission's program runs, as recorded on its attempt;
+// nil runs it unbounded.
+func (d *Dispatch) Bounds() *ProgramBounds {
+	if d == nil {
+		return nil
+	}
+	return d.bounds
 }
 
 // RunID is the run this permission belongs to. Perform reads it to bind the

@@ -265,9 +265,13 @@ type processRunView struct {
 	Performers []processRunPerformerView `json:"performers"`
 	// Paused says an operator paused the run: it plans no new agent turns or
 	// program commands until resumed, while in-flight attempts finish.
-	Paused    *processRunPauseView `json:"paused,omitempty"`
-	CreatedAt time.Time            `json:"createdAt"`
-	UpdatedAt time.Time            `json:"updatedAt"`
+	Paused *processRunPauseView `json:"paused,omitempty"`
+	// ProgramBounds is, per executable program node, where its latest attempt
+	// ran as recorded when it was planned: working directory and sandbox, or
+	// unconfined. A node whose attempts ran unscoped is absent.
+	ProgramBounds map[string]processProgramBoundsView `json:"programBounds,omitempty"`
+	CreatedAt     time.Time                           `json:"createdAt"`
+	UpdatedAt     time.Time                           `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
@@ -572,6 +576,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		return false, errProcessRuntimeStopped
 	}
 	run.Hold(paused)
+	run.SetProgramBounds(processProgramBoundsResolver(runID))
 
 	var dispatches []*executor.Dispatch
 	// committed records that this start already made a durable change. A
@@ -1734,6 +1739,10 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	case claimed:
 		action = "driving"
 	}
+	programBounds, err := processRunProgramBounds(record.ID)
+	if err != nil {
+		return processRunView{}, err
+	}
 	return processRunView{
 		ID: record.ID, TemplateRef: record.TemplateRef, Params: params,
 		ProgramAuthorizations: authorizations, Status: checkpoint.Status,
@@ -1741,7 +1750,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
-		Paused:    processRunPauseViewOf(record.Scope),
+		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }

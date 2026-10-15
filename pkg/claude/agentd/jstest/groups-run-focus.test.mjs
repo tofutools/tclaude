@@ -130,6 +130,16 @@ test('the inspector opens on the gate waiting on you and follows node selection'
   assert.match(inspector().querySelector('dd').textContent, /fe-dev-forms/);
 });
 
+test('a program step shows where its attempt ran', async (t) => {
+  const { harness, root } = await mountRunFocus(t, { runId: 'run_reindex' });
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-process-node="snapshot"]'), 'click'));
+  const bounds = root.querySelector('[data-run-inspector="snapshot"] [data-run-bounds]');
+  assert.equal(bounds.textContent, 'in webshop-charts · 🛡 sandbox dev-net');
+  assert.equal(bounds.getAttribute('title'), '/home/dev/git/webshop-charts');
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-process-node="verify"]'), 'click'));
+  assert.equal(root.querySelector('[data-run-inspector="verify"] [data-run-bounds]'), null, 'not planned yet: nothing recorded');
+});
+
 test('a blocked node shows why it is parked', async (t) => {
   const { harness, root } = await mountRunFocus(t, { runId: 'run_migrate' });
   await harness.act(() => harness.fireEvent(root.querySelector('[data-process-node="apply"]'), 'click'));

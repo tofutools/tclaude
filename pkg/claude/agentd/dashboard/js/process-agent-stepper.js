@@ -3,17 +3,18 @@
 // A run bound to one agent (◉) executes inside that agent's context, so in
 // the agent's own terminal it reads better as a vertical stepper than as a
 // graph: agentic steps are turns injected into this conversation, program
-// steps run on the host, decisions wait for a human. A bounds strip makes the
-// agent's envelope explicit (working dir, sandbox, grants, spend, identity),
-// and a step that will leave that envelope is flagged before the run gets
-// there. The stepper is pure presentation: it renders the read model's
+// steps run in the agent's working dir inside its sandbox, decisions wait for
+// a human. A bounds strip makes the agent's envelope explicit (working dir,
+// sandbox, grants, spend, identity), and a step that will leave that envelope
+// — a program step recorded as unconfined, or one whose bounds cannot be
+// enforced — is flagged before the run gets there. The stepper is pure presentation: it renders the read model's
 // projection plus the dashboard snapshot, and every action is injected.
 
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, runIconView, runName, runSteps,
+  ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, programBounds, runIconView, runName, runSteps,
 } from './process-kit.js';
 
 const html = htm.bind(h);
@@ -109,8 +110,18 @@ export function stepperRows(run, agentId, now = Date.now()) {
       }
       case 'command': {
         const profile = String(node.performer?.ref || '');
-        if (settled) row.detail.push(`ran on the host${profile ? ` · profile ${profile}` : ''}`);
-        else row.warning = `runs on the host, outside this agent's sandbox (program profile ${profile || 'none'})`;
+        const bounds = programBounds(node);
+        if (bounds) {
+          // Recorded when the attempt was planned: where it actually runs.
+          row.detail.push(`${settled ? 'ran' : 'runs'} ${bounds.text}`);
+          if (!settled) row.warning = bounds.warning;
+        } else if (settled) {
+          row.detail.push(`ran on the host${profile ? ` · profile ${profile}` : ''}`);
+        } else if (String(run?.scope?.kind || '') === 'agent') {
+          row.detail.push(`will run in this agent's working dir and sandbox${profile ? ` · profile ${profile}` : ''}`);
+        } else {
+          row.warning = `runs on the host, outside this agent's sandbox (program profile ${profile || 'none'})`;
+        }
         break;
       }
       case 'decision': {

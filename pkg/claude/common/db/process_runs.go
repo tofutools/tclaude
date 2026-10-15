@@ -1008,6 +1008,46 @@ func ListProcessRunEvents(runID string, afterSequence int64, limit int) ([]Proce
 	return events, rows.Err()
 }
 
+// ListLatestProcessRunNodeEvents returns, for each node, the newest event of
+// one of kinds among the run's newest MaxProcessRunEventReadPage such events,
+// newest first. It is the bounded read behind per-node "last attempt" facts
+// the read model projects without replaying the run's whole evidence.
+func ListLatestProcessRunNodeEvents(runID string, kinds ...string) ([]ProcessRunEvent, error) {
+	if !validProcessRuntimeIdentifier(runID, MaxProcessRunIDBytes, false) || len(kinds) == 0 {
+		return nil, fmt.Errorf("%w: invalid evidence query", ErrProcessRunInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	args := append(processRunEventSelectArgs(), runID)
+	for _, kind := range kinds {
+		args = append(args, kind)
+	}
+	args = append(args, MaxProcessRunEventReadPage)
+	rows, err := d.Query(processRunEventSelect+`
+		WHERE run_id = ? AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)
+		ORDER BY sequence DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	seen := map[string]bool{}
+	var events []ProcessRunEvent
+	for rows.Next() {
+		event, err := scanProcessRunEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		if seen[event.NodeID] {
+			continue
+		}
+		seen[event.NodeID] = true
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 // DeleteProcessRunsWithoutCheckpointVersion removes run checkpoints (and, via
 // the schema's cascade, their evidence rows) whose stored checkpoint does not
 // carry the given schema version. This is the sanctioned Take2 wipe for a

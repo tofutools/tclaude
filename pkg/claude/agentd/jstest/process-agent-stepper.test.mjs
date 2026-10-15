@@ -17,7 +17,8 @@ function agentRun() {
         dispatch: { agentId: 'agt_search', attempt: 4, state: 'delivered', deliveredAt: at(21) } },
       { id: 'verify', label: 'Verify recall@10', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'eval' } },
       { id: 'decide', label: 'Decide', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
-      { id: 'swap', label: 'Swap alias', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'alias-write' } },
+      { id: 'swap', label: 'Swap alias', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'alias-write' },
+        bounds: { scope: 'agent', cwd: '/home/dev/git/webshop-search-index-v2', sandbox: 'unconfined', reason: 'the agent runs with --sandbox-impl off' } },
       { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } },
     ],
     edges: [
@@ -69,15 +70,17 @@ test('stepper rows mark turns in this conversation and warn before leaving the b
   const { stepper } = await load(t);
   const rows = stepper.stepperRows(agentRun(), 'agt_search');
   assert.deepEqual(rows.map((row) => row.id), ['snapshot', 'backfill', 'verify', 'decide', 'swap']);
-  const [snap, backfill, verify, decide] = rows;
+  const [snap, backfill, verify, decide, swap] = rows;
   assert.equal(snap.kind, 'command');
   assert.match(snap.detail.join(), /ran on the host · profile safe/);
   assert.equal(snap.warning, '', 'a finished step no longer warns');
   assert.ok(backfill.here);
   assert.match(backfill.detail.join(' · '), /turn injected at \d\d:\d\d · loop ×4/);
   assert.equal(backfill.time, '21m');
-  assert.match(verify.warning, /runs on the host, outside this agent's sandbox \(program profile eval\)/);
-  assert.deepEqual(verify.detail, [], 'the warning already says where it runs');
+  assert.equal(verify.warning, '', 'an agent-scoped program step runs inside the agent bounds');
+  assert.deepEqual(verify.detail, ["will run in this agent's working dir and sandbox · profile eval"]);
+  assert.match(swap.warning, /runs in webshop-search-index-v2 outside any sandbox \(the agent runs with --sandbox-impl off\)/,
+    'a step recorded as unconfined leaves the bounds');
   assert.equal(decide.detail.join(), 'swap · ask-lead');
   assert.match(decide.warning, /human decision/);
 
@@ -87,6 +90,22 @@ test('stepper rows mark turns in this conversation and warn before leaving the b
   const elsewhere = stepper.stepperRows(run, 'agt_search')[1];
   assert.ok(!elsewhere.here);
   assert.match(elsewhere.detail.join(' · '), /performed by agt_other/);
+});
+
+test('recorded program bounds say where a step runs, or why it cannot', async (t) => {
+  const { stepper } = await load(t);
+  const run = agentRun();
+  run.nodes[1].bounds = { scope: 'agent', cwd: '/home/dev/git/webshop-search-index-v2', sandbox: 'tclaude-layer', profiles: ['dev-net'] };
+  run.nodes[3].bounds = { scope: 'agent', sandbox: 'tclaude-layer', error: 'bwrap is not installed' };
+  const [snap, , verify] = stepper.stepperRows(run, 'agt_search');
+  assert.deepEqual(snap.detail, ['ran in webshop-search-index-v2 · 🛡 sandbox dev-net']);
+  assert.equal(snap.warning, '');
+  assert.match(verify.warning, /cannot run inside the run's bounds: bwrap is not installed/);
+
+  // A group-scoped run's unplanned program step still says it leaves this agent.
+  run.scope = { kind: 'group', group: 'webshop' };
+  delete run.nodes[3].bounds;
+  assert.match(stepper.stepperRows(run, 'agt_search')[2].warning, /runs on the host/);
 });
 
 test('an agent-scoped run opens as the stepper, toggles to the graph, and promotes', async (t) => {
@@ -101,7 +120,8 @@ test('an agent-scoped run opens as the stepper, toggles to the graph, and promot
   assert.ok(!root.querySelector('.pk-mini-graph'));
   assert.match(root.querySelector('[data-process-bounds]').textContent, /webshop-search-index-v2.*dev-net.*2 grants.*\$ 1\.23 spent.*survives reincarnate/s);
   assert.match(root.querySelector('[data-process-step="backfill"]').textContent, /← this conversation/);
-  assert.ok(root.querySelector('[data-process-step="verify"] .pk-stepper-step-warning'));
+  assert.ok(root.querySelector('[data-process-step="swap"] .pk-stepper-step-warning'));
+  assert.equal(root.querySelector('[data-process-step="verify"] .pk-stepper-step-warning'), null);
 
   const button = (pattern) => [...root.querySelectorAll('.pk-run-popover-actions button')].find((b) => pattern.test(b.textContent));
   assert.equal(button(/pause/).disabled, true, 'no pause action wired');

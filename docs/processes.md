@@ -133,6 +133,44 @@ profiles (`--authorize-program-profile`) also needs `process.runs.manage`,
 and group ownership never satisfies that: scope narrows authority, it never
 widens it into host program execution.
 
+**Where program steps run.** Scope also narrows where a program step
+(`performer.kind: program`) executes. The bounds are resolved when each
+attempt is planned (a reissue resolves them again) and recorded on it:
+
+| Scope | Working directory | Confinement |
+| --- | --- | --- |
+| `none` | the daemon's, unchanged | none, unchanged |
+| `agent` | the bound agent's current working directory (its worktree) | the sandbox the agent's current generation was launched with — its recorded sandbox profiles, enforced by tclaude's own layer (bubblewrap on Linux, Seatbelt on macOS) whichever layer confines the agent itself |
+| `group` | the group's default working directory | the group's sandbox profiles, enforced by tclaude's own layer, as the group's default spawn profile would launch an agent |
+
+- An agent with no OS sandbox at all (`--sandbox-impl off` or
+  `resource-only`, Codex `--sandbox danger-full-access`, or a harness
+  sandbox recorded as off) has nothing to narrow to: its program steps run
+  **unconfined** in its working directory. Likewise a group with no default
+  spawn profile, or whose default profile runs unconfined, keeps the
+  unscoped behaviour. Either way the attempt is recorded as `unconfined`,
+  with the reason.
+- Bounds that cannot be enforced **fail the attempt closed**: the program
+  never starts, and never unconfined instead. That covers a host where
+  tclaude's sandbox is unavailable (no bubblewrap, no unprivileged user
+  namespaces), an agent whose sandbox snapshot is not recorded, and a group
+  with a sandboxing default profile but no default working directory. The
+  attempt's `program_observed` error names what is missing; with a retry
+  policy the branch parks as blocked like any other failure.
+- A program step runs under the neutral `shell` launch identity inside the
+  sandbox: it gets the profile's grants and its working directory, never a
+  coding harness's credentials or state directories. Writes to a linked git
+  worktree's shared `.git` directory are not granted, so a program that
+  commits needs a profile that grants them.
+- Resource limits in the profile are not applied to program steps yet.
+
+Each attempt's `program_prepared` (or `program_reissued`) event carries a
+`bounds` object — `scope`, `cwd`, `sandbox` (`tclaude-layer` or
+`unconfined`), `profiles`, `reason`, and `error` when it cannot be
+enforced. `process show --json` lists each program node's latest bounds
+under `programBounds`, and the dashboard shows them on the program step (see
+below).
+
 **Orphaned runs.** A scope is never changed silently. If a group-scoped
 run's group is deleted, or an agent-scoped run's agent is retired or
 deleted, the run pauses with scope state `orphaned` (its `action` reads
@@ -232,8 +270,11 @@ group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.
   i/n), repeated on the tab. An icon opens a popover with the mini-graph and
   the agent's node lit, its contract, what feeds it and what waits on it, and
   the run actions. A run bound to that agent opens instead as a vertical
-  stepper with a bounds strip (working dir, sandbox, grants, spend, identity),
-  flagging steps that leave the agent's sandbox.
+  stepper with a bounds strip (working dir, sandbox, grants, spend, identity).
+  Each program step says where its attempt runs or ran (directory and
+  sandbox), and a step recorded as unconfined, or whose bounds cannot be
+  enforced, is flagged. The run focus inspector shows the same on a program
+  node as *runs*.
 
 **Acting on it.** Decide human gates from the run focus or the popover;
 reassign an agent node by dragging a member from the performer dock onto it
@@ -260,7 +301,8 @@ name and needs the same permission.
   settled. A losing branch that *fails* still fails the run, exactly as under
   `join: all`.
 - **Program performers** (`performer.kind: program`): executed as argv without
-  a shell, with a bounded environment and bounded output.
+  a shell, with a bounded environment and bounded output, inside the run
+  scope's bounds (see [Where program steps run](#run-scope)).
 - **Bounded program retries.** `retry.maxAttempts: <n>` includes the first
   attempt and is capped at 100; attempts run back to back, and nothing can
   interrupt a task still spending its budget. A failed attempt inside the
