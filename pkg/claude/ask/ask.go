@@ -110,6 +110,9 @@ type askInput struct {
 	// ask defaults leave these false and are validated as before.
 	ModelBuiltin     bool
 	EffortBuiltin    bool
+	ModelGlobal      bool
+	EffortGlobal     bool
+	GlobalHarness    string
 	ForceInteractive bool
 	New              bool
 	// Verbose keeps the harness's capture-mode stderr transcript visible
@@ -169,7 +172,7 @@ func runFromCLI(p *Params, args []string) error {
 	}
 
 	// Resolve the harness + model/effort a FRESH ask runs at, applying the
-	// precedence flag > selected ask profile > config.ask > built-in default
+	// precedence flag > selected ask profile > config.ask > global default > built-in default
 	// (JOH-253 / JOH-252). The config file is the same ~/.tclaude/config.json
 	// the dashboard edits; a load failure degrades to the built-in default
 	// rather than failing the ask. runAsk stays a pure argv builder (empty =
@@ -195,6 +198,9 @@ func runFromCLI(p *Params, args []string) error {
 		Effort:           target.Effort,
 		ModelBuiltin:     target.ModelBuiltin,
 		EffortBuiltin:    target.EffortBuiltin,
+		ModelGlobal:      target.ModelGlobal,
+		EffortGlobal:     target.EffortGlobal,
+		GlobalHarness:    target.GlobalHarness,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
@@ -251,27 +257,12 @@ func printWhere(cwd string, w io.Writer) error {
 	return nil
 }
 
-// resolveAskTarget resolves the harness + model + effort a FRESH `tclaude ask`
-// runs at, applying precedence per field: a per-call flag wins, else the
-// selected ask profile, else the dedicated config.ask block, else the
-// built-in default constants. The harness comes from the selected ask profile
-// (JOH-252 fold-in, Option A) — a spawn profile from the groups tab, reused
-// here for its harness/model/effort subset — else the default (Claude Code).
-//
-// A named-but-missing profile self-heals to the no-profile path (a deleted or
-// renamed profile must not hard-error every ask). Spawn-profile fields
-// irrelevant to a one-shot ask (agent name, role, sandbox, …) are ignored;
-// only harness/model/effort are read. The built-in default constants
-// (DefaultAskModel/DefaultAskEffort) are Claude-catalog values, so they are
-// applied only when the resolved harness is Claude — a non-Claude harness with
-// no pinned model/effort leaves them blank, and the asker omits the flags so
-// Codex uses its own configured defaults.
-//
-// The returned values are raw strings still validated against the resolved
-// harness's catalog by runAsk. db.ResolveSpawnProfile is the only I/O; a load
-// error degrades to the no-profile path rather than failing the ask.
-// This compact wrapper is retained for the package's existing resolution tests;
-// runFromCLI uses resolveAskTargetDetails to carry source markers into runAsk.
+// resolveAskTarget resolves a fresh ask per field: flags, selected ask
+// profile, dedicated ask config, global default spawn profile, then harness
+// built-ins. No group defaults or sandbox-profile fields participate here.
+// Missing profile references self-heal. Ambient cross-harness model/effort
+// values are skipped; explicit ask values are validated by runAsk.
+// The compact wrapper is retained for resolution tests.
 func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string, resolveErr error) {
 	target, err := resolveAskTargetDetails(flagModel, flagEffort, cfg)
 	if err != nil {
@@ -290,27 +281,74 @@ type resolvedAskTarget struct {
 	Effort        string
 	ModelBuiltin  bool
 	EffortBuiltin bool
+	ModelGlobal   bool
+	EffortGlobal  bool
+	GlobalHarness string
 }
 
 func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (resolvedAskTarget, error) {
 	target := resolvedAskTarget{Harness: harness.DefaultName}
 	var modelBuiltin, effortBuiltin bool
 
+	var selected *db.SpawnProfile
 	if name := cfg.AskProfileName(); name != "" {
 		if prof, err := db.ResolveSpawnProfile(name); err == nil && prof != nil {
 			if prof.Disabled {
 				return resolvedAskTarget{}, fmt.Errorf("spawn profile %q is disabled: %s", prof.Name, prof.DisabledReason)
 			}
-			if prof.Harness != "" {
-				target.Harness = prof.Harness
-			}
-			target.Model, target.Effort = prof.Model, prof.Effort
-		} else {
-			// Missing / unreadable profile → fall back to config.ask defaults.
-			target.Model, target.Effort, modelBuiltin, effortBuiltin = resolveConfiguredAskDefaults(cfg)
+			selected = prof
 		}
-	} else {
-		target.Model, target.Effort, modelBuiltin, effortBuiltin = resolveConfiguredAskDefaults(cfg)
+	}
+	// Ask has no group context. Only the dashboard-wide default can supply
+	// lower-priority values; an unavailable/deleted reference self-heals.
+	global, _ := db.GlobalDefaultSpawnProfile()
+	if global != nil && global.Disabled {
+		if selected == nil {
+			return resolvedAskTarget{}, fmt.Errorf("spawn profile %q is disabled: %s", global.Name, global.DisabledReason)
+		}
+		global = nil
+	}
+	if selected != nil && selected.Harness != "" {
+		target.Harness = selected.Harness
+	} else if global != nil && global.Harness != "" {
+		target.Harness = global.Harness
+	}
+	target.Model, target.Effort, modelBuiltin, effortBuiltin = resolveConfiguredAskDefaults(cfg)
+	if selected != nil {
+		if selected.Model != "" {
+			target.Model = selected.Model
+			modelBuiltin = false
+		}
+		if selected.Effort != "" {
+			target.Effort = selected.Effort
+			effortBuiltin = false
+		}
+	}
+	// Ambient values from a different harness are skipped, as in spawn
+	// resolution. Dedicated ask configuration and explicit flags remain loud.
+	if global != nil {
+		target.GlobalHarness = global.Harness
+		if target.GlobalHarness == "" {
+			target.GlobalHarness = harness.DefaultName
+		}
+		h, err := harness.Resolve(target.Harness)
+		if err != nil {
+			return resolvedAskTarget{}, err
+		}
+		if target.Model == "" && global.Model != "" && target.Harness == target.GlobalHarness {
+			if value, err := h.Models.ValidateModel(global.Model); err == nil {
+				target.Model = value
+				modelBuiltin = false
+				target.ModelGlobal = true
+			}
+		}
+		if target.Effort == "" && global.Effort != "" {
+			if value, err := h.Models.ValidateEffort(global.Effort); err == nil {
+				target.Effort = value
+				effortBuiltin = false
+				target.EffortGlobal = true
+			}
+		}
 	}
 
 	// The built-in defaults only make sense for the Claude catalog.
@@ -331,10 +369,12 @@ func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (
 	if flagModel != "" {
 		target.Model = flagModel
 		modelBuiltin = false
+		target.ModelGlobal = false
 	}
 	if flagEffort != "" {
 		target.Effort = flagEffort
 		effortBuiltin = false
+		target.EffortGlobal = false
 	}
 	target.ModelBuiltin = modelBuiltin
 	target.EffortBuiltin = effortBuiltin
@@ -427,6 +467,23 @@ func runAsk(in askInput, aio askIO) error {
 			model = ""
 		}
 		if in.EffortBuiltin {
+			effort = ""
+		}
+	}
+
+	// A thread keeps its recorded harness even when the global default changes
+	// vendor. Do not apply incompatible ambient defaults to that older thread.
+	if in.ModelGlobal && model != "" {
+		sourceHarness := in.GlobalHarness
+		if sourceHarness == "" {
+			sourceHarness = in.Harness
+		}
+		if _, err := h.Models.ValidateModel(model); err != nil || (sourceHarness != "" && sourceHarness != h.Name) {
+			model = ""
+		}
+	}
+	if in.EffortGlobal && effort != "" {
+		if _, err := h.Models.ValidateEffort(effort); err != nil {
 			effort = ""
 		}
 	}

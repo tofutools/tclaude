@@ -58,8 +58,9 @@ harness.
 
 ## Harness, model, and effort
 
-A fresh ask defaults to Claude Code with `sonnet` / `medium`. Per-call flags
-override model and effort:
+A fresh ask uses the configured ask profile, then ask-specific settings, then
+the global default spawn profile. With none set, it defaults to Claude Code
+with `sonnet` / `medium`. Per-call flags override model and effort:
 
 ```bash
 tclaude ask -m haiku -e low "give me the short version"
@@ -69,12 +70,19 @@ To change the default harness for fresh asks, select a saved spawn profile
 in the dashboard (**Config → Ask & scribe defaults**) or set `ask.profile`
 in `~/.tclaude/data/config.json`. Only the profile's harness, model, and
 effort fields are used; its sandbox, identity, and other spawn fields are
-ignored. A deleted profile falls back to the Claude defaults instead of
-failing. Without a profile, `ask.model` and `ask.effort` set Claude's
-defaults directly.
+ignored. A deleted profile falls through to ask-specific settings and the
+global default instead of failing. `ask.model` and `ask.effort` override the
+corresponding global values. The global profile can select any supported
+harness; unset non-Claude model/effort fields use that harness's defaults.
 
-Resolution order: per-call flags → selected profile → `ask.model` /
-`ask.effort` → built-ins.
+Resolution order per field: per-call flags → selected ask profile →
+`ask.model` / `ask.effort` → global default spawn profile → harness built-ins.
+The harness comes from the ask profile, then the global profile, then Claude
+Code. Group defaults never participate. Incompatible ambient global
+model/effort values are skipped, including when resuming a thread recorded
+under another harness; explicit ask values are still validated. Sandbox
+profiles, including the global sandbox-profile default, are currently not
+applied by `ask`.
 
 ## Piped input
 
