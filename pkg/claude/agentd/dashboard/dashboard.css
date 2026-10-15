@@ -20476,6 +20476,9 @@ body.wizard .gq-link { color: #d4af37; }
 .gm-outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .gm-outcome { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid #30363d; border-radius: 999px; color: #d2a8ff; }
 .gm-outcome-name { width: 80px; padding: 1px 5px; }
+.gm-loop { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid #9e6a03; border-radius: 999px; color: #f2cc60; font-size: 11px; }
+.gm-loop input { width: 40px; padding: 0 3px; }
+body.wizard .gm-loop { border-color: #a8892a; color: #f3e6c0; }
 .gm-add-outcome { font: inherit; width: 22px; height: 22px; border-radius: 50%; border: 1px dashed #30363d; background: transparent; color: #8b949e; cursor: pointer; }
 .gm-row { display: flex; align-items: center; gap: 8px; }
 .gm-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid #21262d; font-size: 12px; }

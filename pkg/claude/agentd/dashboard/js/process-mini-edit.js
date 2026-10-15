@@ -12,6 +12,7 @@
 // editor.
 
 import { setStepWho } from './process-step-list.js';
+import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, loopBound, loopableEdge, setLoopBound } from './process-loops.js';
 
 // PASS_LABELS mirrors model.PassOutcomeLabels: the edge a task's pass
 // verdict follows.
@@ -145,6 +146,30 @@ export function canRunAlongside(view, id) {
   return '';
 }
 
+// syncLoops keeps each decision's loop bounds in step with its edges after
+// an edit, as the step list's syncStepLoops does: a bound whose outcome no
+// longer goes back is dropped, and an outcome that now goes back gets the
+// default bound, so a draft never holds an unbounded loop with no rounds
+// control to fix it.
+export function syncLoops(view) {
+  const { nodes } = view.template;
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node.type !== 'decision') {
+      delete node.loops;
+      continue;
+    }
+    for (const outcome of Object.keys(node.loops || {})) {
+      if (!loopableEdge(nodes, view.edges, id, outcome)) setLoopBound(node, outcome, null);
+    }
+    for (const edge of outgoing(view, id)) {
+      if (!loopBound(node, edge.outcome) && loopableEdge(nodes, view.edges, id, edge.outcome)) {
+        setLoopBound(node, edge.outcome, { maxIterations: LOOP_DEFAULT_ROUNDS });
+      }
+    }
+  }
+  return view;
+}
+
 // insertAfter puts a new step on `id`'s main path, before what came next.
 export function insertAfter(view, id, kind) {
   const why = canInsertAfter(view, id);
@@ -159,7 +184,7 @@ export function insertAfter(view, id, kind) {
   } else {
     next.edges.push({ from: id, outcome: next.template.nodes[id].type === 'decision' ? uniqueOutcome(next, id, 'next') : 'next', to: added });
   }
-  return { view: next, id: added };
+  return { view: syncLoops(next), id: added };
 }
 
 // insertBefore puts a new step in front of `id`: whatever led to it leads to
@@ -176,7 +201,7 @@ export function insertBefore(view, id, kind) {
   if (next.template.start === id) next.template.start = added;
   next.edges.push({ from: added, outcome: CONTINUE[kind], to: id });
   dropStaleJoins(next);
-  return { view: next, id: added };
+  return { view: syncLoops(next), id: added };
 }
 
 // branch adds an outcome to a decision that leads to a new step, which then
@@ -198,7 +223,7 @@ export function branch(view, id, kind) {
   const added = addNode(next, newStepNode(kind));
   next.edges.push({ from: id, outcome, to: added });
   if (main) next.edges.push({ from: added, outcome: CONTINUE[kind], to: main.to });
-  return { view: next, id: added, outcome };
+  return { view: syncLoops(next), id: added, outcome };
 }
 
 // runAlongside runs a new step in parallel with `id`: the edge into `id`
@@ -216,7 +241,7 @@ export function runAlongside(view, id, kind) {
   next.edges.push({ from: fork, outcome: id, to: id }, { from: fork, outcome: added, to: added });
   next.edges.push({ from: added, outcome: CONTINUE[kind], to: main.to });
   next.template.nodes[main.to].join = 'all';
-  return { view: next, id: added, fork };
+  return { view: syncLoops(next), id: added, fork };
 }
 
 // duplicate puts a copy of `id` right after it: the copy takes over `id`'s
@@ -237,7 +262,7 @@ export function duplicate(view, id) {
     next.edges.push({ from: id, outcome: CONTINUE[miniKind(node)] || 'next', to: added });
   }
   dropStaleJoins(next);
-  return { view: next, id: added };
+  return { view: syncLoops(next), id: added };
 }
 
 // changeKind turns a step into an agent, "you" or command step, keeping its
@@ -273,7 +298,7 @@ export function changeKind(view, id, kind) {
     for (const orphan of orphans) removeNode(next, orphan);
   }
   dropStaleJoins(next);
-  return { view: next, id, orphans };
+  return { view: syncLoops(next), id, orphans };
 }
 
 // entryOf is where a run starts: the start pseudo edge's target, else
@@ -343,7 +368,7 @@ export function deleteStep(view, id) {
   const orphans = [...before].filter((nodeID) => nodeID !== id && !after.has(nodeID));
   for (const orphan of orphans) removeNode(next, orphan);
   dropStaleJoins(next);
-  return { view: next, id: target, orphans };
+  return { view: syncLoops(next), id: target, orphans };
 }
 
 // deleteOrphans names the steps deleting `id` would also remove.
@@ -363,7 +388,7 @@ export function setOutcomeTarget(view, id, outcome, to) {
   if (!edge) throw new Error(`no outcome ${outcome}`);
   edge.to = to;
   dropStaleJoins(next);
-  return { view: next, id };
+  return { view: syncLoops(next), id };
 }
 
 // addOutcome gives a decision one more outcome, leading to `to`.
@@ -375,7 +400,7 @@ export function addOutcome(view, id, to) {
   const outcome = uniqueOutcome(next, id, decision.performer?.kind === 'human' ? 'option' : 'other');
   if (decision.performer?.kind === 'human') decision.performer.choices = [...(decision.performer.choices || []), outcome];
   next.edges.push({ from: id, outcome, to });
-  return { view: next, id, outcome };
+  return { view: syncLoops(next), id, outcome };
 }
 
 // removeOutcome drops one outcome of a decision (never its last).
@@ -386,7 +411,7 @@ export function removeOutcome(view, id, outcome) {
   next.edges = next.edges.filter((edge) => !(edge.from === id && edge.outcome === outcome));
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).filter((c) => c !== outcome);
   dropStaleJoins(next);
-  return { view: next, id };
+  return { view: syncLoops(next), id };
 }
 
 // renameOutcome renames one outcome of a decision (an answer, for "you").
@@ -398,8 +423,13 @@ export function renameOutcome(view, id, outcome, name) {
   const edge = next.edges.find((e) => e.from === id && e.outcome === outcome);
   if (edge) edge.outcome = value;
   const decision = next.template.nodes[id];
+  const bound = loopBound(decision, outcome);
+  if (bound) {
+    setLoopBound(decision, outcome, null);
+    setLoopBound(decision, value, bound);
+  }
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
-  return { view: next, id };
+  return { view: syncLoops(next), id };
 }
 
 // updateStep applies a step-list edit (setStepName, setStepText, setStepWho)
@@ -407,7 +437,7 @@ export function renameOutcome(view, id, outcome, name) {
 export function updateStep(view, id, edit) {
   const next = copyView(view);
   next.template.nodes[id] = edit({ id, node: next.template.nodes[id] }).node;
-  return { view: next, id };
+  return { view: syncLoops(next), id };
 }
 
 // outcomesOf lists a step's outcomes with their targets, main first.
@@ -418,11 +448,31 @@ export function outcomesOf(view, id) {
 }
 
 // targetsFor lists the nodes an outcome of `id` may lead to: every node but
-// the start and the step itself.
-export function targetsFor(view, id) {
+// the start and the step itself. Going back to earlier work is a decision's
+// bounded loop, so a task is offered only targets ahead of it (a backward
+// target it already has stays), and a decision's backward targets say so
+// (back: true).
+export function targetsFor(view, id, outcome = '') {
+  const decision = view.template.nodes[id]?.type === 'decision';
+  const current = view.edges.find((edge) => edge.from === id && edge.outcome === outcome);
   return Object.entries(view.template.nodes)
     .filter(([nodeID, node]) => nodeID !== id && node.type !== 'start')
-    .map(([nodeID, node]) => ({ id: nodeID, label: node.type === 'end' ? `end${node.name ? ` (${node.name})` : ''}` : node.name || nodeID }));
+    .map(([nodeID, node]) => {
+      const edges = current ? view.edges.map((edge) => (edge === current ? { ...edge, to: nodeID } : edge)) : view.edges;
+      const back = !!current && edgeGoesBack(view.template.nodes, edges, id, outcome);
+      return { id: nodeID, back, label: node.type === 'end' ? `end${node.name ? ` (${node.name})` : ''}` : node.name || nodeID };
+    })
+    .filter((target) => decision || !target.back || target.id === current?.to);
+}
+
+// setLoopRounds sets how many rounds a decision's backward outcome may run.
+export function setLoopRounds(view, id, outcome, rounds) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const bound = loopBound(node, outcome);
+  if (!bound) throw new Error(`${outcome} does not go back`);
+  setLoopBound(node, outcome, { ...bound, maxIterations: rounds });
+  return { view: next, id };
 }
 
 // draftProjection is the kit run projection of a draft: every node planned,

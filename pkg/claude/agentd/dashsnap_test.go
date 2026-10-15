@@ -963,6 +963,34 @@ func baseStates() []dashsnap.State {
 			SettleMS: 500,
 		},
 		{
+			Key:     "groups-processes-mini-editor-loop",
+			Title:   "Groups — Processes: mini editor bounded loop",
+			Caption: "Bounded loops in the mini editor (tcl-eu70x9): pointing a decision's answer back at earlier work makes it a loop with the default bound. The graph draws it as an amber back edge labelled with its bound, and the inspector marks backward targets (↺ … again) and asks how many rounds. A task is offered only targets ahead of it.",
+			InitJS:  processContextFixtureInitJS() + processContextSavedProcessesInitJS() + savedProcessTemplateInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var wait = async function(sel, ms){ var until = Date.now() + (ms || 3000); while (!document.querySelector(sel) && Date.now() < until) await new Promise(function(r){ setTimeout(r, 40); }); var el = document.querySelector(sel); if (!el) throw new Error('missing ' + sel); return el; };
+  var tick = function(){ return new Promise(function(r){ setTimeout(r, 60); }); };
+  document.querySelector('[data-saved-edit-graph="tpl_ship"]').click();
+  var card = await wait('[data-mini-editor="tpl_ship"]');
+  card.querySelector('[data-process-node="final-say"]').click();
+  var select = await wait('[data-mini-inspector="final-say"] [data-mini-outcome="hold"] select');
+  if (!select.querySelector('option[value="implement"][data-mini-back]')) throw new Error('a decision is not offered its earlier work as a loop');
+  select.value = 'implement';
+  select.dispatchEvent(new Event('change', {bubbles: true}));
+  await tick();
+  var rounds = await wait('[data-mini-inspector="final-say"] [data-mini-loop="hold"] input');
+  if (rounds.value !== '3') throw new Error('the loop did not get the default bound');
+  if (!card.querySelector('.pk-elabel.loop')) throw new Error('the graph does not draw the loop');
+  card.querySelector('[data-process-node="rework"]').click();
+  await tick();
+  if (card.querySelector('[data-mini-inspector="review"] option[value="implement"]')) throw new Error('a task is offered earlier work');
+  card.querySelector('[data-process-node="final-say"]').click();
+  await tick();
+  if (/problem/.test(card.textContent)) throw new Error('the loop left the draft with problems');
+  card.scrollIntoView({block: 'start'});`),
+			SettleMS: 500,
+		},
+		{
 			Key:     "groups-processes-blocked-start",
 			Title:   "Groups — blocked run + scoped start",
 			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list: it asks for the template's params (required ones marked) and lists program profiles to authorize, never pre-ticked.",

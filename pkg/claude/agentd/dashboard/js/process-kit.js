@@ -25,6 +25,7 @@ import { h } from 'preact';
 import { useId, useState } from 'preact/hooks';
 import htm from 'htm';
 import { layoutProcessGraph } from './process-layout.js';
+import { loopEdgeSuffix } from './process-loops.js';
 
 const html = htm.bind(h);
 
@@ -361,7 +362,7 @@ export function loopLabel(edge, known = new Map()) {
   const max = Number(edge.maxIterations) || 0;
   if (!max) return base;
   const at = loopRound(edge, known);
-  const bound = at ? `round ${at.round} of ${at.rounds}` : `≤${max}×`;
+  const bound = loopEdgeSuffix(at ? at.rounds : max, at ? at.round : 0);
   return base ? `${base} · ${bound}` : bound;
 }
 
