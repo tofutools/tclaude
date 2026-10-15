@@ -272,3 +272,57 @@ func TestProcessGroupProcesses_FullGroupRefusesBeforeSaving(t *testing.T) {
 	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/webshop/processes", map[string]any{"templateId": "filler-0"})
 	assert.Equal(t, http.StatusOK, rec.Code, "re-pinning a held template stays idempotent on a full group")
 }
+
+// Scenario: the dock's process library describes each template without
+// loading it (steps, roles, commands) and names the groups it is pinned to;
+// an agent's listing leaves the group names out.
+func TestProcessGroupProcesses_LibraryListsSummaryAndPins(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	f.HaveGroup("webshop")
+	f.HaveGroup("infra")
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates",
+		map[string]any{"template": shipFeatureTemplate("ship-feature"), "pinGroup": "webshop"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created struct {
+		ID string `json:"id"`
+	}
+	testharness.DecodeJSON(t, rec, &created)
+	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/infra/processes", map[string]any{"templateId": created.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	type listing struct {
+		Templates []struct {
+			ID      string `json:"id"`
+			Summary struct {
+				Steps    int      `json:"steps"`
+				Roles    []string `json:"roles"`
+				Commands int      `json:"commands"`
+				Asks     int      `json:"asks"`
+			} `json:"summary"`
+			PinnedGroups []string `json:"pinnedGroups"`
+		} `json:"templates"`
+	}
+	rec = processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body listing
+	testharness.DecodeJSON(t, rec, &body)
+	require.Len(t, body.Templates, 1)
+	got := body.Templates[0]
+	assert.Equal(t, 2, got.Summary.Steps)
+	assert.Equal(t, []string{"dev"}, got.Summary.Roles)
+	assert.Equal(t, 1, got.Summary.Commands)
+	assert.Equal(t, 0, got.Summary.Asks)
+	assert.Equal(t, []string{"infra", "webshop"}, got.PinnedGroups)
+
+	const member = "memb-1111-2222-3333-4444"
+	f.HaveAliveSession(member, "spwn-memb", "tmux-memb", f.TestCwd("memb"))
+	f.HaveMember("webshop", member)
+	require.NoError(t, db.SetAgentPermissionOverride(member, agentd.PermProcessTemplatesRead, db.PermEffectGrant, "test"))
+	rec = agentReq(t, f, member, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body = listing{}
+	testharness.DecodeJSON(t, rec, &body)
+	require.Len(t, body.Templates, 1)
+	assert.Equal(t, 2, body.Templates[0].Summary.Steps)
+	assert.Empty(t, body.Templates[0].PinnedGroups, "group names are the human's to read")
+}

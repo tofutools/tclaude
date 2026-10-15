@@ -247,13 +247,15 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
 }
 
 // WorkflowImportButton picks a .pwf file, previews it and opens the review.
-export function WorkflowImportButton({ group = '', onImported }) {
+// A file dropped elsewhere (the dock's Processes section) comes in as
+// `dropped` and takes the same review.
+export function WorkflowImportButton({
+  group = '', onImported, dropped = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn',
+}) {
   const input = useRef(null);
   const [state, setState] = useState(null);
   const [error, setError] = useState('');
-  const choose = async (event) => {
-    const picked = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
+  const load = async (picked) => {
     if (!picked) return;
     setError('');
     if (picked.size > MAX_FILE) {
@@ -267,9 +269,15 @@ export function WorkflowImportButton({ group = '', onImported }) {
       setError(`Cannot import ${picked.name}: ${err?.message || err}`);
     }
   };
+  const choose = (event) => {
+    const picked = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    void load(picked);
+  };
+  useEffect(() => { void load(dropped); }, [dropped]);
   return html`<span class="pwf-import-entry">
     <input ref=${input} type="file" accept=".pwf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
-    <button id="process-workflow-import-btn" class="process-action" type="button" title="Import a shared .pwf workflow file: you review what it runs before anything is stored" onClick=${() => input.current?.click()}>⤒ import workflow</button>
+    <button id=${id || undefined} class=${className} type="button" title="Import a shared .pwf workflow file: you review what it runs before anything is stored" onClick=${() => input.current?.click()}>${label}</button>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;

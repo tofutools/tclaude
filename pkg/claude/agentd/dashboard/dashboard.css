@@ -20631,3 +20631,37 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-role-unknown { font-size: 11.5px; color: #f2cc60; }
 .pwf-import-dialog .modal-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
 body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+
+/* Dock › Processes: the process template library (tcl-rzik1e). It reuses the
+   dock card skin; the card body opens a preview popover beside the dock. */
+.dock-process-tools { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.dock-process-toggle { display: inline-flex; border: 1px solid #2a3340; border-radius: 10px; overflow: hidden; }
+.dock-process-toggle button { font: inherit; font-size: 10.5px; background: none; border: 0; color: #7d8590; padding: 1px 8px; cursor: pointer; }
+.dock-process-toggle button.on { background: #1f2a37; color: #d4d4d4; }
+.dock-process-tools .dpp-spacer { flex: 1; }
+.dock-process-import, .dock-process-new { font: inherit; font-size: 11px; background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #c9d1d9; padding: 1px 7px; cursor: pointer; }
+.dock-process-import:hover, .dock-process-new:hover { border-color: #58a6ff; }
+.dock-processes .pwf-inline-error { display: block; font-size: 11px; margin-top: 4px; }
+.dock-process-open { cursor: pointer; text-align: left; }
+.dock-process-open:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }
+.dock-process-version { color: #6e7681; font-weight: 400; font-size: 10.5px; }
+.dock-process-summary { font-size: 10.5px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-chip.dock-process-pin { color: #79c0ff; border-color: #1f6feb66; }
+.dock-process-card.is-open { border-color: #58a6ff; box-shadow: 0 0 0 2px #58a6ff22; }
+.dock-process-drop { border: 1.5px dashed #2a3340; border-radius: 6px; color: #6e7681; font-size: 11px; text-align: center; padding: 7px; margin-top: 4px; }
+.dock-processes.dock-section .dock-process-drop.is-over, .dock-process-drop.is-over { border-color: #58a6ff; color: #79c0ff; background: #58a6ff10; }
+.dock-process-preview { position: fixed; z-index: 60; width: 460px; max-width: calc(100vw - 32px); box-sizing: border-box; background: #161b22; border: 1px solid #3d444d; border-radius: 8px; box-shadow: 0 12px 30px rgba(1, 4, 9, 0.85); padding: 10px 12px; font-size: 12px; color: #c9d1d9; }
+.dpp-head { display: flex; align-items: center; gap: 8px; }
+.dpp-head b { font-size: 13.5px; color: #e6edf3; }
+.dpp-meta { color: #6e7681; font-size: 11px; }
+.dpp-spacer { flex: 1; }
+.dpp-close { background: none; border: 0; color: #7d8590; cursor: pointer; font-size: 12px; }
+.dpp-desc { margin: 4px 0 8px; color: #8b949e; font-size: 11.5px; }
+.dpp-graph { overflow-x: auto; margin: 4px 0 8px; }
+.dpp-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dpp-acts select { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
+.dpp-acts .dpp-start { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
+body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
+body.wizard .dock-process-toggle button.on { background: #2d2145; }

@@ -168,3 +168,27 @@ func ForgetProcessTemplate(templateID string) error {
 	_, err = d.Exec(`DELETE FROM process_template_listing WHERE template_id = ?`, templateID)
 	return err
 }
+
+// ProcessTemplatePinnedGroups maps each pinned template id to the names of the
+// groups it is pinned to, sorted by name.
+func ProcessTemplatePinnedGroups() (map[string][]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT p.template_id, g.name FROM process_group_pins p
+		JOIN agent_groups g ON g.id = p.group_id ORDER BY p.template_id, g.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, group string
+		if err := rows.Scan(&id, &group); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], group)
+	}
+	return out, rows.Err()
+}

@@ -1,0 +1,216 @@
+// dock-processes.js -- the dock's Processes section (tcl-rzik1e): the process
+// template library at the bottom of the right panel, after Agent profiles,
+// Group templates and Roles. It reuses the dock's section and card markup, but
+// reads its own data: process templates are not on the dashboard snapshot.
+//
+// - A card shows the template's name, version count, a one-line summary and
+//   the groups it is pinned to. Dragging it onto a group pins it there
+//   (dock-dnd.js, kind 'processes').
+// - Clicking a card opens a preview: the graph as a not-yet-started run, then
+//   Start in <group>, Edit, Pin to group and share (.pwf).
+// - ⤒ and dropping a .pwf on the section import through the existing review.
+// - ⧉ opens Automations › Processes, where templates are managed and deleted.
+
+import { h } from 'preact';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import { wizWord } from './slop.js';
+import { ProcessMiniGraph } from './process-kit.js';
+import { processContext, processRunApi } from './process-context.js';
+import { WorkflowExportButton, WorkflowImportButton } from './process-workflow-share.js';
+import { handOffProcessDraft } from './process-draft-handoff.js';
+import { requestProcessStart } from './process-start-handoff.js';
+import { dashPrefs } from './prefs.js';
+import { groupsState } from './groups-state.js';
+
+const html = htm.bind(h);
+
+// PROCESS_LIBRARY_EVENT asks every library view to reload, after a pin from
+// a drop or anything else that changes what it lists.
+export const PROCESS_LIBRARY_EVENT = 'tclaude:process-library-changed';
+
+export function processSummaryText(row) {
+  const summary = row.summary || {};
+  const parts = [`${summary.steps || 0} step${summary.steps === 1 ? '' : 's'}`];
+  if (summary.roles?.length) parts.push(summary.roles.join(', '));
+  if (summary.commands) parts.push(`${summary.commands} command${summary.commands === 1 ? '' : 's'}`);
+  if (summary.asks) parts.push(summary.asks === 1 ? 'asks you once' : `asks you ${summary.asks}×`);
+  return parts.join(' · ');
+}
+
+async function libraryRows(all, fetchImpl) {
+  const response = await fetchImpl(`/v1/process/templates${all ? '?all=1' : ''}`, { credentials: 'same-origin' });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+  return body.templates || [];
+}
+
+// templateAsRun draws a stored template with the run renderer: every step
+// planned, edges labelled with their outcome.
+export function templateAsRun(view) {
+  const template = view?.template || {};
+  const nodes = Object.entries(template.nodes || {}).map(([id, node]) => ({
+    id, kind: node?.type || 'task', state: 'planned', label: node?.name || id,
+    performer: node?.performer ? { kind: node.performer.kind } : undefined,
+  }));
+  const edges = (view?.edges || []).filter((edge) => edge.from && edge.to)
+    .map((edge) => ({ from: edge.from, to: edge.to, label: edge.outcome }));
+  return { nodes, edges };
+}
+
+export async function pinToGroup(group, templateId, { api = processRunApi, doc = document, context = processContext } = {}) {
+  await api.pinProcess(group, templateId);
+  doc.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+  // The group's saved-process chips read the process context.
+  void context?.refresh?.();
+}
+
+function Preview({ row, anchor, groups, onClose, onChanged, fetchImpl }) {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    let live = true;
+    fetchImpl(`/v1/process/templates/${encodeURIComponent(row.id)}`, { credentials: 'same-origin' })
+      .then((response) => response.json().then((body) => (response.ok ? body : Promise.reject(new Error(body.message || body.error || response.statusText)))))
+      .then((body) => { if (live) setView(body); })
+      .catch((cause) => { if (live) setError(cause.message); });
+    return () => { live = false; };
+  }, [row.id]);
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    const onDown = (event) => {
+      if (!ref.current?.contains(event.target) && !anchor?.contains(event.target)) onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [anchor, onClose]);
+  const rect = anchor?.getBoundingClientRect?.();
+  const style = rect ? `top:${Math.max(8, Math.min(rect.top, window.innerHeight - 340))}px;right:${Math.max(8, window.innerWidth - rect.left + 10)}px` : '';
+  const pinned = new Set(row.pinnedGroups || []);
+  const pin = async (group) => {
+    if (!group || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await pinToGroup(group, row.id);
+      onChanged();
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (event, act) => {
+    const group = event.currentTarget.value;
+    event.currentTarget.value = '';
+    act(group);
+  };
+  return html`<div ref=${ref} class="dock-process-preview" role="dialog" aria-label=${`${row.name || row.id} preview`} style=${style} data-dock-process-preview=${row.id}>
+    <div class="dpp-head"><b>${row.name || row.id}</b><span class="dpp-meta">v${row.versionCount || 1}${row.listed === false ? ' · group-only' : ''}</span>
+      <span class="dpp-spacer"></span><button type="button" class="dpp-close" aria-label="Close" onClick=${onClose}>✕</button></div>
+    ${row.description && html`<p class="dpp-desc">${row.description}</p>`}
+    <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
+    <div class="dpp-acts">
+      <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, setFocus: groupsState.setFocus, rerender: groupsState.rerender }); })}>
+        <option value="">${wizWord('▶ Start in…', '▶ Begin in…')}</option>
+        ${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
+      </select>
+      <button type="button" class="process-action" data-dock-process-edit onClick=${() => { onClose(); handOffProcessDraft({ id: row.id, name: row.name || row.id }); }}>✎ Edit</button>
+      <select class="dpp-pin" aria-label="Pin to group" disabled=${busy} data-dock-process-pin onChange=${(event) => pick(event, pin)}>
+        <option value="">Pin to group…</option>
+        ${groups.filter((group) => !pinned.has(group)).map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
+      </select>
+      <${WorkflowExportButton} id=${row.id} />
+    </div>
+    ${error && html`<div class="island-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
+function ProcessCard({ row, open, onOpen }) {
+  const ref = useRef(null);
+  const name = row.name || row.id;
+  // The body is not a <button>: the dock's drag gesture stands down on
+  // buttons, and the whole card should drag.
+  const toggle = () => onOpen(open ? null : { row, anchor: ref.current });
+  return html`<div ref=${ref} class=${`dock-card dock-process-card${open ? ' is-open' : ''}`} draggable="true"
+      data-dock-kind="processes" data-dock-name=${row.id} data-dock-label=${name}
+      title=${wizWord('Click to preview · drag onto a group to pin it there', 'Click to scry · drag onto a party to bind it')}>
+    <span class="dock-grip" aria-hidden="true">⠿</span>
+    <div role="button" tabIndex="0" class="dock-card-body dock-process-open" aria-expanded=${open ? 'true' : 'false'}
+      onClick=${toggle} onKeyDown=${(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }}>
+      <span class="dock-card-name">${name} <span class="dock-process-version">v${row.versionCount || 1}</span></span>
+      <span class="dock-process-summary">${processSummaryText(row)}</span>
+      <span class="dock-chips dock-chips-compact">${(row.pinnedGroups || []).length
+        ? row.pinnedGroups.map((group) => html`<span key=${group} class="dock-chip dock-process-pin">${group}</span>`)
+        : html`<span class="dock-chip dock-chip-more">not pinned</span>`}</span>
+    </div>
+  </div>`;
+}
+
+// DockProcesses is the section. groups are the real groups' names, for the
+// Start in / Pin to pickers.
+export function DockProcesses({ groups = [], isSectionOpen, setSectionOpen, fetchImpl = (...args) => fetch(...args) }) {
+  const [open, setOpen] = useState(() => isSectionOpen('processes'));
+  const [all, setAll] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [dropped, setDropped] = useState(null);
+  const [dropOver, setDropOver] = useState(false);
+  const load = useCallback(() => {
+    libraryRows(all, fetchImpl).then((next) => { setRows(next); setError(''); }).catch((cause) => setError(cause.message));
+  }, [all]);
+  useEffect(() => { if (open) load(); }, [open, load]);
+  useEffect(() => {
+    document.addEventListener(PROCESS_LIBRARY_EVENT, load);
+    return () => document.removeEventListener(PROCESS_LIBRARY_EVENT, load);
+  }, [load]);
+  const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  const current = preview && rows?.find((row) => row.id === preview.row.id);
+  return html`<details class="dock-section dock-processes" data-key="processes" open=${open}
+      onToggle=${(event) => { const next = event.currentTarget.hasAttribute('open'); setOpen(next); setSectionOpen('processes', next); }}
+      onDragOver=${(event) => { if (!fileDrag(event)) return; event.preventDefault(); setDropOver(true); }}
+      onDragLeave=${(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropOver(false); }}
+      onDrop=${(event) => {
+        if (!fileDrag(event)) return;
+        event.preventDefault();
+        setDropOver(false);
+        const file = event.dataTransfer.files?.[0];
+        if (file) setDropped(file);
+      }}>
+    <summary class="dock-section-head">
+      <span class="dock-section-title">
+        <span class="dock-section-chevron" aria-hidden="true">▸</span>
+        <span class="dock-section-icon" aria-hidden="true">◈</span>
+        ${wizWord('Processes', 'Rites')}
+        <span class="dock-section-count">${rows ? rows.length : ''}</span>
+      </span>
+      <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
+        title="Open Automations › Processes (manage and delete templates)"
+        onClick=${(event) => { event.preventDefault(); document.querySelector('nav [data-tab="processes"]')?.click(); }}>⧉</button>
+    </summary>
+    <div class="dock-section-items">
+      <div class="dock-process-tools">
+        <span class="dock-process-toggle" role="group" aria-label="Which templates">
+          <button type="button" class=${all ? '' : 'on'} aria-pressed=${all ? 'false' : 'true'} onClick=${() => setAll(false)}>library</button>
+          <button type="button" class=${all ? 'on' : ''} aria-pressed=${all ? 'true' : 'false'} data-dock-process-all onClick=${() => setAll(true)}>all</button>
+        </span>
+        <span class="dpp-spacer"></span>
+        <${WorkflowImportButton} id="" className="dock-process-import" label="⤒ import" dropped=${dropped} onImported=${load} />
+        <button type="button" class="dock-process-new" title="New process template" onClick=${() => handOffProcessDraft({ create: true })}>＋</button>
+      </div>
+      ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
+      ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
+      ${(rows || []).map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview} />`)}
+      <div class=${`dock-process-drop${dropOver ? ' is-over' : ''}`}>⤓ ${wizWord('drop a .pwf here to import it', 'drop a .pwf scroll here')}</div>
+    </div>
+    ${current && html`<${Preview} row=${current} anchor=${preview.anchor} groups=${groups} fetchImpl=${fetchImpl}
+      onClose=${() => setPreview(null)} onChanged=${load} />`}
+  </details>`;
+}

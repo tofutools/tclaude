@@ -41,6 +41,57 @@ type processTemplateListView struct {
 	// Listed is library metadata: whether the template lists in the library
 	// (tcl-8o4rjj). It is never part of the template.
 	Listed bool `json:"listed"`
+	// Summary says what the current version asks for, so a library listing
+	// can describe a template without loading it.
+	Summary processTemplateSummaryView `json:"summary"`
+	// PinnedGroups names the groups the template is pinned to. Only the human
+	// sees it: group names are not every agent's to read.
+	PinnedGroups []string `json:"pinnedGroups,omitempty"`
+}
+
+// processTemplateSummaryView counts a template's top-level steps: steps is
+// every node but start and end, roles the agent roles (or profiles) its
+// agent steps ask for, commands its program steps, asks the steps a person
+// performs.
+type processTemplateSummaryView struct {
+	Steps    int      `json:"steps"`
+	Roles    []string `json:"roles,omitempty"`
+	Commands int      `json:"commands"`
+	Asks     int      `json:"asks"`
+}
+
+func processTemplateSummary(tmpl *model.Template) processTemplateSummaryView {
+	var summary processTemplateSummaryView
+	if tmpl == nil {
+		return summary
+	}
+	roles := map[string]bool{}
+	for _, node := range tmpl.Nodes {
+		if node.Type == model.NodeTypeStart || node.Type == model.NodeTypeEnd {
+			continue
+		}
+		summary.Steps++
+		if node.Performer == nil {
+			continue
+		}
+		switch node.Performer.Kind {
+		case model.PerformerProgram:
+			summary.Commands++
+		case model.PerformerHuman:
+			summary.Asks++
+		case model.PerformerAgent:
+			if role := node.Performer.Role; role != "" {
+				roles[role] = true
+			} else if node.Performer.Profile != "" {
+				roles[node.Performer.Profile] = true
+			}
+		}
+	}
+	for role := range roles {
+		summary.Roles = append(summary.Roles, role)
+	}
+	slices.Sort(summary.Roles)
+	return summary
 }
 
 // processTemplateHeadView is the bounded polling shape plus provenance for
@@ -129,6 +180,13 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUnlisted := r.URL.Query().Get("all") == "1"
+	var pinned map[string][]string
+	if classify(peerFromContext(r.Context())) == classHuman {
+		if pinned, err = db.ProcessTemplatePinnedGroups(); err != nil {
+			writeError(w, http.StatusInternalServerError, "process_templates", err.Error())
+			return
+		}
+	}
 	grouped := make(map[string][]store.TemplateRecord)
 	for _, record := range records {
 		if unlisted[record.ID] && !includeUnlisted {
@@ -191,6 +249,8 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Name = latest.Name
 		view.Description = latest.Description
+		view.Summary = processTemplateSummary(latest)
+		view.PinnedGroups = pinned[id]
 		views = append(views, view)
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"templates": views})

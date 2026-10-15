@@ -29,6 +29,7 @@ import { GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphE
 import { SavedProcesses } from './groups-saved-processes.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
+import { takeProcessStart } from './process-start-handoff.js';
 
 const html = htm.bind(h);
 
@@ -377,6 +378,19 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const [quick, setQuick] = useState(null);
   // dismissed only re-renders this group at once; the pref folds the rest.
   const [, setDismissed] = useState(false);
+  // "Start in <group>" from the dock's library opens this group's start form
+  // on that template.
+  useEffect(() => {
+    const take = () => {
+      const request = takeProcessStart(group.name);
+      if (!request) return;
+      setQuick(null);
+      setStarting({ templateId: request.templateId, scope: 'group' });
+    };
+    take();
+    document.addEventListener('tclaude:process-start', take);
+    return () => document.removeEventListener('tclaude:process-start', take);
+  }, [group.name]);
   const entry = groupContextEntry(context, group);
   const { runs, planned } = groupRunsFor(context, entry, filter);
   // The roster is the group's full membership: the Groups search narrows
