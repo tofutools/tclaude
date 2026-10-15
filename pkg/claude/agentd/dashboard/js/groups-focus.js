@@ -86,8 +86,6 @@ export function useGroupsFocusRestore(state, doc = document) {
   }, [state, doc]);
 }
 
-// The Processes button's icon: the same small flow graph as the group
-// headers' process indicators (groups-process-indicators.js).
 // The Agents button's icon. An inline SVG rather than the 👥 emoji, whose
 // colour comes from the OS emoji font (dark purple on some systems, nearly
 // invisible on the selected button); CSS colours it like FlowIcon.
@@ -98,6 +96,8 @@ function PeopleIcon() {
   </svg>`;
 }
 
+// The Processes button's icon: the same small flow graph as the group
+// headers' process indicators (groups-process-indicators.js).
 function FlowIcon() {
   return html`<svg class="groups-focus-flow" viewBox="0 0 22 16" aria-hidden="true">
     <polyline points="3,10 11,5 19,10" />
