@@ -13,6 +13,7 @@ import { ProcessRunBadge } from './process-kit.js';
 import { groupContextEntry, processContext } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
 import { chooseGroupsFocus } from './groups-focus.js';
+import { UNGROUPED_VKEY } from './virtual-groups.js';
 
 const html = htm.bind(h);
 
@@ -46,15 +47,20 @@ export function groupProcessCounts(entry) {
 }
 
 // openGroupInProcesses switches to the Processes focus on `filter` and brings
-// the group's section into view.
+// the group's row into view, opened so its runs show (the open state is
+// shared with Agents, so a group folded there would hide them).
 export function openGroupInProcesses(groupName, filter = 'running', { doc = document } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
   groups.setProcessFilter?.(filter);
   groups.setFocusedRun?.(null);
   chooseGroupsFocus(groups, 'processes', { doc });
-  // The group's row, not its body: a collapsed group still has one.
-  const reveal = () => doc.querySelector(`details[data-group-key="${cssString(groupName)}"]`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  const reveal = () => {
+    const row = doc.querySelector(`details[data-group-key="${cssString(groupName)}"]`);
+    if (!row) return;
+    row.open = true;
+    row.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(reveal));
   else reveal();
 }
@@ -99,5 +105,5 @@ export function MemberProcessCell({ member, group, snapshot, source = processCon
   if (!entries.length) return html`<span class="muted">—</span>`;
   return html`<span class="gpi-badges">${entries.map((entry) => html`<${ProcessRunBadge}
     key=${`${entry.runId}:${entry.nodeId}`} run=${entry.run} nodeId=${entry.nodeId}
-    onOpen=${() => openRunInProcesses(entry.run.scope?.group || group?.name || '', entry.runId)} />`)}</span>`;
+    onOpen=${() => openRunInProcesses(entry.run.scope?.group || group?.name || UNGROUPED_VKEY, entry.runId)} />`)}</span>`;
 }
