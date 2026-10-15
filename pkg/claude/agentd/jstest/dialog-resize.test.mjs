@@ -322,3 +322,41 @@ test('a resize is bounded by the dialog floor and the viewport', async (t) => {
   assert.equal(dialog.style.getPropertyValue('--dialog-h'), '1168px');
   await mounted.unmount();
 });
+
+test('image and video launchers share the saved media viewer size', async (t) => {
+  const { harness, prefs } = await setup(t, {
+    seedPref: ['tclaude.dash.attachmentViewer.image.size', JSON.stringify({ w: 1000, h: 700 })],
+  });
+  const { ImageAttachmentPreview } = await harness.importDashboardModule('js/image-preview-overlay.js');
+  const { VideoAttachmentPreview } = await harness.importDashboardModule('js/video-preview-overlay.js');
+  stubFetch(t, async () => ({ ok: true, status: 200 }));
+  const video = { id: 6, filename: 'movie.mp4', url: '/movie', video: true };
+  const mounted = await harness.mount(harness.html`<div>
+    <${ImageAttachmentPreview} messageID=${42} attachment=${imageAttachment} siblings=${[imageAttachment, video]} />
+    <${VideoAttachmentPreview} messageID=${42} attachment=${video} siblings=${[imageAttachment, video]} />
+  </div>`);
+  const triggers = [...mounted.container.querySelectorAll('.human-attachment-preview-trigger')];
+  // Both launchers are mounted before the first resize, as in Messages.
+  for (const [trigger, width, height] of [
+    [triggers[0], 1000, 700], [triggers[1], 1100, 800], [triggers[0], 1200, 900],
+  ]) {
+    await harness.act(() => trigger.click());
+    await settle(harness);
+    const dialog = mounted.container.querySelector('[role="dialog"]');
+    assert.equal(dialog.style.getPropertyValue('--dialog-w'), `${width}px`);
+    assert.equal(dialog.style.getPropertyValue('--dialog-h'), `${height}px`);
+    pinSize(dialog, width, height);
+    const grip = dialog.querySelector('.dialog-resizer');
+    await harness.act(() => {
+      harness.fireEvent(grip, 'pointerdown', { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      harness.fireEvent(grip, 'pointermove', { pointerId: 1, clientX: 50, clientY: 50 });
+      harness.fireEvent(grip, 'pointerup', { pointerId: 1 });
+      harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+    });
+    await settle(harness);
+    assert.deepEqual(prefs.writes.at(-1), [
+      'tclaude.dash.attachmentViewer.image.size', JSON.stringify({ w: width + 100, h: height + 100 }),
+    ]);
+  }
+  await mounted.unmount();
+});

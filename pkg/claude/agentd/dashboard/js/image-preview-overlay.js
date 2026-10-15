@@ -123,7 +123,9 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
   });
   const { dialogStyle, resizerProps } = useDialogResize({
     dialogRef,
-    prefKey: `tclaude.dash.attachmentViewer.${videoTrigger ? 'video' : 'image'}.size`,
+    // One media dialog keeps one size regardless of which thumbnail opens it.
+    // Reuse the image key to retain existing saved image-viewer sizes.
+    prefKey: 'tclaude.dash.attachmentViewer.image.size',
   });
   const topmost = () => isTopmostOverlay(overlayRef.current);
   const view = useViewerDisplay({ dialogRef, open, shouldHandle: topmost });
