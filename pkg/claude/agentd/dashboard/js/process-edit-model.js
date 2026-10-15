@@ -716,10 +716,15 @@ export class ProcessEditModel {
     const chosen = ids?.length ? ids.filter((id) => this.template.nodes[id]) : scope;
     const keys = Object.keys(this.layout.nodes || {}).filter((key) => chosen.includes(key)
       || (!ids?.length && scope.some((id) => key.startsWith(id + SCOPE_SEPARATOR))));
-    if (!keys.length) return false;
+    // Inline-expanded bodies hang off the offset their ▣ node had when it was
+    // expanded; tidying the whole scope moves that node, so the bodies fold
+    // back rather than stay stranded at the old place.
+    const folded = !ids?.length && this.expansions?.size > 0;
+    if (!keys.length && !folded) return false;
     for (const id of chosen) this.assertNodeEditable(id);
     this.begin();
     for (const key of keys) delete this.layout.nodes[key];
+    if (folded) this.expansions.clear();
     return true;
   }
 

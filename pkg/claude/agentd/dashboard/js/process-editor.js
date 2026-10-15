@@ -1968,8 +1968,15 @@ export class ProcessTemplateEditor {
   // the hand-placed positions.
   autoLayout() {
     if (this.destroyed || !this.graph) return false;
-    const ids = selectionItems(this.selection).filter((item) => item.type === 'node'
+    const selected = selectionItems(this.selection);
+    const ids = selected.filter((item) => item.type === 'node'
       && !this.model.nestedTarget?.(item.id)).map((item) => item.id);
+    // A selection never widens to the whole graph: one that holds no node of
+    // this graph (edges, or nodes inside an expanded body) has nothing to do.
+    if (selected.length && !ids.length) {
+      this.status('Select nodes of this graph to lay them out, or clear the selection to tidy the whole graph.');
+      return false;
+    }
     const whole = ids.length === 0;
     const changed = this.mutate(() => this.model.autoLayout(ids));
     if (changed === undefined) return false;

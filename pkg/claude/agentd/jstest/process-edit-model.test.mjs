@@ -397,6 +397,14 @@ test('auto layout drops pins for the selection or the whole scope, as one undo s
   assert.equal(model.undoStack.length, before + 1);
   assert.ok(model.undo());
   assert.deepEqual(model.layout.nodes.begin, { x: 20, y: 30 });
+
+  // A whole tidy folds inline-expanded bodies, whose offset belonged to the
+  // old position of their node; a selection leaves them open.
+  model.expansions.set('build', { dx: 10, dy: 10 });
+  assert.equal(model.autoLayout(['begin']), true);
+  assert.equal(model.expansions.size, 1);
+  assert.equal(model.autoLayout(), true);
+  assert.equal(model.expansions.size, 0);
 });
 
 test('multi-selection delete rewires across selected nodes atomically', () => {
