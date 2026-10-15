@@ -2323,6 +2323,23 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-auto-layout-before",
+			Title:   "Process editor — hand-placed mess before auto layout",
+			Caption: "Nodes dragged around by hand: every drag pins a position, so the graph drifts out of shape.",
+			JS: processEditorStateJS(autoLayoutMessJS + ` await editorPaint(); await editorPaint();`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-auto-layout",
+			Title:   "Process editor — after ▦ auto layout",
+			Caption: "▦ auto layout (toolbar, ⌘K, Ctrl/Cmd+Shift+L) drops the position pins and the layered layout tidies the graph in one undoable step.",
+			JS: processEditorStateJS(autoLayoutMessJS + ` await editorPaint();
+  document.querySelector('[data-process-auto-layout]').click(); await editorPaint(); await editorPaint();
+  if (Object.keys(ed.model.layout.nodes||{}).length) throw new Error('auto layout left pins behind');
+  if (!/Auto layout applied/.test(document.querySelector('.process-editor-status').textContent)) throw new Error('no auto layout status');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:      "process-editor-selected",
 			Title:    "Process editor — node selected",
 			Caption:  "A selected node: accent outline on the canvas and the inspector strip showing type, id, label input, and dark-themed action buttons.",
@@ -5926,3 +5943,21 @@ func processStepperSnapJS(paused bool) string {
 })();`
 	return strings.NewReplacer("PAUSED_FIELD", field, "PAUSE_STATE", state).Replace(js)
 }
+
+// autoLayoutMessJS builds a process with a fan-out, a decision and a wait in
+// the editor, then drags every node somewhere arbitrary, as a long hand-edit
+// session leaves it.
+const autoLayoutMessJS = `var m=ed.model;
+  var first=m.outgoingEdges('begin')[0]; if(first) m.deleteEdge('begin', first.outcome);
+  var fan=m.addConnectedNode('parallel',{connectFrom:'begin'}).id; m.renameNode(fan,'Fan out');
+  var ui=m.addConnectedNode('task',{connectFrom:fan}).id; m.renameNode(ui,'Build UI');
+  var api=m.addConnectedNode('task',{connectFrom:fan}).id; m.renameNode(api,'Build API');
+  var rev=m.addConnectedNode('task',{connectFrom:ui}).id; m.renameNode(rev,'Review');
+  m.addEdge(api,'pass',rev);
+  var ok=m.addConnectedNode('decision',{connectFrom:rev}).id; m.renameNode(ok,'Approved?');
+  var soak=m.addConnectedNode('wait',{connectFrom:ok}).id; m.renameNode(soak,'Soak 1h');
+  m.addEdge(soak,'pass','ship');
+  var fix=m.addConnectedNode('task',{connectFrom:ok}).id; m.renameNode(fix,'Hotfix');
+  m.addEdge(fix,'pass','ship');
+  var ids=Object.keys(m.template.nodes); m.moveNodes(ids.map(function(id,i){ return {id:id, x: 80+((i*263)%900), y: 60+((i*197)%460)}; }));
+  ed.refresh({fit:true});`

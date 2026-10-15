@@ -378,6 +378,27 @@ test('multi-node move is one atomic undo step', () => {
   assert.equal(model.layout.nodes.build, undefined);
 });
 
+test('auto layout drops pins for the selection or the whole scope, as one undo step', () => {
+  const model = new ProcessEditModel(view());
+  model.moveNodes([{ id: 'begin', x: 20, y: 30 }, { id: 'build', x: 120, y: 130 }]);
+  model.layout.nodes['build/inner'] = { x: 5, y: 5 };
+  assert.equal(model.autoLayout(['build']), true);
+  assert.equal(model.layout.nodes.build, undefined, 'the selected node follows the layout again');
+  assert.deepEqual(model.layout.nodes.begin, { x: 20, y: 30 }, 'an unselected pin stays');
+  assert.deepEqual(model.layout.nodes['build/inner'], { x: 5, y: 5 }, 'a selection leaves body pins alone');
+  assert.ok(model.undo());
+  assert.deepEqual(model.layout.nodes.build, { x: 120, y: 130 });
+
+  const before = model.undoStack.length;
+  assert.equal(model.autoLayout(), true);
+  assert.deepEqual(Object.keys(model.layout.nodes), [], 'the whole scope, inline bodies included');
+  assert.equal(model.undoStack.length, before + 1);
+  assert.equal(model.autoLayout(), false, 'nothing pinned: nothing to do, no undo step');
+  assert.equal(model.undoStack.length, before + 1);
+  assert.ok(model.undo());
+  assert.deepEqual(model.layout.nodes.begin, { x: 20, y: 30 });
+});
+
 test('multi-selection delete rewires across selected nodes atomically', () => {
   const seeded = view();
   seeded.template.nodes.review = { type: 'task' };

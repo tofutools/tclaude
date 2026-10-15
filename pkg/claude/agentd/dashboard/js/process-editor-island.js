@@ -148,6 +148,7 @@ function Header({ controller, view }) {
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title="Undo (Ctrl+Z)" onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
+    <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title="Auto layout: tidy the graph, or just the selected nodes (Ctrl/Cmd+Shift+L). Undo restores hand-placed positions." onClick=${() => controller.autoLayout()}>▦ auto layout</button>
     <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
     <button class="process-action" type="button" title="Process commands (Ctrl/Cmd-K)" aria-label="Open process commands (Ctrl/Cmd-K)" onClick=${() => controller.openCommands()}>⌘K commands</button>
     <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"

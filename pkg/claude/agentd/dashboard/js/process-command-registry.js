@@ -75,6 +75,8 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'select all everything bind whole', context.hasGraph, 'The graph is empty.', () => editor.selectAll()),
     command('clear-selection', '○', 'Clear selection', 'Release selection', 'Leave every graph item unselected',
       'clear deselect unselect release', context.hasSelection, 'Nothing is selected.', () => editor.clearSelection()),
+    command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (Ctrl/Cmd+Shift+L)',
+      'auto layout arrange tidy organize reflow relayout clean up', context.canAutoLayout, context.autoLayoutReason, () => editor.autoLayout()),
     command('fit', '⊡', 'Fit graph to view', 'Survey the whole graph', 'Show the complete process graph',
       'fit view frame all survey', context.hasGraph, 'The graph is empty.', () => editor.fitGraph()),
     command('center', '◎', 'Center selection', 'Center the chosen runes', 'Pan the selected graph items into view',
