@@ -54,4 +54,19 @@ func TestProcessValidateAttributesTemplateRefProblemsToTheSubprocessNode(t *test
 	assert.Regexp(t, `^subprocess_ref_unresolved: inside template middle: subprocess "g": resolve template "ghost": `, byNode["c"][0])
 	assert.Contains(t, byNode["a"], `unknown_input: template child: in-port "bogus" is not a declared param of the subprocess body`)
 	assert.Len(t, byNode["a"], 2, "the unbound required in-port is reported too: %v", byNode["a"])
+
+	// A reference inside an inline body binds from that body's own params.
+	inline := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: inlined\nstart: begin\n" +
+		"nodes:\n" +
+		"  begin:\n    type: start\n    next:\n      pass: wrap\n" +
+		"  wrap:\n    type: subprocess\n    subprocess:\n      params:\n        target:\n          type: string\n" +
+		"      inputs:\n        target: x\n      start: in\n      nodes:\n" +
+		"        in:\n          type: start\n          next:\n            pass: a\n" +
+		"        a:\n          type: subprocess\n          subprocess:\n            templateRef: child\n            inputs:\n              target: \"{{ params.target }}\"\n          next:\n            pass: out\n" +
+		"        out:\n          type: end\n" +
+		"    next:\n      pass: done\n" +
+		"  done:\n    type: end\n"
+	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": inline})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"diagnostics":[]`, "a nested reference forwarding its body's param is clean")
 }

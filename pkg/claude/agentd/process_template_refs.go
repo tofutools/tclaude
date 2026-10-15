@@ -26,6 +26,7 @@ func templateRefDiagnostics(tmpl *model.Template, resolve model.TemplateResolver
 	if tmpl == nil || resolve == nil {
 		return nil
 	}
+	resolve = memoizedTemplateResolver(resolve)
 	var out []processEditDiag
 	failed := false
 	var walk func(scope *model.Template, prefix string)
@@ -38,7 +39,7 @@ func templateRefDiagnostics(tmpl *model.Template, resolve model.TemplateResolver
 			sp := node.Subprocess
 			target := prefix + nodeID
 			if sp.IsInline() {
-				walk(&model.Template{Nodes: sp.Nodes}, target+model.SubprocessNodeIDSeparator)
+				walk(&model.Template{Params: sp.Params, Nodes: sp.Nodes}, target+model.SubprocessNodeIDSeparator)
 				continue
 			}
 			if sp.TemplateRef == "" {
@@ -119,4 +120,26 @@ func templateRefNodeDiagnostics(rootID string, scope *model.Template, nodeID, ta
 		})
 	}
 	return out
+}
+
+// memoizedTemplateResolver loads each (id, version) once per validate: every
+// reference is resolved for its own probe and again for the whole tree, and
+// the editor calls validate repeatedly. One cache also keeps all probes on
+// one store snapshot.
+func memoizedTemplateResolver(resolve model.TemplateResolver) model.TemplateResolver {
+	type loaded struct {
+		tmpl    *model.Template
+		version string
+		err     error
+	}
+	cache := map[string]loaded{}
+	return func(id, version string) (*model.Template, string, error) {
+		key := id + "@" + version
+		hit, ok := cache[key]
+		if !ok {
+			hit.tmpl, hit.version, hit.err = resolve(id, version)
+			cache[key] = hit
+		}
+		return hit.tmpl, hit.version, hit.err
+	}
 }
