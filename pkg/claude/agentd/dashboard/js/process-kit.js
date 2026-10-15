@@ -632,7 +632,7 @@ export function ProcessMiniGraph({
     const inner = isTerminalKind(node.kind)
       ? html`<span class="pk-gnode-label">${node.kind}</span>`
       : node.kind === 'decision'
-        ? html`<span class="pk-gnode-label">${node.label}</span>`
+        ? html`<span class="pk-gnode-label">${node.label}</span>${badge}`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
     const extra = {
       ...(typeof onNodeContextMenu === 'function' ? { onContextMenu: (event) => onNodeContextMenu(node, event) } : {}),

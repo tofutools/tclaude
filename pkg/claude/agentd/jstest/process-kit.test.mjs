@@ -252,4 +252,9 @@ test('a bounded loop draws amber with its bound, and its body nodes say their ro
   assert.equal(graph.querySelector('.pk-round').textContent, '↺ 2/3');
   assert.match(getByRole(graph, 'button', { name: /^Review ·/ }).getAttribute('title'), /round 2 of 3$/, 'idle body nodes say their round');
   await mounted.unmount();
+  const parked = loopRun(2);
+  parked.nodes = parked.nodes.map((n) => ({ ...n, state: n.id === 'review' ? 'waiting' : n.id === 'write' ? 'done' : n.state }));
+  const gate = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${parked} />`);
+  assert.equal(gate.container.querySelector('[data-process-node="review"] .pk-round')?.textContent, '↺ 2/3', 'a decision parked on its verdict wears the badge');
+  await gate.unmount();
 });
