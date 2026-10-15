@@ -74,7 +74,9 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   assert.ok(migrate.querySelector('[data-process-node="apply"].pk-state-waiting'), 'a blocked node reads as blocked on human');
 
   assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 in processes · 1 working · 0 idle');
-  assert.deepEqual([...fe.querySelectorAll('.gp-member.busy')].map((a) => a.getAttribute('title').split(' · ')[0]), ['fe-dev-forms', 'fe-dev-charts']);
+  assert.equal(fe.querySelector('.gp-member.busy').getAttribute('title'), '2 performing a process step — fe-dev-forms, fe-dev-charts');
+  assert.equal(fe.querySelector('.gp-member.busy .gp-member-count').textContent, '2');
+  assert.equal(fe.querySelector('.gp-member.is-working .gp-member-count'), null, 'a lone member gets no count');
   // Processes run elsewhere, so the empty group folds Get started to a line.
   assert.ok(group('infra-crew').querySelector('[data-quickstart-folded="infra-crew"]'), 'an empty group folds Get started once processes exist');
   assert.equal(group('infra-crew').querySelector('[data-quickstart]'), null);
@@ -379,7 +381,7 @@ test('the avatar strip reads each member\'s real status, not just process work',
 
   const infra = group('infra-crew');
   assert.equal(infra.querySelector('.gp-strip-text').textContent, '0 idle · 1 offline');
-  assert.equal(group('frontend-squad').querySelector('.gp-member.is-working').getAttribute('title'), 'fe-lead · working on other tasks (not in a process)');
+  assert.equal(group('frontend-squad').querySelector('.gp-member.is-working').getAttribute('title'), '1 working on other tasks (not in a process) — fe-lead');
 });
 
 test('the group row mirrors the Agents row: agent process, group process, resume all, pause all', async (t) => {
