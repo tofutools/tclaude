@@ -494,6 +494,12 @@ func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) er
 	if err != nil {
 		return err
 	}
+	if len(command.Verdicts) > 0 && outcome.Outcome == engine.ProgramSucceeded {
+		// An agent decider's success IS its verdict, which this path has no
+		// way to name.
+		return fmt.Errorf("%w: %q is an agent decision; it succeeds only with the agent's verdict, so record it as failed or reassign it",
+			engine.ErrInvalidDecisionVerdict, command.NodeID)
+	}
 	observation := engine.ProgramObservation{
 		CommandID: command.ID, NodeID: command.NodeID,
 		Outcome: outcome.Outcome, ExitCode: outcome.ExitCode, Error: outcome.Error,
@@ -544,42 +550,52 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	if err != nil {
 		return err
 	}
-	payload := decisionEvidencePayload{
-		Verdict: input.Verdict, Evidence: input.Evidence, Attempt: input.Attempt,
+	causal, err := verdictEvidence(run.definition, run.checkpoint, next, actor,
+		decisionEvidencePayload{Verdict: input.Verdict, Evidence: input.Evidence, Attempt: input.Attempt}, input.NodeID)
+	if err != nil {
+		return err
 	}
+	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
+	return persistEvents(run, next, events)
+}
+
+// verdictEvidence is the evidence one committed verdict leaves, whoever
+// decided: the decision_recorded row, then what it did to a compound's stages
+// or to a loop.
+func verdictEvidence(definition *engine.Definition, before, next engine.Checkpoint, actor string,
+	payload decisionEvidencePayload, nodeID string) ([]db.ProcessRunEvent, error) {
 	// A prepared approval gate has no authored edge, and one is not invented for
 	// it: its verdict moves the compound's own stage sequence. For an authored
 	// decision the edge is the whole point of the verdict, so a missing one stays
 	// the fail-closed contradiction it always was.
-	loopStep, looped := run.definition.LoopStepOf(input.NodeID, input.Verdict, run.checkpoint, next)
-	route := input.Verdict
+	loopStep, looped := definition.LoopStepOf(nodeID, payload.Verdict, before, next)
+	route := payload.Verdict
 	if looped && loopStep.Exhausted {
 		// Past its last round the outcome followed the loop's onExhausted
 		// edge, and that is the edge the verdict chose.
 		route = loopStep.Loop.OnExhausted
 	}
-	if chosen, ok := run.definition.DecisionEdge(input.NodeID, route); ok {
+	if chosen, ok := definition.DecisionEdge(nodeID, route); ok {
 		payload.ChosenEdge = &chosen
-	} else if _, approval := run.definition.ApprovalAttempt(run.checkpoint, input.NodeID); !approval {
-		return fmt.Errorf("%w: decision %q has no edge for verdict %q", ErrInvalidRun, input.NodeID, input.Verdict)
+	} else if _, approval := definition.ApprovalAttempt(before, nodeID); !approval {
+		return nil, fmt.Errorf("%w: decision %q has no edge for verdict %q", ErrInvalidRun, nodeID, payload.Verdict)
 	}
 	// A rework verdict sends the compound's plan back, and this decision named
 	// the only gate that could have happened at. The row goes immediately after
 	// the verdict that caused it; every other decision pays one map lookup.
-	causal := append([]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)},
-		causedStageReset(run.definition, input.NodeID, run.checkpoint, next)...)
+	causal := append([]db.ProcessRunEvent{eventForNode("decision_recorded", nodeID, actor, payload)},
+		causedStageReset(definition, nodeID, before, next)...)
 	if looped {
-		causal = append(causal, loopEvidence(input, loopStep))
+		causal = append(causal, loopEvidence(payload.Evidence, loopStep))
 	}
-	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
-	return persistEvents(run, next, events)
+	return causal, nil
 }
 
 // loopEvidence records what a verdict did to its loop (tcl-eu70x9): the round
 // it started, or the limit it hit. The verdict's evidence travels with it:
 // it is what the decider sent the work back with, and the next round's
 // performer is handed it from here.
-func loopEvidence(input DecisionInput, step engine.LoopStep) db.ProcessRunEvent {
+func loopEvidence(feedback string, step engine.LoopStep) db.ProcessRunEvent {
 	kind := "loop_iterated"
 	if step.Exhausted {
 		kind = "loop_exhausted"
@@ -587,7 +603,7 @@ func loopEvidence(input DecisionInput, step engine.LoopStep) db.ProcessRunEvent 
 	return eventForNode(kind, step.Loop.To, EngineActor, loopEvidencePayload{
 		From: step.Loop.From, Outcome: step.Loop.Outcome, To: step.Loop.To,
 		Round: step.Loop.Round, MaxIterations: step.Loop.MaxIterations,
-		OnExhausted: step.Loop.OnExhausted, Feedback: input.Evidence,
+		OnExhausted: step.Loop.OnExhausted, Feedback: feedback,
 	})
 }
 

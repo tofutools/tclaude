@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -168,12 +167,12 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 		tmpl func() *model.Template
 	}{
 		{
-			name: "agent decider",
-			code: "unsupported_performer",
+			name: "agent decider timeout",
+			code: "unsupported_timeout",
 			tmpl: func() *model.Template {
 				tmpl := decisionDiamondTemplate()
 				node := tmpl.Nodes["choose"]
-				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide"}
+				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide", Timeout: "5m"}
 				tmpl.Nodes["choose"] = node
 				return tmpl
 			},
@@ -248,11 +247,11 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "agent check stage performer",
-			code: "unsupported_performer",
+			name: "agent check stage timeout",
+			code: "unsupported_timeout",
 			tmpl: func() *model.Template {
 				return compoundStageTemplate(func(node *model.Node) {
-					node.Checks[0].Performer = model.Performer{Kind: model.PerformerAgent, Prompt: "Check it"}
+					node.Checks[0].Performer = model.Performer{Kind: model.PerformerAgent, Prompt: "Check it", Timeout: "5m"}
 				})
 			},
 		},
@@ -544,16 +543,15 @@ func TestAgentTaskPerformerIsEligibleAndPlansAgentCommand(t *testing.T) {
 	}
 }
 
-func TestAgentPerformerOnCompoundTaskIsIneligible(t *testing.T) {
+func TestAgentPerformersOnCompoundStagesAreEligible(t *testing.T) {
 	tmpl := sequentialTemplate("task")
 	node := tmpl.Nodes["task"]
 	node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Do it"}
-	node.Review = &model.Step{ID: "rev", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}
+	node.Retry = &model.RetryPolicy{MaxAttempts: 3, OnFail: model.RetryModeFeedbackSameSession}
+	node.Checks = []model.Step{{ID: "lint", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}}
+	node.Review = &model.Step{ID: "rev", Performer: model.Performer{Kind: model.PerformerAgent, Role: "reviewer", Prompt: "Review it"}}
 	tmpl.Nodes["task"] = node
-	diagnostics := CheckEligibility(tmpl)
-	if !slices.ContainsFunc(diagnostics, func(d model.Diagnostic) bool {
-		return d.Code == "unsupported_performer" && d.Path == "nodes.task.performer.kind"
-	}) {
-		t.Fatalf("agent do performer on a compound must be ineligible: %+v", diagnostics)
+	if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
 	}
 }

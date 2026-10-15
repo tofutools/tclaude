@@ -45,7 +45,7 @@ func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 		Nodes:   nodes,
 		Edges:   edges,
 	}
-	if entry.kind == definitionDecision {
+	if entry.awaitsHuman() {
 		addObligation(&checkpoint, entry.id)
 	}
 	if err := validateCheckpoint(checkpoint, definition); err != nil {
@@ -121,7 +121,7 @@ func nextPlannableTask(checkpoint Checkpoint, definition *Definition) (definitio
 		return definitionNode{}, false
 	}
 	for _, node := range definition.nodes {
-		if node.kind == definitionTask && checkpoint.Nodes[node.id] == NodeReady {
+		if node.runsCommand() && checkpoint.Nodes[node.id] == NodeReady {
 			return node, true
 		}
 	}
@@ -215,7 +215,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			next.Nodes[node.id] = NodeRunning
 			next.Nodes[entry.id] = NodeReady
-			if entry.kind == definitionDecision {
+			if entry.awaitsHuman() {
 				addObligation(&next, entry.id)
 			}
 		case definitionSubprocessExit:
@@ -248,7 +248,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 		// The command names its own node, so planning is node-addressed too.
 		index, ok := definition.index[transition.Command.NodeID]
-		if !ok || definition.nodes[index].kind != definitionTask {
+		if !ok || !definition.nodes[index].runsCommand() {
 			return invalid("command_planned requires a prepared program task; got %q", transition.Command.NodeID)
 		}
 		node := definition.nodes[index]
@@ -298,10 +298,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			return Checkpoint{}, fmt.Errorf("%w: observation does not match an outstanding command", ErrStaleObservation)
 		}
 		index, ok := definition.index[outstanding.NodeID]
-		if !ok || definition.nodes[index].kind != definitionTask {
+		if !ok || !definition.nodes[index].runsCommand() {
 			return invalid("outstanding command node %q is not prepared", outstanding.NodeID)
 		}
 		node := definition.nodes[index]
+		decider := node.kind == definitionDecision
+		if observation.Verdict != "" && (!decider || observation.Outcome != ProgramSucceeded) {
+			return invalid("only a successful agent decision observation carries a verdict")
+		}
 		switch observation.Outcome {
 		case ProgramSucceeded:
 			if observation.ExitCode != 0 {
@@ -309,6 +313,17 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			if observation.Error != "" {
 				return invalid("successful program observation cannot carry an error")
+			}
+			if decider {
+				// An agent decider's verdict routes exactly as a human's does,
+				// loops included. A refused verdict leaves the command
+				// outstanding, so the decider can report another one.
+				removeCommand(&next, outstanding.NodeID)
+				if err := settleVerdict(&next, definition, index, observation.Verdict); err != nil {
+					return Checkpoint{}, err
+				}
+				abandonAfterDoom(&next)
+				break
 			}
 			// Per-entry removal only: sibling branches' commands are untouched.
 			removeCommand(&next, outstanding.NodeID)
@@ -455,19 +470,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			break
 		}
-		// A bounded outcome goes back for another round while rounds remain,
-		// and past the limit follows the loop's onExhausted outcome instead.
-		route, iterate, err := routeDecision(next, definition, node, decision.Verdict)
-		if err != nil {
-			return Checkpoint{}, err
-		}
-		if iterate >= 0 {
-			if err := iterateLoop(&next, definition, iterate); err != nil {
-				return Checkpoint{}, err
-			}
-			break
-		}
-		if err := completeAndSettle(&next, definition, index, arrivesAt(route)); err != nil {
+		if err := settleVerdict(&next, definition, index, decision.Verdict); err != nil {
 			return Checkpoint{}, err
 		}
 	case TransitionBlockedResolved:
@@ -552,6 +555,24 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 	return next, nil
 }
 
+// settleVerdict applies an authored decision's verdict, from a person or an
+// agent decider: a bounded outcome goes back for another round while rounds
+// remain, and past the limit follows the loop's onExhausted outcome instead.
+func settleVerdict(next *Checkpoint, definition *Definition, index int, verdict string) error {
+	node := definition.nodes[index]
+	if !verdictAllowed(node, verdict) {
+		return fmt.Errorf("%w: verdict %q is not an authored outcome of decision %q", ErrInvalidDecisionVerdict, verdict, node.id)
+	}
+	route, iterate, err := routeDecision(*next, definition, node, verdict)
+	if err != nil {
+		return err
+	}
+	if iterate >= 0 {
+		return iterateLoop(next, definition, iterate)
+	}
+	return completeAndSettle(next, definition, index, arrivesAt(route))
+}
+
 // advanceStage completes one successful work stage of a compound parent and
 // readies the next stage in prepared order.
 //
@@ -586,7 +607,7 @@ func advanceStage(next *Checkpoint, definition *Definition, childIndex int) erro
 	}
 	next.Nodes[child.id] = NodeDone
 	next.Nodes[successor.id] = NodeReady
-	if successor.kind == definitionDecision {
+	if successor.awaitsHuman() {
 		addObligation(next, successor.id)
 	}
 	return nil
@@ -810,7 +831,7 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		// as late arrivals against a node that is no longer pending.
 		if target.joinAny && counts.arrived > 0 {
 			next.Nodes[target.id] = NodeReady
-			if target.kind == definitionDecision {
+			if target.awaitsHuman() {
 				addObligation(next, target.id)
 			}
 			continue
@@ -843,7 +864,7 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 			}
 		case target.joinAll || counts.arrived == 1:
 			next.Nodes[target.id] = NodeReady
-			if target.kind == definitionDecision {
+			if target.awaitsHuman() {
 				addObligation(next, target.id)
 			}
 		default:
@@ -1171,6 +1192,9 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 		command.Round, command.Rounds = round.Round, round.Of
 		command.LoopFrom, command.LoopOutcome = round.From, round.Outcome
 	}
+	if node.kind == definitionDecision {
+		command.Verdicts = slices.Clone(node.verdicts)
+	}
 	if node.agent != nil {
 		agent := *node.agent
 		command.Agent = &agent
@@ -1178,6 +1202,18 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 		command.Program = cloneProgramCommand(node.program)
 	}
 	return command
+}
+
+// runsCommand reports whether a node is executed through the command outbox:
+// every task, and a decision an agent decides.
+func (node definitionNode) runsCommand() bool {
+	return node.kind == definitionTask || (node.kind == definitionDecision && node.agent != nil)
+}
+
+// awaitsHuman reports whether a ready node parks on a person's verdict: a
+// decision nobody delegated to an agent, including every approval gate.
+func (node definitionNode) awaitsHuman() bool {
+	return node.kind == definitionDecision && node.agent == nil
 }
 
 // commandKind is the outbox kind a prepared task node plans.
@@ -1298,6 +1334,7 @@ func cloneCommand(command Command) Command {
 		agent := *command.Agent
 		clone.Agent = &agent
 	}
+	clone.Verdicts = slices.Clone(command.Verdicts)
 	return clone
 }
 

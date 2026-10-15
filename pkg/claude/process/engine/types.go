@@ -237,6 +237,9 @@ type Command struct {
 	// later round's performer is told what its own loop's decider said.
 	LoopFrom    string `json:"loopFrom,omitempty"`
 	LoopOutcome string `json:"loopOutcome,omitempty"`
+	// Verdicts are the outcomes an agent decider's command chooses between;
+	// its report names one of them. Empty for every task.
+	Verdicts []string `json:"verdicts,omitempty"`
 }
 
 // AgentCommand is the fully bound request for one agent performer attempt.
@@ -289,6 +292,9 @@ type ProgramObservation struct {
 	Outcome   ProgramOutcome `json:"outcome"`
 	ExitCode  int            `json:"exitCode"`
 	Error     string         `json:"error,omitempty"`
+	// Verdict is an agent decider's chosen outcome, on a successful
+	// observation of a decision node's command only.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // DecisionRecord is the reducer payload for one decision verdict: for an

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -367,7 +368,7 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 		choice.waitReason = "the run is orphaned: its scope target is gone"
 	} else {
 		previous := previousProcessDispatch(row)
-		loop := processLoopFeedback(row.RunID, command)
+		loop := processReworkContext(row.RunID, command)
 		body := processDispatchMessage(row.RunID, command, "", loop)
 		choice = resolveProcessPerformer(row.RunID, scope, command, previous, body)
 		if choice.feedback != "" {
@@ -466,14 +467,11 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 	spec := command.Agent
 	// A new loop round goes back to the performer of the round before, which
 	// is handed the decider's feedback in its own session (processLoopFeedback).
-	loopReentry := processLoopReentry(command, previous)
+	loopReentry := processLoopReentry(runID, command, previous)
 	feedbackMode := (spec.RetryMode == model.RetryModeFeedbackSameSession && previous != nil) || loopReentry
 	feedback := ""
 	if feedbackMode && !loopReentry {
-		feedback = previous.ReportNote
-		if feedback == "" {
-			feedback = "the previous attempt reported failure without a note"
-		}
+		feedback = processRetryFeedback(*previous)
 	}
 
 	switch scope.Kind {
@@ -817,6 +815,17 @@ func processDispatchMessage(runID string, command engine.Command, feedback, loop
 	}
 	fmt.Fprintf(&b, "\n## Task\n\n%s\n", sanitizeProcessText(command.Agent.Prompt))
 	report := fmt.Sprintf("tclaude process report %%s --run %s --node %s --attempt %d", runID, command.NodeID, command.Attempt)
+	if len(command.Verdicts) > 0 {
+		// An agent decider: its report is the decision.
+		fmt.Fprintf(&b, "\n## Your decision\n\nYou decide this step. Choose exactly one verdict: %s.\n", strings.Join(command.Verdicts, ", "))
+		fmt.Fprintf(&b, "Your note is your reasoning; if your verdict sends the work back, it is what the next round's performer is told.\n")
+		fmt.Fprintf(&b, "\nReport exactly once:\n\n")
+		fmt.Fprintf(&b, "    "+report+" --verdict <verdict> --note \"<your reasoning>\"\n", engine.ProgramSucceeded)
+		fmt.Fprintf(&b, "\nIf you cannot decide at all, report failure instead; that fails the step:\n\n")
+		fmt.Fprintf(&b, "    "+report+" --note \"<why you cannot decide>\"\n", engine.ProgramFailed)
+		fmt.Fprintf(&b, "\nOnly you can report this attempt, and only once.\n")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "\n## When you are done\n\nReport exactly once, with the outcome of the work:\n\n")
 	fmt.Fprintf(&b, "    "+report+" --note \"<short summary>\"\n", engine.ProgramSucceeded)
 	fmt.Fprintf(&b, "    "+report+" --note \"<why it failed>\"\n", engine.ProgramFailed)
@@ -912,7 +921,8 @@ func withdrawDrainingAgentCommands(runID string, run *executor.Run) {
 func applyRecordedProcessReport(row db.ProcessAgentDispatch) error {
 	report := executor.AgentReport{
 		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
-		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Performer: row.AgentID,
+		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Verdict: row.ReportVerdict,
+		Performer: row.AgentID,
 	}
 	actor := "agent:" + row.AgentID
 	if row.AgentID == "" {
@@ -937,6 +947,8 @@ type processReportRequest struct {
 	Attempt int                   `json:"attempt,omitempty"`
 	Outcome engine.ProgramOutcome `json:"outcome"`
 	Note    string                `json:"note,omitempty"`
+	// Verdict is an agent decider's decision: one of its node's outcomes.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 type processReportResponse struct {
@@ -972,6 +984,7 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Note = strings.TrimSpace(request.Note)
+	request.Verdict = strings.TrimSpace(request.Verdict)
 	// Validate before the report is recorded: a recorded report the executor
 	// then refuses could never be applied or corrected.
 	if err := executor.ValidateAgentReportNote(request.Note); err != nil {
@@ -990,12 +1003,20 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 
 	switch row.State {
 	case db.ProcessDispatchDelivered:
+		// A stored report is applied as it was sent, so one the run would
+		// refuse — a decider's verdict that is not an outcome, or that goes
+		// back past its loop's last round — is refused before it is stored.
+		if status, code, message := checkProcessReport(*row, request); status != 0 {
+			writeError(w, status, code, message)
+			return
+		}
 		if err := db.RecordProcessAgentDispatchReport(row.RunID, row.CommandID, agentID,
-			string(request.Outcome), request.Note); err != nil {
+			string(request.Outcome), request.Note, request.Verdict); err != nil {
 			writeError(w, http.StatusConflict, "process_report_conflict", "the dispatch changed while reporting; retry")
 			return
 		}
 		row.State, row.ReportOutcome, row.ReportNote = db.ProcessDispatchReported, string(request.Outcome), request.Note
+		row.ReportVerdict = request.Verdict
 		response.Status = "accepted"
 	case db.ProcessDispatchReported, db.ProcessDispatchClosed:
 		if row.ReportOutcome == "" {
@@ -1003,9 +1024,13 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 				"this attempt was settled without your report; it no longer needs one")
 			return
 		}
-		if row.ReportOutcome != string(request.Outcome) {
+		if row.ReportOutcome != string(request.Outcome) || row.ReportVerdict != request.Verdict {
+			reported := row.ReportOutcome
+			if row.ReportVerdict != "" {
+				reported += " with verdict " + row.ReportVerdict
+			}
 			writeError(w, http.StatusConflict, "process_report_conflict",
-				fmt.Sprintf("this attempt was already reported as %s", row.ReportOutcome))
+				fmt.Sprintf("this attempt was already reported as %s", reported))
 			return
 		}
 		response.Status = "duplicate"
@@ -1038,6 +1063,29 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// checkProcessReport asks the run whether it would accept a report, without
+// recording it. It returns a zero status when it would.
+func checkProcessReport(row db.ProcessAgentDispatch, request processReportRequest) (int, string, string) {
+	run, err := executor.LoadRun(row.RunID)
+	if err != nil {
+		return http.StatusInternalServerError, "process_report", err.Error()
+	}
+	err = executor.CheckAgentReport(run, executor.AgentReport{
+		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
+		Outcome: request.Outcome, Note: request.Note, Verdict: request.Verdict, Performer: row.AgentID,
+	})
+	switch {
+	case err == nil:
+		return 0, "", ""
+	case errors.Is(err, engine.ErrStaleObservation):
+		return http.StatusConflict, "process_report_stale", "this attempt was settled while you were reporting; it no longer needs your report"
+	case errors.Is(err, executor.ErrInvalidAgentReport), errors.Is(err, engine.ErrInvalidDecisionVerdict):
+		return http.StatusUnprocessableEntity, "process_report_verdict", err.Error()
+	default:
+		return http.StatusInternalServerError, "process_report", err.Error()
+	}
 }
 
 // selectProcessReportDispatch finds the dispatch a report means and checks it
@@ -1159,11 +1207,133 @@ func processRunPerformerViews(runID string, live processLiveness) (map[string]pr
 	return byCommand, views, nil
 }
 
+// processRetryFeedback is what a feedback-same-session retry is handed about
+// the attempt before it. A previous attempt that succeeded did not fail: a
+// later stage sent the work back, and processGateFeedback says why.
+func processRetryFeedback(previous db.ProcessAgentDispatch) string {
+	if previous.ReportOutcome == string(engine.ProgramSucceeded) {
+		return ""
+	}
+	if previous.ReportNote == "" {
+		return "the previous attempt reported failure without a note"
+	}
+	return previous.ReportNote
+}
+
+// processReworkContext is why an attempt's work is being done again, beyond
+// its own failure: a loop round, or a check or review that sent it back.
+func processReworkContext(runID string, command engine.Command) string {
+	var parts []string
+	for _, part := range []string{processLoopFeedback(runID, command), processGateFeedback(runID, command)} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// processReworkGate names the check, review, or plan approval that sent a
+// compound's work stage back for this attempt (the stage_reset evidence), or
+// "" when the attempt is not such a rework.
+func processReworkGate(runID string, command engine.Command) string {
+	if command.Attempt < 2 {
+		return ""
+	}
+	resets, err := db.ListLatestProcessRunNodeEvents(runID, "stage_reset")
+	if err != nil {
+		slog.Warn("process performers: stage feedback not read", "run", runID, "node", command.NodeID, "error", err)
+		return ""
+	}
+	for _, event := range resets {
+		var payload struct {
+			ParentNodeID    string `json:"parentNodeId"`
+			GateNodeID      string `json:"gateNodeId"`
+			WorkNodeID      string `json:"workNodeId"`
+			NextWorkAttempt int    `json:"nextWorkAttempt"`
+		}
+		if event.DecodePayload(&payload) == nil && payload.WorkNodeID == command.NodeID &&
+			payload.NextWorkAttempt == command.Attempt {
+			return payload.GateNodeID
+		}
+	}
+	return ""
+}
+
+// processGateFeedback is what a compound's work stage is told when one of its
+// checks or its review sent the work back (the stage_reset evidence): which
+// stage, and what it reported. Empty for every other attempt.
+func processGateFeedback(runID string, command engine.Command) string {
+	gate := processReworkGate(runID, command)
+	if gate == "" {
+		return ""
+	}
+	text := fmt.Sprintf("## Sent back by %s\n\nA later stage of this step did not pass, so this work runs again.", gate)
+	// The gate's latest settlement is the one that sent the work back: an
+	// agent's report, a program's result, an operator-recorded outcome, or a
+	// person's plan-approval verdict.
+	reports, err := db.ListLatestProcessRunNodeEvents(runID,
+		"agent_reported", "program_observed", "program_outcome_recorded", "decision_recorded")
+	if err != nil {
+		return text
+	}
+	for _, event := range reports {
+		if event.NodeID != gate {
+			continue
+		}
+		// Only the fields read here: a report's or an operator's note, a
+		// verdict's evidence, or a program's failure and its error output.
+		var payload struct {
+			Observation struct {
+				Error string `json:"error"`
+			} `json:"observation"`
+			Note     string `json:"note"`
+			Evidence string `json:"evidence"`
+			Stderr   string `json:"stderr"`
+		}
+		if json.Unmarshal(event.PayloadJSON, &payload) != nil {
+			break
+		}
+		reason := payload.Note
+		if reason == "" {
+			reason = payload.Evidence
+		}
+		if reason == "" {
+			reason = payload.Observation.Error
+			if stderr := strings.TrimSpace(payload.Stderr); stderr != "" {
+				reason += "\n\n" + processFeedbackTail(stderr)
+			}
+		}
+		if reason != "" {
+			text += " It reported:\n\n" + reason
+		}
+		break
+	}
+	return text
+}
+
+// processFeedbackTail keeps the end of a program's error output, where the
+// failure usually is, at the scale of a report note.
+func processFeedbackTail(output string) string {
+	const limit = 2048
+	if len(output) <= limit {
+		return output
+	}
+	cut := len(output) - limit
+	for cut < len(output) && !utf8.RuneStart(output[cut]) {
+		cut++
+	}
+	return "…" + output[cut:]
+}
+
 // processLoopReentry reports whether an attempt opens a new round of its
 // loop: its node finished the round before successfully, so this attempt is
 // not a retry of a failure.
-func processLoopReentry(command engine.Command, previous *db.ProcessAgentDispatch) bool {
-	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded)
+//
+// A later round's work stage whose check or review sent it back is not a new
+// round either: it follows the compound's own retry mode.
+func processLoopReentry(runID string, command engine.Command, previous *db.ProcessAgentDispatch) bool {
+	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded) &&
+		processReworkGate(runID, command) == ""
 }
 
 // processLoopFeedback is what a performer in a later round of a loop is told
