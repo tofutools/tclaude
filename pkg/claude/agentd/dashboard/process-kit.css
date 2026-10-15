@@ -183,6 +183,14 @@ button.pk-run-icon { cursor: pointer; }
   position: absolute; transform: translate(-50%, -50%); font-size: 9.5px; color: var(--pk-muted);
   background: var(--pk-surface); padding: 0 3px; white-space: nowrap; pointer-events: none;
 }
+/* A bounded loop (tcl-eu70x9): an amber dashed back edge whose label carries
+   its bound, and a round badge on the loop body's active node, top-left so it clears the
+   performer avatars on the top-right corner. */
+.pk-edge.loop { stroke: var(--pk-waiting); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.pk-arrow.loop path { fill: var(--pk-waiting); }
+.pk-elabel.loop { color: var(--pk-waiting-text); border: 1px solid color-mix(in srgb, var(--pk-waiting) 55%, transparent); border-radius: 999px; padding: 0 6px; }
+.pk-round { position: absolute; left: 6px; top: 0; transform: translateY(-50%); font-size: 9.5px; font-weight: 600; line-height: 1;
+  padding: 2px 6px; border-radius: 999px; border: 1px solid var(--pk-waiting); background: var(--pk-surface); color: var(--pk-waiting-text); white-space: nowrap; }
 .pk-gnode {
   position: absolute; transform: translate(-50%, -50%); box-sizing: border-box;
   display: flex; align-items: center; gap: 7px; padding: 0 9px 0 7px; margin: 0;

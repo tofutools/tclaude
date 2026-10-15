@@ -124,6 +124,15 @@ test('the draft projects onto the kit: kinds, who lines, outcome labels', () => 
   assert.deepEqual(m.changeSummary(ship, m.insertAfter(ship, 'implement', 'agent').view), ['added “New step”', 'Implement changed']);
 });
 
+test('a bounded loop projects as a back edge carrying its bound', () => {
+  const looped = structuredClone(ship);
+  looped.template.nodes.approve.loops = { rework: { maxIterations: 3 } };
+  const run = m.draftProjection(looped);
+  const back = run.edges.find((e) => e.from === 'approve' && e.to === 'rework');
+  assert.deepEqual([back.back, back.maxIterations, back.label], [true, 3, 'rework']);
+  assert.equal(run.edges.find((e) => e.from === 'implement').back, undefined, 'other edges stay forward');
+});
+
 test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
   assert.match(m.canRunAlongside(ship, 'final-say'), /other outcomes/, 'its hold answer would leave the branch');
   const fork = fill(m.runAlongside(ship, 'review', 'agent'));

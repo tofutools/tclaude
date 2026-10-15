@@ -162,8 +162,8 @@ test('the S1 sheet mounts every section', async (t) => {
   const { harness, sheet } = await kit(t);
   const mounted = await harness.mount(harness.html`<${sheet.ProcessKitSheet} wizard=${true} />`);
   const root = mounted.container.querySelector('[data-process-kit-sheet]');
-  assert.equal(root.querySelectorAll('.pk-sheet-box').length, 5);
-  assert.equal(root.querySelectorAll('.pk-mini-graph').length, 2);
+  assert.equal(root.querySelectorAll('.pk-sheet-box').length, 6);
+  assert.equal(root.querySelectorAll('.pk-mini-graph').length, 4);
   assert.match(root.textContent, /Familiar rune/);
   assert.match(root.textContent, /familiar-bound · search-indexer/);
   await mounted.unmount();
@@ -217,4 +217,44 @@ test('the read model projection (GET /v1/process/context) renders without an ada
   assert.ok(mounted.container.querySelector('[data-process-node="impl"].here'));
   assert.ok(mounted.container.querySelector('path.pk-edge.back'));
   await mounted.unmount();
+});
+
+test('a bounded loop draws amber with its bound, and its body nodes say their round', async (t) => {
+  const { harness, mod } = await kit(t);
+  const loopRun = (round) => ({
+    id: 'r', name: 'review loop', status: 'running',
+    nodes: [
+      { id: 'start', kind: 'start', label: 'start', state: 'done' },
+      { id: 'write', kind: 'agent', label: 'Write', state: round ? 'running' : 'planned', ...(round ? { round, rounds: 3 } : {}) },
+      { id: 'review', kind: 'decision', label: 'Review', state: 'planned', ...(round ? { round, rounds: 3 } : {}) },
+      { id: 'end', kind: 'end', label: 'end', state: 'planned' },
+    ],
+    edges: [
+      { from: 'start', to: 'write' }, { from: 'write', to: 'review' },
+      { from: 'review', to: 'end', label: 'approved' },
+      { from: 'review', to: 'write', label: 'changes', back: true, maxIterations: 3 },
+    ],
+  });
+  assert.equal(mod.loopLabel({ label: 'changes', maxIterations: 3 }), 'changes · ≤3×');
+  assert.equal(mod.loopLabel({ label: 'changes' }), 'changes', 'an unbounded edge keeps its label');
+  assert.equal(mod.nodeRound({ round: 2, rounds: 3 }), '2/3');
+  assert.equal(mod.nodeRound({}), '');
+  const planned = mod.miniGraphLayout(loopRun(0)).edges.find((e) => e.loop);
+  assert.deepEqual([planned.back, planned.label], [true, 'changes · ≤3×']);
+  assert.equal(mod.miniGraphLayout(loopRun(2)).edges.find((e) => e.loop).label, 'changes · round 2 of 3');
+
+  const mounted = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${loopRun(2)} onNodeClick=${() => {}} />`);
+  const graph = mounted.container;
+  assert.ok(graph.querySelector('path.pk-edge.back.loop'));
+  assert.equal(graph.querySelector('.pk-elabel.loop').textContent, '↺ changes · round 2 of 3');
+  assert.deepEqual([...graph.querySelectorAll('[data-process-round]')].map((b) => b.closest('[data-process-node]').dataset.processNode), ['write'],
+    'only the active body node wears the badge');
+  assert.equal(graph.querySelector('.pk-round').textContent, '↺ 2/3');
+  assert.match(getByRole(graph, 'button', { name: /^Review ·/ }).getAttribute('title'), /round 2 of 3$/, 'idle body nodes say their round');
+  await mounted.unmount();
+  const parked = loopRun(2);
+  parked.nodes = parked.nodes.map((n) => ({ ...n, state: n.id === 'review' ? 'waiting' : n.id === 'write' ? 'done' : n.state }));
+  const gate = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${parked} />`);
+  assert.equal(gate.container.querySelector('[data-process-node="review"] .pk-round')?.textContent, '↺ 2/3', 'a decision parked on its verdict wears the badge');
+  await gate.unmount();
 });

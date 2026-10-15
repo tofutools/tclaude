@@ -437,9 +437,14 @@ export function draftProjection(view, { whoOf = () => '', name = '' } = {}) {
     if (kind === 'advanced') projected.sub = 'full editor';
     return projected;
   });
-  const edges = (view.edges || []).filter((edge) => edge.from !== '').map((edge) => ({
-    from: edge.from, to: edge.to, label: PASS_LABELS.includes(edge.outcome) || view.template.nodes[edge.from]?.type === 'parallel' ? '' : edge.outcome,
-  }));
+  const edges = (view.edges || []).filter((edge) => edge.from !== '').map((edge) => {
+    const projected = {
+      from: edge.from, to: edge.to, label: PASS_LABELS.includes(edge.outcome) || view.template.nodes[edge.from]?.type === 'parallel' ? '' : edge.outcome,
+    };
+    // A bounded loop (node.loops[outcome]) draws as a back edge with its bound.
+    const max = Number(view.template.nodes[edge.from]?.loops?.[edge.outcome]?.maxIterations) || 0;
+    return max > 0 ? { ...projected, label: projected.label || edge.outcome, back: true, maxIterations: max } : projected;
+  });
   return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges };
 }
 
