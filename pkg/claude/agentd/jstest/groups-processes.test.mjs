@@ -201,6 +201,33 @@ test('starting a run posts the group with idempotency headers', async (t) => {
   assert.match(init.headers['X-Tclaude-Request-Digest'], /^[0-9a-f]{64}$/);
 });
 
+test('the run api saves, publishes and pins templates with group metadata outside the template', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/process-context.js');
+  const calls = [];
+  const api = mod.createProcessRunApi({ fetchImpl: async (path, init = {}) => { calls.push({ path, init }); return { ok: true, status: 200, json: async () => ({ id: 'tpl_new' }) }; } });
+  const view = { template: { id: 'draft', name: 'triage', nodes: {} }, edges: [], layout: { nodes: {} } };
+  await api.createTemplate(view, { listed: false, pinGroup: 'web shop' });
+  await api.createTemplate(view);
+  await api.saveTemplate('tpl_a', view, { sourceHash: 'h1' });
+  await api.publishTemplate('tpl_a');
+  await api.pinProcess('web shop', 'tpl_a');
+  await api.unpinProcess('web shop', 'tpl_a');
+  await api.getTemplate('tpl_a');
+  const bodies = calls.map(({ init }) => (init.body ? JSON.parse(init.body) : null));
+  assert.deepEqual(calls.map(({ path, init }) => `${init.method || 'GET'} ${path}`), [
+    'POST /v1/process/templates', 'POST /v1/process/templates', 'POST /v1/process/templates/tpl_a',
+    'POST /v1/process/templates/tpl_a/listing', 'POST /v1/process/groups/web%20shop/processes',
+    'DELETE /v1/process/groups/web%20shop/processes/tpl_a', 'GET /v1/process/templates/tpl_a',
+  ]);
+  assert.deepEqual(bodies[0], { template: { name: 'triage', nodes: {} }, edges: [], layout: { nodes: {} }, listed: false, pinGroup: 'web shop' });
+  assert.deepEqual(bodies[1], { template: { name: 'triage', nodes: {} }, edges: [], layout: { nodes: {} } }, 'no metadata unless asked');
+  assert.deepEqual(bodies[2], { template: { id: 'tpl_a', name: 'triage', nodes: {} }, edges: [], layout: { nodes: {} }, sourceHash: 'h1' });
+  assert.deepEqual(bodies[3], { listed: true });
+  assert.deepEqual(bodies[4], { templateId: 'tpl_a' });
+  for (const i of [0, 2, 3, 4]) assert.ok(calls[i].init.headers['Idempotency-Key'], 'creating calls carry an idempotency key');
+});
+
 test('the start form asks for params and explicit program authorization', async (t) => {
   const started = [];
   let refuse = true;

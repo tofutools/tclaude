@@ -17,16 +17,21 @@ const GROUPS = [
 
 const EMPTY_CONTEXT = { runs: {}, groups: [{ groupId: 1, group: 'webshop', active: [], needsYou: [], done: [], planned: [] }], agents: [], orphaned: [] };
 
-function fakeApi({ createError = null, startErrors = [] } = {}) {
-  const calls = { validate: [], create: [], start: [] };
+function fakeApi({ createError = null, createErrorBody = null, startErrors = [], stored = {} } = {}) {
+  const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [] };
   return {
     calls,
+    getTemplate: async (id) => { calls.get.push(id); return stored[id]; },
+    saveTemplate: async (id, view, options) => { calls.save.push({ id, view, options }); return { ref: `${id}@sha256:2`, sourceHash: 'h2' }; },
+    publishTemplate: async (id) => { calls.publish.push(id); return { id, listed: true }; },
+    pinProcess: async (group, id) => { calls.pin.push({ group, id }); return { pinned: true }; },
+    unpinProcess: async (group, id) => { calls.unpin.push({ group, id }); return { pinned: false }; },
     listTemplates: async () => [{ id: 'release-train', name: 'release-train' }, { id: 'db-migrate', name: 'db-migrate' }],
     templateRequirements: async () => ({ params: [], programProfiles: [] }),
     validateTemplate: async (view) => { calls.validate.push(view); return []; },
     createTemplate: async (view, options) => {
       calls.create.push({ view, options });
-      if (createError) throw new Error(createError);
+      if (createError) throw Object.assign(new Error(createError), { body: createErrorBody });
       return { id: `tmpl_${calls.create.length}`, ref: 'x@sha256:1' };
     },
     startGroupRun: async (request) => {
@@ -114,6 +119,7 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
   assert.equal(start.disabled, false);
   await click(start);
   assert.equal(api.calls.create.length, 1);
+  assert.deepEqual(api.calls.create[0].options, { listed: false }, 'a one-off start is unlisted and not saved to the group');
   const created = api.calls.create[0].view;
   assert.equal(created.template.name, 'build-review-ship');
   assert.deepEqual(Object.keys(created.template.params), ['issue']);
@@ -261,4 +267,168 @@ test('Start sends only the inputs the steps still use', async (t) => {
   await setValue(editor.querySelector('[data-start-param="ticket"]'), 'T-2');
   await click(editor.querySelector('[data-step-start]'));
   assert.deepEqual(api.calls.start.at(-1).params, { ticket: 'T-2' });
+});
+
+test('Save to group stores the steps unlisted and pinned to the group', async (t) => {
+  const { root, api, notes, click, setValue } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  const save = editor.querySelector('[data-step-save-group]');
+  assert.equal(save.textContent, 'Save to webshop');
+  await click(save);
+  assert.deepEqual(api.calls.create.map((call) => call.options), [{ listed: false, pinGroup: 'webshop' }]);
+  assert.equal(JSON.stringify(api.calls.create[0].view).includes('webshop'), false, 'the group never goes into the template');
+  assert.deepEqual(api.calls.start, []);
+  assert.deepEqual(notes, [{ message: 'Saved triage to webshop', error: false }]);
+  assert.equal(root.querySelector('[data-step-editor]'), null);
+});
+
+test('a refused start, then Save to group, pins the template already created', async (t) => {
+  const api = fakeApi({ startErrors: ['boom'] });
+  const { root, click, setValue } = await mount(t, { api });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-step-start]'));
+  assert.match(editor.querySelector('.gq-error').textContent, /boom/);
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.equal(api.calls.create.length, 1);
+  assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_1' }]);
+});
+
+test('Save to library lists the steps without pinning them', async (t) => {
+  const { root, api, click, setValue } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-step-save-library]'));
+  assert.deepEqual(api.calls.create.map((call) => call.options), [{ listed: true }]);
+});
+
+const SAVED_VIEW = {
+  template: {
+    id: 'tmpl_ship', name: 'ship-feature', params: { issue: { type: 'string', required: true } },
+    start: 'start',
+    nodes: {
+      start: { type: 'start' },
+      implement: { type: 'task', name: 'Implement', performer: { kind: 'agent', profile: 'dev', prompt: 'Implement {{params.issue}}.' } },
+      end: { type: 'end', outcome: 'success' },
+    },
+  },
+  edges: [{ from: 'start', outcome: 'start', to: 'implement' }, { from: 'implement', outcome: 'pass', to: 'end' }],
+  layout: { nodes: {} },
+  sourceHash: 'h1', listed: false,
+};
+
+const SAVED_CONTEXT = {
+  ...EMPTY_CONTEXT,
+  groups: [{
+    ...EMPTY_CONTEXT.groups[0],
+    processes: [
+      { templateId: 'tmpl_ship', name: 'ship-feature', ref: 'tmpl_ship@sha256:1', listed: false, steps: 1,
+        params: [{ name: 'issue', type: 'string', required: true }, { name: 'branch', type: 'string', required: false, default: 'main' }],
+        programProfiles: ['ci'] },
+      { templateId: 'tmpl_nightly', name: 'nightly-check', ref: 'tmpl_nightly@sha256:1', listed: true, steps: 3, params: [], programProfiles: [] },
+    ],
+  }],
+};
+
+test('saved processes show as chips; ▶ asks for the inputs and consent, then starts in the group', async (t) => {
+  const { root, api, notes, click, setValue, harness, settle } = await mount(t, { context: SAVED_CONTEXT });
+  assert.equal(root.querySelector('[data-quickstart]'), null, 'a group with saved processes is past Get started');
+  assert.equal(root.querySelector('[data-quickstart-folded]'), null);
+  const saved = root.querySelector('[data-saved-processes="webshop"]');
+  assert.deepEqual([...saved.querySelectorAll('[data-saved-process]')].map((el) => el.dataset.savedProcess), ['tmpl_ship', 'tmpl_nightly']);
+  assert.match(saved.querySelector('[data-saved-process="tmpl_nightly"]').textContent, /nightly-check\s*3 steps/);
+  assert.equal(saved.querySelector('[data-saved-new]'), null, 'new processes are built from the group process buttons');
+  await click(saved.querySelector('[data-saved-run="tmpl_ship"]'));
+  const strip = root.querySelector('[data-saved-strip="tmpl_ship"]');
+  assert.ok(strip, 'the start strip opens');
+  assert.equal(strip.querySelector('[data-start-param="branch"]').value, 'main', 'a default starts out filled');
+  const start = strip.querySelector('[data-saved-start]');
+  assert.match(start.getAttribute('title'), /Fill issue first/);
+  await setValue(strip.querySelector('[data-start-param="issue"]'), 'JOH-412');
+  assert.match(start.getAttribute('title'), /Allow its commands to run first/);
+  const box = strip.querySelector('[data-start-profile="ci"]');
+  Object.defineProperty(box, 'checked', { configurable: true, value: true });
+  await setValue(box, true, 'change');
+  assert.equal(start.disabled, false);
+  await harness.act(() => harness.fireEvent(strip, 'submit'));
+  await settle();
+  assert.deepEqual(api.calls.start, [{ templateId: 'tmpl_ship', group: 'webshop', params: { branch: 'main', issue: 'JOH-412' }, authorizeProgramProfiles: ['ci'] }]);
+  assert.deepEqual(notes, [{ message: 'Started ship-feature in webshop', error: false }]);
+  assert.equal(root.querySelector('[data-saved-strip]'), null, 'the strip closes after a start');
+  assert.deepEqual(api.calls.create, [], 'a rerun saves nothing');
+});
+
+test('a saved process publishes to the library and is removed from the group after a confirm', async (t) => {
+  const { root, api, click } = await mount(t, { context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-publish]'));
+  assert.deepEqual(api.calls.publish, ['tmpl_ship']);
+  await click(root.querySelector('[data-saved-remove]'));
+  assert.deepEqual(api.calls.unpin, [], 'remove asks first');
+  assert.match(root.querySelector('.gq-confirm').textContent, /not in the template library/);
+  await click(root.querySelector('[data-saved-remove-confirm]'));
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_ship' }]);
+  await click(root.querySelector('[data-saved-run="tmpl_nightly"]'));
+  assert.equal(root.querySelector('[data-saved-publish]'), null, 'a listed process is already published');
+});
+
+test('Edit steps reopens a saved process as a step list and saves a new version of it', async (t) => {
+  const api = fakeApi({ stored: { tmpl_ship: SAVED_VIEW } });
+  const { root, click, setValue } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-edit]'));
+  assert.deepEqual(api.calls.get, ['tmpl_ship']);
+  const editor = root.querySelector('[data-step-editor-saved="tmpl_ship"]');
+  assert.ok(editor, 'the saved process opens in the step-list editor');
+  assert.equal(editor.querySelector('.gq-name').value, 'ship-feature');
+  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['implement']);
+  assert.match(editor.querySelector('.gq-tag').textContent, /saved in webshop/);
+  assert.equal(editor.querySelector('[data-step-save-group]').textContent, 'Save');
+  await setValue(editor.querySelector('[data-start-param="issue"]'), 'A-1');
+  await click(editor.querySelector('[data-step-start]'));
+  assert.deepEqual(api.calls.save, [], 'starting unchanged steps writes no new version');
+  assert.equal(api.calls.start.at(-1).templateId, 'tmpl_ship');
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-edit]'));
+  const again = root.querySelector('[data-step-editor-saved="tmpl_ship"]');
+  await setValue(steps(root)[0].querySelector('.gq-step-text'), 'Implement {{issue}} with tests.', 'change');
+  await click(again.querySelector('[data-step-save-group]'));
+  assert.equal(api.calls.save.length, 1);
+  assert.equal(api.calls.save[0].id, 'tmpl_ship');
+  assert.deepEqual(api.calls.save[0].options, { sourceHash: 'h1' }, 'saved against the version it opened, still pinned and unlisted');
+  assert.equal(api.calls.save[0].view.template.nodes.implement.performer.prompt, 'Implement {{params.issue}} with tests.');
+  assert.deepEqual(api.calls.create, []);
+});
+
+test('a saved process the step list cannot show opens in the graph editor', async (t) => {
+  const graphy = { ...SAVED_VIEW, template: { ...SAVED_VIEW.template, nodes: { ...SAVED_VIEW.template.nodes, fan: { type: 'parallel' } } } };
+  const api = fakeApi({ stored: { tmpl_ship: graphy } });
+  const { root, handoff, notes, click } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-edit]'));
+  assert.equal(root.querySelector('[data-step-editor]'), null);
+  assert.deepEqual(handoff.takeProcessDraft(), { id: 'tmpl_ship', name: 'ship-feature' });
+  assert.match(notes[0].message, /opens in the graph editor/);
+});
+
+test('a save whose pin failed keeps the stored template, so a retry only pins it', async (t) => {
+  const api = fakeApi({ createError: 'the template was saved, but pinning it to the group failed: full',
+    createErrorBody: { id: 'tmpl_x', ref: 'tmpl_x@sha256:1', code: 'process_group_pin' }, stored: { tmpl_x: { sourceHash: 'hx' } } });
+  const { root, click, setValue } = await mount(t, { api });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.match(editor.querySelector('.gq-error').textContent, /pinning it to the group failed/);
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.equal(api.calls.create.length, 1, 'no second template');
+  assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
 });

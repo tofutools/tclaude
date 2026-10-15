@@ -5,7 +5,8 @@
 //
 //   { runs: { <runId>: projection },
 //     groups: [{ groupId, group, active: [runId], needsYou: [runId], done: [runId],
-//                planned: [{ source, id, templateId, name, nextAt }], activeCount, needsYouCount }],
+//                planned: [{ source, id, templateId, name, nextAt }], activeCount, needsYouCount,
+//                processes: [{ templateId, name, ref, listed, steps, params, programProfiles }] }],
 //     agents: [{ agentId, runs: [{ runId, nodeId, index, total, state }] }],
 //     orphaned: [runId], truncated }
 //
@@ -203,10 +204,22 @@ function newAttemptKey() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// saveMeta is a template save's library and group metadata: sent only when
+// set.
+function saveMeta(listed, pinGroup) {
+  return { ...(listed === undefined ? {} : { listed }), ...(pinGroup ? { pinGroup } : {}) };
+}
+
 async function processRequest(path, init, fetchImpl) {
   const response = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store', ...init });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
+  if (!response.ok) {
+    // The body rides along: a template save whose listing or pin failed
+    // names the version it did store ({id, ref}).
+    const error = new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
+    error.body = body;
+    throw error;
+  }
   return body;
 }
 
@@ -265,14 +278,52 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       return templateStartRequirements(body.template || {});
     },
     // createTemplate stores a new template from an edit view and returns the
-    // created {id, ref, ...}; the store mints the id. `listed` is sent only
-    // when given, so a daemon without library listing still accepts it.
-    async createTemplate({ template, edges, layout }, { listed, attemptKey = newAttemptKey() } = {}) {
+    // created {id, ref, ...}; the store mints the id. `listed` and
+    // `pinGroup` are sent only when given, so a daemon without library
+    // listing still accepts a plain create. Both are request metadata, never
+    // template content.
+    async createTemplate({ template, edges, layout }, { listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
       const path = '/v1/process/templates';
       const { id: _id, ...rest } = template;
-      const body = JSON.stringify({ template: rest, edges, layout, ...(listed === undefined ? {} : { listed }) });
+      const body = JSON.stringify({ template: rest, edges, layout, ...saveMeta(listed, pinGroup) });
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // getTemplate reads a stored template's edit view ({template, edges,
+    // layout, sourceHash, listed, ...}).
+    getTemplate(templateId) {
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, {}, fetchImpl);
+    },
+    // saveTemplate saves a new version of a stored template against the
+    // sourceHash it was opened at; a 409 means someone saved in between.
+    async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
+      const path = `/v1/process/templates/${encodeURIComponent(templateId)}`;
+      const body = JSON.stringify({ template: { ...template, id: templateId }, edges, layout, sourceHash, ...saveMeta(listed, pinGroup) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // publishTemplate lists a template in the library.
+    async publishTemplate(templateId, attemptKey = newAttemptKey()) {
+      const path = `/v1/process/templates/${encodeURIComponent(templateId)}/listing`;
+      const body = JSON.stringify({ listed: true });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // pinProcess saves an existing template to a group's processes;
+    // unpinProcess removes it from them (the template itself stays).
+    async pinProcess(group, templateId, attemptKey = newAttemptKey()) {
+      const path = `/v1/process/groups/${encodeURIComponent(group)}/processes`;
+      const body = JSON.stringify({ templateId });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    async unpinProcess(group, templateId) {
+      return processRequest(`/v1/process/groups/${encodeURIComponent(group)}/processes/${encodeURIComponent(templateId)}`, {
+        method: 'DELETE',
       }, fetchImpl);
     },
     // validateTemplate reads the server's diagnostics for an unsaved view.
