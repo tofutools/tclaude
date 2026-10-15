@@ -4,7 +4,9 @@
 //
 //   chat      the human writes here (operator mail to the scribe); the
 //             scribe's turn replies are read back from
-//             GET /api/scribe/{agent}/chat and shown as bubbles.
+//             GET /api/scribe/{agent}/chat and shown as bubbles. While a
+//             turn is open the same read carries a live tail of it (the
+//             scribe's text so far and its tool calls), polled faster.
 //   terminal  the scribe's own terminal, opened through the dashboard's
 //             terminal panes (openTerminalPane via the actions' openScribe).
 //
@@ -21,12 +23,14 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { PROCESS_SCRIBE_PROMPT_MAX, processScribeChatTranscript } from './process-scribe.js';
+import { PROCESS_SCRIBE_PROMPT_MAX, processScribeChatLive, processScribeChatTranscript } from './process-scribe.js';
 import { dashPrefs } from './prefs.js';
 
 const html = htm.bind(h);
 
 export const SCRIBE_CHAT_POLL_MS = 2500;
+// While a turn is open the read is re-polled faster, so its progress streams.
+export const SCRIBE_CHAT_LIVE_POLL_MS = 1000;
 const DRAFT_PREFIX = 'Draft a process that ';
 
 export const SCRIBE_DOCK_WIDTH_PREF = 'tclaude.dash.processEditor.scribeWidth';
@@ -127,11 +131,16 @@ async function defaultFetchChat(agentId, signal) {
   const response = await fetch(`/api/scribe/${encodeURIComponent(agentId)}/chat`, { credentials: 'same-origin', signal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
-  return processScribeChatTranscript(body);
+  return { messages: processScribeChatTranscript(body), live: processScribeChatLive(body) };
+}
+
+// A fetchChat may answer with the bare message list (no live tail).
+function chatRead(result) {
+  return Array.isArray(result) ? { messages: result, live: null } : { messages: result?.messages || [], live: result?.live || null };
 }
 
 function useScribeChat(agentId, enabled, fetchChat, pokeRef) {
-  const [state, setState] = useState({ messages: [], error: '', loaded: false });
+  const [state, setState] = useState({ messages: [], live: null, error: '', loaded: false });
   useEffect(() => {
     if (!enabled || !agentId) return undefined;
     const abort = new AbortController();
@@ -139,13 +148,17 @@ function useScribeChat(agentId, enabled, fetchChat, pokeRef) {
     let stopped = false;
     const poll = async () => {
       clearTimeout(timer);
+      let open = false;
       try {
-        const messages = await fetchChat(agentId, abort.signal);
-        if (!stopped) setState({ messages, error: '', loaded: true });
+        const read = chatRead(await fetchChat(agentId, abort.signal));
+        // Fast only while there is progress to show: a turn whose transcript
+        // cannot be read, or one that never got a reply, falls back.
+        open = !!read.live?.items?.length;
+        if (!stopped) setState({ ...read, error: '', loaded: true });
       } catch (error) {
         if (!stopped && error?.name !== 'AbortError') setState((prev) => ({ ...prev, error: error?.message || String(error), loaded: true }));
       }
-      if (!stopped) timer = setTimeout(poll, SCRIBE_CHAT_POLL_MS);
+      if (!stopped) timer = setTimeout(poll, open ? SCRIBE_CHAT_LIVE_POLL_MS : SCRIBE_CHAT_POLL_MS);
     };
     pokeRef.current = poll;
     void poll();
@@ -154,21 +167,47 @@ function useScribeChat(agentId, enabled, fetchChat, pokeRef) {
   return state;
 }
 
-function ChatLog({ messages, loaded, error, pendingSend }) {
+// LiveTurn is the open turn so far: the scribe's text as a pending bubble and
+// each tool call as a one-line step. Rendered as text only.
+function LiveTurn({ live }) {
+  if (!live?.items?.length) return null;
+  return html`<div class="psd-msg is-scribe is-live" data-scribe-msg="live">
+    <span class="psd-msg-who">scribe · in progress</span>
+    ${live.truncated && html`<p class="psd-live-more">earlier steps of this turn are not shown</p>`}
+    ${live.items.map((item, index) => item.kind === 'tool'
+      ? html`<p key=${index} class="psd-live-tool" data-scribe-live="tool">${item.text}</p>`
+      : html`<div key=${index} class="psd-msg-body" data-scribe-live="text">${item.text}</div>`)}
+  </div>`;
+}
+
+function ChatLog({ messages, live, loaded, error, pendingSend }) {
   const log = useRef(null);
+  // Live progress follows the bottom only while the reader is there, so
+  // scrolling up to re-read an earlier reply is not undone every poll.
+  const atBottom = useRef(true);
+  const liveSize = (live?.items || []).reduce((sum, item) => sum + item.text.length, 0);
   useLayoutEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
+    atBottom.current = true;
   }, [messages.length, pendingSend]);
+  useLayoutEffect(() => {
+    if (log.current && atBottom.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [liveSize]);
+  const onScroll = (event) => {
+    const el = event.currentTarget;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
   const last = messages.at(-1);
-  const working = pendingSend || last?.role === 'human';
-  return html`<div ref=${log} class="psd-log process-scroll-surface" role="log" aria-live="polite" aria-label="Scribe conversation">
+  const working = pendingSend || last?.role === 'human' || !!live;
+  return html`<div ref=${log} onScroll=${onScroll} class="psd-log process-scroll-surface" role="log" aria-live="polite" aria-label="Scribe conversation">
     ${!loaded && html`<p class="psd-empty">Loading the conversation…</p>`}
     ${loaded && !messages.length && !error && html`<p class="psd-empty">Ask for a change in plain words. The scribe saves a new version, and you accept or reject each change on the canvas.</p>`}
     ${messages.map((message) => html`<div key=${message.id} class=${`psd-msg is-${message.role}`} data-scribe-msg=${message.role}>
       <span class="psd-msg-who">${message.role === 'scribe' ? 'scribe' : 'you'}</span>
       <div class="psd-msg-body">${message.body}</div>
     </div>`)}
-    ${working && loaded && html`<p class="psd-working" role="status"><span class="psd-dot" aria-hidden="true"></span>scribe is working…</p>`}
+    ${loaded && html`<${LiveTurn} live=${live} />`}
+    ${working && loaded && html`<p class="psd-working" role="status" title=${live?.unavailable || ''}><span class="psd-dot" aria-hidden="true"></span>scribe is working…</p>`}
     ${error && html`<p class="psd-error" role="alert">Could not read the conversation: ${error}</p>`}
   </div>`;
 }
@@ -282,7 +321,7 @@ export function ScribeDock({ controller, view }) {
       </div>
     </div>`}
 
-    ${live && dock.mode === 'chat' && html`<${ChatLog} messages=${chat.messages} loaded=${chat.loaded} error=${chat.error} pendingSend=${sending} />`}
+    ${live && dock.mode === 'chat' && html`<${ChatLog} messages=${chat.messages} live=${chat.live} loaded=${chat.loaded} error=${chat.error} pendingSend=${sending} />`}
     ${live && dock.mode === 'terminal' && html`<div class="psd-terminal">
       <p>The scribe's terminal opens in the dashboard's terminal panes. Messages and context actions sent from here arrive there too.</p>
       <button type="button" class="process-action" data-scribe-open-terminal onClick=${() => api.openTerminal?.(scribe)}>Open terminal</button>

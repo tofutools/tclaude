@@ -222,10 +222,12 @@ versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
 things there are specific to processes:
 
 - **Co-design with a scribe.** *Edit with agent* docks the template's scribe
-  beside the canvas: chat with it there (its replies come back as it finishes
-  a turn) or switch the dock to its terminal. The dock's context actions send
-  it the selection, a node to explain, the focused validation issue, or a
-  description to draft from. When the scribe saves a version, *Review on
+  beside the canvas: chat with it there (while it works, what it has written
+  so far and a one-line note per tool call stream in, read from its own
+  transcript, on every harness but OpenCode; its final reply replaces them
+  when the turn ends) or switch the dock to its terminal. The dock's context
+  actions send it the selection, a node to explain, the focused validation
+  issue, or a description to draft from. When the scribe saves a version, *Review on
   canvas* paints it over your draft (added, changed, removed) and you accept
   or reject each change; your own unsaved edits are never overwritten, and
   conflicting edits are flagged rather than merged silently.

@@ -99,6 +99,29 @@ test('the header toggles a docked chat that shows the scribe conversation', asyn
   assert.equal(dock(), null);
 });
 
+test('an open scribe turn streams its text and tool calls as a pending bubble', async (t) => {
+  const chat = {
+    messages: [{ id: 'h1', role: 'human', body: 'Add a review gate after build.', at: '' }],
+    live: { truncated: true, unavailable: '', items: [
+      { kind: 'text', text: 'Reading the template first.' },
+      { kind: 'tool', text: 'Bash: tclaude process template show dock-flow' },
+      { kind: 'text', text: '<b>Adding</b> the gate.' },
+    ] },
+  };
+  const { dock, click, settle } = await openEditor(t, { chat });
+  await click('.process-scribe-action');
+  await settle();
+  assert.deepEqual([...dock().querySelectorAll('[data-scribe-msg]')].map((el) => el.dataset.scribeMsg), ['human', 'live']);
+  assert.deepEqual([...dock().querySelectorAll('[data-scribe-live]')].map((el) => [el.dataset.scribeLive, el.textContent]), [
+    ['text', 'Reading the template first.'],
+    ['tool', 'Bash: tclaude process template show dock-flow'],
+    ['text', '<b>Adding</b> the gate.'],
+  ]);
+  assert.equal(dock().querySelector('[data-scribe-live] b'), null, 'live text is rendered as text');
+  assert.match(dock().textContent, /earlier steps of this turn are not shown/);
+  assert.ok(dock().querySelector('.psd-working'), 'the turn is still shown as working');
+});
+
 test('chat sends operator mail; context actions carry bounded editor context', async (t) => {
   const { harness, editor, dock, click, settle, posts } = await openEditor(t);
   await click('.process-scribe-action');
