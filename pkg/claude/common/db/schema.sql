@@ -1847,3 +1847,8 @@ CREATE TABLE spend_alerts (
  threshold INTEGER NOT NULL,
  PRIMARY KEY (period, period_start, threshold)
  );
+
+CREATE TABLE saved_prompts (
+ name TEXT PRIMARY KEY NOT NULL,
+ body TEXT NOT NULL
+ );

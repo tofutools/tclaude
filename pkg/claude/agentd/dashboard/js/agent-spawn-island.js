@@ -1,3 +1,4 @@
+import { SavedPromptPicker } from './saved-prompts.js';
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -207,6 +208,7 @@ function roleHoverText(role) {
 }
 
 function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
+  const promptBodyRef = useRef(null);
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = useMemo(() => ({
     groups: current.groups,
@@ -947,10 +949,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
-      <textarea id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}
+      <textarea ref=${promptBodyRef} id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}
         onInput=${(event) => update('initialMessage', event.currentTarget.value)}
         placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>
     </label>
+    <${SavedPromptPicker} value=${draft.initialMessage} onChange=${(text) => update('initialMessage', text)}
+      textareaRef=${promptBodyRef} disabled=${busy} confirmDiscard=${confirmDiscard}/>
     <div class="cron-create-row" id="agent-spawn-attachments-row"
       title="Attach files or screenshots to hand to the new agent. They're uploaded to a temp dir and listed in the agent's startup briefing.">
       <span class="cron-create-label">Attachments</span>

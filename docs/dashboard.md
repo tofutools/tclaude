@@ -40,6 +40,26 @@ Whether `tclaude agentd serve` auto-launches a browser is configurable in
 Config → agentd daemon & server. For reaching the dashboard from another
 machine or a phone, see [Operating remotely](remote.md).
 
+## Saved prompts
+
+The terminal’s **✉ Message** composer and the spawn dialog’s **Initial msg**
+field include an **Insert prompt…** picker. Selecting a saved prompt inserts
+its text at the cursor (or replaces the selected text), leaving the result
+editable. It never sends the message or spawns an agent. An insertion that
+would exceed the message limit is refused without changing your draft.
+
+Choose **Manage prompts…** beside either picker to create, edit, rename, or
+delete prompts. Names use the same short handles as groups (for example,
+`cold-review`); bodies contain up to 16,384 UTF-8 bytes. Prompts are stored in
+SQLite and shared globally across groups on this daemon. They are independent
+of roles: a role supplies agent guidance and permissions, while a saved prompt
+is text copied into an operator’s draft.
+
+The dashboard manages prompts as the human. The daemon also exposes
+`GET/POST /v1/saved-prompts` and `GET/PATCH/DELETE /v1/saved-prompts/{name}`;
+PATCH replaces the complete name/body pair. Reads are open to agents, and
+mutations require `prompts.manage`, which is not granted by default.
+
 ## The tabs
 
 In order across the top:

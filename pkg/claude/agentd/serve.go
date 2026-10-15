@@ -1426,6 +1426,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/sandbox-profile-drafts/{token}", handleSandboxProfileDraftSubmit)
 	mux.HandleFunc("/v1/groups/{group}/sandbox-profile", handleGroupSandboxProfile)
 	// Role library (JOH-240). Reads open, writes gated on roles.manage.
+	mux.HandleFunc("/v1/saved-prompts", handleSavedPrompts)
+	mux.HandleFunc("/v1/saved-prompts/{name}", handleSavedPromptByName)
 	mux.HandleFunc("/v1/roles", handleRoles)
 	mux.HandleFunc("/v1/roles/{name}", handleRoleByName)
 	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)

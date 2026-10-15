@@ -468,6 +468,7 @@ const (
 	// assign it, or use it to launch an agent.
 	PermSandboxProfilesDraft   = "sandbox-profiles.draft"
 	PermRolesManage            = "roles.manage"
+	PermPromptsManage          = "prompts.manage"
 	PermProcessAdvance         = "process.advance"
 	PermProcessTemplatesRead   = "process.templates.read"
 	PermProcessTemplatesManage = "process.templates.manage"
