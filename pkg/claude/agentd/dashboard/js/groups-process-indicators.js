@@ -116,7 +116,7 @@ export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen
       const label = `${n} ${wizard ? spec.arcane : spec.plain}`;
       const body = html`<${FlowGlyph} />${n > 1 ? html`<span class="gpi-count">${n}</span>` : null}`;
       const className = `gpi-graph gpi-state-${spec.state}`;
-      if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} title=${label} aria-label=${label}>${body}</span>`;
+      if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} role="img" title=${label} aria-label=${label}>${body}</span>`;
       return html`<button key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
         title=${`${label} — show ${groupName}'s ${spec.plain} in the Processes focus`} aria-label=${label}
         onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onOpen(spec.filter); }}
