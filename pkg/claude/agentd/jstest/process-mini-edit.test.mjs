@@ -150,6 +150,13 @@ test('a decision answer sent back is a bounded loop; a task only goes forward', 
   assert.equal(m.setOutcomeTarget(view, 'approve', 'changes', 'merge').view.template.nodes.approve.loops, undefined, 'forward again drops it');
   assert.equal(m.changeKind(view, 'approve', 'agent').view.template.nodes.approve.loops, undefined, 'a task has no loops');
   assert.throws(() => m.setLoopRounds(ship, 'approve', 'ship', 3), /does not go back/);
+
+  const escalating = structuredClone(view);
+  escalating.template.nodes.approve.loops.changes.onExhausted = 'hold';
+  const renamed = m.renameOutcome(escalating, 'approve', 'hold', 'stop').view;
+  assert.equal(renamed.template.nodes.approve.loops.changes.onExhausted, 'stop', 'a rename follows the fallback');
+  const removed = m.removeOutcome(renamed, 'approve', 'stop').view;
+  assert.deepEqual(removed.template.nodes.approve.loops, { changes: { maxIterations: 5 } }, 'a removed fallback leaves no dangling onExhausted');
 });
 
 test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {

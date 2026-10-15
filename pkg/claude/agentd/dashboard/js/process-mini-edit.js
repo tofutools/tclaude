@@ -12,7 +12,7 @@
 // editor.
 
 import { setStepWho } from './process-step-list.js';
-import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, loopBound, loopableEdge, setLoopBound } from './process-loops.js';
+import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound } from './process-loops.js';
 
 // PASS_LABELS mirrors model.PassOutcomeLabels: the edge a task's pass
 // verdict follows.
@@ -161,9 +161,17 @@ export function syncLoops(view) {
     for (const outcome of Object.keys(node.loops || {})) {
       if (!loopableEdge(nodes, view.edges, id, outcome)) setLoopBound(node, outcome, null);
     }
-    for (const edge of outgoing(view, id)) {
-      if (!loopBound(node, edge.outcome) && loopableEdge(nodes, view.edges, id, edge.outcome)) {
-        setLoopBound(node, edge.outcome, { maxIterations: LOOP_DEFAULT_ROUNDS });
+    const outcomes = outgoing(view, id).map((edge) => edge.outcome);
+    for (const outcome of outcomes) {
+      if (!loopBound(node, outcome) && loopableEdge(nodes, view.edges, id, outcome)) {
+        setLoopBound(node, outcome, { maxIterations: LOOP_DEFAULT_ROUNDS });
+      }
+    }
+    // A used-up loop may only follow another outcome that does not loop.
+    for (const outcome of Object.keys(node.loops || {})) {
+      const bound = loopBound(node, outcome);
+      if (bound.onExhausted && !exhaustionChoices(node, outcomes, outcome).includes(bound.onExhausted)) {
+        setLoopBound(node, outcome, { maxIterations: bound.maxIterations });
       }
     }
   }
@@ -427,6 +435,9 @@ export function renameOutcome(view, id, outcome, name) {
   if (bound) {
     setLoopBound(decision, outcome, null);
     setLoopBound(decision, value, bound);
+  }
+  for (const [looped, other] of Object.entries(decision.loops || {})) {
+    if (other.onExhausted === outcome) decision.loops[looped] = { ...other, onExhausted: value };
   }
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
   return { view: syncLoops(next), id };
