@@ -9151,7 +9151,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #worktree-cleanup-modal .cleanup-row { flex-wrap: wrap; }
 #worktree-cleanup-modal .cleanup-row label { flex-wrap: wrap; row-gap: 3px; }
 #worktree-cleanup-modal .cleanup-row .path { flex: 1 1 14em; }
-.cleanup-dangling-note { flex: 1 0 100%; margin: 2px 0 0 25px; color: #d29922; }
+#worktree-cleanup-modal .cleanup-row .cleanup-dangling-note { flex: 1 1 100%; margin: 2px 0 0 25px; color: #d29922; }
 #worktree-cleanup-modal .cleanup-toolbar button { white-space: nowrap; }
 .cleanup-toolbar button.active,
 .cleanup-toolbar button[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
@@ -19897,7 +19897,9 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 
 /* ─── Wizard saved-prompt library ───────────────────────────────────
    The manager opens over the spawn dialog or the operator composer; give it
-   the same violet surface, parchment fields and gilded actions as those. */
+   the same violet surface, parchment fields and gilded actions as those.
+   The manager renders inside #agent-spawn-modal (no portal), whose blanket
+   wizard button rule carries two ids — the doubled id outranks it. */
 body.wizard #saved-prompts-manage-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
@@ -19916,11 +19918,11 @@ body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), 
 }
 body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select):focus { border-color: #a97bd6; }
 body.wizard #saved-prompts-manage-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
-body.wizard #saved-prompts-manage-modal button:not(.primary) {
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #saved-prompts-manage-modal button:not(.primary):hover:not(:disabled) { background: #3a2a63; }
-body.wizard #saved-prompts-manage-modal button.primary {
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:not(.primary):hover:not(:disabled) { background: #3a2a63; }
+body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0; border: 2px solid #d9b45a;
 }

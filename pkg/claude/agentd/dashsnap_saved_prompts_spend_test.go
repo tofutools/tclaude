@@ -104,6 +104,15 @@ func savedPromptAndSpendStates(showGroups, expandGroups string) []dashsnap.State
   var edit = document.querySelector('#saved-prompts-manage-modal select');
   edit.value = 'cold-review';
   edit.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  // The manager renders inside the spawn dialog, whose blanket button rule
+  // must not repaint Save prompt as a secondary button.
+  var primary = document.querySelector('#saved-prompts-manage-modal .modal-buttons button.primary');
+  var secondary = document.querySelector('#saved-prompts-manage-modal .modal-buttons button:not(.primary)');
+  var ps = getComputedStyle(primary), ss = getComputedStyle(secondary);
+  if (ps.backgroundColor === ss.backgroundColor && ps.backgroundImage === ss.backgroundImage) {
+    throw new Error('Save prompt lost its primary styling: ' + ps.backgroundColor + ' ' + ps.backgroundImage);
+  }
 })();`,
 			SettleMS: 500,
 		},
@@ -134,6 +143,12 @@ func savedPromptAndSpendStates(showGroups, expandGroups string) []dashsnap.State
   filter.click();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (filter.getAttribute('aria-pressed') !== 'true') throw new Error('dangling filter did not toggle');
+  var list = document.querySelector('#worktree-cleanup-list');
+  if (list.scrollWidth > list.clientWidth + 1) throw new Error('worktree list overflows horizontally: ' + list.scrollWidth + ' > ' + list.clientWidth);
+  var note = document.querySelector('#worktree-cleanup-modal .cleanup-dangling-note');
+  var badge = document.querySelector('#worktree-cleanup-modal .cleanup-badge.merged');
+  if (note.getBoundingClientRect().top < badge.getBoundingClientRect().bottom) throw new Error('dangling note overlaps the badge line');
+  if (getComputedStyle(note).color === 'rgb(125, 133, 144)') throw new Error('dangling note lost its amber colour');
 })();`,
 			SettleMS: 400,
 		},
