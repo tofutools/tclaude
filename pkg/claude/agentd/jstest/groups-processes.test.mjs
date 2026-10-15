@@ -277,13 +277,12 @@ test('the Processes perspective is the Agents tree: nesting, summary counts, a s
   assert.equal(root.querySelector('table'), null, 'no member tables');
   assert.equal(root.querySelector('[data-act="spawn-agent"]'), null, 'no agent actions');
   const fe = details('frontend-squad');
-  const chips = [...fe.querySelector(':scope > summary').querySelectorAll('.gpi-chip')].map((chip) => chip.textContent.trim());
-  assert.deepEqual(chips, ['● 2 running', '● 2 needs you', '◷ 1 planned'], 'the summary row counts runs');
-  assert.equal(fe.querySelector(':scope > summary .group-activity'), null, 'member activity gives way to run counts');
-  assert.equal(details('infra-crew').querySelector(':scope > summary .gpi-none').textContent, 'no processes');
+  const graphs = [...fe.querySelector(':scope > summary').querySelectorAll('.gpi-graph')].map((graph) => graph.getAttribute('aria-label'));
+  assert.deepEqual(graphs, ['2 needs you', '2 running', '1 planned'], 'the summary row counts runs');
+  assert.equal(details('infra-crew').querySelector(':scope > summary .gpi-graphs'), null, 'a quiet group shows no graphs');
 
   const platform = details('platform');
-  assert.equal(platform.querySelector(':scope > summary .gpi-none').textContent, 'no processes', 'no roll-up into the parent');
+  assert.equal(platform.querySelector(':scope > summary .gpi-graphs'), null, 'no roll-up into the parent');
   assert.equal(platform.querySelector(':scope > summary .gp-subtree-total').textContent, '↳ in subgroups: 2 running · 2 needs you · 1 planned');
   assert.ok(platform.querySelector(':scope > .subtable > .group-subgroups + .gp-group'), 'the parent\'s own runs follow its subgroups');
 
@@ -294,7 +293,7 @@ test('the Processes perspective is the Agents tree: nesting, summary counts, a s
   assert.deepEqual(focused.pop(), { group: 'frontend-squad', runId: 'run_reindex' });
 
   const ungrouped = details(' ungrouped-virtual');
-  assert.equal(ungrouped.querySelector(':scope > summary .gpi-chip').textContent.trim(), '● 1 running');
+  assert.equal(ungrouped.querySelector(':scope > summary .gpi-graph').getAttribute('aria-label'), '1 running');
   const agentRuns = group(' ungrouped-virtual').querySelector('[data-process-member-runs]');
   assert.equal(agentRuns.querySelector('.gp-member-runs-label').textContent, 'Agent runs');
   await harness.act(() => harness.fireEvent(agentRuns.querySelector('button[data-process-run]'), 'click'));
