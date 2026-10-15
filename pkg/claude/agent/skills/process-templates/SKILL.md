@@ -152,10 +152,15 @@ loops and validate reachability, outcome vocabulary, and loop budgets.
 Every performer starts with `kind` and may use shared `profile`, `timeout`, and
 `contact` (`cadence`, positive `budget`, `escalationTarget`). Kind-scoped fields:
 
-- `kind: agent`: require `prompt`; optional `profile` (the member role or
-  spawn profile that performs it), `assignee` (a specific agent by name or
-  id), `spawn` (`allowed` lets a run spawn a performer with `profile` when
-  nobody in scope can take the node; default `never`), `model`, `effort`.
+- `kind: agent`: require `prompt`; optional `model`, `effort`. Who performs
+  it is at most one of `assignee` (a specific agent by name or id), `role`
+  (any group member with that role), or `anyone: true` (anyone in the run's
+  group, idle first); with none of them, `profile` is the role (legacy).
+  `fallback` says what happens when nobody can take it: `{action: spawn,
+  profile: P}` (no profile = the group's default spawn profile), `{action:
+  wait}`, or `{action: fail}`. A top-level template `fallback` sets the
+  default for every agent step. Prefer `fallback` over the legacy `spawn:
+  allowed` (spawn with `profile`); never set both on one step.
 - `kind: human`: require `ask` or `prompt`; optional `profile`, `assignee`,
   `choices`. Decision choices route through exact `next` outcomes. Human task
   choices require `choiceOutcomes` mapping each label to `pass` or `fail`.

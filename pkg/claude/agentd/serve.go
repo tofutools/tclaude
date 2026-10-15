@@ -1545,6 +1545,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
+	mux.HandleFunc("POST /v1/process/resolve-preview", processRoute(handleProcessResolvePreview))
 	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
 	// daemon-owned and SQLite-backed rather than part of filesystem authoring.
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))

@@ -237,9 +237,20 @@ type AgentCommand struct {
 	Assignee string `json:"assignee,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
+	// Role and Anyone are the authored selectors (model.Performer). With
+	// neither, Profile is the role.
+	Role   string `json:"role,omitempty"`
+	Anyone bool   `json:"anyone,omitempty"`
 	// Spawn records that the template allows spawning a fresh performer with
-	// Profile when nobody in scope can take the node.
+	// Profile when nobody in scope can take the node (the legacy form).
 	Spawn bool `json:"spawn,omitempty"`
+	// FallbackAction and FallbackProfile are the effective fallback when
+	// nobody in scope can take the node: model.FallbackSpawn (with this
+	// profile, or the group's default spawn profile when empty),
+	// model.FallbackWait or model.FallbackFail. Empty on commands prepared
+	// before fallbacks existed; Fallback() derives it from Spawn then.
+	FallbackAction  string `json:"fallbackAction,omitempty"`
+	FallbackProfile string `json:"fallbackProfile,omitempty"`
 	// RetryMode is the authored on-fail mode for the node's next attempt:
 	// model.RetryModeFreshAttempt or model.RetryModeFeedbackSameSession.
 	RetryMode string `json:"retryMode,omitempty"`
@@ -357,3 +368,14 @@ func (e *EligibilityError) Error() string {
 }
 
 func (e *EligibilityError) Unwrap() error { return ErrTemplateIneligible }
+
+// Fallback returns the command's effective fallback action and spawn profile.
+func (c *AgentCommand) Fallback() (string, string) {
+	if c.FallbackAction != "" {
+		return c.FallbackAction, c.FallbackProfile
+	}
+	if c.Spawn && c.Profile != "" {
+		return model.FallbackSpawn, c.Profile
+	}
+	return model.FallbackWait, ""
+}

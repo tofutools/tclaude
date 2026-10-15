@@ -25,6 +25,9 @@ type Definition struct {
 	// walk of exactly the edges that can carry it rather than of the graph: a
 	// definition with no join: any node has an empty index and pays nothing.
 	joinAnyIncoming []int
+	// fallback is the template's process-wide agent fallback; subprocess
+	// bodies inherit it.
+	fallback *model.PerformerFallback
 }
 
 type definitionNodeKind uint8
@@ -171,6 +174,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	// nexts holds each authored node's next map with namespaced targets, so the
 	// edge pass below never has to find a node's scope again.
 	nexts := make(map[int]model.Next, len(tmpl.Nodes))
+	definition.fallback = tmpl.Fallback
 	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts); err != nil {
 		return nil, err
 	}
@@ -251,7 +255,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			prepared.maxAttempts = model.RetryBudget(node.Retry)
 			prepared.retryAuthored = node.Retry != nil
 			if node.Performer.Kind == model.PerformerAgent {
-				agent, err := bindAgent(id, *node.Performer, node.Retry, params)
+				agent, err := bindAgent(id, *node.Performer, node.Retry, params, definition.fallback)
 				if err != nil {
 					return err
 				}
@@ -622,7 +626,11 @@ func bindProgram(nodeID string, performer model.Performer, params map[string]str
 // bindAgent binds one agent performer slot to its run parameters. A prompt that
 // names a parameter the run does not supply fails preparation, exactly as a
 // program's run does, so an agent is never handed an instruction with a hole.
-func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolicy, params map[string]string) (*AgentCommand, error) {
+//
+// The effective fallback is the step's own, then its legacy spawn setting,
+// then the process default, then waiting (AgentCommand.Fallback).
+func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolicy, params map[string]string,
+	processFallback *model.PerformerFallback) (*AgentCommand, error) {
 	for _, reference := range model.ParamReferences(performer.Prompt) {
 		if _, ok := params[reference]; !ok {
 			return nil, fmt.Errorf("%w: node %q prompt parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
@@ -632,12 +640,33 @@ func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolic
 	if strings.TrimSpace(bound.Prompt) == "" {
 		return nil, fmt.Errorf("%w: node %q prompt is blank after interpolation", ErrInvalidProgramBinding, nodeID)
 	}
-	return &AgentCommand{
+	command := AgentCommandFor(bound, processFallback)
+	command.RetryMode = model.RetryMode(retry)
+	return command, nil
+}
+
+// AgentCommandFor is the performer-selection part of an agent command: who
+// may take the node and what happens when nobody can. bindAgent completes it
+// for a run; a resolve preview uses it as is.
+func AgentCommandFor(bound model.Performer, processFallback *model.PerformerFallback) *AgentCommand {
+	command := &AgentCommand{
 		Profile: bound.Profile, Prompt: bound.Prompt, Assignee: bound.Assignee,
+		Role: strings.TrimSpace(bound.Role), Anyone: bound.Anyone,
 		Model: bound.Model, Effort: bound.Effort,
-		Spawn:     bound.Spawn == model.SpawnAllowed,
-		RetryMode: model.RetryMode(retry),
-	}, nil
+		Spawn: bound.Spawn == model.SpawnAllowed,
+	}
+	// A template written before fallbacks existed binds exactly the command
+	// it always did (FallbackAction empty, derived from Spawn): commands are
+	// compared field by field against persisted checkpoints, so an in-flight
+	// run must re-prepare to the same command.
+	switch {
+	case bound.Fallback != nil:
+		command.FallbackAction, command.FallbackProfile = bound.Fallback.Action, strings.TrimSpace(bound.Fallback.Profile)
+	case strings.TrimSpace(bound.Spawn) != "":
+	case processFallback != nil:
+		command.FallbackAction, command.FallbackProfile = processFallback.Action, strings.TrimSpace(processFallback.Profile)
+	}
+	return command
 }
 
 // DecodeCheckpoint is the persistence/load boundary: strict JSON shape

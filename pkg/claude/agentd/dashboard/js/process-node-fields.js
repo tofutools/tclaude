@@ -12,7 +12,7 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
-  setChoiceOutcome, setContactField, formatLines,
+  setChoiceOutcome, setContactField, setFallbackField, formatLines, FALLBACK_ACTIONS,
 } from './process-node-form.js';
 
 const html = htm.bind(h);
@@ -96,6 +96,22 @@ export function PerformerEditor({
             key=${choice} fieldKey=${`${path}.choice.${choice}`} label=${choice}
             options=${['pass', 'fail']} value=${performer.choiceOutcomes?.[choice] || 'pass'} readOnly=${readOnly}
             apply=${(key, value) => mutate(`choice.${choice}`, value, (slot, next) => setChoiceOutcome(slot, choice, next))} />`)}
+        </div>`;
+      }
+      if (field.flag) {
+        return html`<div key=${field.key} title=${field.hint}><${NodeSelect} fieldKey=${`${path}.${field.key}`} label=${field.label}
+          options=${['no', 'yes']} value=${performer?.[field.key] ? 'yes' : 'no'} readOnly=${readOnly}
+          apply=${(key, next) => mutate(field.key, next, (slot, raw) => setPerformerField(slot, field.key, raw))} /></div>`;
+      }
+      if (field.fallback) {
+        const fallback = performer?.fallback || {};
+        return html`<div key=${field.key} class="process-node-fallback" title=${field.hint}>
+          <${NodeSelect} fieldKey=${`${path}.fallback.action`} label=${field.label} options=${FALLBACK_ACTIONS}
+            value=${fallback.action || ''} blankLabel="process default" readOnly=${readOnly}
+            apply=${(key, next) => mutate('fallback.action', next, (slot, raw) => setFallbackField(slot, 'action', raw))} />
+          ${fallback.action === 'spawn' && html`<${NodeField} fieldKey=${`${path}.fallback.profile`} label="spawn profile"
+            value=${fallback.profile || ''} placeholder="group default" readOnly=${readOnly}
+            apply=${(key, next) => mutate('fallback.profile', next, (slot, raw) => setFallbackField(slot, 'profile', raw))} />`}
         </div>`;
       }
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];

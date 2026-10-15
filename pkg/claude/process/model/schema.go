@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
+	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "fallback", "start", "nodes", "layout")
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
 	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "captures", "subprocess", "metadata")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
-	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "spawn", "model", "effort", "run", "args", "timeout", "contact")
+	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact")
+	fallbackFields   = stringSet("action", "profile")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
@@ -42,6 +43,7 @@ const (
 	schemaChecks
 	schemaPerformer
 	schemaContact
+	schemaFallback
 	schemaRetry
 	schemaWait
 	schemaNext
@@ -307,6 +309,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return performerFields
 	case schemaContact:
 		return contactFields
+	case schemaFallback:
+		return fallbackFields
 	case schemaRetry:
 		return retryFields
 	case schemaWait:
@@ -326,6 +330,8 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaNodeMap, true
 		case "layout":
 			return schemaLayout, true
+		case "fallback":
+			return schemaFallback, true
 		}
 	case schemaNode:
 		switch key {
@@ -366,8 +372,11 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaRetry, true
 		}
 	case schemaPerformer:
-		if key == "contact" {
+		switch key {
+		case "contact":
 			return schemaContact, true
+		case "fallback":
+			return schemaFallback, true
 		}
 	}
 	return 0, false

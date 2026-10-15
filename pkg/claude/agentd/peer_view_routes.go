@@ -5,6 +5,7 @@ package agentd
 var peerViewLocalRoutes = []string{
 	// Process runs are this node's own; a peer view never serves them.
 	"GET /v1/process/context",
+	"POST /v1/process/resolve-preview",
 	"POST /v1/process/runs/{id}/decide",
 	"POST /v1/process/runs/{id}/rescope",
 	"POST /v1/process/runs/{id}/pause",
