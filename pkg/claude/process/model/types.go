@@ -36,6 +36,26 @@ const (
 	SpawnNever   = "never"
 )
 
+// Agent performer fallback actions (PerformerFallback.Action): what happens to
+// an agent step when nobody in the run's scope can take it.
+const (
+	// FallbackSpawn spawns a fresh performer into the run's group with the
+	// fallback's profile, or the group's default spawn profile.
+	FallbackSpawn = "spawn"
+	// FallbackWait leaves the step waiting, visibly, for a performer.
+	FallbackWait = "wait"
+	// FallbackFail fails the step's attempt; retry and fail routing apply.
+	FallbackFail = "fail"
+)
+
+// PerformerFallback says what an agent step does when no member can take it.
+// It is set per step (Performer.Fallback) or once for the process
+// (Template.Fallback); the step's wins.
+type PerformerFallback struct {
+	Action  string `json:"action" yaml:"action"`
+	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
+}
+
 const (
 	PerformerHuman   PerformerKind = "human"
 	PerformerAgent   PerformerKind = "agent"
@@ -50,9 +70,12 @@ type Template struct {
 	Description string           `json:"description,omitempty" yaml:"description,omitempty"`
 	Doc         string           `json:"doc,omitempty" yaml:"doc,omitempty"`
 	Params      map[string]Param `json:"params,omitempty" yaml:"params,omitempty"`
-	Start       string           `json:"start" yaml:"start"`
-	Nodes       map[string]Node  `json:"nodes" yaml:"nodes"`
-	Layout      *Layout          `json:"layout,omitempty" yaml:"layout,omitempty"`
+	// Fallback is the process-wide default for agent steps no member can
+	// take; a step's own Performer.Fallback overrides it.
+	Fallback *PerformerFallback `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+	Start    string             `json:"start" yaml:"start"`
+	Nodes    map[string]Node    `json:"nodes" yaml:"nodes"`
+	Layout   *Layout            `json:"layout,omitempty" yaml:"layout,omitempty"`
 }
 
 type Param struct {
@@ -124,6 +147,15 @@ type Performer struct {
 	Ask      string   `json:"ask,omitempty" yaml:"ask,omitempty"`
 	Choices  []string `json:"choices,omitempty" yaml:"choices,omitempty"`
 	Assignee string   `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	// Role and Anyone are the other agent selectors: any member of the run's
+	// group with this role, or anyone in the run's scope (idle first, then
+	// the least busy). At most one of Assignee, Role and Anyone is set. With
+	// none of them, Profile names the role (the legacy shape).
+	Role   string `json:"role,omitempty" yaml:"role,omitempty"`
+	Anyone bool   `json:"anyone,omitempty" yaml:"anyone,omitempty"`
+	// Fallback is agent-scoped: what happens when no member can take the
+	// step. It overrides Template.Fallback and replaces the legacy Spawn.
+	Fallback *PerformerFallback `json:"fallback,omitempty" yaml:"fallback,omitempty"`
 	// ChoiceOutcomes routes a human task-stage vocabulary onto the engine's
 	// existing binary attempt outcomes. Decision performers remain edge-driven
 	// and therefore reject this field.

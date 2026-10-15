@@ -20,6 +20,10 @@ export const RETRY_ON_FAIL_MODES = ['feedback-same-session', 'fresh-attempt'];
 
 export const PLAN_APPROVAL_MODES = ['auto', 'human'];
 
+// What an agent step does when nobody in the run's scope can take it
+// (model.PerformerFallback). Blank inherits the process default.
+export const FALLBACK_ACTIONS = ['spawn', 'wait', 'fail'];
+
 // One descriptor per performer field. `kinds` scopes a field; a field on
 // every kind is common. `list` fields hold string arrays (edited one item
 // per line), `multiline` fields render as textareas. `hint` is UI help text
@@ -30,7 +34,10 @@ export const PERFORMER_FIELDS = [
   { key: 'choices', label: 'choices', kinds: ['human'], list: true, hint: 'Optional closed answer set, one per line' },
   { key: 'choiceOutcomes', label: 'choice outcomes', kinds: ['human'], outcomeMap: true, hint: 'Route each task-stage choice to pass or fail' },
   { key: 'assignee', label: 'assignee', kinds: ['human', 'agent'], hint: 'Optional specific person or agent (name or agent id); defaults to whoever holds the profile' },
-  { key: 'spawn', label: 'spawn', kinds: ['agent'], hint: 'allowed: spawn a fresh agent with the profile when nobody in scope can take the node; never (default) waits instead' },
+  { key: 'role', label: 'role', kinds: ['agent'], hint: 'Any member of the run\'s group with this role (idle first). Set at most one of assignee, role and anyone; with none, the profile is the role' },
+  { key: 'anyone', label: 'anyone in scope', kinds: ['agent'], flag: true, hint: 'Anyone in the run\'s scope takes it: idle first, then the least busy' },
+  { key: 'spawn', label: 'spawn', kinds: ['agent'], hint: 'Legacy: allowed spawns a fresh agent with the profile when nobody in scope can take the node; prefer the fallback' },
+  { key: 'fallback', label: 'if nobody can take it', kinds: ['agent'], fallback: true, hint: 'spawn (with a profile, or the group\'s default spawn profile), wait, or fail the step; blank uses the process default' },
   { key: 'prompt', label: 'prompt', kinds: ['agent', 'human'], multiline: true, hint: 'Instruction text (agents) or long-form context (humans)' },
   { key: 'model', label: 'model', kinds: ['agent'], hint: 'Optional model override on top of the profile' },
   { key: 'effort', label: 'effort', kinds: ['agent'], hint: 'Optional reasoning-effort override on top of the profile' },
@@ -71,6 +78,12 @@ export function setPerformerField(performer, key, value, { choiceRouting = true 
   const field = PERFORMER_FIELDS.find((candidate) => candidate.key === key);
   if (!field) throw new Error(`unknown performer field ${key}`);
   if (field.outcomeMap) throw new Error('choice outcomes must be edited per choice');
+  if (field.fallback) throw new Error('the fallback is edited with setFallbackField');
+  if (field.flag) {
+    if (value === true || value === 'yes') performer[key] = true;
+    else delete performer[key];
+    return;
+  }
   if (field.list) {
     const list = Array.isArray(value) ? value : parseLines(value);
     if (list.length) performer[key] = list;
@@ -107,6 +120,33 @@ export function setChoiceOutcome(performer, label, outcome) {
   if (outcome !== 'pass' && outcome !== 'fail') throw new Error(`invalid choice outcome ${outcome}`);
   syncChoiceOutcomes(performer, true);
   performer.choiceOutcomes[label] = outcome;
+}
+
+// setFallbackField edits an agent fallback held by `holder` (a performer, or
+// the template for the process default). A blank action removes it; a
+// profile is kept only for a spawn.
+export function setFallbackField(holder, key, value) {
+  if (!['action', 'profile'].includes(key)) throw new Error(`unknown fallback field ${key}`);
+  const text = (value || '').trim();
+  if (key === 'action') {
+    if (!text) {
+      delete holder.fallback;
+      return;
+    }
+    if (!FALLBACK_ACTIONS.includes(text)) throw new Error(`invalid fallback action ${text}`);
+    holder.fallback = { ...(holder.fallback || {}), action: text };
+  } else {
+    if (!holder.fallback) throw new Error('pick a fallback action first');
+    if (text) holder.fallback = { ...holder.fallback, profile: text };
+    else {
+      const { profile: _profile, ...rest } = holder.fallback;
+      holder.fallback = rest;
+    }
+  }
+  if (holder.fallback.action !== 'spawn' && 'profile' in holder.fallback) {
+    const { profile: _profile, ...rest } = holder.fallback;
+    holder.fallback = rest;
+  }
 }
 
 // setContactField edits the per-slot contact schedule (cadence, budget,

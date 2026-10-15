@@ -94,6 +94,9 @@ func validateTemplateIdentity(tmpl *Template, diagnostics *templateDiagnosticCol
 			return false
 		}
 	}
+	if !diagnostics.AddAll(validateFallback(tmpl.Fallback, "fallback")) {
+		return false
+	}
 	if strings.TrimSpace(tmpl.ID) == "" {
 		if !diagnostics.Add(diagError("missing_id", "id", "template id is required")) {
 			return false
@@ -518,6 +521,9 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		!scoped("choiceOutcomes", len(performer.ChoiceOutcomes) > 0, PerformerHuman) ||
 		!scoped("assignee", !isBlank(performer.Assignee), PerformerHuman, PerformerAgent) ||
 		!scoped("spawn", !isBlank(performer.Spawn), PerformerAgent) ||
+		!scoped("role", !isBlank(performer.Role), PerformerAgent) ||
+		!scoped("anyone", performer.Anyone, PerformerAgent) ||
+		!scoped("fallback", performer.Fallback != nil, PerformerAgent) ||
 		!scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman) ||
 		!scoped("model", !isBlank(performer.Model), PerformerAgent) ||
 		!scoped("effort", !isBlank(performer.Effort), PerformerAgent) ||
@@ -531,6 +537,27 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 			return false
 		}
 	}
+	selectors := 0
+	for _, set := range []bool{!isBlank(performer.Assignee) && performer.Kind == PerformerAgent, !isBlank(performer.Role), performer.Anyone} {
+		if set {
+			selectors++
+		}
+	}
+	if selectors > 1 {
+		if !diagnostics.Add(diagError("conflicting_performer_selector", path,
+			"an agent performer names at most one of assignee, role and anyone")) {
+			return false
+		}
+	}
+	if performer.Fallback != nil && !isBlank(performer.Spawn) {
+		if !diagnostics.Add(diagError("conflicting_fallback", path+".spawn",
+			"spawn is the legacy form of fallback; set fallback only")) {
+			return false
+		}
+	}
+	if !diagnostics.AddAll(validateFallback(performer.Fallback, path+".fallback")) {
+		return false
+	}
 	for i, choice := range performer.Choices {
 		if isBlank(choice) {
 			if !diagnostics.Add(diagError("invalid_choice", fmt.Sprintf("%s.choices[%d]", path, i), "choices must not be blank")) {
@@ -540,6 +567,7 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 	}
 	for _, produced := range []Diagnostics{
 		checkInertParamRef(path+".assignee", performer.Assignee),
+		checkInertParamRef(path+".role", performer.Role),
 		checkInertParamRef(path+".model", performer.Model),
 		checkInertParamRef(path+".effort", performer.Effort),
 	} {
@@ -553,6 +581,25 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		}
 	}
 	return true
+}
+
+// validateFallback checks an agent fallback: a known action, and a profile
+// only for a spawn.
+func validateFallback(fallback *PerformerFallback, path string) Diagnostics {
+	if fallback == nil {
+		return nil
+	}
+	var out Diagnostics
+	switch fallback.Action {
+	case FallbackSpawn, FallbackWait, FallbackFail:
+	default:
+		out = append(out, diagError("invalid_fallback", path+".action",
+			fmt.Sprintf("fallback action must be %q, %q or %q", FallbackSpawn, FallbackWait, FallbackFail)))
+	}
+	if !isBlank(fallback.Profile) && fallback.Action != FallbackSpawn {
+		out = append(out, diagError("invalid_fallback", path+".profile", "a fallback profile is only valid with action "+FallbackSpawn))
+	}
+	return append(out, checkInertParamRef(path+".profile", fallback.Profile)...)
 }
 
 // ValidateChoiceRouting defensively validates the persisted performer shape at

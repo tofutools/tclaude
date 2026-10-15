@@ -433,13 +433,34 @@ identical report is acknowledged without being applied twice. A report goes
 through the same transition a program result does, so retry budgets, parking,
 and fail-fast behave identically.
 
-**Who performs the node**, by run scope:
+**Who performs the node.** An agent step names at most one selector:
+
+- `assignee`: a specific agent, by name or agent id;
+- `role`: any member of the run's group with that role;
+- `anyone: true`: anyone in the run's group.
+
+With none of them, the step's `profile` is the role (the original shape): a
+member whose role matches the profile, or the role that spawn profile
+declares.
+
+What happens when nobody can take the step is its **fallback**, separate from
+the role: `fallback: {action: spawn, profile: P}` spawns a fresh performer
+into the group (with no `profile`, the group's default spawn profile), `wait`
+waits as **needs performer**, and `fail` fails the attempt, so the step's
+retry and fail routing apply. Set it on a step, or once for the whole process
+with a top-level `fallback`; the step's own wins. A step with neither uses
+the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
 
 | Scope | Resolution |
 | --- | --- |
-| group | the explicit `assignee`, if it names a current member; else a member whose role matches the node's `profile` (or that spawn profile's role), idle first, then busy, then offline; else — only with `spawn: allowed` and when the run owner could spawn into the group — a fresh agent spawned with the node's `profile`; else the node waits as **needs performer** |
+| group | the explicit `assignee`, if it names a current member; else a member the selector admits (its `role`, anyone, or the `profile` role), idle first, then busy, then offline, and among equals the one holding the fewest open process steps; else the fallback — a spawn only when the run owner could spawn into the group |
 | agent | the bound agent performs every agent node; an `assignee` naming anyone else waits as needs performer |
-| none | only an explicit `assignee` (any active agent); otherwise the node waits as needs performer |
+| none | only an explicit `assignee` (any active agent); otherwise the node waits as needs performer, or fails when its fallback is `fail` |
+
+`POST /v1/process/resolve-preview` with a template and a `group` answers, for
+each agent step, who would take it if the run started now — a member, a spawn
+of which profile, a wait, or a failure — without starting anything. The
+process context lists each group's `defaultSpawnProfile` and member `roles`.
 
 A **needs performer** node is retried on every runtime sweep (once a minute),
 so it is picked up as soon as a matching member joins. `show` prints the
@@ -447,7 +468,7 @@ reason it waits.
 
 **Retries.** `retry.onFail: fresh-attempt` (the default) hands the next
 attempt to a different performer when one is available — spawning one if the
-template allows it — and only falls back to the previous performer as a last
+step's fallback says so — and only falls back to the previous performer as a last
 resort. `retry.onFail: feedback-same-session` hands it back to the same
 performer, together with the note its failed report carried.
 

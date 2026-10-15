@@ -58,6 +58,11 @@ const (
 	processResolutionSpawned     = "spawned"
 	processResolutionBound       = "bound"
 	processResolutionSameSession = "same_session"
+	// processResolutionAnyone is a member picked by an "anyone" selector.
+	processResolutionAnyone = "anyone"
+	// processResolutionFallbackFailed marks an attempt failed by its
+	// fallback because nobody could take it.
+	processResolutionFallbackFailed = "fallback_failed"
 )
 
 // processRunScope is the slice of a run's persisted scope binding
@@ -234,9 +239,13 @@ func reconcileProcessRunAgentDispatches(runID string) error {
 		case row.State == db.ProcessDispatchReported:
 			reapply = append(reapply, row)
 		case row.State == db.ProcessDispatchDelivered:
-			resolveLostProcessPerformer(row, command)
+			if failed := resolveLostProcessPerformer(row, command); failed != nil {
+				reapply = append(reapply, *failed)
+			}
 		default:
-			resolveAndDeliverProcessDispatch(row, command)
+			if failed := resolveAndDeliverProcessDispatch(row, command); failed != nil {
+				reapply = append(reapply, *failed)
+			}
 		}
 	}
 	processDispatchMu.Unlock()
@@ -267,20 +276,20 @@ func sortedCommands(commands map[string]engine.Command) []engine.Command {
 // resolveLostProcessPerformer re-resolves a delivered dispatch whose performer
 // can no longer do the work. An agent-scoped run is bound to its agent: losing
 // that agent orphans the whole run (tcl-mrhhuc), so its dispatch just waits.
-func resolveLostProcessPerformer(row db.ProcessAgentDispatch, command engine.Command) {
+func resolveLostProcessPerformer(row db.ProcessAgentDispatch, command engine.Command) *db.ProcessAgentDispatch {
 	scope, err := processRunScopeOf(row.RunID)
 	if err != nil || scope.Kind == processScopeAgent {
-		return
+		return nil
 	}
 	reason := processPerformerLostReason(scope, row.AgentID)
 	if reason == "" {
-		return
+		return nil
 	}
 	if err := db.ReleaseProcessAgentDispatch(row.RunID, row.CommandID, row.AgentID, reason); err != nil {
-		return
+		return nil
 	}
 	row.State, row.AgentID = db.ProcessDispatchPending, ""
-	resolveAndDeliverProcessDispatch(row, command)
+	return resolveAndDeliverProcessDispatch(row, command)
 }
 
 // processPerformerLostReason names why a delivered performer can no longer
@@ -328,6 +337,9 @@ type processPerformerChoice struct {
 	spawn      *managedSpawn
 	resolution string
 	waitReason string
+	// failReason, when set, fails the attempt: the node's fallback says to
+	// fail rather than wait when nobody can take it.
+	failReason string
 	// feedback is the previous attempt's failure, handed back to a
 	// feedback-same-session performer.
 	feedback string
@@ -335,18 +347,20 @@ type processPerformerChoice struct {
 
 // resolveAndDeliverProcessDispatch resolves a performer for one pending or
 // needs-performer dispatch and delivers the node prompt to it. The caller holds
-// processDispatchMu.
-func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engine.Command) {
+// processDispatchMu. When the node's fallback fails the attempt instead, it
+// returns the dispatch row carrying that failure report, for the caller to
+// apply to the run once it has released the lock.
+func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engine.Command) *db.ProcessAgentDispatch {
 	scope, err := processRunScopeOf(row.RunID)
 	if err != nil {
 		slog.Warn("process performers: scope lookup failed", "run", row.RunID, "error", err)
-		return
+		return nil
 	}
 	if scope.Paused {
 		// A paused run starts no new agent turn. The attempt stays as it is —
 		// not needs_performer, which would ask a human for a performer — and
 		// resume's dispatch pass delivers it.
-		return
+		return nil
 	}
 	var choice processPerformerChoice
 	if scope.Orphaned {
@@ -366,13 +380,13 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 			})
 			if err != nil {
 				slog.Warn("process performers: delivery failed", "run", row.RunID, "node", row.NodeID, "error", err)
-				return
+				return nil
 			}
 			if err := db.MarkProcessAgentDispatchDelivered(row.RunID, row.CommandID, row.State,
 				choice.candidate.AgentID, choice.resolution, messageID); err != nil {
 				slog.Warn("process performers: delivery not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
 			}
-			return
+			return nil
 		case choice.spawn != nil:
 			choice.spawn.params.InitialMessage = body
 			choice.spawn.params.AgentID = db.NewAgentID()
@@ -393,15 +407,27 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 				agentID, processResolutionSpawned, 0); err != nil {
 				slog.Warn("process performers: spawned delivery not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
 			}
-			return
+			return nil
+		case choice.failReason != "":
+			if err := db.FailProcessAgentDispatch(row.RunID, row.CommandID, row.State, processResolutionFallbackFailed,
+				string(engine.ProgramFailed), choice.failReason); err != nil {
+				slog.Warn("process performers: fallback failure not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
+				return nil
+			}
+			failed, err := db.GetProcessAgentDispatch(row.RunID, row.CommandID)
+			if err != nil || failed == nil {
+				return nil
+			}
+			return failed
 		}
 	}
 	if row.State == db.ProcessDispatchNeedsPerformer && row.WaitReason == choice.waitReason {
-		return
+		return nil
 	}
 	if err := db.MarkProcessAgentDispatchNeedsPerformer(row.RunID, row.CommandID, choice.waitReason); err != nil {
 		slog.Warn("process performers: needs-performer not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
 	}
+	return nil
 }
 
 // previousProcessDispatch returns the dispatch of the attempt immediately
@@ -480,13 +506,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 				}
 			}
 		}
-		roles := processWantedRoles(spec.Profile)
-		var matching []processPerformerCandidate
-		for _, member := range members {
-			if slices.ContainsFunc(roles, func(role string) bool { return strings.EqualFold(role, member.Role) }) {
-				matching = append(matching, member)
-			}
-		}
+		matching, resolution := processMatchingMembers(members, spec)
 		// A fresh attempt is a fresh performer whenever one is available: the
 		// previous performer is only a last resort, behind a spawn.
 		var reuse *processPerformerCandidate
@@ -498,20 +518,31 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			}
 		}
 		if len(matching) > 0 {
-			slices.SortStableFunc(matching, func(a, b processPerformerCandidate) int { return a.rank - b.rank })
-			return processPerformerChoice{candidate: &matching[0], resolution: processResolutionRole}
+			sortProcessCandidates(matching)
+			return processPerformerChoice{candidate: &matching[0], resolution: resolution}
 		}
+		action, profile := spec.Fallback()
 		waitReason := ""
-		if spec.Spawn && spec.Profile != "" {
-			plan, status, detail := planProcessPerformerSpawn(runID, scope, group, command, body)
-			if plan != nil {
-				return processPerformerChoice{spawn: plan}
+		if action == model.FallbackSpawn {
+			if profile == "" {
+				profile = group.DefaultProfile
 			}
-			waitReason = fmt.Sprintf("no member can take the node and spawning a %q performer was refused (%s): %s",
-				spec.Profile, status, detail)
+			if profile == "" {
+				waitReason = processNoMemberReason(spec) + "; the fallback spawns the group's default spawn profile, and the group has none"
+			} else {
+				plan, status, detail := planProcessPerformerSpawn(runID, scope, group, command, profile, body)
+				if plan != nil {
+					return processPerformerChoice{spawn: plan}
+				}
+				waitReason = fmt.Sprintf("no member can take the node and spawning a %q performer was refused (%s): %s",
+					profile, status, detail)
+			}
 		}
 		if reuse != nil {
-			return processPerformerChoice{candidate: reuse, resolution: processResolutionRole}
+			return processPerformerChoice{candidate: reuse, resolution: resolution}
+		}
+		if action == model.FallbackFail {
+			return processPerformerChoice{failReason: processNoMemberReason(spec) + "; the step's fallback fails it"}
 		}
 		if waitReason == "" {
 			waitReason = processNoMemberReason(spec)
@@ -535,16 +566,63 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			}
 			return processPerformerChoice{candidate: candidate, resolution: processResolutionAssignee}
 		}
-		return processPerformerChoice{waitReason: "an unscoped run has no members to perform this node: " +
-			"name an assignee, or start the run scoped to a group or an agent"}
+		reason := "an unscoped run has no members to perform this node: " +
+			"name an assignee, or start the run scoped to a group or an agent"
+		if action, _ := spec.Fallback(); action == model.FallbackFail {
+			return processPerformerChoice{failReason: reason}
+		}
+		return processPerformerChoice{waitReason: reason}
 	}
 }
 
-func processNoMemberReason(spec *engine.AgentCommand) string {
-	if spec.Profile == "" {
-		return "no group member can take this node: it names no role (profile) and no assignee"
+// processMatchingMembers returns the members a node's selector admits, and
+// the resolution that names the choice: everyone for "anyone", else the
+// members holding a wanted role.
+func processMatchingMembers(members []processPerformerCandidate, spec *engine.AgentCommand) ([]processPerformerCandidate, string) {
+	if spec.Anyone {
+		return slices.Clone(members), processResolutionAnyone
 	}
-	if !spec.Spawn {
+	roles := processWantedRoles(spec)
+	var matching []processPerformerCandidate
+	for _, member := range members {
+		if slices.ContainsFunc(roles, func(role string) bool { return strings.EqualFold(role, member.Role) }) {
+			matching = append(matching, member)
+		}
+	}
+	return matching, processResolutionRole
+}
+
+// sortProcessCandidates orders candidates by preference: idle, then online,
+// then offline, and within each the one holding the fewest open process
+// attempts.
+func sortProcessCandidates(candidates []processPerformerCandidate) {
+	busy := make(map[string]int, len(candidates))
+	for _, candidate := range candidates {
+		if open, err := db.ListProcessAgentDispatchesForAgent(candidate.AgentID, true, 100); err == nil {
+			busy[candidate.AgentID] = len(open)
+		}
+	}
+	slices.SortStableFunc(candidates, func(a, b processPerformerCandidate) int {
+		if a.rank != b.rank {
+			return a.rank - b.rank
+		}
+		return busy[a.AgentID] - busy[b.AgentID]
+	})
+}
+
+func processNoMemberReason(spec *engine.AgentCommand) string {
+	action, _ := spec.Fallback()
+	switch {
+	case spec.Anyone:
+		return "the group has no active member to take this node"
+	case spec.Role != "":
+		if action == model.FallbackWait {
+			return fmt.Sprintf("no group member has role %q; the step waits for one", spec.Role)
+		}
+		return fmt.Sprintf("no group member has role %q", spec.Role)
+	case spec.Profile == "":
+		return "no group member can take this node: it names no role (profile) and no assignee"
+	case action == model.FallbackWait:
 		return fmt.Sprintf("no group member has role %q; the template does not allow spawning one", spec.Profile)
 	}
 	return fmt.Sprintf("no group member has role %q", spec.Profile)
@@ -554,7 +632,7 @@ func processNoMemberReason(spec *engine.AgentCommand) string {
 // run's group on behalf of the run owner. It reuses the managed-worker policy
 // path, so a process can never spawn anything its owner could not.
 func planProcessPerformerSpawn(runID string, scope processRunScope, group *db.AgentGroup,
-	command engine.Command, body string) (*managedSpawn, string, string) {
+	command engine.Command, profile, body string) (*managedSpawn, string, string) {
 	ownerConv := ""
 	if agentID, ok := strings.CutPrefix(scope.Owner, "agent:"); ok {
 		owner, err := db.GetAgent(agentID)
@@ -567,7 +645,7 @@ func planProcessPerformerSpawn(runID string, scope processRunScope, group *db.Ag
 		}
 	}
 	name := processPerformerSpawnName(command)
-	return planManagedSpawn(group, command.Agent.Profile, nil, ownerConv, "process:"+runID, name, body, nil)
+	return planManagedSpawn(group, profile, nil, ownerConv, "process:"+runID, name, body, nil)
 }
 
 // processPerformerSpawnName derives a spawn-name-charset-safe agent name from
@@ -588,10 +666,14 @@ func processPerformerSpawnName(command engine.Command) string {
 	return name
 }
 
-// processWantedRoles is the set of member roles that may take a node with this
-// profile: the profile name itself, plus the role label and role refs the
-// spawn profile of that name declares.
-func processWantedRoles(profile string) []string {
+// processWantedRoles is the set of member roles that may take a node: its
+// role when it names one, else (the legacy shape) the profile name itself plus
+// the role label and role refs the spawn profile of that name declares.
+func processWantedRoles(spec *engine.AgentCommand) []string {
+	if spec.Role != "" {
+		return []string{spec.Role}
+	}
+	profile := spec.Profile
 	if profile == "" {
 		return nil
 	}
@@ -820,7 +902,12 @@ func applyRecordedProcessReport(row db.ProcessAgentDispatch) error {
 		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
 		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Performer: row.AgentID,
 	}
-	_, err := processRuns.submit(row.RunID, "agent:"+row.AgentID, processRunInput{agentReport: &report})
+	actor := "agent:" + row.AgentID
+	if row.AgentID == "" {
+		// A fallback failure has no performer: the engine records it.
+		actor = executor.EngineActor
+	}
+	_, err := processRuns.submit(row.RunID, actor, processRunInput{agentReport: &report})
 	if err == nil || errors.Is(err, engine.ErrStaleObservation) {
 		// Applied now, or already settled some other way: either way the
 		// dispatch has nothing left to do.

@@ -244,6 +244,21 @@ func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note s
 		dbTime(now), dbTime(now), runID, commandID, ProcessDispatchDelivered, agentID)
 }
 
+// FailProcessAgentDispatch durably records that an unresolved dispatch fails
+// without a performer: its fallback says to fail the attempt when nobody can
+// take it. The row then carries a report exactly as if a performer had sent
+// one, so the ordinary recorded-report path applies it to the run.
+func FailProcessAgentDispatch(runID, commandID, expectedState, resolution, outcome, note string) error {
+	now := time.Now().UTC()
+	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
+		SET state = ?, agent_id = '', resolution = ?, wait_reason = ?, report_outcome = ?, report_note = ?,
+			reported_at = ?, updated_at = ?
+		WHERE run_id = ? AND command_id = ? AND state = ?`,
+		ProcessDispatchReported, resolution, boundedDispatchText(note, MaxProcessDispatchWaitReasonBytes),
+		outcome, boundedDispatchText(note, MaxProcessDispatchReportNoteBytes), dbTime(now), dbTime(now),
+		runID, commandID, expectedState)
+}
+
 // CloseProcessAgentDispatch retires a dispatch whose command left the outbox.
 // The performer and any report stay for history and avatars.
 func CloseProcessAgentDispatch(runID, commandID, reason string) error {

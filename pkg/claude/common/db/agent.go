@@ -4847,3 +4847,36 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	m.RegularSend = regularSend != 0
 	return &m, nil
 }
+
+// ActiveGroupMemberRole is one member role held by active agents of a group.
+type ActiveGroupMemberRole struct {
+	GroupID int64
+	Role    string
+	Count   int
+}
+
+// ListActiveGroupMemberRoles counts, in one read, the non-empty roles held by
+// active (unretired) members of every group.
+func ListActiveGroupMemberRoles() ([]ActiveGroupMemberRole, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT m.group_id, m.role, COUNT(*)
+		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE ag.retired_at IS NULL AND trim(m.role) != ''
+		GROUP BY m.group_id, m.role ORDER BY m.group_id, m.role`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ActiveGroupMemberRole
+	for rows.Next() {
+		var r ActiveGroupMemberRole
+		if err := rows.Scan(&r.GroupID, &r.Role, &r.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

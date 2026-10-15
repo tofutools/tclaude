@@ -296,6 +296,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
+	mux.HandleFunc("POST /v1/process/resolve-preview", dashboardProcessRoute(handleProcessResolvePreview))
 	// Share a process as a .pwf file, and review then import one (docs/pwf.md).
 	mux.HandleFunc("GET /v1/process/templates/{id}/export", dashboardProcessRoute(handleProcessTemplateExport))
 	mux.HandleFunc("POST /v1/process/import", dashboardProcessRoute(handleProcessImport))

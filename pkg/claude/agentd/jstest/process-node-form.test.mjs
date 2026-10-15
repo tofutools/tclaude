@@ -14,6 +14,7 @@ import {
   setContactField, setRetryField, setStageEnabled, setPlanApproval,
   addCheck, removeCheck, moveCheck, setCheckID,
   setCaptures, setWaitField, setNodeText, parseLines, formatLines,
+  setFallbackField,
 } from '../dashboard/js/process-node-form.js';
 
 function view() {
@@ -94,8 +95,29 @@ test('every performer field is declared for all three kinds or explicitly kind-s
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
   assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
-  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'spawn', 'prompt', 'model', 'effort', 'timeout']);
+  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
+});
+
+test('agent selectors and the fallback edit as their wire shapes', () => {
+  const performer = { kind: 'agent', prompt: 'Review it' };
+  setPerformerField(performer, 'role', ' reviewer ');
+  setPerformerField(performer, 'anyone', 'yes');
+  assert.equal(performer.role, 'reviewer');
+  assert.equal(performer.anyone, true);
+  setPerformerField(performer, 'anyone', 'no');
+  assert.ok(!('anyone' in performer));
+  assert.throws(() => setFallbackField(performer, 'profile', 'p'), /pick a fallback action first/);
+  setFallbackField(performer, 'action', 'spawn');
+  setFallbackField(performer, 'profile', 'sonnet-dev');
+  assert.deepEqual(performer.fallback, { action: 'spawn', profile: 'sonnet-dev' });
+  setFallbackField(performer, 'action', 'fail');
+  assert.deepEqual(performer.fallback, { action: 'fail' }, 'a profile is only kept for a spawn');
+  assert.throws(() => setFallbackField(performer, 'action', 'retry'), /invalid fallback action/);
+  setFallbackField(performer, 'action', '');
+  assert.ok(!('fallback' in performer), 'blank inherits the process default');
+  setPerformerKind(performer, 'human');
+  assert.ok(!('role' in performer), 'agent selectors do not survive a kind switch');
 });
 
 test('setPerformerKind prunes fields the new kind does not define, keeping common ones', () => {

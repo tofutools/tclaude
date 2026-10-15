@@ -148,6 +148,18 @@ type processGroupContext struct {
 	Planned       []processPlannedRun `json:"planned"`
 	ActiveCount   int                 `json:"activeCount"`
 	NeedsYouCount int                 `json:"needsYouCount"`
+	// DefaultSpawnProfile is the profile an agent step's spawn fallback uses
+	// when it names none ("" = the group has no default), and Roles the
+	// member roles its role selector can pick from (tcl-52p3cq).
+	DefaultSpawnProfile string             `json:"defaultSpawnProfile"`
+	Roles               []processGroupRole `json:"roles"`
+}
+
+// processGroupRole is one member role of a group and how many active
+// members hold it.
+type processGroupRole struct {
+	Role  string `json:"role"`
+	Count int    `json:"count"`
 }
 
 type processPlannedRun struct {
@@ -343,6 +355,34 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		g.Done = append(g.Done, projection.RunID)
 		view.Runs[projection.RunID] = projection
 	}
+	// Every visible group is listed, with or without runs: a process is
+	// authored for a group before it ever runs there.
+	all, err := db.ListAgentGroups()
+	if err != nil {
+		return view, err
+	}
+	memberRoles, err := db.ListActiveGroupMemberRoles()
+	if err != nil {
+		return view, err
+	}
+	roles := map[int64][]processGroupRole{}
+	for _, r := range memberRoles {
+		roles[r.GroupID] = append(roles[r.GroupID], processGroupRole{Role: r.Role, Count: r.Count})
+	}
+	for _, group := range all {
+		if group.IsArchived() || (!visible.all && !visible.groups[group.ID]) {
+			continue
+		}
+		g := groups[group.ID]
+		if g == nil {
+			g = newProcessGroupContext(db.ProcessRunScope{Kind: db.ProcessRunScopeGroup, GroupID: group.ID, GroupName: group.Name})
+			groups[group.ID] = g
+		}
+		g.DefaultSpawnProfile = group.DefaultProfile
+		if r := roles[group.ID]; r != nil {
+			g.Roles = r
+		}
+	}
 	for _, g := range groups {
 		view.Groups = append(view.Groups, *g)
 	}
@@ -356,7 +396,8 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 
 func newProcessGroupContext(scope db.ProcessRunScope) *processGroupContext {
 	return &processGroupContext{GroupID: scope.GroupID, Group: scope.GroupName,
-		Active: []string{}, NeedsYou: []string{}, Done: []string{}, Planned: []processPlannedRun{}}
+		Active: []string{}, NeedsYou: []string{}, Done: []string{}, Planned: []processPlannedRun{},
+		Roles: []processGroupRole{}}
 }
 
 // agentStep places the run's performer at its earliest current work step;
