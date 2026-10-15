@@ -1137,6 +1137,11 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    the same arrangement .activity-hover uses in the header. */
 .ci-hover { position: relative; display: inline-block; }
 .presented-pr { display: inline-block; }
+/* A member row's PR link and its badges (.pr-chain) sit at one spacing in
+   every layout: the CI pill a little further from the number, the reviewer
+   icon a little further from the pill, than the shared defaults. */
+.pr-chain .ci-badge:not(.rv-badge) { margin-left: 7px; }
+.pr-chain .ci-badge.rv-badge { margin-left: 4px; }
 /* The badge is a link, not a button: clicking it opens the build it is
    reporting on (the workflow run behind its current state, or the PR's checks
    page when no run could be named). Hovering it — not clicking — is what
