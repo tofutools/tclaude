@@ -134,6 +134,13 @@ export function createProcessesActions({
     return shouldRefresh ? load('templates', { quiet: true }) : true;
   }
 
+  // openReferencedTemplate follows a ▣ node's templateRef from the editor,
+  // behind the same unsaved-edits guard as any other navigation away.
+  async function openReferencedTemplate(id) {
+    if (!id || !(await canLeaveEditor())) return false;
+    await openEditor(id);
+    return true;
+  }
   async function canLeaveEditor() {
     const editor = state.currentEditor();
     const dirty = editor?.dirty ?? editor?.model?.dirty;
@@ -613,7 +620,7 @@ export function createProcessesActions({
   }
   function refreshActive() { return load('templates'); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
+    load, observeTemplateHeads, activateSubtab, openEditor, openReferencedTemplate, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,

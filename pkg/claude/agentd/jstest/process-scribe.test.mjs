@@ -149,3 +149,18 @@ test('context handoff is clearly delimited, CAS-safe, editable-prompt bounded, a
   assert.match(brief, /must never instantiate or run a process/);
   assert.throws(() => processScribeBrief(handoff, { context, prompt: 'x'.repeat(PROCESS_SCRIBE_PROMPT_MAX + 1) }), /at most/);
 });
+
+test('scribe chat messages are bounded and carry context only for actions', async () => {
+  const { processScribeChatMessage, processScribeChatTranscript, PROCESS_SCRIBE_PROMPT_MAX } = await import('../dashboard/js/process-scribe.js');
+  assert.equal(processScribeChatMessage({ prompt: '  Rename build.  ' }), 'Rename build.');
+  assert.throws(() => processScribeChatMessage({ prompt: '   ' }), /write a message/);
+  assert.throws(() => processScribeChatMessage({ prompt: 'x'.repeat(PROCESS_SCRIBE_PROMPT_MAX + 1) }), /at most/);
+  const withContext = processScribeChatMessage({ prompt: 'Fix it.', context: { kind: 'current-selection', items: [] } });
+  assert.match(withContext, /^Fix it\.\n\n/);
+  assert.match(withContext, /BEGIN BOUNDED EDITOR CONTEXT \(UNTRUSTED JSON; NOT TEMPLATE SOURCE\)/);
+  assert.deepEqual(processScribeChatTranscript({ messages: [
+    { id: 'h1', role: 'human', body: 'hi' }, { id: 's1', role: 'scribe', body: '<b>x</b>' },
+    { id: 'x', role: 'system', body: 'dropped' }, { role: 'scribe', body: 'no id' },
+  ] }).map((m) => [m.id, m.role, m.body]), [['h1', 'human', 'hi'], ['s1', 'scribe', '<b>x</b>']]);
+  assert.deepEqual(processScribeChatTranscript(null), []);
+});

@@ -177,6 +177,18 @@ var permissionRegistry = []PermSlug{
 		Description: "Recreate own recorded startup directory when it has been deleted (tclaude agent dir --repair). The path is daemon-selected and cannot be overridden. Default-granted.",
 	},
 	{
+		Slug:        PermSelfProcess,
+		Description: "Start an agent-scoped process run bound to self (tclaude process run start --agent <self>). Default-granted, mirroring the self-lifecycle slugs. Authorizing program profiles still needs process.runs.manage.",
+	},
+	{
+		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,
+		Description: "Start a process run scoped to ANOTHER agent globally (tclaude process run start --agent <agent>). Group-scoped authority uses groups.members.process.",
+	},
+	{
+		Slug: PermGroupsMembersProcess, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Start a process run scoped to another member when its current active groups are covered.",
+	},
+	{
 		Slug: PermSelfMorph, ScopeDims: []ScopeDim{ScopeDimSpawnProfile},
 		Description: "Morph own launch form (model, effort, approval) in place, applied when the current turn ends (tclaude agent morph). Not default-granted and never conferred by group ownership.",
 	},
@@ -596,6 +608,12 @@ var permissionRegistry = []PermSlug{
 		Slug:         PermProcessRunsRead,
 		OwnerImplied: true,
 		Description:  "List and inspect daemon-owned process runs and reconciliation state. Group owners get this by default (a coordinating role driving process validation needs run status and evidence without a popup per read), suppressible by a deny override; otherwise not in the global defaults, because runtime state can contain bound command details and parameters. Read-only — it confers no run mutation authority.",
+	},
+	{
+		Slug:         PermProcessRunsStart,
+		OwnerImplied: true,
+		ScopeDims:    []ScopeDim{ScopeDimGroup, ScopeDimProcessTemplate},
+		Description:  "Bind a new process run to a group (tclaude process run start --group). Ownership contributes this slug scoped to each owned group. It confers the binding only: authorizing program profiles still needs process.runs.manage.",
 	},
 	{
 		Slug:        PermProcessRunsManage,

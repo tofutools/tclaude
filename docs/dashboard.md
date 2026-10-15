@@ -122,6 +122,15 @@ actions menu, or **🧹 Review worktrees across all groups…** from the top-lev
 **clean up** dialog. See [Dashboard cleanup sweep](worktrees.md#dashboard-cleanup-sweep)
 for discovery scope, selection defaults, and removal safeguards.
 
+With `features.processes` on, an **Agents | Processes** switch sits beside
+the group filter (deep link `/groups/processes`). Agents is the roster above,
+with run counts on each group header and a Process column of *run › node*
+badges on member rows. Processes shows each group's runs as live graph cards
+with *+ start process* (template, params, explicit program-profile
+authorization); *open ›* focuses one run with its graph, a node inspector for
+decisions, a performer dock to drag-reassign agent nodes, and pause / resume.
+See [Processes › In the dashboard](processes.md#in-the-dashboard).
+
 ### The member row
 
 The row's `⚙` menu includes **export debug info**, a direct JSON download that
@@ -390,6 +399,12 @@ drag onto each other to form named, collapsible tab groups. Drag a tab off
 the strip to detach it into its own browser window; drag the pop-out's header
 back to reattach — `⧉ tab` / `↩ dashboard` buttons are the explicit path.
 
+With `features.processes` on, a pane whose agent takes part in a process run
+shows a collapsible top-right cluster of run icons (also on its tab). An icon
+opens a popover with the run's mini-graph, the agent's node lit, and the run
+actions: decide, reassign node, promote, pause / resume. A run bound to the
+pane's agent opens as a vertical stepper with the agent's bounds strip.
+
 ## Automations
 
 Subtabs All / Exports / Cron jobs / Standing orders / Triggers:
@@ -417,15 +432,29 @@ surfaces drive.
 ## Processes
 
 A subtab of Automations (`/automations/processes`), feature-flagged behind
-`features.processes`. A single Templates view lists
-templates (rename, describe, versions, delete), creates new ones, and can hand
-one to a process scribe agent via "Edit with agent". The graph editor covers
-Task / Decision / Parallel / Wait / Start / End nodes, human | agent | program
+`features.processes`. A single Templates view lists templates (rename,
+describe, versions, delete), creates new ones, and can hand one to a process
+scribe agent via "Edit with agent". The graph editor covers Task / Decision /
+Parallel / Wait / Subprocess / Start / End nodes, human | agent | program
 performer slots, optional plan-before-work and review-gate stages,
-retry-on-fail modes, outcome-labelled edges, live server validation, undo/
-redo, snippets, a params dialog, and versioned saves with external-change
-detection. Instantiated runs and human work items are API/CLI-only and are
-not rendered on the tab. See [Processes](processes.md).
+retry-on-fail modes, outcome-labelled edges, a node inspector, live server
+validation, undo/redo, snippets, a params dialog, a ⌘K command palette, and
+versioned saves with external-change detection. In the editor:
+
+- **Edit with agent** docks the scribe beside the canvas (💬 chat or ⌨
+  terminal), with context actions for the selection, a node, the focused
+  issue, or a description. A version the scribe saves is reviewed on the
+  canvas, change by change (A accept, R reject, J/K walk).
+- **Subprocess (▣) nodes**: double-click to drill in (breadcrumb, parent
+  minimap, port panel, outline in the palette, Esc / Alt+↑ to leave), ⇪
+  extract a body as its own template, ⊞ expand it in place as a framed group,
+  ▣ wrap a selection as a subprocess, ⇲ unwrap one.
+- The palette lists your other templates as subprocess references; dropping
+  a palette item onto a connector splices it in.
+
+Runs are not listed on this tab; they live in the Groups **Processes** focus
+and the Terminals overlay below. See [Processes](processes.md#in-the-dashboard)
+for the whole flow.
 
 ## Plugins
 

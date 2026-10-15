@@ -16,7 +16,7 @@ export const PROCESS_CLIPBOARD_MAX_ID = 128;
 export const PROCESS_CLIPBOARD_MAX_OUTCOME = 512;
 export const PROCESS_CLIPBOARD_MAX_COORDINATE = 1_000_000;
 
-const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
+const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
 const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program']);
 const NODE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const MAX_JSON_DEPTH = 32;
@@ -24,14 +24,14 @@ const MAX_JSON_ITEMS = 32_768;
 const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const NODE_FIELDS = new Set([
   'type', 'join', 'name', 'description', 'doc', 'performer', 'plan', 'checks',
-  'review', 'retry', 'wait', 'next', 'result', 'captures', 'metadata',
+  'review', 'retry', 'wait', 'next', 'result', 'captures', 'metadata', 'subprocess',
 ]);
 const STEP_FIELDS = new Set([
   'id', 'name', 'description', 'doc', 'performer', 'approval', 'approvalRetry', 'retry',
 ]);
 const PERFORMER_FIELDS = new Set([
   'kind', 'profile', 'prompt', 'ask', 'choices', 'choiceOutcomes', 'assignee',
-  'model', 'effort', 'run', 'args', 'timeout', 'contact',
+  'spawn', 'model', 'effort', 'run', 'args', 'timeout', 'contact',
 ]);
 const CONTACT_FIELDS = new Set(['cadence', 'budget', 'escalationTarget']);
 const RETRY_FIELDS = new Set(['maxAttempts', 'backoff', 'onFail']);
@@ -109,7 +109,7 @@ function validatePerformer(value) {
   validateWireRecord(value, PERFORMER_FIELDS);
   if (!PROCESS_PERFORMER_KINDS.has(value.kind)) wireShapeReject();
   validateOptionalStrings(value, [
-    'profile', 'prompt', 'ask', 'assignee', 'model', 'effort', 'run', 'timeout',
+    'profile', 'prompt', 'ask', 'assignee', 'spawn', 'model', 'effort', 'run', 'timeout',
   ]);
   if (Object.hasOwn(value, 'choices')) validateStringList(value.choices);
   if (Object.hasOwn(value, 'args')) validateStringList(value.args);
@@ -151,6 +151,12 @@ export function validateProcessEditNode(value) {
   if (Object.hasOwn(value, 'metadata')) {
     if (!isRecord(value.metadata)) wireShapeReject();
     validateJSONValue(value.metadata);
+  }
+  // A subprocess body is a whole nested template; the server validates its
+  // semantics, so the boundary only bounds and shape-checks it here.
+  if (Object.hasOwn(value, 'subprocess')) {
+    if (!isRecord(value.subprocess)) wireShapeReject();
+    validateJSONValue(value.subprocess);
   }
   return value;
 }

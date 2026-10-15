@@ -21,6 +21,7 @@ import {
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import { MemberTable } from './groups-member-table.js';
 import { GroupFederationMarker } from './group-federation-marker.js';
+import { GroupProcessChips } from './groups-process-indicators.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -481,6 +482,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
     ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
+    <${GroupProcessChips} group=${group} snapshot=${snapshot} wizard=${document.body.classList.contains('wizard')} />
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />

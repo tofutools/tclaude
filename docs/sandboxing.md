@@ -1206,6 +1206,9 @@ cause, not a restored pre-flight contract.
   the sandbox.
 - [Spawning and lifecycle](spawning-and-lifecycle.md) — the full spawn
   guardrail list.
+- [Processes › Run scope](processes.md#run-scope) — program steps of an
+  agent- or group-scoped process run execute inside the same layer, under
+  the agent's or group's profiles, and fail closed when it is unavailable.
 - [Permissions and audit](permissions-and-audit.md) — the slug model behind
   `sandbox-profiles.manage` and `agent.sandbox-impl`.
 - Claude Code sandboxing: <https://code.claude.com/docs/en/sandboxing>

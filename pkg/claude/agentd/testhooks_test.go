@@ -2226,3 +2226,12 @@ func SetFederationPollIntervalForTest(interval time.Duration) func() {
 	fedOutboxTick, fedSessionsTick, fedCompletionTick = interval, interval, interval
 	return func() { fedOutboxTick, fedSessionsTick, fedCompletionTick = oldOutbox, oldSessions, oldCompletion }
 }
+
+// SetProcessProgramLayerWrapForTest replaces only the rendering of tclaude's
+// own sandbox around a scoped program step. Scope resolution, recording, and
+// the program's execution stay on the production path.
+func SetProcessProgramLayerWrapForTest(fn func(cwd string, snapshot *sandboxpolicy.Snapshot, argv []string) ([]string, error)) func() {
+	previous := processProgramLayerWrap
+	processProgramLayerWrap = fn
+	return func() { processProgramLayerWrap = previous }
+}

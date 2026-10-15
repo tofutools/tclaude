@@ -7,6 +7,11 @@ import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import {
+  GroupsFocusSwitch, effectiveGroupsFocus, useGroupsFocusRestore,
+} from './groups-focus.js';
+import { GroupsProcessesFocus } from './groups-processes.js';
+import { processContext } from './process-context.js';
 
 const html = htm.bind(h);
 
@@ -61,6 +66,7 @@ export function GroupsControls({ state, actions }) {
   const badge = state.deviationCount.value;
   const columns = state.columnOptions.value;
   const wizard = useWizardTheme();
+  useGroupsFocusRestore(state);
 
   const queueRefresh = () => {
     clearTimeout(refreshTimer.current);
@@ -129,6 +135,7 @@ export function GroupsControls({ state, actions }) {
         inputRef.current?.focus();
       }}
     >×</button>
+    <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
       <button
         ref=${buttonRef}
@@ -190,9 +197,10 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-export function GroupsList({ host, state, actions }) {
-  useWizardTheme();
+export function GroupsList({ host, state, actions, processSource = undefined }) {
+  const wizard = useWizardTheme();
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
+  const focus = effectiveGroupsFocus(state);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
   const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
@@ -267,10 +275,41 @@ export function GroupsList({ host, state, actions }) {
     if (!present) setHoveredGroupKey(null);
   }, [current.groups, hoveredGroupKey]);
 
+  // Both lenses read the process context: Processes for its cards, Agents for
+  // the G1 header chips and row badges. One fetch per snapshot poll.
+  const processesEnabled = state.snapshot.value?.processes_enabled === true;
+  useEffect(() => {
+    if (!processesEnabled) return undefined;
+    const source = processSource || processContext;
+    void source.refresh();
+    const poll = () => { void source.refresh(); };
+    document.addEventListener('tclaude:snapshot', poll);
+    return () => document.removeEventListener('tclaude:snapshot', poll);
+  }, [processesEnabled, processSource]);
+  // The Process member column is available only while processes are on
+  // (body.hide-processes, which signals cannot track), so the column menu's
+  // cached options recompute when the feature flips.
+  const processesSeen = useRef(processesEnabled);
+  useEffect(() => {
+    if (processesSeen.current === processesEnabled) return;
+    processesSeen.current = processesEnabled;
+    state.rerender();
+  }, [processesEnabled]);
+
+  // The drag-and-drop hints and member-table chrome belong to the Agents lens.
+  useEffect(() => {
+    document.body.classList.toggle('groups-focus-processes', focus === 'processes');
+    return () => document.body.classList.remove('groups-focus-processes');
+  }, [focus]);
+
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
-    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
-      triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />
+    ${focus === 'processes'
+    ? html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
+      filter=${state.processFilter.value} onFilter=${state.setProcessFilter} source=${processSource}
+      focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun} />`
+    : html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
+      triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`}
     ${state.standingOrdersDialog.value && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}

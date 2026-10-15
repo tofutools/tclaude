@@ -70,6 +70,7 @@ tclaude process run <template-id> --param key=value \
 tclaude process runs ls
 tclaude process show <run-id>
 tclaude process events <run-id>
+tclaude process pause <run-id>
 tclaude process resume <run-id>
 tclaude process decide <run-id> --node <node> --verdict <verdict> [--attempt N]
 tclaude process reconcile <run-id>
@@ -78,6 +79,8 @@ tclaude process record-outcome <run-id> [--node <node>] \
     --outcome succeeded|failed
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
+tclaude process report succeeded|failed [--run <run-id> --node <node> \
+    --attempt <n>] [--note "summary"]      # agent performers only
 tclaude process templates ls
 ```
 
@@ -95,7 +98,189 @@ agent can watch run status and evidence without a human approval per read.
 Ownership confers reads only — mutations always need an explicit
 `process.runs.manage` grant or a one-shot `--ask-human` approval — and an
 explicit per-agent deny overrides everything, the owner grant included. See
-[Permissions and audit](permissions-and-audit.md).
+[Permissions and audit](permissions-and-audit.md). Starting a run bound to a
+group or an agent uses the scope gates below instead.
+
+## Run scope
+
+Every run is bound to a context when it starts, and keeps that binding:
+
+| Scope | Start with | Bound to |
+| --- | --- | --- |
+| `none` | `tclaude process run <template>` | nothing — the original, unscoped run |
+| `group` (⌂) | `... --group <name-or-id>` | the group's id, so renaming the group keeps the binding |
+| `agent` (◉) | `... --agent <agent>` | the agent's stable `agent_id`, so the run survives reincarnate and compact; a clone does not copy it |
+
+The run's **owner** is whoever started it (`human:operator` or
+`agent:<agent_id>`). `tclaude process show` prints the scope and owner;
+`tclaude process runs ls` adds a SCOPE column and filters with `--group`,
+`--agent` and `--performer`. `--performer` matches runs bound to that agent
+and runs with a node attempt dispatched to it.
+
+**Who may start a scoped run.**
+
+- `none`: `process.runs.manage` for the template, as before.
+- `group`: `process.runs.start` covering the group. Group owners hold it for
+  their own groups; anyone else needs a grant (unscoped, or scoped to the
+  group and/or template). The human may always start one.
+- `agent`: the agent itself with `self.process` (default-granted by
+  `tclaude setup --install-default-agent-permissions`); for another agent,
+  `agent.process`, or `groups.members.process` covering every group the
+  target is in (group owners hold that for their members).
+
+The scope gates confer the *binding* only. A run that authorizes program
+profiles (`--authorize-program-profile`) also needs `process.runs.manage`,
+and group ownership never satisfies that: scope narrows authority, it never
+widens it into host program execution.
+
+**Where program steps run.** Scope also narrows where a program step
+(`performer.kind: program`) executes. The bounds are resolved when each
+attempt is planned (a reissue resolves them again) and recorded on it:
+
+| Scope | Working directory | Confinement |
+| --- | --- | --- |
+| `none` | the daemon's, unchanged | none, unchanged |
+| `agent` | the bound agent's current working directory (its worktree) | the sandbox the agent's current generation was launched with — its recorded sandbox profiles, enforced by tclaude's own layer (bubblewrap on Linux, Seatbelt on macOS) whichever layer confines the agent itself |
+| `group` | the group's default working directory | the group's sandbox profiles, enforced by tclaude's own layer, as the group's default spawn profile would launch an agent |
+
+- An agent with no OS sandbox at all (`--sandbox-impl off` or
+  `resource-only`, Codex `--sandbox danger-full-access`, or a harness
+  sandbox recorded as off) has nothing to narrow to: its program steps run
+  **unconfined** in its working directory. Likewise a group with no default
+  spawn profile, or whose default profile runs unconfined, keeps the
+  unscoped behaviour. Either way the attempt is recorded as `unconfined`,
+  with the reason.
+- Bounds that cannot be enforced **fail the attempt closed**: the program
+  never starts, and never unconfined instead. That covers a host where
+  tclaude's sandbox is unavailable (no bubblewrap, no unprivileged user
+  namespaces), an agent whose sandbox snapshot is not recorded, and a group
+  with a sandboxing default profile but no default working directory. The
+  attempt's `program_observed` error names what is missing; with a retry
+  policy the branch parks as blocked like any other failure.
+- A program step runs under the neutral `shell` launch identity inside the
+  sandbox: it gets the profile's grants and its working directory, never a
+  coding harness's credentials or state directories. Writes to a linked git
+  worktree's shared `.git` directory are not granted, so a program that
+  commits needs a profile that grants them.
+- Resource limits in the profile are not applied to program steps yet.
+
+Each attempt's `program_prepared` (or `program_reissued`) event carries a
+`bounds` object — `scope`, `cwd`, `sandbox` (`tclaude-layer` or
+`unconfined`), `profiles`, `reason`, and `error` when it cannot be
+enforced. `process show --json` lists each program node's latest bounds
+under `programBounds`, and the dashboard shows them on the program step (see
+below).
+
+**Orphaned runs.** A scope is never changed silently. If a group-scoped
+run's group is deleted, or an agent-scoped run's agent is retired or
+deleted, the run pauses with scope state `orphaned` (its `action` reads
+`orphaned` and a `run_orphaned` event records why). Program work already in
+flight finishes, but nothing new is planned and resume, decisions and
+reconciliation are refused until the human re-scopes it:
+
+```bash
+tclaude process rescope <run-id> --none            # unbind it
+tclaude process rescope <run-id> --group <group>   # re-bind to a group
+tclaude process rescope <run-id> --agent <agent>   # re-bind to an agent
+```
+
+The one input an orphaned run still accepts is giving it up:
+`tclaude process resolve-blocked ... --action cancel` on a blocked node.
+Runs of a deleted group stay listable with `runs ls --group <group-id>`.
+
+`rescope` is human-only and records a `run_rescoped` event. On a bound
+agent-scoped run, `rescope --group` **promotes** it to a group the agent
+belongs to; completed history is kept. Demoting a group-scoped run to agent
+scope is not supported.
+
+Unscoped runs need no migration and appear only in the Processes list, not
+in the Groups or Terminals overlays.
+
+**Runs in context.** The dashboard overlays poll `GET /v1/process/context`
+alongside the snapshot. It returns one mini-graph projection per scoped run
+(authored nodes with kind, state, work-step index and performer; edges with
+their disposition; the current nodes) in a `runs` map, and refers to them by
+id: per group `active`, `needsYou` (awaiting a decision, blocked, needing
+reconciliation) and the recently finished `done`; per agent its current step
+(`index` of `total`) in each run bound to it; and a top-level `orphaned`
+list. It is bounded: each group or agent contributes at most 16 active and 8
+finished runs (8 listed per bucket), at most 64 runs in all, and 48 nodes
+per run. The human and holders of `process.runs.read` see every
+scoped run; another agent sees its own groups' runs and the runs bound to
+itself. Visibility is unchanged:
+`process.runs.read` (which group owners hold) still gates the run surfaces.
+
+## In the dashboard
+
+With `features.processes` on, the dashboard covers the whole loop: authoring,
+starting a run in a group or for one agent, following it, and acting on it.
+All of it goes through the same daemon routes and permissions as the CLI.
+
+**Authoring** (Automations › Processes, then open a template). The graph
+editor has the node inspector, live validation, undo/redo, snippets and
+versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
+things there are specific to processes:
+
+- **Co-design with a scribe.** *Edit with agent* docks the template's scribe
+  beside the canvas: chat with it there (its replies come back as it finishes
+  a turn) or switch the dock to its terminal. The dock's context actions send
+  it the selection, a node to explain, the focused validation issue, or a
+  description to draft from. When the scribe saves a version, *Review on
+  canvas* paints it over your draft (added, changed, removed) and you accept
+  or reject each change; your own unsaved edits are never overwritten, and
+  conflicting edits are flagged rather than merged silently.
+- **Subprocesses.** A ▣ node runs a nested graph (see
+  [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
+  in place: a breadcrumb and a minimap of the parent show where you are, the
+  dashed port nodes are its contract (⇄ ports binds body params and maps body
+  ends onto the ▣ node's outcomes), and Esc or Alt+↑ goes back up. The
+  palette's outline lists every nested body. *⇪ extract as template* saves a
+  body as its own template and turns the node into a reference to it. A
+  reference is not edited in place, since other templates may share it. While
+  you author, the editor resolves each reference the way a run would, and any
+  problem (a missing template, in-ports it does not declare or leaves unbound,
+  trouble further down) marks the ▣ node. Its inspector lists them as
+  "inside template X: …" with an *open X to fix* button.
+- **Composing on the canvas.** The palette also lists your other templates:
+  drop one (or any node kind) on the canvas, or onto a connector to splice it
+  in between. *⊞ expand* draws a ▣ node's body on the parent canvas as a
+  framed group whose nodes you edit in context; *⊟ collapse* folds it back.
+  Select a region and choose *▣ wrap as subprocess…* to fold it into one ▣
+  node — the ports come from the connectors crossing its boundary — and
+  *⇲ unwrap* inlines a body again.
+
+**Starting a run.** In Groups, switch the focus to **Processes** and use
+*+ start process* on a group: pick a template, fill its params, and tick the
+program profiles you authorize it to run under (never pre-ticked). The run is
+group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.
+
+**Following it.**
+
+- **Groups › Agents** — each group header counts running, waiting-on-you and
+  planned runs, and each member row's Process column shows a *run › node*
+  badge for every run the agent works in (amber when parked on a human gate,
+  dashed when queued).
+- **Groups › Processes** — each group's runs as live graph cards with the
+  agents on the nodes they perform, needs-you first. *open ›* focuses one run:
+  the live graph, a docked inspector (approve or request changes on a human
+  gate, the node's history), the group's agents as a performer dock, and the
+  run's ⏸ pause / ▶ resume.
+- **Terminals** — a pane whose agent takes part in a run shows a small
+  top-right cluster of run icons (ring = run state, badge = this agent's step
+  i/n), repeated on the tab. An icon opens a popover with the mini-graph and
+  the agent's node lit, its contract, what feeds it and what waits on it, and
+  the run actions. A run bound to that agent opens instead as a vertical
+  stepper with a bounds strip (working dir, sandbox, grants, spend, identity).
+  Each program step says where its attempt runs or ran (directory and
+  sandbox), and a step recorded as unconfined, or whose bounds cannot be
+  enforced, is flagged. The run focus inspector shows the same on a program
+  node as *runs*.
+
+**Acting on it.** Decide human gates from the run focus or the popover;
+reassign an agent node by dragging a member from the performer dock onto it
+(or *reassign node* in the Terminals popover); pause and resume from the run
+focus, the popover, or the stepper. Each maps to the CLI verb of the same
+name and needs the same permission.
 
 ## What executes today
 
@@ -116,7 +301,8 @@ explicit per-agent deny overrides everything, the owner grant included. See
   settled. A losing branch that *fails* still fails the run, exactly as under
   `join: all`.
 - **Program performers** (`performer.kind: program`): executed as argv without
-  a shell, with a bounded environment and bounded output.
+  a shell, with a bounded environment and bounded output, inside the run
+  scope's bounds (see [Where program steps run](#run-scope)).
 - **Bounded program retries.** `retry.maxAttempts: <n>` includes the first
   attempt and is capped at 100; attempts run back to back, and nothing can
   interrupt a task still spending its budget. A failed attempt inside the
@@ -168,23 +354,132 @@ explicit per-agent deny overrides everything, the owner grant included. See
   refuses any other value — including a verdict formed against an earlier
   window and submitted late.
 
+- **Subprocess nodes** (`type: subprocess`) run a nested graph as one node
+  of their parent. The body is either inline (`subprocess.start`,
+  `subprocess.nodes`, `subprocess.params`) or another stored template
+  (`subprocess.templateRef`, optionally pinned with `version: sha256:<hex>`).
+  The body is its own param scope: `subprocess.inputs` binds each body param
+  from a literal or `{{ params.x }}` of the parent, and an unbound param falls
+  back to its default. `subprocess.outputs` maps each body end node to one of
+  the subprocess node's `next` outcomes; with a single outcome, unmapped ends
+  use it. Body nodes run under namespaced ids (`<id>/<inner id>`), so a body
+  decision is decided with `decide --node review/gate`. The subprocess node
+  stays `running` while its body is live and settles its own route exactly
+  once, when a body end node is reached; on an untaken branch the whole body
+  is skipped with it. Referenced templates are resolved when the run is
+  created and embedded in the run's snapshot, so later edits to them never
+  change a run in flight; reference cycles and nesting deeper than four levels
+  are refused. Inner program profiles need authorizing at run creation like
+  any other.
+- **Agent performers** (`performer.kind: agent` on a plain task) — see
+  [Agent performers](#agent-performers) below.
+
 One sizing rule applies only to running: a run records durable evidence per
 node, and that row bounds node ids at 256 bytes. Run creation refuses a
-template whose node ids — authored or derived from compound stages — exceed
-it; editing and storing such a template still works.
+template whose node ids — authored, derived from compound stages, or
+namespaced into a subprocess body — exceed it; editing and storing such a template still works.
 
 ## What does not execute yet
 
 These CLI verbs are stubs that return a "process runtime is temporarily
 unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
-`advance`, `unblock`, `observe`, `resolve`, `report`, `verify`, `repair`.
+`advance`, `unblock`, `observe`, `resolve`, `verify`, `repair`.
 
 These authoring features are valid in a stored template but refused at run
 creation with a path-specific diagnostic, rather than failing later: agent
-deciders; agent or human task performers; retry backoff waits; same-session
-retry feedback (`retry.onFail: feedback-same-session`); retries on compound
-stages; `plan.approvalRetry`; human or agent stage performers; poison
-handling; wait nodes; captures.
+deciders; human task performers; agent performers on compound (staged) tasks;
+agent performer `timeout`; retry backoff waits; same-session retry feedback
+for program tasks (`retry.onFail: feedback-same-session` is executable only
+for agent tasks); retries on compound stages; `plan.approvalRetry`; human or
+agent stage performers; poison handling; wait nodes; captures.
+
+## Agent performers
+
+A plain task with `performer.kind: agent` is performed by an agent. When the
+node becomes ready the daemon resolves a performer from the run's scope and
+delivers the node's prompt **as a message in that agent's inbox** — never by
+typing into its pane. The message carries the run id, node id, and attempt,
+and the exact command to report back with:
+
+```bash
+tclaude process report succeeded --run <run-id> --node <node> --attempt <n> \
+    --note "PR #12 is open"
+tclaude process report failed --run <run-id> --node <node> --attempt <n> \
+    --note "why it failed"
+```
+
+`--run`, `--node`, and `--attempt` may be omitted when the agent has exactly
+one open node. The report is authenticated by the calling agent's identity and
+must match the exact attempt that was delivered to it: another agent is
+refused, a report for an older attempt is refused as stale, and a repeated
+identical report is acknowledged without being applied twice. A report goes
+through the same transition a program result does, so retry budgets, parking,
+and fail-fast behave identically.
+
+**Who performs the node**, by run scope:
+
+| Scope | Resolution |
+| --- | --- |
+| group | the explicit `assignee`, if it names a current member; else a member whose role matches the node's `profile` (or that spawn profile's role), idle first, then busy, then offline; else — only with `spawn: allowed` and when the run owner could spawn into the group — a fresh agent spawned with the node's `profile`; else the node waits as **needs performer** |
+| agent | the bound agent performs every agent node; an `assignee` naming anyone else waits as needs performer |
+| none | only an explicit `assignee` (any active agent); otherwise the node waits as needs performer |
+
+A **needs performer** node is retried on every runtime sweep (once a minute),
+so it is picked up as soon as a matching member joins. `show` prints the
+reason it waits.
+
+**Retries.** `retry.onFail: fresh-attempt` (the default) hands the next
+attempt to a different performer when one is available — spawning one if the
+template allows it — and only falls back to the previous performer as a last
+resort. `retry.onFail: feedback-same-session` hands it back to the same
+performer, together with the note its failed report carried.
+
+**Performers going away.** An offline performer keeps the node: its inbox holds
+the prompt and the node simply waits. A performer that is retired or leaves
+the group is replaced by re-resolving the same attempt. A run bound to an
+agent is never re-resolved to someone else.
+
+**People always win.** `record-outcome --node <node>` settles an agent's node
+in its place; the performer is told the attempt no longer needs it, and its
+later report is refused as stale. When a run is ending — a sibling failed, or
+an operator cancelled — outstanding agent attempts are withdrawn and their
+performers told to stop.
+
+**Reassigning.** `tclaude process assign <run-id> --node <node> --agent <agent>`
+(HTTP `POST /v1/process/runs/{id}/nodes/{node}/assign` with `{"agent": ...}`)
+hands a node's outstanding, not yet reported attempt to a named performer. It
+needs the same permission as `decide`. The new performer must fit the run's
+scope: a member of a group run, the bound agent of an agent run, or for an
+unscoped run an agent the owner (and an agent caller) shares a group with. It
+gets the prompt and is the only agent that may report; a previous performer is
+told to stop. A node that is not ready yet, already reported, or not agentic
+has nothing to reassign (409).
+
+In the dashboard the same operation is a drag: in Groups › Processes, drag
+an agent from a run's performer dock onto its agent node (or use the node
+inspector's reassign picker); in Terminals, the run popover's
+"reassign node" opens a picker of the group's members.
+
+**Pausing.** `tclaude process pause <run-id>` (HTTP
+`POST /v1/process/runs/{id}/pause`) holds a run: it dispatches no new agent
+turns or program commands, while attempts already in flight finish and their
+outcomes and reports are recorded. Decisions are still accepted; what they
+make ready waits too. A paused run's `paused` field says who paused it and
+when, its `action` reads `paused` unless something still needs a human, an
+undelivered agent attempt stays undelivered, and reassigning (which would
+start a new turn) is refused until it is resumed.
+`tclaude process resume <run-id>` (`POST /v1/process/runs/{id}/resume`)
+releases the pause and plans what waited. Both need the same permission as
+`decide`, are idempotent, and record `run_paused` / `run_resumed` evidence; a
+finished run cannot be paused. The dashboard's Pause / Resume control sits in
+the Terminals run popover and stepper and in the Groups single-run focus.
+
+`show --json` lists every attempt's performer under `performers` (agent,
+display name, live status, how it was chosen, and what it reported); outstanding
+agent commands report their dispatch state (`pending`, `needs_performer`,
+`delivered`, `reported`) instead of `needs_reconcile`. A daemon restart picks
+in-flight dispatches back up without re-sending them. An outstanding agent
+command occupies one of the run's four concurrency slots, like a program.
 
 ## Crashes and reconciliation
 

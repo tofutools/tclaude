@@ -7,7 +7,10 @@ import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
-import { NodeDialog } from './process-node-dialog.js';
+import { NodeInspector } from './process-node-inspector.js';
+import { ScribeDock } from './process-scribe-dock.js';
+import { DiffReviewBar } from './process-diff-review.js';
+import { ScopeBar, ScopeMinimap, ScopeOutline, ScopePorts } from './process-scope-ui.js';
 import { ParamsDialog } from './process-params-dialog.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
@@ -141,13 +144,16 @@ function Header({ controller, view }) {
     <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
     <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
     <span class="spacer"></span>
-    <button class="process-action" type="button" disabled=${externalPending} title="Edit template name and description" onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
+    <button class="process-action" type="button" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title="Undo (Ctrl+Z)" onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
     <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
     <button class="process-action" type="button" title="Process commands (Ctrl/Cmd-K)" aria-label="Open process commands (Ctrl/Cmd-K)" onClick=${() => controller.openCommands()}>⌘K commands</button>
-    <button class="process-action process-scribe-action" type="button" disabled=${externalPending || pending.save} title="Open an agent scoped to this exact process template" onClick=${() => controller.requestScribe('template')}>
+    <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"
+      disabled=${!view.scribeDock?.available && (externalPending || pending.save)} aria-pressed=${view.scribeDock?.available ? String(!!view.scribeDock.open) : undefined}
+      title=${view.scribeDock?.available ? 'Co-design this template with its scoped process scribe (chat or terminal)' : 'Open an agent scoped to this exact process template'}
+      onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
     </button>
     <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version (Ctrl/Cmd+S)" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
@@ -209,6 +215,9 @@ function ExternalChange({ controller, view }) {
         ${change.kind === 'dirty' ? 'Reload & discard' : 'Apply update'}
       </button>
       ${change.kind === 'dirty' && html`<button class="process-action" type="button" disabled=${pending || view.pending.save} onClick=${() => controller.keepExternalChange()}>Keep editing</button>`}
+      <button class="process-action primary" type="button" data-review-on-canvas disabled=${pending || view.pending.save || view.diff?.open}
+        title="Show this version on the canvas and accept or reject each change; your local edits stay until you decide"
+        onClick=${() => controller.openDiffReview()}>Review on canvas</button>
     </div>
     ${change.reviewOpen && html`<div class="process-external-review">
       <div class="process-external-graph-summary">${review?.graph || (change.reviewPending ? 'Loading the exact polled generation…' : 'Change summary unavailable; retry Review changes.')}</div>
@@ -217,7 +226,7 @@ function ExternalChange({ controller, view }) {
   </div>`;
 }
 
-function Palette({ controller, hidden, snippets }) {
+function Palette({ controller, hidden, snippets, view }) {
   const card = (payload, label, hint, { custom = false, available = true, pending = false } = {}) => {
     const canInsert = snippets.canInsert && available && !pending;
     return html`<div
@@ -236,8 +245,11 @@ function Palette({ controller, hidden, snippets }) {
   return html`<aside class="process-editor-palette process-scroll-surface" aria-label="Node palette" hidden=${hidden}
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
+    ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
     <div class="process-palette-section">Primitives</div>
     ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
+    ${!!view?.templateRefs?.length && html`<div class="process-palette-section" title="Drop onto the canvas, or onto a connector to splice it in">Templates</div>
+    ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
     <div class="process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
     <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><button
@@ -275,25 +287,20 @@ function Inspector({ controller, view }) {
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
     const edges = selected.length - nodes;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…</button><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
   }
   if (sel?.type === 'node' && view.selectedNode) {
-    const node = view.selectedNode;
+    // The node itself is edited in the docked node inspector beside the canvas.
     return html`<div ref=${root} class="process-editor-inspector" inert=${pending}>
-      <span class="process-inspector-kind">${node.type || 'task'} node</span><span class="process-inspector-id">${sel.id}</span>
-      <${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="label" aria-label="Node label" value=${node.name || ''} onCommit=${(name) => controller.renameNode(sel.id, name)} />
-      ${view.selectedNodeIncoming > 1 && html`<select class="process-inspector-select" aria-label="Join semantics" value=${node.join || ''} onChange=${(event) => controller.setJoin(sel.id, event.currentTarget.value || null)}><option value="">join: unset</option><option value="all">join: all</option><option value="any">join: any</option></select>`}
-      ${view.model.start !== sel.id && node.type !== 'end' && html`<button class="process-action" type="button" title="Make this node the process entry point" onClick=${() => controller.setStart(sel.id)}>set as start</button>`}
-      <button class="process-action" type="button" title="Open the structured node editor: stages, performers, retry, captures" onClick=${() => controller.openNodeSettings(sel.id)}>node settings…</button>
-      <button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} title="Save this node as a reusable custom snippet" onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button>
-      <button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete node</button>
+      <span class="process-inspector-kind">${view.selectedNode.type || 'task'} node</span><span class="process-inspector-id">${sel.id}</span>
+      <span class="process-inspector-hint">Editing in the node inspector →</span>
     </div>`;
   }
   if (sel?.type === 'edge' && view.selectedEdge) {
     const edge = view.selectedEdge;
     return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete edge</button></div>`;
   }
-  return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint">Select a node or edge to edit it. Double-click a node to open its stage editor.</span></div>`;
+  return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint">Select a node or edge to edit it. A selected node opens in the node inspector.</span></div>`;
 }
 
 function Issues({ controller, issues }) {
@@ -463,12 +470,6 @@ function EditorModal({ controller, descriptor }) {
   if (descriptor.kind === 'choice') return html`<${ChoiceDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'scribe') return html`<${ScribeDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'snippet-name') return html`<${SnippetNameDialog} descriptor=${descriptor} complete=${complete} />`;
-  if (descriptor.kind === 'node') return html`<${NodeDialog}
-    key=${descriptor.generation}
-    model=${controller.model} nodeId=${descriptor.nodeId} mode=${descriptor.mode}
-    onMutated=${() => controller.refresh()} complete=${complete}
-    confirmDiscard=${controller.options.confirmDiscard || (async () => false)}
-    registerHandle=${registerHandle} />`;
   if (descriptor.kind === 'params') return html`<${ParamsDialog}
     model=${controller.model} onMutated=${() => controller.refresh()} complete=${complete}
     confirmDiscard=${controller.options.confirmDiscard || (async () => false)}
@@ -492,14 +493,20 @@ export function ProcessEditorApp({ controller }) {
     <${Header} controller=${controller} view=${view} />
     <${ExternalChange} controller=${controller} view=${view} />
     <div class="process-editor-body" inert=${view.pending.externalDecision || view.pending.externalReload}>
-      <${Palette} controller=${controller} hidden=${view.paletteHidden} snippets=${view.snippets} />
+      <${Palette} controller=${controller} hidden=${view.paletteHidden} snippets=${view.snippets} view=${view} />
       <div ref=${stageRef} class="process-editor-stage">
         <div ref=${graphRef} class="process-editor-canvas-host"></div>
+        <${ScopeBar} controller=${controller} view=${view} />
+        <${ScopeMinimap} controller=${controller} view=${view} />
         <${InlineEditor} controller=${controller} inline=${view.inline} />
         <${EdgePin} controller=${controller} pin=${view.edgePin} />
         <${Issues} controller=${controller} issues=${view.issues} />
       </div>
+      <${NodeInspector} controller=${controller} view=${view} />
+      <${ScopePorts} controller=${controller} view=${view} />
+      <${ScribeDock} controller=${controller} view=${view} />
     </div>
+    <${DiffReviewBar} controller=${controller} view=${view} />
     <${Inspector} controller=${controller} view=${view} />
   </div><${EditorModal} controller=${controller} descriptor=${view.modal} /></${Fragment}>`;
 }

@@ -296,6 +296,21 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
+	mux.HandleFunc("GET /v1/process/context", dashboardProcessRoute(handleProcessContext))
+	// Groups › Processes "+ start process" (G3) starts a group-scoped run.
+	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
+	// The single-run focus (G5) reads one run's durable view and evidence and
+	// records a human gate's verdict.
+	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
+	mux.HandleFunc("GET /v1/process/runs/{id}/events", dashboardProcessRoute(handleProcessRunEvents))
+	mux.HandleFunc("POST /v1/process/runs/{id}/decide", dashboardProcessRoute(handleProcessRunDecide))
+	// The Terminals overlay promotes an agent-scoped run to a group (T3) and
+	// hands a node's attempt to another performer (T2/G5 reassign).
+	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", dashboardProcessRoute(handleProcessRunRescope))
+	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/assign", dashboardProcessRoute(handleProcessRunAssign))
+	// The Pause / Resume control (T2/T3/G5) holds and releases a run.
+	mux.HandleFunc("POST /v1/process/runs/{id}/pause", dashboardProcessRoute(handleProcessRunPause))
+	mux.HandleFunc("POST /v1/process/runs/{id}/resume", dashboardProcessRoute(handleProcessRunResume))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerDashboardPAFRoutes(mux)

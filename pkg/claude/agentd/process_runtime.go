@@ -56,12 +56,26 @@ var (
 )
 
 // processRunInput is one authenticated external input for a run's single state
-// owner. Exactly one member is set: this is a typed union of the two things an
-// operator can hand a live run, NOT a generic event bus. A third kind arriving
-// is the point at which to reach for a small typed-union cleanup instead.
+// owner. Exactly one member is set: this is a typed union of the things an
+// operator or a performer can hand a live run, NOT a generic event bus.
 type processRunInput struct {
-	decision   *executor.DecisionInput
-	resolution *executor.ResolutionInput
+	decision    *executor.DecisionInput
+	resolution  *executor.ResolutionInput
+	agentReport *executor.AgentReport
+	// outcome is an operator-recorded outcome for an agent command: human
+	// preemption of a performer, which must not wait for sibling programs.
+	outcome *processRunOutcomeInput
+}
+
+type processRunOutcomeInput struct {
+	selector string
+	outcome  executor.RecordedOutcome
+}
+
+// cancels reports whether this input gives the run up — the one input an
+// orphaned run still accepts.
+func (i processRunInput) cancels() bool {
+	return i.resolution != nil && i.resolution.Action == engine.ResolveCancel
 }
 
 // apply commits this input against the run. It is called only by the run's
@@ -73,8 +87,12 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.RecordDecision(run, actor, *i.decision)
 	case i.resolution != nil:
 		return executor.ResolveBlocked(run, actor, *i.resolution)
+	case i.agentReport != nil:
+		return executor.RecordAgentReport(run, actor, *i.agentReport)
+	case i.outcome != nil:
+		return executor.RecordOutcome(run, actor, i.outcome.selector, i.outcome.outcome)
 	default:
-		return fmt.Errorf("process run input names neither a decision nor a blocked resolution")
+		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
 }
 
@@ -241,8 +259,32 @@ type processRunView struct {
 	AwaitingDecisions []processRunDecisionView `json:"awaitingDecisions"`
 	Commands          []processRunCommandView  `json:"commands"`
 	Blocked           []processRunBlockedView  `json:"blocked"`
-	CreatedAt         time.Time                `json:"createdAt"`
-	UpdatedAt         time.Time                `json:"updatedAt"`
+	Scope             processRunScopeView      `json:"scope"`
+	// Performers is every agent node attempt's performer, oldest attempt first
+	// per node: who was chosen, how, and what they reported.
+	Performers []processRunPerformerView `json:"performers"`
+	// Paused says an operator paused the run: it plans no new agent turns or
+	// program commands until resumed, while in-flight attempts finish.
+	Paused *processRunPauseView `json:"paused,omitempty"`
+	// ProgramBounds is, per executable program node, where its latest attempt
+	// ran as recorded when it was planned: working directory and sandbox, or
+	// unconfined. A node whose attempts ran unscoped is absent.
+	ProgramBounds map[string]processProgramBoundsView `json:"programBounds,omitempty"`
+	CreatedAt     time.Time                           `json:"createdAt"`
+	UpdatedAt     time.Time                           `json:"updatedAt"`
+}
+
+// processRunPauseView is who paused a run, and when.
+type processRunPauseView struct {
+	At time.Time `json:"at"`
+	By string    `json:"by,omitempty"`
+}
+
+func processRunPauseViewOf(scope db.ProcessRunScope) *processRunPauseView {
+	if !scope.Paused() {
+		return nil
+	}
+	return &processRunPauseView{At: scope.PausedAt, By: scope.PausedBy}
 }
 
 // processRunDecisionView presents one awaited decision with its selectable
@@ -275,26 +317,37 @@ type processRunBlockedView struct {
 // while this daemon still accounts for the program, and needs_reconcile once it
 // does not — the two are indistinguishable in SQLite alone, which is exactly
 // why a cold load reports every entry as the latter.
+//
+// An agent command is never ambiguous: its State is its dispatch state
+// (pending, needs_performer, delivered, reported), and Performer says who has
+// it.
 type processRunCommandView struct {
-	CommandID string `json:"commandId"`
-	NodeID    string `json:"nodeId"`
-	Profile   string `json:"profile,omitempty"`
-	Program   string `json:"program"`
-	State     string `json:"state"`
+	CommandID string                   `json:"commandId"`
+	NodeID    string                   `json:"nodeId"`
+	Kind      engine.CommandKind       `json:"kind"`
+	Attempt   int                      `json:"attempt"`
+	Profile   string                   `json:"profile,omitempty"`
+	Program   string                   `json:"program"`
+	State     string                   `json:"state"`
+	Performer *processRunPerformerView `json:"performer,omitempty"`
 }
 
 const (
 	processCommandExecuting      = "executing"
 	processCommandNeedsReconcile = "needs_reconcile"
+	processCommandNeedsPerformer = "needs_performer"
+	processCommandAwaitPerformer = "awaiting_performer"
 )
 
 type processRunSummaryView struct {
-	ID           string           `json:"id"`
-	TemplateRef  string           `json:"templateRef"`
-	Status       engine.RunStatus `json:"status"`
-	StateVersion int64            `json:"stateVersion"`
-	CreatedAt    time.Time        `json:"createdAt"`
-	UpdatedAt    time.Time        `json:"updatedAt"`
+	ID           string               `json:"id"`
+	TemplateRef  string               `json:"templateRef"`
+	Status       engine.RunStatus     `json:"status"`
+	StateVersion int64                `json:"stateVersion"`
+	Scope        processRunScopeView  `json:"scope"`
+	Paused       *processRunPauseView `json:"paused,omitempty"`
+	CreatedAt    time.Time            `json:"createdAt"`
+	UpdatedAt    time.Time            `json:"updatedAt"`
 }
 
 type processRunEventView struct {
@@ -311,6 +364,10 @@ type processRunCreateRequest struct {
 	TemplateID               string            `json:"templateId"`
 	Params                   map[string]string `json:"params,omitempty"`
 	AuthorizeProgramProfiles []string          `json:"authorizeProgramProfiles"`
+	// Group or Agent (at most one) binds the run's scope; neither leaves it
+	// unscoped. Both accept the selectors the agent CLI uses elsewhere.
+	Group string `json:"group,omitempty"`
+	Agent string `json:"agent,omitempty"`
 }
 
 type processRunOutcomeRequest struct {
@@ -478,6 +535,36 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		}
 	}()
 
+	// An orphaned run is parked for a human to re-scope: nothing — resume,
+	// sweep, or operator input — may advance it until then. Canceling it is
+	// the one input that still applies, since it only gives the run up.
+	orphaned, err := processRunOrphaned(runID)
+	if err != nil {
+		return false, err
+	}
+	if orphaned && (start.mode != processRunApplyInput || !start.input.cancels()) {
+		return false, errProcessRunOrphaned
+	}
+	// A paused run still records what arrives — outcomes, reports, verdicts —
+	// but plans nothing new. A reissue IS a new command, so it waits too.
+	// The planning gate makes this pause read and the planning below one step
+	// against a concurrent pause (see processRunPauseGate).
+	processRunPauseGate.RLock()
+	planningGated := true
+	ungatePlanning := func() {
+		if planningGated {
+			planningGated = false
+			processRunPauseGate.RUnlock()
+		}
+	}
+	defer ungatePlanning()
+	paused, err := processRunPaused(runID)
+	if err != nil {
+		return false, err
+	}
+	if paused && start.mode == processRunReissue {
+		return false, errProcessRunPaused
+	}
 	run := prepared
 	if run == nil {
 		run, err = executor.LoadRun(runID)
@@ -488,6 +575,8 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	if claim.ctx.Err() != nil {
 		return false, errProcessRuntimeStopped
 	}
+	run.Hold(paused)
+	run.SetProgramBounds(processProgramBoundsResolver(runID))
 
 	var dispatches []*executor.Dispatch
 	// committed records that this start already made a durable change. A
@@ -530,22 +619,36 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	default:
 		err = fmt.Errorf("unknown process run start mode")
 	}
+	ungatePlanning()
 	if err != nil {
 		return false, err
 	}
 	if fillErr != nil && (!committed || !errors.Is(fillErr, executor.ErrNeedsReconcile)) {
 		return false, fillErr
 	}
+	// An input may have doomed the run while agents still hold attempts: they
+	// are withdrawn here, by the owner, so the run can drain.
+	withdrawDrainingAgentCommands(runID, run)
+	dispatches = startProcessAgentDispatches(runID, run, dispatches)
 	if len(dispatches) == 0 {
 		if fillErr != nil {
 			// Committed, but another branch still needs a human before anything
 			// can be planned. The action succeeded; nothing started.
 			return false, nil
 		}
+		if len(run.AgentCommands()) > 0 {
+			// Agent performers hold the run's slots, or are the only live work.
+			// Their reports, not a driver, move the run next.
+			return false, nil
+		}
+		if run.Held() && run.Action().Kind != executor.ActionNeedsReconcile {
+			// Paused: the operator's resume, not a driver, moves the run next.
+			return false, nil
+		}
 		switch run.Action().Kind {
 		case executor.ActionNeedsReconcile:
 			return false, executor.ErrNeedsReconcile
-		case executor.ActionAwaitDecision, executor.ActionBlocked, executor.ActionTerminal:
+		case executor.ActionAwaitDecision, executor.ActionBlocked, executor.ActionAwaitPerformer, executor.ActionTerminal:
 			// Parked on a human or an operator, or over. Nothing started, and
 			// nothing is wrong: the run waits for its next external input.
 			return false, nil
@@ -566,6 +669,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 // did not reach are simply left ready.
 func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]*executor.Dispatch, error) {
 	var dispatches []*executor.Dispatch
+	// An outstanding agent command occupies a slot exactly like a running
+	// program, so a wide fan-out never puts more performers to work at once
+	// than programs. Callers count only the programs they have in flight.
+	capacity -= len(run.AgentCommands())
 	for range capacity {
 		dispatch, err := claim.plan(func() (*executor.Dispatch, error) { return executor.Prepare(run) })
 		if err != nil {
@@ -577,6 +684,27 @@ func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]
 		dispatches = append(dispatches, dispatch)
 	}
 	return dispatches, nil
+}
+
+// startProcessAgentDispatches hands every agent command among pending to the
+// performer dispatcher and returns the program dispatches left for workers. An
+// agent command is not executed by this owner: its durable outbox entry is
+// accounted for by its dispatch record, so the live permission is dropped.
+func startProcessAgentDispatches(runID string, run *executor.Run, pending []*executor.Dispatch) []*executor.Dispatch {
+	programs := pending[:0:0]
+	agents := false
+	for _, dispatch := range pending {
+		if dispatch.Command().Kind == engine.CommandAgent {
+			executor.Abandon(run, dispatch)
+			agents = true
+			continue
+		}
+		programs = append(programs, dispatch)
+	}
+	if agents {
+		kickProcessAgentDispatch(runID)
+	}
+	return programs
 }
 
 // drive is the run's single state owner. It is the ONLY goroutine that touches
@@ -593,6 +721,7 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 	results := make(chan processRunProgramResult, processRunConcurrency)
 	inFlight := 0
 	start := func(pending []*executor.Dispatch) {
+		pending = startProcessAgentDispatches(runID, claim.run, pending)
 		for _, dispatch := range pending {
 			// Authorize the command this dispatch actually executes, not the one
 			// a run-level view happens to surface first: the outbox is plural, so
@@ -636,6 +765,18 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// program result is serialized here rather than by a lock: whichever
 			// the select takes first commits first, and the loser sees the state
 			// the winner left behind.
+			//
+			// The orphan gate applies here as in beginRun, so an input is not
+			// accepted merely because programs happened to still be in flight.
+			if !request.input.cancels() {
+				if orphaned, err := processRunOrphaned(runID); err != nil || orphaned {
+					if err == nil {
+						err = errProcessRunOrphaned
+					}
+					request.reply <- err
+					break
+				}
+			}
 			applyErr := request.input.apply(claim.run, request.actor)
 			request.reply <- applyErr
 			// An operator cancel dooms the run from HERE rather than from an
@@ -645,9 +786,29 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// ordinary observations, so nothing is lost or assumed.
 			if applyErr == nil && claim.run.Draining() {
 				claim.cancelWorkers()
+				withdrawDrainingAgentCommands(runID, claim.run)
 			}
 		}
-		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
+		// Work already planned runs to its observation, but an owner whose
+		// run lost its scope target plans nothing further.
+		if orphaned, err := processRunOrphaned(runID); err != nil || orphaned {
+			if err != nil {
+				slog.Warn("process runtime: scope check failed; not planning", "run", runID, "error", err)
+			}
+			start(pending)
+			continue
+		}
+		// fillProcessRun already counts outstanding agent commands, so only the
+		// pending programs take a slot here.
+		pendingPrograms := 0
+		for _, dispatch := range pending {
+			if dispatch.Command().Kind != engine.CommandAgent {
+				pendingPrograms++
+			}
+		}
+		ungate := gateProcessRunPlanning(runID, claim.run)
+		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-pendingPrograms)
+		ungate()
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -667,9 +828,11 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		executor.Abandon(claim.run, result.dispatch)
 		return nil
 	}
+	ungate := gateProcessRunPlanning(runID, claim.run)
 	next, err := claim.plan(func() (*executor.Dispatch, error) {
 		return executor.Observe(claim.run, result.dispatch, result.result)
 	})
+	ungate()
 	// Best-effort sibling cancellation, decided on the run rather than on this
 	// observation: with authored retries a failed program is ordinarily just one
 	// attempt ending, and the branch is re-readied for the next one. Cancelling
@@ -680,6 +843,7 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		// The killed programs still come back as ordinary observations, so
 		// nothing is lost or assumed.
 		claim.cancelWorkers()
+		withdrawDrainingAgentCommands(runID, claim.run)
 	}
 	if err != nil {
 		// The worker is gone either way, so this branch can no longer be
@@ -750,6 +914,8 @@ func (m *processRunManager) shutdown(ctx context.Context) error {
 func startProcessRunRuntime(stop <-chan struct{}) {
 	go func() {
 		sweepProcessRuns()
+		// A restart rediscovers every in-flight agent dispatch here.
+		sweepProcessAgentDispatches()
 		ticker := time.NewTicker(processRunFallbackInterval)
 		defer ticker.Stop()
 		for {
@@ -758,6 +924,7 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 				return
 			case <-ticker.C:
 				sweepProcessRuns()
+				sweepProcessAgentDispatches()
 			}
 		}
 	}()
@@ -770,6 +937,11 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 func sweepProcessRuns() {
 	if !processRoutesEnabled() {
 		return
+	}
+	if count, err := db.OrphanProcessRunsWithMissingScope(); err != nil {
+		slog.Warn("process runtime: scope orphan sweep failed", "error", err)
+	} else if count > 0 {
+		slog.Info("process runtime: orphaned runs whose scope target is gone", "runs", count)
 	}
 	processRuns.mu.Lock()
 	after := processRuns.sweepCursor
@@ -831,7 +1003,11 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	runs, err := db.ListProcessRunSummaries(after, limit)
+	filter, ok := processRunListFilter(w, r)
+	if !ok {
+		return
+	}
+	runs, err := db.ListProcessRunSummaries(after, limit, filter)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -841,6 +1017,8 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		views = append(views, processRunSummaryView{
 			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef,
 			Status: engine.RunStatus(runs[i].Status), StateVersion: runs[i].StateVersion,
+			Scope:     processRunScopeViewOf(runs[i].Scope),
+			Paused:    processRunPauseViewOf(runs[i].Scope),
 			CreatedAt: runs[i].CreatedAt, UpdatedAt: runs[i].UpdatedAt,
 		})
 	}
@@ -862,7 +1040,7 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	// expressible through the same identifier operators use to create runs and
 	// lets them survive routine template version updates.
 	templateID := strings.TrimSpace(request.TemplateID)
-	caller, ok := requirePermission(w, r, PermProcessRunsManage, ActionContext{ProcessTemplate: templateID})
+	caller, scope, ok := authorizeProcessRunCreate(w, r, request, templateID)
 	if !ok {
 		return
 	}
@@ -872,7 +1050,8 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	run, err := createProcessRun(r.Context(), request, string(actor))
+	scope.Owner = string(actor)
+	run, err := createProcessRun(r.Context(), request, string(actor), scope)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -894,7 +1073,14 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 
 func processRunCreateAuditDetail(request processRunCreateRequest) string {
 	profiles, _ := json.Marshal(request.AuthorizeProgramProfiles)
-	return "template: " + strings.TrimSpace(request.TemplateID) + ", authorized profiles: " + string(profiles)
+	detail := "template: " + strings.TrimSpace(request.TemplateID) + ", authorized profiles: " + string(profiles)
+	if group := strings.TrimSpace(request.Group); group != "" {
+		detail += ", group: " + stripControl(group)
+	}
+	if bound := strings.TrimSpace(request.Agent); bound != "" {
+		detail += ", agent: " + stripControl(bound)
+	}
+	return detail
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
@@ -966,16 +1152,30 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, map[string]any{"events": views, "next": next})
 }
 
+// handleProcessRunResume releases an operator pause, if any, and then resumes
+// (or ticks) the run.
 func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
+	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	if !ok {
 		return
 	}
 	if err := decodeEmptyProcessRuntimeRequest(w, r); err != nil {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
+		return
+	}
 	runID := r.PathValue("id")
-	started, err := processRuns.begin(runID, processRunStart{mode: processRunResume})
+	setAuditDetail(r, "run: "+runID)
+	unpaused, err := releaseProcessRunPause(strings.TrimSpace(runID), string(actor))
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	started, err := resumeProcessRun(runID, unpaused)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -985,7 +1185,7 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "unpaused": unpaused, "run": view})
 }
 
 func handleProcessRunReissue(w http.ResponseWriter, r *http.Request) {
@@ -1048,10 +1248,22 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	selector := strings.TrimSpace(request.NodeID)
 	setAuditDetail(r, "run: "+runID+", command node: "+stripControl(selector)+
 		", outcome: "+stripControl(string(request.Outcome)))
+	outcome := executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note}
 	started, err := processRuns.begin(runID, processRunStart{
-		mode: processRunRecordOutcome, actor: string(actor), selector: selector,
-		outcome: executor.RecordedOutcome{Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error, Note: request.Note},
+		mode: processRunRecordOutcome, actor: string(actor), selector: selector, outcome: outcome,
 	})
+	if errors.Is(err, errProcessRunClaimed) {
+		// A live owner is driving sibling programs. Its executing programs are
+		// never reconcilable, so routing the outcome through the owner can only
+		// settle an agent command: human preemption of a performer.
+		started, err = processRuns.submit(runID, string(actor), processRunInput{
+			outcome: &processRunOutcomeInput{selector: selector, outcome: outcome}})
+		if errors.Is(err, executor.ErrNoReconciliation) {
+			// The selected command is a program the owner is executing: it is
+			// not the operator's to settle while the run is claimed.
+			err = errProcessRunClaimed
+		}
+	}
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -1167,7 +1379,7 @@ func stripControl(value string) string {
 	}, value)
 }
 
-func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
+func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string, scope db.ProcessRunScope) (*executor.Run, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
 		return nil, fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
@@ -1180,9 +1392,16 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := fs.GetTemplate(ctx, head.Ref)
+	stored, err := fs.GetTemplate(ctx, head.Ref)
 	if err != nil {
 		return nil, err
+	}
+	// Subprocess template references are pinned and embedded here, once: the
+	// run snapshot then carries every body it executes, so preparation and a
+	// cold load never read the template store again.
+	tmpl, err := model.ResolveSubprocessRefs(stored, processSubprocessResolver(ctx, fs))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", db.ErrProcessRunInvalid, err)
 	}
 	params := request.Params
 	if params == nil {
@@ -1226,7 +1445,11 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	payload, err := json.Marshal(struct {
 		TemplateRef           string   `json:"templateRef"`
 		ProgramAuthorizations []string `json:"programAuthorizations"`
-	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations})
+		ScopeKind             string   `json:"scopeKind"`
+		ScopeGroupID          int64    `json:"scopeGroupId,omitempty"`
+		ScopeAgentID          string   `json:"scopeAgentId,omitempty"`
+	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations,
+		ScopeKind: scope.Kind, ScopeGroupID: scope.GroupID, ScopeAgentID: scope.AgentID})
 	if err != nil {
 		return nil, err
 	}
@@ -1234,7 +1457,7 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: paramsJSON, ProgramAuthorizationsJSON: authorizationsJSON,
 		Status: string(checkpoint.Status), StateVersion: db.InitialProcessRunStateVersion,
-		CheckpointJSON: checkpointJSON,
+		CheckpointJSON: checkpointJSON, Scope: scope,
 	}
 	createdAt := time.Now().UTC()
 	initialEvents := []db.ProcessRunEvent{{
@@ -1262,7 +1485,7 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		ID: record.ID, TemplateRef: record.TemplateRef, TemplateSnapshotJSON: record.TemplateSnapshotJSON,
 		ParamsJSON: record.ParamsJSON, ProgramAuthorizationsJSON: record.ProgramAuthorizationsJSON,
 		Status: record.Status, CheckpointJSON: record.CheckpointJSON,
-		InitialEvents: initialEvents,
+		Scope: record.Scope, InitialEvents: initialEvents,
 	})
 	if err != nil {
 		return nil, err
@@ -1301,6 +1524,26 @@ func normalizeProcessRunAuthorizations(profiles []string) ([]string, error) {
 	return normalized, nil
 }
 
+// processSubprocessResolver loads a referenced subprocess template from the
+// store: the pinned version when one is authored, the head otherwise.
+func processSubprocessResolver(ctx context.Context, fs *store.FS) model.TemplateResolver {
+	return func(id, version string) (*model.Template, string, error) {
+		ref := id + "@" + version
+		if version == "" {
+			head, err := fs.GetTemplateHead(ctx, id)
+			if err != nil {
+				return nil, "", err
+			}
+			ref = head.Ref
+		}
+		tmpl, err := fs.GetTemplate(ctx, ref)
+		if err != nil {
+			return nil, "", err
+		}
+		return tmpl, strings.TrimPrefix(ref, id+"@"), nil
+	}
+}
+
 func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []string) []string {
 	allowed := make(map[string]struct{}, len(authorized))
 	for _, profile := range authorized {
@@ -1315,9 +1558,11 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 			missingSet[performer.Profile] = struct{}{}
 		}
 	}
-	for _, node := range tmpl.Nodes {
+	// WalkNodes descends into subprocess bodies: their programs run as part of
+	// this run, so they need the same authorization up front.
+	model.WalkNodes(tmpl, func(_ string, node model.Node) {
 		if node.Type != model.NodeTypeTask {
-			continue
+			return
 		}
 		// A compound task dispatches one program per derived stage, not just the
 		// parent's do performer, so every stage profile has to be authorized
@@ -1334,7 +1579,7 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 		if node.Review != nil {
 			require(&node.Review.Performer)
 		}
-	}
+	})
 	missing := make([]string, 0, len(missingSet))
 	for profile := range missingSet {
 		missing = append(missing, profile)
@@ -1356,6 +1601,12 @@ func loadProcessRunView(runID string) (processRunView, error) {
 }
 
 func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, claimed bool) (processRunView, error) {
+	return processRunViewWith(record, accounted, claimed, newProcessLiveness())
+}
+
+// processRunViewWith is processRunViewOf sharing one liveness read across the
+// runs a caller projects.
+func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, claimed bool, live processLiveness) (processRunView, error) {
 	var checkpoint engine.Checkpoint
 	if err := record.DecodeCheckpoint(&checkpoint); err != nil {
 		return processRunView{}, err
@@ -1372,21 +1623,45 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 	// is precisely why a cold load calls every outstanding command ambiguous.
 	// The live claim is the only thing that knows which ones it owns; see
 	// loadProcessRunView for how that reading is kept conservative.
+	performerByCommand, performers, err := processRunPerformerViews(record.ID, live)
+	if err != nil {
+		return processRunView{}, err
+	}
 	commands := make([]processRunCommandView, 0, len(checkpoint.Commands))
 	needsReconcile := false
 	anyExecuting := false
+	needsPerformer := false
+	awaitingPerformer := false
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
-		state := processCommandNeedsReconcile
+		view := processRunCommandView{
+			CommandID: command.ID, NodeID: command.NodeID, Kind: command.Kind, Attempt: command.Attempt,
+			Profile: command.Program.Profile, Program: command.Program.Run,
+		}
+		if command.Kind == engine.CommandAgent {
+			if command.Agent != nil {
+				view.Profile = command.Agent.Profile
+			}
+			view.State = db.ProcessDispatchPending
+			if performer, ok := performerByCommand[command.ID]; ok {
+				view.State = performer.State
+				view.Performer = &performer
+			}
+			if view.State == db.ProcessDispatchNeedsPerformer {
+				needsPerformer = true
+			} else {
+				awaitingPerformer = true
+			}
+			commands = append(commands, view)
+			continue
+		}
+		view.State = processCommandNeedsReconcile
 		if _, live := accounted[command.NodeID]; live {
-			state, anyExecuting = processCommandExecuting, true
+			view.State, anyExecuting = processCommandExecuting, true
 		} else {
 			needsReconcile = true
 		}
-		commands = append(commands, processRunCommandView{
-			CommandID: command.ID, NodeID: command.NodeID,
-			Profile: command.Program.Profile, Program: command.Program.Run, State: state,
-		})
+		commands = append(commands, view)
 	}
 
 	awaitingDecisions := make([]processRunDecisionView, 0, len(checkpoint.AwaitingDecisions))
@@ -1441,18 +1716,32 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 	// a parked branch, and the plural fields above stay addressable regardless.
 	action := "runnable"
 	switch {
+	case record.Scope.Orphaned() && checkpoint.Status == engine.RunRunning:
+		action = "orphaned"
 	case needsReconcile:
 		action = processCommandNeedsReconcile
 	case anyExecuting:
 		action = processCommandExecuting
+	case needsPerformer:
+		action = processCommandNeedsPerformer
 	case awaiting != nil:
 		action = "awaiting_decision"
 	case len(blocked) > 0:
 		action = "blocked"
+	case record.Scope.Paused() && checkpoint.Status == engine.RunRunning:
+		// Below everything a human must still answer: a pause holds new work,
+		// it does not settle what is already waiting on someone.
+		action = "paused"
+	case awaitingPerformer:
+		action = processCommandAwaitPerformer
 	case checkpoint.Status != engine.RunRunning:
 		action = "terminal"
 	case claimed:
 		action = "driving"
+	}
+	programBounds, err := processRunProgramBounds(record.ID)
+	if err != nil {
+		return processRunView{}, err
 	}
 	return processRunView{
 		ID: record.ID, TemplateRef: record.TemplateRef, Params: params,
@@ -1460,7 +1749,8 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
-		Blocked:   blocked,
+		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
+		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
@@ -1516,6 +1806,14 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "process_run_not_found", err.Error())
 	case errors.Is(err, db.ErrProcessRunExists):
 		writeError(w, http.StatusConflict, "process_run_exists", err.Error())
+	case errors.Is(err, errProcessRunOrphaned):
+		writeError(w, http.StatusConflict, "process_run_orphaned", err.Error())
+	case errors.Is(err, errProcessRunPaused):
+		writeError(w, http.StatusConflict, "process_run_paused", err.Error())
+	case errors.Is(err, db.ErrProcessRunPause):
+		writeError(w, http.StatusConflict, "process_run_pause", err.Error())
+	case errors.Is(err, db.ErrProcessRunRescope):
+		writeError(w, http.StatusConflict, "process_run_rescope", err.Error())
 	case errors.Is(err, errProcessRunClaimed):
 		writeError(w, http.StatusConflict, "process_run_claimed", err.Error())
 	case errors.Is(err, errProcessRunCapacity):

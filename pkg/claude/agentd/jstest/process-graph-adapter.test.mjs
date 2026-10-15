@@ -71,8 +71,8 @@ test('editor interaction layering raises one node without changing semantic laye
   const canonicalNodeOrder = nodeOrder();
   const canonicalPortOrder = portOrder();
   assert.deepEqual([...viewport.children].map((layer) => layer.dataset.key),
-    ['edges', 'nodes', 'front-node', 'ports', 'front-ports'],
-    'edges, nodes, ports, and the two contained paint layers keep fixed semantic stacking');
+    ['groups', 'edges', 'nodes', 'front-node', 'ports', 'front-ports'],
+    'group frames, edges, nodes, ports, and the two contained paint layers keep fixed semantic stacking');
 
   const start = nodeLayer.querySelector('[data-node-id="start"]');
   const focusElement = harness.window.HTMLElement.prototype.focus;

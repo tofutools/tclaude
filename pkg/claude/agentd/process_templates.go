@@ -75,6 +75,9 @@ type processEditDiag struct {
 	Severity model.Severity `json:"severity"`
 	Code     string         `json:"code"`
 	Message  string         `json:"message"`
+	// TemplateRef names the stored template a subprocess-reference
+	// diagnostic comes from; the editor offers to open it.
+	TemplateRef string `json:"templateRef,omitempty"`
 }
 
 type processEditModelError struct{ err error }
@@ -480,9 +483,15 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 		writeProcessEditParseError(w, err)
 		return
 	}
+	diagnostics := diagnosticsForEditor(parsed.Diagnostics, parsed.Template)
+	if !parsed.Diagnostics.HasErrors() {
+		if fs, err := store.NewFS(processStoreRoot()); err == nil {
+			diagnostics = append(diagnostics, templateRefDiagnostics(parsed.Template, processSubprocessResolver(r.Context(), fs))...)
+		}
+	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,
-		"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+		"diagnostics": diagnostics,
 	})
 }
 
@@ -744,6 +753,17 @@ func diagnosticEditorTarget(path string, tmpl *model.Template) (string, string) 
 		return "template", ""
 	}
 	nodeID, field := splitDiagnosticNodePath(rest, tmpl)
+	// A diagnostic inside an inline subprocess body targets the inner node by
+	// its namespaced id ("qa/unit"), the same key the editor's body layout
+	// uses, so a drilled-in canvas can badge it (and the root can roll it up
+	// onto the ▣ node).
+	if inner, ok := strings.CutPrefix(field, "subprocess."); ok && tmpl != nil {
+		if node, found := tmpl.Nodes[nodeID]; found && node.Subprocess != nil && node.Subprocess.IsInline() {
+			if scope, target := diagnosticEditorTarget(inner, &model.Template{Nodes: node.Subprocess.Nodes}); scope != "template" {
+				return scope, nodeID + model.SubprocessNodeIDSeparator + target
+			}
+		}
+	}
 	if outcome, isEdge := strings.CutPrefix(field, "next."); isEdge {
 		return "edge", nodeID + ":" + outcome
 	}

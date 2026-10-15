@@ -87,8 +87,8 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 	)
 	editorIsland := read("js/process-editor-island.js")
 	must("process-editor-island.js", editorIsland,
-		`class="process-action process-scribe-action"`,
-		`onClick=${() => controller.requestScribe('template')}`,
+		"class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`}",
+		"onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}",
 		"Share editor context with process scribe",
 		"BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source",
 		"Send & open scribe",

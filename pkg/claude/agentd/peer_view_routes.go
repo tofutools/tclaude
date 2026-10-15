@@ -3,6 +3,12 @@ package agentd
 // Dashboard routes deliberately left local-only. The route guard test requires
 // an explicit decision here whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	// Process runs are this node's own; a peer view never serves them.
+	"GET /v1/process/context",
+	"POST /v1/process/runs/{id}/decide",
+	"POST /v1/process/runs/{id}/rescope",
+	"POST /v1/process/runs/{id}/pause",
+	"POST /v1/process/runs/{id}/resume",
 	"GET /api/federation/hub/boards", "PATCH /api/federation/hub/boards/{board}", "DELETE /api/federation/hub/boards/{board}",
 	"GET /api/federation/boards/{board}/items", "POST /api/federation/boards/{board}/items", "GET /api/federation/boards/{board}/items/{item}/versions", "PUT /api/federation/boards/{board}/items/{item}/pin", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/fetch", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/contents", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/download", "HEAD /api/federation/boards/{board}/items/{item}/versions/{version}/download", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/preview", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/import", "GET /api/federation/boards/updates", "PUT /api/federation/boards/updates", "GET /api/federation/boards", "POST /api/federation/boards", "POST /api/federation/boards/join", "GET /api/federation/boards/{board}", "DELETE /api/federation/boards/{board}/membership", "GET /api/federation/boards/{board}/members", "PUT /api/federation/boards/{board}/members/{instance}", "DELETE /api/federation/boards/{board}/members/{instance}", "GET /api/federation/boards/{board}/invites", "POST /api/federation/boards/{board}/invites", "DELETE /api/federation/boards/{board}/invites/{token_id}", "POST /api/federation/boards/{board}/rotate-key",
 	"GET /api/agent-bundle/export", "POST /api/agent-bundle/import", "POST /api/paf/redact",
@@ -206,6 +212,7 @@ var peerViewLocalRoutes = []string{
 	"/api/sandbox-profiles",
 	"/api/sandbox-profiles/{name}",
 	"/api/scribe",
+	"GET /api/scribe/{agent}/chat",
 	"/api/shutdown",
 	"/api/slop/channel",
 	"/api/slop/nowplaying",
@@ -259,6 +266,8 @@ var peerViewLocalRoutes = []string{
 	"GET /api/starters",
 	"GET /api/starters/{name}",
 	"GET /api/templates/{name}/export",
+	"GET /v1/process/runs/{id}",
+	"GET /v1/process/runs/{id}/events",
 	"GET /v1/process/template-heads",
 	"GET /v1/process/templates",
 	"GET /v1/process/templates/{id}",
@@ -299,6 +308,9 @@ var peerViewLocalRoutes = []string{
 	"POST /api/templates/{name}/deploy",
 	"POST /api/templates/{name}/instantiate",
 	"POST /api/templates/{name}/reinforce",
+	"POST /v1/process/runs",
+	"POST /v1/process/runs/{id}/decide",
+	"POST /v1/process/runs/{id}/nodes/{node}/assign",
 	"POST /v1/process/templates",
 	"POST /v1/process/templates/{id}",
 	"POST /v1/process/validate",

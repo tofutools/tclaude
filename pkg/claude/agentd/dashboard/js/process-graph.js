@@ -104,6 +104,35 @@ function edgeAccessibleName(edge, issues = []) {
     + `${detail ? `: ${detail}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`;
 }
 
+// Review-diff decoration (process-draft-diff.js): class-coded AND text-coded
+// (a visible "+ added" / "− removed" / "~ fields" tag), never colour-only.
+function diffClasses(diff) {
+  if (!diff) return '';
+  return ` is-diff is-diff-${diff.op} is-diff-${diff.state || 'pending'}`
+    + `${diff.conflict ? ' is-diff-conflict' : ''}${diff.current ? ' is-diff-current' : ''}${diff.ghost ? ' is-diff-ghost' : ''}`;
+}
+
+function diffDescription(diff) {
+  if (!diff) return '';
+  const op = diff.op === 'added' ? 'proposed addition' : diff.op === 'removed' ? 'proposed removal' : 'proposed change';
+  return `, ${op}${diff.state && diff.state !== 'pending' ? ` ${diff.state}` : ''}${diff.conflict ? ', conflicts with your edits' : ''}`;
+}
+
+function renderDiffTag(parent, node) {
+  const diff = node.diff;
+  if (!diff?.tag) return;
+  const text = `${diff.conflict ? '⚠ ' : ''}${diff.state === 'accepted' ? '✓ ' : diff.state === 'rejected' ? '✕ ' : ''}${diff.tag}`;
+  const width = Math.min(node.width + 40, 16 + [...text].length * 6.4);
+  const group = svgElement('g', {
+    class: 'process-diff-tag', transform: `translate(${-node.width / 2} ${-node.height / 2 - 20})`, 'aria-hidden': 'true',
+  });
+  group.append(svgElement('rect', { class: 'process-diff-tag-bg', x: 0, y: 0, width, height: 16, rx: 4 }));
+  const label = svgElement('text', { class: 'process-diff-tag-text', x: 7, y: 12 });
+  label.textContent = text;
+  group.append(label);
+  parent.append(group);
+}
+
 function outgoingCounts(edges) {
   const counts = new Map();
   for (const edge of edges) counts.set(edge.from, (counts.get(edge.from) || 0) + 1);
@@ -278,6 +307,11 @@ function insideLabelLayout(node) {
       return { x: -20, y: -15, width: 40, height: 30, centerY: 0, maxUnits: 4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
     case 'end':
       return { x: -21, y: -15, width: 42, height: 30, centerY: 0, maxUnits: 4.2, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    case 'port-in':
+    case 'port-out':
+      return { x: -22, y: -15, width: 44, height: 30, centerY: 0, maxUnits: 4.4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    case 'subprocess':
+      return { x: -62, y: -24, width: 124, height: 40, centerY: -4, maxUnits: 9, maxLines: 2, lineHeight: 15, className: '' };
     default:
       return { x: -70, y: -25, width: 140, height: 50, centerY: 0, maxUnits: 10.2, maxLines: 3, lineHeight: 16, className: '' };
   }
@@ -368,6 +402,20 @@ function renderShape(parent, node) {
         svgElement('circle', { class: 'process-node-shape process-shape-end', cx: 0, cy: 0, r: node.width / 2 }),
         svgElement('circle', { class: 'process-end-inner', cx: 0, cy: 0, r: node.width / 2 - 7 }),
       );
+      break;
+    case 'subprocess': {
+      // ▣: a framed box — the nested graph — with a drill-in affordance.
+      const w = node.width; const hgt = node.height;
+      parent.append(
+        svgElement('rect', { class: 'process-node-shape process-shape-subprocess', x: -w / 2, y: -hgt / 2, width: w, height: hgt, rx: 10 }),
+        svgElement('rect', { class: 'process-subprocess-frame', x: -w / 2 + 5, y: -hgt / 2 + 5, width: w - 10, height: hgt - 10, rx: 7 }),
+        svgElement('path', { class: 'process-subprocess-mark', d: `M ${w / 2 - 24} ${hgt / 2 - 20} h 10 v 10 h -10 Z M ${w / 2 - 21} ${hgt / 2 - 17} h 4 v 4 h -4 Z` }),
+      );
+      break;
+    }
+    case 'port-in':
+    case 'port-out':
+      parent.append(svgElement('circle', { class: `process-node-shape process-shape-port process-shape-${node.type}`, cx: 0, cy: 0, r: node.width / 2 }));
       break;
     default:
       parent.append(svgElement('rect', {
@@ -481,6 +529,13 @@ function renderMarkers(defs, markerID, backMarkerID) {
   defs.append(marker, backMarker);
 }
 
+// groupActionTarget resolves a group frame's header action (collapse) under
+// an event; only this instance's frames count.
+function groupActionTarget(graph, event) {
+  const action = event?.target?.closest?.('[data-group-action]');
+  return action && graph.groupLayer?.contains(action) ? action : null;
+}
+
 export class ProcessGraph {
   constructor(container, graph = { nodes: [], edges: [] }, options = {}) {
     if (!(container instanceof Element)) throw new TypeError('ProcessGraph container must be a DOM Element');
@@ -541,6 +596,9 @@ export class ProcessGraph {
     this.defs = svgElement('defs');
     renderMarkers(this.defs, this.markerID, this.backMarkerID);
     this.viewport = svgElement('g', { class: 'process-graph-viewport' });
+    // Frames of inline-expanded subprocesses (graph.groups) paint beneath
+    // everything else; only their header actions take pointer input.
+    this.groupLayer = svgElement('g', { class: 'process-group-layer', 'data-key': 'groups' });
     this.edgeLayer = svgElement('g', { class: 'process-edge-layer', 'data-key': 'edges' });
     this.nodeLayer = svgElement('g', { class: 'process-node-layer', 'data-key': 'nodes' });
     this.frontNodeLayer = svgElement('g', {
@@ -551,7 +609,7 @@ export class ProcessGraph {
       class: 'process-front-port-layer', 'data-key': 'front-ports', 'aria-hidden': 'true',
     });
     this.viewport.append(
-      this.edgeLayer, this.nodeLayer, this.frontNodeLayer, this.portLayer, this.frontPortLayer,
+      this.groupLayer, this.edgeLayer, this.nodeLayer, this.frontNodeLayer, this.portLayer, this.frontPortLayer,
     );
     this.svg.append(this.defs, this.viewport);
     this.controls = htmlElement('div', { class: 'process-graph-controls', 'aria-label': 'Graph view controls' });
@@ -611,6 +669,7 @@ export class ProcessGraph {
     // Built from the same laid-out projection the edges come from, so edge
     // labels and node types can never describe different graphs.
     this.nodeTypes = new Map((this.layout.nodes || []).map((node) => [node.id, node.type]));
+    this.renderGroups();
     this.renderEdges(this.layout.edges);
     this.nodeLayer.replaceChildren();
     this.portLayer.replaceChildren();
@@ -633,6 +692,46 @@ export class ProcessGraph {
         pointerType: this.pointer.pointerType, target: this.svg,
       });
     }
+  }
+
+  // renderGroups frames each graph.groups entry around its member nodes as
+  // laid out, with a header naming it and a collapse action.
+  renderGroups() {
+    const byID = new Map((this.layout.nodes || []).map((node) => [node.id, node]));
+    this.groupLayer.replaceChildren(...(this.graph.groups || []).flatMap((group) => {
+      const members = (group.nodes || []).map((id) => byID.get(id)).filter(Boolean);
+      if (!members.length) return [];
+      const pad = 26;
+      const left = Math.min(...members.map((node) => node.x - node.width / 2)) - pad;
+      const right = Math.max(...members.map((node) => node.x + node.width / 2)) + pad;
+      const top = Math.min(...members.map((node) => node.y - node.height / 2)) - pad - 22;
+      const bottom = Math.max(...members.map((node) => node.y + node.height / 2)) + pad;
+      const frame = svgElement('g', { class: 'process-group', 'data-group-id': group.id });
+      frame.append(svgElement('rect', {
+        class: 'process-group-frame', x: left, y: top, width: right - left, height: bottom - top, rx: 14,
+      }));
+      const label = svgElement('text', { class: 'process-group-label', x: left + 14, y: top + 20 });
+      label.textContent = `▣ ${group.label || group.id} · expanded`;
+      const action = svgElement('g', {
+        class: 'process-group-action', 'data-group-action': 'collapse', 'data-group-id': group.id,
+        role: 'button', tabindex: '0', 'aria-label': `Collapse ${group.label || group.id}`,
+        transform: `translate(${right - 96} ${top + 6})`,
+      });
+      action.append(svgElement('rect', { class: 'process-group-action-box', x: 0, y: 0, width: 84, height: 20, rx: 6 }));
+      const text = svgElement('text', { class: 'process-group-action-label', x: 42, y: 14, 'text-anchor': 'middle' });
+      text.textContent = '⊟ collapse';
+      action.append(text);
+      frame.append(label, action);
+      return [frame];
+    }));
+  }
+
+  markDropEdge(element) {
+    const id = element?.dataset?.edgeId || null;
+    if (id === this.dropEdgeID) return;
+    this.dropEdgeID = id;
+    for (const marked of this.edgeLayer.querySelectorAll('.is-drop-target')) marked.classList.remove('is-drop-target');
+    if (element) element.classList.add('is-drop-target');
   }
 
   renderEdges(edges) {
@@ -687,7 +786,7 @@ export class ProcessGraph {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
-      class: `process-edge${edge.back ? ' process-edge-back' : ''}`,
+      class: `process-edge${edge.back ? ' process-edge-back' : ''}${diffClasses(edge.diff)}`,
       'data-key': key,
       'data-edge-id': edge.id,
       'data-edge-index': edge.inputIndex,
@@ -696,7 +795,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': edgeAccessibleName(edge, issues),
+      'aria-label': `${edgeAccessibleName(edge, issues)}${diffDescription(edge.diff)}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -729,20 +828,21 @@ export class ProcessGraph {
   renderNode(node) {
     const overlay = overlayPresentation(node.overlay || node.stateOverlay);
     const group = svgElement('g', {
-      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}`,
+      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}${diffClasses(node.diff)}`,
       transform: `translate(${node.x} ${node.y})`,
       'data-key': `node:${node.id}`,
       'data-node-id': node.id,
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}`,
+      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}${diffDescription(node.diff)}`,
     });
     group.dataset.baseAriaLabel = group.getAttribute('aria-label');
     renderShape(group, node);
     const labelSerial = this.labelSerial = (this.labelSerial || 0) + 1;
     renderText(group, node, `process-node-label-clip-${this.instanceID}-${labelSerial}`);
     renderOverlay(group, node, overlay);
+    renderDiffTag(group, node);
     return group;
   }
 
@@ -866,10 +966,20 @@ export class ProcessGraph {
       this.keyboardFocusOwned = false;
       this.cancelActivePointer();
     }, { signal });
-    this.root.addEventListener('dragover', (event) => event.preventDefault(), { signal });
+    // A drag hovering a connector marks it: dropping there splices.
+    this.root.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      this.markDropEdge(this.eventTarget(event).edge);
+    }, { signal });
+    this.root.addEventListener('dragleave', (event) => {
+      if (!this.root.contains(event.relatedTarget)) this.markDropEdge(null);
+    }, { signal });
     this.root.addEventListener('drop', (event) => {
       event.preventDefault();
-      hook(this.options, 'onCanvasDrop')({ point: this.clientToGraph(event.clientX, event.clientY), event });
+      const hit = this.eventTarget(event).edge;
+      this.markDropEdge(null);
+      const edge = hit ? this.layout.edges.find((candidate) => candidate.id === hit.dataset.edgeId) || null : null;
+      hook(this.options, 'onCanvasDrop')({ point: this.clientToGraph(event.clientX, event.clientY), edge, event });
     }, { signal });
   }
 
@@ -1136,6 +1246,7 @@ export class ProcessGraph {
 
   onPointerDown(event) {
     this.observeCanvasPointer?.(event);
+    if (groupActionTarget(this, event)) return;
     if (this.pointer) {
       // A pointerdown repeating the armed gesture's own pointer id AND button
       // means that button was released without its pointerup/pointercancel
@@ -1573,6 +1684,12 @@ export class ProcessGraph {
 
   onClick(event) {
     if (this.dragMoved || this.suppressClick) return;
+    const groupAction = groupActionTarget(this, event);
+    if (groupAction) {
+      this.pendingClickTarget = null;
+      hook(this.options, 'onGroupAction')({ id: groupAction.dataset.groupId, action: groupAction.dataset.groupAction, event });
+      return;
+    }
     const pending = this.pendingClickTarget;
     this.pendingClickTarget = null;
     const target = pending ? {
@@ -1613,6 +1730,12 @@ export class ProcessGraph {
   }
 
   onKeyDown(event) {
+    const groupAction = (event.key === 'Enter' || event.key === ' ') && groupActionTarget(this, event);
+    if (groupAction) {
+      event.preventDefault();
+      hook(this.options, 'onGroupAction')({ id: groupAction.dataset.groupId, action: groupAction.dataset.groupAction, event });
+      return;
+    }
     const target = this.eventTarget(event);
     if (event.key === 'Escape' && this.keyboardPort) {
       event.preventDefault();
@@ -1835,6 +1958,18 @@ export class ProcessGraph {
     this.view.y = rect.height / 2 - y * this.view.k;
     this.applyView();
     return true;
+  }
+
+  // revealPoint pans only when graph point (x, y) sits outside the viewport
+  // (less a margin), so stepping through nearby items keeps the view steady.
+  revealPoint(x, y, margin = 60) {
+    const rect = this.svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const sx = this.view.x + x * this.view.k;
+    const sy = this.view.y + y * this.view.k;
+    const inset = Math.min(margin, rect.width / 4, rect.height / 4);
+    if (sx >= inset && sx <= rect.width - inset && sy >= inset && sy <= rect.height - inset) return false;
+    return this.centerOn(x, y);
   }
 
   focusNode(id) {

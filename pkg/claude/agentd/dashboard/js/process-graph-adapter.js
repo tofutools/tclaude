@@ -48,6 +48,7 @@ export class ProcessGraphAdapter {
       onNodeClick: emit('nodeClick'),
       onNodeDblClick: emit('nodeDoubleClick'),
       onEdgeClick: emit('edgeClick'),
+      onGroupAction: emit('groupAction'),
       onCanvasClick: emit('canvasClick'),
       onViewportChange: emit('viewportChange'),
       onMarqueeSelect: emit('marqueeSelection'),
@@ -110,6 +111,7 @@ export class ProcessGraphAdapter {
 
   fit() { if (!this.disposed) this.widget.fitToView(); }
   centerOn(x, y) { if (!this.disposed) this.widget.centerOn(x, y); }
+  revealPoint(x, y) { if (!this.disposed) this.widget.revealPoint(x, y); }
   zoomBy(factor) { return this.disposed ? false : this.widget.zoomBy(factor); }
   resetZoom() { return this.disposed ? false : this.widget.resetZoom(); }
   resetInteractionLayering() { if (!this.disposed) this.widget.resetInteractionLayering(); }

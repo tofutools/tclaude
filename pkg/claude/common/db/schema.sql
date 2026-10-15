@@ -965,11 +965,27 @@ CREATE TABLE "process_runs" (
 			updated_at             INTEGER NOT NULL
 			                           CHECK(length(CAST(updated_at AS BLOB)) BETWEEN 1 AND 64)
 		, program_authorizations_json TEXT NOT NULL DEFAULT '[]'
-			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144)) STRICT;
+			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144), scope_kind TEXT NOT NULL DEFAULT 'none'
+			CHECK(scope_kind IN ('none', 'group', 'agent')), scope_group_id INTEGER NOT NULL DEFAULT 0
+			CHECK(scope_group_id >= 0), scope_agent_id TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(scope_agent_id AS BLOB)) <= 128), owner TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(owner AS BLOB)) <= 256), scope_state TEXT NOT NULL DEFAULT 'bound'
+			CHECK(scope_state IN ('bound', 'orphaned')), paused_at INTEGER, paused_by TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(paused_by AS BLOB)) <= 256)) STRICT;
 
 CREATE INDEX idx_process_runs_active
 			ON process_runs(id)
 			WHERE status NOT IN ('completed', 'failed', 'canceled');
+
+CREATE INDEX idx_process_runs_scope_group
+			ON process_runs(scope_group_id, id) WHERE scope_kind = 'group';
+
+CREATE INDEX idx_process_runs_scope_agent
+			ON process_runs(scope_agent_id, id) WHERE scope_kind = 'agent';
+
+CREATE INDEX idx_process_runs_scope_recent
+			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
+			WHERE scope_kind != 'none';
 
 CREATE TABLE "process_run_events" (
 			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
@@ -1852,3 +1868,39 @@ CREATE TABLE saved_prompts (
  name TEXT PRIMARY KEY NOT NULL,
  body TEXT NOT NULL
  );
+
+CREATE TABLE process_agent_dispatches (
+	run_id         TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
+	command_id     TEXT NOT NULL CHECK(length(CAST(command_id AS BLOB)) BETWEEN 1 AND 1024),
+	node_id        TEXT NOT NULL CHECK(length(CAST(node_id AS BLOB)) BETWEEN 1 AND 512),
+	attempt        INTEGER NOT NULL CHECK(attempt >= 1),
+	state          TEXT NOT NULL CHECK(state IN ('pending', 'needs_performer', 'delivered', 'reported', 'closed')),
+	agent_id       TEXT NOT NULL DEFAULT '',
+	resolution     TEXT NOT NULL DEFAULT '',
+	wait_reason    TEXT NOT NULL DEFAULT '',
+	message_id     INTEGER NOT NULL DEFAULT 0,
+	deliveries     INTEGER NOT NULL DEFAULT 0,
+	report_outcome TEXT NOT NULL DEFAULT '',
+	report_note    TEXT NOT NULL DEFAULT '',
+	created_at     INTEGER NOT NULL,
+	updated_at     INTEGER NOT NULL,
+	delivered_at   INTEGER,
+	reported_at    INTEGER,
+	PRIMARY KEY (run_id, command_id)
+) STRICT;
+
+CREATE INDEX idx_process_agent_dispatches_agent
+	ON process_agent_dispatches(agent_id, state);
+
+CREATE INDEX idx_process_agent_dispatches_open
+	ON process_agent_dispatches(state) WHERE state IN ('pending', 'needs_performer', 'delivered', 'reported');
+
+CREATE TABLE agent_turn_replies (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+	conv_id    TEXT NOT NULL,
+	body       TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_agent_turn_replies_agent ON agent_turn_replies(agent_id, id);

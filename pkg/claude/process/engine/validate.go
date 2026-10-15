@@ -44,12 +44,22 @@ const (
 	// expansion. Advancing it is what completes the parent and settles the
 	// parent's authored outgoing route, exactly once.
 	definitionStageDone
+	// definitionSubprocess is an authored subprocess node. Its body is prepared
+	// as namespaced nodes appended contiguously right after it; advancing the
+	// node starts the body at its entry, and the node stays running until a
+	// body end node completes it.
+	definitionSubprocess
+	// definitionSubprocessExit is an end node of a subprocess body. Advancing it
+	// completes the owning subprocess node through the outcome its out-port
+	// names, which is the one way a body leaves.
+	definitionSubprocessExit
 )
 
 type definitionNode struct {
 	id      string
 	kind    definitionNodeKind
-	program ProgramCommand // task nodes only
+	program ProgramCommand // program task nodes only
+	agent   *AgentCommand  // agent task nodes only
 	// maxAttempts is the authored retry budget of a task node, first attempt
 	// included, and 1 for a task with no authored retry. It is the ONLY thing
 	// preparation carries about retry: the reducer needs a ceiling to compare
@@ -107,6 +117,18 @@ type definitionNode struct {
 	// gated by a person", which is what the plan-stage ceiling rule turns on. Both
 	// are prepared once so neither question is ever a walk of the child list.
 	approvalGate int
+	// scope is the prepared index of the subprocess node whose body holds this
+	// node, and -1 for a node of the template's own graph. Compound stages share
+	// their parent's scope.
+	scope int
+	// scopeEnd is, on a subprocess node, one past the prepared index of the last
+	// node of its body: the body is exactly the range (index, scopeEnd). It is
+	// -1 everywhere else.
+	scopeEnd int
+	// entry is a subprocess node's prepared body entry index, and -1 elsewhere.
+	entry int
+	// exitOutcome is the parent outcome a subprocess exit node leaves through.
+	exitOutcome string
 }
 
 type definitionEdge struct {
@@ -131,14 +153,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	if err := RequireEligible(tmpl); err != nil {
 		return nil, err
 	}
-	order, err := topologicalOrder(tmpl)
-	if err != nil {
-		return nil, err
-	}
-	definition := &Definition{
-		nodes: make([]definitionNode, 0, len(order)),
-		index: make(map[string]int, len(order)),
-	}
+	definition := &Definition{index: make(map[string]int, len(tmpl.Nodes))}
 	// appendNode is the single insertion point, so the id->index map and the
 	// prepared order cannot disagree. Authoring rejects every child-id collision
 	// before this runs (model.validateExpansionCollisions); the guard is here so
@@ -153,130 +168,21 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		definition.nodes = append(definition.nodes, prepared)
 		return index, nil
 	}
-	for _, nodeID := range order {
-		node := tmpl.Nodes[nodeID]
-		prepared := definitionNode{
-			id:           nodeID,
-			parent:       -1,
-			doAnchor:     -1,
-			planAnchor:   -1,
-			approvalGate: -1,
-			joinAll:      node.Join == model.JoinAll,
-			joinAny:      node.Join == model.JoinAny,
-		}
-		switch node.Type {
-		case model.NodeTypeStart:
-			prepared.kind = definitionStart
-		case model.NodeTypeParallel:
-			prepared.kind = definitionParallel
-		case model.NodeTypeTask:
-			if node.IsCompound() {
-				// The parent runs no program: its do work is one of the derived
-				// stages below. It keeps the authored edges and the child list.
-				prepared.kind = definitionCompound
-				break
-			}
-			prepared.kind = definitionTask
-			// Eligibility already admitted only the retry shape this engine
-			// executes, so the budget is taken as authored; RetryBudget resolves an
-			// absent policy to the fail-fast single attempt.
-			prepared.maxAttempts = model.RetryBudget(node.Retry)
-			prepared.retryAuthored = node.Retry != nil
-			program, err := bindProgram(nodeID, *node.Performer, params)
-			if err != nil {
-				return nil, err
-			}
-			prepared.program = program
-		case model.NodeTypeDecision:
-			prepared.kind = definitionDecision
-			prepared.verdicts = sortedOutcomes(node.Next)
-		case model.NodeTypeEnd:
-			prepared.kind = definitionEnd
-			prepared.terminal = terminalStatus(node.Result)
-		}
-		parentIndex, err := appendNode(prepared)
-		if err != nil {
-			return nil, err
-		}
-		if prepared.kind != definitionCompound {
-			continue
-		}
-		// Derived stages are appended immediately after their parent, so the
-		// prepared order stays a single deterministic sequence and a compound's
-		// stages sit exactly where the parent did.
-		for _, spec := range model.ExpandNode(nodeID, node) {
-			// Every stage but the do stage is a single fail-fast attempt:
-			// eligibility rejects stage retry and approvalRetry policies, so no
-			// other child carries an authored budget.
-			child := definitionNode{
-				id: spec.ChildID, parent: parentIndex, doAnchor: -1, planAnchor: -1,
-				approvalGate: -1, stage: spec.Stage, maxAttempts: 1,
-			}
-			switch spec.Stage {
-			case model.StageDone:
-				child.kind = definitionStageDone
-			case model.StagePlanApproval:
-				// The one prepared stage nobody dispatches. It is an ordinary
-				// decision as far as the reducer, the durable obligation outbox, and
-				// every decision surface are concerned; only its verdict vocabulary
-				// is fixed rather than authored, because a compound's stages have no
-				// authored edges for an author to have named outcomes on.
-				//
-				// bindProgram is deliberately never called for it: model.ExpandNode
-				// gives it a synthetic human performer that describes who decides,
-				// not a program to run.
-				child.kind = definitionDecision
-				child.verdicts = approvalVerdicts()
-			default:
-				child.kind = definitionTask
-				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
-				if err != nil {
-					return nil, err
-				}
-				child.program = program
-			}
-			// The compound's authored retry budget belongs to the do stage and to
-			// nothing else. It is the SINGLE rework budget: it bounds do executions
-			// whether a do program failed or a gate sent the work back, which is why
-			// no gate is ever prepared with one of its own.
-			if spec.Stage == model.StageDo {
-				child.maxAttempts = model.RetryBudget(node.Retry)
-				child.retryAuthored = node.Retry != nil
-			}
-			childIndex, err := appendNode(child)
-			if err != nil {
-				return nil, err
-			}
-			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
-			switch spec.Stage {
-			case model.StageDo:
-				definition.nodes[parentIndex].doAnchor = childIndex
-			case model.StagePlan:
-				definition.nodes[parentIndex].planAnchor = childIndex
-			case model.StagePlanApproval:
-				definition.nodes[parentIndex].approvalGate = childIndex
-			}
-		}
-		if definition.nodes[parentIndex].doAnchor < 0 {
-			return nil, fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, nodeID)
-		}
-		// An approval gate whose plan child is missing would be a decision nothing
-		// could ever derive a window identity for. Expansion only ever emits the
-		// gate directly after the plan stage, so this fails closed on a caller that
-		// reached preparation with an expansion this engine did not derive.
-		if parent := definition.nodes[parentIndex]; parent.approvalGate >= 0 && parent.planAnchor < 0 {
-			return nil, fmt.Errorf("%w: compound %q expanded an approval gate without a plan stage",
-				ErrInvalidDefinition, nodeID)
-		}
+	// nexts holds each authored node's next map with namespaced targets, so the
+	// edge pass below never has to find a node's scope again.
+	nexts := make(map[int]model.Next, len(tmpl.Nodes))
+	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts); err != nil {
+		return nil, err
 	}
 	for fromIndex := range definition.nodes {
 		from := &definition.nodes[fromIndex]
 		// Derived stages have no authored edges, and the engine gives them no
-		// synthetic ones: their sequence is the parent's ordered child list.
-		if from.parent >= 0 {
+		// synthetic ones: their sequence is the parent's ordered child list. A
+		// subprocess exit has none either: it completes its owning node.
+		if from.parent >= 0 || from.kind == definitionSubprocessExit {
 			continue
 		}
-		next := tmpl.Nodes[from.id].Next
+		next := nexts[fromIndex]
 		for _, outcome := range sortedOutcomes(next) {
 			toIndex, ok := definition.index[next[outcome]]
 			if !ok {
@@ -298,6 +204,206 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		}
 	}
 	return definition, nil
+}
+
+// prepareScope prepares one graph scope — the template, or a subprocess body
+// namespaced under prefix — in deterministic topological order. owner is the
+// subprocess node whose body this is, and scope its prepared index (nil and -1
+// for the template itself). Each subprocess body is appended contiguously right
+// after its node, so a body is always one index range.
+func prepareScope(definition *Definition, tmpl *model.Template, params map[string]string, prefix string,
+	scope int, owner *model.Node, appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	order, err := topologicalOrder(tmpl)
+	if err != nil {
+		return err
+	}
+	for _, nodeID := range order {
+		node := tmpl.Nodes[nodeID]
+		id := prefix + nodeID
+		prepared := definitionNode{
+			id:           id,
+			parent:       -1,
+			doAnchor:     -1,
+			planAnchor:   -1,
+			approvalGate: -1,
+			scope:        scope,
+			scopeEnd:     -1,
+			entry:        -1,
+			joinAll:      node.Join == model.JoinAll,
+			joinAny:      node.Join == model.JoinAny,
+		}
+		switch node.Type {
+		case model.NodeTypeStart:
+			prepared.kind = definitionStart
+		case model.NodeTypeParallel:
+			prepared.kind = definitionParallel
+		case model.NodeTypeTask:
+			if node.IsCompound() {
+				// The parent runs no program: its do work is one of the derived
+				// stages below. It keeps the authored edges and the child list.
+				prepared.kind = definitionCompound
+				break
+			}
+			prepared.kind = definitionTask
+			// Eligibility already admitted only the retry shape this engine
+			// executes, so the budget is taken as authored; RetryBudget resolves an
+			// absent policy to the fail-fast single attempt.
+			prepared.maxAttempts = model.RetryBudget(node.Retry)
+			prepared.retryAuthored = node.Retry != nil
+			if node.Performer.Kind == model.PerformerAgent {
+				agent, err := bindAgent(id, *node.Performer, node.Retry, params)
+				if err != nil {
+					return err
+				}
+				prepared.agent = agent
+				break
+			}
+			program, err := bindProgram(id, *node.Performer, params)
+			if err != nil {
+				return err
+			}
+			prepared.program = program
+		case model.NodeTypeDecision:
+			prepared.kind = definitionDecision
+			prepared.verdicts = sortedOutcomes(node.Next)
+		case model.NodeTypeEnd:
+			if owner != nil {
+				// A body end node leaves the subprocess through its out-port.
+				outcome, ok := owner.Subprocess.OutputOutcome(nodeID, owner.Next)
+				if !ok {
+					return fmt.Errorf("%w: subprocess end %q has no out-port outcome", ErrInvalidDefinition, id)
+				}
+				prepared.kind = definitionSubprocessExit
+				prepared.exitOutcome = outcome
+				break
+			}
+			prepared.kind = definitionEnd
+			prepared.terminal = terminalStatus(node.Result)
+		case model.NodeTypeSubprocess:
+			prepared.kind = definitionSubprocess
+		}
+		parentIndex, err := appendNode(prepared)
+		if err != nil {
+			return err
+		}
+		if prepared.kind != definitionSubprocessExit {
+			nexts[parentIndex] = namespacedNext(node.Next, prefix)
+		}
+		if prepared.kind == definitionSubprocess {
+			if err := prepareSubprocess(definition, parentIndex, node, params, appendNode, nexts); err != nil {
+				return err
+			}
+			continue
+		}
+		if prepared.kind != definitionCompound {
+			continue
+		}
+		// Derived stages are appended immediately after their parent, so the
+		// prepared order stays a single deterministic sequence and a compound's
+		// stages sit exactly where the parent did.
+		for _, spec := range model.ExpandNode(id, node) {
+			// Every stage but the do stage is a single fail-fast attempt:
+			// eligibility rejects stage retry and approvalRetry policies, so no
+			// other child carries an authored budget.
+			child := definitionNode{
+				id: spec.ChildID, parent: parentIndex, doAnchor: -1, planAnchor: -1,
+				approvalGate: -1, stage: spec.Stage, maxAttempts: 1,
+				scope: scope, scopeEnd: -1, entry: -1,
+			}
+			switch spec.Stage {
+			case model.StageDone:
+				child.kind = definitionStageDone
+			case model.StagePlanApproval:
+				// The one prepared stage nobody dispatches. It is an ordinary
+				// decision as far as the reducer, the durable obligation outbox, and
+				// every decision surface are concerned; only its verdict vocabulary
+				// is fixed rather than authored, because a compound's stages have no
+				// authored edges for an author to have named outcomes on.
+				//
+				// bindProgram is deliberately never called for it: model.ExpandNode
+				// gives it a synthetic human performer that describes who decides,
+				// not a program to run.
+				child.kind = definitionDecision
+				child.verdicts = approvalVerdicts()
+			default:
+				child.kind = definitionTask
+				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
+				if err != nil {
+					return err
+				}
+				child.program = program
+			}
+			// The compound's authored retry budget belongs to the do stage and to
+			// nothing else. It is the SINGLE rework budget: it bounds do executions
+			// whether a do program failed or a gate sent the work back, which is why
+			// no gate is ever prepared with one of its own.
+			if spec.Stage == model.StageDo {
+				child.maxAttempts = model.RetryBudget(node.Retry)
+				child.retryAuthored = node.Retry != nil
+			}
+			childIndex, err := appendNode(child)
+			if err != nil {
+				return err
+			}
+			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
+			switch spec.Stage {
+			case model.StageDo:
+				definition.nodes[parentIndex].doAnchor = childIndex
+			case model.StagePlan:
+				definition.nodes[parentIndex].planAnchor = childIndex
+			case model.StagePlanApproval:
+				definition.nodes[parentIndex].approvalGate = childIndex
+			}
+		}
+		if definition.nodes[parentIndex].doAnchor < 0 {
+			return fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, id)
+		}
+		// An approval gate whose plan child is missing would be a decision nothing
+		// could ever derive a window identity for. Expansion only ever emits the
+		// gate directly after the plan stage, so this fails closed on a caller that
+		// reached preparation with an expansion this engine did not derive.
+		if parent := definition.nodes[parentIndex]; parent.approvalGate >= 0 && parent.planAnchor < 0 {
+			return fmt.Errorf("%w: compound %q expanded an approval gate without a plan stage",
+				ErrInvalidDefinition, id)
+		}
+	}
+	return nil
+}
+
+// prepareSubprocess prepares one subprocess node's body right after it: the
+// body's params are bound from this scope's params through its in-ports, and
+// its nodes are namespaced under the node's own id.
+func prepareSubprocess(definition *Definition, index int, node model.Node, params map[string]string,
+	appendNode func(definitionNode) (int, error), nexts map[int]model.Next) error {
+	id := definition.nodes[index].id
+	body, ok := node.Subprocess.Body()
+	if !ok {
+		return fmt.Errorf("%w: subprocess %q references template %q, which was not resolved",
+			ErrInvalidDefinition, id, node.Subprocess.TemplateRef)
+	}
+	prefix := id + model.SubprocessNodeIDSeparator
+	if err := prepareScope(definition, body, node.Subprocess.BindInputs(body, params), prefix, index, &node, appendNode, nexts); err != nil {
+		return err
+	}
+	entry, ok := definition.index[prefix+body.Start]
+	if !ok {
+		return fmt.Errorf("%w: subprocess %q has no prepared entry", ErrInvalidDefinition, id)
+	}
+	definition.nodes[index].entry = entry
+	definition.nodes[index].scopeEnd = len(definition.nodes)
+	return nil
+}
+
+// namespacedNext returns a next map whose targets carry a scope prefix.
+func namespacedNext(next model.Next, prefix string) model.Next {
+	if prefix == "" || next == nil {
+		return next
+	}
+	namespaced := make(model.Next, len(next))
+	for outcome, target := range next {
+		namespaced[outcome] = prefix + target
+	}
+	return namespaced
 }
 
 // topologicalOrder returns every node exactly once, the entry node first, in a
@@ -510,6 +616,27 @@ func bindProgram(nodeID string, performer model.Performer, params map[string]str
 		Run:     bound.Run,
 		Args:    append([]string(nil), bound.Args...),
 		Timeout: bound.Timeout,
+	}, nil
+}
+
+// bindAgent binds one agent performer slot to its run parameters. A prompt that
+// names a parameter the run does not supply fails preparation, exactly as a
+// program's run does, so an agent is never handed an instruction with a hole.
+func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolicy, params map[string]string) (*AgentCommand, error) {
+	for _, reference := range model.ParamReferences(performer.Prompt) {
+		if _, ok := params[reference]; !ok {
+			return nil, fmt.Errorf("%w: node %q prompt parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
+		}
+	}
+	bound := model.InterpolatePerformer(performer, params)
+	if strings.TrimSpace(bound.Prompt) == "" {
+		return nil, fmt.Errorf("%w: node %q prompt is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+	}
+	return &AgentCommand{
+		Profile: bound.Profile, Prompt: bound.Prompt, Assignee: bound.Assignee,
+		Model: bound.Model, Effort: bound.Effort,
+		Spawn:     bound.Spawn == model.SpawnAllowed,
+		RetryMode: model.RetryMode(retry),
 	}, nil
 }
 
@@ -770,12 +897,12 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 	seen := make(map[string]struct{}, len(checkpoint.Commands))
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
-		if command.Kind != CommandProgram {
-			return invalid("command kind must be %q", CommandProgram)
-		}
 		node, ok := definitionNodeByID(definition, command.NodeID)
 		if !ok || node.kind != definitionTask {
-			return invalid("command node %q is not a program task", command.NodeID)
+			return invalid("command node %q is not a prepared task", command.NodeID)
+		}
+		if command.Kind != node.commandKind() {
+			return invalid("command kind for node %q must be %q", command.NodeID, node.commandKind())
 		}
 		if _, dup := seen[command.NodeID]; dup {
 			return invalid("duplicate command for node %q", command.NodeID)
@@ -785,7 +912,7 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 		// durable outbox entry that names any attempt other than its node's
 		// current one fails closed here — including one whose id and Attempt
 		// field agree with each other but not with the run's own state.
-		expected := programCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
+		expected := taskCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
 		if !commandsEqual(command, expected) {
 			return invalid("command does not match the deterministic bound request for node %q", command.NodeID)
 		}
@@ -1126,6 +1253,9 @@ func terminalStatus(result string) RunStatus {
 }
 
 func commandsEqual(left, right Command) bool {
+	if (left.Agent == nil) != (right.Agent == nil) || (left.Agent != nil && *left.Agent != *right.Agent) {
+		return false
+	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
 		left.Attempt == right.Attempt &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&

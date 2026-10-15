@@ -94,7 +94,7 @@ test('every performer field is declared for all three kinds or explicitly kind-s
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
   assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
-  assert.deepEqual(keysFor('agent'), ['profile', 'prompt', 'model', 'effort', 'timeout']);
+  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'spawn', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
 });
 

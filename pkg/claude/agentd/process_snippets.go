@@ -286,7 +286,7 @@ func validateSnippetRetryWire(value any) error {
 func validateSnippetPerformerWire(value any) error {
 	record, err := snippetWireRecord(value,
 		"kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee",
-		"model", "effort", "run", "args", "timeout", "contact")
+		"spawn", "model", "effort", "run", "args", "timeout", "contact")
 	if err != nil {
 		return err
 	}
@@ -294,7 +294,7 @@ func validateSnippetPerformerWire(value any) error {
 	if !ok || (kind != string(model.PerformerHuman) && kind != string(model.PerformerAgent) && kind != string(model.PerformerProgram)) {
 		return errors.New("custom snippet contains incompatible process node data")
 	}
-	if err := snippetOptionalStrings(record, "profile", "prompt", "ask", "assignee", "model", "effort", "run", "timeout"); err != nil {
+	if err := snippetOptionalStrings(record, "profile", "prompt", "ask", "assignee", "spawn", "model", "effort", "run", "timeout"); err != nil {
 		return err
 	}
 	for _, field := range []string{"choices", "args"} {

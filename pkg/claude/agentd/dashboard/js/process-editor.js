@@ -24,7 +24,7 @@
 import { createProcessGraphAdapter } from './process-graph-adapter.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_SNIPPETS,
+  PALETTE_SNIPPETS, SCOPE_SEPARATOR,
 } from './process-edit-model.js';
 import { edgePinPlacement, edgePinTitle } from './process-edge-hint.js';
 import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
@@ -36,6 +36,7 @@ import {
   validateProcessSelectionPayload,
 } from './process-editor-clipboard.js';
 import { LiveValidation } from './process-validation.js';
+import { insertNode, spliceNode, unwrapSubprocess, wrapPlan, wrapSelection } from './process-compose.js';
 import {
   NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
   sameTemplateGeneration, templateHeadFromEditView,
@@ -43,6 +44,11 @@ import {
 import {
   makeSelection, selectionContains, selectionItems, toggleSelection,
 } from './process-selection.js';
+import {
+  DRAFT_DIFF_MAX_CHANGES, decideAllDraftChanges, decideDraftChange, diffTemplateDrafts,
+  draftChangeForEdge, draftChangeForNode, draftDiffCounts, mergeDraftDecisions,
+  overlayDraftDiff, pendingDraftChanges, sameDraftContent,
+} from './process-draft-diff.js';
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import {
@@ -50,9 +56,10 @@ import {
 } from './process-connection-feedback.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import {
-  processScribeContextPreview, processScribeEditorContext,
-  processScribeHandoff, processScribePrompt,
+  PROCESS_SCRIBE_CHAT_SUBJECT, processScribeChatMessage, processScribeContextPreview,
+  processScribeEditorContext, processScribeHandoff, processScribePrompt,
 } from './process-scribe.js';
+import { dashPrefs } from './prefs.js';
 import {
   createProcessSnippet, deleteProcessSnippet, loadProcessSnippets, renameProcessSnippet,
 } from './process-snippet-library.js';
@@ -98,8 +105,70 @@ export function hasNonCollapsedDOMSelection(event) {
   }
 }
 
+// An open proposal review (diffReview) freezes the draft exactly like a
+// pending reload: the review's three-way diff was computed against it.
 function externalInteractionPending(editor) {
-  return !!(editor.externalDecisionPending || editor.externalReloadPending);
+  return !!(editor.externalDecisionPending || editor.externalReloadPending || editor.diffReview);
+}
+
+const SCRIBE_DOCK_MODE_PREF = 'tclaude.dash.processEditor.scribeMode';
+
+function readScribeDockMode() {
+  try {
+    return dashPrefs.getItem(SCRIBE_DOCK_MODE_PREF) === 'terminal' ? 'terminal' : 'chat';
+  } catch {
+    return 'chat';
+  }
+}
+
+function externalBusyReason(editor) {
+  return editor.diffReview
+    ? 'Finish or close the proposal review first.'
+    : 'An external template reload is in progress.';
+}
+
+// ---- subprocess scopes (E1) ---------------------------------------------------
+
+// Scope ports are drawn as read-only pseudo nodes. Their ids start with '@',
+// which no authored node id can (ids are [a-z0-9][a-z0-9._-]*).
+export const SCOPE_PORT_PREFIX = '@';
+export const SCOPE_PORT_IN = '@in';
+
+export function isScopePortID(id) {
+  return String(id || '').startsWith(SCOPE_PORT_PREFIX);
+}
+
+const NO_PORTS = Object.freeze({ in: false, out: false });
+
+// overlayScopePorts adds the open subprocess's contract to its body graph:
+// one in-port feeding the body's start, and one out-port per parent outcome
+// fed by the end nodes mapped onto it (an unmapped end leaves through the
+// parent's only outcome, as at runtime).
+export function overlayScopePorts(graph, ports) {
+  if (!ports) return graph;
+  const out = { nodes: [...(graph?.nodes || [])], edges: [...(graph?.edges || [])] };
+  const bound = ports.params.filter((param) => ports.inputs[param]).length;
+  out.nodes.push({ id: SCOPE_PORT_IN, type: 'port-in', label: ports.params.length ? `in · ${bound}/${ports.params.length}` : 'in', portAvailability: NO_PORTS, scopePort: true });
+  if (ports.start) out.edges.push({ id: `${SCOPE_PORT_IN}:start`, from: SCOPE_PORT_IN, to: ports.start, outcome: 'start', scopePort: true });
+  for (const outcome of ports.outcomes) {
+    out.nodes.push({ id: `${SCOPE_PORT_PREFIX}out:${outcome}`, type: 'port-out', label: outcome, portAvailability: NO_PORTS, scopePort: true });
+  }
+  for (const end of ports.ends) {
+    const outcome = ports.outputs[end] || (ports.outcomes.length === 1 ? ports.outcomes[0] : '');
+    if (!outcome || !ports.outcomes.includes(outcome)) continue;
+    out.edges.push({ id: `${SCOPE_PORT_PREFIX}${end}:${outcome}`, from: end, to: `${SCOPE_PORT_PREFIX}out:${outcome}`, outcome, scopePort: true });
+  }
+  return out;
+}
+
+// scopeMinimap keeps a bounded picture of the parent graph at drill-in time.
+function scopeMinimap(layout, currentID) {
+  const nodes = (layout?.nodes || []).slice(0, 200).filter((node) => !isScopePortID(node.id)).map((node) => ({
+    id: node.id, x: node.x, y: node.y, width: node.width, height: node.height, type: node.type, current: node.id === currentID,
+  }));
+  const edges = (layout?.edges || []).slice(0, 400).filter((edge) => Array.isArray(edge.points) && edge.points.length > 1)
+    .map((edge) => ({ points: edge.points.map((point) => ({ x: point.x, y: point.y })) }));
+  return { nodes, edges };
 }
 
 function graphInteraction(editor) {
@@ -135,6 +204,44 @@ async function fetchEditView(id, version, { signal } = {}) {
   return body;
 }
 
+// scribeContextInput is what scribe context describes: always the stored
+// (root) template. Inside a ▣ scope the body's nodes, edges, selection and
+// focused diagnostic are added under their namespaced ids ("qa/unit"), so
+// a scribe is never told about a top-level node that does not exist.
+// wrapBlocker says why the selection cannot be wrapped as a subprocess, or
+// '' when it can.
+function wrapBlocker(model, selection) {
+  const nodes = selectionItems(selection).filter((item) => item.type === 'node').map((item) => item.id);
+  if (!nodes.length) return 'Select the nodes to wrap first.';
+  if (typeof model?.nestedTarget !== 'function') return 'Wrapping is not available here.';
+  try {
+    wrapPlan(model, nodes);
+    return '';
+  } catch (error) {
+    return error.message;
+  }
+}
+
+export function scribeContextInput(model, selection, diagnostic) {
+  const items = selectionItems(selection);
+  if (!model.inScope) return { template: model.template, edges: model.edges, selection: items, diagnostic };
+  const prefix = model.scopePath().join(SCOPE_SEPARATOR) + SCOPE_SEPARATOR;
+  const scoped = (id) => (id ? prefix + id : id);
+  const root = model.rootState();
+  const template = { ...root.template, nodes: { ...root.template.nodes } };
+  for (const [id, node] of Object.entries(model.template.nodes || {})) template.nodes[scoped(id)] = node;
+  const edges = [...root.edges, ...model.edges.filter((edge) => edge.from)
+    .map((edge) => ({ ...edge, from: scoped(edge.from), to: scoped(edge.to) }))];
+  const namespaced = items.map((item) => (item.type === 'node' ? { ...item, id: scoped(item.id) }
+    : item.type === 'edge' ? { ...item, from: scoped(item.from), to: scoped(item.to) } : item));
+  const focused = diagnostic && {
+    ...diagnostic,
+    ...(diagnostic.node ? { node: scoped(diagnostic.node) } : {}),
+    ...(diagnostic.edge ? { edge: { ...diagnostic.edge, from: scoped(diagnostic.edge.from) } } : {}),
+  };
+  return { template, edges, selection: namespaced, diagnostic: focused };
+}
+
 export class ProcessTemplateEditor {
   constructor(mount, view, options = {}) {
     this.mount = mount;
@@ -164,13 +271,25 @@ export class ProcessTemplateEditor {
     this.externalReviewRequest = null;
     this.externalChange = NO_EXTERNAL_CHANGE;
     this.externalReviewOpen = false;
+    // On-canvas review of an external generation (E4): { key, model, rev,
+    // ours, view, changes, decisions, cursor }. Private controller state; only
+    // bounded counts and the current change cross into the snapshot.
+    this.diffReview = null;
+    // Subprocess drill-in (E1): one parent-graph minimap per open scope, and
+    // whether the open scope's port panel is showing.
+    this.scopeMinimaps = [];
+    this.scopePortsOpen = false;
     this.paletteHidden = false;
+    // Docked scribe (E4): open state is per editor; the chat/terminal mode is
+    // a remembered per-browser preference.
+    this.scribeDock = { open: false, mode: readScribeDockMode() };
     this.customSnippets = [];
     this.snippetLibrary = { loading: true, error: '', generation: 0, pendingID: '', creating: false };
     this.snippetLoadSeq = 0;
     this.statusState = { message: '', error: false };
     this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
     this.inspectorFocusRequest = 0;
+    this.nodeFocusRequest = 0;
     this.modalState = null;
     this.modalGeneration = 0;
     this.modalHandle = null;
@@ -233,6 +352,7 @@ export class ProcessTemplateEditor {
         portDragStart: (event) => this.onPortDragStart(event),
         portDragEnd: (event) => this.onPortDragEnd(event),
         canvasDrop: (event) => this.onCanvasDrop(event),
+        groupAction: (event) => this.onGroupAction(event),
         canvasPointerMove: (event) => this.onCanvasPointerMove(event),
         canvasPointerLeave: () => this.onCanvasPointerLeave(),
       },
@@ -263,18 +383,36 @@ export class ProcessTemplateEditor {
         save: this.savePending,
         externalDecision: this.externalDecisionPending,
         externalReload: this.externalReloadPending,
+        diffReview: !!this.diffReview,
       },
+      diff: this.diffReviewSnapshot(),
+      scope: this.scopeSnapshot(),
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
+      scribeDock: { ...this.scribeDock, available: !!this.options.scribeDock },
+      // Stored templates the palette offers as ▣ references (never this one:
+      // a template cannot run itself).
+      templateRefs: (this.options.templateRefs?.() || [])
+        .filter((item) => item?.id && item.id !== (this.model.template.id || ''))
+        .slice(0, 50).map((item) => ({ id: String(item.id), name: String(item.name || item.id), versions: item.versionCount || 0 })),
       snippets: {
         ...this.snippetLibrary,
         items: this.customSnippets.map(({ payload, ...metadata }) => ({ ...metadata })),
         canInsert: this.model.config.canInsert && !externalInteractionPending(this),
         canSaveSelection: this.canSaveSelectionAsSnippet(),
       },
+      compose: (() => {
+        const wrapReason = wrapBlocker(this.model, this.selection);
+        return {
+          canWrap: !wrapReason && this.model.config.canInsert && !externalInteractionPending(this) && !this.diffReview,
+          wrapReason,
+          expanded: [...(this.model.expansions?.keys() || [])].filter((id) => this.model.isExpanded?.(id)),
+        };
+      })(),
       inline: { ...this.inlineState },
       edgePin: this.edgePinView(),
       inspectorFocusRequest: this.inspectorFocusRequest,
+      nodeFocusRequest: this.nodeFocusRequest,
       external: {
         ...structuredClone(externalChange),
         // The exact view remains private controller state for Apply Update.
@@ -354,6 +492,7 @@ export class ProcessTemplateEditor {
     this.externalReloadPending = false;
     this.externalDecisionPending = false;
     this.externalReviewPending = false;
+    this.diffReview = null;
     cancelExternalReview(this);
     this.abort.abort();
     this.nodeChooserDispose?.();
@@ -607,6 +746,7 @@ export class ProcessTemplateEditor {
   }
 
   insertPaletteItem(payload, point = this.canvasCenterPoint()) {
+    if (payload.kind === 'template') return this.insertTemplateRef(payload, point);
     if (payload.kind === 'primitive') return this.addNodeType(payload.type, point);
     if (payload.kind === 'custom-snippet') return this.insertCustomSnippet(payload.id, point);
     if (payload.kind !== 'snippet') return false;
@@ -622,8 +762,8 @@ export class ProcessTemplateEditor {
     // decorate() re-anchors the last known diagnostics on the fresh graph
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
-    const graph = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
-    this.graph?.setGraph(graph, { fit });
+    const decorated = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
+    this.graph?.setGraph(this.overlayGraph(decorated), { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
     this.setSelection(this.selection);
@@ -653,6 +793,11 @@ export class ProcessTemplateEditor {
     const previous = this.externalChange;
     const observedKey = currentRef && currentSourceHash ? `${currentRef}\n${currentSourceHash}` : '';
     if (this.externalReviewRequest && this.externalReviewRequest.key !== observedKey) cancelExternalReview(this);
+    if (this.diffReview && observedKey && this.diffReview.key !== observedKey) {
+      this.diffReview = null;
+      this.refresh();
+      this.status('A newer version arrived while you were reviewing; nothing was merged. Review the newer version on the canvas.');
+    }
     this.externalChange = reconcileExternalChange(this.externalChange, {
       loadedRef: this.model.currentRef, loadedSourceHash: this.model.sourceHash,
       currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
@@ -852,6 +997,455 @@ export class ProcessTemplateEditor {
     }
   }
 
+  // ---- subprocess drill-in (E1) ---------------------------------------------
+
+  scopeSnapshot() {
+    const model = this.model;
+    const depth = model.frames.length;
+    if (this.scopeMinimaps.length > depth) this.scopeMinimaps.length = depth;
+    return {
+      depth,
+      trail: model.scopeTrail(),
+      ports: depth ? model.scopePorts() : null,
+      portsOpen: !!(depth && this.scopePortsOpen),
+      minimap: depth ? this.scopeMinimaps[depth - 1] || null : null,
+      outline: model.outline(),
+    };
+  }
+
+  enterSubprocess(id) {
+    if (this.destroyed || externalInteractionPending(this)) return false;
+    const node = this.model.node(id);
+    if (node?.type !== 'subprocess') return false;
+    if (node.subprocess?.templateRef) {
+      this.status(`${node.name || id} runs the template ${node.subprocess.templateRef}; open that template to edit its graph.`);
+      return false;
+    }
+    if (!this.model.canEnterScope(id)) {
+      this.status('Subprocesses nest at most 4 levels deep.', true);
+      return false;
+    }
+    this.scopeMinimaps.length = this.model.frames.length;
+    this.scopeMinimaps.push(scopeMinimap(this.graph?.layoutSnapshot(), id));
+    this.model.enterScope(id);
+    this.selection = null;
+    this.scopePortsOpen = false;
+    this.refresh({ fit: true });
+    this.status(`Inside ${node.name || id}. Esc or ↑ exit returns to the parent graph.`);
+    return true;
+  }
+
+  exitSubprocess(levels = 1) {
+    if (this.destroyed || !this.model.inScope || externalInteractionPending(this)) return false;
+    let id = '';
+    for (let i = 0; i < levels && this.model.inScope; i += 1) {
+      id = this.model.exitScope();
+      this.scopeMinimaps.pop();
+    }
+    this.scopePortsOpen = false;
+    this.selection = id ? { type: 'node', id } : null;
+    this.refresh({ fit: true });
+    this.status('');
+    return true;
+  }
+
+  goToScopeDepth(depth) {
+    const levels = this.model.frames.length - Math.max(0, depth);
+    return levels > 0 ? this.exitSubprocess(levels) : false;
+  }
+
+  // revealOutlineNode navigates to the scope holding a node (path = the ▣
+  // ids above it) and selects it.
+  revealOutlineNode(path = [], id = '') {
+    if (this.destroyed || externalInteractionPending(this)) return false;
+    const current = this.model.scopePath();
+    let common = 0;
+    while (common < current.length && common < path.length && current[common] === path[common]) common += 1;
+    if (current.length > common) this.exitSubprocess(current.length - common);
+    for (const step of path.slice(common)) if (!this.enterSubprocess(step)) return false;
+    if (id && this.model.node(id)) {
+      this.setSelection({ type: 'node', id });
+      queueMicrotask(() => this.graph?.focusNode?.(id));
+    }
+    return true;
+  }
+
+  toggleScopePorts(open = !this.scopePortsOpen) {
+    if (this.destroyed || !this.model.inScope) return false;
+    this.scopePortsOpen = !!open;
+    if (open) this.setSelection(null);
+    else this.updateChrome();
+    return true;
+  }
+
+  setScopeInput(param, expression) {
+    return this.mutate(() => this.model.setScopeInput(param, expression)) !== undefined;
+  }
+
+  setScopeOutput(end, outcome) {
+    return this.mutate(() => this.model.setScopeOutput(end, outcome)) !== undefined;
+  }
+
+  // extractSubprocess saves the open inline body as a new stored template
+  // and swaps the ▣ node to reference it (ports kept). The swap is an
+  // ordinary undoable edit of this draft; the new template already exists.
+  async extractSubprocess() {
+    if (this.destroyed || !this.model.inScope || this.savePending || externalInteractionPending(this)) return false;
+    const nodeId = this.model.scopePath().at(-1);
+    const label = this.model.scopeTrail().at(-1).label;
+    const name = await this.nameSnippetModal({ title: 'Extract subgraph as a template', submitLabel: 'Extract', initialName: label });
+    if (name == null || this.destroyed) return false;
+    let body;
+    try {
+      body = this.model.extractableBody(name);
+    } catch (error) {
+      this.status(error.message, true);
+      return false;
+    }
+    const guardedModel = this.model;
+    const guardedPath = this.model.scopePath().join('/');
+    // Body edits made while the POST is in flight are not in the created
+    // template; swapping to the ref then would silently drop them.
+    const guardedRev = this.model.rev;
+    let created;
+    try {
+      const response = await fetch('/v1/process/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      created = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(created.message || created.error || `${response.status} ${response.statusText}`);
+    } catch (error) {
+      this.status(`Could not extract the subgraph: ${error.message}`, true);
+      return false;
+    }
+    if (this.destroyed) return false;
+    if (this.model !== guardedModel || this.model.rev !== guardedRev || this.model.scopePath().join('/') !== guardedPath || !created.id) {
+      this.status(`Saved the subgraph as template ${created.id || name}, but the editor moved on; reference it from the ▣ node yourself.`, true);
+      return false;
+    }
+    this.exitSubprocess(1);
+    if (this.mutate(() => this.model.replaceSubprocessWithRef(nodeId, created.id)) === undefined) return false;
+    this.status(`Extracted into template ${name} (${created.id}); this node now references it. Save to keep the change.`);
+    return true;
+  }
+
+  // ---- proposal review (draft diff overlay) --------------------------------
+
+  // overlayGraph paints an open review over a (validation-decorated) graph.
+  // Every repaint goes through here — the validation round's included — so a
+  // late diagnostics response cannot wipe the proposal off the canvas.
+  overlayGraph(graph) {
+    const review = this.diffReview;
+    const painted = review ? overlayDraftDiff(graph, {
+      theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
+    }) : graph;
+    return this.model.inScope ? overlayScopePorts(painted, this.model.scopePorts()) : painted;
+  }
+
+  diffReviewSnapshot() {
+    const review = this.diffReview;
+    if (!review) return { open: false };
+    const index = review.changes.findIndex((change) => change.id === review.cursor);
+    const current = review.changes[index] || null;
+    const verdict = current ? review.decisions[current.id] : undefined;
+    return {
+      open: true,
+      ref: review.view.currentRef || '',
+      semanticHash: review.view.semanticHash || '',
+      counts: draftDiffCounts(review.changes, review.decisions),
+      index,
+      current: current ? {
+        id: current.id, kind: current.kind, op: current.op, label: current.label,
+        fields: [...(current.fields || [])], conflict: !!current.conflict,
+        previousTo: current.previousTo || '',
+        state: verdict === 'accept' ? 'accepted' : verdict === 'reject' ? 'rejected' : 'pending',
+        linked: current.requires.length,
+      } : null,
+    };
+  }
+
+  // openDiffReview diffs the exact reviewed external generation against the
+  // live draft (three-way, base = the generation the draft was loaded from)
+  // and paints the proposal on the canvas. The draft is frozen while open.
+  openDiffReview() {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const change = this.externalChange;
+    const view = change.review?.view;
+    if (change.kind !== 'clean' && change.kind !== 'dirty') return false;
+    if (!view || !sameTemplateGeneration(change, view)) {
+      void this.loadExternalReview();
+      this.status('Loading the proposed version; try again in a moment.');
+      return false;
+    }
+    if (this.modalDispose || this.inlineState.open || graphInteraction(this).active) {
+      this.status('Close the open editor dialog before reviewing the proposal.', true);
+      return false;
+    }
+    if (this.model.inScope) this.exitSubprocess(this.model.frames.length);
+    const ours = this.model.saveBody();
+    const changes = diffTemplateDrafts({ base: this.loadedView, ours, theirs: view });
+    if (!changes.length) {
+      this.adoptReviewedGeneration(ours, view, []);
+      this.status(`Your draft already contains every change in version ${shortHash(view.semanticHash)}.`);
+      return true;
+    }
+    if (changes.length > DRAFT_DIFF_MAX_CHANGES) {
+      this.status(`This version changes ${changes.length} items, too many to step through. Use Review changes and Apply update instead.`, true);
+      return false;
+    }
+    this.diffReview = {
+      key: `${change.ref}\n${change.sourceHash}`, model: this.model, rev: this.model.rev,
+      ours, view, changes, decisions: {}, cursor: changes[0].id,
+    };
+    this.externalReviewOpen = false;
+    this.setSelection(null);
+    // Open on the whole proposal; stepping then pans only as needed.
+    this.refresh({ fit: true });
+    return true;
+  }
+
+  closeDiffReview(message = 'Closed the proposal review; nothing was merged.') {
+    if (this.destroyed || !this.diffReview) return false;
+    this.diffReview = null;
+    this.refresh();
+    if (message) this.status(message);
+    return true;
+  }
+
+  setDiffCursor(id) {
+    const review = this.diffReview;
+    if (this.destroyed || !review || !review.changes.some((change) => change.id === id)) return false;
+    review.cursor = id;
+    this.refresh();
+    this.focusDiffChange();
+    return true;
+  }
+
+  // stepDiff walks the changes in review order, preferring undecided ones so
+  // "step through" lands on the next thing that still needs a verdict.
+  stepDiff(delta = 1) {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    const { changes } = review;
+    const at = Math.max(0, changes.findIndex((change) => change.id === review.cursor));
+    const pending = new Set(pendingDraftChanges(changes, review.decisions).map((change) => change.id));
+    for (let step = 1; step <= changes.length; step += 1) {
+      const candidate = changes[(at + delta * step + changes.length * step) % changes.length];
+      if (!pending.size || pending.has(candidate.id)) return this.setDiffCursor(candidate.id);
+    }
+    return false;
+  }
+
+  focusDiffChange() {
+    const review = this.diffReview;
+    const change = review?.changes.find((candidate) => candidate.id === review.cursor);
+    if (!change || !this.graph) return;
+    const layout = this.graph.layoutSnapshot();
+    let point = null;
+    if (change.kind === 'node') point = layout.nodes.find((node) => node.id === change.nodeId);
+    else if (change.kind === 'edge') {
+      const edge = layout.edges.find((candidate) => candidate.from === change.edge.from
+        && candidate.outcome === change.edge.outcome && candidate.diff);
+      point = edge?.label || layout.nodes.find((node) => node.id === change.edge.from);
+    }
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) this.graph.revealPoint(point.x, point.y);
+  }
+
+  reviewStillCurrent(review) {
+    return this.diffReview === review && !this.destroyed && this.model === review.model
+      && this.model.rev === review.rev && sameTemplateGeneration(this.externalChange, review.view);
+  }
+
+  // A conflicting change is never settled implicitly: when a verdict (or the
+  // accept closure) would take the proposal over unsaved human work, ask.
+  async confirmConflicts(review, conflicts, verb) {
+    if (!conflicts.length) return 'theirs';
+    const choice = await this.choiceModal({
+      title: `${conflicts.length} proposed change${conflicts.length === 1 ? '' : 's'} conflict${conflicts.length === 1 ? 's' : ''} with your unsaved edits`,
+      body: `${conflicts.slice(0, 6).map((change) => change.label).join(', ')}${conflicts.length > 6 ? `, … ${conflicts.length - 6} more` : ''}. `
+        + `You changed ${conflicts.length === 1 ? 'this item' : 'these items'} locally too. ${verb} must choose explicitly which version to keep; cancel to decide one by one.`,
+      choices: [
+        { key: 'mine', label: 'Keep my edits' },
+        { key: 'theirs', label: 'Take the proposal', danger: true },
+      ],
+    });
+    if (!this.reviewStillCurrent(review)) return null;
+    return choice;
+  }
+
+  async decideDiff(id = this.diffReview?.cursor, verdict = 'accept') {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    const preview = decideDraftChange(review.changes, review.decisions, id, verdict);
+    if (!preview.affected.length) return false;
+    if (verdict === 'accept') {
+      const conflicts = review.changes.filter((change) => change.id !== id && change.conflict
+        && preview.affected.includes(change.id) && review.decisions[change.id] !== 'accept');
+      const choice = await this.confirmConflicts(review, conflicts, 'Accepting this change also applies linked changes, so you');
+      if (choice !== 'theirs') return false;
+    }
+    if (!this.reviewStillCurrent(review)) return false;
+    review.decisions = preview.decisions;
+    const linked = preview.affected.length - 1;
+    if (linked > 0) this.status(`${verdict === 'accept' ? 'Accepted' : 'Rejected'} ${linked} linked change${linked === 1 ? '' : 's'} as well.`);
+    else this.status('');
+    return this.afterDiffDecision();
+  }
+
+  undoDiffDecision(id = this.diffReview?.cursor) {
+    const review = this.diffReview;
+    if (this.destroyed || !review || !review.decisions[id]) return false;
+    review.decisions = decideDraftChange(review.changes, review.decisions, id, 'pending').decisions;
+    this.refresh();
+    return true;
+  }
+
+  async decideAllDiff(verdict = 'accept') {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    let decisions = review.decisions;
+    if (verdict === 'accept') {
+      const conflicts = pendingDraftChanges(review.changes, decisions).filter((change) => change.conflict);
+      const choice = await this.confirmConflicts(review, conflicts, 'Accept all');
+      if (!choice) return false;
+      // "Keep my edits": reject every conflict FIRST, which pushes out
+      // everything requiring one, so the accept pass below can never pull a
+      // conflict back in through a dependency.
+      if (choice === 'mine') {
+        for (const change of conflicts) {
+          if (!decisions[change.id]) decisions = decideDraftChange(review.changes, decisions, change.id, 'reject').decisions;
+        }
+      }
+      decisions = decideAllDraftChanges(review.changes, decisions, 'accept', { includeConflicts: choice === 'theirs' });
+    } else {
+      decisions = decideAllDraftChanges(review.changes, decisions, 'reject', { includeConflicts: true });
+    }
+    if (!this.reviewStillCurrent(review)) return false;
+    review.decisions = decisions;
+    return this.afterDiffDecision();
+  }
+
+  afterDiffDecision() {
+    const review = this.diffReview;
+    if (!pendingDraftChanges(review.changes, review.decisions).length) return this.finishDiffReview();
+    this.stepDiff(1);
+    return true;
+  }
+
+  finishDiffReview() {
+    const review = this.diffReview;
+    if (this.destroyed || !review) return false;
+    if (!this.reviewStillCurrent(review)) {
+      this.closeDiffReview('The editor or version changed during the review; nothing was merged.');
+      return false;
+    }
+    const merged = mergeDraftDecisions({
+      ours: review.ours, theirs: review.view, changes: review.changes, decisions: review.decisions,
+    });
+    const counts = draftDiffCounts(review.changes, review.decisions);
+    this.diffReview = null;
+    this.adoptReviewedGeneration(merged, review.view, review.changes, counts);
+    return true;
+  }
+
+  adoptReviewedGeneration(content, view, changes, counts = draftDiffCounts(changes, {})) {
+    const clean = sameDraftContent(content, view);
+    this.model.adoptReviewedGeneration(content, {
+      ref: view.currentRef, sourceHash: view.sourceHash, semanticHash: view.semanticHash,
+    }, { clean });
+    this.loadedView = structuredClone(view);
+    this.blank = false;
+    this.externalChange = NO_EXTERNAL_CHANGE;
+    this.externalReviewOpen = false;
+    this.retainLiveSelection();
+    this.refresh();
+    if (clean) this.validation?.applyDiagnostics(view.diagnostics || []);
+    if (changes.length) {
+      this.status(`Merged version ${shortHash(view.semanticHash)}: ${counts.accepted} accepted, ${counts.rejected} rejected.`
+        + `${clean ? '' : ' Your draft differs from that version; Save to keep your choices.'}`);
+    }
+  }
+
+  // ---- docked scribe (chat + terminal) -------------------------------------
+
+  toggleScribeDock(open = !this.scribeDock.open) {
+    if (this.destroyed || !this.options.scribeDock) return false;
+    const changed = this.scribeDock.open !== !!open;
+    this.scribeDock = { ...this.scribeDock, open: !!open };
+    this.updateChrome?.();
+    // The dock is a column beside the canvas: opening it narrows the view
+    // and would clip the right-hand nodes. Refit once the column has laid
+    // out (never during a pointer gesture).
+    if (changed && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyed || this.graph?.interactionSnapshot?.()?.active) return;
+        this.graph?.fit?.();
+      }));
+    }
+    return true;
+  }
+
+  setScribeDockMode(mode) {
+    if (this.destroyed || (mode !== 'chat' && mode !== 'terminal')) return false;
+    this.scribeDock = { ...this.scribeDock, mode };
+    try { dashPrefs.setItem(SCRIBE_DOCK_MODE_PREF, mode); } catch { /* preference only */ }
+    this.updateChrome?.();
+    return true;
+  }
+
+  // scribeDockContext is what the context chips and actions offer right now.
+  scribeDockContext() {
+    const items = selectionItems(this.selection);
+    const nodes = items.filter((item) => item.type === 'node');
+    const errors = (this.validation?.mapped?.entries || []).filter((entry) => entry.severity === 'error').length;
+    return {
+      selection: items.length,
+      singleNode: nodes.length === 1 && items.length === 1 ? (this.model.node(nodes[0].id)?.name || nodes[0].id) : '',
+      errors,
+      hasIssue: !!this.validation?.currentIssue?.(),
+      saved: !!(this.model.template.id || '').trim(),
+    };
+  }
+
+  // sendToScribe mails the docked scribe: plain chat, or a context action
+  // carrying the same bounded editor context a summon brief uses. The scribe
+  // answers by saving a new version, reviewed on the canvas; local edits are
+  // never handed over, so a dirty draft stays put and conflicts surface in
+  // the review instead of being overwritten.
+  async sendToScribe(scribe, { kind = 'chat', prompt = '' } = {}) {
+    if (this.destroyed) return { error: 'The editor is closed.' };
+    if (!scribe?.convId) return { error: 'No live scribe for this template.' };
+    let context = null;
+    try {
+      if (kind !== 'chat') {
+        const id = (this.model.template.id || '').trim();
+        if (!id) throw new Error('Save this template once first: a scribe works on a stored template.');
+        const handoff = processScribeHandoff({
+          kind: 'template', id, currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
+        });
+        context = processScribeEditorContext({
+          kind: kind === 'explain' ? 'selection' : kind, handoff,
+          ...scribeContextInput(this.model, this.selection, kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null),
+        });
+      }
+      const body = processScribeChatMessage({
+        prompt: prompt || (kind === 'explain'
+          ? 'Explain what the selected node does, what feeds it and where its outcomes lead. Do not change anything.'
+          : processScribePrompt(kind === 'chat' ? 'template' : kind)),
+        context,
+      });
+      const response = await fetch('/api/operator-message', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: scribe.convId, subject: PROCESS_SCRIBE_CHAT_SUBJECT, body }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
+      return { ok: true };
+    } catch (error) {
+      return { error: error?.message || String(error) };
+    }
+  }
+
   status(message, isError = false) {
     if (this.destroyed) return;
     this.statusState = { message: message || '', error: !!isError };
@@ -865,11 +1459,15 @@ export class ProcessTemplateEditor {
   // so matching on from/outcome — which the layout spreads through — is the
   // only stable lookup.
   laidEdge(from, outcome) {
-    return this.graph?.layoutSnapshot().edges.find((edge) => edge.from === from && edge.outcome === outcome);
+    // A connector leaving an expanded ▣ is drawn from a body end; source
+    // carries its real identity.
+    return this.graph?.layoutSnapshot().edges.find((edge) => (edge.source?.from ?? edge.from) === from
+      && (edge.source?.outcome ?? edge.outcome) === outcome);
   }
 
   setSelection(selection) {
     if (this.destroyed) return;
+    if (selection) this.scopePortsOpen = false;
     // Template metadata is editor chrome, not a graph entity. Keep it outside
     // process-selection's node/edge-only normalization while explicitly
     // clearing the canvas highlight. A refresh replays this same branch;
@@ -895,16 +1493,43 @@ export class ProcessTemplateEditor {
 
   onNodeClick({ node, event }) {
     if (!node) return;
+    if (isScopePortID(node.id)) {
+      if (!this.diffReview) this.toggleScopePorts(true);
+      return;
+    }
+    if (this.diffReview) {
+      const change = draftChangeForNode(this.diffReview.changes, node.id);
+      if (change) this.setDiffCursor(change.id);
+      return;
+    }
     const item = { type: 'node', id: node.id };
     this.setSelection(event?.shiftKey || event?.ctrlKey || event?.metaKey
       ? toggleSelection(this.selection, item) : item);
+    // Selecting one node docks its inspector beside the canvas, narrowing
+    // it: a node near the right edge would end up clipped under the new
+    // column. Once the inspector has laid out, pan just enough to keep the
+    // clicked node in view (never during a pointer gesture).
+    if (this.selection?.type === 'node' && this.selection.id === node.id && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyed || this.selection?.type !== 'node' || this.selection.id !== node.id) return;
+        if (this.graph?.interactionSnapshot?.()?.active) return;
+        const laid = this.graph?.layoutSnapshot().nodes.find((candidate) => candidate.id === node.id);
+        if (laid) this.graph.revealPoint(laid.x, laid.y);
+      }));
+    }
   }
 
   // Double-click is the logical-zoom gesture (design §8a): zoom into the
   // node's structured editing surface. In-place rename stays available via
   // the inspector's label input.
   onNodeDblClick({ node }) {
-    if (!node) return;
+    if (!node || this.diffReview || isScopePortID(node.id)) return;
+    const nested = this.model.nestedTarget(node.id);
+    if (nested) {
+      this.revealOutlineNode([nested.owner], nested.inner);
+      return;
+    }
+    if (this.model.node(node.id)?.type === 'subprocess' && this.enterSubprocess(node.id)) return;
     this.setSelection({ type: 'node', id: node.id });
     this.openNodeSettings(node.id);
   }
@@ -931,49 +1556,61 @@ export class ProcessTemplateEditor {
     return true;
   }
 
-  // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296
-  // editability seam decides the mode: a node the view may not edit renders
-  // the exact same component read-only — the viewer's detail card.
+  // openNodeSettings is the logical zoom into one node (double-click, Enter,
+  // a configuration-required add): it selects the node and focuses the docked
+  // node inspector (E3), which renders read-only when the editability seam
+  // says the node may not be edited.
   async openNodeSettings(nodeId) {
     if (this.destroyed || externalInteractionPending(this)) return false;
     if (!this.model.node(nodeId)) return false;
-    const current = this.modalDispose;
-    if (current) {
-      const closed = current.requestClose
-        ? await current.requestClose()
-        : (current(null), true);
-      if (!closed || this.abort?.signal.aborted) return false;
-    }
-    if (!this.model.node(nodeId)) return false;
-    const mode = this.model.config.nodeEditable(nodeId) ? 'edit' : 'view';
-    if (!this.snapshotSignal) {
-      const { openNodeDialog } = await import('./process-node-dialog.js');
-      const dispose = openNodeDialog({
-        model: this.model, nodeId, mode,
-        onMutated: () => this.refresh?.(),
-        onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
-        confirmDiscard: this.options.confirmDiscard,
-      });
-      this.modalDispose = dispose;
-    } else {
-      this.openModal({ kind: 'node', nodeId, mode });
-    }
+    this.setSelection({ type: 'node', id: nodeId });
+    this.nodeFocusRequest += 1;
+    this.publish();
     return true;
+  }
+
+  // editNode is the node inspector's single mutation gate: one undoable,
+  // live-validated edit through ProcessEditModel.updateNode. Returns false
+  // when the edit was refused (read-only node, a mutator error, a pending
+  // external reload), with the reason on the status line.
+  editNode(nodeId, mutate) {
+    if (this.destroyed) return false;
+    return this.mutate(() => this.model.updateNode(nodeId, mutate)) !== undefined;
   }
 
   onEdgeClick({ edge, event }) {
     if (!edge) return;
-    const item = { type: 'edge', from: edge.from, outcome: edge.outcome };
+    if (isScopePortID(edge.from) || isScopePortID(edge.to)) {
+      if (!this.diffReview) this.toggleScopePorts(true);
+      return;
+    }
+    if (this.diffReview) {
+      const change = draftChangeForEdge(this.diffReview.changes, edge.from, edge.outcome);
+      if (change) this.setDiffCursor(change.id);
+      return;
+    }
+    // A connector leaving an expanded ▣ is drawn from a body end; source is
+    // the connector it really is.
+    const identity = edge.source || edge;
+    const item = { type: 'edge', from: identity.from, outcome: identity.outcome };
     const already = selectionContains(this.selection, item);
     const additive = event?.shiftKey || event?.ctrlKey || event?.metaKey;
     this.setSelection(additive ? toggleSelection(this.selection, item) : item);
     // Second click on an already-selected edge edits the outcome label in place.
-    if (already && !additive) this.openInlineOutcomeEdit(edge.from, edge.outcome);
+    if (already && !additive) this.openInlineOutcomeEdit(identity.from, identity.outcome);
   }
 
   commitNodeDrag({ starts, delta, moved = true }) {
     if (this.destroyed || !this.graph) return;
     if (!moved || !starts?.length || !delta) return;
+    // Scope ports are laid out, never pinned: a dragged port snaps back.
+    if (starts.some((start) => isScopePortID(start.id))) {
+      starts = starts.filter((start) => !isScopePortID(start.id));
+      if (!starts.length) {
+        this.refresh();
+        return;
+      }
+    }
     // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
     // graph units, so scale by the zoom before comparing — at high zoom a
     // small visible drag is a tiny graph-unit delta and must still commit.
@@ -1118,13 +1755,109 @@ export class ProcessTemplateEditor {
 
   // ---- palette drop ----------------------------------------------------------
 
-  onCanvasDrop({ point, event }) {
+  onCanvasDrop({ point, edge, event }) {
     let raw = event?.dataTransfer?.getData?.(PALETTE_MIME) || '';
     if (!raw && this.paletteDragPayload) raw = this.paletteDragPayload;
     if (!raw) return;
     let payload;
     try { payload = JSON.parse(raw); } catch { return; }
+    if (edge && !this.diffReview && (payload.kind === 'primitive' || payload.kind === 'template')) {
+      ProcessTemplateEditor.prototype.splicePaletteItem.call(this, payload, edge.source || edge, point);
+      return;
+    }
     ProcessTemplateEditor.prototype.insertPaletteItem.call(this, payload, point);
+  }
+
+  // ---- composition (E2): splice, template refs, expand, wrap/unwrap ----------
+
+  // templateRefInit makes a ▣ node reference a stored template.
+  static templateRefInit(payload) {
+    return (node) => { node.subprocess = { templateRef: String(payload.id) }; };
+  }
+
+  insertTemplateRef(payload, point = this.canvasCenterPoint()) {
+    if (!payload?.id || payload.id === this.model.template.id) return false;
+    const id = this.mutate(() => insertNode(this.model, 'subprocess', {
+      x: point.x, y: point.y, name: payload.name || payload.id, init: ProcessTemplateEditor.templateRefInit(payload),
+    }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    this.status(`Added ▣ ${payload.name || payload.id}: it runs that template. Map its out-ports in the node inspector.`);
+    return id;
+  }
+
+  // splicePaletteItem drops a node kind or template onto a connector.
+  splicePaletteItem(payload, { from, outcome }, point = this.canvasCenterPoint()) {
+    if (this.destroyed) return false;
+    if (payload.kind === 'template' && (!payload.id || payload.id === this.model.template.id)) return false;
+    const type = payload.kind === 'template' ? 'subprocess' : payload.type;
+    const id = this.mutate(() => spliceNode(this.model, { from, outcome }, type, {
+      x: point.x, y: point.y,
+      ...(payload.kind === 'template' ? { name: payload.name || payload.id, init: ProcessTemplateEditor.templateRefInit(payload) } : {}),
+    }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    this.status(`Spliced ${payload.kind === 'template' ? `▣ ${payload.name || payload.id}` : type} into ${from} → (${outcome}).`);
+    return id;
+  }
+
+  // expandSubprocess draws a ▣ node's body in place, centered where the node
+  // is drawn now. View state: no edit, no undo step.
+  expandSubprocess(id) {
+    if (this.destroyed || this.diffReview || !this.model.canExpand(id)) return false;
+    const laid = this.graph?.layoutSnapshot().nodes.find((node) => node.id === id);
+    this.model.expandSubprocess(id, laid ? { x: laid.x, y: laid.y } : undefined);
+    this.setSelection(null);
+    // The graph just grew by a whole body: show all of it.
+    this.refresh({ fit: true });
+    this.status(`Expanded ${this.model.node(id)?.name || id} in place: edit its nodes here, or collapse it from the frame.`);
+    return true;
+  }
+
+  collapseSubprocess(id) {
+    if (this.destroyed || !this.model.collapseSubprocess(id)) return false;
+    this.selection = null;
+    this.refresh();
+    this.setSelection({ type: 'node', id });
+    return true;
+  }
+
+  onGroupAction({ id, action }) {
+    if (action === 'collapse') this.collapseSubprocess(id);
+  }
+
+  async wrapSelection() {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const ids = selectionItems(this.selection).filter((item) => item.type === 'node').map((item) => item.id);
+    const reason = wrapBlocker(this.model, this.selection);
+    if (reason) {
+      this.status(reason, true);
+      return false;
+    }
+    const name = await this.nameSnippetModal({ title: 'Wrap selection as a subprocess', submitLabel: 'Wrap', initialName: 'Subprocess' });
+    if (name == null || this.destroyed) return false;
+    const layout = this.graph?.layoutSnapshot();
+    const laid = (layout?.nodes || []).filter((node) => ids.includes(node.id));
+    const position = laid.length ? {
+      x: Math.round(laid.reduce((sum, node) => sum + node.x, 0) / laid.length),
+      y: Math.round(laid.reduce((sum, node) => sum + node.y, 0) / laid.length),
+    } : undefined;
+    const id = this.mutate(() => wrapSelection(this.model, ids, { name, position }));
+    if (!id) return false;
+    this.setSelection({ type: 'node', id });
+    const ports = this.model.node(id).subprocess;
+    this.status(`Wrapped ${ids.length} node${ids.length === 1 ? '' : 's'} as ▣ ${name}: ${Object.keys(ports.outputs || {}).length} out-port(s), ${Object.keys(ports.inputs || {}).length} in-port(s).`);
+    return id;
+  }
+
+  unwrapSubprocess(id) {
+    if (this.destroyed || this.diffReview || this.savePending || externalInteractionPending(this)) return false;
+    const laid = this.graph?.layoutSnapshot().nodes.find((node) => node.id === id);
+    const ids = this.mutate(() => unwrapSubprocess(this.model, id, { origin: laid ? { x: laid.x, y: laid.y } : undefined }));
+    if (!ids) return false;
+    this.setSelection(makeSelection(ids.map((nodeID) => ({ type: 'node', id: nodeID }))));
+    this.status(`Unwrapped ${id} into ${ids.length} node${ids.length === 1 ? '' : 's'}.`);
+    return ids;
   }
 
   canvasCenterPoint() {
@@ -1270,6 +2003,7 @@ export class ProcessTemplateEditor {
         canCreate: false, createReason: closedReason,
         canEdit: false, editReason: closedReason,
         canDuplicate: false, duplicateReason: closedReason,
+        canWrap: false, wrapReason: closedReason, expandable: '', canUnwrap: false, unwrapReason: closedReason,
         canDelete: false, deleteReason: closedReason,
         canValidate: false, validateReason: closedReason,
         issueCount: 0, hasCurrentIssue: false,
@@ -1294,7 +2028,7 @@ export class ProcessTemplateEditor {
     const deletionEditable = selected.every((item) => item.type === 'node'
       ? this.model.config.nodeEditable(item.id) : this.model.config.edgeEditable(this.model.findEdge(item.from, item.outcome)))
       && affectedEdges.every((edge) => this.model.config.edgeEditable(edge));
-    const busyReason = pending ? 'An external template reload is in progress.' : '';
+    const busyReason = pending ? externalBusyReason(this) : '';
     const issueCount = this.validation?.mapped?.entries?.length || 0;
     const hasCurrentIssue = !!this.validation?.currentIssue?.();
     const id = (this.model.template.id || '').trim();
@@ -1306,8 +2040,14 @@ export class ProcessTemplateEditor {
       createReason: busyReason || 'Adding nodes is not allowed in this view.',
       canEdit: !pending && (templateSelected || (!!one && oneEditable)),
       editReason: busyReason || (!hasSelection ? 'Select one item first.' : selected.length > 1 ? 'Edit one item at a time.' : 'The selected item is read-only.'),
-      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length,
-      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : 'Only node selections can be duplicated.'),
+      canDuplicate: !pending && this.model.config.canInsert && selectedNodes.length > 0 && selectedNodes.length === selected.length
+        && !selectedNodes.some((item) => this.model.nestedTarget?.(item.id)),
+      duplicateReason: busyReason || (!hasSelection ? 'Select one or more nodes first.' : selectedNodes.some((item) => this.model.nestedTarget?.(item.id)) ? 'Collapse the expanded subprocess to duplicate its nodes.' : 'Only node selections can be duplicated.'),
+      canWrap: !pending && this.model.config.canInsert && selectedNodes.length > 0 && !wrapBlocker(this.model, this.selection),
+      wrapReason: busyReason || wrapBlocker(this.model, this.selection) || 'Adding nodes is not allowed in this view.',
+      expandable: one?.type === 'node' && this.model.canExpand?.(one.id) ? one.id : '',
+      canUnwrap: !pending && one?.type === 'node' && !!this.model.canExpand?.(one.id) && this.model.config.canInsert,
+      unwrapReason: busyReason || 'Select one ▣ node with an inline body.',
       canDelete: !pending && selected.length > 0 && deletionEditable,
       deleteReason: busyReason || (!hasSelection ? 'Select graph items first.' : 'The selection includes read-only graph items.'),
       canValidate: !pending && !!this.validation,
@@ -1327,7 +2067,9 @@ export class ProcessTemplateEditor {
   mutate(operation, { fit = false } = {}) {
     if (this.destroyed) return undefined;
     if (externalInteractionPending(this)) {
-      this.status('Wait for the external reload to finish before editing.');
+      this.status(this.diffReview
+        ? 'Finish or close the proposal review before editing.'
+        : 'Wait for the external reload to finish before editing.');
       return undefined;
     }
     let result;
@@ -1415,6 +2157,20 @@ export class ProcessTemplateEditor {
   onEditorKeyDown(event) {
     if (event.defaultPrevented) return;
     const inInput = isProcessEditorFormControl(event.target);
+    if (this.diffReview && !inInput && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const review = {
+        a: () => this.decideDiff(undefined, 'accept'),
+        r: () => this.decideDiff(undefined, 'reject'),
+        j: () => this.stepDiff(1),
+        k: () => this.stepDiff(-1),
+        Escape: () => this.closeDiffReview(),
+      }[event.key.length === 1 ? event.key.toLowerCase() : event.key];
+      if (review) {
+        event.preventDefault();
+        void review();
+        return;
+      }
+    }
     if ((event.ctrlKey || event.metaKey) && !inInput) {
       const key = event.key.toLowerCase();
       if (key === 'z' && !event.shiftKey) {
@@ -1428,7 +2184,18 @@ export class ProcessTemplateEditor {
         return;
       }
     }
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && this.selection) {
+    // Keys aimed at the docked node inspector (its buttons, block handles)
+    // belong to that panel: deleting the node from under a focused ✕ or ↑ is
+    // never what Delete/Backspace meant there.
+    const inInspector = !!event.target?.closest?.('[data-node-inspector]');
+    // Leaving a subgraph: Alt+↑ always, Esc once nothing is selected.
+    if (this.model?.inScope && !inInput && !event.ctrlKey && !event.metaKey
+        && ((event.key === 'ArrowUp' && event.altKey) || (event.key === 'Escape' && !this.selection && !event.altKey))) {
+      event.preventDefault();
+      this.exitSubprocess(1);
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !inInput && !inInspector && this.selection) {
       event.preventDefault();
       this.deleteSelection();
     }
@@ -1771,8 +2538,7 @@ export class ProcessTemplateEditor {
     try {
       handoff = processScribeHandoff(anchor);
       context = processScribeEditorContext({
-        kind, handoff, template: this.model.template, edges: this.model.edges,
-        selection: selectionItems(this.selection), diagnostic: focusedDiagnostic,
+        kind, handoff, ...scribeContextInput(this.model, this.selection, focusedDiagnostic),
       });
     } catch (error) {
       this.status(error.message, true);
@@ -1794,8 +2560,7 @@ export class ProcessTemplateEditor {
         if (focusedDiagnostic && currentDiagnostic) {
           try {
             const currentContext = processScribeEditorContext({
-              kind, handoff, template: this.model.template, edges: this.model.edges,
-              selection: [], diagnostic: currentDiagnostic,
+              kind, handoff, ...scribeContextInput(this.model, null, currentDiagnostic),
             });
             diagnosticFresh = JSON.stringify(currentContext.diagnostic) === JSON.stringify(context.diagnostic);
           } catch {

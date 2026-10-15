@@ -307,7 +307,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-editor-island.js", island,
 		"export function ProcessEditorApp(",
 		"export function mountProcessEditorIsland(",
-		"import { NodeDialog } from './process-node-dialog.js';",
+		"import { NodeInspector } from './process-node-inspector.js';",
+		"<${NodeInspector} controller=${controller} view=${view} />",
 		"import { ParamsDialog } from './process-params-dialog.js';",
 		"<${EditableTitle} controller=${controller} view=${view} />",
 		"controller.setSelection({ type: 'template' })",
@@ -316,8 +317,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"Review changes", "Keep editing",
 		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"process-issues-panel",
-		"descriptor.kind === 'node'", "descriptor.kind === 'params'",
-		"key=${descriptor.generation}",
+		"descriptor.kind === 'params'",
 		`class="process-editor-inspector" inert=${pending}`,
 		"discardBufferedChange.current",
 		"onCopy=${(event) => controller.onEditorCopy(event)}",
@@ -349,11 +349,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		}
 	}
 	graphConsumers := map[string]string{
-		"process-editor.js":        editor,
-		"process-editor-island.js": island,
-		"process-validation.js":    read("js/process-validation.js"),
-		"process-node-dialog.js":   read("js/process-node-dialog.js"),
-		"process-params-dialog.js": read("js/process-params-dialog.js"),
+		"process-editor.js":         editor,
+		"process-editor-island.js":  island,
+		"process-validation.js":     read("js/process-validation.js"),
+		"process-node-inspector.js": read("js/process-node-inspector.js"),
+		"process-node-fields.js":    read("js/process-node-fields.js"),
+		"process-params-dialog.js":  read("js/process-params-dialog.js"),
+		"process-scribe-dock.js":    read("js/process-scribe-dock.js"),
+		"process-diff-review.js":    read("js/process-diff-review.js"),
 	}
 	for name, source := range graphConsumers {
 		for _, banned := range []string{
@@ -611,11 +614,11 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	}
 
 	for name, needle := range map[string]string{
-		"js/processes-island.js":      `id="process-editor-view" class="process-canvas-view process-scroll-surface"`,
-		"js/process-editor-island.js": "process-editor-palette process-scroll-surface",
-		"js/process-node-chooser.js":  "process-node-chooser-list process-scroll-surface",
-		"js/process-node-dialog.js":   "process-node-dialog-body process-scroll-surface",
-		"js/process-params-dialog.js": "process-param-list process-scroll-surface",
+		"js/processes-island.js":       `id="process-editor-view" class="process-canvas-view process-scroll-surface"`,
+		"js/process-editor-island.js":  "process-editor-palette process-scroll-surface",
+		"js/process-node-chooser.js":   "process-node-chooser-list process-scroll-surface",
+		"js/process-node-inspector.js": "process-node-inspector process-node-detail process-scroll-surface",
+		"js/process-params-dialog.js":  "process-param-list process-scroll-surface",
 	} {
 		if !strings.Contains(read(name), needle) {
 			t.Errorf("%s missing editor scroll ownership marker %q", name, needle)

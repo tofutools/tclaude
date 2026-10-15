@@ -16,6 +16,9 @@ const (
 	NodeTypeStart    NodeType = "start"
 	NodeTypeEnd      NodeType = "end"
 	NodeTypeParallel NodeType = "parallel"
+	// NodeTypeSubprocess runs a nested process graph — inline or a reference
+	// to another stored template — as one node of its parent. See Subprocess.
+	NodeTypeSubprocess NodeType = "subprocess"
 )
 
 type JoinPolicy string
@@ -26,6 +29,12 @@ const (
 )
 
 type PerformerKind string
+
+// Agent performer spawn policies (Performer.Spawn).
+const (
+	SpawnAllowed = "allowed"
+	SpawnNever   = "never"
+)
 
 const (
 	PerformerHuman   PerformerKind = "human"
@@ -74,7 +83,10 @@ type Node struct {
 	// only in v1 — the runtime capture plumbing is a later ticket; validation
 	// keeps names id-shaped and unique so they can become references later.
 	Captures []string `json:"captures,omitempty" yaml:"captures,omitempty"`
-	Metadata Metadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	// Subprocess is the nested graph of a subprocess node, and is only valid on
+	// that node type.
+	Subprocess *Subprocess `json:"subprocess,omitempty" yaml:"subprocess,omitempty"`
+	Metadata   Metadata    `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 type Step struct {
@@ -103,9 +115,10 @@ type Performer struct {
 	// Prompt is the instruction text for agent performers; human performers
 	// may use it as long-form context alongside (or instead of) Ask.
 	Prompt string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	// Ask, Choices, and Assignee are human-scoped: the question to put to the
-	// human, an optional closed answer set, and an optional specific person
-	// (defaults to whoever holds the profile). A decision node's choices realize
+	// Ask and Choices are human-scoped: the question to put to the human and an
+	// optional closed answer set. Assignee names an optional specific performer
+	// (defaults to whoever holds the profile): a person for a human performer,
+	// an agent (name or agent id) for an agent performer. A decision node's choices realize
 	// as its outcome edges; task-stage choices are constrained by the engine's
 	// pass/fail routing vocabulary.
 	Ask      string   `json:"ask,omitempty" yaml:"ask,omitempty"`
@@ -115,6 +128,10 @@ type Performer struct {
 	// existing binary attempt outcomes. Decision performers remain edge-driven
 	// and therefore reject this field.
 	ChoiceOutcomes map[string]string `json:"choiceOutcomes,omitempty" yaml:"choiceOutcomes,omitempty"`
+	// Spawn is agent-scoped: whether the runtime may spawn a fresh performer
+	// with Profile when no existing agent in the run's scope can take the node.
+	// "allowed" opts in; empty or "never" keeps resolution to existing agents.
+	Spawn string `json:"spawn,omitempty" yaml:"spawn,omitempty"`
 	// Model and Effort are agent-scoped overrides on top of the profile.
 	// Freeform strings: legal values are harness-specific and are validated at
 	// the process-agent spawn boundary.

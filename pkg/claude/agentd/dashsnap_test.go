@@ -767,6 +767,112 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-focus-agents",
+			Title:   "Groups — Agents focus switch",
+			Caption: "Mock G6-A: the Agents | Processes segmented control sits beside the group filter (features.processes on), Agents selected with its distinct-agent count over the usual member tables.",
+			JS: showGroups + collapseGroups + `return (async function(){
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('.groups-focus-switch') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var agents = document.querySelector('.groups-focus-switch [data-groups-focus="agents"]');
+  if (!agents) throw new Error('groups focus switch did not render');
+  if (agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents is not the default focus');
+  if (!document.querySelector('#groups-list details[data-group-key]')) throw new Error('Agents focus lost the member tables');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:     "groups-focus-processes",
+			Title:   "Groups — Processes focus",
+			Caption: "Mock G6-A: the Processes focus (/groups/processes) swaps the member tables for each group's run cards from the live read model (none running in this fixture); the filter bar stays.",
+			// The focus is set through the island's signal rather than a click,
+			// so this capture does not persist the pref and leak the Processes
+			// focus into later states that boot on bare Groups.
+			JS: showGroups + `return (async function(){
+  var registry = await import('/static/js/feature-state-registry.js');
+  var groups = registry.featureState('groups');
+  if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  groups.focus.value = 'processes';
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var processes = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
+  if (!processes || processes.getAttribute('aria-pressed') !== 'true') throw new Error('Processes focus is not selected');
+  var gDeadline = Date.now() + 3000;
+  while (!document.querySelector('[data-groups-processes]') && Date.now() < gDeadline) await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  if (!document.querySelector('[data-groups-processes]')) throw new Error('Processes run view missing');
+  if (document.querySelector('#groups-list details[data-group-key]')) throw new Error('member tables still shown in Processes focus');
+})();`,
+			SettleMS: 200,
+		},
+		{
+			Key:      "groups-processes-running",
+			Title:    "Groups — Processes focus run cards",
+			Caption:  "Mock G3: each group renders its live runs as graph cards (needs-you first, scope chip, duration, template/owner), performer avatars on nodes, a busy/idle avatar strip on the group header, and an empty group saying so. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
+			InitJS:   processContextFixtureInitJS(),
+			JS:       showGroups + groupsProcessesJS(""),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-blocked-start",
+			Title:   "Groups — blocked run + scoped start",
+			Caption: "Mock G3: a run parked on a blocked node reads as blocked on human and waiting on you; + start process opens the group-scoped start form over the real template list: it asks for the template's params (required ones marked) and lists program profiles to authorize, never pre-ticked.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  var migrate = document.querySelector('[data-process-run-card="run_migrate"]');
+  if (!migrate || !migrate.querySelector('[data-process-node="apply"].pk-state-waiting')) throw new Error('blocked run card missing its blocked node');
+  document.querySelector('[data-process-start="frontend-squad"]').click();
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('.gp-start-form select, .gp-start-form .gp-start-note:not(:empty)') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('.gp-start-form')) throw new Error('start form did not open');
+  while (!document.querySelector('.gp-start-form [data-start-param="issue"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('.gp-start-form [data-start-param="issue"]')) throw new Error('the template\'s required param is not asked for');
+  if (!document.querySelector('.gp-start-form button[type="submit"]').disabled) throw new Error('start is enabled with a required param empty');`),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-all",
+			Title:   "Groups — Processes focus, All filter",
+			Caption: "Mock G3: the All filter adds finished runs and planned (cron/trigger) entries to each group's live runs.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(`
+  groups.processFilter.value = 'all';
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('[data-process-run-card="run_hotfix"]')) throw new Error('All filter lacks the finished run');
+  if (!document.querySelector('[data-process-planned="cron_nightly"]')) throw new Error('All filter lacks the planned entry');`),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-agents-process-badges",
+			Title:   "Groups — process chips and member badges",
+			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + expandGroups + `return (async function(){
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('[data-group-processes="running"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-group-processes="needs-you"]')) throw new Error('group header lacks the needs-you chip');
+  if (!document.querySelector('[data-group-processes="planned"]')) throw new Error('group header lacks the planned chip');
+  if (!document.querySelector('.gpi-none')) throw new Error('a quiet group does not say "no processes"');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-running')) throw new Error('no running member badge');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-waiting')) throw new Error('no amber member badge');
+  if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-planned')) throw new Error('no dashed planned member badge');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:      "groups-run-focus",
+			Title:    "Groups — single-run focus",
+			Caption:  "Mock G5: opening a G3 card focuses the run — the group's runs (live, planned, recent) on the left, the live graph in the middle with the awaited review gate selected, a docked inspector with approve / request changes and the node's history, and the group's agents as a performer dock (drag one onto an agent node to reassign it), with the run's ⏸ pause / ▶ resume control in the header. Run context and detail are recorded projections of the read model and run API, so the state is deterministic.",
+			InitJS:   processContextFixtureInitJS() + processRunDetailInitJS(),
+			JS:       showGroups + groupsProcessesJS(groupsRunFocusJS),
+			SettleMS: 300,
+		},
+		{
 			Key:     "shell-notifications",
 			Title:   "Preact shell — notification popover",
 			Caption: "TCL-360 populated form gate: the real notification GET fills native checkboxes, labels, help titles and Config shortcut inside the plain/wizard shell.",
@@ -1420,9 +1526,9 @@ setTimeout(function(){
 			SettleMS: 300,
 		},
 		{
-			Key:      "action-dialog-terminal-chooser",
-			Title:    "Action dialogs — terminals & windows",
-			Caption:  "The ⚙ terminals & windows chooser: four described options grouped by live session vs. own shell, native vs. web tags, 1–4 hotkeys, and scoped wizard chrome.",
+			Key:     "action-dialog-terminal-chooser",
+			Title:   "Action dialogs — terminals & windows",
+			Caption: "The ⚙ terminals & windows chooser: four described options grouped by live session vs. own shell, native vs. web tags, 1–4 hotkeys, and scoped wizard chrome.",
 			JS: `return (async function(){
   var module = await import('/static/js/action-dialog-controller.js');
   module.chooseTerminalAction("fe-lead", "/tmp/lbl-fe-lead");
@@ -1472,6 +1578,146 @@ setTimeout(function(){
   if(document.activeElement!==input) throw new Error('the description editor did not take focus');
 })();`}},
 			SettleMS: 900,
+		},
+		{
+			Key:     "process-kit-s1",
+			Title:   "Process UI kit — S1 sheet",
+			Caption: "The shared process vocabulary (mock S1): node-kind glyphs, run/node state styling, scope chips, run badges with step strips, state-ring overlay icons, and two read-only mini-graphs rendered from run projections.",
+			JS: `return (async function(){
+  var mod = await import('/static/js/process-kit-sheet.js');
+  var host = document.createElement('div');
+  host.id = 'process-kit-sheet-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;overflow:auto;visibility:visible;background:var(--pk-surface)';
+  document.body.appendChild(host);
+  mod.mountProcessKitSheet(host);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var graphs = host.querySelectorAll('.pk-mini-graph');
+  if (!graphs.length || graphs[0].getBoundingClientRect().width < 200) throw new Error('process kit mini-graph is not visible');
+  if (graphs.length !== 2) throw new Error('process kit sheet rendered ' + graphs.length + ' mini-graphs, want 2');
+  if (!host.querySelector('.pk-run-icon.pk-scope-agent')) throw new Error('agent-scoped run icon missing');
+  if (getComputedStyle(host.querySelector('.pk-gnode.pk-state-running')).borderTopColor === getComputedStyle(host.querySelector('.pk-gnode.pk-state-done')).borderTopColor) throw new Error('process kit stylesheet is not applied');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-terminal-overlay-t2",
+			Title:   "Terminals — process overlay (T1/T2)",
+			Caption: "A terminal pane's process overlay (mocks T1/T2): the top-right cluster of run icons for the pane's agent, with one opened into the popover — mini-graph with the agent's node lit, the node's contract and outcomes, what is around it, and the run actions.",
+			JS: `return (async function(){
+  var kit = await import('/static/js/process-terminal-overlay.js');
+  var preact = await import('preact');
+  var htm = (await import('htm')).default.bind(preact.h);
+  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+  var run = { runId: 'run_review', name: 'review-loop', status: 'running', startedAt: ago(95),
+    scope: { kind: 'group', groupId: 7, group: 'webshop', owner: 'agent:agt_lead', state: 'bound' },
+    nodes: [
+      { id: 'start', label: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'plan', label: 'Plan', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_lead' } },
+      { id: 'implement', label: 'Implement checkout', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_coder' }, description: 'Implement the checkout flow against the payments API and push a PR.' },
+      { id: 'search', label: 'Implement search', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_search' } },
+      { id: 'gate', label: 'Ship it?', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
+      { id: 'end', label: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'plan', label: 'next' }, { from: 'plan', to: 'implement', label: 'next' },
+      { from: 'plan', to: 'search', label: 'next' }, { from: 'implement', to: 'gate', label: 'next' },
+      { from: 'search', to: 'gate', label: 'next' }, { from: 'gate', to: 'end', label: 'approved' },
+      { from: 'gate', to: 'implement', label: 'changes', back: true } ] };
+  var agentRun = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(20),
+    scope: { kind: 'agent', agentId: 'agt_coder', owner: 'human:operator', state: 'bound' },
+    nodes: [ { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'snap', label: 'Snapshot', kind: 'task', state: 'pending', performer: { kind: 'agent', ref: 'agt_coder' } },
+      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'snap', label: 'next' }, { from: 'snap', to: 'end', label: 'next' } ] };
+  var context = { runs: { run_review: run, run_reindex: agentRun }, groups: [], agents: [], orphaned: [] };
+  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
+  var host = document.createElement('div');
+  host.id = 'process-terminal-overlay-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
+  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">coder · checkout</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">$ go test ./pkg/checkout/...\nok   pkg/checkout  1.2s\n$ git push -u origin checkout\n</pre><div data-overlay-root></div></div>';
+  document.body.appendChild(host);
+  var root = host.querySelector('[data-overlay-root]');
+  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_coder" enabled=${true} actions=${{ openGroups: function(){}, onComposeMessage: function(){} }} />` + "`" + `, root);
+  await kit.refreshProcessContext();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_review"]');
+  if (!icon) throw new Error('process overlay icon missing');
+  icon.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var pop = host.querySelector('[data-process-popover="run_review"]');
+  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('process run popover is not visible: ' + (pop ? pop.getBoundingClientRect().width + ' ' + getComputedStyle(pop).display : 'absent'));
+  if (!pop.querySelector('.pk-mini-graph')) throw new Error('popover mini-graph missing');
+  if (getComputedStyle(host.querySelector('.pk-pane-overlay')).position !== 'absolute') throw new Error('overlay stylesheet is not applied');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-terminal-overlay-reassign",
+			Title:   "Terminals — reassign a node from the overlay",
+			Caption: "The T2 popover's reassign control opened on the agent's delivered node: an inline picker of the group's other members, with assign and cancel.",
+			JS: `return (async function(){
+  var kit = await import('/static/js/process-terminal-overlay.js');
+  var preact = await import('preact');
+  var htm = (await import('htm')).default.bind(preact.h);
+  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+  var run = { runId: 'run_review', name: 'review-loop', status: 'running', startedAt: ago(95),
+    scope: { kind: 'group', groupId: 7, group: 'webshop', owner: 'agent:agt_lead', state: 'bound' },
+    nodes: [
+      { id: 'start', label: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'plan', label: 'Plan', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_lead' } },
+      { id: 'implement', label: 'Implement checkout', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_coder' }, dispatch: { agentId: 'agt_coder', attempt: 1, state: 'delivered' }, description: 'Implement the checkout flow against the payments API and push a PR.' },
+      { id: 'search', label: 'Implement search', kind: 'task', state: 'done', performer: { kind: 'agent', ref: 'agt_search' } },
+      { id: 'gate', label: 'Ship it?', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
+      { id: 'end', label: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'plan', label: 'next' }, { from: 'plan', to: 'implement', label: 'next' },
+      { from: 'plan', to: 'search', label: 'next' }, { from: 'implement', to: 'gate', label: 'next' },
+      { from: 'search', to: 'gate', label: 'next' }, { from: 'gate', to: 'end', label: 'approved' },
+      { from: 'gate', to: 'implement', label: 'changes', back: true } ] };
+  var agentRun = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(20),
+    scope: { kind: 'agent', agentId: 'agt_coder', owner: 'human:operator', state: 'bound' },
+    nodes: [ { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'snap', label: 'Snapshot', kind: 'task', state: 'pending', performer: { kind: 'agent', ref: 'agt_coder' } },
+      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'snap', label: 'next' }, { from: 'snap', to: 'end', label: 'next' } ] };
+  var snap = { groups: [{ id: 7, name: 'webshop', members: [{ agent_id: 'agt_coder', title: 'coder' }, { agent_id: 'agt_search', title: 'search-indexer' }, { agent_id: 'agt_lead', title: 'lead' }] }] };
+  var context = { runs: { run_review: run, run_reindex: agentRun }, groups: [], agents: [], orphaned: [] };
+  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
+  var host = document.createElement('div');
+  host.id = 'process-terminal-overlay-reassign-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
+  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">coder · checkout</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">$ go test ./pkg/checkout/...\nok   pkg/checkout  1.2s\n$ git push -u origin checkout\n</pre><div data-overlay-root></div></div>';
+  document.body.appendChild(host);
+  var root = host.querySelector('[data-overlay-root]');
+  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_coder" enabled=${true} actions=${{ openGroups: function(){}, onComposeMessage: function(){}, assign: async function(){} }} candidatesFor=${function(run, current){ return kit.reassignCandidates(snap, run, current); }} />` + "`" + `, root);
+  await kit.refreshProcessContext();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_review"]');
+  if (!icon) throw new Error('process overlay icon missing');
+  icon.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var pop = host.querySelector('[data-process-popover="run_review"]');
+  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('process run popover is not visible: ' + (pop ? pop.getBoundingClientRect().width + ' ' + getComputedStyle(pop).display : 'absent'));
+  if (!pop.querySelector('.pk-mini-graph')) throw new Error('popover mini-graph missing');
+  if (getComputedStyle(host.querySelector('.pk-pane-overlay')).position !== 'absolute') throw new Error('overlay stylesheet is not applied');
+  var reassign = Array.from(pop.querySelectorAll('.pk-run-popover-actions button')).find(function(b){ return /reassign/.test(b.textContent); });
+  if (!reassign || reassign.disabled) throw new Error('reassign is not enabled on a delivered agent node');
+  reassign.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!pop.querySelector('[data-process-reassign="implement"] select')) throw new Error('reassign picker missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:      "process-terminal-overlay-t3",
+			Title:    "Terminals — agent-scoped run stepper (T3)",
+			Caption:  "A run bound to the pane's agent opens as a vertical stepper (mock T3): the bounds strip (dir, sandbox, grants, spend, reincarnation), agentic steps as turns in this conversation with their loop count, program steps flagged as leaving the agent's sandbox, the human decision, and pause / graph view / promote actions.",
+			JS:       processStepperSnapJS(false),
+			SettleMS: 300,
+		},
+		{
+			Key:      "process-terminal-overlay-t3-paused",
+			Title:    "Terminals — paused agent-scoped run (T3)",
+			Caption:  "The same stepper for a run an operator paused: a ⏸ paused chip in the head, and the run action reads ▶ resume run. Work in flight finishes; nothing new is dispatched until resumed.",
+			JS:       processStepperSnapJS(true),
+			SettleMS: 300,
 		},
 		{
 			Key:     "processes-scribe-library-entry",
@@ -1861,7 +2107,7 @@ setTimeout(function(){
   var chooser=document.querySelector('.process-node-chooser');
   if(!chooser||document.activeElement!==chooser.querySelector('.process-node-chooser-input')) throw new Error('edge-drop chooser did not open or focus');
   var commandIDs=Array.from(chooser.querySelectorAll('[role="option"]')).map(function(option){return option.dataset.commandId;}).sort();
-  var expectedIDs=['process.create.decision','process.create.end','process.create.parallel','process.create.start','process.create.task','process.create.wait'];
+  var expectedIDs=['process.create.decision','process.create.end','process.create.parallel','process.create.start','process.create.subprocess','process.create.task','process.create.wait'];
   if(JSON.stringify(commandIDs)!==JSON.stringify(expectedIDs)) throw new Error('edge-drop chooser vocabulary incomplete: '+JSON.stringify(commandIDs));`),
 			SettleMS: 1100,
 		},
@@ -1909,17 +2155,16 @@ setTimeout(function(){
   if(contrast<4.5) throw new Error('disabled reason contrast is '+contrast.toFixed(2)+':1');`},
 				{Kind: "click", Selector: `.process-node-chooser [data-command-id="process.create.task"]`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
-  if(!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('configuration-required task editor did not open');
+  if(!document.querySelector('.process-editor-body > [data-node-inspector]')) throw new Error('configuration-required task did not open the node inspector');
   if(Object.keys(ed.model.template.nodes).length!==state.nodes+1||ed.model.edges.length!==state.edges+1) throw new Error('node and edge were not both created');
   if(ed.model.undoStack.length!==state.undo+1) throw new Error('connected insertion was not one undo operation');
   var created=Object.keys(ed.model.template.nodes).find(function(id){return !['begin','ship'].includes(id);});
   var edge=ed.model.edges.find(function(candidate){return candidate.from===created&&candidate.to==='ship';});
   if(!created||ed.model.node(created).type!=='task'||!edge) throw new Error('input-port drop did not create new-source → existing-target direction');
   window.__edgeDrop.created=created;`},
-				{Kind: "click", Selector: ".process-node-modal .process-node-cancel"},
 				{Kind: "click", Selector: `.process-editor-header button[title="Undo (Ctrl+Z)"]`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
-  if(document.querySelector('.process-node-modal')) throw new Error('configuration editor did not close');
+  if(document.querySelector('[data-node-inspector]')) throw new Error('node inspector outlived the undone node');
   if(ed.model.node(state.created)||Object.keys(ed.model.template.nodes).length!==state.nodes||ed.model.edges.length!==state.edges) throw new Error('one undo did not remove the connected node and edge');
   if(ed.model.undoStack.length!==state.undo) throw new Error('atomic undo did not restore the prior history depth');`},
 			},
@@ -1947,17 +2192,42 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-browser-inspector-reveal",
+			Title:   "Process editor — the clicked node stays in view",
+			Caption: "Real Chrome input: clicking the rightmost node docks its inspector, which narrows the canvas; the editor pans just enough that the clicked node is not clipped under the new column.",
+			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null); await editorPaint(); ed.graph.fit(); await editorPaint();`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
+				{Kind: "eval", JS: `return (async function(){
+  await new Promise(function(r){ setTimeout(r, 250); });
+  var ed=window.__browserEd;
+  if(ed.snapshot().selection?.id!=='ship') throw new Error('ship not selected');
+  var inspector=document.querySelector('[data-node-inspector="ship"]');
+  if(!inspector) throw new Error('inspector did not open');
+  var shape=document.querySelector('.process-node[data-node-id="ship"] .process-node-shape').getBoundingClientRect();
+  var hit=document.elementFromPoint(shape.left+shape.width/2, shape.top+shape.height/2);
+  if(!hit||!hit.closest('[data-node-id="ship"]')) throw new Error('ship is hidden under the inspector');
+})();`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-node-click",
 			Title:   "Process editor — trusted node click + Delete",
 			Caption: "Real Chrome input: an inspector edit commits on blur, the next node click remains selected after pointer capture retargeting, and Delete confirms/removes that node.",
 			JS: processEditorStateJS(`ed.setSelection({type:'node',id:'begin'}); window.__browserEd=ed;
   await editorPaint();
-  var input=document.querySelector('.process-editor-inspector .process-inspector-input');
+  var input=document.querySelector('[data-node-inspector] [data-node-field="meta.name"]');
   if(!input) throw new Error('node inspector input missing');
+  // The docked inspector covers the canvas's right edge, where the fit put
+  // ship: centre the view between the two nodes so the click lands on it.
+  var laid=ed.graph.layoutSnapshot().nodes, b=laid.find(function(n){return n.id==='begin';}), sh=laid.find(function(n){return n.id==='ship';});
+  ed.graph.centerOn((b.x+sh.x)/2,(b.y+sh.y)/2);
+  await editorPaint();
   input.value='';`),
 			Actions: []dashsnap.BrowserAction{
-				{Kind: "click", Selector: ".process-inspector-input"},
-				{Kind: "input", Selector: ".process-inspector-input", Text: "Renamed begin"},
+				{Kind: "click", Selector: `[data-node-inspector] [data-node-field="meta.name"]`},
+				{Kind: "input", Selector: `[data-node-inspector] [data-node-field="meta.name"]`, Text: "Renamed begin"},
 				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
   var selection=ed.snapshot().selection;
@@ -2416,64 +2686,203 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
-			Key:      "process-node-dialog-task-agent",
-			Title:    "Process node dialog — task, agent work performer",
-			Caption:  "The compound task's stage editor (TCL-298): plan stage with approval policy, agent work performer (profile/prompt/model/effort + contact schedule), ordered checks, review gate, retry policy, captures, and the read-only edges summary.",
-			JS:       nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent")),
+			Key:      "process-node-inspector-task-agent",
+			Title:    "Process node inspector — task, agent work performer",
+			Caption:  "E3: selecting a node docks its inspector beside the canvas as a stack of blocks — Performer (agent: profile/model/effort), Prompt, Work stages (plan → work → checks → review chips), Inputs, Retry, Outputs, Outcomes → edges, Bounds (timeout + contact schedule) — each reorderable, with + add block offering only what fits the kind.",
+			JS:       nodeInspectorStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("agent")),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-resized",
-			Title:   "Process node dialog — resized workspace",
-			Caption: "TCL-419: the standard persisted resize affordance expands the compound task editor into a two-column workspace; the scroll body and fixed action row remain usable in both skins.",
-			JS: nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent") + `
-  var dialog = document.querySelector('.process-node-dialog');
-  if (getComputedStyle(dialog).resize !== 'both') throw new Error('node dialog resize affordance is not active');
-  dialog.style.width = '1000px'; dialog.style.height = '760px';
-  var detail = dialog.querySelector('.process-node-detail');
-  if (getComputedStyle(detail).columnCount !== '2') throw new Error('wide node form did not reflow into columns');`),
-			SettleMS: 1200,
-		},
-		{
-			Key:     "process-node-dialog-task-human",
-			Title:   "Process node dialog — task, human work performer",
-			Caption: "The same shared performer editor keyed to human: ask text, choices, assignee — scrolled to the work section. No per-kind component forks (uniform performer contract).",
-			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+			Key:     "process-node-inspector-task-human",
+			Title:   "Process node inspector — task, human work performer",
+			Caption: "The same shared performer editor keyed to human: choices, choice outcomes and assignee in Performer, the question in Prompt. No per-kind component forks (uniform performer contract).",
+			JS: nodeInspectorStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'human', profile: 'operator', ask: 'Apply the manual registry update', choices: ['done', 'blocked'], assignee: 'johan'};
   });
-  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("human") + nodeDialogScrollToWork),
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("human")),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-task-program",
-			Title:   "Process node dialog — task, program work performer",
-			Caption: "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10) — scrolled to the work section.",
-			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
+			Key:     "process-node-inspector-task-program",
+			Title:   "Process node inspector — task, program work performer",
+			Caption: "The shared performer editor keyed to program: command + per-line arguments and the explicit ⚠ command-execution security note (§10); Prompt is not offered for a program.",
+			JS: nodeInspectorStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'program', profile: 'ci', run: 'go', args: ['test', './...']};
   });
-  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("program") + `
-  if (!document.querySelector('.process-node-security-note')) throw new Error('program security note missing');` + nodeDialogScrollToWork),
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeInspectorSelfCheck("program") + `
+  if (!document.querySelector('[data-node-inspector] .process-node-security-note')) throw new Error('program security note missing');
+  if (document.querySelector('[data-node-inspector] [data-node-block="prompt"], [data-node-inspector] [data-add-block="prompt"]')) throw new Error('a program performer was offered a prompt');`),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-dialog-decision",
-			Title:   "Process node dialog — decision node",
-			Caption: "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
-			JS: nodeDialogStateJS(`await ed.openNodeSettings('escalate'); await editorPaint();` + `
-  var choiceHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'choices → edges'; });
-  if (!choiceHead) throw new Error('decision dialog missing the choices → edges section');`),
+			Key:     "process-node-inspector-decision",
+			Title:   "Process node inspector — decision node",
+			Caption: "A decision docks the decider performer (human, with choices), its question in Prompt, and the read-only choices → edges in Outcomes, pointing at the canvas for topology edits.",
+			JS: nodeInspectorStateJS(`await ed.openNodeSettings('escalate'); await editorPaint();
+  var outcomes = document.querySelector('[data-node-inspector="escalate"] [data-node-block="outcomes"]');
+  if (!outcomes || !/cancel/.test(outcomes.textContent)) throw new Error('decision inspector missing its choices → edges');`),
 			SettleMS: 1200,
 		},
 		{
-			Key:     "process-node-card-readonly",
-			Title:   "Process node detail card — read-only mode",
-			Caption: "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
-			JS: nodeDialogStateJS(`ed.model.config.nodeEditable = function(){ return false; };
+			Key:     "process-node-inspector-readonly",
+			Title:   "Process node inspector — read-only node",
+			Caption: "The same inspector for a node the view may not edit: read-only badge, every control disabled, no add or remove — block order stays a local preference.",
+			JS: nodeInspectorStateJS(`ed.model.config.nodeEditable = function(){ return false; };
   await ed.openNodeSettings('implement'); await editorPaint();
-  if (!document.querySelector('.process-node-readonly-badge')) throw new Error('read-only badge missing');
-  if (!document.querySelector('.process-node-detail.is-readonly')) throw new Error('detail card is not in read-only mode');
-  var enabled = document.querySelector('.process-node-detail select:not(:disabled), .process-node-detail input:not(:disabled), .process-node-detail textarea:not(:disabled)');
-  if (enabled) throw new Error('read-only card left a control enabled: ' + enabled.className);`),
+  if (!document.querySelector('[data-node-inspector] .process-node-readonly-badge')) throw new Error('read-only badge missing');
+  if (!document.querySelector('.process-node-inspector.is-readonly')) throw new Error('inspector is not in read-only mode');
+  var enabled = document.querySelector('.process-node-inspector select:not(:disabled), .process-node-inspector input:not(:disabled), .process-node-inspector textarea:not(:disabled)');
+  if (enabled) throw new Error('read-only inspector left a control enabled: ' + enabled.className);`),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-scribe-dock-chat",
+			Title:    "Process editor — docked scribe, chat mode",
+			Caption:  "E4: the scribe docks beside the canvas. Chat mode mails the scribe and reads its turn replies back (GET /api/scribe/{agent}/chat); context chips show the selection and validation errors, and context actions send bounded editor context. A saved scribe version waits as \"Review on canvas\".",
+			JS:       scribeDockStateJS("chat", true, `  if (document.querySelectorAll('[data-scribe-msg]').length !== 3) throw new Error('chat bubbles missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-scribe-dock-terminal",
+			Title:    "Process editor — docked scribe, terminal mode",
+			Caption:  "Terminal mode keeps the same context actions but hands the conversation to the scribe's own terminal pane (openTerminalPane); messages sent from the dock arrive there.",
+			JS:       scribeDockStateJS("terminal", false, `  if (!document.querySelector('[data-scribe-open-terminal]')) throw new Error('terminal mode button missing');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-diff-review",
+			Title:   "Process editor — scribe proposal reviewed on the canvas",
+			Caption: "Review on canvas paints the scribe's saved version over the live draft: added (green, dashed), changed (amber) and removed/retargeted (red ghost) items with tags; the bar counts +added ~changed −removed, walks the changes, and accepts or rejects each — or all. The merge lands as one undoable edit.",
+			JS: scribeDockStateJS("chat", true, `  if (!ed.openDiffReview()) throw new Error('review did not open');
+  await editorPaint();
+  await ed.decideDiff(undefined, 'accept');
+  await editorPaint();
+  var bar = document.querySelector('[data-diff-review]');
+  if (!bar) throw new Error('review bar missing');
+  if (!/1 of \d+ decided/.test(bar.textContent)) throw new Error('review bar did not record the accept: ' + bar.textContent);
+  if (!document.querySelector('.process-node.is-diff-added')) throw new Error('proposed nodes are not painted');`),
+			SettleMS: 1400,
+		},
+		{
+			Key:     "process-subgraph-scope",
+			Title:   "Process editor — inside a ▣ subprocess",
+			Caption: "E1: double-clicking a ▣ node drills into its inline body. The breadcrumb names the path, the parent minimap marks where we are (click it, Esc or Alt+↑ to leave), and dashed in/out port nodes stand for the ▣ node's contract with its parent. The palette outline lists nested bodies.",
+			JS: subgraphStateJS(`  var qaNode = document.querySelector('[data-node-id="qa"]');
+  qaNode.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (ed.model.scopePath().join('/') !== 'qa') throw new Error('double-click did not enter the ▣ body');
+  var crumbs = Array.from(document.querySelectorAll('[data-scope-bar] .pscope-crumb')).map(function(el){ return el.textContent.trim(); });
+  if (crumbs.join('|') !== 'Release train|▣ QA suite') throw new Error('breadcrumb: ' + crumbs.join('|'));
+  if (!document.querySelector('[data-scope-minimap] .pscope-mini-node.is-current')) throw new Error('parent minimap missing');
+  if (!document.querySelector('[data-node-id="@in"]') || !document.querySelector('[data-node-id="@out:pass"]')) throw new Error('port nodes missing');
+  if (!document.querySelector('[data-scope-outline] [data-outline-node="qa/unit"]')) throw new Error('outline missing the body');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-subgraph-ports",
+			Title:   "Process editor — subgraph ports",
+			Caption: "E1: clicking a port node (or ⇄ ports) opens the subgraph's contract: in-ports bind body params from the parent's params or literals, out-ports map each body end onto one of the ▣ node's parent outcomes. Edits are ordinary undoable edits of the parent.",
+			JS: subgraphStateJS(`  ed.enterSubprocess('qa');
+  await editorPaint();
+  document.querySelector('[data-node-id="@out:pass"]').dispatchEvent(new MouseEvent('click', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('[data-scope-ports]')) throw new Error('port panel did not open');
+  if (!ed.setScopeOutput('bad', 'pass')) throw new Error('out-port edit refused');
+  await editorPaint();
+  if (ed.model.scopePorts().outputs.bad !== 'pass' || !ed.dirty) throw new Error('out-port edit did not land');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-subgraph-extract",
+			Title:   "Process editor — subgraph extracted as a template",
+			Caption: "E1: ⇪ extract as template saves the body as its own template (the snippet-name dialog, then POST /v1/process/templates), returns to the parent and swaps the ▣ node to a templateRef that keeps its ports. A referenced body is not entered; the inspector offers \"open template ↗\".",
+			JS: subgraphStateJS(`  var realFetch = window.fetch;
+  window.fetch = function(url, init) {
+    if (String(url) === '/v1/process/templates' && init && init.method === 'POST') {
+      return Promise.resolve(new Response(JSON.stringify({id: 'qa-suite'}), {status: 201, headers: {'Content-Type': 'application/json'}}));
+    }
+    return realFetch.apply(this, arguments);
+  };
+  ed.enterSubprocess('qa');
+  await editorPaint();
+  document.querySelector('[data-scope-action="extract"]').click();
+  await editorPaint(); await editorPaint();
+  var submit = Array.from(document.querySelectorAll('button')).find(function(b){ return b.textContent.trim() === 'Extract'; });
+  if (!submit) throw new Error('name dialog did not open');
+  submit.click();
+  var xDeadline = Date.now() + 3000;
+  while (ed.model.scopePath().length && Date.now() < xDeadline) await new Promise(function(r){ setTimeout(r, 40); });
+  await editorPaint();
+  var sp = ed.model.node('qa').subprocess;
+  if (sp.templateRef !== 'qa-suite' || sp.nodes || sp.outputs.bad !== 'fail') throw new Error('▣ node was not swapped to a ref: ' + JSON.stringify(sp));
+  ed.openNodeSettings('qa');
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('[data-subprocess-open-template]')) throw new Error('inspector does not offer open template');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-compose-splice",
+			Title:   "Process editor — splice onto a connector",
+			Caption: "E2: the palette lists stored templates beside node kinds. Dragging one over a connector marks it (orange, dashed); dropping splices the node in between, keeping the incoming connector's identity.",
+			JS: composeStateJS(`  var edge = ed.graph.layoutSnapshot().edges.find(function(e){ return e.from === 'plan' && e.outcome === 'pass'; });
+  ed.onCanvasDrop({point: {x: edge.label.x, y: edge.label.y + 160}, edge: edge, event: {dataTransfer: {getData: function(){ return JSON.stringify({kind: 'primitive', type: 'decision'}); }}}});
+  await editorPaint(); await editorPaint();
+  var ids = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; });
+  if (ids.indexOf('plan:pass>decision') < 0 || ids.indexOf('decision:pass>build') < 0) throw new Error('splice did not rewire: ' + ids.join(','));
+  var next = document.querySelector('.process-edge[data-from="decision"]');
+  if (next) next.classList.add('is-drop-target');
+  ed.options.templateRefs = function(){ return [{id: 'qa-suite', name: 'QA suite', versionCount: 3}, {id: 'deploy-std', name: 'Deploy (standard)', versionCount: 2}]; };
+  ed.publish();
+  await editorPaint(); await editorPaint();
+  var refs = Array.from(document.querySelectorAll('.process-editor-palette [data-palette-item]')).filter(function(el){ return el.dataset.paletteItem.indexOf('"template"') >= 0; });
+  if (refs.length !== 2) throw new Error('palette lists ' + refs.length + ' templates');`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-compose-wrap",
+			Title:   "Process editor — wrap a selection as a subprocess",
+			Caption: "E2: selecting Build and Check offers ▣ wrap as subprocess…; the wrapped ▣ node keeps the region's connectors (one start, one out-port per outside target). The state self-checks that unwrap restores the original topology.",
+			JS: composeStateJS(`  var before = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; }).sort().join(',');
+  ed.setSelection({type: 'multi', items: [{type: 'node', id: 'build'}, {type: 'node', id: 'check'}]});
+  await editorPaint();
+  var wrap = document.querySelector('[data-wrap-selection]');
+  if (!wrap || wrap.disabled) throw new Error('wrap is not offered');
+  wrap.click();
+  await editorPaint(); await editorPaint();
+  var submit = Array.from(document.querySelectorAll('button')).find(function(b){ return b.textContent.trim() === 'Wrap'; });
+  if (!submit) throw new Error('name dialog did not open');
+  var input = submit.closest('form') && submit.closest('form').querySelector('input');
+  if (input) { input.value = 'Build and check'; input.dispatchEvent(new Event('input', {bubbles: true})); }
+  submit.click();
+  var wDeadline = Date.now() + 3000;
+  while ((!ed.selection || ed.model.node(ed.selection.id)?.type !== 'subprocess') && Date.now() < wDeadline) await new Promise(function(r){ setTimeout(r, 40); });
+  var id = ed.selection && ed.selection.id;
+  if (!id || ed.model.node(id).type !== 'subprocess') throw new Error('wrap did not create a ▣ node');
+  ed.unwrapSubprocess(id);
+  var after = ed.model.edges.map(function(e){ return e.from + ':' + e.outcome + '>' + e.to; }).sort().join(',');
+  if (after !== before) throw new Error('unwrap did not restore: ' + after);
+  ed.applyHistory('undo');
+  await editorPaint(); await editorPaint();
+  ed.setSelection({type: 'node', id: id});
+  ed.openNodeSettings(id);
+  await editorPaint(); await editorPaint();`),
+			SettleMS: 1200,
+		},
+		{
+			Key:     "process-compose-expand",
+			Title:   "Process editor — ▣ expanded in place",
+			Caption: "E2: ⊞ expand draws a ▣ node's body on the canvas as a framed group: connectors land on its start and leave from its mapped ends, inner nodes select and edit in context, and ⊟ collapse folds it back.",
+			JS: composeStateJS(`  ed.setSelection({type: 'multi', items: [{type: 'node', id: 'build'}, {type: 'node', id: 'check'}]});
+  var id = ed.mutate(function(){ return window.__compose.wrapSelection(ed.model, ['build', 'check'], {name: 'QA suite'}); });
+  ed.refresh();
+  await editorPaint();
+  if (!ed.expandSubprocess(id)) throw new Error('expand refused');
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-group[data-group-id="' + id + '"]')) throw new Error('frame missing');
+  document.querySelector('[data-node-id="' + id + '/check"]').dispatchEvent(new MouseEvent('click', {bubbles: true}));
+  await editorPaint(); await editorPaint();
+  if (!ed.selection || ed.selection.id !== id + '/check') throw new Error('inner node did not select: ' + JSON.stringify(ed.selection));
+  if (!document.querySelector('.process-node-inspector, [data-node-inspector]')) throw new Error('inspector did not open for the inner node');`),
 			SettleMS: 1200,
 		},
 		{
@@ -3325,13 +3734,54 @@ func processGraphStateJS(title, graph string, colorSchemes ...string) string {
 });`, title, graph, colorScheme, title)
 }
 
-// nodeDialogStateJS builds on the editor harness: it grows the seeded
+// nodeInspectorStateJS builds on the editor harness: it grows the seeded
 // release-train template into a compound task ("implement": plan + agent
 // work + ordered checks + review gate + retry + captures) and a human
 // decision ("escalate") purely through the client edit model, then runs the
-// state's dialog-driving JS. `return` matters — MustEval awaits the promise,
-// so the self-checks (throws) gate the capture.
-func nodeDialogStateJS(extraJS string) string {
+// state's inspector-driving JS. `return` matters — MustEval awaits the
+// promise, so the self-checks (throws) gate the capture.
+// scribeDockStateJS opens the release-train editor with the docked scribe:
+// the browser-side scribe API is stubbed (no live scribe agent exists in the
+// fixture), and with proposal set a scribe-saved version is pending review.
+func scribeDockStateJS(mode string, proposal bool, extraJS string) string {
+	js := `var scribe = {agentId: 'agt_' + 'a'.repeat(32), convId: 'scribe-conv', name: 'process-scribe-k3x',
+    scope: {kind: 'process-template', id: 'release-train'}, scopeLabel: 'process template release-train', online: true};
+  ed.options.scribeDock = {
+    scribes: function(){ return [scribe]; },
+    openTerminal: function(){ return true; },
+    fetchChat: async function(){ return [
+      {id: 'h1', role: 'human', body: 'Add an implement step and a human review gate before ship.', at: ''},
+      {id: 's1', role: 'scribe', body: 'Added "Implement" (agent, dev profile) after begin and a "Review gate" decision before ship. Validated and saved as a new version; review it on the canvas.', at: ''},
+      {id: 'h2', role: 'human', body: 'Also tighten the description.', at: ''},
+    ]; },
+  };
+  ed.observeExternalHead = function(){};
+  ed.setScribeDockMode('` + mode + `');
+  ed.toggleScribeDock(true);
+`
+	if proposal {
+		js += `  var theirs = JSON.parse(JSON.stringify(ed.model.saveBody()));
+  theirs.template.description = 'Plan, implement, review, and ship a dashboard release behind a human review gate.';
+  theirs.template.nodes.implement = {type: 'task', name: 'Implement', performer: {kind: 'agent', profile: 'dev', prompt: 'Implement the change'}};
+  theirs.template.nodes.gate = {type: 'decision', name: 'Review gate', performer: {kind: 'human', ask: 'Ship it?', choices: ['yes', 'no']}};
+  theirs.edges = theirs.edges.filter(function(e){ return !(e.from === 'begin' && e.outcome === 'pass'); });
+  theirs.edges.push({from: 'begin', outcome: 'pass', to: 'implement'}, {from: 'implement', outcome: 'pass', to: 'gate'}, {from: 'gate', outcome: 'yes', to: 'ship'});
+  theirs.layout = theirs.layout || {};
+  theirs.layout.nodes = Object.assign({}, theirs.layout.nodes, {implement: {x: 220, y: 240}, gate: {x: 360, y: 300}});
+  theirs.currentRef = 'release-train@sha256:' + 'b'.repeat(64);
+  theirs.sourceHash = 'c'.repeat(64);
+  theirs.semanticHash = '5c71be0a' + 'd'.repeat(56);
+  ed.externalChange = {kind: 'clean', ref: theirs.currentRef, sourceHash: theirs.sourceHash, review: {view: theirs, summary: null}};
+  ed.renderExternalChange();
+`
+	}
+	js += `  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-scribe-dock[data-scribe-dock="` + mode + `"]')) throw new Error('scribe dock did not open in ` + mode + ` mode');
+`
+	return processEditorStateJS(js + extraJS)
+}
+
+func nodeInspectorStateJS(extraJS string) string {
 	const seed = `ed.model.addNode('task', {x: 470, y: 90, id: 'implement', name: 'Implement'});
   ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'agent', profile: 'dev', prompt: 'Implement the change', model: 'opus', effort: 'high',
@@ -3357,22 +3807,16 @@ func nodeDialogStateJS(extraJS string) string {
 	return processEditorStateJS(seed + extraJS)
 }
 
-// nodeDialogSelfCheck asserts the dialog is open with the work performer's
-// kind select showing `kind` — a broken dialog fails the run instead of
-// passing as a silent blank capture.
-func nodeDialogSelfCheck(kind string) string {
+// nodeInspectorSelfCheck asserts the inspector is docked with the work
+// performer's kind select showing `kind` — a broken inspector fails the run
+// instead of passing as a silent blank capture.
+func nodeInspectorSelfCheck(kind string) string {
 	return fmt.Sprintf(`
-  if (!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('node dialog did not open');
-  var kinds = Array.from(document.querySelectorAll('.process-node-modal .process-node-select'));
-  if (!kinds.some(function(sel){ return sel.value === %q; })) throw new Error('no performer editor shows kind %s');`, kind, kind)
+  var dock = document.querySelector('.process-editor-body > [data-node-inspector]');
+  if (!dock) throw new Error('node inspector did not dock');
+  var kindSelect = dock.querySelector('[data-node-field="performer.kind"]');
+  if (!kindSelect || kindSelect.value !== %q) throw new Error('performer block does not show kind %s');`, kind, kind)
 }
-
-// nodeDialogScrollToWork scrolls the dialog body so the work section's
-// performer editor is the visible content in the capture.
-const nodeDialogScrollToWork = `
-  var workHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'work'; });
-  if (!workHead) throw new Error('work section missing');
-  workHead.scrollIntoView();`
 
 func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, state, message string) dashsnap.State {
 	caption := "TCL-563: a trusted connector drag exposes the shared source/valid/invalid action vocabulary, delayed bounded tooltip, accessible reason, unchanged port geometry, and readable regular/wizard contrast."
@@ -3469,6 +3913,52 @@ var processEditorLegacyEdgeErrorRowJS = processEditorStateJS(`var outcome='x'.re
   var actionRect=action.getBoundingClientRect();
   if(actionRect.width<=0||actionRect.height<=0||actionRect.right>mountRect.right+1) throw new Error('header controls were pushed out of the editor mount');`)
 
+// subgraphStateJS opens release-train with a ▣ "QA suite" node whose
+// inline body runs unit tests and lint, wired begin → qa → ship / stop.
+func subgraphStateJS(extraJS string) string {
+	return processEditorStateJS(`ed.model.addNode('subprocess', {x: 300, y: 120, id: 'qa', name: 'QA suite'});
+  ed.model.addNode('end', {x: 520, y: 220, id: 'stop', name: 'Stop'});
+  ed.model.template.nodes.stop.result = 'failure';
+  ed.model.template.nodes.qa.subprocess = {
+    params: {target: {type: 'string'}}, start: 'in',
+    nodes: {
+      'in': {type: 'start', next: {pass: 'unit'}},
+      unit: {type: 'task', name: 'Unit tests', performer: {kind: 'program', run: 'make test'}, next: {pass: 'lint', fail: 'bad'}},
+      lint: {type: 'task', name: 'Lint', performer: {kind: 'program', run: 'make lint'}, next: {pass: 'ok', fail: 'bad'}},
+      ok: {type: 'end', result: 'success'}, bad: {type: 'end', result: 'failure'}
+    },
+    inputs: {target: '{{ params.issue }}'}, outputs: {ok: 'pass', bad: 'fail'}
+  };
+  ed.model.setEdgeTarget('begin', 'pass', 'qa');
+  ed.model.addEdge('qa', 'pass', 'ship');
+  ed.model.addEdge('qa', 'fail', 'stop');
+  ed.model.layout.nodes.ship = {x: 520, y: 40};
+  ed.refresh({fit: true});
+  await editorPaint();
+` + extraJS)
+}
+
+// composeStateJS opens release-train as plan → build → check → ship (check
+// may also fail to stop), the E2 composition fixture.
+func composeStateJS(extraJS string) string {
+	return processEditorStateJS(`window.__compose = await import('/static/js/process-compose.js');
+  ed.model.addNode('task', {x: 240, y: 120, id: 'plan', name: 'Plan sprint'});
+  ed.model.addNode('task', {x: 420, y: 120, id: 'build', name: 'Build'});
+  ed.model.addNode('decision', {x: 600, y: 120, id: 'check', name: 'Green?'});
+  ed.model.addNode('end', {x: 800, y: 220, id: 'stop', name: 'Stop'});
+  ed.model.template.nodes.stop.result = 'failure';
+  ed.model.setEdgeTarget('begin', 'pass', 'plan');
+  ed.model.addEdge('plan', 'pass', 'build');
+  ed.model.addEdge('build', 'pass', 'check');
+  ed.model.addEdge('check', 'yes', 'ship');
+  ed.model.addEdge('check', 'no', 'stop');
+  ed.model.layout.nodes.begin = {x: 80, y: 120};
+  ed.model.layout.nodes.ship = {x: 800, y: 40};
+  ed.refresh({fit: true});
+  await editorPaint();
+` + extraJS)
+}
+
 func processEditorStateJS(extraJS string) string {
 	return fmt.Sprintf(`return (async function(){
   var auto = document.querySelector('nav [data-tab="jobs"]');
@@ -3539,7 +4029,7 @@ func processEditorLayeringState(key, title string) dashsnap.State {
   if(frontNode.matches('[role],[tabindex],[aria-label]')||frontNode.querySelector('[role],[tabindex],[aria-label]')||frontPorts.querySelector('[role],[tabindex],[aria-label]')) throw new Error('front copies duplicated accessible node/port ownership');
   if(!frontNode.querySelector('.process-overlay-anchor')) throw new Error('node-local overlay did not travel with its raised node');
   if(root.querySelector('.process-action-tooltip').closest('svg')||document.querySelector('.process-issues-panel').closest('svg')) throw new Error('global overlays moved into the node paint layer');
-  if(JSON.stringify(Array.from(root.querySelector('.process-graph-viewport').children).map(function(layer){return layer.dataset.key||layer.classList.contains('process-editor-band')&&'band';}).slice(0,5))!==JSON.stringify(['edges','nodes','front-node','ports','front-ports'])) throw new Error('fixed semantic layer order changed');
+  if(JSON.stringify(Array.from(root.querySelector('.process-graph-viewport').children).map(function(layer){return layer.dataset.key||layer.classList.contains('process-editor-band')&&'band';}).slice(0,6))!==JSON.stringify(['groups','edges','nodes','front-node','ports','front-ports'])) throw new Error('fixed semantic layer order changed');
   if(JSON.stringify(Array.from(state.nodeLayer.querySelectorAll('[tabindex="0"]')).concat(Array.from(state.portLayer.querySelectorAll('[tabindex="0"]'))).map(function(element){return element.closest('[data-node-id]').dataset.nodeId+':'+(element.dataset.port||'node');}))!==state.traversal) throw new Error('click history changed canonical keyboard traversal');
   var hit=document.elementFromPoint(state.overlap.x,state.overlap.y)?.closest('[data-node-id]');
   if(!hit||hit.dataset.nodeId!=='begin'||!hit.closest('.process-front-node-layer')) throw new Error('raised node does not own overlap hit-testing');
@@ -5040,4 +5530,160 @@ input.value = %q;
 input.dispatchEvent(new Event('input', { bubbles: true }));
 if (!document.querySelector('#cfg-layout').hasAttribute('data-cfg-searching')) throw new Error('config search mode not entered');
 `, query)
+}
+
+// processContextFixtureInitJS stubs GET /v1/process/context with the G3 jstest
+// fixture until the read model (tcl-f2cpfb) is on this branch. Fixture times
+// shift to the real clock, and performer/owner/scope refs rebind by member
+// title to the seeded agents' ids, so the avatar strip's busy ring is real.
+func processContextFixtureInitJS() string {
+	raw, err := os.ReadFile(filepath.Join("jstest", "process-context-fixture.json"))
+	if err != nil {
+		panic(fmt.Sprintf("read process context fixture: %v", err))
+	}
+	return fmt.Sprintf(`(function(){
+  var fixture = %s;
+  var realFetch = window.fetch.bind(window);
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf('/v1/process/context') === -1) return realFetch(input, init);
+    var data = JSON.parse(JSON.stringify(fixture));
+    var shift = Date.now() - Date.parse(data._now);
+    var dash = await import('/static/js/dashboard.js');
+    var idByTitle = {};
+    ((dash.lastSnapshot && dash.lastSnapshot.groups) || []).forEach(function(g){
+      (g.members || []).forEach(function(m){ if (m.title && m.agent_id) idByTitle[m.title] = m.agent_id; });
+    });
+    var titleByRef = {};
+    Object.values(data.runs).forEach(function(run){
+      run.nodes.forEach(function(n){ if (n.performer && n.performer.name) titleByRef[n.performer.ref] = n.performer.name; });
+    });
+    titleByRef.agt_fe_lead = 'fe-lead';
+    var rebind = function(ref){ return idByTitle[titleByRef[ref]] || ref; };
+    Object.values(data.runs).forEach(function(run){
+      ['startedAt', 'updatedAt'].forEach(function(k){ if (run[k]) run[k] = new Date(Date.parse(run[k]) + shift).toISOString(); });
+      if (run.scope.owner) run.scope.owner = rebind(run.scope.owner);
+      if (run.scope.agentId) run.scope.agentId = rebind(run.scope.agentId);
+      run.nodes.forEach(function(n){ if (n.performer && n.performer.ref) { n.performer.ref = rebind(n.performer.ref); delete n.performer.name; } });
+    });
+    data.groups.forEach(function(g){ (g.planned || []).forEach(function(p){ p.nextAt = new Date(Date.parse(p.nextAt) + shift).toISOString(); }); });
+    data.agents.forEach(function(a){ a.agentId = rebind(a.agentId); });
+    return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+})();`, raw)
+}
+
+// processRunDetailInitJS stubs the single-run focus's run detail reads: the
+// release run's review gate awaits a verdict and has a short history.
+func processRunDetailInitJS() string {
+	return `(function(){
+  var prevFetch = window.fetch;
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var m = url.match(/\/v1\/process\/runs\/([^/?]+)(\/events)?/);
+    if (!m || (init && init.method && init.method !== 'GET')) return prevFetch(input, init);
+    var id = decodeURIComponent(m[1]);
+    var json = function(body){ return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+    if (m[2]) {
+      if (id !== 'run_release' || url.indexOf('after=') !== -1) return json({ events: [], next: 0 });
+      var at = function(min){ return new Date(Date.now() - min * 60000).toISOString(); };
+      return json({ events: [
+        { sequence: 1, occurredAt: at(16), nodeId: 'review', kind: 'node_entered', actor: 'from Implement charts' },
+        { sequence: 2, occurredAt: at(15), nodeId: 'review', kind: 'human_notified', actor: 'Messages' },
+        { sequence: 3, occurredAt: at(2), nodeId: 'review', kind: 'reminder' },
+      ], next: 0 });
+    }
+    return json({ id: id, awaitingDecisions: id === 'run_release' ? [{ nodeId: 'review', verdicts: ['approved', 'changes'] }] : [], blocked: id === 'run_migrate' ? [{ nodeId: 'apply', attempt: 1, reason: 'migration lock held' }] : [] });
+  };
+})();`
+}
+
+// groupsRunFocusJS opens the release run's card into the single-run focus
+// and waits for the inspector to land on its awaited review gate.
+const groupsRunFocusJS = `
+  document.querySelector('[data-process-open="run_release"]').click();
+  var focusDeadline = Date.now() + 3000;
+  while (!document.querySelector('[data-run-inspector="review"] [data-run-verdict]') && Date.now() < focusDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-run-focus="run_release"]')) throw new Error('run focus did not open');
+  if (!document.querySelector('[data-run-inspector="review"] [data-run-verdict="approved"]')) throw new Error('inspector lacks the gate verdicts');
+  if (!document.querySelector('[data-run-dock-agent]')) throw new Error('performer dock is empty');
+  if (!document.querySelector('.grf-history li')) throw new Error('inspector history is empty');`
+
+// groupsProcessesJS shows the Groups Processes focus through the island's
+// signals (no pref write leaks into later states), waits for the fixture's
+// cards, then runs extraJS with `groups` in scope.
+func groupsProcessesJS(extraJS string) string {
+	return `return (async function(){
+  var registry = await import('/static/js/feature-state-registry.js');
+  var groups = registry.featureState('groups');
+  if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  groups.focus.value = 'processes';
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('[data-process-run-card="run_release"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('[data-process-run-card="run_release"]')) throw new Error('fixture run cards did not render');
+  var empty = document.querySelector('[data-process-group="infra-crew"] .gp-empty');
+  if (!empty) throw new Error('the empty group does not say so');
+  if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
+` + extraJS + `
+})();`
+}
+
+// processStepperSnapJS renders the T3 stepper for a live or a paused run.
+func processStepperSnapJS(paused bool) string {
+	field, state := "", "live"
+	if paused {
+		field, state = "paused: { at: ago(3), by: 'human:operator' },", "paused"
+	}
+	js := `return (async function(){
+  var kit = await import('/static/js/process-terminal-overlay.js');
+  var stepper = await import('/static/js/process-agent-stepper.js');
+  var preact = await import('preact');
+  var htm = (await import('htm')).default.bind(preact.h);
+  var ago = function(m){ return new Date(Date.now() - m * 60000).toISOString(); };
+  var run = { runId: 'run_reindex', name: 'reindex-v2', status: 'running', startedAt: ago(41), PAUSED_FIELD
+    scope: { kind: 'agent', agentId: 'agt_search', owner: 'human:operator', state: 'bound' },
+    nodes: [
+      { id: 'start', kind: 'start', state: 'done', performer: { kind: 'engine' } },
+      { id: 'snapshot', label: 'Snapshot index', kind: 'task', state: 'done', performer: { kind: 'program', ref: 'safe' } },
+      { id: 'backfill', label: 'Backfill shards', kind: 'task', state: 'running', performer: { kind: 'agent', ref: 'agt_search' },
+        dispatch: { agentId: 'agt_search', attempt: 4, state: 'delivered', deliveredAt: ago(21) } },
+      { id: 'verify', label: 'Verify recall@10', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'eval' } },
+      { id: 'decide', label: 'Decide', kind: 'decision', state: 'pending', performer: { kind: 'human' } },
+      { id: 'swap', label: 'Swap alias', kind: 'task', state: 'pending', performer: { kind: 'program', ref: 'alias-write' } },
+      { id: 'end', kind: 'end', state: 'pending', performer: { kind: 'engine' } } ],
+    edges: [ { from: 'start', to: 'snapshot', label: 'next' }, { from: 'snapshot', to: 'backfill', label: 'next' },
+      { from: 'backfill', to: 'verify', label: 'next' }, { from: 'verify', to: 'decide', label: 'next' },
+      { from: 'decide', to: 'swap', label: 'swap' }, { from: 'decide', to: 'end', label: 'ask-lead' },
+      { from: 'swap', to: 'end', label: 'next' } ] };
+  var context = { runs: { run_reindex: run }, groups: [], agents: [{ agentId: 'agt_search', runs: [{ runId: 'run_reindex', nodeId: 'backfill', index: 2, total: 5, state: 'running' }] }], orphaned: [] };
+  var snap = { agents: [{ agent_id: 'agt_search', conv_id: 'conv-search', title: 'search-indexer', groups: ['webshop'],
+      state: { cwd: '/home/dev/git/webshop-search-index-v2', sandbox_profiles: [{ scope: 'group', name: 'dev-net' }], cost_usd: 3.42 } }],
+    groups: [{ id: 7, name: 'webshop', members: [] }], permissions: { grants: { 'conv-search': ['self.process'] } } };
+  kit.configureProcessContextPoller({ interval: 600000, fetch: async function(){ return { ok: true, json: async function(){ return context; } }; } });
+  var host = document.createElement('div');
+  host.id = 'process-terminal-overlay-t3-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#0d1117;visibility:visible';
+  host.innerHTML = '<div class="mux-pane active" style="display:flex"><div class="mux-pane-header"><span class="mux-pane-title">search-indexer</span></div><pre style="margin:0;padding:12px;color:#8b949e;font:12px ui-monospace,monospace">[process reindex-v2 › Backfill shards] (injected turn)\nBash(./scripts/backfill.sh --shard 3)\n  shard 3/4: 1,284,113 docs … 71%\n</pre><div data-overlay-root></div></div>';
+  document.body.appendChild(host);
+  var root = host.querySelector('[data-overlay-root]');
+  preact.render(htm` + "`" + `<${kit.ProcessPaneOverlay} agentId="agt_search" enabled=${true} bounds=${stepper.agentRunBounds(snap, 'agt_search')} actions=${{ openGroups: function(){}, onComposeMessage: function(){}, promote: async function(){}, pause: async function(){}, resume: async function(){} }} />` + "`" + `, root);
+  await kit.refreshProcessContext();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var icon = host.querySelector('[data-process-overlay] button.pk-run-icon[data-process-run="run_reindex"]');
+  if (!icon) throw new Error('process overlay icon missing');
+  icon.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var pop = host.querySelector('[data-process-stepper]');
+  if (!pop || pop.getBoundingClientRect().width < 300) throw new Error('agent stepper is not visible');
+  if (!pop.querySelector('[data-process-bounds] .pk-bounds-chip')) throw new Error('bounds strip missing');
+  if (pop.querySelectorAll('.pk-stepper-step').length !== 5) throw new Error('expected five steps');
+  var pauseState = pop.querySelector('[data-process-pause]');
+  if (!pauseState || pauseState.dataset.processPause !== 'PAUSE_STATE') throw new Error('pause control is not PAUSE_STATE');
+  if (pauseState.querySelector('button').disabled) throw new Error('pause control is disabled');
+})();`
+	return strings.NewReplacer("PAUSED_FIELD", field, "PAUSE_STATE", state).Replace(js)
 }

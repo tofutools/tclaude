@@ -10,15 +10,18 @@ import (
 var (
 	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
-	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "captures", "metadata")
+	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "captures", "subprocess", "metadata")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
-	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "model", "effort", "run", "args", "timeout", "contact")
+	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "spawn", "model", "effort", "run", "args", "timeout", "contact")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
 	layoutFields     = stringSet("nodes", "edges")
 	layoutNodeFields = stringSet("x", "y")
 	layoutEdgeFields = stringSet("pinned")
+	// subprocessFields deliberately omits "resolved": only run creation embeds a
+	// referenced body, so authored source can never supply one.
+	subprocessFields = stringSet("templateRef", "version", "params", "start", "nodes", "inputs", "outputs")
 )
 
 type schemaID uint8
@@ -42,6 +45,7 @@ const (
 	schemaRetry
 	schemaWait
 	schemaNext
+	schemaSubprocess
 	schemaCount
 )
 
@@ -289,6 +293,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return paramFields
 	case schemaNode:
 		return nodeFields
+	case schemaSubprocess:
+		return subprocessFields
 	case schemaLayout:
 		return layoutFields
 	case schemaLayoutNode:
@@ -335,6 +341,15 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaWait, true
 		case "next":
 			return schemaNext, true
+		case "subprocess":
+			return schemaSubprocess, true
+		}
+	case schemaSubprocess:
+		switch key {
+		case "params":
+			return schemaParamMap, true
+		case "nodes":
+			return schemaNodeMap, true
 		}
 	case schemaLayout:
 		switch key {

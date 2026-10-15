@@ -19,6 +19,11 @@ const TYPE_SIZES = Object.freeze({
   wait: [78, 78],
   start: [58, 58],
   end: [62, 62],
+  subprocess: [180, 76],
+  // Scope ports (E1): the open subprocess's in/out contract, drawn as
+  // read-only pseudo nodes inside a drilled-in body.
+  'port-in': [54, 54],
+  'port-out': [54, 54],
 });
 
 function cmpText(a, b) {
@@ -29,20 +34,24 @@ function finite(value, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function nodeSize(node) {
+function nodeSize(node, sizeOf) {
+  // A caller-supplied sizer lets read-only renderers (the process UI kit's
+  // mini-graph) reuse layering and ordering at their own node scale.
+  const custom = typeof sizeOf === 'function' ? sizeOf(node) : null;
+  if (custom && Number.isFinite(custom.width) && Number.isFinite(custom.height)) return { width: custom.width, height: custom.height };
   if (node.compound?.collapsed) return { width: 190, height: 88 };
   const [width, height] = TYPE_SIZES[node.type] || TYPE_SIZES.task;
   return { width, height };
 }
 
-function stableNodes(graph) {
+function stableNodes(graph, sizeOf) {
   const seen = new Set();
   return (graph.nodes || []).map((raw, inputIndex) => {
     const id = String(raw.id || '');
     if (!id) throw new Error(`process layout: node at index ${inputIndex} has no id`);
     if (seen.has(id)) throw new Error(`process layout: duplicate node id ${id}`);
     seen.add(id);
-    return { ...raw, ...nodeSize(raw), id };
+    return { ...raw, ...nodeSize(raw, sizeOf), id };
   }).sort((a, b) => cmpText(a.id, b.id));
 }
 
@@ -285,7 +294,7 @@ function boundaryPoint(node, toward, outgoing) {
     const scale = 1 / ((Math.abs(dx) / (node.width / 2)) + (Math.abs(dy) / (node.height / 2)) || 1);
     return { x: node.x + dx * scale, y: node.y + dy * scale };
   }
-  if (node.type === 'wait' || node.type === 'start' || node.type === 'end') {
+  if (node.type === 'wait' || node.type === 'start' || node.type === 'end' || node.type === 'port-in' || node.type === 'port-out') {
     const length = Math.hypot(dx, dy) || 1;
     const radius = Math.min(node.width, node.height) / 2;
     return { x: node.x + dx / length * radius, y: node.y + dy / length * radius };
@@ -756,7 +765,7 @@ export function rerouteProcessLayout(layout, positions, overrides = {}) {
 // this module later without touching editor/viewer callers.
 export function layoutProcessGraph(graph, overrides = {}) {
   const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
-  const nodes = stableNodes(graph || {});
+  const nodes = stableNodes(graph || {}, options.nodeSize);
   const byID = new Map(nodes.map((n) => [n.id, n]));
   const edges = stableEdges(graph || {}, byID);
   const feedbackArc = typeof options.feedbackArc === 'function' ? options.feedbackArc : defaultFeedbackArc;

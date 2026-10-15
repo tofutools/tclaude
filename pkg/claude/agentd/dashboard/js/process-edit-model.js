@@ -39,7 +39,132 @@ export const START_OUTCOME = 'start';
 
 export const PALETTE_PRIMITIVES = PROCESS_NODE_TYPES;
 
-const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
+const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
+
+// ---- subprocess scopes (E1) --------------------------------------------------
+//
+// A subprocess (▣) node carries a nested graph in node.subprocess: inline
+// (start, nodes with their own `next`, params) or a templateRef. The editor
+// drills into an inline body by projecting it as the model's active scope —
+// template/edges/layout become the body's — while the parents wait in
+// `frames`. Undo snapshots, Save and the outline always see the ROOT, folded
+// back from every open scope, so one history and one CAS save cover the whole
+// tree. Body layout lives in the root layout under namespaced keys
+// ("qa/unit"), matching the runtime's namespaced node ids.
+
+export const SCOPE_SEPARATOR = '/';
+export const MAX_SUBPROCESS_DEPTH = 4;
+
+export function isInlineSubprocess(sub) {
+  return !!sub && typeof sub === 'object' && !sub.templateRef
+    && (!!sub.start || Object.keys(sub.nodes || {}).length > 0 || Object.keys(sub.params || {}).length > 0);
+}
+
+// A fresh ▣ node: an inline body that runs straight from start to end.
+export function blankSubprocessBody() {
+  return {
+    start: 'start',
+    nodes: { start: { type: 'start', next: { pass: 'end' } }, end: { type: 'end', result: 'success' } },
+  };
+}
+
+export function defaultNode(type) {
+  const node = { type };
+  if (type === 'end') node.result = 'success';
+  if (type === 'subprocess') node.subprocess = blankSubprocessBody();
+  return node;
+}
+
+// scopeEdges normalizes a body's nodes[*].next into the editor's edge list,
+// the client-side twin of the server's NormalizeEdges.
+export function scopeEdges(body = {}) {
+  const edges = [];
+  if (body.start) edges.push({ from: '', outcome: START_OUTCOME, to: body.start });
+  for (const id of Object.keys(body.nodes || {}).sort()) {
+    const next = body.nodes[id]?.next || {};
+    for (const outcome of Object.keys(next).sort()) edges.push({ from: id, outcome, to: next[outcome] });
+  }
+  return edges;
+}
+
+export function scopeNodes(body = {}) {
+  return Object.fromEntries(Object.entries(clone(body.nodes) || {}).map(([id, node]) => {
+    const { next: _next, ...rest } = node || {};
+    return [id, rest];
+  }));
+}
+
+// foldBody writes a scope's nodes/edges/params back into its subprocess
+// object, keeping the node's other fields (inputs, outputs).
+export function foldBody(sub = {}, template = {}, edges = []) {
+  const { start: _start, nodes: _nodes, params: _params, ...rest } = clone(sub) || {};
+  const nodes = clone(template.nodes) || {};
+  let start = '';
+  for (const edge of edges) {
+    if (edge.from === '') {
+      if (edge.outcome === START_OUTCOME) start = edge.to;
+      continue;
+    }
+    const node = nodes[edge.from];
+    if (!node) continue;
+    node.next = { ...(node.next || {}), [edge.outcome]: edge.to };
+  }
+  const out = { ...rest };
+  if (template.params && Object.keys(template.params).length) out.params = clone(template.params);
+  if (start) out.start = start;
+  out.nodes = nodes;
+  return out;
+}
+
+function scopedLayout(layout = {}, prefix) {
+  const out = { nodes: {} };
+  for (const [key, value] of Object.entries(layout.nodes || {})) {
+    if (key.startsWith(prefix)) out.nodes[key.slice(prefix.length)] = clone(value);
+  }
+  for (const [from, value] of Object.entries(layout.edges || {})) {
+    if (!from.startsWith(prefix)) continue;
+    out.edges ||= {};
+    out.edges[from.slice(prefix.length)] = clone(value);
+  }
+  return out;
+}
+
+function withoutScope(layout = {}, prefix) {
+  const out = clone(layout) || {};
+  out.nodes ||= {};
+  for (const key of Object.keys(out.nodes)) if (key.startsWith(prefix)) delete out.nodes[key];
+  for (const key of Object.keys(out.edges || {})) if (key.startsWith(prefix)) delete out.edges[key];
+  if (out.edges && !Object.keys(out.edges).length) delete out.edges;
+  return out;
+}
+
+function foldFrame(frame, child) {
+  const template = clone(frame.template);
+  const node = template.nodes[frame.nodeId];
+  node.subprocess = foldBody(node.subprocess, child.template, child.edges);
+  const prefix = frame.nodeId + SCOPE_SEPARATOR;
+  const layout = withoutScope(frame.layout, prefix);
+  for (const [key, value] of Object.entries(child.layout?.nodes || {})) layout.nodes[prefix + key] = clone(value);
+  for (const [key, value] of Object.entries(child.layout?.edges || {})) {
+    layout.edges ||= {};
+    layout.edges[prefix + key] = clone(value);
+  }
+  return { template, edges: clone(frame.edges), layout };
+}
+
+// processOutline is the bounded tree the outline panel lists: every node of
+// the root graph, with inline bodies nested under their ▣ node.
+export function processOutline(template = {}, depth = 0) {
+  return Object.entries(template.nodes || {}).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([id, node]) => {
+    const entry = { id, name: String(node?.name || id), type: String(node?.type || 'task') };
+    if (node?.type === 'subprocess') {
+      const sub = node.subprocess || {};
+      if (sub.templateRef) entry.ref = String(sub.templateRef);
+      else if (depth < MAX_SUBPROCESS_DEPTH) entry.children = processOutline({ nodes: sub.nodes || {} }, depth + 1);
+    }
+    return entry;
+  });
+}
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -136,6 +261,13 @@ export class ProcessEditModel {
       canInsert: config.canInsert !== false,
       maxUndo: Number.isInteger(config.maxUndo) && config.maxUndo > 0 ? config.maxUndo : MAX_UNDO,
     };
+    // Open subprocess scopes, outermost first: each holds the PARENT state
+    // ({ nodeId, template, edges, layout }) as of entering the child.
+    this.frames = [];
+    // Inline expansions (E2) of the CURRENT scope's ▣ nodes: id → the
+    // translation { dx, dy } from body layout coordinates to this canvas.
+    // View state only: never saved, never in history.
+    this.expansions = new Map();
     this.undoStack = [];
     this.redoStack = [];
     // rev identifies the CURRENT state; serial mints revs and never decreases,
@@ -159,13 +291,10 @@ export class ProcessEditModel {
     return this.redoStack.length > 0;
   }
 
+  // Undo snapshots always hold the ROOT, so history stays one timeline across
+  // drill-ins; restoring re-enters the open scope path as far as it survives.
   snapshotState() {
-    return {
-      template: clone(this.template),
-      edges: clone(this.edges),
-      layout: clone(this.layout),
-      rev: this.rev,
-    };
+    return { ...this.rootState(), rev: this.rev };
   }
 
   restoreState(snapshot) {
@@ -173,11 +302,172 @@ export class ProcessEditModel {
     // while topology history moves, and prevents pre-save snapshots from
     // resurrecting another store key after the identity becomes pinned.
     const id = this.template.id;
+    const path = this.scopePath();
+    this.expansions = this.frames[0]?.expansions || this.expansions;
+    this.frames = [];
     this.template = snapshot.template;
     this.template.id = id;
     this.edges = snapshot.edges;
     this.layout = snapshot.layout;
     this.rev = snapshot.rev;
+    this.reenterScopes(path);
+  }
+
+  // ---- subprocess scopes ----------------------------------------------------
+
+  get inScope() {
+    return this.frames.length > 0;
+  }
+
+  scopePath() {
+    return this.frames.map((frame) => frame.nodeId);
+  }
+
+  // rootState folds every open scope back into a fresh copy of the root.
+  rootState() {
+    let state = { template: clone(this.template), edges: clone(this.edges), layout: clone(this.layout) };
+    for (let i = this.frames.length - 1; i >= 0; i -= 1) state = foldFrame(this.frames[i], state);
+    state.template.id = this.template.id;
+    return state;
+  }
+
+  scopeTrail() {
+    const root = this.frames[0]?.template || this.template;
+    return [
+      { id: '', label: String(root.name || root.id || 'process') },
+      ...this.frames.map((frame) => ({ id: frame.nodeId, label: String(frame.template.nodes[frame.nodeId]?.name || frame.nodeId) })),
+    ];
+  }
+
+  // assertCanNest refuses a ▣ node whose body would exceed the server's
+  // nesting limit (bodies nest at most MAX_SUBPROCESS_DEPTH levels).
+  assertCanNest(type) {
+    if (type === 'subprocess' && this.frames.length >= MAX_SUBPROCESS_DEPTH) {
+      throw new Error(`subprocesses nest at most ${MAX_SUBPROCESS_DEPTH} levels deep`);
+    }
+  }
+
+  canEnterScope(id) {
+    const node = this.template.nodes[id];
+    return node?.type === 'subprocess' && isInlineSubprocess(node.subprocess) && this.frames.length < MAX_SUBPROCESS_DEPTH;
+  }
+
+  // enterScope is navigation, not an edit: no undo step, no rev change.
+  enterScope(id) {
+    if (!this.canEnterScope(id)) throw new Error(`node ${id} has no inline subprocess body to enter`);
+    const node = this.template.nodes[id];
+    const body = node.subprocess;
+    this.frames.push({ nodeId: id, template: this.template, edges: this.edges, layout: this.layout, expansions: this.expansions });
+    this.expansions = new Map();
+    this.template = {
+      id: this.template.id, name: String(node.name || id),
+      params: clone(body.params) || {}, start: body.start || '', nodes: scopeNodes(body),
+    };
+    this.edges = scopeEdges(body);
+    this.layout = scopedLayout(this.frames.at(-1).layout, id + SCOPE_SEPARATOR);
+    return true;
+  }
+
+  exitScope() {
+    const frame = this.frames.pop();
+    if (!frame) return '';
+    this.expansions = frame.expansions || new Map();
+    const id = this.template.id;
+    const state = foldFrame(frame, { template: this.template, edges: this.edges, layout: this.layout });
+    this.template = state.template;
+    this.template.id = id;
+    this.edges = state.edges;
+    this.layout = state.layout;
+    return frame.nodeId;
+  }
+
+  exitToRoot() {
+    while (this.frames.length) this.exitScope();
+  }
+
+  reenterScopes(path = []) {
+    for (const id of path) {
+      if (!this.canEnterScope(id)) break;
+      this.enterScope(id);
+    }
+  }
+
+  // scopePorts describes the open scope's contract with its parent: body
+  // params are the in-ports (bound by inputs), and body end nodes leave
+  // through out-ports (outputs) onto the parent node's outcomes.
+  scopePorts() {
+    const frame = this.frames.at(-1);
+    if (!frame) return null;
+    const sub = frame.template.nodes[frame.nodeId]?.subprocess || {};
+    const outcomes = frame.edges.filter((edge) => edge.from === frame.nodeId).map((edge) => edge.outcome).sort();
+    const ends = Object.entries(this.template.nodes).filter(([, node]) => node?.type === 'end').map(([id]) => id).sort();
+    return {
+      nodeId: frame.nodeId,
+      params: Object.keys(this.template.params || {}).sort(),
+      parentParams: Object.keys((this.frames[0]?.template || this.template).params || {}).sort(),
+      inputs: { ...(sub.inputs || {}) },
+      outputs: { ...(sub.outputs || {}) },
+      outcomes, ends,
+      start: this.template.start || '',
+    };
+  }
+
+  // setScopeInput / setScopeOutput edit the open scope's ports on the parent
+  // ▣ node — one undoable step each. An empty value unbinds.
+  setScopeInput(param, expression) {
+    return this.editScopePorts('inputs', param, String(expression ?? '').trim());
+  }
+
+  setScopeOutput(endID, outcome) {
+    return this.editScopePorts('outputs', endID, String(outcome ?? '').trim());
+  }
+
+  editScopePorts(field, key, value) {
+    const frame = this.frames.at(-1);
+    if (!frame) throw new Error('not inside a subprocess');
+    if (!key) throw new Error('port name is required');
+    this.assertNodeEditable(frame.nodeId);
+    const sub = frame.template.nodes[frame.nodeId].subprocess;
+    if ((sub[field]?.[key] || '') === value) return false;
+    this.begin();
+    const next = { ...(sub[field] || {}) };
+    if (value) next[key] = value;
+    else delete next[key];
+    if (Object.keys(next).length) sub[field] = next;
+    else delete sub[field];
+    return true;
+  }
+
+  // replaceSubprocessWithRef swaps an inline body (a node of the CURRENT
+  // scope) for a reference to the template it was extracted into, keeping
+  // the ports.
+  replaceSubprocessWithRef(id, templateRef) {
+    const node = this.template.nodes[id];
+    if (node?.type !== 'subprocess' || !isInlineSubprocess(node.subprocess)) throw new Error(`node ${id} has no inline body`);
+    if (!templateRef) throw new Error('template id is required');
+    this.assertNodeEditable(id);
+    this.begin();
+    const { inputs, outputs } = node.subprocess;
+    node.subprocess = { templateRef, ...(inputs ? { inputs } : {}), ...(outputs ? { outputs } : {}) };
+    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
+    return true;
+  }
+
+  // extractableBody returns the open scope as a standalone template edit
+  // view (for POST /v1/process/templates).
+  extractableBody(name) {
+    if (!this.inScope) throw new Error('enter a subprocess to extract it');
+    const template = clone(this.template);
+    delete template.id;
+    template.apiVersion = this.frames[0].template.apiVersion || 'tclaude.dev/v1alpha1';
+    template.kind = this.frames[0].template.kind || 'ProcessTemplate';
+    template.name = String(name || template.name || '').trim();
+    if (!Object.keys(template.params || {}).length) delete template.params;
+    return { template, edges: clone(this.edges), layout: clone(this.layout) };
+  }
+
+  outline() {
+    return processOutline(this.rootState().template);
   }
 
   // begin() is the single undo gate: every mutation snapshots the pre-state,
@@ -301,6 +591,9 @@ export class ProcessEditModel {
     if (!this.layout.edges) return;
     const live = new Set(this.edges.map((edge) => `${edge.from}\u0000${edge.outcome}`));
     for (const [from, byOutcome] of Object.entries(this.layout.edges)) {
+      // Namespaced keys ("qa/unit") pin edges inside nested bodies; their own
+      // scope prunes them, and withoutScope drops them with the ▣ node.
+      if (from.includes(SCOPE_SEPARATOR)) continue;
       for (const outcome of Object.keys(byOutcome)) {
         if (!live.has(`${from}\u0000${outcome}`)) delete byOutcome[outcome];
       }
@@ -335,12 +628,12 @@ export class ProcessEditModel {
 
   addNode(type, { x, y, id, name } = {}) {
     this.assertCanInsert();
+    this.assertCanNest(type);
     const nodeType = NODE_TYPES.has(type) ? type : 'task';
     const nodeID = this.uniqueNodeID(id || nodeType);
     this.begin();
-    const node = { type: nodeType };
+    const node = defaultNode(nodeType);
     if (name) node.name = name;
-    if (nodeType === 'end') node.result = 'success';
     this.template.nodes[nodeID] = node;
     if (Number.isFinite(x) && Number.isFinite(y)) this.layout.nodes[nodeID] = { x, y };
     return nodeID;
@@ -352,6 +645,7 @@ export class ProcessEditModel {
   // connectTo (new → existing) identifies the side of the dragged port.
   addConnectedNode(type, { x, y, connectFrom = '', connectTo = '' } = {}) {
     this.assertCanInsert();
+    this.assertCanNest(type);
     if (!!connectFrom === !!connectTo) throw new Error('connected node requires exactly one existing endpoint');
     const existingID = connectFrom || connectTo;
     if (!this.template.nodes[existingID]) throw new Error(`unknown node ${existingID}`);
@@ -366,9 +660,7 @@ export class ProcessEditModel {
     this.assertEdgeEditable(edge);
 
     this.begin();
-    const node = { type: nodeType };
-    if (nodeType === 'end') node.result = 'success';
-    this.template.nodes[nodeID] = node;
+    this.template.nodes[nodeID] = defaultNode(nodeType);
     if (Number.isFinite(x) && Number.isFinite(y)) this.layout.nodes[nodeID] = { x, y };
     this.edges.push(edge);
     return { id: nodeID, edge };
@@ -397,6 +689,7 @@ export class ProcessEditModel {
     this.begin();
     delete this.template.nodes[id];
     delete this.layout.nodes[id];
+    this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
     this.edges = this.edges.filter((edge) => edge.from !== id && edge.to !== id);
     if (rewire && successor && successor !== id) {
       for (const edge of incoming) {
@@ -587,6 +880,7 @@ export class ProcessEditModel {
     for (const id of nodes) {
       delete this.template.nodes[id];
       delete this.layout.nodes[id];
+      this.layout = withoutScope(this.layout, id + SCOPE_SEPARATOR);
     }
     this.edges = this.edges.filter((edge) => !selectedEdge(edge) && !nodes.has(edge.from) && !nodes.has(edge.to));
     this.edges.push(...bridges);
@@ -717,6 +1011,7 @@ export class ProcessEditModel {
   }
 
   setTemplateMeta({ name, description, doc } = {}) {
+    if (this.inScope) throw new Error('template settings belong to the root process; exit the subprocess first');
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
     const changed = (name !== undefined && (name || undefined) !== this.template.name)
@@ -817,21 +1112,190 @@ export class ProcessEditModel {
         joinOnTarget: join && (inCounts.get(edge.to) || 0) > 1 ? join : undefined,
       });
     }
-    return { nodes, edges };
+    return this.expandGraph({ nodes, edges });
+  }
+
+  // ---- inline expansion (E2) -------------------------------------------------
+  //
+  // An expanded ▣ node is drawn in place as a framed group: its body nodes
+  // join this canvas under namespaced ids ("qa/unit", the same keys its body
+  // layout is stored under), connectors into the ▣ land on the body's start,
+  // and connectors out of it leave from the body end mapped onto that
+  // outcome. Edits on a namespaced id are routed into the body (see the
+  // NESTED_ROUTES wrapper below the class), so they are ordinary undoable
+  // edits of this draft.
+
+  canExpand(id) {
+    return this.canEnterScope(id);
+  }
+
+  isExpanded(id) {
+    return this.expansions.has(id) && this.canExpand(id);
+  }
+
+  // expandSubprocess centers the body on `origin` (the ▣ node's drawn
+  // position; the editor passes it because an unpinned node has none here).
+  expandSubprocess(id, origin = this.layout.nodes[id] || { x: 0, y: 0 }) {
+    if (!this.canExpand(id)) throw new Error(`node ${id} has no inline subprocess body to expand`);
+    // A wrapped region keeps its pins in this canvas's coordinates around
+    // the ▣ node: show it exactly where it was drawn before wrapping.
+    const prefix = id + SCOPE_SEPARATOR;
+    const pins = Object.keys(this.template.nodes[id].subprocess.nodes || {})
+      .map((inner) => this.layout.nodes[prefix + inner]).filter(Boolean);
+    const near = 120;
+    if (pins.length && Math.min(...pins.map((p) => p.x)) - near <= origin.x && origin.x <= Math.max(...pins.map((p) => p.x)) + near
+        && Math.min(...pins.map((p) => p.y)) - near <= origin.y && origin.y <= Math.max(...pins.map((p) => p.y)) + near) {
+      this.expansions.set(id, { dx: 0, dy: 0 });
+      return true;
+    }
+    const positions = [...this.bodyPositions(id).values()];
+    const left = Math.min(...positions.map((p) => p.x - p.width / 2));
+    const right = Math.max(...positions.map((p) => p.x + p.width / 2));
+    const top = Math.min(...positions.map((p) => p.y - p.height / 2));
+    const bottom = Math.max(...positions.map((p) => p.y + p.height / 2));
+    const cx = positions.length ? (left + right) / 2 : 0;
+    const cy = positions.length ? (top + bottom) / 2 : 0;
+    this.expansions.set(id, { dx: Math.round(origin.x - cx), dy: Math.round(origin.y - cy) });
+    return true;
+  }
+
+  collapseSubprocess(id) {
+    return this.expansions.delete(id);
+  }
+
+  // bodyPositions lays the body out in its own coordinates: stored body
+  // pins where present, the shared layout engine for the rest.
+  bodyPositions(id) {
+    const body = this.template.nodes[id]?.subprocess || {};
+    const prefix = id + SCOPE_SEPARATOR;
+    const laid = layoutProcessGraph({
+      nodes: Object.entries(body.nodes || {}).map(([inner, node]) => ({
+        id: inner, type: node?.type || 'task', label: node?.name || inner,
+        pinned: this.layout.nodes[prefix + inner] ? { ...this.layout.nodes[prefix + inner] } : undefined,
+      })),
+      edges: scopeEdges(body).filter((edge) => edge.from && body.nodes?.[edge.to])
+        .map((edge) => ({ id: graphEdgeID(edge.from, edge.outcome), ...edge })),
+    });
+    return new Map(laid.nodes.map((node) => [node.id, node]));
+  }
+
+  expansionOffset(id) {
+    return this.expansions.get(id) || { dx: 0, dy: 0 };
+  }
+
+  expandGraph(graph) {
+    const groups = [];
+    for (const id of [...this.expansions.keys()]) {
+      if (!this.isExpanded(id)) continue;
+      const node = this.template.nodes[id];
+      const body = node.subprocess;
+      const prefix = id + SCOPE_SEPARATOR;
+      const { dx, dy } = this.expansionOffset(id);
+      const positions = this.bodyPositions(id);
+      const inner = Object.entries(body.nodes || {}).map(([innerID, child]) => ({
+        id: prefix + innerID,
+        type: child?.type || 'task',
+        label: child?.name || innerID,
+        portAvailability: processNodePortAvailability(child),
+        pinned: { x: positions.get(innerID).x + dx, y: positions.get(innerID).y + dy },
+        group: id,
+      }));
+      const bodyEdges = scopeEdges(body).filter((edge) => edge.from && body.nodes?.[edge.to]).map((edge) => ({
+        id: graphEdgeID(prefix + edge.from, edge.outcome),
+        from: prefix + edge.from, to: prefix + edge.to, outcome: edge.outcome,
+        pinned: this.edgePinned(prefix + edge.from, edge.outcome),
+      }));
+      const ends = Object.keys(body.nodes || {}).filter((inner) => body.nodes[inner]?.type === 'end').sort();
+      const outputs = body.outputs || {};
+      const outcomes = graph.edges.filter((edge) => edge.from === id).length;
+      const sourceEnd = (outcome) => ends.find((end) => outputs[end] === outcome)
+        || (outcomes === 1 ? ends.find((end) => !outputs[end]) : undefined) || ends[0];
+      const entry = body.start && body.nodes?.[body.start] ? prefix + body.start : '';
+      graph.nodes = graph.nodes.filter((candidate) => candidate.id !== id).concat(inner);
+      graph.edges = graph.edges.flatMap((edge) => {
+        if (edge.to === id) return entry ? [{ ...edge, to: entry }] : [];
+        if (edge.from !== id) return [edge];
+        const end = sourceEnd(edge.outcome);
+        // source keeps the connector's real identity for selection and edits.
+        return end ? [{ ...edge, from: prefix + end, source: { from: id, outcome: edge.outcome } }] : [];
+      }).concat(bodyEdges);
+      groups.push({ id, label: String(node.name || id), nodes: inner.map((child) => child.id) });
+    }
+    if (groups.length) graph.groups = groups;
+    return graph;
+  }
+
+  // commitScope replaces the current scope's content as ONE undo step: the
+  // whole-graph rewrites of process-compose.js (splice, wrap, unwrap) build
+  // the next state from clones and land it here.
+  commitScope({ template, edges, layout }) {
+    this.assertCanInsert();
+    const id = this.template.id;
+    this.begin();
+    this.template = template;
+    this.template.id = id;
+    this.edges = edges;
+    this.layout = layout;
+    this.template.start = edges.find((edge) => edge.from === '' && edge.outcome === START_OUTCOME)?.to || '';
+    for (const owner of [...this.expansions.keys()]) if (!this.canExpand(owner)) this.expansions.delete(owner);
+    return true;
+  }
+
+  // nestedTarget splits a namespaced id ("qa/unit") into the ▣ node of this
+  // scope whose inline body holds it and the body-local id.
+  nestedTarget(id) {
+    if (typeof id !== 'string') return null;
+    const at = id.indexOf(SCOPE_SEPARATOR);
+    if (at <= 0) return null;
+    const owner = id.slice(0, at);
+    const inner = id.slice(at + 1);
+    if (!inner || inner.includes(SCOPE_SEPARATOR) || !this.canEnterScope(owner)) return null;
+    return { owner, inner };
+  }
+
+  // withinBody runs fn inside a ▣ node's body and folds straight back; the
+  // body's own mutators take the (root-snapshotting) undo step.
+  withinBody(owner, fn) {
+    this.enterScope(owner);
+    try {
+      return fn();
+    } finally {
+      this.exitScope();
+    }
   }
 
   // saveBody is the POST payload. The server decodes with unknown fields
   // disallowed, so only the recognized edit-view fields go over the wire, and
   // template.layout stays empty — the top-level layout is authoritative.
   saveBody() {
-    const template = clone(this.template);
+    const { template, edges, layout } = this.rootState();
     delete template.layout;
-    return {
-      template,
-      edges: clone(this.edges),
-      layout: clone(this.layout),
-      sourceHash: this.sourceHash,
-    };
+    return { template, edges, layout, sourceHash: this.sourceHash };
+  }
+
+  // adoptReviewedGeneration applies a reviewed three-way merge
+  // (process-draft-diff.js) as ONE undoable mutation and rebases the CAS base
+  // onto the reviewed generation: its changes are now part of this draft,
+  // whether accepted or deliberately rejected. clean marks the merge as
+  // byte-for-byte that saved generation; otherwise the draft stays dirty and
+  // a later Save writes the human's choices on top of it.
+  adoptReviewedGeneration({ template, edges, layout } = {}, { ref, sourceHash, semanticHash } = {}, { clean = false } = {}) {
+    this.exitToRoot();
+    this.begin();
+    const id = this.template.id;
+    this.template = clone(template) || {};
+    this.template.id = id;
+    if (!this.template.nodes) this.template.nodes = {};
+    if (!this.template.params) this.template.params = {};
+    this.edges = clone(edges) || [];
+    this.layout = clone(layout) || {};
+    if (!this.layout.nodes) this.layout.nodes = {};
+    this.sourceHash = sourceHash || '';
+    this.currentRef = ref || '';
+    this.semanticHash = semanticHash || '';
+    // Not clean: the CAS base moved to the reviewed version, so no undo
+    // snapshot (whose content predates it) may ever read as saved again.
+    this.savedRev = clean ? this.rev : -1;
   }
 
   // markSaved baselines dirty at savedAtRev -- the rev captured when the save
@@ -853,6 +1317,122 @@ export class ProcessEditModel {
 // preconfigured compounds seeded from the embedded pinned example templates
 // (docs/examples/code-change-with-review.yaml), trimmed to the fields the
 // graph editor can meaningfully own today.
+// ---- edits on an inline-expanded body (E2) ---------------------------------
+//
+// The canvas addresses an expanded ▣ node's body nodes by namespaced id
+// ("qa/unit"). These model entry points accept such ids and run inside the
+// body (withinBody), so the body's own validation applies and the edit is
+// one ordinary undo step. A connector cannot cross the frame: wiring into or
+// out of a body goes through its ports.
+const CROSS_BOUNDARY = 'Connectors cannot cross a subprocess frame; wire into the ▣ node and map its ports instead.';
+const NESTED_ROUTES = {
+  updateNode: [0], renameNode: [0], setJoin: [0], deleteNode: [0],
+  addEdge: [0, 2], deleteEdge: [0], setEdgeOutcome: [0], setEdgeTarget: [0, 2], setEdgePinned: [0],
+  findEdge: [0], incomingEdges: [0], outgoingEdges: [0],
+};
+
+function namespaceEdge(edge, prefix) {
+  return edge && { ...edge, from: edge.from ? prefix + edge.from : '', to: prefix + edge.to };
+}
+
+function routeNested(model, args, positions) {
+  const targets = positions.map((index) => [index, model.nestedTarget(args[index])]);
+  if (!targets.some(([, target]) => target)) return null;
+  const owners = new Set(targets.map(([, target]) => target?.owner || ''));
+  if (owners.size !== 1 || owners.has('')) throw new Error(CROSS_BOUNDARY);
+  const local = [...args];
+  for (const [index, target] of targets) local[index] = target.inner;
+  return { owner: [...owners][0], local };
+}
+
+for (const [name, positions] of Object.entries(NESTED_ROUTES)) {
+  const original = ProcessEditModel.prototype[name];
+  ProcessEditModel.prototype[name] = function nestedRoute(...args) {
+    const route = routeNested(this, args, positions);
+    if (!route) return original.apply(this, args);
+    const prefix = route.owner + SCOPE_SEPARATOR;
+    const result = this.withinBody(route.owner, () => original.apply(this, route.local));
+    if (name === 'findEdge' || name === 'addEdge') return namespaceEdge(result, prefix);
+    if (name === 'incomingEdges' || name === 'outgoingEdges') return result.map((edge) => namespaceEdge(edge, prefix));
+    return result;
+  };
+}
+
+{
+  const proto = ProcessEditModel.prototype;
+  const { node, edgePortRejection, addConnectedNode, moveNodes, deleteItems } = proto;
+
+  // A body node reads straight from the ▣ node (no scope entry: the canvas
+  // asks on every render). Its next map is topology, shown as edges.
+  proto.node = function nestedNode(id) {
+    const target = this.nestedTarget(id);
+    if (!target) return node.call(this, id);
+    const { next: _next, ...rest } = this.template.nodes[target.owner].subprocess.nodes?.[target.inner] || {};
+    return this.template.nodes[target.owner].subprocess.nodes?.[target.inner] ? rest : undefined;
+  };
+
+  proto.edgePortRejection = function nestedPortRejection(from, to, nodes, context) {
+    if (nodes !== undefined) return edgePortRejection.call(this, from, to, nodes, context);
+    let route;
+    try {
+      route = routeNested(this, [from, to], [0, 1]);
+    } catch (error) {
+      return error.message;
+    }
+    if (!route) return edgePortRejection.call(this, from, to, undefined, context);
+    return this.withinBody(route.owner, () => edgePortRejection.call(this, route.local[0], route.local[1], undefined, context));
+  };
+
+  proto.addConnectedNode = function nestedConnectedNode(type, options = {}) {
+    const existing = options.connectFrom || options.connectTo;
+    const target = this.nestedTarget(existing);
+    if (!target) return addConnectedNode.call(this, type, options);
+    const { dx, dy } = this.expansionOffset(target.owner);
+    const local = {
+      ...options,
+      ...(options.connectFrom ? { connectFrom: target.inner } : { connectTo: target.inner }),
+      ...(Number.isFinite(options.x) && Number.isFinite(options.y) ? { x: options.x - dx, y: options.y - dy } : {}),
+    };
+    const result = this.withinBody(target.owner, () => addConnectedNode.call(this, type, local));
+    const prefix = target.owner + SCOPE_SEPARATOR;
+    return { id: prefix + result.id, edge: namespaceEdge(result.edge, prefix) };
+  };
+
+  // Moving a body node stores its body-coordinate pin under the namespaced
+  // key, which is exactly where a drill-in reads it from.
+  proto.moveNodes = function nestedMoveNodes(moves) {
+    const nested = (moves || []).map((move) => [move, this.nestedTarget(move.id)]);
+    if (!nested.some(([, target]) => target)) return moveNodes.call(this, moves);
+    const unique = new Map(nested.map(([move, target]) => [move.id, { move, target }]));
+    for (const { move, target } of unique.values()) {
+      if (!target && !this.template.nodes[move.id]) throw new Error(`unknown node ${move.id}`);
+      if (target && !this.node(move.id)) throw new Error(`unknown node ${move.id}`);
+      this.assertNodeEditable(target ? target.owner : move.id);
+      if (!Number.isFinite(move.x) || !Number.isFinite(move.y)) throw new Error('moveNodes needs finite coordinates');
+    }
+    this.begin();
+    for (const { move, target } of unique.values()) {
+      const { dx, dy } = target ? this.expansionOffset(target.owner) : { dx: 0, dy: 0 };
+      this.layout.nodes[move.id] = { x: move.x - dx, y: move.y - dy };
+    }
+    return true;
+  };
+
+  proto.deleteItems = function nestedDeleteItems(items, options) {
+    const ids = (items || []).map((item) => (item.type === 'edge' ? item.from : item.id));
+    const targets = ids.map((id) => this.nestedTarget(id));
+    if (!targets.some(Boolean)) return deleteItems.call(this, items, options);
+    const owners = new Set(targets.map((target) => target?.owner || ''));
+    if (owners.size !== 1 || owners.has('')) throw new Error('Delete items inside one expanded subprocess at a time.');
+    const owner = [...owners][0];
+    const strip = (id) => this.nestedTarget(id)?.inner ?? id;
+    const local = items.map((item) => (item.type === 'edge'
+      ? { ...item, from: strip(item.from), ...(item.to ? { to: strip(item.to) } : {}) }
+      : { ...item, id: strip(item.id) }));
+    return this.withinBody(owner, () => deleteItems.call(this, local, options));
+  };
+}
+
 export const PALETTE_SNIPPETS = [
   {
     key: 'code-change-with-review',

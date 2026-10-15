@@ -67,10 +67,10 @@ func Perform(ctx context.Context, dispatch *Dispatch) (Result, error) {
 	if !dispatch.spent.CompareAndSwap(false, true) {
 		return Result{}, ErrStaleDispatch
 	}
-	return programPerform(ctx, dispatch.runID, dispatch.command)
+	return programPerform(ctx, dispatch.runID, dispatch.command, dispatch.bounds)
 }
 
-func performProgram(ctx context.Context, runID string, command engine.Command) (Result, error) {
+func performProgram(ctx context.Context, runID string, command engine.Command, bounds *ProgramBounds) (Result, error) {
 	started := time.Now().UTC()
 	result := Result{
 		StartedAt: started,
@@ -92,12 +92,24 @@ func performProgram(ctx context.Context, runID string, command engine.Command) (
 		return result, nil
 	}
 
+	argv, err := boundedProgramArgv(command.Program, bounds)
+	if err != nil {
+		// Fail closed: a scope whose bounds cannot be enforced never runs its
+		// program unconfined instead.
+		result.FinishedAt = time.Now().UTC()
+		result.Observation.Error = boundedError(err.Error())
+		return result, nil
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stdout := newTailBuffer(MaxOutputTailBytes)
 	stderr := newTailBuffer(MaxOutputTailBytes)
-	cmd := osexec.CommandContext(runCtx, command.Program.Run, command.Program.Args...)
+	cmd := osexec.CommandContext(runCtx, argv[0], argv[1:]...)
 	configureProgramCommand(cmd)
+	if bounds != nil {
+		cmd.Dir = bounds.Cwd
+	}
 	cmd.Env = environment
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -174,10 +186,20 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	// Settling this observation can activate more than one branch; the follow-on
 	// advance plans one of them. The branches it did not plan stay ready until
 	// the owner has capacity for them.
-	advanced, planned, _, err := engine.AdvanceAndPlan(next, run.definition)
+	//
+	// A held run settles the same advance but plans nothing: the attempt that
+	// was in flight is recorded, and its successor waits for the release.
+	var advanced engine.Checkpoint
+	var planned *engine.Command
+	if run.held {
+		advanced, err = engine.AdvanceUntilQuiescent(next, run.definition)
+	} else {
+		advanced, planned, _, err = engine.AdvanceAndPlan(next, run.definition)
+	}
 	if err != nil {
 		return nil, err
 	}
+	plannedBounds := run.programBounds(planned)
 	// A failed check or review verdict reworks its compound, and this
 	// observation named the only gate that could have happened at. The row goes
 	// immediately after the verdict that caused it.
@@ -193,15 +215,37 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	// observation created — a plan stage succeeding into its approval gate —
 	// record its window in the same transaction that opened it.
 	events := commitEvidence(run.definition, run.checkpoint, advanced,
-		input, advanceEvidence(planned), true)
+		input, advanceEvidence(planned, plannedBounds), true)
 	if err := persistEvents(run, advanced, events); err != nil {
 		Abandon(run, dispatch)
 		return nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
 	}
 	if planned != nil {
-		return run.grant(*planned), nil
+		return run.grant(*planned, plannedBounds), nil
 	}
 	return nil, nil
+}
+
+// boundedProgramArgv is the argv that runs program inside bounds.
+func boundedProgramArgv(program engine.ProgramCommand, bounds *ProgramBounds) ([]string, error) {
+	argv := append([]string{program.Run}, program.Args...)
+	if bounds == nil {
+		return argv, nil
+	}
+	if bounds.Error != "" {
+		return nil, fmt.Errorf("program not started: the run scope's bounds cannot be enforced: %s", bounds.Error)
+	}
+	if bounds.Wrap == nil {
+		return argv, nil
+	}
+	wrapped, err := bounds.Wrap(argv)
+	if err != nil {
+		return nil, fmt.Errorf("program not started: the run scope's bounds cannot be enforced: %w", err)
+	}
+	if len(wrapped) == 0 {
+		return nil, fmt.Errorf("program not started: the run scope's sandbox rendered no command")
+	}
+	return wrapped, nil
 }
 
 func validateProgram(program engine.ProgramCommand) (time.Duration, error) {

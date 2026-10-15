@@ -125,7 +125,7 @@ func TestProcessRunAggregateProjectionsDoNotMaterializeRuntimePayloads(t *testin
 		program_authorizations_json = 99, checkpoint_json = 10`)
 	require.NoError(t, err)
 
-	summaries, err := ListProcessRunSummaries("", MaxProcessRunReadPage)
+	summaries, err := ListProcessRunSummaries("", MaxProcessRunReadPage, ProcessRunFilter{})
 	require.NoError(t, err)
 	require.Len(t, summaries, MaxProcessRunReadPage)
 	assert.Equal(t, "run_summary_00", summaries[0].ID)

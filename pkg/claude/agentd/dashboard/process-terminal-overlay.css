@@ -1,0 +1,116 @@
+/* Terminals process overlay (js/process-terminal-overlay.js, mocks T1/T2).
+   Builds on process-kit.css tokens (--pk-*). The cluster sits top-right just
+   below the pane header so it never covers the prompt line at the bottom. */
+
+.pk-pane-overlay {
+  position: absolute; top: 40px; right: 18px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  pointer-events: none; color: var(--pk-text);
+}
+.pk-pane-overlay > * { pointer-events: auto; }
+.pk-pane-overlay-bar {
+  display: inline-flex; align-items: center; gap: 10px; padding: 5px 6px 5px 8px;
+  background: color-mix(in srgb, var(--pk-surface) 82%, transparent);
+  border: 1px solid var(--pk-line); border-radius: 22px; backdrop-filter: blur(3px);
+}
+.pk-pane-overlay.collapsed .pk-pane-overlay-bar { padding: 2px 4px 2px 8px; opacity: .8; }
+.pk-pane-overlay-count { font-size: 11px; color: var(--pk-muted); }
+.pk-pane-overlay-toggle {
+  border: none; background: none; color: var(--pk-muted); font: inherit; font-size: 12px;
+  cursor: pointer; padding: 2px 4px; border-radius: 4px;
+}
+.pk-pane-overlay-toggle:hover { color: var(--pk-text); }
+.pk-pane-overlay-toggle:focus-visible { outline: 2px solid var(--pk-running); outline-offset: 1px; }
+
+/* T2 popover */
+.pk-run-popover {
+  width: min(560px, calc(100vw - 48px)); max-height: calc(100vh - 180px); overflow: auto;
+  background: var(--pk-surface); border: 1px solid var(--pk-node-border); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45); font-size: 12px;
+}
+.pk-run-popover-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; border-bottom: 1px solid var(--pk-line);
+}
+.pk-run-popover-name { font-size: 13px; }
+.pk-run-popover-close {
+  margin-left: auto; border: none; background: none; color: var(--pk-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px;
+}
+.pk-run-popover-close:hover { color: var(--pk-text); }
+.pk-run-popover-graph { padding: 8px 12px; border-bottom: 1px solid var(--pk-line); overflow-x: auto; }
+.pk-run-popover-body { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
+.pk-run-popover-node, .pk-run-popover-around { padding: 10px 12px; min-width: 0; }
+.pk-run-popover-around { border-left: 1px solid var(--pk-line); }
+.pk-run-popover-kicker {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--pk-muted); margin-bottom: 6px;
+}
+.pk-run-popover-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.pk-run-popover-desc { margin: 0 0 8px; color: var(--pk-planned-text); line-height: 1.4; }
+.pk-run-popover-outcomes { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.pk-around-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; min-width: 0; }
+.pk-around-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-around-arrow { color: var(--pk-muted); width: 12px; flex: none; text-align: center; }
+.pk-around-label { color: var(--pk-muted); font-size: 11px; }
+.pk-around-state { margin-left: auto; font-size: 10px; color: var(--pk-muted); flex: none; }
+.pk-around-state.pk-state-running { color: var(--pk-running-text); }
+.pk-around-state.pk-state-waiting { color: var(--pk-waiting-text); }
+.pk-around-state.pk-state-done { color: var(--pk-done-text); }
+.pk-around-state.pk-state-failed { color: var(--pk-failed-text); }
+.pk-run-popover-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--pk-line);
+}
+.pk-run-popover-actions .mux-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
+.pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
+
+/* Reassign picker in the T2 actions row */
+.pk-reassign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pk-reassign-select { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; max-width: 220px; }
+
+/* T3: agent-scoped run stepper (js/process-agent-stepper.js) */
+.pk-agent-stepper { width: min(440px, calc(100vw - 48px)); }
+.pk-bounds {
+  display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px;
+  border-bottom: 1px solid var(--pk-line);
+  background: color-mix(in srgb, var(--pk-agent) 9%, var(--pk-surface));
+}
+.pk-bounds-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid color-mix(in srgb, var(--pk-agent) 55%, transparent);
+  color: var(--pk-text);
+}
+.pk-bounds-unknown { border-color: var(--pk-line); color: var(--pk-muted); }
+.pk-stepper-list { padding: 6px 12px 4px; }
+.pk-stepper-step { position: relative; display: flex; gap: 10px; padding: 6px 0 10px; }
+.pk-stepper-step:not(:last-child)::before {
+  content: ''; position: absolute; left: 10px; top: 28px; bottom: -2px; width: 2px; background: var(--pk-line);
+}
+.pk-stepper-step.pk-state-done:not(:last-child)::before { background: var(--pk-done); }
+.pk-stepper-step-dot {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; border: 2px solid var(--pk-line); background: var(--pk-surface); z-index: 1;
+}
+.pk-stepper-step.pk-state-done .pk-stepper-step-dot { border-color: var(--pk-done); }
+.pk-stepper-step.pk-state-running .pk-stepper-step-dot { border-color: var(--pk-running); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pk-running) 25%, transparent); }
+.pk-stepper-step.pk-state-waiting .pk-stepper-step-dot { border-color: var(--pk-waiting); }
+.pk-stepper-step.pk-state-failed .pk-stepper-step-dot { border-color: var(--pk-failed); }
+.pk-stepper-step.pk-stepper-step-here.pk-state-running .pk-stepper-step-dot { border-color: var(--pk-agent); }
+.pk-stepper-step-body { min-width: 0; flex: 1; }
+.pk-stepper-step-title { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.pk-stepper-step-title b { font-size: 12.5px; }
+.pk-stepper-step.pk-state-planned .pk-stepper-step-title b { color: var(--pk-planned-text); }
+.pk-stepper-step-here-label { font-size: 11px; color: var(--pk-agent-text); }
+.pk-stepper-step-time { margin-left: auto; font-size: 11px; color: var(--pk-muted); }
+.pk-stepper-step-detail { color: var(--pk-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+.pk-stepper-step-warning { color: var(--pk-waiting-text); font-size: 11px; margin-top: 2px; }
+.pk-stepper-group { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; }
+
+/* Tab-strip ("rail") miniatures */
+.pk-tab-icons { display: inline-flex; gap: 3px; margin: 0 2px; vertical-align: middle; }
+
+@media (max-width: 640px) {
+  .pk-run-popover-body { grid-template-columns: 1fr; }
+  .pk-run-popover-around { border-left: none; border-top: 1px solid var(--pk-line); }
+}
