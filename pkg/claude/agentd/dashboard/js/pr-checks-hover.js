@@ -138,7 +138,7 @@ function usableArea() {
 // Measurements are coalesced into an animation frame and compared field-wise
 // before publishing, so a wheel gesture costs one layout read per frame and
 // re-renders the check list only when the panel actually moves.
-function usePanelPlacement(rootRef, panelRef, open) {
+export function usePanelPlacement(rootRef, panelRef, open) {
   const [placement, setPlacement] = useState(null);
   const frame = useRef(0);
 
@@ -350,7 +350,7 @@ export function badgeHref(summary, prURL) {
 // pointer never rests on the badge, so nothing would ever open the panel and
 // a tap would just leave the dashboard. Such a tap opens the panel instead;
 // its rows and footer link are then ordinary tappable links.
-function touchOnly() {
+export function touchOnly() {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     && window.matchMedia('(hover: none)').matches;
 }

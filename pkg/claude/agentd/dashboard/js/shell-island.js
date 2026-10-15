@@ -14,6 +14,7 @@ import {
   WHAT_IF_HINT,
 } from './shell-model.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
+import { PRReviewBadge } from './pr-review-badge.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
 import { featureState } from './peer-view-limits.js';
@@ -173,8 +174,11 @@ function OpenPRRow({ pr, showFinalCI = false }) {
           ${draft ? html`<span class="open-pr-draft-label">Draft</span>` : null}
         </span>
       </span>
-      <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
-        summary=${terminal && !showFinalCI ? null : pr.checks} />
+      <span class="open-pr-badges">
+        <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
+          summary=${terminal && !showFinalCI ? null : pr.checks} />
+        ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
+      </span>
     </li>
   `;
 }
@@ -252,7 +256,7 @@ function OpenPRs({ state }) {
   const recentLabel = `Closed ${view.recentWindowDays}d`;
   // "recent" selected while the window is configured off falls back to the
   // open list, so the Open chip — not a vanished chip — must read as active.
-  const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
+  const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'ready' && filter !== 'unattached';
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
@@ -274,6 +278,9 @@ function OpenPRs({ state }) {
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
             <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${view.total}</button>
             <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${view.attention}</button>
+            <button class=${filter === 'ready' ? 'active' : ''} aria-pressed=${filter === 'ready'}
+              title="Approved with all CI checks passing"
+              onClick=${() => setFilter('ready')}>Ready to merge ${view.ready}</button>
             <button class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${view.unattached}</button>
             ${view.recentWindowDays > 0 ? html`<button class=${view.showingRecent ? 'active' : ''} aria-pressed=${view.showingRecent}
               title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}

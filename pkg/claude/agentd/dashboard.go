@@ -3249,6 +3249,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
 	// presented badge gets the same indicator as an automatic one.
 	prChecks := prChecksIndexFor(allPRCacheURLs)
+	// Review status rides the same identity-keyed batch discipline; see
+	// prreviews.go. Written only by GitHub reads that already happen.
+	prReviews := prReviewsIndexFor(allPRCacheURLs)
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -3285,7 +3288,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		b := rc.viewFor(convID)
 		links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 			withFreshestPRStates(freshPRStates).
-			withPRChecks(prChecks)
+			withPRChecks(prChecks).
+			withPRReviews(prReviews)
 		a := &dashboardAgent{
 			AgentID:           b.AgentID,
 			ConvID:            convID,
@@ -3513,7 +3517,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
-				withPRChecks(prChecks)
+				withPRChecks(prChecks).
+				withPRReviews(prReviews)
 			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			online := b.Online
 			if presence != nil && presence.State == "away" {
@@ -3568,7 +3573,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
-				withPRChecks(prChecks)
+				withPRChecks(prChecks).
+				withPRReviews(prReviews)
 			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			ownerOnline := b.Online && (presence == nil || presence.State != "away")
 			dg.Members = append(dg.Members, dashboardMember{
@@ -3842,12 +3848,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Links = links
 	out.Usage = usage
 	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
-		unionLocallyKnownOpenPRs(
+		withAuthoredPRReviews(unionLocallyKnownOpenPRs(
 			reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
 			localPRs,
 			freshPRStates,
 			prChecks,
-		),
+		), prReviews),
 		out.Agents,
 	)
 	// Costs-tab visibility: show when there is real pay-per-token spend to

@@ -117,7 +117,7 @@ shows how to bring a retired agent back.
 !!! info "Go deeper"
     [Agents and groups → Ownership](../agents-and-groups.md#ownership),
     [Spawning and lifecycle → The manager pattern](../spawning-and-lifecycle.md#the-manager-pattern),
-    [Dashboard → PR and CI pills](../dashboard.md#pr-and-ci-pills) and
+    [Dashboard → PR, CI and review pills](../dashboard.md#pr-ci-and-review-pills) and
     [Dashboard → Messages](../dashboard.md#messages).
 
 ## From the terminal

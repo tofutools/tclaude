@@ -65,14 +65,14 @@ func TestDecodeAuthoredRecentPRsReportsTruncation(t *testing.T) {
 
 func TestAuthoredPRSearchArgsSelectQueryAndWindow(t *testing.T) {
 	now := time.Date(2026, 8, 13, 3, 0, 0, 0, time.UTC)
-	open := authoredPRSearchArgs("octocat", 0, now)
+	open := authoredPRSearchArgs("octocat", 0, now, false)
 	assert.Contains(t, open, "query="+authoredOpenPRGraphQLQuery)
 	for _, arg := range open {
 		assert.NotContains(t, arg, "qr=", "the closed search is skipped when the window is off")
 		assert.NotContains(t, arg, "rfirst=")
 	}
 
-	recent := authoredPRSearchArgs("octocat", 3, now)
+	recent := authoredPRSearchArgs("octocat", 3, now, false)
 	assert.Contains(t, recent, "query="+authoredRecentPRGraphQLQuery)
 	assert.Contains(t, recent, "qr=author:octocat is:closed type:pr closed:>=2026-08-10 sort:updated-desc")
 	assert.Contains(t, recent, "rfirst=50")

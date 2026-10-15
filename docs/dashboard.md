@@ -289,7 +289,7 @@ enabled, use the compact selector to switch between quota percentage and
 estimated pay-per-token cost. Copilot also offers its native AIC allowance in
 the same selector: `% / ≈$ / AIC`.
 
-### PR and CI pills
+### PR, CI and review pills
 
 The PR pill (`#1234`) is colored by state (open / draft / merged / closed).
 The CI pill reads `✓ 12/14` with glyphs ✓ ✕ ◐ · (the denominator excludes
@@ -304,6 +304,20 @@ default; select that filter to reveal its **Include drafts** checkbox. Open PRs
 are ordered by repository name, then numeric PR number, so CI and activity
 updates do not move rows. Titles come from GitHub; newly discovered PRs show
 `repo#number` until their title is fetched. The Closed filter stays newest first.
+
+A review pill follows the CI pill on open, non-draft PRs: `✓ 2` (two
+approvals), `± 1` (changes requested), `◷ review` (branch protection still
+requires a review) or a dashed `no reviews`. Approvals count human reviewers
+only; bots are listed but never counted. Hovering opens a reviewer panel with
+each reviewer's latest review (linked), GitHub's review decision, and links to
+the conversation and the changed files. The panel reads the snapshot and makes
+no GitHub call. GitHub's `reviewDecision` rides every existing PR read for
+free. The reviewer list costs one extra GraphQL point, so the Open PRs search
+fetches it at most once a minute. Reviewer lists come only from that search of
+your own PRs; another author's PR shows a pill only when its repository's
+branch protection requires reviews. In the footer, **Ready to merge** lists
+approved PRs with passing CI, and requested changes count toward **Needs
+attention**.
 
 ### Zooming into a terminal
 
