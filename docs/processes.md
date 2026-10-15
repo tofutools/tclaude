@@ -63,6 +63,35 @@ Importing stores templates and never starts a run. The review lists every
 command the workflow would run, the roles it asks for and the signer. See
 [Portable Workflow Format](pwf.md).
 
+### Saved to a group, or to the library
+
+Every process is a stored template, one versioned artifact, however it was
+saved. A group keeps an ordered list of the processes saved to it, shown as
+one-click chips that ask only for the start inputs. The library lists a
+template unless it was saved to a group without being published:
+
+- **Save to group** saves the template unlisted and pins it to the group
+  (`POST /v1/process/templates[/{id}]` with `"listed": false` and
+  `"pinGroup": "<group>"`).
+- **Start now** on a step list that was never saved saves it unlisted and
+  not pinned, so one-off runs leave no chip behind. The run still references
+  the template by its ref.
+- **Publish** lists it in the library:
+  `POST /v1/process/templates/{id}/listing {"listed": true}`, or a save with
+  `"listed": true`.
+- **Pin / unpin** an existing template:
+  `POST /v1/process/groups/{group}/processes {"templateId": …}` and
+  `DELETE /v1/process/groups/{group}/processes/{templateId}`.
+
+The library read (`GET /v1/process/templates`) hides unlisted templates
+unless asked with `?all=1`. The process context lists each group's saved
+processes in pin order, with their start params (whether each is required)
+and the program profiles a start must authorize.
+
+Pins and the listing live in tclaude's database, never in the template: a
+template's hashes are the same whether or not it is pinned or listed, and an
+exported template carries no group. Deleting a template removes its pins.
+
 Two worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
 authoring-shape templates and pass template validation, but note that they use
