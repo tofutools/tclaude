@@ -20,6 +20,7 @@ type processReportParams struct {
 	Node    string `long:"node" optional:"true" help:"Node id from the dispatch message"`
 	Attempt int    `long:"attempt" optional:"true" help:"Attempt number from the dispatch message"`
 	Note    string `long:"note" optional:"true" help:"Short summary of the result, or why it failed"`
+	Verdict string `long:"verdict" optional:"true" help:"Your decision, when you were asked to decide a step: one of the verdicts the dispatch message lists"`
 }
 
 // processReportCmd is the fixed report-back verb an agent performer runs when
@@ -32,7 +33,8 @@ func processReportCmd() *cobra.Command {
 		Short: "Report the outcome of a process node you were asked to perform",
 		Long: "Run this from the agent that received a process node in its inbox, exactly once, " +
 			"when the work is done. Copy --run, --node, and --attempt from the dispatch message; " +
-			"they may be omitted when you have exactly one open process node.",
+			"they may be omitted when you have exactly one open process node. " +
+			"A decider reports succeeded with --verdict naming its decision, and its --note is the reasoning.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		ValidArgs:   []string{string(engine.ProgramSucceeded), string(engine.ProgramFailed)},
 		RunFunc: func(p *processReportParams, _ *cobra.Command, _ []string) {
@@ -55,8 +57,9 @@ func runProcessReport(p *processReportParams, stdout, stderr io.Writer) error {
 		Attempt int                   `json:"attempt,omitempty"`
 		Outcome engine.ProgramOutcome `json:"outcome"`
 		Note    string                `json:"note,omitempty"`
+		Verdict string                `json:"verdict,omitempty"`
 	}{RunID: strings.TrimSpace(p.Run), NodeID: strings.TrimSpace(p.Node), Attempt: p.Attempt,
-		Outcome: outcome, Note: strings.TrimSpace(p.Note)}
+		Outcome: outcome, Note: strings.TrimSpace(p.Note), Verdict: strings.TrimSpace(p.Verdict)}
 	var response struct {
 		Status  string `json:"status"`
 		RunID   string `json:"runId"`
@@ -75,6 +78,11 @@ func runProcessReport(p *processReportParams, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "Recorded %s for run %s node %s attempt %d; the daemon will apply it shortly.\n",
 			outcome, response.RunID, response.NodeID, response.Attempt)
 	default:
+		if verdict := strings.TrimSpace(p.Verdict); verdict != "" {
+			fmt.Fprintf(stdout, "Decided %s for run %s node %s attempt %d.\n",
+				verdict, response.RunID, response.NodeID, response.Attempt)
+			break
+		}
 		fmt.Fprintf(stdout, "Reported %s for run %s node %s attempt %d.\n",
 			outcome, response.RunID, response.NodeID, response.Attempt)
 	}

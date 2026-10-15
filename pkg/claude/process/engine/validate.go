@@ -290,6 +290,16 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 		case model.NodeTypeDecision:
 			prepared.kind = definitionDecision
 			prepared.verdicts = sortedOutcomes(node.Next)
+			// An agent decider is planned like an agent task, one attempt per
+			// window, and reports its verdict back (tcl-eu70x9).
+			if node.Performer != nil && node.Performer.Kind == model.PerformerAgent {
+				agent, err := bindAgent(id, *node.Performer, nil, params, definition.fallback)
+				if err != nil {
+					return err
+				}
+				prepared.agent = agent
+				prepared.maxAttempts = 1
+			}
 		case model.NodeTypeEnd:
 			if owner != nil {
 				// A body end node leaves the subprocess through its out-port.
@@ -841,13 +851,13 @@ func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, attempt := range checkpoint.Attempts {
 		node, ok := definitionNodeByID(definition, nodeID)
 		// A decision in a loop body counts its windows here (loops.go).
-		if ok && node.kind == definitionDecision && node.parent < 0 && len(node.loops) > 0 {
+		if ok && node.awaitsHuman() && node.parent < 0 && len(node.loops) > 0 {
 			if attempt < 1 {
 				return fmt.Errorf("%w: decision %q window %d must be positive", ErrInvalidCheckpoint, nodeID, attempt)
 			}
 			continue
 		}
-		if !ok || node.kind != definitionTask {
+		if !ok || !node.runsCommand() {
 			return fmt.Errorf("%w: attempts names %q, which is not a prepared program task", ErrInvalidCheckpoint, nodeID)
 		}
 		// The ceiling, not the authored budget: an operator retry durably raised
@@ -884,7 +894,7 @@ func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) erro
 	for nodeID, ceiling := range checkpoint.AttemptCeilings {
 		node, ok := definitionNodeByID(definition, nodeID)
 		// A loop's new round opens a fresh window for any task of its body.
-		if !ok || node.kind != definitionTask || (!node.retryAuthored && len(node.loops) == 0) {
+		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0) {
 			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy or in a loop",
 				ErrInvalidCheckpoint, nodeID)
 		}
@@ -970,7 +980,7 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
 		node, ok := definitionNodeByID(definition, command.NodeID)
-		if !ok || node.kind != definitionTask {
+		if !ok || !node.runsCommand() {
 			return invalid("command node %q is not a prepared task", command.NodeID)
 		}
 		if command.Kind != node.commandKind() {
@@ -1015,8 +1025,8 @@ func validateAwaitingDecisions(checkpoint Checkpoint, definition *Definition) er
 	seen := make(map[string]struct{}, len(checkpoint.AwaitingDecisions))
 	for _, obligation := range checkpoint.AwaitingDecisions {
 		node, ok := definitionNodeByID(definition, obligation.NodeID)
-		if !ok || node.kind != definitionDecision {
-			return invalid("awaiting decision node %q is not a prepared decision", obligation.NodeID)
+		if !ok || !node.awaitsHuman() {
+			return invalid("awaiting decision node %q is not a prepared decision a person decides", obligation.NodeID)
 		}
 		if _, dup := seen[obligation.NodeID]; dup {
 			return invalid("duplicate awaiting decision for node %q", obligation.NodeID)
@@ -1095,7 +1105,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				return invalid("active node %q cannot have settled outgoing edges", node.id)
 			}
 			if status == NodeRunning {
-				if node.kind != definitionTask {
+				if !node.runsCommand() {
 					return invalid("only a task node may be running; got %q", node.id)
 				}
 				if command := checkpoint.FirstCommand(); command == nil || command.NodeID != node.id {
@@ -1134,7 +1144,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				return invalid("nodes %q and %q both doomed the run", definition.nodes[doomedIndex].id, node.id)
 			}
 			doomedIndex = index
-			if node.kind != definitionTask {
+			if !node.runsCommand() {
 				return invalid("only a program task may fail or be canceled; got %q", node.id)
 			}
 			if !entry && (in.unresolved > 0 || in.arrived != 1) {
@@ -1192,7 +1202,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.FirstCommand() != nil {
 			return invalid("ready node %q cannot coexist with an outstanding command", active.id)
 		}
-		if active.kind == definitionDecision {
+		if active.awaitsHuman() {
 			if obligation := checkpoint.FirstAwaitingDecision(); obligation == nil || obligation.NodeID != active.id {
 				return invalid("ready decision %q requires its awaiting-decision obligation", active.id)
 			}
@@ -1345,6 +1355,7 @@ func commandsEqual(left, right Command) bool {
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
 		left.Attempt == right.Attempt && left.Round == right.Round && left.Rounds == right.Rounds &&
 		left.LoopFrom == right.LoopFrom && left.LoopOutcome == right.LoopOutcome &&
+		slices.Equal(left.Verdicts, right.Verdicts) &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&
 		left.Program.Timeout == right.Program.Timeout && slices.Equal(left.Program.Args, right.Program.Args)
 }

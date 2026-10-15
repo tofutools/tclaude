@@ -398,13 +398,13 @@ func TestDirectEntryDoesNotRelaxUnsupportedShapes(t *testing.T) {
 		tmpl func() *model.Template
 	}{
 		{
-			name: "agent decider as the entry",
-			code: "unsupported_performer",
-			path: "nodes.choose.performer.kind",
+			name: "agent decider timeout as the entry",
+			code: "unsupported_timeout",
+			path: "nodes.choose.performer.timeout",
 			tmpl: func() *model.Template {
 				tmpl := directDecisionEntryTemplate()
 				node := tmpl.Nodes["choose"]
-				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide"}
+				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide", Timeout: "5m"}
 				tmpl.Nodes["choose"] = node
 				return tmpl
 			},

@@ -168,12 +168,12 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 		tmpl func() *model.Template
 	}{
 		{
-			name: "agent decider",
-			code: "unsupported_performer",
+			name: "agent decider timeout",
+			code: "unsupported_timeout",
 			tmpl: func() *model.Template {
 				tmpl := decisionDiamondTemplate()
 				node := tmpl.Nodes["choose"]
-				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide"}
+				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide", Timeout: "5m"}
 				tmpl.Nodes["choose"] = node
 				return tmpl
 			},

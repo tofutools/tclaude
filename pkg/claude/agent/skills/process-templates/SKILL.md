@@ -174,6 +174,9 @@ decide:
   holds no `join: any`, and two loops nest or are disjoint.
 - Only decisions take `loops`. Rename or delete the outcome together with its
   `loops` entry.
+- The decider may be an agent (`performer: {kind: agent, role: reviewer,
+  prompt: ...}`). It reports `tclaude process report succeeded --verdict
+  <outcome> --note "<reasoning>"`, and the note is what the next round is told.
 
 ### Performers
 

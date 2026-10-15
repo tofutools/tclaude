@@ -220,8 +220,9 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 		node := definition.nodes[index]
 		status := next.Nodes[node.id]
 		if index == loop.from {
-			if status != NodeReady {
-				return fmt.Errorf("%w: loop decision %q is %q, not ready", ErrInvalidTransition, node.id, status)
+			// A person decides a ready decision; an agent decider is running.
+			if status != NodeReady && status != NodeRunning {
+				return fmt.Errorf("%w: loop decision %q is %q, not deciding", ErrInvalidTransition, node.id, status)
 			}
 			continue
 		}
@@ -251,14 +252,14 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 		node := definition.nodes[index]
 		next.Nodes[node.id] = NodePending
 		switch {
-		case node.kind == definitionDecision && node.parent < 0:
+		case node.awaitsHuman() && node.parent < 0:
 			// An authored decision's window counter: a verdict formed in an
 			// earlier round names an older window and is refused as stale.
 			if next.Attempts[node.id] == math.MaxInt {
 				return fmt.Errorf("%w: decision %q window counter would overflow", ErrInvalidTransition, node.id)
 			}
 			recordAttempt(next, node.id, next.Attempts[node.id]+1)
-		case node.kind == definitionTask:
+		case node.runsCommand():
 			if err := openLoopAttemptWindow(next, definition, node); err != nil {
 				return err
 			}
@@ -270,7 +271,7 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 	}
 	to := definition.nodes[loop.to]
 	next.Nodes[to.id] = NodeReady
-	if to.kind == definitionDecision {
+	if to.awaitsHuman() {
 		addObligation(next, to.id)
 	}
 	return nil

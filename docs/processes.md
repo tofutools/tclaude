@@ -127,6 +127,10 @@ a fresh attempt, attempt numbers keep counting up, and the decision opens a
 new window. Past the last round the decision follows `onExhausted` instead;
 with no `onExhausted`, the outcome is refused and the decider picks another.
 
+The decider can be an agent instead of a person — `performer: {kind: agent,
+role: reviewer, prompt: "Review the change and decide."}` — so a review loop
+runs without anyone in it. See [Agent deciders](#agent-deciders).
+
 Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
 error that says how to bound it. To keep a round well defined, a loop body is
 entered only at its target, left only through decisions, holds no
@@ -165,7 +169,7 @@ tclaude process record-outcome <run-id> [--node <node>] \
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
-    --attempt <n>] [--note "summary"]      # agent performers only
+    --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
 tclaude process templates ls
 ```
 
@@ -405,9 +409,11 @@ name and needs the same permission.
 
 - **Sequential task chains** starting at any executable node kind — top-level
   `start` names the entry node, and a separate `start`-typed node is optional.
-- **Exclusive decisions** with human deciders: the verdict selects exactly one
-  authored outcome edge and closes the alternatives. Authored decisions open
-  once — unless they are in a loop body — and need no `--attempt`.
+- **Exclusive decisions** with human or agent deciders: the verdict selects
+  exactly one authored outcome edge and closes the alternatives. Authored
+  decisions open once — unless they are in a loop body — and need no
+  `--attempt`. An agent decider reports its verdict instead of a person
+  deciding (see [Agent deciders](#agent-deciders)).
 - **Parallel fan-out** (`type: parallel`) reduced by `join: all` or
   `join: any`. Branches execute concurrently, bounded to four external
   programs at a time; ready branches past the bound wait for a slot. A branch
@@ -515,8 +521,8 @@ unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
 `advance`, `unblock`, `observe`, `resolve`, `verify`, `repair`.
 
 These authoring features are valid in a stored template but refused at run
-creation with a path-specific diagnostic, rather than failing later: agent
-deciders; human task performers; agent performers on compound (staged) tasks;
+creation with a path-specific diagnostic, rather than failing later: human
+task performers; agent performers on compound (staged) tasks;
 agent performer `timeout`; retry backoff waits; same-session retry feedback
 for program tasks (`retry.onFail: feedback-same-session` is executable only
 for agent tasks); retries on compound stages; `plan.approvalRetry`; human or
@@ -630,6 +636,28 @@ agent commands report their dispatch state (`pending`, `needs_performer`,
 `delivered`, `reported`) instead of `needs_reconcile`. A daemon restart picks
 in-flight dispatches back up without re-sending them. An outstanding agent
 command occupies one of the run's four concurrency slots, like a program.
+
+### Agent deciders
+
+A decision with `performer.kind: agent` is decided by an agent. It is
+dispatched exactly like an agent task — same selectors, fallbacks, and inbox
+message — and nobody is asked for a verdict. The message lists the verdicts
+the agent chooses between, and the agent reports one:
+
+```bash
+tclaude process report succeeded --run <run-id> --node <node> --attempt <n> \
+    --verdict changes --note "add tests for the empty-input case"
+```
+
+The verdict routes exactly as a person's would, loops included, and the note
+is the decision's evidence: when the verdict sends work back for another
+round, that round's performers are told it. A verdict that is not one of the
+decision's outcomes, or that would go back past a loop's last round with no
+`onExhausted`, is refused and nothing is recorded, so the agent can report
+again. An agent that cannot decide reports `failed`, which fails the decision
+like any failed agent step. Nobody can decide in an agent's place with
+`tclaude process decide`; reassigning or recording an outcome works as for any
+agent step.
 
 ## Crashes and reconciliation
 

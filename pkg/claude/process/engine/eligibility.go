@@ -180,10 +180,13 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 					add("unsupported_routing", path+".next", "a task requires exactly one outgoing route in this engine")
 				}
 			case model.NodeTypeDecision:
-				if node.Performer == nil || node.Performer.Kind != model.PerformerHuman {
-					add("unsupported_performer", path+".performer.kind", "this engine executes only human deciders; agent deciders are not executable yet")
-				} else if node.Performer.Contact != nil {
+				switch {
+				case node.Performer == nil || (node.Performer.Kind != model.PerformerHuman && node.Performer.Kind != model.PerformerAgent):
+					add("unsupported_performer", path+".performer.kind", "this engine executes only human and agent deciders")
+				case node.Performer.Contact != nil:
 					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
+				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
+					add("unsupported_timeout", path+".performer.timeout", "agent performer timeouts are not executable in this engine yet")
 				}
 			case model.NodeTypeEnd:
 			case model.NodeTypeParallel:

@@ -817,6 +817,17 @@ func processDispatchMessage(runID string, command engine.Command, feedback, loop
 	}
 	fmt.Fprintf(&b, "\n## Task\n\n%s\n", sanitizeProcessText(command.Agent.Prompt))
 	report := fmt.Sprintf("tclaude process report %%s --run %s --node %s --attempt %d", runID, command.NodeID, command.Attempt)
+	if len(command.Verdicts) > 0 {
+		// An agent decider: its report is the decision.
+		fmt.Fprintf(&b, "\n## Your decision\n\nYou decide this step. Choose exactly one verdict: %s.\n", strings.Join(command.Verdicts, ", "))
+		fmt.Fprintf(&b, "Your note is your reasoning; if your verdict sends the work back, it is what the next round's performer is told.\n")
+		fmt.Fprintf(&b, "\nReport exactly once:\n\n")
+		fmt.Fprintf(&b, "    "+report+" --verdict <verdict> --note \"<your reasoning>\"\n", engine.ProgramSucceeded)
+		fmt.Fprintf(&b, "\nIf you cannot decide at all, report failure instead; that fails the step:\n\n")
+		fmt.Fprintf(&b, "    "+report+" --note \"<why you cannot decide>\"\n", engine.ProgramFailed)
+		fmt.Fprintf(&b, "\nOnly you can report this attempt, and only once.\n")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "\n## When you are done\n\nReport exactly once, with the outcome of the work:\n\n")
 	fmt.Fprintf(&b, "    "+report+" --note \"<short summary>\"\n", engine.ProgramSucceeded)
 	fmt.Fprintf(&b, "    "+report+" --note \"<why it failed>\"\n", engine.ProgramFailed)
@@ -912,7 +923,8 @@ func withdrawDrainingAgentCommands(runID string, run *executor.Run) {
 func applyRecordedProcessReport(row db.ProcessAgentDispatch) error {
 	report := executor.AgentReport{
 		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
-		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Performer: row.AgentID,
+		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Verdict: row.ReportVerdict,
+		Performer: row.AgentID,
 	}
 	actor := "agent:" + row.AgentID
 	if row.AgentID == "" {
@@ -937,6 +949,8 @@ type processReportRequest struct {
 	Attempt int                   `json:"attempt,omitempty"`
 	Outcome engine.ProgramOutcome `json:"outcome"`
 	Note    string                `json:"note,omitempty"`
+	// Verdict is an agent decider's decision: one of its node's outcomes.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 type processReportResponse struct {
@@ -972,6 +986,7 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Note = strings.TrimSpace(request.Note)
+	request.Verdict = strings.TrimSpace(request.Verdict)
 	// Validate before the report is recorded: a recorded report the executor
 	// then refuses could never be applied or corrected.
 	if err := executor.ValidateAgentReportNote(request.Note); err != nil {
@@ -990,12 +1005,20 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 
 	switch row.State {
 	case db.ProcessDispatchDelivered:
+		// A stored report is applied as it was sent, so one the run would
+		// refuse — a decider's verdict that is not an outcome, or that goes
+		// back past its loop's last round — is refused before it is stored.
+		if status, code, message := checkProcessReport(*row, request); status != 0 {
+			writeError(w, status, code, message)
+			return
+		}
 		if err := db.RecordProcessAgentDispatchReport(row.RunID, row.CommandID, agentID,
-			string(request.Outcome), request.Note); err != nil {
+			string(request.Outcome), request.Note, request.Verdict); err != nil {
 			writeError(w, http.StatusConflict, "process_report_conflict", "the dispatch changed while reporting; retry")
 			return
 		}
 		row.State, row.ReportOutcome, row.ReportNote = db.ProcessDispatchReported, string(request.Outcome), request.Note
+		row.ReportVerdict = request.Verdict
 		response.Status = "accepted"
 	case db.ProcessDispatchReported, db.ProcessDispatchClosed:
 		if row.ReportOutcome == "" {
@@ -1003,9 +1026,13 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 				"this attempt was settled without your report; it no longer needs one")
 			return
 		}
-		if row.ReportOutcome != string(request.Outcome) {
+		if row.ReportOutcome != string(request.Outcome) || row.ReportVerdict != request.Verdict {
+			reported := row.ReportOutcome
+			if row.ReportVerdict != "" {
+				reported += " with verdict " + row.ReportVerdict
+			}
 			writeError(w, http.StatusConflict, "process_report_conflict",
-				fmt.Sprintf("this attempt was already reported as %s", row.ReportOutcome))
+				fmt.Sprintf("this attempt was already reported as %s", reported))
 			return
 		}
 		response.Status = "duplicate"
@@ -1038,6 +1065,29 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// checkProcessReport asks the run whether it would accept a report, without
+// recording it. It returns a zero status when it would.
+func checkProcessReport(row db.ProcessAgentDispatch, request processReportRequest) (int, string, string) {
+	run, err := executor.LoadRun(row.RunID)
+	if err != nil {
+		return http.StatusInternalServerError, "process_report", err.Error()
+	}
+	err = executor.CheckAgentReport(run, executor.AgentReport{
+		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
+		Outcome: request.Outcome, Note: request.Note, Verdict: request.Verdict, Performer: row.AgentID,
+	})
+	switch {
+	case err == nil:
+		return 0, "", ""
+	case errors.Is(err, engine.ErrStaleObservation):
+		return http.StatusConflict, "process_report_stale", "this attempt was settled while you were reporting; it no longer needs your report"
+	case errors.Is(err, executor.ErrInvalidAgentReport), errors.Is(err, engine.ErrInvalidDecisionVerdict):
+		return http.StatusUnprocessableEntity, "process_report_verdict", err.Error()
+	default:
+		return http.StatusInternalServerError, "process_report", err.Error()
+	}
 }
 
 // selectProcessReportDispatch finds the dispatch a report means and checks it

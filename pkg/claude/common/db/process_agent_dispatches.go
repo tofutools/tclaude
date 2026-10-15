@@ -52,6 +52,8 @@ type ProcessAgentDispatch struct {
 	Deliveries    int
 	ReportOutcome string
 	ReportNote    string
+	// ReportVerdict is an agent decider's reported verdict; empty otherwise.
+	ReportVerdict string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	DeliveredAt   time.Time
@@ -65,14 +67,14 @@ func (d *ProcessAgentDispatch) Open() bool {
 
 const processAgentDispatchColumns = `run_id, command_id, node_id, attempt, state, agent_id, resolution,
 	wait_reason, message_id, deliveries, report_outcome, report_note, created_at, updated_at,
-	delivered_at, reported_at`
+	delivered_at, reported_at, report_verdict`
 
 func scanProcessAgentDispatch(scanner processRunScanner) (*ProcessAgentDispatch, error) {
 	var row ProcessAgentDispatch
 	var created, updated, delivered, reported dbTimestamp
 	if err := scanner.Scan(&row.RunID, &row.CommandID, &row.NodeID, &row.Attempt, &row.State,
 		&row.AgentID, &row.Resolution, &row.WaitReason, &row.MessageID, &row.Deliveries,
-		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported); err != nil {
+		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported, &row.ReportVerdict); err != nil {
 		return nil, err
 	}
 	row.CreatedAt, row.UpdatedAt = created.Time(), updated.Time()
@@ -235,12 +237,12 @@ func ReleaseProcessAgentDispatch(runID, commandID, agentID, reason string) error
 // RecordProcessAgentDispatchReport durably accepts one performer's report. It
 // is a compare-and-swap on the exact performer: only the agent the attempt was
 // delivered to can move it, and only once.
-func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note string) error {
+func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note, verdict string) error {
 	now := time.Now().UTC()
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, report_outcome = ?, report_note = ?, reported_at = ?, updated_at = ?
+		SET state = ?, report_outcome = ?, report_note = ?, report_verdict = ?, reported_at = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state = ? AND agent_id = ?`,
-		ProcessDispatchReported, outcome, boundedDispatchText(note, MaxProcessDispatchReportNoteBytes),
+		ProcessDispatchReported, outcome, boundedDispatchText(note, MaxProcessDispatchReportNoteBytes), verdict,
 		dbTime(now), dbTime(now), runID, commandID, ProcessDispatchDelivered, agentID)
 }
 

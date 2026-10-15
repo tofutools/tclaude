@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -24,6 +25,9 @@ type AgentReport struct {
 	Attempt   int
 	Outcome   engine.ProgramOutcome
 	Note      string
+	// Verdict is an agent decider's chosen outcome; required on a decider's
+	// successful report and refused on any other.
+	Verdict string
 	// Performer is the stable agent id that reported, recorded as evidence.
 	Performer string
 }
@@ -46,20 +50,11 @@ func RecordAgentReport(run *Run, actor string, report AgentReport) error {
 	if run == nil || run.definition == nil {
 		return ErrInvalidRun
 	}
-	command, ok := findCommand(run.checkpoint, report.CommandID, report.NodeID)
-	if !ok || command.Kind != engine.CommandAgent || command.Attempt != report.Attempt {
-		return fmt.Errorf("%w: report does not match an outstanding agent command", engine.ErrStaleObservation)
+	observation, err := agentObservation(run, report)
+	if err != nil {
+		return err
 	}
-	observation := engine.ProgramObservation{
-		CommandID: command.ID, NodeID: command.NodeID, Outcome: report.Outcome,
-	}
-	if report.Outcome == engine.ProgramFailed {
-		observation.ExitCode = 1
-		observation.Error = report.Note
-		if observation.Error == "" {
-			observation.Error = "agent performer reported failure"
-		}
-	}
+	command, _ := findCommand(run.checkpoint, report.CommandID, report.NodeID)
 	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
 		Kind: engine.TransitionProgramObserved, Observation: &observation,
 	})
@@ -72,9 +67,69 @@ func RecordAgentReport(run *Run, actor string, report AgentReport) error {
 		Performer   string                    `json:"performer,omitempty"`
 		Note        string                    `json:"note,omitempty"`
 	}{Observation: observation, Attempt: command.Attempt, Performer: report.Performer, Note: report.Note}
-	events := commitEvidence(run.definition, run.checkpoint, next,
-		[]db.ProcessRunEvent{event("agent_reported", &command, actor, payload)}, nil, false)
+	causal := []db.ProcessRunEvent{event("agent_reported", &command, actor, payload)}
+	if observation.Verdict != "" {
+		// The note is the decider's reasoning, and the next round's performer
+		// is handed it exactly as a person's evidence.
+		decided, err := verdictEvidence(run.definition, run.checkpoint, next, actor,
+			decisionEvidencePayload{Verdict: report.Verdict, Evidence: report.Note, Attempt: command.Attempt}, command.NodeID)
+		if err != nil {
+			return err
+		}
+		causal = append(causal, decided...)
+	}
+	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
 	return persistEvents(run, next, events)
+}
+
+// CheckAgentReport reports whether RecordAgentReport would accept a report,
+// without recording anything. The daemon stores a report durably before it
+// applies it, and a stored report the engine then refuses could never be
+// applied; an agent decider's verdict is the one part of a report the engine
+// can refuse on its own terms (an outcome its loop has no rounds left for).
+// While the command is outstanding nothing else can change that answer.
+func CheckAgentReport(run *Run, report AgentReport) error {
+	if err := validateAgentReport(report); err != nil {
+		return err
+	}
+	if run == nil || run.definition == nil {
+		return ErrInvalidRun
+	}
+	observation, err := agentObservation(run, report)
+	if err != nil {
+		return err
+	}
+	_, err = engine.Apply(run.checkpoint, run.definition, engine.Transition{
+		Kind: engine.TransitionProgramObserved, Observation: &observation,
+	})
+	return err
+}
+
+// agentObservation binds a report to its outstanding command and builds the
+// observation the engine applies.
+func agentObservation(run *Run, report AgentReport) (engine.ProgramObservation, error) {
+	command, ok := findCommand(run.checkpoint, report.CommandID, report.NodeID)
+	if !ok || command.Kind != engine.CommandAgent || command.Attempt != report.Attempt {
+		return engine.ProgramObservation{}, fmt.Errorf("%w: report does not match an outstanding agent command", engine.ErrStaleObservation)
+	}
+	switch decider := len(command.Verdicts) > 0; {
+	case decider && report.Outcome == engine.ProgramSucceeded && report.Verdict == "":
+		return engine.ProgramObservation{}, fmt.Errorf("%w: a decider reports its verdict, one of %s",
+			ErrInvalidAgentReport, strings.Join(command.Verdicts, ", "))
+	case (!decider || report.Outcome != engine.ProgramSucceeded) && report.Verdict != "":
+		return engine.ProgramObservation{}, fmt.Errorf("%w: only a decider's successful report carries a verdict", ErrInvalidAgentReport)
+	}
+	observation := engine.ProgramObservation{
+		CommandID: command.ID, NodeID: command.NodeID, Outcome: report.Outcome, Verdict: report.Verdict,
+	}
+	if report.Outcome == engine.ProgramFailed {
+		observation.ExitCode = 1
+		observation.Error = report.Note
+		if observation.Error == "" {
+			observation.Error = "agent performer reported failure"
+		}
+	}
+	return observation, nil
 }
 
 func validateAgentReport(report AgentReport) error {
