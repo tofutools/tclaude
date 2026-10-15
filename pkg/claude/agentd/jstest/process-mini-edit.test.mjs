@@ -34,6 +34,7 @@ function cases() {
     'delete-approve': m.deleteStep(ship, 'approve').view,
     'before-join-agent': fill(m.insertBefore(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')),
     'delete-join': m.deleteStep(fill(m.insertAfter(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')), 'approve').view,
+    'loop-final-say-hold': m.setLoopRounds(m.setOutcomeTarget(ship, 'final-say', 'hold', 'implement').view, 'final-say', 'hold', 4).view,
   };
 }
 
@@ -131,6 +132,47 @@ test('a bounded loop projects as a back edge carrying its bound', () => {
   const back = run.edges.find((e) => e.from === 'approve' && e.to === 'rework');
   assert.deepEqual([back.back, back.maxIterations, back.label], [true, 3, 'rework']);
   assert.equal(run.edges.find((e) => e.from === 'implement').back, undefined, 'other edges stay forward');
+});
+
+test('a decision answer sent back is a bounded loop; a task only goes forward', () => {
+  const back = (view, id, outcome) => m.targetsFor(view, id, outcome).filter((t) => t.back).map((t) => t.id);
+  assert.deepEqual(back(ship, 'rework', 'next'), [], 'a task is not offered earlier work');
+  assert.ok(!m.targetsFor(ship, 'rework', 'next').some((t) => t.id === 'implement'));
+  assert.deepEqual(back(ship, 'approve', 'rework').sort(), ['implement', 'review'], 'a decision may go back, marked as such');
+
+  let view = m.setOutcomeTarget(ship, 'approve', 'rework', 'implement').view;
+  assert.deepEqual(view.template.nodes.approve.loops, { rework: { maxIterations: 3 } }, 'going back gets the default bound');
+  view = m.setLoopRounds(view, 'approve', 'rework', 5).view;
+  view = m.renameOutcome(view, 'approve', 'rework', 'changes').view;
+  assert.deepEqual(view.template.nodes.approve.loops, { changes: { maxIterations: 5 } }, 'a rename keeps the bound');
+  const run = m.draftProjection(view);
+  assert.deepEqual(run.edges.filter((e) => e.back).map((e) => [e.from, e.to, e.maxIterations]), [['approve', 'implement', 5]]);
+  assert.equal(m.setOutcomeTarget(view, 'approve', 'changes', 'merge').view.template.nodes.approve.loops, undefined, 'forward again drops it');
+  assert.equal(m.changeKind(view, 'approve', 'agent').view.template.nodes.approve.loops, undefined, 'a task has no loops');
+  assert.throws(() => m.setLoopRounds(ship, 'approve', 'ship', 3), /does not go back/);
+
+  const escalating = structuredClone(view);
+  escalating.template.nodes.approve.loops.changes.onExhausted = 'hold';
+  const renamed = m.renameOutcome(escalating, 'approve', 'hold', 'stop').view;
+  assert.equal(renamed.template.nodes.approve.loops.changes.onExhausted, 'stop', 'a rename follows the fallback');
+  const removed = m.removeOutcome(renamed, 'approve', 'stop').view;
+  assert.deepEqual(removed.template.nodes.approve.loops, { changes: { maxIterations: 5 } }, 'a removed fallback leaves no dangling onExhausted');
+});
+
+test('a loop keeps a way on, and its body only leaves through a decision', () => {
+  const looped = m.setOutcomeTarget(ship, 'approve', 'rework', 'implement').view;
+  const ids = (view, id, outcome) => m.targetsFor(view, id, outcome).map((t) => t.id);
+  assert.deepEqual(ids(looped, 'review', 'next'), ['approve'], 'a task in the loop stays in it');
+  assert.ok(ids(looped, 'merge', 'next').includes('end'), 'a task after the loop is unaffected');
+
+  const you = m.insertAfter(ship, 'review', 'you');
+  assert.ok(!m.targetsFor(you.view, you.id, 'continue').some((t) => t.back), 'a lone answer cannot loop: the loop would have no way on');
+  assert.equal(m.canRemoveOutcome(looped, 'approve', 'ship'), '', 'hold still leads on');
+  const onlyOut = m.removeOutcome(looped, 'approve', 'hold').view;
+  assert.match(m.canRemoveOutcome(onlyOut, 'approve', 'ship'), /does not loop back/);
+  assert.equal(m.canRemoveOutcome(onlyOut, 'approve', 'rework'), '');
+  assert.equal(m.mainEdge(m.setOutcomeTarget(ship, 'approve', 'ship', 'implement').view, 'approve').outcome, 'rework',
+    'the main path is a decision\'s first answer that does not loop');
 });
 
 test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
