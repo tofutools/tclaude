@@ -22,6 +22,9 @@ import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-intera
 import { MemberTable } from './groups-member-table.js';
 import { GroupFederationMarker } from './group-federation-marker.js';
 import { GroupProcessChips } from './groups-process-indicators.js';
+import {
+  GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
+} from './groups-processes.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -421,8 +424,13 @@ function FleetGroupName({ group }) {
     title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>${at}</span>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
 }
 
-function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
+function RealGroupSummary({ node, group, activity, membersView, snapshot, actions }) {
   const interactions = useGroupsInteractions();
+  // The Processes perspective keeps this row and swaps the member activity
+  // for the group's run counts, plus the dim subgroup total a collapsed
+  // parent needs.
+  const processes = useProcessesPerspective();
+  const wizard = document.body.classList.contains('wizard');
   const { members, hiddenOffline, away } = membersView;
   const online = group.online || 0;
   // An away agent keeps its home membership, so it still takes a cap slot.
@@ -445,7 +453,9 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     ${snapshot?.group_attachments_mode === 'float'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="float" />`
       : null}
-    <${GroupActivity} members=${activity} snapshot=${snapshot} />
+    ${processes
+    ? html`<${GroupProcessChips} group=${group} snapshot=${snapshot} source=${processes.source} wizard=${wizard} /><${SubgroupRunTotal} node=${node} />`
+    : html`<${GroupActivity} members=${activity} snapshot=${snapshot} />`}
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}
     ${group.pending?.length ? html`<span class="group-pending-chip" title=${`${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'} waiting for startup`}>⏳ ${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'}</span>` : null}
@@ -482,7 +492,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
     ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
-    <${GroupProcessChips} group=${group} snapshot=${snapshot} wizard=${document.body.classList.contains('wizard')} />
+    ${processes ? null : html`<${GroupProcessChips} group=${group} snapshot=${snapshot} wizard=${wizard} />`}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
@@ -592,19 +602,22 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     !quickPinned && hoveredGroupKey === group.name ? 'quick-hover' : '',
   ].filter(Boolean).join(' ');
   const fleet = group.fleet_node;
+  // Processes swaps only the agent details (pending spawns, spawn and power
+  // actions, the task-force card, the member table) for the group's runs.
+  const processes = useProcessesPerspective();
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
     data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name}
     open=${realGroupOpen(group, dashPrefs)}
   >
-    <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
+    <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
       ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
-      ${group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
-      <div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
-      <${ForceBlock} group=${group} />
+      ${processes ? null : group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
+      ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
+      <${ForceBlock} group=${group} />`}
       <${GroupTriggersSection} group=${group} triggers=${triggers} />
-      ${!view.members.length && !view.away
+      ${processes ? html`<${GroupProcessBody} group=${group} />` : !view.members.length && !view.away
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
           ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
@@ -633,14 +646,15 @@ function VirtualBadge({ regularTitle, wizardTitle }) {
 
 function VirtualUngrouped({ group, snapshot, actions }) {
   const view = groupMembersView(group, offlineDefault('groups'));
+  const processes = useProcessesPerspective();
   const summary = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard="Unbound" /></strong>
-    <${GroupActivity} members=${view.members} snapshot=${snapshot} />
+    ${processes ? html`<${UngroupedRunCount} group=${group} />` : html`<${GroupActivity} members=${view.members} snapshot=${snapshot} />`}
     <${VirtualBadge} regularTitle="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group." wizardTitle="An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers familiars bound to no party." />
     <span class="muted">— <${ThemeText}
       regular=${`${view.members.length} agent${view.members.length === 1 ? '' : 's'} not in any group${view.hiddenOffline ? ` · ${view.hiddenOffline} offline hidden` : ''}`}
       wizard=${`${view.members.length} unbound familiar${view.members.length === 1 ? '' : 's'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
     /></span>`;
-  const body = !view.members.length
+  const body = processes ? html`<${UngroupedProcessBody} group=${group} />` : !view.members.length
     ? html`<div class="muted"><${ThemeText} regular="(no ungrouped agents)" wizard="(no unbound familiars)" /></div>`
     : !view.visible.length
       ? html`<div class="muted"><${ThemeText}

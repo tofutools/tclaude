@@ -28,15 +28,30 @@ async function settle(harness) {
   for (let i = 0; i < 3; i++) await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
+// mountFocus renders the Processes perspective as the Groups tab does: the
+// shared groups tree (groups-list.js) inside the focus frame.
 async function mountFocus(t, props = {}) {
   const harness = await createPreactHarness(t);
-  const mod = await harness.importDashboardModule('js/groups-processes.js');
+  const [mod, list, interactions] = await Promise.all([
+    harness.importDashboardModule('js/groups-processes.js'),
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
+  ]);
   const source = props.source || fakeSource(harness, props.sourceOptions);
   const filters = [];
-  const mounted = await harness.mount(harness.html`<${mod.GroupsProcessesFocus} groups=${GROUPS} source=${source}
-    filter=${props.filter || 'running'} onFilter=${(value) => filters.push(value)} api=${props.api} wizard=${props.wizard || false} />`);
+  const groups = props.groups || GROUPS;
+  const allGroups = props.allGroups || groups;
+  const snapshot = { processes_enabled: true, groups: allGroups.filter((group) => !group.virtual) };
+  const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
+    <${mod.GroupsProcessesFocus} groups=${groups} allGroups=${allGroups} source=${source}
+      filter=${props.filter || 'running'} onFilter=${(value) => filters.push(value)} api=${props.api} wizard=${props.wizard || false}
+      focusedRun=${props.focusedRun || null} onFocusRun=${props.onFocusRun || (() => {})}>
+      <${list.GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${{}} />
+    <//>
+  <//>`);
   const group = (name) => mounted.container.querySelector(`[data-process-group="${name}"]`);
-  return { harness, mod, source, filters, mounted, root: mounted.container, group };
+  const details = (name) => mounted.container.querySelector(`details[data-group-key="${name}"]`);
+  return { harness, mod, source, filters, mounted, root: mounted.container, group, details };
 }
 
 test('Running shows each group\'s live runs as graph cards, needs-you first, and an empty group says so', async (t) => {
@@ -62,7 +77,7 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
   assert.deepEqual([...fe.querySelectorAll('.gp-member.busy')].map((a) => a.getAttribute('title').split(' · ')[0]), ['fe-dev-forms', 'fe-dev-charts']);
   assert.equal(group('infra-crew').querySelector('.gp-empty').textContent, 'No running processes.');
-  assert.equal(group('Ungrouped'), null, 'virtual groups have no runs');
+  assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
   assert.equal(root.querySelector('[data-process-filter="running"]').getAttribute('aria-pressed'), 'true');
 });
 
@@ -158,12 +173,9 @@ test('the context source maps 404 to unavailable and keeps the last good context
 });
 
 test('a Groups search narrows the groups shown, not the busy strip or performer names', async (t) => {
-  const harness = await createPreactHarness(t);
-  const mod = await harness.importDashboardModule('js/groups-processes.js');
   const filtered = [{ name: 'frontend-squad', members: [GROUPS[0].members[0]] }];
-  const mounted = await harness.mount(harness.html`<${mod.GroupsProcessesFocus} groups=${filtered} allGroups=${GROUPS}
-    source=${fakeSource(harness)} filter="running" />`);
-  const fe = mounted.container.querySelector('[data-process-group="frontend-squad"]');
+  const { group } = await mountFocus(t, { groups: filtered, allGroups: GROUPS });
+  const fe = group('frontend-squad');
   assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
   assert.equal(fe.querySelector('[data-process-node="checkout"] .pk-avatar').getAttribute('title'), 'fe-dev-forms');
 });
@@ -240,4 +252,65 @@ test('template start requirements walk stages and inline bodies', async (t) => {
   assert.deepEqual(needs.params.map((p) => [p.name, p.required, p.hasDefault]), [['a', true, false], ['b', false, true]]);
   assert.deepEqual(needs.programProfiles, ['', 'ci', 'test']);
   assert.deepEqual(mod.unauthorizedProfiles('program profiles require explicit authorization: <empty>, ci'), ['', 'ci']);
+});
+
+test('the Processes perspective is the Agents tree: nesting, summary counts, a subgroup total, and runs instead of members', async (t) => {
+  // reindex is agent-scoped: the read model indexes it under its agent, not
+  // the group, so it belongs on the member-runs line.
+  const context = structuredClone(FIXTURE);
+  context.groups[0].active = context.groups[0].active.filter((id) => id !== 'run_reindex');
+  context.groups[0].activeCount = 2;
+  context.agents.push({ agentId: 'agt_doc', runs: [{ runId: 'run_docs', nodeId: 'fix', index: 2, total: 3, state: 'running' }] });
+  context.runs.run_docs = { ...structuredClone(context.runs.run_reindex), runId: 'run_docs', name: 'doc-sweep', scope: { kind: 'agent', agentId: 'agt_doc', state: 'bound' } };
+  const groups = [
+    { name: 'platform', members: [] },
+    { ...GROUPS[0], parent: 'platform' },
+    GROUPS[1],
+    { name: 'Ungrouped', key: ' ungrouped-virtual', virtual: true, members: [{ conv_id: 'c9', agent_id: 'agt_doc', title: 'doc-bot' }] },
+  ];
+  const focused = [];
+  const { harness, root, group, details } = await mountFocus(t, {
+    groups, sourceOptions: { context }, onFocusRun: (value) => focused.push(value),
+  });
+
+  assert.ok(details('platform').querySelector('.group-subgroups details[data-group-key="frontend-squad"]'), 'subgroups nest as in Agents');
+  assert.equal(root.querySelector('table'), null, 'no member tables');
+  assert.equal(root.querySelector('[data-act="spawn-agent"]'), null, 'no agent actions');
+  const fe = details('frontend-squad');
+  const chips = [...fe.querySelector(':scope > summary').querySelectorAll('.gpi-chip')].map((chip) => chip.textContent.trim());
+  assert.deepEqual(chips, ['● 2 running', '● 2 needs you', '◷ 1 planned'], 'the summary row counts runs');
+  assert.equal(fe.querySelector(':scope > summary .group-activity'), null, 'member activity gives way to run counts');
+  assert.equal(details('infra-crew').querySelector(':scope > summary .gpi-none').textContent, 'no processes');
+
+  const platform = details('platform');
+  assert.equal(platform.querySelector(':scope > summary .gpi-none').textContent, 'no processes', 'no roll-up into the parent');
+  assert.equal(platform.querySelector(':scope > summary .gp-subtree-total').textContent, '↳ in subgroups: 2 running · 2 needs you · 1 planned');
+  assert.ok(platform.querySelector(':scope > .subtable > .group-subgroups + .gp-group'), 'the parent\'s own runs follow its subgroups');
+
+  const memberRuns = group('frontend-squad').querySelector('[data-process-member-runs]');
+  assert.equal(memberRuns.querySelector('.gp-member-runs-label').textContent, 'Member runs');
+  assert.deepEqual([...memberRuns.querySelectorAll('[data-process-member-run]')].map((el) => el.dataset.processMemberRun), ['run_reindex']);
+  await harness.act(() => harness.fireEvent(memberRuns.querySelector('button[data-process-run]'), 'click'));
+  assert.deepEqual(focused.pop(), { group: 'frontend-squad', runId: 'run_reindex' });
+
+  const ungrouped = details(' ungrouped-virtual');
+  assert.equal(ungrouped.querySelector(':scope > summary .gpi-chip').textContent.trim(), '● 1 running');
+  const agentRuns = group(' ungrouped-virtual').querySelector('[data-process-member-runs]');
+  assert.equal(agentRuns.querySelector('.gp-member-runs-label').textContent, 'Agent runs');
+  await harness.act(() => harness.fireEvent(agentRuns.querySelector('button[data-process-run]'), 'click'));
+  assert.deepEqual(focused.pop(), { group: ' ungrouped-virtual', runId: 'run_docs' });
+});
+
+test('an Ungrouped agent run opens in the single-run focus', async (t) => {
+  const context = structuredClone(FIXTURE);
+  context.agents.push({ agentId: 'agt_doc', runs: [{ runId: 'run_docs', nodeId: 'fix', index: 2, total: 3, state: 'running' }] });
+  context.runs.run_docs = { ...structuredClone(context.runs.run_reindex), runId: 'run_docs', name: 'doc-sweep', scope: { kind: 'agent', agentId: 'agt_doc', state: 'bound' } };
+  const groups = [GROUPS[0], { name: 'Ungrouped', key: ' ungrouped-virtual', virtual: true, members: [{ conv_id: 'c9', agent_id: 'agt_doc', title: 'doc-bot' }] }];
+  const closed = [];
+  const { root } = await mountFocus(t, {
+    groups, sourceOptions: { context }, focusedRun: { group: ' ungrouped-virtual', runId: 'run_docs' }, onFocusRun: (value) => closed.push(value),
+  });
+  assert.ok(root.querySelector('[data-run-focus="run_docs"]'), 'the agent run opens');
+  assert.equal(root.querySelector('details[data-group-key]'), null, 'the run focus replaces the tree');
+  assert.deepEqual(closed, [], 'the run is not treated as stranded');
 });

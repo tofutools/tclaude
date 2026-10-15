@@ -785,7 +785,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-focus-processes",
 			Title:   "Groups — Processes focus",
-			Caption: "Mock G6-A: the Processes focus (/groups/processes) swaps the member tables for each group's run cards from the live read model (none running in this fixture); the filter bar stays.",
+			Caption: "Mock G6-A / P2: the Processes focus (/groups/processes) keeps the same groups tree and swaps each group's member details for its run cards from the live read model (none running in this fixture); the filter bar stays.",
 			// The focus is set through the island's signal rather than a click,
 			// so this capture does not persist the pref and leak the Processes
 			// focus into later states that boot on bare Groups.
@@ -800,14 +800,15 @@ func baseStates() []dashsnap.State {
   var gDeadline = Date.now() + 3000;
   while (!document.querySelector('[data-groups-processes]') && Date.now() < gDeadline) await new Promise(function(resolve){ setTimeout(resolve, 40); });
   if (!document.querySelector('[data-groups-processes]')) throw new Error('Processes run view missing');
-  if (document.querySelector('#groups-list details[data-group-key]')) throw new Error('member tables still shown in Processes focus');
+  if (!document.querySelector('#groups-list details[data-group-key] [data-process-group]')) throw new Error('Processes focus lost the groups tree');
+  if (document.querySelector('#groups-list [data-act="spawn-agent"]')) throw new Error('agent details still shown in Processes focus');
 })();`,
 			SettleMS: 200,
 		},
 		{
 			Key:      "groups-processes-running",
 			Title:    "Groups — Processes focus run cards",
-			Caption:  "Mock G3: each group renders its live runs as graph cards (needs-you first, scope chip, duration, template/owner), performer avatars on nodes, a busy/idle avatar strip on the group header, and an empty group saying so. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
+			Caption:  "Mock G3 / P2: the groups tree in the Processes perspective — each group's summary row counts its runs, and its body renders its own live runs as graph cards (needs-you first, scope chip, duration, template/owner) with performer avatars on nodes and a busy/idle avatar strip, after its nested subgroups; an empty group says so. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
 			InitJS:   processContextFixtureInitJS(),
 			JS:       showGroups + groupsProcessesJS(""),
 			SettleMS: 300,
@@ -843,6 +844,20 @@ func baseStates() []dashsnap.State {
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (!document.querySelector('[data-process-run-card="run_hotfix"]')) throw new Error('All filter lacks the finished run');
   if (!document.querySelector('[data-process-planned="cron_nightly"]')) throw new Error('All filter lacks the planned entry');`),
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-processes-tree-collapsed",
+			Title:   "Groups — Processes tree, collapsed",
+			Caption: "Mock P3: collapsed, the Processes tree's summary rows alone say where attention is needed: each group's own running / needs-you / planned counts (no roll-up), plus a dim ↳ in subgroups total on a collapsed parent so nested work is never hidden. The fixture's migration run is moved into the nested infra-crew for this state.",
+			InitJS:  processContextFixtureInitJS() + processContextSubgroupRunInitJS(),
+			JS: showGroups + groupsProcessesTreeJS(`
+  document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = false; });
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var parent = document.querySelector('details[data-group-key="`+tfTemplate+`"] > summary');
+  if (!parent || !parent.querySelector('.gpi-chip')) throw new Error('the parent row lacks its own run counts');
+  var total = parent.querySelector('.gp-subtree-total');
+  if (!total || !/in subgroups: 1 needs you/.test(total.textContent)) throw new Error('the collapsed parent lacks its subgroup total');`, false),
 			SettleMS: 300,
 		},
 		{
@@ -5613,8 +5628,24 @@ const groupsRunFocusJS = `
 
 // groupsProcessesJS shows the Groups Processes focus through the island's
 // signals (no pref write leaks into later states), waits for the fixture's
-// cards, then runs extraJS with `groups` in scope.
+// cards, opens the tree's groups, then runs extraJS with `groups` in scope.
 func groupsProcessesJS(extraJS string) string {
+	return groupsProcessesTreeJS(`
+  var empty = document.querySelector('[data-process-group="infra-crew"] .gp-empty');
+  if (!empty) throw new Error('the empty group does not say so');
+  if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
+`+extraJS, true)
+}
+
+// groupsProcessesTreeJS is groupsProcessesJS without the fixture's
+// per-group checks; open expands every group of the tree first. The open
+// state is set on the elements only, so no pref leaks into later states.
+func groupsProcessesTreeJS(extraJS string, open bool) string {
+	expand := ""
+	if open {
+		expand = `
+  document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = true; });`
+	}
 	return `return (async function(){
   var registry = await import('/static/js/feature-state-registry.js');
   var groups = registry.featureState('groups');
@@ -5624,11 +5655,31 @@ func groupsProcessesJS(extraJS string) string {
   while (!document.querySelector('[data-process-run-card="run_release"]') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
-  if (!document.querySelector('[data-process-run-card="run_release"]')) throw new Error('fixture run cards did not render');
-  var empty = document.querySelector('[data-process-group="infra-crew"] .gp-empty');
-  if (!empty) throw new Error('the empty group does not say so');
-  if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
+  if (!document.querySelector('[data-process-run-card="run_release"]')) throw new Error('fixture run cards did not render');` + expand + `
 ` + extraJS + `
+})();`
+}
+
+// processContextSubgroupRunInitJS moves the fixture's migration run from
+// frontend-squad into its nested infra-crew, so a collapsed frontend-squad
+// has subgroup work to total. It wraps the fixture stub installed before it.
+func processContextSubgroupRunInitJS() string {
+	return `(function(){
+  var prevFetch = window.fetch;
+  window.fetch = async function(input, init){
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var response = await prevFetch(input, init);
+    if (url.indexOf('/v1/process/context') === -1) return response;
+    var data = await response.json();
+    var fe = data.groups[0], infra = data.groups[1];
+    fe.active = fe.active.filter(function(id){ return id !== 'run_migrate'; });
+    fe.needsYou = fe.needsYou.filter(function(id){ return id !== 'run_migrate'; });
+    fe.needsYouCount = fe.needsYou.length;
+    fe.activeCount = fe.active.length;
+    infra.needsYou = ['run_migrate'];
+    infra.needsYouCount = 1;
+    return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
 })();`
 }
 

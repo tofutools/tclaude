@@ -53,7 +53,8 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
   groups.setProcessFilter?.(filter);
   groups.setFocusedRun?.(null);
   chooseGroupsFocus(groups, 'processes', { doc });
-  const reveal = () => doc.querySelector(`[data-process-group="${cssString(groupName)}"]`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  // The group's row, not its body: a collapsed group still has one.
+  const reveal = () => doc.querySelector(`details[data-group-key="${cssString(groupName)}"]`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(reveal));
   else reveal();
 }

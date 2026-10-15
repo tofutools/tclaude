@@ -72,14 +72,21 @@ function html(harness, mod, source, api, run, calls) {
 
 test('a G3 card opens its run in the single-run focus', async (t) => {
   const harness = await createPreactHarness(t);
-  const mod = await harness.importDashboardModule('js/groups-processes.js');
+  const [mod, list, interactions] = await Promise.all([
+    harness.importDashboardModule('js/groups-processes.js'),
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
+  ]);
   const opened = [];
   const focused = harness.signals.signal(null);
   const source = fakeSource(harness);
   const api = fakeApi();
-  const mounted = await harness.mount(harness.html`<${() => harness.html`<${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS}
+  // The focus frames the shared groups tree, as the Groups tab mounts it.
+  const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}><${() => harness.html`<${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS}
     source=${source} filter="running" runApi=${api} focusedRun=${focused.value}
-    onFocusRun=${(value) => { opened.push(value); focused.value = value; }} />`} />`);
+    onFocusRun=${(value) => { opened.push(value); focused.value = value; }}>
+    <${list.GroupsNativeList} groups=${GROUPS} snapshot=${{ processes_enabled: true }} actions=${{}} />
+  <//>`} /><//>`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-open="run_release"]'), 'click'));
   await settle(harness);
   assert.deepEqual(opened, [{ group: 'frontend-squad', runId: 'run_release' }]);

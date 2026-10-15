@@ -20145,6 +20145,14 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-planned-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px 18px; }
 .gp-planned-source { color: #6e7681; font-size: 10px; }
 .gp-empty { color: #8b949e; font-size: 12px; margin: 0 0 8px 18px; }
+/* The Processes perspective inside the shared groups tree (mocks P2/P3). */
+.subtable > .gp-group .gp-card, .subtable > .gp-group .gp-planned-list, .subtable > .gp-group .gp-empty { margin-left: 0; }
+.subtable > .gp-group .gp-group-head { padding: 4px 0 8px; }
+.gp-member-runs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.gp-member-runs-label { color: #8b949e; font-size: 11px; }
+.gp-member-run { display: inline-flex; align-items: center; gap: 4px; }
+.gp-subtree-total { color: #6e7681; font-size: 11px; }
+details[open] > summary .gp-subtree-total { display: none; }
 .gp-error { color: #ff7b72; }
 body.wizard .gp-filter { border-color: rgba(122, 93, 176, 0.5); background: #140f28; }
 body.wizard .gp-filter button { color: #b39ddb; }
