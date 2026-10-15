@@ -1009,3 +1009,19 @@ test('a clearing write never leaves an empty layout.edges container', () => {
   assert.equal(model.layout.edges, undefined,
     'a template with no pins at all must not grow an empty edges block');
 });
+
+test('applyDraft lands a whole edited view as one undoable edit, keeping id and CAS base', () => {
+  const model = new ProcessEditModel({
+    template: { id: 'ship', name: 'ship', nodes: { a: { type: 'task' }, end: { type: 'end' } } },
+    edges: [{ from: 'a', outcome: 'pass', to: 'end' }], layout: { nodes: {}, edges: { a: { pass: { pinned: true } } } }, sourceHash: 'h1',
+  });
+  model.applyDraft({ template: { id: 'other', name: 'ship', nodes: { b: { type: 'task' }, end: { type: 'end' } } }, edges: [{ from: 'b', outcome: 'pass', to: 'end' }], layout: { nodes: {}, edges: { a: { pass: { pinned: true } } } } });
+  assert.equal(model.template.id, 'ship', 'the stored identity stays');
+  assert.equal(model.sourceHash, 'h1');
+  assert.deepEqual(Object.keys(model.template.nodes).sort(), ['b', 'end']);
+  assert.equal(model.layout.edges, undefined, 'a pin on a gone connector is pruned');
+  assert.equal(model.dirty, true);
+  assert.equal(model.undo(), true);
+  assert.deepEqual(Object.keys(model.template.nodes).sort(), ['a', 'end']);
+  assert.equal(model.dirty, false);
+});

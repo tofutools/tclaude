@@ -131,7 +131,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
   </section>`;
 }
 
-function WhoPicker({ step, roster, roles, onChange }) {
+export function WhoPicker({ step, roster, roles, onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
   const options = whoOptions(roster, { roles });
@@ -313,7 +313,7 @@ function previewNow(node) {
 // edits one of the group's saved processes ({templateId, sourceHash}):
 // saving writes a new version of that template instead of a new one.
 // `groupInfo` is the group's process context ({roles, defaultSpawnProfile}).
-export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, notify = defaultNotify }) {
+export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, onGraph = null, notify = defaultNotify }) {
   const [list, setList] = useState(initial);
   const [name, setName] = useState(initial.template?.name || '');
   const [values, setValues] = useState({});
@@ -332,8 +332,10 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   // new version.
   const created = useRef(null);
   if (!created.current) {
+    // `changed`: the graph view handed over unsaved edits, so these steps
+    // are not what is stored.
     created.current = saved
-      ? { key: viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', pinned: true, listed: !!saved.listed }
+      ? { key: saved.changed ? '' : viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', pinned: true, listed: !!saved.listed }
       : { key: '', id: '' };
   }
   const needs = templateStartRequirements(view.template);
@@ -519,6 +521,11 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <input type="text" class="gq-name" aria-label="Process name" placeholder="name it, e.g. ship-feature" value=${name}
           onInput=${(event) => setName(event.currentTarget.value)} />
         <span class="gq-tag">${saved ? `saved in ${group.name} · editing` : 'draft · not saved'}</span>
+        ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
+          <button type="button" aria-pressed="true" class="on">☰ Steps</button>
+          <button type="button" data-mini-graph title="Show the same draft as a graph"
+            onClick=${() => onGraph({ view, changed: created.current.key !== viewKey, sourceHash: created.current.sourceHash })}>◈ Graph</button>
+        </span>`}
         <span class="gq-spacer"></span>
         ${origin && html`<span class="gq-dim">from starter ${origin}</span>`}
       </div>
