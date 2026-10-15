@@ -112,11 +112,13 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
   return html`<div class="cron-create-row saved-prompts-row">
     <span class="cron-create-label">Saved prompts</span>
     <div class="cron-create-target">
-      <select aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
-        <option value="">${prompts.length ? 'Insert prompt…' : 'No saved prompts'}</option>
-        ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
-      </select>
-      <button type="button" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…</button>
+      <div class="cron-target-input-row saved-prompts-controls">
+        <select aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
+          <option value="">${prompts.length ? 'Insert prompt…' : 'No saved prompts'}</option>
+          ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
+        </select>
+        <button type="button" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…</button>
+      </div>
       ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
     </div>
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}
