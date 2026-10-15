@@ -494,6 +494,12 @@ func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) er
 	if err != nil {
 		return err
 	}
+	if len(command.Verdicts) > 0 && outcome.Outcome == engine.ProgramSucceeded {
+		// An agent decider's success IS its verdict, which this path has no
+		// way to name.
+		return fmt.Errorf("%w: %q is an agent decision; it succeeds only with the agent's verdict, so record it as failed or reassign it",
+			engine.ErrInvalidDecisionVerdict, command.NodeID)
+	}
 	observation := engine.ProgramObservation{
 		CommandID: command.ID, NodeID: command.NodeID,
 		Outcome: outcome.Outcome, ExitCode: outcome.ExitCode, Error: outcome.Error,

@@ -83,6 +83,13 @@ func TestProcessAgentDecider_SendsBackThenApproves(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, reportVerdict(t, f, reviewer, runID, 1, "approved", "add tests for the edge case"))
 
 	reportLoopStep(t, f, dev, runID, "implement", 2)
+	// An operator can settle the decider as failed or reassign it, but not as
+	// succeeded: its success is a verdict this path cannot name.
+	recorded := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+runID+"/record-outcome",
+		map[string]any{"nodeId": "decide", "outcome": "succeeded", "note": "looked fine to me"})
+	assert.NotEqual(t, http.StatusAccepted, recorded.Code, recorded.Body.String())
+	assert.Contains(t, recorded.Body.String(), "agent decision")
+
 	assert.Equal(t, http.StatusUnprocessableEntity, reportVerdict(t, f, reviewer, runID, 2, "changes", "still not right"),
 		"the loop has no round left to go back for")
 	require.Equal(t, http.StatusOK, reportVerdict(t, f, reviewer, runID, 2, "approved", "good now"))
@@ -138,4 +145,33 @@ func TestProcessAgentReviewStage_SendsTheWorkBackWithItsReason(t *testing.T) {
 	assert.Equal(t, engine.RunCompleted, showLoopRun(t, f, runID).Status)
 	kinds, _ := performerEventKinds(t, f, runID)
 	assert.Equal(t, 1, countKind(kinds, "stage_reset"))
+}
+
+// Scenario: an agent plans, a person reworks the plan, and the planner's next
+// attempt is told the person's reason.
+func TestProcessAgentPlanStage_ReworkCarriesTheReason(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	const planner = "pplan-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", planner, "alice", "dev", "idle")
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "agent-planned", Start: "implement",
+		Nodes: map[string]model.Node{
+			"implement": {Type: model.NodeTypeTask, Next: model.Next{"next": "done"},
+				Performer: &model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Implement the plan."},
+				Plan: &model.Step{ID: "plan", Approval: model.PlanApprovalHuman,
+					Performer: model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Plan the change."}}},
+			"done": {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}
+	const runID = "run_agent_plan_rework"
+	startLoopRun(t, f, root, runID, tmpl)
+
+	reportLoopStep(t, f, planner, runID, "implement.plan", 1)
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{
+		"nodeId": "implement.plan.approval", "verdict": "rework", "attempt": 1, "evidence": "use approach Y instead"}))
+	inbox := processInbox(t, planner)
+	require.Len(t, inbox, 2)
+	assert.Contains(t, inbox[1].Body, "Sent back by implement.plan.approval")
+	assert.Contains(t, inbox[1].Body, "use approach Y instead")
 }

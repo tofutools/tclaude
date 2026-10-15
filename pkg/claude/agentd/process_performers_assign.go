@@ -227,11 +227,12 @@ func processAssignCandidate(scope processRunScope, actor, selector string) (*pro
 // processAssignFeedback carries a feedback-same-session retry's previous
 // failure to whoever takes the attempt, as ordinary resolution would.
 func processAssignFeedback(row db.ProcessAgentDispatch, command engine.Command) string {
+	runID := row.RunID
 	if command.Agent.RetryMode != model.RetryModeFeedbackSameSession {
 		return ""
 	}
 	previous := previousProcessDispatch(row)
-	if previous == nil || processLoopReentry(command, previous) {
+	if previous == nil || processLoopReentry(runID, command, previous) {
 		return ""
 	}
 	return processRetryFeedback(*previous)

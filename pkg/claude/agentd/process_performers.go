@@ -467,7 +467,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 	spec := command.Agent
 	// A new loop round goes back to the performer of the round before, which
 	// is handed the decider's feedback in its own session (processLoopFeedback).
-	loopReentry := processLoopReentry(command, previous)
+	loopReentry := processLoopReentry(runID, command, previous)
 	feedbackMode := (spec.RetryMode == model.RetryModeFeedbackSameSession && previous != nil) || loopReentry
 	feedback := ""
 	if feedbackMode && !loopReentry {
@@ -1232,10 +1232,10 @@ func processReworkContext(runID string, command engine.Command) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// processGateFeedback is what a compound's work stage is told when one of its
-// checks or its review sent the work back (the stage_reset evidence): which
-// stage, and what it reported. Empty for every other attempt.
-func processGateFeedback(runID string, command engine.Command) string {
+// processReworkGate names the check, review, or plan approval that sent a
+// compound's work stage back for this attempt (the stage_reset evidence), or
+// "" when the attempt is not such a rework.
+func processReworkGate(runID string, command engine.Command) string {
 	if command.Attempt < 2 {
 		return ""
 	}
@@ -1244,7 +1244,6 @@ func processGateFeedback(runID string, command engine.Command) string {
 		slog.Warn("process performers: stage feedback not read", "run", runID, "node", command.NodeID, "error", err)
 		return ""
 	}
-	gate := ""
 	for _, event := range resets {
 		var payload struct {
 			ParentNodeID    string `json:"parentNodeId"`
@@ -1254,15 +1253,26 @@ func processGateFeedback(runID string, command engine.Command) string {
 		}
 		if event.DecodePayload(&payload) == nil && payload.WorkNodeID == command.NodeID &&
 			payload.NextWorkAttempt == command.Attempt {
-			gate = payload.GateNodeID
-			break
+			return payload.GateNodeID
 		}
 	}
+	return ""
+}
+
+// processGateFeedback is what a compound's work stage is told when one of its
+// checks or its review sent the work back (the stage_reset evidence): which
+// stage, and what it reported. Empty for every other attempt.
+func processGateFeedback(runID string, command engine.Command) string {
+	gate := processReworkGate(runID, command)
 	if gate == "" {
 		return ""
 	}
 	text := fmt.Sprintf("## Sent back by %s\n\nA later stage of this step did not pass, so this work runs again.", gate)
-	reports, err := db.ListLatestProcessRunNodeEvents(runID, "agent_reported", "program_observed")
+	// The gate's latest settlement is the one that sent the work back: an
+	// agent's report, a program's result, an operator-recorded outcome, or a
+	// person's plan-approval verdict.
+	reports, err := db.ListLatestProcessRunNodeEvents(runID,
+		"agent_reported", "program_observed", "program_outcome_recorded", "decision_recorded")
 	if err != nil {
 		return text
 	}
@@ -1270,19 +1280,23 @@ func processGateFeedback(runID string, command engine.Command) string {
 		if event.NodeID != gate {
 			continue
 		}
-		// Only the fields read here: an agent report's note, or a program's
-		// failure and its error output.
+		// Only the fields read here: a report's or an operator's note, a
+		// verdict's evidence, or a program's failure and its error output.
 		var payload struct {
 			Observation struct {
 				Error string `json:"error"`
 			} `json:"observation"`
-			Note   string `json:"note"`
-			Stderr string `json:"stderr"`
+			Note     string `json:"note"`
+			Evidence string `json:"evidence"`
+			Stderr   string `json:"stderr"`
 		}
 		if json.Unmarshal(event.PayloadJSON, &payload) != nil {
 			break
 		}
 		reason := payload.Note
+		if reason == "" {
+			reason = payload.Evidence
+		}
 		if reason == "" {
 			reason = payload.Observation.Error
 			if stderr := strings.TrimSpace(payload.Stderr); stderr != "" {
@@ -1314,8 +1328,12 @@ func processFeedbackTail(output string) string {
 // processLoopReentry reports whether an attempt opens a new round of its
 // loop: its node finished the round before successfully, so this attempt is
 // not a retry of a failure.
-func processLoopReentry(command engine.Command, previous *db.ProcessAgentDispatch) bool {
-	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded)
+//
+// A later round's work stage whose check or review sent it back is not a new
+// round either: it follows the compound's own retry mode.
+func processLoopReentry(runID string, command engine.Command, previous *db.ProcessAgentDispatch) bool {
+	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded) &&
+		processReworkGate(runID, command) == ""
 }
 
 // processLoopFeedback is what a performer in a later round of a loop is told
