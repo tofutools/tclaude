@@ -707,6 +707,27 @@ export class ProcessEditModel {
     return this.moveNodes([{ id, x, y }]);
   }
 
+  // autoLayout drops position pins so the layered layout places those nodes
+  // again: the given nodes, or every node in this scope (and the pins of
+  // their inline subprocess bodies) when none are given. Nodes nobody pinned
+  // already follow the layout. One undo step; the graph itself is unchanged.
+  autoLayout(ids = []) {
+    const scope = Object.keys(this.template.nodes);
+    const chosen = ids?.length ? ids.filter((id) => this.template.nodes[id]) : scope;
+    const keys = Object.keys(this.layout.nodes || {}).filter((key) => chosen.includes(key)
+      || (!ids?.length && scope.some((id) => key.startsWith(id + SCOPE_SEPARATOR))));
+    // Inline-expanded bodies hang off the offset their ▣ node had when it was
+    // expanded; tidying the whole scope moves that node, so the bodies fold
+    // back rather than stay stranded at the old place.
+    const folded = !ids?.length && this.expansions?.size > 0;
+    if (!keys.length && !folded) return false;
+    for (const id of chosen) this.assertNodeEditable(id);
+    this.begin();
+    for (const key of keys) delete this.layout.nodes[key];
+    if (folded) this.expansions.clear();
+    return true;
+  }
+
   // moveNodes keeps a multi-selection drag atomic: every coordinate and
   // editability gate is checked before one undo snapshot is consumed.
   moveNodes(moves) {
