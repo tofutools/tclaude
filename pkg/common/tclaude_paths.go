@@ -108,7 +108,12 @@ func unixSocketReachable(path string) bool {
 	if path == "" {
 		return false
 	}
-	c, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	// A missing socket fails at once, so the timeout only costs anything
+	// when a socket file exists. It is generous because a false "not
+	// reachable" lets migration move state out from under a live daemon, and
+	// a busy host can delay the dial past a tight deadline before connect
+	// even runs.
+	c, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
 		return false
 	}
