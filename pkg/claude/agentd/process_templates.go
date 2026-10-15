@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
@@ -36,6 +38,9 @@ type processTemplateListView struct {
 	LatestVersion processTemplateVersionView   `json:"latestVersion"`
 	VersionCount  int                          `json:"versionCount"`
 	Versions      []processTemplateVersionView `json:"versions"`
+	// Listed is library metadata: whether the template lists in the library
+	// (tcl-8o4rjj). It is never part of the template.
+	Listed bool `json:"listed"`
 }
 
 // processTemplateHeadView is the bounded polling shape plus provenance for
@@ -55,17 +60,23 @@ type processTemplateHeadView struct {
 // and deliberately does not contribute to SemanticHash. Edges are normalized
 // out of nodes[*].next so a graph editor need not reverse-engineer that shape.
 type processTemplateEditView struct {
-	Template      *model.Template            `json:"template"`
-	Edges         []model.Edge               `json:"edges,omitempty"`
-	Layout        *model.Layout              `json:"layout,omitempty"`
-	SourceHash    string                     `json:"sourceHash,omitempty"`
-	SemanticHash  string                     `json:"semanticHash,omitempty"`
-	CurrentRef    string                     `json:"currentRef,omitempty"`
-	Source        string                     `json:"source,omitempty"`
-	Actor         store.ActorRef             `json:"actor,omitempty"`
-	AuthoredAt    *time.Time                 `json:"authoredAt,omitempty"`
-	Diagnostics   []processEditDiag          `json:"diagnostics,omitempty"`
-	Authorship    []store.TemplateAuthorship `json:"authorship,omitempty"`
+	Template     *model.Template            `json:"template"`
+	Edges        []model.Edge               `json:"edges,omitempty"`
+	Layout       *model.Layout              `json:"layout,omitempty"`
+	SourceHash   string                     `json:"sourceHash,omitempty"`
+	SemanticHash string                     `json:"semanticHash,omitempty"`
+	CurrentRef   string                     `json:"currentRef,omitempty"`
+	Source       string                     `json:"source,omitempty"`
+	Actor        store.ActorRef             `json:"actor,omitempty"`
+	AuthoredAt   *time.Time                 `json:"authoredAt,omitempty"`
+	Diagnostics  []processEditDiag          `json:"diagnostics,omitempty"`
+	Authorship   []store.TemplateAuthorship `json:"authorship,omitempty"`
+	// Listed and PinGroup are library and group metadata, never template
+	// content (tcl-8o4rjj). On a save, Listed (when present) sets whether the
+	// template lists in the library, and PinGroup pins it to that group's
+	// saved processes. A read reports Listed.
+	Listed        *bool  `json:"listed,omitempty"`
+	PinGroup      string `json:"pinGroup,omitempty"`
 	layoutPresent bool
 }
 
@@ -110,8 +121,19 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_templates", err.Error())
 		return
 	}
+	// The library lists only listed templates; ?all=1 includes the ones saved
+	// to a group without being published.
+	unlisted, err := db.ProcessTemplateUnlisted()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_templates", err.Error())
+		return
+	}
+	includeUnlisted := r.URL.Query().Get("all") == "1"
 	grouped := make(map[string][]store.TemplateRecord)
 	for _, record := range records {
+		if unlisted[record.ID] && !includeUnlisted {
+			continue
+		}
 		grouped[record.ID] = append(grouped[record.ID], record)
 	}
 	ids := make([]string, 0, len(grouped))
@@ -144,6 +166,7 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		slices.SortFunc(versions, compareTemplateRecordsNewest)
 		view := processTemplateListView{
 			ID:           id,
+			Listed:       !unlisted[id],
 			VersionCount: len(versions),
 			Versions:     make([]processTemplateVersionView, 0, len(versions)),
 		}
@@ -238,6 +261,9 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 		writeError(w, http.StatusInternalServerError, "process_template_delete", err.Error())
 		return
 	}
+	if err := db.ForgetProcessTemplate(id); err != nil {
+		slog.Warn("process templates: deleted template's pins and listing not removed", "template", id, "error", err)
+	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
@@ -330,6 +356,10 @@ func handleProcessTemplateCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a new template has no prior version to save against")
 		return
 	}
+	pin, ok := resolveProcessTemplatePin(w, r, body.PinGroup)
+	if !ok {
+		return
+	}
 	body.Template.ID = newProcessTemplateID()
 	parsed, err := parseProcessEditView(body)
 	if err != nil {
@@ -367,6 +397,9 @@ func handleProcessTemplateCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
+	if !applyProcessTemplateMeta(w, parsed.Template.ID, body.Listed, pin) {
+		return
+	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{
 		"id":           parsed.Template.ID,
 		"ref":          commit.Ref,
@@ -396,6 +429,10 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	}
 	if body.Template == nil && strings.TrimSpace(body.Source) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "template or source is required")
+		return
+	}
+	pin, ok := resolveProcessTemplatePin(w, r, body.PinGroup)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -453,6 +490,9 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
+		return
+	}
+	if !applyProcessTemplateMeta(w, id, body.Listed, pin) {
 		return
 	}
 	writeProcessJSON(w, http.StatusCreated, map[string]any{
@@ -646,7 +686,12 @@ func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string, incl
 	}
 	semantic := *parsed.Template
 	semantic.Layout = nil
+	listed, err := db.ProcessTemplateListed(semantic.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &processTemplateEditView{
+		Listed:       &listed,
 		Template:     &semantic,
 		Edges:        parsed.Edges,
 		Layout:       parsed.Template.Layout,

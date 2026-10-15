@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -153,6 +154,9 @@ type processGroupContext struct {
 	// member roles its role selector can pick from (tcl-52p3cq).
 	DefaultSpawnProfile string             `json:"defaultSpawnProfile"`
 	Roles               []processGroupRole `json:"roles"`
+	// Processes are the processes saved to the group, in pin order
+	// (tcl-8o4rjj).
+	Processes []processGroupProcess `json:"processes"`
 }
 
 // processGroupRole is one member role of a group and how many active
@@ -200,7 +204,7 @@ func handleProcessContext(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := buildProcessContext(visible)
+	view, err := buildProcessContext(r.Context(), visible)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -267,7 +271,7 @@ func processContextVisibility(w http.ResponseWriter, r *http.Request) (processCo
 	return visible, true
 }
 
-func buildProcessContext(visible processContextVisible) (processContextView, error) {
+func buildProcessContext(ctx context.Context, visible processContextVisible) (processContextView, error) {
 	view := processContextView{
 		Runs: map[string]processRunProjection{}, Groups: []processGroupContext{},
 		Agents: []processAgentContext{}, Orphaned: []string{},
@@ -361,6 +365,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 	if err != nil {
 		return view, err
 	}
+	saved := processSavedTemplates()
 	memberRoles, err := db.ListActiveGroupMemberRoles()
 	if err != nil {
 		return view, err
@@ -382,6 +387,9 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 		if r := roles[group.ID]; r != nil {
 			g.Roles = r
 		}
+		if saved.fs != nil {
+			g.Processes = processGroupProcesses(ctx, saved.fs, group.ID, saved.unlisted)
+		}
 	}
 	for _, g := range groups {
 		view.Groups = append(view.Groups, *g)
@@ -397,7 +405,7 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 func newProcessGroupContext(scope db.ProcessRunScope) *processGroupContext {
 	return &processGroupContext{GroupID: scope.GroupID, Group: scope.GroupName,
 		Active: []string{}, NeedsYou: []string{}, Done: []string{}, Planned: []processPlannedRun{},
-		Roles: []processGroupRole{}}
+		Roles: []processGroupRole{}, Processes: []processGroupProcess{}}
 }
 
 // agentStep places the run's performer at its earliest current work step;

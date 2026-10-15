@@ -1544,6 +1544,9 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
+	mux.HandleFunc("POST /v1/process/templates/{id}/listing", processRoute(handleProcessTemplateListing))
+	mux.HandleFunc("POST /v1/process/groups/{group}/processes", processRoute(handleProcessGroupPin))
+	mux.HandleFunc("DELETE /v1/process/groups/{group}/processes/{templateId}", processRoute(handleProcessGroupUnpin))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
 	mux.HandleFunc("POST /v1/process/resolve-preview", processRoute(handleProcessResolvePreview))
 	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
