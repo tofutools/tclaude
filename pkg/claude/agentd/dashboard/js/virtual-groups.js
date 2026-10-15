@@ -193,7 +193,7 @@ function scribeVisible() {
 }
 
 export {
-  virtualUngroupedGroup, ungroupedVisible,
+  UNGROUPED_VKEY, virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,

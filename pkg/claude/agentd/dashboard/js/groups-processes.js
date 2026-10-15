@@ -1,14 +1,19 @@
-// groups-processes.js -- the Groups tab's Processes focus (mock G3): the same
-// group tree, but each group renders its runs as graph cards, with agents as
-// avatars on the nodes they perform and a busy/idle avatar strip on the group
-// header. Data comes from the process context read model (process-context.js)
-// and renders through the shared process UI kit (process-kit.js).
+// groups-processes.js -- the Groups tab's Processes perspective (mocks G3,
+// P2/P3): the very same groups tree as the Agents perspective (groups-list.js
+// renders it), with each group's member details swapped for its runs as graph
+// cards, agents shown as avatars on the nodes they perform and a busy/idle
+// avatar strip. GroupsProcessesFocus frames the tree (filter toolbar, load
+// states, the single-run focus) and hands the tree what it needs through
+// ProcessesPerspective; the tree asks for it with useProcessesPerspective and
+// renders GroupProcessBody / UngroupedProcessBody / GroupRunCounts. Data comes
+// from the process context read model (process-context.js) and renders
+// through the shared process UI kit (process-kit.js).
 
-import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createContext, h } from 'preact';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessMiniGraph, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
+  ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
   RUN_FILTERS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
@@ -16,6 +21,7 @@ import {
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
+import { agentRunIndex, groupProcessCounts } from './groups-process-indicators.js';
 
 const html = htm.bind(h);
 
@@ -191,6 +197,39 @@ function PlannedRow({ item, wizard }) {
   </span>`;
 }
 
+// memberRunEntries lists the agent-scoped runs of the given members, one
+// entry per run (the first member it lists wins), skipping runs already shown
+// as cards. The context indexes only live agent-scoped runs, so only the
+// filters that show live runs list them.
+function memberRunEntries(context, members, filter, shown = new Set()) {
+  if (filter !== 'running' && filter !== 'all') return [];
+  const index = agentRunIndex(context);
+  const seen = new Set(shown);
+  const out = [];
+  for (const member of members) {
+    for (const entry of index.get(member?.agent_id) || []) {
+      if (seen.has(entry.runId)) continue;
+      seen.add(entry.runId);
+      out.push({ ...entry, member });
+    }
+  }
+  return out;
+}
+
+// MemberRuns is the slim line of agent-scoped runs under a group's cards
+// (and the whole body of Ungrouped): the performer's avatar and a run badge
+// that opens the single-run focus.
+function MemberRuns({ entries, label, onOpen }) {
+  if (!entries.length) return null;
+  return html`<div class="gp-member-runs" data-process-member-runs>
+    <span class="gp-member-runs-label">${label}</span>
+    ${entries.map((entry) => html`<span key=${entry.runId} class="gp-member-run" data-process-member-run=${entry.runId}>
+      <span class="pk-avatar" title=${memberName(entry.member)}>${memberInitial(entry.member)}</span>
+      <${ProcessRunBadge} run=${entry.run} nodeId=${entry.nodeId} onOpen=${() => onOpen(entry.runId)} />
+    </span>`)}
+  </div>`;
+}
+
 function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocusRun }) {
   const [starting, setStarting] = useState(false);
   const entry = groupContextEntry(context, group);
@@ -201,28 +240,127 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
   const names = new Map(members.map((member) => [memberKey(member), memberName(member)]));
   const nameOf = (ref) => names.get(ref) || '';
   const busy = busyPerformers(groupRunsFor(context, entry, 'running').runs);
+  const memberRuns = memberRunEntries(context, members, filter, new Set(runs.map((run) => run.runId)));
   const label = FILTER_LABELS[filter][wizard ? 1 : 0].toLowerCase();
+  const open = (runId) => onFocusRun({ group: group.name, runId });
   return html`<div class="gp-group" data-process-group=${group.name}>
     <div class="gp-group-head">
-      <span class="gp-group-name">${group.name}</span>
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
       <span class="gp-spacer"></span>
       ${!starting && html`<button type="button" class="gp-start" data-process-start=${group.name} onClick=${() => setStarting(true)}
         title=${wizard ? `Begin a rite bound to ${group.name}` : `Start a process run scoped to ${group.name}`}>${wizard ? '+ begin a rite' : '+ start process'}</button>`}
     </div>
     ${starting && html`<${StartRunForm} group=${group} api=${api} source=${source} wizard=${wizard} onClose=${() => setStarting(false)} />`}
-    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard}
-      onOpen=${(runId) => onFocusRun({ group: group.name, runId })} />`)}
+    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
+    <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Familiar rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && html`<div class="gp-empty">${filter === 'all'
+    ${!runs.length && !planned.length && !memberRuns.length && html`<div class="gp-empty">${filter === 'all'
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
   </div>`;
 }
 
+const ProcessesPerspective = createContext(null);
+
+// useProcessesPerspective is what the groups tree reads to tell the two
+// perspectives apart: null in Agents, the run context and handlers in
+// Processes.
+export function useProcessesPerspective() {
+  return useContext(ProcessesPerspective);
+}
+
+// GroupProcessBody replaces a real group's member details in the Processes
+// perspective: its own scope's runs only (subgroups render theirs nested).
+export function GroupProcessBody({ group }) {
+  const perspective = useProcessesPerspective();
+  if (!perspective) return null;
+  return html`<${GroupRuns} group=${group} roster=${perspective.rosters.get(group.name)} context=${perspective.context}
+    filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
+    onFocusRun=${perspective.onFocusRun} />`;
+}
+
+// ungroupedRuns are the agent-scoped runs of Ungrouped's agents, the only
+// runs the virtual group has.
+function ungroupedRuns(perspective, group) {
+  return memberRunEntries(perspective.context, group.members || [], perspective.filter);
+}
+
+export function UngroupedProcessBody({ group }) {
+  const perspective = useProcessesPerspective();
+  if (!perspective) return null;
+  const { wizard, filter } = perspective;
+  const entries = ungroupedRuns(perspective, group);
+  const label = FILTER_LABELS[filter][wizard ? 1 : 0].toLowerCase();
+  return html`<div class="gp-group" data-process-group=${group.key || group.name}>
+    <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
+      onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
+    ${!entries.length && html`<div class="gp-empty">${filter === 'running' || filter === 'all'
+      ? (wizard ? 'No unbound familiar walks a rite.' : 'No ungrouped agent runs a process.')
+      : `No ${label} ${wizard ? 'rites' : 'processes'} outside groups.`}</div>`}
+  </div>`;
+}
+
+function countText(counts, wizard) {
+  const parts = [];
+  if (counts.running) parts.push(`${counts.running} ${wizard ? 'unfolding' : 'running'}`);
+  if (counts.needsYou) parts.push(`${counts.needsYou} ${wizard ? 'awaits you' : 'needs you'}`);
+  if (counts.planned) parts.push(`${counts.planned} ${wizard ? 'foretold' : 'planned'}`);
+  return parts.join(' · ');
+}
+
+// SubgroupRunTotal is the dim "↳ in subgroups" line on a summary row: the
+// runs of every nested group, so collapsing a parent never hides work. It
+// is not a roll-up: the group's own counts stay its own, and the line hides
+// while the group is open (its subgroups then show their own rows).
+export function SubgroupRunTotal({ node }) {
+  const perspective = useProcessesPerspective();
+  if (!perspective || !node.children?.length) return null;
+  const total = { running: 0, needsYou: 0, planned: 0 };
+  const add = (child) => {
+    const counts = groupProcessCounts(groupContextEntry(perspective.context, child.group));
+    total.running += counts.running;
+    total.needsYou += counts.needsYou;
+    total.planned += counts.planned;
+    for (const grandchild of child.children || []) add(grandchild);
+  };
+  for (const child of node.children) add(child);
+  const text = countText(total, perspective.wizard);
+  if (!text) return null;
+  return html`<span class="gp-subtree-total" title="Runs in this group's subgroups, shown while it is collapsed">↳ ${perspective.wizard ? 'in sub-parties' : 'in subgroups'}: ${text}</span>`;
+}
+
+// UngroupedRunCount is Ungrouped's summary-row count in the Processes
+// perspective.
+export function UngroupedRunCount({ group }) {
+  const perspective = useProcessesPerspective();
+  if (!perspective) return null;
+  const entries = memberRunEntries(perspective.context, group.members || [], 'running');
+  const needsYou = entries.filter((entry) => entry.run.needsYou === true).length;
+  const counts = { running: entries.length - needsYou, needsYou, planned: 0 };
+  const { wizard } = perspective;
+  if (!entries.length) return html`<span class="gpi-none">${wizard ? 'no rites' : 'no processes'}</span>`;
+  return html`<span class="gpi-chips">
+    ${counts.running > 0 && html`<span class="pk-chip pk-state-running gpi-chip"><span aria-hidden="true">●</span> ${counts.running} ${wizard ? 'unfolding' : 'running'}</span>`}
+    ${counts.needsYou > 0 && html`<span class="pk-chip pk-state-waiting gpi-chip"><span aria-hidden="true">●</span> ${counts.needsYou} ${wizard ? 'awaits you' : 'needs you'}</span>`}
+  </span>`;
+}
+
+// findFocusGroup resolves the open run's group: a real group from the full
+// roster (so a Groups search cannot strand it), else a shown group by key,
+// which is how Ungrouped's agent runs open.
+function findFocusGroup(focusedRun, rosters, groups) {
+  if (!focusedRun) return null;
+  return rosters.get(focusedRun.group)
+    || (groups || []).find((group) => (group.virtual ? group.key || group.name : group.name) === focusedRun.group)
+    || null;
+}
+
+// GroupsProcessesFocus frames the Processes perspective: the run filter, the
+// load states, and either the single-run focus or `children` -- the shared
+// groups tree -- under the ProcessesPerspective it reads.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = 'running', onFilter = () => {}, wizard = false, source = processContext, api = processRunApi,
-  focusedRun = null, onFocusRun = () => {}, runApi = undefined,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -234,10 +372,7 @@ export function GroupsProcessesFocus({
   }, [source]);
   const status = source.status.value;
   const context = source.context.value;
-  const realGroups = (groups || []).filter((group) => !group.virtual);
-  // An open run shows in the single-run focus; its group comes from the full
-  // roster so a Groups search cannot strand it.
-  const focusGroup = focusedRun && (rosters.get(focusedRun.group) || realGroups.find((group) => group.name === focusedRun.group));
+  const focusGroup = findFocusGroup(focusedRun, rosters, groups);
   // A run whose group is gone closes rather than hiding and popping back.
   const strandedRun = status === 'ready' && focusedRun && !focusGroup;
   useEffect(() => { if (strandedRun) onFocusRun(null); }, [strandedRun]);
@@ -247,7 +382,8 @@ export function GroupsProcessesFocus({
     const previous = lastRun.current;
     lastRun.current = focusedRun?.runId || null;
     if (previous && !focusedRun) {
-      const opener = [...document.querySelectorAll('[data-process-open]')].find((el) => el.dataset.processOpen === previous);
+      const opener = [...document.querySelectorAll('[data-process-open], [data-process-member-run] [data-process-run]')]
+        .find((el) => (el.dataset.processOpen || el.dataset.processRun) === previous);
       opener?.focus?.();
     }
   }, [focusedRun?.runId]);
@@ -256,9 +392,10 @@ export function GroupsProcessesFocus({
       ${source.error.value && html`<span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span>`}
       <${GroupsRunFocus} group=${focusGroup} roster=${rosters.get(focusGroup.name)} context=${context} runId=${focusedRun.runId}
         wizard=${wizard} source=${source} api=${runApi} onClose=${() => onFocusRun(null)}
-        onSelectRun=${(runId) => onFocusRun({ group: focusGroup.name, runId })} />
+        onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
+  const perspective = { context, filter: current, wizard, api, source, onFocusRun, rosters };
   return html`<div class="gp-focus" data-groups-processes>
     <div class="gp-toolbar">
       <div class="gp-filter" role="group" aria-label=${wizard ? 'Rite filter' : 'Process filter'}>
@@ -271,7 +408,7 @@ export function GroupsProcessesFocus({
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
     ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
-    ${status === 'ready' && realGroups.map((group) => html`<${GroupRuns} key=${group.name} group=${group} roster=${rosters.get(group.name)} context=${context} filter=${current} wizard=${wizard} api=${api} source=${source} onFocusRun=${onFocusRun} />`)}
+    ${status === 'ready' && html`<${ProcessesPerspective.Provider} value=${perspective}>${children}<//>`}
     ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}
   </div>`;
 }
