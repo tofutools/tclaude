@@ -145,27 +145,40 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const latest = useRef(0);
+  // The choices the shown review was made with, and the newest ones picked.
+  const reviewed = useRef(choices);
+  const picked = useRef(choices);
+  const [imported, setImported] = useState(false);
   useEffect(() => { processGroupNames().then(setGroups, () => setGroups([])); }, []);
   // Every choice changes what an import stores, so it is reviewed again
   // before Import applies it.
   const choose = async (next) => {
-    const merged = { ...choices, ...next };
+    const merged = { ...picked.current, ...next };
+    picked.current = merged;
     setChoices(merged);
     setError('');
     setReviewing(true);
     const seq = ++latest.current;
     try {
       const fresh = await previewImport(bytes, { choices: merged });
-      if (seq === latest.current) setPreview(fresh);
+      if (seq === latest.current) {
+        reviewed.current = merged;
+        setPreview(fresh);
+      }
     } catch (err) {
-      if (seq === latest.current) setError(err?.message || String(err));
+      // The review still shows the last choices that previewed; show those.
+      if (seq === latest.current) {
+        picked.current = reviewed.current;
+        setChoices(reviewed.current);
+        setError(err?.message || String(err));
+      }
     } finally {
       if (seq === latest.current) setReviewing(false);
     }
   };
   const blocked = review.updates > 0 && !replace;
   const submit = async () => {
-    if (busy || reviewing || blocked || (review.nothingToDo && !choices.group)) return;
+    if (busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)) return;
     setBusy(true);
     setError('');
     try {
@@ -180,6 +193,9 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
         setPreview(err.body.preview);
         setReplace(false);
         if (err.body.preview.applied) {
+          // Stored, but not pinned: the list refreshes and the import is done.
+          onImported?.(err.body.preview);
+          setImported(true);
           setError(err.message);
           setBusy(false);
           return;
@@ -226,7 +242,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       </select></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
+      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
   </${Overlay}>`;
 }
 

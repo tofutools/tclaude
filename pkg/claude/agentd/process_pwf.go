@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -417,15 +416,6 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 
 // pwfSignatureViews labels valid signatures by key: this node, a known
 // federation peer, or unknown. Labels the file asserts are never trusted.
-func sortedKeysOf[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func pwfSignatureViews(results []paf.SignatureResult) []pwfSignatureView {
 	views := []pwfSignatureView{}
 	var self string

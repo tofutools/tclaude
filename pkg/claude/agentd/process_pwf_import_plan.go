@@ -83,6 +83,15 @@ func (o pwfImportOptions) digestKey() string {
 	return b.String()
 }
 
+func sortedKeysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // pwfRoleMapping is one role name the workflow uses and what its steps use
 // after the import.
 type pwfRoleMapping struct {
@@ -104,7 +113,8 @@ type pwfRoleMapping struct {
 func pwfRoleUses(a *pwf.Archive) map[string][]string {
 	uses := map[string][]string{}
 	add := func(name, where string) {
-		if name != "" {
+		// A {{ params.x }} role is chosen per run, not mapped on import.
+		if name != "" && !strings.Contains(name, "{{") {
 			uses[name] = append(uses[name], where)
 		}
 	}
@@ -286,7 +296,7 @@ func (p *pwfPlanner) plan(ref string) (*pwfPlanned, error) {
 }
 
 func (p *pwfPlanner) mapName(name *string) bool {
-	if to, ok := p.roleMap[*name]; ok && *name != "" {
+	if to, ok := p.roleMap[*name]; ok && *name != "" && !strings.Contains(*name, "{{") {
 		*name = to
 		return true
 	}
