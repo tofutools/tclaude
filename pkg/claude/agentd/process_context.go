@@ -74,6 +74,10 @@ type processProjectionNode struct {
 	// recorded it: who has it, which attempt (the loop count), and when the
 	// turn was injected. Absent until the node is first dispatched.
 	Dispatch *processProjectionDispatch `json:"dispatch,omitempty"`
+	// Bounds is a program node's latest attempt's recorded bounds: where it
+	// ran (cwd) and in which sandbox, or unconfined. Absent until a scoped run
+	// first plans the node.
+	Bounds *processProgramBoundsView `json:"bounds,omitempty"`
 	// Description is the authored node description, clipped to
 	// processProjectionDescriptionRunes so a run's projection stays small.
 	Description string `json:"description,omitempty"`
@@ -620,6 +624,19 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 		}
 		dispatched[authored] = performer
 	}
+	// Program bounds lift onto the authored node the same way; the newest
+	// recording wins.
+	bounded := make(map[string]processProgramBoundsView, len(run.ProgramBounds))
+	for nodeID, bounds := range run.ProgramBounds {
+		authored, ok := s.authoredID(nodeID)
+		if !ok {
+			continue
+		}
+		if current, seen := bounded[authored]; seen && current.Sequence > bounds.Sequence {
+			continue
+		}
+		bounded[authored] = bounds
+	}
 	projection.Nodes = make([]processProjectionNode, len(s.nodes))
 	for i, node := range s.nodes {
 		node.State = states[node.ID]
@@ -640,6 +657,9 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 					node.Performer.Ref = latest.AgentID
 				}
 			}
+		}
+		if bounds, ok := bounded[node.ID]; ok {
+			node.Bounds = &bounds
 		}
 		if processNodeStateRank[node.State] >= processNodeStateRank[string(engine.NodeReady)] &&
 			node.State != string(engine.NodeFailed) && node.State != string(engine.NodeCanceled) {

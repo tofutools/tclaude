@@ -325,7 +325,7 @@ func TestAwaitedEvidenceIsBudgetedAgainstTheRestOfTheCommit(t *testing.T) {
 	after, _, _, err := engine.AdvanceAndPlan(before, definition)
 	require.NoError(t, err)
 
-	events := commitEvidence(definition, before, after, nil, advanceEvidence(nil), true)
+	events := commitEvidence(definition, before, after, nil, advanceEvidence(nil, nil), true)
 	require.LessOrEqual(t, len(events), db.MaxProcessRunEventsPerTransition)
 	counts := map[string]int{}
 	for _, event := range events {
@@ -352,7 +352,7 @@ func TestAwaitedEvidenceIsBudgetedAgainstTheRestOfTheCommit(t *testing.T) {
 
 	// An advance that neither opened a window nor prepared a command still leaves
 	// its plain status row, so a commit is never silently empty.
-	quiet := commitEvidence(definition, after, after, nil, advanceEvidence(nil), true)
+	quiet := commitEvidence(definition, after, after, nil, advanceEvidence(nil, nil), true)
 	require.Len(t, quiet, 1)
 	assert.Equal(t, "engine_advanced", quiet[0].Kind)
 	assert.Empty(t, commitEvidence(definition, after, after, nil, nil, false),

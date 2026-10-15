@@ -13,6 +13,8 @@ import (
 // must exclude real subprocess wall time.
 func SetProgramPerformForTest(fn func(context.Context, string, engine.Command) (Result, error)) func() {
 	previous := programPerform
-	programPerform = fn
+	programPerform = func(ctx context.Context, runID string, command engine.Command, _ *ProgramBounds) (Result, error) {
+		return fn(ctx, runID, command)
+	}
 	return func() { programPerform = previous }
 }
