@@ -1,8 +1,10 @@
-// groups-process-indicators.js -- process state inside the Groups tab's
-// Agents focus (mock G1): `N running / N needs you / N planned` chips on each
-// group header, and a `run › node` badge with a step strip on each member row
-// for the process node that agent performs. Both read the process context
-// read model (process-context.js) and click through to the Processes focus.
+// groups-process-indicators.js -- process state inside the Groups tab: an
+// animated running / needs-you / planned flow-graph row on each group header
+// (the process twin of the member bots in group-activity.js, shown in both
+// perspectives), and a `run › node` badge with a step strip on each member
+// row for the process node that agent performs (Agents focus, mock G1). Both
+// read the process context read model (process-context.js) and click
+// through to the Processes focus.
 //
 // Large fleets: one context fetch per snapshot poll, and one agent→runs index
 // per context object (cached), so each row is a Map lookup.
@@ -77,26 +79,59 @@ function cssString(value) {
   return String(value).replace(/["\\]/g, '\\$&');
 }
 
-function enabled(snapshot, source) {
+export function enabled(snapshot, source) {
   return snapshot?.processes_enabled === true && source.status.value === 'ready';
 }
 
-export function GroupProcessChips({ group, snapshot, source = processContext, wizard = false }) {
+// GRAPH_STATES is the process twin of group-activity.js's bot row: one
+// animated flow-graph glyph per distinct state present, loudest first, each
+// carrying a count when more than one run shares it. Running moves a packet
+// node to node, needs-you pulses an amber gate node, planned is a quiet
+// dashed outline (dashboard.css → .gpi-graph).
+const GRAPH_STATES = [
+  { key: 'needsYou', state: 'waiting', filter: 'running', data: 'needs-you', plain: 'needs you', arcane: 'awaits you' },
+  { key: 'running', state: 'running', filter: 'running', data: 'running', plain: 'running', arcane: 'unfolding' },
+  { key: 'planned', state: 'planned', filter: 'planned', data: 'planned', plain: 'planned', arcane: 'foretold' },
+];
+
+function FlowGlyph() {
+  return html`<svg class="gpi-flow" viewBox="0 0 22 16" aria-hidden="true">
+    <polyline class="gpi-edge" points="3,10 11,5 19,10" />
+    <circle class="gpi-node" cx="3" cy="10" r="2.4" />
+    <circle class="gpi-node gpi-gate" cx="11" cy="5" r="2.4" />
+    <circle class="gpi-node" cx="19" cy="10" r="2.4" />
+    <circle class="gpi-packet" cx="3" cy="10" r="1.6" />
+  </svg>`;
+}
+
+// ProcessGraphRow renders counts as the glyph row; nothing when no run is
+// present. With onOpen each glyph is a button opening the Processes focus on
+// its filter (without toggling the enclosing <details>).
+export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen = null }) {
+  const present = GRAPH_STATES.filter((spec) => counts[spec.key] > 0);
+  if (!present.length) return null;
+  return html`<span class=${`gpi-graphs level-${present[0].state}`}>
+    ${present.map((spec) => {
+      const n = counts[spec.key];
+      const label = `${n} ${wizard ? spec.arcane : spec.plain}`;
+      const body = html`<${FlowGlyph} />${n > 1 ? html`<span class="gpi-count">${n}</span>` : null}`;
+      const className = `gpi-graph gpi-state-${spec.state}`;
+      if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} title=${label} aria-label=${label}>${body}</span>`;
+      return html`<button key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
+        title=${`${label} — show ${groupName}'s ${spec.plain} in the Processes focus`} aria-label=${label}
+        onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onOpen(spec.filter); }}
+      >${body}</button>`;
+    })}
+  </span>`;
+}
+
+// GroupProcessGraphs is a group header's process indicator, shown beside the
+// member bots in both perspectives; a quiet group shows nothing.
+export function GroupProcessGraphs({ group, snapshot, source = processContext, wizard = false }) {
   if (!enabled(snapshot, source)) return null;
   const counts = groupProcessCounts(groupContextEntry(source.context.value, group));
-  if (!counts.running && !counts.needsYou && !counts.planned) {
-    return html`<span class="gpi-none">${wizard ? 'no rites' : 'no processes'}</span>`;
-  }
-  const chip = (count, state, filter, plain, arcane, glyph) => count > 0 && html`<button type="button"
-      class=${`pk-chip pk-state-${state} gpi-chip`} data-group-processes=${filter === 'running' && state === 'waiting' ? 'needs-you' : filter}
-      title=${`Show ${group.name}'s ${plain} in the Processes focus`}
-      onClick=${(event) => { event.preventDefault(); event.stopPropagation(); openGroupInProcesses(group.name, filter); }}
-    ><span aria-hidden="true">${glyph}</span> ${count} ${wizard ? arcane : plain}</button>`;
-  return html`<span class="gpi-chips">
-    ${chip(counts.running, 'running', 'running', 'running', 'unfolding', '●')}
-    ${chip(counts.needsYou, 'waiting', 'running', 'needs you', 'awaits you', '●')}
-    ${chip(counts.planned, 'planned', 'planned', 'planned', 'foretold', '◷')}
-  </span>`;
+  return html`<${ProcessGraphRow} counts=${counts} wizard=${wizard} groupName=${group.name}
+    onOpen=${(filter) => openGroupInProcesses(group.name, filter)} />`;
 }
 
 export function MemberProcessCell({ member, group, snapshot, source = processContext }) {

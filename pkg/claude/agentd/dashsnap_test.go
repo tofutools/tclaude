@@ -855,15 +855,15 @@ func baseStates() []dashsnap.State {
   document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = false; });
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var parent = document.querySelector('details[data-group-key="`+tfTemplate+`"] > summary');
-  if (!parent || !parent.querySelector('.gpi-chip')) throw new Error('the parent row lacks its own run counts');
+  if (!parent || !parent.querySelector('.gpi-graph')) throw new Error('the parent row lacks its own run graphs');
   var total = parent.querySelector('.gp-subtree-total');
   if (!total || !/in sub(groups|-parties): 1 (needs you|awaits you)/.test(total.textContent)) throw new Error('the collapsed parent lacks its subgroup total');`, false),
 			SettleMS: 300,
 		},
 		{
 			Key:     "groups-agents-process-badges",
-			Title:   "Groups — process chips and member badges",
-			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
+			Title:   "Groups — process graphs and member badges",
+			Caption: "Mock G1: in the Agents focus each group header carries animated needs-you / running / planned flow graphs right after its member bots (a quiet group shows none), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + expandGroups + `return (async function(){
   var deadline = Date.now() + 4000;
@@ -872,7 +872,7 @@ func baseStates() []dashsnap.State {
   }
   if (!document.querySelector('[data-group-processes="needs-you"]')) throw new Error('group header lacks the needs-you chip');
   if (!document.querySelector('[data-group-processes="planned"]')) throw new Error('group header lacks the planned chip');
-  if (!document.querySelector('.gpi-none')) throw new Error('a quiet group does not say "no processes"');
+  if (!document.querySelector('.group-activity + .gpi-graphs')) throw new Error('the process graphs do not follow the member bots');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-running')) throw new Error('no running member badge');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-waiting')) throw new Error('no amber member badge');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-planned')) throw new Error('no dashed planned member badge');
