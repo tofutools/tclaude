@@ -1190,7 +1190,10 @@ func processLoopFeedback(runID string, command engine.Command) string {
 			OnExhausted   string `json:"onExhausted,omitempty"`
 			Feedback      string `json:"feedback,omitempty"`
 		}
-		if event.DecodePayload(&payload) != nil || payload.Round != command.Round {
+		// Only the command's own innermost loop: with nested loops another
+		// loop's row can carry the same round number.
+		if event.DecodePayload(&payload) != nil || payload.Round != command.Round ||
+			payload.From != command.LoopFrom || payload.Outcome != command.LoopOutcome {
 			continue
 		}
 		text := fmt.Sprintf("## Sent back for round %d of %d\n\n%q decided %q, so this work runs again.",

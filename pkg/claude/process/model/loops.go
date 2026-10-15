@@ -222,6 +222,11 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 			if _, ok := tmpl.Nodes[to]; !ok {
 				continue
 			}
+			if to == nodeID {
+				add("loop_not_back", "nodes."+nodeID+".loops."+outcome, fmt.Sprintf(
+					"outcome %q routes %q back to itself; a loop goes back to earlier work", outcome, nodeID))
+				continue
+			}
 			out, _ := forwardAdjacency(tmpl, edges)
 			if !reachableFrom(to, out)[nodeID] {
 				add("loop_not_back", "nodes."+nodeID+".loops."+outcome, fmt.Sprintf(

@@ -96,6 +96,12 @@ func TestBoundedLoopRejections(t *testing.T) {
 			decide.Loops = map[string]LoopBound{"changes": {MaxIterations: 3}, "approved": {MaxIterations: 3}}
 			nodes["decide"] = decide
 		}, "loop_not_back"},
+		"self loop": {func(nodes map[string]Node) {
+			decide := nodes["decide"]
+			decide.Next["wait"] = "decide"
+			decide.Loops = map[string]LoopBound{"changes": {MaxIterations: 3}, "wait": {MaxIterations: 3}}
+			nodes["decide"] = decide
+		}, "loop_not_back"},
 		"second entry": {func(nodes map[string]Node) {
 			nodes["start"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Skip?"},
 				Next: Next{"build": "implement", "skip": "review"}}

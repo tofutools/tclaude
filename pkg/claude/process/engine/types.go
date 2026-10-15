@@ -233,6 +233,10 @@ type Command struct {
 	// innermost loop and that loop's limit. Zero outside loops.
 	Round  int `json:"round,omitempty"`
 	Rounds int `json:"rounds,omitempty"`
+	// LoopFrom and LoopOutcome name that innermost loop's bounded edge, so a
+	// later round's performer is told what its own loop's decider said.
+	LoopFrom    string `json:"loopFrom,omitempty"`
+	LoopOutcome string `json:"loopOutcome,omitempty"`
 }
 
 // AgentCommand is the fully bound request for one agent performer attempt.

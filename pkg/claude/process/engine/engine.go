@@ -1169,6 +1169,7 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 	}
 	if round, ok := definition.RoundOf(checkpoint, node.id); ok {
 		command.Round, command.Rounds = round.Round, round.Of
+		command.LoopFrom, command.LoopOutcome = round.From, round.Outcome
 	}
 	if node.agent != nil {
 		agent := *node.agent

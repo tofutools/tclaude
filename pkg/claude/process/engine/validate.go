@@ -1344,6 +1344,7 @@ func commandsEqual(left, right Command) bool {
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
 		left.Attempt == right.Attempt && left.Round == right.Round && left.Rounds == right.Rounds &&
+		left.LoopFrom == right.LoopFrom && left.LoopOutcome == right.LoopOutcome &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&
 		left.Program.Timeout == right.Program.Timeout && slices.Equal(left.Program.Args, right.Program.Args)
 }

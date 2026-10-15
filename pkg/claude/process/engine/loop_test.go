@@ -300,6 +300,10 @@ func TestNestedLoopRestartsWithItsOuterRound(t *testing.T) {
 	if len(ran) != 2 || ran[1].NodeID != "polish" || ran[1].Round != 1 || ran[0].Round != 2 {
 		t.Fatalf("outer round 2 = %#v", ran)
 	}
+	// Each command names its own innermost loop.
+	if ran[0].LoopFrom != "outer" || ran[0].LoopOutcome != "redo" || ran[1].LoopFrom != "inner" || ran[1].LoopOutcome != "again" {
+		t.Fatalf("loop identities = %#v", ran)
+	}
 	// The inner loop has its rounds again.
 	if _, err = Apply(checkpoint, definition, decidedAt("inner", "again", 2)); err != nil {
 		t.Fatal(err)

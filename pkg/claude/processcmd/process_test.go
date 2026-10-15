@@ -938,3 +938,30 @@ func mapKeys[V any](values map[string]V) []string {
 	}
 	return keys
 }
+
+// TestRuntimeDecideSendsAnExplicitWindowZero: --attempt 0 pins a loop
+// decision's first window, while an omitted --attempt sends none (the
+// daemon then takes the current window).
+func TestRuntimeDecideSendsAnExplicitWindowZero(t *testing.T) {
+	for name, tc := range map[string]struct {
+		params processDecideParams
+		want   string
+	}{
+		"omitted":  {processDecideParams{RunID: "run_1", Node: "choose", Verdict: "approve"}, `{"nodeId":"choose","verdict":"approve"}`},
+		"explicit": {processDecideParams{RunID: "run_1", Node: "choose", Verdict: "approve", attemptSet: true}, `{"nodeId":"choose","verdict":"approve","attempt":0}`},
+		"window 2": {processDecideParams{RunID: "run_1", Node: "choose", Verdict: "approve", Attempt: 2}, `{"nodeId":"choose","verdict":"approve","attempt":2}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got []byte
+			stubProcessRuntime(t, func(_ string, _ string, body any, _ any, _ agent.DaemonOpts) error {
+				var err error
+				got, err = json.Marshal(body)
+				return err
+			})
+			var stdout, stderr bytes.Buffer
+			params := tc.params
+			require.NoError(t, runProcessDecide(&params, &stdout, &stderr))
+			assert.JSONEq(t, tc.want, string(got))
+		})
+	}
+}

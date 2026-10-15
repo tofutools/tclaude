@@ -321,6 +321,9 @@ func deferredExit(checkpoint Checkpoint, definition *Definition, edgeIndex int) 
 type LoopRound struct {
 	Round int
 	Of    int
+	// From and Outcome name the loop's bounded edge.
+	From    string
+	Outcome string
 }
 
 // RoundOf reports the round of the innermost loop around a node, and false for
@@ -331,7 +334,8 @@ func (d *Definition) RoundOf(checkpoint Checkpoint, nodeID string) (LoopRound, b
 		return LoopRound{}, false
 	}
 	loop := d.loops[node.loops[0]]
-	return LoopRound{Round: iterationsTaken(checkpoint, d, loop) + 1, Of: loop.maxIterations}, true
+	return LoopRound{Round: iterationsTaken(checkpoint, d, loop) + 1, Of: loop.maxIterations,
+		From: d.nodes[loop.from].id, Outcome: loop.outcome}, true
 }
 
 // LoopEdge is a bounded back edge as the read surfaces describe it.
