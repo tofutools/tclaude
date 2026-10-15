@@ -7,13 +7,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
-import { setStepText, stepListToView } from '../dashboard/js/process-step-list.js';
+import { AGENT_VERDICTS, replaceStep, setStepChoices, setStepLoop, setStepText, stepListToView } from '../dashboard/js/process-step-list.js';
 import { STARTERS } from '../dashboard/js/process-quickstart.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./process-mini-edit-cases.json', import.meta.url), 'utf8'));
 const roster = [{ name: 'checkout', id: 'a1', role: 'dev', online: true }, { name: 'review-bot', id: 'a2', role: 'reviewer', online: true }];
 const ship = stepListToView(STARTERS[0].build(roster).list);
 const check = stepListToView(STARTERS[2].build(roster).list);
+
+// agentDecides makes the starter's review an agent decider that sends
+// changes back to implement, the way the step list's "◇ agent decides" does.
+function agentDecides() {
+  const list = STARTERS[0].build(roster).list;
+  const review = list.steps.find((step) => step.id === 'review');
+  let step = setStepChoices(review, [...AGENT_VERDICTS], 'approve');
+  step = { ...step, links: step.links.map((link) => (link.outcome === 'changes' ? { ...link, to: 'implement' } : link)) };
+  return stepListToView(replaceStep(list, setStepLoop(step, 'changes', { maxIterations: 3, onExhausted: '' })));
+}
 
 // fill writes the text an operator types into the new step.
 const fill = ({ view, id }) => m.updateStep(view, id, (step) => setStepText(step, step.node.performer.kind === 'program' ? 'make test' : 'Do the thing.')).view;
@@ -34,6 +44,7 @@ function cases() {
     'delete-approve': m.deleteStep(ship, 'approve').view,
     'before-join-agent': fill(m.insertBefore(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')),
     'delete-join': m.deleteStep(fill(m.insertAfter(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')), 'approve').view,
+    'agent-decider-loop': agentDecides(),
     'loop-final-say-hold': m.setLoopRounds(m.setOutcomeTarget(ship, 'final-say', 'hold', 'implement').view, 'final-say', 'hold', 4).view,
   };
 }

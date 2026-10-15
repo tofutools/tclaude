@@ -20367,6 +20367,10 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .gq-loop-rounds { width: 3.6em; }
 .gq-who-select { width: 100%; }
 .gq-answer { color: #e3b341; }
+.gq-step-body .gq-decides { align-self: flex-start; font-size: 11px; padding: 0; color: #8b949e; opacity: 0.75; }
+.gq-step:hover .gq-decides, .gq-decides:focus-visible { opacity: 1; color: #e3b341; }
+body.wizard .gq-step-body .gq-decides { color: #a593c2; }
+body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-res { margin-top: 3px; font-size: 10.5px; color: #6e7681; }
 .gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
 .gq-row-act { display: flex; flex-direction: column; gap: 2px; }

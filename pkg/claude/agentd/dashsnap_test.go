@@ -910,6 +910,29 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:     "groups-processes-step-editor-agent-decider",
+			Title:   "Groups — Processes quick start: an agent decides",
+			Caption: "tcl-kucddt: '◇ agent decides' turns the Review agent step into an agent decider whose verdicts (approve, changes) route like a person's answers. Its 'changes' verdict pointed back at step 1 is a bounded loop, so the review loop runs with nobody in it.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(stepEditorJS(`
+  var tick = function(ms){ return new Promise(function(resolve){ setTimeout(resolve, ms || 60); }); };
+  var decides = editor.querySelector('[data-step="review"] [data-step-decides]');
+  if (!decides) throw new Error('the Review agent step offers no agent decides');
+  decides.click();
+  await tick();
+  var select = editor.querySelector('[data-step="review"] [aria-label="After changes"]');
+  if (!select) throw new Error('the agent decider has no changes verdict');
+  var back = Array.from(select.options).find(function(option){ return /^↺ back to 1 · /.test(option.textContent); });
+  if (!back) throw new Error('the changes verdict offers no way back to step 1');
+  select.value = back.value;
+  select.dispatchEvent(new Event('change', {bubbles: true}));
+  await tick(900);
+  if (!editor.querySelector('[data-step="review"] [data-loop="changes"]')) throw new Error('going back did not show the loop controls');
+  if (editor.querySelector('[data-step="review"] .gq-problem')) throw new Error('the server refuses the agent decider loop');
+  editor.querySelector('[data-step="review"]').scrollIntoView({block: 'center'});`)),
+			SettleMS: 300,
+		},
+		{
 			Key:     "groups-processes-saved",
 			Title:   "Groups — Processes: saved processes",
 			Caption: "Mock Q3 (tcl-7p6bgt): a group's saved processes (Save to group, context groups[].processes in pin order) show as chips at the top of its body, under the group's head row. ▶ opens a start strip that asks only for the start inputs (a default arrives filled) and a consent per program profile,, Start with its blocked reason inline, then Edit steps (reopens the step list; saving writes a new version), publish as template (only while unlisted) and remove in one cluster. New processes are built from the group's process buttons, so the row has no + new.",

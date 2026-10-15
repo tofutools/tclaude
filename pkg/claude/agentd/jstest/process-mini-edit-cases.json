@@ -2096,6 +2096,169 @@
     "nodes": {}
    }
   },
+  "agent-decider-loop": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "build-review-ship",
+    "params": {
+     "issue": {
+      "type": "string",
+      "required": true
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Implement {{params.issue}} on a branch and open a PR."
+      }
+     },
+     "review": {
+      "type": "decision",
+      "name": "Review",
+      "performer": {
+       "kind": "agent",
+       "role": "reviewer",
+       "prompt": "Review the PR for {{params.issue}} and post your verdict and notes on it."
+      },
+      "loops": {
+       "changes": {
+        "maxIterations": 3
+       }
+      }
+     },
+     "approve": {
+      "type": "decision",
+      "name": "Approve",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship {{params.issue}}? Read the review on the PR.",
+       "choices": [
+        "ship",
+        "rework",
+        "hold"
+       ]
+      }
+     },
+     "rework": {
+      "type": "task",
+      "name": "Rework",
+      "performer": {
+       "kind": "agent",
+       "role": "dev",
+       "prompt": "Address the review notes on the PR for {{params.issue}}. This is the one rework round; the human decides next."
+      }
+     },
+     "final-say": {
+      "type": "decision",
+      "name": "Final say",
+      "performer": {
+       "kind": "human",
+       "ask": "Ship the reworked {{params.issue}}?",
+       "choices": [
+        "ship",
+        "hold"
+       ]
+      }
+     },
+     "merge": {
+      "type": "task",
+      "name": "Merge",
+      "performer": {
+       "kind": "program",
+       "run": "gh",
+       "args": [
+        "pr",
+        "merge",
+        "--squash"
+       ]
+      }
+     },
+     "end": {
+      "type": "end"
+     },
+     "stopped": {
+      "type": "end",
+      "result": "canceled",
+      "name": "stopped"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "approve",
+     "to": "approve"
+    },
+    {
+     "from": "review",
+     "outcome": "changes",
+     "to": "implement"
+    },
+    {
+     "from": "approve",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "approve",
+     "outcome": "rework",
+     "to": "rework"
+    },
+    {
+     "from": "approve",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "rework",
+     "outcome": "next",
+     "to": "final-say"
+    },
+    {
+     "from": "final-say",
+     "outcome": "ship",
+     "to": "merge"
+    },
+    {
+     "from": "final-say",
+     "outcome": "hold",
+     "to": "stopped"
+    },
+    {
+     "from": "merge",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
   "loop-final-say-hold": {
    "template": {
     "apiVersion": "tclaude.dev/v1alpha1",

@@ -383,18 +383,34 @@ export function setStepName(step, name) {
   return { ...step, node: { ...clone(step.node), name } };
 }
 
-// setStepChoices makes a "you" step a decision with these answers, or a plain
-// task when answers is empty. Decision answers are its edges: the continuing
-// answer (the step's continue, when it is still an answer) goes to the next
-// step, links for removed answers go away, and new answers link to
-// `following`.
+// stepAnswers are a decision step's answers: a person's choices, or the
+// verdicts an agent decider picks between (its outcomes, which is all an
+// agent decision names), continuing one first.
+export function stepAnswers(step) {
+  if (step?.node?.type !== 'decision') return [];
+  const performer = step.node.performer || {};
+  if (performer.kind === 'human') return performer.choices || [];
+  return [...new Set([...(step.cont ? [step.cont] : []), ...step.links.map((link) => link.outcome)])];
+}
+
+// AGENT_VERDICTS are a new agent decider's verdicts: approve continues,
+// changes is the one to send back for another round.
+export const AGENT_VERDICTS = Object.freeze(['approve', 'changes']);
+
+// setStepChoices makes a "you" or agent step a decision with these answers,
+// or a plain task when answers is empty. Decision answers are its edges: the
+// continuing answer (the step's continue, when it is still an answer) goes to
+// the next step, links for removed answers go away, and new answers link to
+// `following`. A person's answers are also its performer's choices; an agent
+// decider's are only its edges (choices are human-scoped).
 export function setStepChoices(step, choices, following) {
   const answers = [...new Set((choices || []).map((c) => String(c).trim()).filter(Boolean))];
   const node = clone(step.node);
   const performer = { ...(node.performer || { kind: 'human' }) };
   if (answers.length) {
     node.type = 'decision';
-    performer.choices = answers;
+    if (performer.kind === 'human') performer.choices = answers;
+    else delete performer.choices;
     delete performer.choiceOutcomes;
     const cont = answers.includes(step.cont) ? step.cont : '';
     const kept = step.links.filter((link) => answers.includes(link.outcome) && link.outcome !== cont);
