@@ -971,6 +971,24 @@ func validatePoisonEscalations(tmpl *Template, diagnostics *templateDiagnosticCo
 	return true
 }
 
+// cycleFixHint says how to make an unbounded cycle a bounded loop: bound the
+// outcome of a decision on it that goes back, or, with no decision on it, add
+// one, since only a decision can decide when the rounds stop.
+func cycleFixHint(tmpl *Template, edges []Edge, cycle []string) string {
+	// Only the edge that closed the cycle goes back: the walk starts at the
+	// template's start, so bounding any other decision edge on the cycle would
+	// leave a loop entered past its top (loop_entry).
+	if n := len(cycle); n >= 2 && tmpl.Nodes[cycle[n-2]].Type == NodeTypeDecision {
+		from, to := cycle[n-2], cycle[n-1]
+		for _, edge := range edges {
+			if edge.From == from && edge.To == to {
+				return fmt.Sprintf("bound decision %q's outcome %q with loops: {%s: {maxIterations: N}}", from, edge.Outcome, edge.Outcome)
+			}
+		}
+	}
+	return "only a decision can send work back for another round: route the cycle through a decision and bound that outcome with loops: {<outcome>: {maxIterations: N}}"
+}
+
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	acyclicEdges := make([]Edge, 0, len(edges))
 	for _, edge := range edges {
@@ -991,9 +1009,10 @@ func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	visit = func(id string, stack []string) {
 		switch state[id] {
 		case active:
-			cycle := append(stack, id)
-			diagnostics = append(diagnostics, diagError("graph_cycle", "nodes."+id, "this cycle has no bounded edge: "+strings.Join(cycle, " -> ")+
-				"; bound the decision outcome that goes back with loops: {<outcome>: {maxIterations: N}}"))
+			// The cycle is the stack from the revisited node on.
+			cycle := append(append([]string(nil), stack[slices.Index(stack, id):]...), id)
+			diagnostics = append(diagnostics, diagError("graph_cycle", "nodes."+id,
+				"this cycle has no bounded edge: "+strings.Join(cycle, " -> ")+"; "+cycleFixHint(tmpl, acyclicEdges, cycle)))
 			return
 		case done:
 			return
@@ -1006,7 +1025,13 @@ func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 		state[id] = done
 	}
 
-	for _, id := range sortedKeys(adj) {
+	// Walk from the start first so the edge that closes each cycle is the one
+	// that goes back to earlier work, which is what cycleFixHint names.
+	roots := sortedKeys(adj)
+	if tmpl.Start != "" {
+		roots = append([]string{tmpl.Start}, roots...)
+	}
+	for _, id := range roots {
 		if state[id] == unseen {
 			visit(id, nil)
 		}

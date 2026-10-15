@@ -18659,6 +18659,21 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
   cursor: pointer;
 }
 .process-issue:hover, .process-issue:focus-visible { background: #1d2631; outline: none; }
+/* Bounded review loops (tcl-eu70x9): the edge inspector's round limit and the
+   one-click fix beside an unbounded cycle, in the graph's return colour. */
+.process-loop-controls {
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 2px 8px; border: 1px solid #6b5a1e; border-radius: 6px; background: #2a2410; color: #e3a341;
+}
+.process-loop-controls .process-loop-rounds { width: 3.5em; text-align: right; }
+.process-loop-exhausted {
+  background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 3px 6px; font-size: 13px;
+}
+.process-loop-make { color: #e3a341; border-color: #6b5a1e; }
+.process-issues-list li:has(> .process-loop-make) { display: flex; align-items: center; gap: 6px; }
+.process-issues-list li:has(> .process-loop-make) > .process-issue { width: auto; flex: 1; min-width: 0; }
+.process-issues-list li > .process-loop-make { flex: none; font-size: 12px; padding: 2px 8px; }
+.process-loop-hint { color: #e3a341; }
 .process-issue-glyph { flex: none; font-weight: 800; }
 .process-issue-error .process-issue-glyph { color: #f85149; }
 .process-issue-warning .process-issue-glyph { color: #e3a341; }
@@ -20346,6 +20361,10 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .gq-answers-in input { font: inherit; font-size: 11.5px; margin-left: 6px; width: 60%; border: 1px solid #30363d; border-radius: 4px; padding: 1px 6px; background: #0b0f14; color: #e6edf3; }
 .gq-then { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: #8b949e; }
 .gq-then-link select, .gq-who-select, .gq-fallback select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 2px 6px; background: #161b22; color: #e6edf3; }
+.gq-then-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.gq-loop { display: inline-flex; align-items: center; gap: 5px; color: #e3a341; }
+.gq-loop select, .gq-loop-rounds { font: inherit; font-size: 12px; border: 1px solid #6b5a1e; border-radius: 6px; padding: 2px 6px; background: #161b22; color: #e6edf3; }
+.gq-loop-rounds { width: 3.6em; }
 .gq-who-select { width: 100%; }
 .gq-answer { color: #e3b341; }
 .gq-res { margin-top: 3px; font-size: 10.5px; color: #6e7681; }

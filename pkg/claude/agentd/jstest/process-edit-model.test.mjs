@@ -360,6 +360,64 @@ test('a loop bound follows its connector through a rename and goes with it on de
   assert.equal(model.template.nodes.decide.loops, undefined);
 });
 
+function reviewLoopView() {
+  const input = view();
+  input.template.nodes.decide = { type: 'decision' };
+  input.template.nodes.lint = { type: 'task' };
+  input.edges.push(
+    { from: 'build', outcome: 'review', to: 'decide' },
+    { from: 'decide', outcome: 'changes', to: 'build' },
+    { from: 'decide', outcome: 'escalate', to: 'ship' },
+    { from: 'decide', outcome: 'approved', to: 'lint' },
+    { from: 'lint', outcome: 'pass', to: 'ship' },
+  );
+  return input;
+}
+
+test('a decision connector that goes back takes loop controls; a forward one does not', () => {
+  const model = new ProcessEditModel(reviewLoopView());
+  const back = model.edgeLoop('decide', 'changes');
+  assert.equal(back.loopable, true);
+  assert.equal(back.bound, null);
+  assert.deepEqual(back.exhaustion, ['approved', 'escalate']);
+  assert.equal(model.edgeLoop('decide', 'approved').loopable, false);
+  assert.equal(model.edgeLoop('build', 'review').loopable, false, 'a task is no decision');
+
+  // The cycle issue's one-click fix names the connector going back, wherever
+  // on the cycle the server reported it.
+  assert.deepEqual(model.cycleLoopFix('build'), { from: 'decide', outcome: 'changes' });
+  assert.deepEqual(model.cycleLoopFix('decide'), { from: 'decide', outcome: 'changes' });
+  assert.equal(model.cycleLoopFix('lint'), null, 'lint is on no cycle');
+  model.setEdgeLoop('decide', 'changes', { maxIterations: 3, onExhausted: 'escalate' });
+  assert.deepEqual(model.template.nodes.decide.loops, { changes: { maxIterations: 3, onExhausted: 'escalate' } });
+  assert.equal(model.cycleLoopFix('build'), null, 'a bounded cycle needs no fix');
+  assert.deepEqual(model.edgeLoop('decide', 'changes').bound, { maxIterations: 3, onExhausted: 'escalate' });
+  // A bounded edge is drawn as a return edge that carries its round limit.
+  const drawn = model.graph().edges.find((edge) => edge.from === 'decide' && edge.outcome === 'changes');
+  assert.equal(drawn.back, true);
+  assert.equal(drawn.maxIterations, 3);
+  assert.doesNotThrow(() => layoutProcessGraph(model.graph()));
+
+  model.setEdgeLoop('decide', 'changes', { maxIterations: 4, onExhausted: '' });
+  assert.deepEqual(model.template.nodes.decide.loops, { changes: { maxIterations: 4 } });
+  model.undo();
+  assert.deepEqual(model.template.nodes.decide.loops.changes, { maxIterations: 3, onExhausted: 'escalate' });
+  model.setEdgeLoop('decide', 'changes', null);
+  assert.equal(model.template.nodes.decide.loops, undefined);
+});
+
+test('a back connector from a task is not loopable and says it needs a decision', () => {
+  const input = view();
+  input.template.nodes.check = { type: 'task' };
+  input.edges.push({ from: 'build', outcome: 'check', to: 'check' }, { from: 'check', outcome: 'again', to: 'build' });
+  const model = new ProcessEditModel(input);
+  const loop = model.edgeLoop('check', 'again');
+  assert.equal(loop.loopable, false);
+  assert.equal(loop.backFromTask, true);
+  assert.equal(model.cycleLoopFix('build'), null);
+  assert.throws(() => model.setEdgeLoop('check', 'again', { maxIterations: 3 }), /Only a decision/);
+});
+
 test('deleteNode drops touching edges; rewire redirects incoming to the primary successor', () => {
   const dropped = new ProcessEditModel(view());
   dropped.deleteNode('build');

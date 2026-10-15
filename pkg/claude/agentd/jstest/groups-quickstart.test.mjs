@@ -180,7 +180,9 @@ test('editing steps: who, answers and their targets, order and removal', async (
   decide = steps(root)[1];
   const selects = [...decide.querySelectorAll('.gq-then-link select')];
   assert.deepEqual(selects.map((s) => s.getAttribute('aria-label')), ['After ship', 'After hold']);
-  assert.deepEqual([...selects[1].querySelectorAll('option')].map((o) => o.value), ['command', 'end'], 'targets are forward only');
+  const options = [...selects[1].querySelectorAll('option')];
+  assert.deepEqual(options.map((o) => o.value), ['command', 'end', 'step'], 'later steps, the ends, and earlier steps to go back to');
+  assert.match(options[2].textContent, /^↺ back to 1 · /);
   await setValue(selects[1], 'end', 'change');
   await click(steps(root)[2].querySelector('[aria-label="Move step 3 up"]'));
   assert.deepEqual(steps(root).map((el) => el.dataset.step), ['step', 'command', 'approve']);
@@ -194,6 +196,40 @@ test('editing steps: who, answers and their targets, order and removal', async (
   assert.deepEqual(view.edges.filter((e) => e.from === 'approve').map((e) => `${e.outcome}>${e.to}`).sort(), ['hold>end', 'ship>end'],
     'a removed target retargets to what followed it');
   assert.equal(api.calls.start.length, 0, 'saving to the library starts nothing');
+});
+
+test('an answer that goes back is a bounded loop with its rounds and what follows', async (t) => {
+  const { root, api, click, setValue, settle } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'review-loop');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-add-step="you"]'));
+  let decide = steps(root)[1];
+  const answers = decide.querySelector('.gq-answers-in input');
+  await setValue(answers, 'approved, changes, escalate');
+  await harness_blur(answers);
+  await settle();
+  decide = steps(root)[1];
+  await setValue(decide.querySelector('[aria-label="After changes"]'), 'step', 'change');
+  assert.ok(steps(root)[1].querySelector('[data-loop="changes"]'), 'going back shows the loop controls');
+  // Sending it forward again drops the bound; going back again starts afresh.
+  await setValue(steps(root)[1].querySelector('[aria-label="After changes"]'), 'end', 'change');
+  assert.equal(steps(root)[1].querySelector('[data-loop="changes"]'), null);
+  await setValue(steps(root)[1].querySelector('[aria-label="After changes"]'), 'step', 'change');
+  decide = steps(root)[1];
+  const loop = decide.querySelector('[data-loop="changes"]');
+  assert.ok(loop, 'going back shows the loop controls');
+  const rounds = loop.querySelector('.gq-loop-rounds');
+  assert.equal(rounds.value, '3', 'the default round limit');
+  await setValue(rounds, '150', 'change');
+  assert.equal(steps(root)[1].querySelector('.gq-loop-rounds').value, '3', 'an out-of-range count shows the kept one again');
+  await setValue(steps(root)[1].querySelector('.gq-loop-rounds'), '4', 'change');
+  await setValue(steps(root)[1].querySelector('[aria-label="When changes has used its rounds"]'), 'escalate', 'change');
+  await click(editor.querySelector('[data-step-save-library]'));
+  const view = api.calls.create.at(-1).view;
+  assert.deepEqual(view.template.nodes.approve.loops, { changes: { maxIterations: 4, onExhausted: 'escalate' } });
+  assert.ok(view.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'step'));
 });
 
 async function harness_blur(el) {

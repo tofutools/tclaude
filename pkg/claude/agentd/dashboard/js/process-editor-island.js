@@ -5,6 +5,7 @@ import htm from 'htm';
 import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS } from './process-edit-model.js';
 import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
+import { LOOP_DEFAULT_ROUNDS } from './process-loops.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
@@ -299,9 +300,37 @@ function Inspector({ controller, view }) {
   }
   if (sel?.type === 'edge' && view.selectedEdge) {
     const edge = view.selectedEdge;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete edge</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><${EdgeLoopControls} controller=${controller} edge=${edge} loop=${view.selectedEdgeLoop} pending=${pending} /><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete edge</button></div>`;
   }
   return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint">Select a node or edge to edit it. A selected node opens in the node inspector.</span></div>`;
+}
+
+// EdgeLoopControls bounds a decision connector that goes back (tcl-eu70x9):
+// "↺ at most [3] rounds, then [outcome]". An unbounded one offers the
+// one-click default; a back connector of anything but a decision explains
+// that only a decision can send work back.
+function EdgeLoopControls({ controller, edge, loop, pending }) {
+  if (loop?.backFromTask) {
+    return html`<span class="process-inspector-hint process-loop-hint">This connector goes back. Only a decision can send work back for another round: route it through a decision and bound that outcome.</span>`;
+  }
+  if (!loop?.loopable) return null;
+  if (!loop.bound) {
+    return html`<button class="process-action process-loop-make" type="button" data-make-loop
+      title="Bound this connector so the work between its target and this decision runs at most a few rounds"
+      onClick=${() => controller.makeEdgeLoop(edge.from, edge.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)</button>`;
+  }
+  const { maxIterations, onExhausted } = loop.bound;
+  const choices = loop.exhaustion.includes(onExhausted) || !onExhausted ? loop.exhaustion : [onExhausted, ...loop.exhaustion];
+  return html`<span class="process-loop-controls" data-loop-controls>↺ at most
+    <${StableField} blocked=${pending} class="process-inspector-input process-loop-rounds" type="text" inputmode="numeric"
+      spellcheck="false" placeholder=${String(LOOP_DEFAULT_ROUNDS)} aria-label="Most rounds this loop runs; blank removes the bound"
+      value=${String(maxIterations)} onCommit=${(text) => controller.setEdgeLoopRounds(edge.from, edge.outcome, text)} />
+    rounds, then
+    <select class="process-loop-exhausted" aria-label="When the rounds are used up" disabled=${pending} value=${onExhausted}
+      onChange=${(event) => controller.setEdgeLoopExhausted(edge.from, edge.outcome, event.currentTarget.value)}>
+      ${choices.map((outcome) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
+      <option value="">refuse; the decider picks again</option>
+    </select></span>`;
 }
 
 function Issues({ controller, issues }) {
@@ -314,7 +343,9 @@ function Issues({ controller, issues }) {
     onToggle=${(event) => controller.setIssuesOpen(event.currentTarget.open)}>
     <summary class="process-issues-summary">${issues.summary}</summary>
     <ul ref=${list} class="process-issues-list process-scroll-surface">
-      ${issues.entries.map((entry, index) => html`<li key=${`${entry.code}:${entry.scope}:${entry.targetId}:${entry.message}`}><button type="button" class=${`process-issue process-issue-${entry.severity}`} data-issue-index=${index} onClick=${() => controller.focusIssueAt(index, false)}><span class="process-issue-glyph">${severityGlyph(entry.severity)}</span><span class="process-issue-target">${entry.scope === 'edge' && entry.edge ? `${entry.edge.from} → (${entry.edge.outcome})` : entry.node || 'template'}</span><span class="process-issue-message" title=${`${entry.code}: ${entry.message}`}>${entry.message}</span></button></li>`)}
+      ${issues.entries.map((entry, index) => html`<li key=${`${entry.code}:${entry.scope}:${entry.targetId}:${entry.message}`}><button type="button" class=${`process-issue process-issue-${entry.severity}`} data-issue-index=${index} onClick=${() => controller.focusIssueAt(index, false)}><span class="process-issue-glyph">${severityGlyph(entry.severity)}</span><span class="process-issue-target">${entry.scope === 'edge' && entry.edge ? `${entry.edge.from} → (${entry.edge.outcome})` : entry.node || 'template'}</span><span class="process-issue-message" title=${`${entry.code}: ${entry.message}`}>${entry.message}</span></button>${entry.loopFix && html`<button type="button" class="process-action process-loop-make" data-issue-loop-fix
+      title=${`Bound ${entry.loopFix.from} → (${entry.loopFix.outcome}) so the cycle runs at most ${LOOP_DEFAULT_ROUNDS} rounds`}
+      onClick=${() => controller.makeEdgeLoop(entry.loopFix.from, entry.loopFix.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)</button>`}</li>`)}
     </ul>
   </details>`;
 }

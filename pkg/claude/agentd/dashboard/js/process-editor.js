@@ -27,6 +27,9 @@ import {
   PALETTE_SNIPPETS, SCOPE_SEPARATOR,
 } from './process-edit-model.js';
 import { edgePinPlacement, edgePinTitle } from './process-edge-hint.js';
+import {
+  LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, normalizeRounds,
+} from './process-loops.js';
 import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
@@ -377,6 +380,7 @@ export class ProcessTemplateEditor {
       selection: structuredClone(this.selection),
       selectedNode: structuredClone(selectedNode || null),
       selectedEdge: structuredClone(selectedEdge || null),
+      selectedEdgeLoop: selectedEdge ? structuredClone(model.edgeLoop(selectedEdge.from, selectedEdge.outcome)) : null,
       selectedNodeIncoming: selectedNode ? model.incomingEdges(this.selection.id).length : 0,
       model: {
         id: model.template.id || '', name: model.template.name || '',
@@ -429,10 +433,10 @@ export class ProcessTemplateEditor {
         reviewOpen: this.externalReviewOpen,
         reviewPending: this.externalReviewPending,
       },
-      issues: this.validation?.panelSnapshot?.() || {
+      issues: this.issuesWithLoopFixes(this.validation?.panelSnapshot?.() || {
         open: false, hidden: true, summary: 'Issues · none', entries: [],
         issueCursor: -1, focusRequest: 0,
-      },
+      }),
       modal: this.modalState ? { ...this.modalState } : null,
     };
   }
@@ -2151,6 +2155,57 @@ export class ProcessTemplateEditor {
     }
     const ok = this.mutate(() => this.model.setEdgeOutcome(from, oldOutcome, newOutcome));
     if (ok) this.setSelection({ type: 'edge', from, outcome: newOutcome });
+  }
+
+  // issuesWithLoopFixes attaches the one-click loop fix to each graph_cycle
+  // issue a decision connector can fix.
+  issuesWithLoopFixes(issues) {
+    if (!issues?.entries?.length) return issues;
+    return {
+      ...issues,
+      entries: issues.entries.map((entry) => {
+        if (entry.code !== 'graph_cycle' || !entry.node || !this.model.template.nodes[entry.node]) return entry;
+        const loopFix = this.model.cycleLoopFix(entry.node);
+        return loopFix ? { ...entry, loopFix } : entry;
+      }),
+    };
+  }
+
+  // setEdgeLoopRounds commits the inspector's round count: blank removes the
+  // bound, anything outside the server's range is refused with the range.
+  setEdgeLoopRounds(from, outcome, text) {
+    if (!String(text ?? '').trim()) {
+      this.setEdgeLoop(from, outcome, null);
+      return;
+    }
+    const rounds = normalizeRounds(text);
+    if (rounds == null) {
+      this.status(`A loop runs ${LOOP_MIN_ROUNDS} to ${LOOP_MAX_ROUNDS} rounds; leave it blank to remove the bound.`, true);
+      this.refresh();
+      return;
+    }
+    const current = this.model.edgeLoop(from, outcome).bound;
+    this.setEdgeLoop(from, outcome, { maxIterations: rounds, onExhausted: current?.onExhausted || '' });
+  }
+
+  // setEdgeLoopExhausted picks what a used-up loop follows: another outcome,
+  // or '' to refuse the outcome so the decider picks again.
+  setEdgeLoopExhausted(from, outcome, onExhausted) {
+    const current = this.model.edgeLoop(from, outcome).bound;
+    if (!current) return;
+    this.setEdgeLoop(from, outcome, { maxIterations: current.maxIterations, onExhausted });
+  }
+
+  // setEdgeLoop bounds, rebounds, or (with a null bound) unbounds a decision
+  // connector that goes back. Validation explains an unbounded cycle.
+  setEdgeLoop(from, outcome, bound) {
+    this.mutate(() => this.model.setEdgeLoop(from, outcome, bound));
+  }
+
+  // makeEdgeLoop is the one-click fix for an unbounded back connector of a
+  // decision: the default round limit, refusing the outcome once used up.
+  makeEdgeLoop(from, outcome) {
+    this.setEdgeLoop(from, outcome, { maxIterations: LOOP_DEFAULT_ROUNDS, onExhausted: '' });
   }
 
   async deleteSelection() {

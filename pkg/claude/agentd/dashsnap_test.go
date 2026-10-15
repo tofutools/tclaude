@@ -872,6 +872,26 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-processes-step-editor-loop",
+			Title:   "Groups — Processes quick start: an answer that goes back",
+			Caption: "tcl-eu70x9: the Approve step's 'rework' answer pointed back at step 1 becomes a bounded loop — '↺ back to 1 · Implement', at most [3] rounds, then [hold | ask again] — and the preview's rail reads 'rework → ↺ back to 1 (max 3 rounds…)'.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + groupsProcessesJS(stepEditorJS(`
+  var select = editor.querySelector('[aria-label="After rework"]');
+  if (!select) throw new Error('the Approve step has no rework answer');
+  var back = Array.from(select.options).find(function(option){ return /^↺ back to 1 · /.test(option.textContent); });
+  if (!back) throw new Error('the rework answer offers no way back to step 1');
+  select.value = back.value;
+  select.dispatchEvent(new Event('change', {bubbles: true}));
+  await new Promise(function(resolve){ setTimeout(resolve, 900); });
+  var loop = editor.querySelector('[data-loop="rework"]');
+  if (!loop) throw new Error('going back did not show the loop controls');
+  if (loop.querySelector('.gq-loop-rounds').value !== '3') throw new Error('the loop did not start at 3 rounds');
+  if (!/back to 1 \(max 3 rounds/.test(editor.querySelector('[data-step-flow]').textContent)) throw new Error('the preview does not show the loop');
+  editor.scrollIntoView({block: 'start'});`)),
+			SettleMS: 300,
+		},
+		{
 			Key:     "groups-processes-step-editor-graph",
 			Title:   "Groups — Processes quick start: open in graph editor",
 			Caption: "Open in graph editor saves the step list as a template and opens it in Automations › Processes at a readable zoom (the run view's 0.8 fit floor) with its start node centred near the top, instead of fitting the whole tall graph into the viewport.",
@@ -2240,6 +2260,34 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-review-loop",
+			Title:   "Process editor — bounded review loop",
+			Caption: "tcl-eu70x9: a decision's back connector drawn as a return edge labelled with its round limit, with the edge inspector's inline loop controls.",
+			JS: processEditorStateJS(reviewLoopFixtureJS(true) + `
+  ed.setSelection({type:'edge', from:'decide', outcome:'changes'});
+  await editorPaint(); await editorPaint();
+  var edge = document.querySelector('.process-edge-loop');
+  if (!edge) throw new Error('bounded loop edge not drawn as a loop');
+  if (!document.querySelector('[data-loop-controls]')) throw new Error('edge inspector loop controls missing');`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-review-loop-unbounded",
+			Title:   "Process editor — unbounded cycle and its one-click fix",
+			Caption: "tcl-eu70x9: an unbounded back connector of a decision is a graph_cycle error; the issues panel offers '↺ make it a loop (3 rounds)' beside it, and so does the edge inspector.",
+			JS: processEditorStateJS(reviewLoopFixtureJS(false) + `
+  ed.setSelection({type:'edge', from:'decide', outcome:'changes'});
+  var lDeadline = Date.now() + 6000;
+  while (!document.querySelector('[data-issue-loop-fix]') && Date.now() < lDeadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  }
+  if (!document.querySelector('[data-issue-loop-fix]')) throw new Error('graph_cycle issue has no loop fix: '+JSON.stringify((ed.snapshot().issues.entries||[]).map(function(e){return [e.code,e.scope,e.node,e.targetId,e.loopFix];})));
+  ed.setIssuesOpen(true);
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('[data-make-loop]')) throw new Error('edge inspector one-click loop missing');`),
+			SettleMS: 2500,
+		},
+		{
 			Key:     "process-editor-commands",
 			Title:   "Process editor — contextual commands",
 			Caption: "TCL-435: the shared dashboard command palette contributes selection-aware graph operations, searchable plain copy, disabled reasons, and the documented editor launcher.",
@@ -2358,10 +2406,10 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
-			Key:     "process-editor-auto-layout-before",
-			Title:   "Process editor — hand-placed mess before auto layout",
-			Caption: "Nodes dragged around by hand: every drag pins a position, so the graph drifts out of shape.",
-			JS: processEditorStateJS(autoLayoutMessJS + ` await editorPaint(); await editorPaint();`),
+			Key:      "process-editor-auto-layout-before",
+			Title:    "Process editor — hand-placed mess before auto layout",
+			Caption:  "Nodes dragged around by hand: every drag pins a position, so the graph drifts out of shape.",
+			JS:       processEditorStateJS(autoLayoutMessJS + ` await editorPaint(); await editorPaint();`),
 			SettleMS: 1100,
 		},
 		{
@@ -6046,3 +6094,35 @@ const autoLayoutMessJS = `var m=ed.model;
   m.addEdge(fix,'pass','ship');
   var ids=Object.keys(m.template.nodes); m.moveNodes(ids.map(function(id,i){ return {id:id, x: 80+((i*263)%900), y: 60+((i*197)%460)}; }));
   ed.refresh({fit:true});`
+
+// reviewLoopFixtureJS seeds the editor with implement → review → decide
+// {approved → done, changes ↺ implement, escalate → escalated}, the changes
+// connector bounded or not. No pins: the layout routes the loop.
+func reviewLoopFixtureJS(bounded bool) string {
+	loops := ""
+	if bounded {
+		loops = "ed.model.template.nodes.decide.loops = {changes: {maxIterations: 3, onExhausted: 'escalate'}};"
+	}
+	return `var perf = function(prompt){ return {kind:'agent', role:'dev', prompt: prompt}; };
+  ed.model.template.nodes = {
+    start: {type:'start', name:'Start'},
+    implement: {type:'task', name:'Implement', performer: perf('Implement it')},
+    review: {type:'task', name:'Review', performer: perf('Review it')},
+    decide: {type:'decision', name:'Ship it?', performer: {kind:'human', ask:'Ship it?'}},
+    done: {type:'end', name:'Done', result:'success'},
+    escalated: {type:'end', name:'Escalated', result:'canceled'}
+  };
+  ` + loops + `
+  ed.model.template.start = 'start';
+  ed.model.layout.nodes = {};
+  ed.model.edges = [
+    {from:'',outcome:'start',to:'start'},
+    {from:'start',outcome:'next',to:'implement'},
+    {from:'implement',outcome:'next',to:'review'},
+    {from:'review',outcome:'next',to:'decide'},
+    {from:'decide',outcome:'approved',to:'done'},
+    {from:'decide',outcome:'changes',to:'implement'},
+    {from:'decide',outcome:'escalate',to:'escalated'}
+  ];
+  ed.refresh({fit:true});`
+}

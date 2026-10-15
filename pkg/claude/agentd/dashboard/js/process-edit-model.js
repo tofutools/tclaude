@@ -22,6 +22,9 @@
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import { layoutProcessGraph } from './process-layout.js';
 import {
+  cycleFixEdge, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound,
+} from './process-loops.js';
+import {
   processEdgeMutationMessage, processEdgePortAvailability, processNodePortAvailability,
 } from './process-port-availability.js';
 import {
@@ -1028,6 +1031,48 @@ export class ProcessEditModel {
     }
   }
 
+  // setEdgeLoop bounds (or with a null bound unbounds) a decision connector
+  // that goes back: the work between its target and the decision runs at most
+  // bound.maxIterations rounds, then follows bound.onExhausted. The server's
+  // loop_* diagnostics stay the authority on what a valid bound is.
+  setEdgeLoop(from, outcome, bound) {
+    const edge = this.findEdge(from, outcome);
+    if (!edge) throw new Error(`unknown edge ${from} (${outcome})`);
+    const node = this.template.nodes[from];
+    if (bound && node?.type !== 'decision') throw new Error('Only a decision can send work back for another round.');
+    this.assertEdgeEditable(edge);
+    const current = loopBound(node, outcome);
+    const same = bound
+      ? current && current.maxIterations === bound.maxIterations && current.onExhausted === (bound.onExhausted || '')
+      : !current;
+    if (same) return;
+    this.begin();
+    setLoopBound(node, outcome, bound);
+  }
+
+  // edgeLoop describes one connector for the loop controls: whether it can
+  // be bounded (a decision's connector that goes back), its bound, and the
+  // outcomes a used-up loop may follow instead.
+  edgeLoop(from, outcome) {
+    const node = this.template.nodes[from];
+    const loopable = loopableEdge(this.template.nodes, this.edges, from, outcome);
+    const outcomes = this.outgoingEdges(from).map((edge) => edge.outcome).sort((a, b) => a.localeCompare(b, 'en'));
+    return {
+      loopable,
+      // A back connector of a non-decision can only be fixed by a decision.
+      backFromTask: !loopable && node?.type !== 'decision' && edgeGoesBack(this.template.nodes, this.edges, from, outcome),
+      bound: loopBound(node, outcome),
+      exhaustion: loopable ? exhaustionChoices(node, outcomes, outcome) : [],
+    };
+  }
+
+  // cycleLoopFix is the one-click fix for a graph_cycle issue on a node: an
+  // unbounded decision connector going back on a cycle through it, or null
+  // when that cycle has no decision to bound (it needs one added).
+  cycleLoopFix(nodeID) {
+    return cycleFixEdge(this.template.nodes, this.edges, nodeID);
+  }
+
   setEdgeTarget(from, outcome, to) {
     const edge = this.findEdge(from, outcome);
     if (!edge) throw new Error(`unknown edge ${from} (${outcome})`);
@@ -1143,6 +1188,7 @@ export class ProcessEditModel {
       if (edge.from === '') continue;
       if (!this.template.nodes[edge.from] || !this.template.nodes[edge.to]) continue;
       const join = this.template.nodes[edge.to]?.join;
+      const bound = loopBound(this.template.nodes[edge.from], edge.outcome);
       edges.push({
         id: graphEdgeID(edge.from, edge.outcome),
         from: edge.from,
@@ -1151,6 +1197,12 @@ export class ProcessEditModel {
         // Tri-state: undefined leaves the default label rule in charge.
         pinned: this.edgePinned(edge.from, edge.outcome),
         joinOnTarget: join && (inCounts.get(edge.to) || 0) > 1 ? join : undefined,
+        // A bounded loop edge is the graph's sanctioned way back, so layout
+        // routes it as a return edge and the label carries its round limit.
+        // A decision's connector that goes back unbounded is routed the same
+        // way: it is the edge the cycle's fix will bound.
+        ...(bound ? { back: true, maxIterations: bound.maxIterations }
+          : loopableEdge(this.template.nodes, this.edges, edge.from, edge.outcome) ? { back: true } : {}),
       });
     }
     return this.expandGraph({ nodes, edges });
@@ -1388,7 +1440,7 @@ const CROSS_BOUNDARY = 'Connectors cannot cross a subprocess frame; wire into th
 const NESTED_ROUTES = {
   updateNode: [0], renameNode: [0], setJoin: [0], deleteNode: [0],
   addEdge: [0, 2], deleteEdge: [0], setEdgeOutcome: [0], setEdgeTarget: [0, 2], setEdgePinned: [0],
-  findEdge: [0], incomingEdges: [0], outgoingEdges: [0],
+  setEdgeLoop: [0], edgeLoop: [0], findEdge: [0], incomingEdges: [0], outgoingEdges: [0],
 };
 
 function namespaceEdge(edge, prefix) {
