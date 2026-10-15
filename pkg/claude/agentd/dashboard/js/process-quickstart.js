@@ -219,14 +219,23 @@ export function whoFromValue(value) {
   return { mode: value };
 }
 
-// stepFallback is what an agent step does when no member can take it: its
-// own fallback, the process's, the legacy spawn opt-in, else wait.
+// stepFallback is what an agent step does when no member can take it, in the
+// runtime's order (engine.AgentCommandFor): its own fallback; else the
+// legacy spawn opt-in, its own choice (spawn its profile, or wait without
+// one); else the process's; else wait.
 export function stepFallback(step, templateFallback = null) {
   const performer = step?.node?.performer || {};
   if (performer.fallback?.action) return { action: performer.fallback.action, profile: performer.fallback.profile || '' };
+  if (performer.spawn === 'allowed') return performer.profile ? { action: 'spawn', profile: performer.profile } : { action: 'wait', profile: '' };
   if (templateFallback?.action) return { action: templateFallback.action, profile: templateFallback.profile || '' };
-  if (performer.spawn === 'allowed' && performer.profile) return { action: 'spawn', profile: performer.profile };
   return { action: 'wait', profile: '' };
+}
+
+// ownFallback says an agent step decides its own fallback, so the process's
+// does not apply to it.
+export function ownFallback(step) {
+  const performer = step?.node?.performer || {};
+  return !!performer.fallback?.action || performer.spawn === 'allowed';
 }
 
 // whoNow guesses who a step uses if the run started now: the named agent, the

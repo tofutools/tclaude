@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
-  STARTERS, whoFromValue, whoNow, whoOptions, whoValue,
+  STARTERS, ownFallback, whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
@@ -373,6 +373,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   // default spawn profile, or fail the step.
   const agentSteps = list.steps.filter((step) => step.node.performer?.kind === 'agent');
   const fallbackAction = fallback?.action || 'wait';
+  const ownFallbacks = agentSteps.filter(ownFallback).length;
   const spawnProfile = fallback?.profile || defaultSpawnProfile;
   const setFallback = (action) => {
     const template = { ...list.template };
@@ -539,6 +540,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     ? `spawn one with profile ${spawnProfile}` : 'spawn one (the group has no default spawn profile)'}</option>
             <option value="fail">fail the step</option>
           </select></label>
+        ${ownFallbacks > 0 && html`<span class="gq-dim" data-own-fallbacks=${ownFallbacks}>· ${ownFallbacks === 1 ? '1 step sets its own' : `${ownFallbacks} steps set their own`}</span>`}
       </div>`}
     </div>
     <div class="gq-side">

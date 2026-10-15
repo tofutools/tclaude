@@ -84,5 +84,9 @@ test('who-now guesses the performer the way the resolver ranks them', () => {
     'the process fallback spawns the group default');
   assert.equal(whoNow(qa, roster, { fallback: { action: 'spawn' } }).waits, true, 'with no profile to spawn, it waits');
   assert.equal(whoNow(qa, roster, { fallback: { action: 'fail' } }).fails, true);
+  assert.equal(whoNow(step({ kind: 'agent', role: 'qa', profile: 'qa-bot', spawn: 'allowed', prompt: 'x' }), roster, { fallback: { action: 'fail' } }).spawns,
+    'qa-bot', 'a legacy spawn opt-in is the step\'s own choice, before the process fallback');
+  assert.equal(whoNow(step({ kind: 'agent', role: 'qa', spawn: 'allowed', prompt: 'x' }), roster, { fallback: { action: 'fail' } }).fails, undefined,
+    'without a profile it waits, as the runtime does');
   assert.equal(whoNow(step({ kind: 'agent', anyone: true, prompt: 'x' }), roster).label, 'search');
 });
