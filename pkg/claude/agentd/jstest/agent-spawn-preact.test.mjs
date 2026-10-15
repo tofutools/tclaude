@@ -1896,3 +1896,24 @@ test('palette profile and fast selection prefill the dialog after profiles load'
   assert.equal(host.querySelector('#agent-spawn-fast-mode-row').hidden, true);
   assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '');
 });
+
+test('spawn saved prompt inserts into the initial message without launching', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => [{ name: 'brief', body: 'Implement the task.' }] }));
+  let spawns = 0;
+  const mounted = await mountSpawn(t, { spawn: async () => { spawns++; return {}; } });
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+  await flush(harness);
+  const body = host.querySelector('#agent-spawn-init-msg');
+  await harness.input(body, 'Task: ');
+  body.selectionStart = 6; body.selectionEnd = 6;
+  const picker = host.querySelector('[aria-label="Insert saved prompt"]');
+  Object.defineProperty(picker, 'value', { configurable: true, writable: true, value: 'brief' });
+  await harness.act(() => harness.fireEvent(picker, 'change'));
+  assert.equal(body.value, 'Task: Implement the task.');
+  assert.equal(spawns, 0);
+  await harness.input(body, 'Implement the task with tests.');
+  assert.equal(body.value, 'Implement the task with tests.');
+  await mounted.cleanup();
+});

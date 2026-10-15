@@ -36,7 +36,11 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard }) {
     } catch (cause) { setError(cause.message); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<div onKeyDown=${(event) => event.stopPropagation()}>
+  return html`<div onKeyDown=${(event) => {
+    // Keep the parent composer's submit hotkey from sending while editing.
+    // Escape and Tab must reach the shared document-level dialog controller.
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.stopPropagation();
+  }}>
     <${Overlay} id="saved-prompts-manage-modal" labelledby="saved-prompts-title"
       onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
       initialFocusRef=${nameRef} registerClose=${registerClose}>
@@ -102,7 +106,7 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
     const start = field?.selectionStart ?? value.length;
     const end = field?.selectionEnd ?? start;
     const next = value.slice(0, start) + prompt.body + value.slice(end);
-    if (next.length > 16384) { setError('This prompt would exceed the 16384-character message limit.'); return; }
+    if (new TextEncoder().encode(next).length > 16384) { setError('This prompt would exceed the 16384-byte message limit.'); return; }
     setError(''); onChange(next); setCaret(start + prompt.body.length);
   };
   return html`<div class="cron-create-row saved-prompts-row">

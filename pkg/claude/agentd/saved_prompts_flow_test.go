@@ -39,6 +39,8 @@ func TestSavedPromptsValidationAndPermissions(t *testing.T) {
 	for _, body := range []map[string]any{
 		{"name": "", "body": "text"}, {"name": "bad/name", "body": "text"},
 		{"name": "empty", "body": " \n"}, {"name": "large", "body": strings.Repeat("x", 16385)},
+		{"name": "unicode", "body": strings.Repeat("é", 8193)},
+		{"name": "control", "body": "bad\x1btext"},
 	} {
 		require.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPost, "/v1/saved-prompts", body).Code)
 	}
@@ -57,4 +59,25 @@ func TestSavedPromptsValidationAndPermissions(t *testing.T) {
 	var prompt db.SavedPrompt
 	testharness.DecodeJSON(t, rec, &prompt)
 	require.Equal(t, "Text", prompt.Body)
+}
+
+func TestSavedPromptsDashboardRoutes(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	body := map[string]any{"name": "review", "body": "Review the diff."}
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/saved-prompts", body))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var prompt db.SavedPrompt
+	testharness.DecodeJSON(t, humanReq(t, f, http.MethodGet, "/v1/saved-prompts/review", nil), &prompt)
+	require.Equal(t, "Review the diff.", prompt.Body)
+	raw := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(raw)
+	for _, path := range []string{"/api/saved-prompts", "/api/saved-prompts/review"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+			rec = testharness.Serve(raw, testharness.JSONRequest(t, method, path, body))
+			require.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, rec.Code)
+		}
+	}
 }

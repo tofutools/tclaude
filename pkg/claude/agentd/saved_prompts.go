@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -37,8 +36,8 @@ func savePrompt(w http.ResponseWriter, r *http.Request, previousName string) {
 		return
 	}
 	p.Body = strings.ReplaceAll(p.Body, "\r\n", "\n")
-	if strings.TrimSpace(p.Body) == "" || !utf8.ValidString(p.Body) || utf8.RuneCountInString(p.Body) > 16384 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "prompt body must contain 1–16384 characters")
+	if strings.TrimSpace(p.Body) == "" || !isValidInitialMessage(p.Body) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "prompt body must contain 1–16384 UTF-8 bytes, without control characters except tabs and newlines")
 		return
 	}
 	if err := db.SaveSavedPrompt(previousName, p); err != nil {

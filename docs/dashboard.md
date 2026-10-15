@@ -50,7 +50,7 @@ would exceed the message limit is refused without changing your draft.
 
 Choose **Manage prompts…** beside either picker to create, edit, rename, or
 delete prompts. Names use the same short handles as groups (for example,
-`cold-review`); bodies contain up to 16,384 characters. Prompts are stored in
+`cold-review`); bodies contain up to 16,384 UTF-8 bytes. Prompts are stored in
 SQLite and shared globally across groups on this daemon. They are independent
 of roles: a role supplies agent guidance and permissions, while a saved prompt
 is text copied into an operator’s draft.

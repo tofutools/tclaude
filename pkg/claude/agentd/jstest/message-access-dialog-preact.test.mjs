@@ -521,3 +521,27 @@ test('operator Cancel uses dirty confirmation and deferred focus restore yields 
   otherFeature.remove();
   await mounted.unmount();
 });
+
+test('terminal message saved prompt inserts into the editable draft without sending', async (t) => {
+  const harness = await createPreactHarness(t);
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => [{ name: 'review', body: 'Please review.' }] }));
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openOperatorMessage({ agent: 'agt_worker', label: 'worker' });
+  const sent = [];
+  const { host, mounted } = await mountDialogs(harness, state, { sendOperatorMessage: async (draft) => sent.push(draft) }, snapshot());
+  await harness.act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
+  const body = host.querySelector('#operator-message-body');
+  await harness.input(body, 'Task: ');
+  body.selectionStart = 6; body.selectionEnd = 6;
+  const picker = host.querySelector('[aria-label="Insert saved prompt"]');
+  Object.defineProperty(picker, 'value', { configurable: true, writable: true, value: 'review' });
+  await harness.act(() => harness.fireEvent(picker, 'change'));
+  assert.equal(host.querySelector('#operator-message-body'), body);
+  assert.equal(body.value, 'Task: Please review.');
+  assert.equal(sent.length, 0);
+  await harness.input(body, 'Task: Please review the diff.');
+  await harness.act(async () => { host.querySelector('#operator-message-submit').click(); await Promise.resolve(); });
+  assert.equal(sent[0].body, 'Task: Please review the diff.');
+  await mounted.unmount();
+});
