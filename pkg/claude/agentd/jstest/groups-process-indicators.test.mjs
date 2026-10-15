@@ -32,31 +32,33 @@ test('agentRunIndex maps each agent to its runs once per context', async (t) => 
     'entries whose run is not in the map are dropped');
 });
 
-test('group header chips summarise running, needs-you and planned; a quiet group says "no processes"', async (t) => {
+test('group header graphs show one glyph per state, loudest first; a quiet group shows nothing', async (t) => {
   const { harness, mod } = await setup(t);
   const source = fakeSource(harness);
   const mounted = await harness.mount(harness.html`<div>
-    <div id="fe"><${mod.GroupProcessChips} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${source} /></div>
-    <div id="infra"><${mod.GroupProcessChips} group=${{ name: 'infra-crew' }} snapshot=${ON} source=${source} /></div>
-    <div id="unknown"><${mod.GroupProcessChips} group=${{ name: 'nowhere' }} snapshot=${ON} source=${source} /></div>
-    <div id="off"><${mod.GroupProcessChips} group=${{ name: 'frontend-squad' }} snapshot=${{}} source=${source} /></div>
+    <div id="fe"><${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${source} /></div>
+    <div id="infra"><${mod.GroupProcessGraphs} group=${{ name: 'infra-crew' }} snapshot=${ON} source=${source} /></div>
+    <div id="unknown"><${mod.GroupProcessGraphs} group=${{ name: 'nowhere' }} snapshot=${ON} source=${source} /></div>
+    <div id="off"><${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${{}} source=${source} /></div>
   </div>`);
-  const chips = [...mounted.container.querySelectorAll('#fe .gpi-chip')].map((c) => [c.dataset.groupProcesses, c.textContent.trim()]);
-  assert.deepEqual(chips, [['running', '● 3 running'], ['needs-you', '● 2 needs you'], ['planned', '◷ 1 planned']]);
-  assert.ok(mounted.container.querySelector('#fe .gpi-chip.pk-state-waiting'), 'needs-you is amber');
-  assert.equal(mounted.container.querySelector('#infra').textContent, 'no processes');
-  assert.equal(mounted.container.querySelector('#unknown').textContent, 'no processes');
-  assert.equal(mounted.container.querySelector('#off').textContent, '', 'nothing while processes are off');
+  const graphs = [...mounted.container.querySelectorAll('#fe .gpi-graph')].map((g) => [g.dataset.groupProcesses, g.getAttribute('aria-label'), g.textContent]);
+  assert.deepEqual(graphs, [['needs-you', '2 needs you', '2'], ['running', '3 running', '3'], ['planned', '1 planned', '']],
+    'a count badge only when more than one run shares the state');
+  assert.ok(mounted.container.querySelector('#fe .gpi-graphs.level-waiting'), 'needs-you leads the row\'s glow');
+  assert.ok(mounted.container.querySelector('#fe .gpi-graph.gpi-state-waiting svg.gpi-flow'), 'each state is a flow-graph glyph');
+  assert.equal(mounted.container.querySelector('#infra').innerHTML, '');
+  assert.equal(mounted.container.querySelector('#unknown').innerHTML, '');
+  assert.equal(mounted.container.querySelector('#off').innerHTML, '', 'nothing while processes are off');
 });
 
-test('chips stay hidden until the context has loaded', async (t) => {
+test('graphs stay hidden until the context has loaded', async (t) => {
   const { harness, mod } = await setup(t);
-  const mounted = await harness.mount(harness.html`<${mod.GroupProcessChips} group=${{ name: 'frontend-squad' }} snapshot=${ON}
+  const mounted = await harness.mount(harness.html`<${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON}
     source=${fakeSource(harness, { status: 'unavailable', context: null })} />`);
   assert.equal(mounted.container.textContent, '');
 });
 
-test('a header chip opens the Processes focus on its filter without toggling the group', async (t) => {
+test('a header graph opens the Processes focus on its filter without toggling the group', async (t) => {
   const { harness, mod } = await setup(t);
   const [{ registerFeatureState }, { createGroupsState }] = await Promise.all([
     harness.importDashboardModule('js/feature-state-registry.js'),
@@ -73,7 +75,7 @@ test('a header chip opens the Processes focus on its filter without toggling the
   harness.document.addEventListener('tclaude:navigated', (event) => navigated.push(event.detail.location));
   let toggles = 0;
   const mounted = await harness.mount(harness.html`<details onClick=${() => { toggles++; }}><summary>
-    <${mod.GroupProcessChips} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${fakeSource(harness)} />
+    <${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${fakeSource(harness)} />
   </summary></details>`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
   assert.equal(toggles, 0);

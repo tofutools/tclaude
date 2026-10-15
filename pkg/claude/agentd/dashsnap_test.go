@@ -855,15 +855,15 @@ func baseStates() []dashsnap.State {
   document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = false; });
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var parent = document.querySelector('details[data-group-key="`+tfTemplate+`"] > summary');
-  if (!parent || !parent.querySelector('.gpi-chip')) throw new Error('the parent row lacks its own run counts');
+  if (!parent || !parent.querySelector('.gpi-graph')) throw new Error('the parent row lacks its own run graphs');
   var total = parent.querySelector('.gp-subtree-total');
   if (!total || !/in sub(groups|-parties): 1 (needs you|awaits you)/.test(total.textContent)) throw new Error('the collapsed parent lacks its subgroup total');`, false),
 			SettleMS: 300,
 		},
 		{
 			Key:     "groups-agents-process-badges",
-			Title:   "Groups — process chips and member badges",
-			Caption: "Mock G1: in the Agents focus each group header carries running / needs-you / planned chips (or \"no processes\"), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
+			Title:   "Groups — process graphs and member badges",
+			Caption: "Mock G1: in the Agents focus each group header carries animated needs-you / running / planned flow graphs right after its member bots (a quiet group shows none), and member rows gain a Process column with a run › node badge per run: running, amber when parked on a human gate, dashed when queued. Run context is the same recorded projection as G3.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + expandGroups + `return (async function(){
   var deadline = Date.now() + 4000;
@@ -872,7 +872,7 @@ func baseStates() []dashsnap.State {
   }
   if (!document.querySelector('[data-group-processes="needs-you"]')) throw new Error('group header lacks the needs-you chip');
   if (!document.querySelector('[data-group-processes="planned"]')) throw new Error('group header lacks the planned chip');
-  if (!document.querySelector('.gpi-none')) throw new Error('a quiet group does not say "no processes"');
+  if (!document.querySelector('.group-activity + .gpi-graphs')) throw new Error('the process graphs do not follow the member bots');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-running')) throw new Error('no running member badge');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-waiting')) throw new Error('no amber member badge');
   if (!document.querySelector('.gpi-badges .pk-run-badge.pk-state-planned')) throw new Error('no dashed planned member badge');
@@ -1573,6 +1573,34 @@ setTimeout(function(){
 			Caption:  "Feature-gated Processes tab with a populated versioned template list, dark-themed actions, and the library-scoped Edit-with-agent entry point.",
 			JS:       processTabJS(`[data-process-template="release-train"]`),
 			SettleMS: 900,
+		},
+		{
+			Key:     "processes-workflow-import",
+			Title:   "Processes — import a shared workflow",
+			Caption: "PWF: ⤒ import workflow previews a .pwf file and opens the review before anything is stored: signer trust, every command it would run with its program profile, the roles it asks for, steps that are not portable, and what changes here. Replacing an existing template needs explicit consent. Each template row gains a share (export) action.",
+			JS:      processTabJS(`[data-process-template="release-train"]`),
+			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `return (async function(){
+  var preview={title:'Ship a feature',summary:'A developer implements the issue, a reviewer checks it, you approve, and the PR is merged.',root:'ship-feature@sha256:173d',rootId:'ship-feature',
+    signatures:[{keyId:'pub_3f2a9c1e',status:'valid',trust:'unknown key'}],
+    params:[{name:'issue',type:'string',required:true}],
+    roles:[{name:'dev',steps:['ship-feature:build']},{name:'reviewer',steps:['review-loop:review']}],
+    programs:[{step:'ship-feature:merge',profile:'git',run:'gh',args:['pr','merge','--squash']}],
+    assignees:[{name:'checkout',steps:['ship-feature:build']}],humans:['ship-feature:approve'],
+    templates:[{ref:'ship-feature@sha256:173d',id:'ship-feature',name:'Ship feature',head:true,status:'new'},{ref:'review-loop@sha256:ca7a',id:'review-loop',name:'Review loop',head:true,status:'update',currentRef:'review-loop@sha256:0b1c'}],
+    updates:1,applied:false,reviewDigest:'d'};
+  var realFetch=window.fetch;
+  window.fetch=function(url,init){ if(String(url).indexOf('/v1/process/import')===0) return Promise.resolve(new Response(JSON.stringify(preview),{status:200,headers:{'Content-Type':'application/json'}})); return realFetch(url,init); };
+  if(!document.querySelector('[data-process-action="export"][data-id="release-train"]')) throw new Error('template row lacks the share action');
+  var input=document.querySelector('[data-pwf-file]');
+  if(!input) throw new Error('import workflow entry missing');
+  var dt=new DataTransfer(); dt.items.add(new File([new Uint8Array([80,75,3,4])],'ship-feature.pwf'));
+  input.files=dt.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+  var deadline=Date.now()+3000;
+  while(!document.querySelector('[data-pwf-command]') && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,40); });
+  if(!document.querySelector('[data-pwf-command="ship-feature:merge"]')) throw new Error('import review did not open');
+  if(!document.querySelector('[data-pwf-import]').disabled) throw new Error('an update must need replace consent');
+})();`}},
+			SettleMS: 500,
 		},
 		{
 			Key:     "processes-template-description-edit",
