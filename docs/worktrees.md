@@ -80,8 +80,26 @@ created by hand, including siblings outside the selected group. Rows show
 paths, branches, agent associations, and uncommitted-change badges where
 checked for cleanup.
 
+Rows also show local Git signals: **merged** (the checkout commit is an
+ancestor of the base), **unpublished** commit counts, **upstream gone**, and
+last activity. Base selection uses the locally recorded `origin/HEAD`, then
+local `main` or `master`. Nothing is fetched. With an upstream, unpublished
+means commits ahead of that locally recorded upstream; without a surviving
+upstream, it means commits absent from base. These counts may be conservative
+if a remote branch was deleted. Squash/rebase merges are not detected as
+merged; patch equivalence is not checked. Missing refs or scan timeouts show
+**Git signals unavailable** rather than a successful comparison.
+
+**Potentially dangling** filters to non-main worktrees with no running agent
+that are merged or have had no activity for 30 days, with the reason shown.
+Activity is the newer of the last commit time and checkout directory mtime;
+it is a heuristic (editing an existing file need not update directory mtime).
+Offline-agent worktrees can appear here and still need review for resume.
+The filter changes visibility only, not selection. Git probes have a shared
+five-second budget per repository to keep large scans bounded.
+
 Discovery never deletes anything. Clean orphans and clean retired-agent
-worktrees are pre-ticked; dirty worktrees, worktrees belonging to other offline
+worktrees are pre-ticked unless unpublished commits are detected; dirty worktrees, worktrees belonging to other offline
 agents, and live-agent worktrees start unticked. Review the selection before
 removing it: removal is forced, so selecting a dirty worktree discards its
 uncommitted changes. Removing an offline agent's worktree also breaks its

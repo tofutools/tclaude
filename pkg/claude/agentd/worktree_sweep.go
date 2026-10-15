@@ -77,6 +77,9 @@ type sweepAgent struct {
 
 // sweepWorktree is one candidate row in the discovery response.
 type sweepWorktree struct {
+	sweepSignals
+	commit string // registered HEAD, including detached checkouts
+
 	Path     string       `json:"path"`
 	Name     string       `json:"name"`      // base dir name, for a terse label
 	Branch   string       `json:"branch"`    // "" when detached
@@ -298,6 +301,7 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 			Branch:   wt.Branch,
 			RepoRoot: repoByPath[path],
 			IsMain:   wt.IsMain,
+			commit:   wt.Commit,
 		}
 		// Resolve the bound agents (title + liveness + retired state) for
 		// this worktree.
@@ -350,6 +354,8 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 		}
 		out = append(out, row)
 	}
+
+	addSweepSignals(roots, out)
 
 	// Orphans first, main last; stable tiebreak on path.
 	sort.Slice(out, func(i, j int) bool {
