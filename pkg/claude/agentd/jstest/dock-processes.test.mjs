@@ -46,3 +46,20 @@ test('pinToGroup pins, then asks library views and the process context to reload
   assert.deepEqual(calls, [['webshop', 'ship-feature'], ['refresh']]);
   assert.deepEqual(events, [PROCESS_LIBRARY_EVENT]);
 });
+
+test('a Start in request expands the group and expires if never taken', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { requestProcessStart, takeProcessStart } = await harness.importDashboardModule('js/process-start-handoff.js');
+  const prefs = new Map();
+  let rerenders = 0;
+  const doc = { querySelector: () => null, dispatchEvent: () => true };
+  const opts = { doc, prefs: { setItem: (k, v) => prefs.set(k, v) }, setFocus: () => {}, rerender: () => rerenders++, now: () => 1000 };
+  requestProcessStart({ group: 'webshop', templateId: 'ship' }, opts);
+  assert.equal(prefs.get('tclaude.dash.group.webshop'), '1');
+  assert.equal(rerenders, 1);
+  assert.equal(takeProcessStart('infra', { now: () => 1000 }), null);
+  assert.deepEqual(takeProcessStart('webshop', { now: () => 2000 }), { group: 'webshop', templateId: 'ship' });
+  assert.equal(takeProcessStart('webshop', { now: () => 2000 }), null, 'taken once');
+  requestProcessStart({ group: 'webshop', templateId: 'ship' }, opts);
+  assert.equal(takeProcessStart('webshop', { now: () => 60_000 }), null, 'stale request dropped');
+});

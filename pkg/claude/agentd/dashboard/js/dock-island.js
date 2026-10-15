@@ -330,7 +330,8 @@ export function Dock({ host, state, sections, isSectionOpen, setSectionOpen }) {
   }, [host]);
 
   // The process library sits last, and only while Processes is enabled.
-  const groups = (snapshot?.groups || []).map((group) => group.name).filter(Boolean);
+  // Local groups only: pin and start go to this daemon's routes by name.
+  const groups = (snapshot?.groups || []).filter((group) => !group.fleet_node).map((group) => group.name).filter(Boolean);
   return [
     ...sections.map((section) => html`
       <${DockSection}
