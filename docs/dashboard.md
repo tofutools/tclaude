@@ -306,8 +306,8 @@ updates do not move rows. Titles come from GitHub; newly discovered PRs show
 `repo#number` until their title is fetched. The Closed filter stays newest first.
 
 A review pill follows the CI pill on open, non-draft PRs: `✓ 2` (two
-approvals), `± 1` (changes requested), `◷` (branch protection still
-requires a review) or a dashed `no reviews`. Approvals count human reviewers
+approvals), `± 1` (changes requested), an amber `◷` (branch protection still
+requires a review) or a grey `◷` (no reviews yet, none required). Approvals count human reviewers
 only; bots are listed but never counted. Hovering opens a reviewer panel with
 each reviewer's latest review (linked), GitHub's review decision, and links to
 the conversation and the changed files. The panel reads the snapshot and makes
