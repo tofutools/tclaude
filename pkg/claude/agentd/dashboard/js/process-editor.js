@@ -68,6 +68,9 @@ import {
 // every other document-level DnD feature out of a palette drag.
 const PALETTE_MIME = 'application/x-tclaude-process-palette';
 const EXTERNAL_REVIEW_TIMEOUT_MS = 15_000;
+// READABLE_OPEN_ZOOM is the zoom floor of a readable open, the run view's
+// fit floor (MIN_GRAPH_SCALE).
+const READABLE_OPEN_ZOOM = 0.8;
 // 1/1024 graph unit is at most 0.0035 CSS px at the supported maximum zoom.
 // Treating targets inside this epsilon as equal absorbs harmless subpixel
 // SVGRect/view arithmetic without creating a perceptible cursor snap.
@@ -335,6 +338,9 @@ export class ProcessTemplateEditor {
       graph: this.model.graph(),
       ariaLabel: `Process template editor: ${this.model.template.id}`,
       interactionLayering: true,
+      // A template handed over from the quick start opens readable, not
+      // fitted: a tall step list fitted whole is too small to read.
+      readableZoom: this.options.readableOpen ? READABLE_OPEN_ZOOM : undefined,
       connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared),
       connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model),
       events: {

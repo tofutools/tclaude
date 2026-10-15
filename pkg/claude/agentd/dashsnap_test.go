@@ -808,7 +808,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "groups-processes-running",
 			Title:    "Groups — Processes focus run cards",
-			Caption:  "Mock G3 / P2: the groups tree in the Processes perspective — each group's summary row counts its runs, and its body renders its own live runs as graph cards (needs-you first, scope chip, duration, template/owner) with performer avatars on nodes and a busy/idle avatar strip, after its nested subgroups; a group without processes offers Get started. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
+			Caption:  "Mock G3 / P2: the groups tree in the Processes perspective — each group's summary row counts its runs, and its body renders its own live runs as graph cards (needs-you first, scope chip, duration, template/owner) with performer avatars on nodes and a busy/idle avatar strip, after its nested subgroups; a group without processes folds Get started to one line, since processes exist elsewhere. Run context is a recorded GET /v1/process/context projection (jstest/process-context-fixture.json), so the state is deterministic.",
 			InitJS:   processContextFixtureInitJS(),
 			JS:       showGroups + groupsProcessesJS(""),
 			SettleMS: 300,
@@ -816,9 +816,9 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-processes-get-started",
 			Title:   "Groups — Processes quick start: Get started",
-			Caption: "Mock Q1 (tcl-7p6bgt): a group with no processes shows Get started in its body. Four starters arrive filled from the group's roster (roles first, then members), library templates can be reused, and a blank step list or the full graph editor is one click away. Describing the flow in words is a later ticket (tcl-m23mb2), so its box is a disabled stub.",
+			Caption: "Mock Q1 (tcl-7p6bgt): a group with no processes folds Get started to 'No processes yet · Get started ▸' once any process exists (or the operator dismissed it), and expands it on click. Four starters arrive filled from the group's roster (roles first, then members), library templates can be reused, and a blank step list or the full graph editor is one click away. Describing the flow in words is a later ticket (tcl-m23mb2), so its box is a disabled stub.",
 			InitJS:  processContextFixtureInitJS(),
-			JS: showGroups + groupsProcessesJS(`
+			JS: showGroups + groupsProcessesJS(quickStartExpandJS+`
   var panel = document.querySelector('[data-quickstart="infra-crew"]');
   var deadline = Date.now() + 3000;
   while (!panel.querySelector('[data-reuse-template]') && Date.now() < deadline) { await new Promise(function(resolve){ setTimeout(resolve, 40); }); }
@@ -831,16 +831,21 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-processes-step-editor",
 			Title:   "Groups — Processes quick start: step list",
-			Caption: "Mock Q2 (tcl-7p6bgt): the Build → review → ship starter opened as an inline step list. Each step has a Who picker (a specific agent, any member with a role, you, or a command), you-steps branch on their answers to later steps (one rework round, then you decide), {{issue}} in a prompt became a start input, and the preview, the start inputs and who it will use now update live. The server validates the draft as it changes; nothing runs until Start.",
+			Caption: "Mock Q2 (tcl-7p6bgt): the Build → review → ship starter opened as an inline step list. Each step has a Who picker (a specific agent, any member with a role, you, or a command), you-steps branch on their answers to later steps (one rework round, then you decide), {{issue}} in a prompt became a start input, and the preview (a top-to-bottom numbered flow at the panel's width, answers that jump drawn as rails), the start inputs and who it will use now update live. The merge command needs a named consent ('Allow step 6 to run … (program profile: default)'); unticked, Start is disabled with a one-line reason. The server validates the draft as it changes; nothing runs until Start.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + groupsProcessesJS(stepEditorJS(`
+  editor.querySelector('[data-start-profile=""]').click();
+  await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  if (!editor.querySelector('[data-start-blocked]')) throw new Error('Start lacks its one-line reason');
+  var rows = editor.querySelectorAll('[data-step-flow] [data-flow-row]');
+  if (rows.length !== 9) throw new Error('the preview does not list every step top to bottom: ' + rows.length);
   editor.scrollIntoView({block: 'start'});`)),
 			SettleMS: 300,
 		},
 		{
 			Key:     "groups-processes-step-editor-graph",
 			Title:   "Groups — Processes quick start: open in graph editor",
-			Caption: "Open in graph editor hands the unsaved step list to Automations › Processes as a new, unsaved template, so anything the step list cannot show is one click away.",
+			Caption: "Open in graph editor saves the step list as a template and opens it in Automations › Processes at a readable zoom (the run view's 0.8 fit floor) with its start node centred near the top, instead of fitting the whole tall graph into the viewport.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + groupsProcessesJS(stepEditorJS(`
   editor.querySelector('[data-step-open-graph]').click();
@@ -848,7 +853,11 @@ func baseStates() []dashsnap.State {
   while (!document.querySelector('#process-editor-view .process-node[data-node-id="approve"], #process-editor-view [data-node-id="approve"]') && Date.now() < until) {
     await new Promise(function(resolve){ setTimeout(resolve, 50); });
   }
-  if (!document.querySelector('#process-editor-view [data-node-id="approve"]')) throw new Error('the graph editor did not open the handed-off draft');`)),
+  if (!document.querySelector('#process-editor-view [data-node-id="approve"]')) throw new Error('the graph editor did not open the handed-off draft');
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var transform = (document.querySelector('#process-editor-view svg g[transform*="scale("]') || {getAttribute: function(){ return ''; }}).getAttribute('transform');
+  var zoom = Number((/scale\(([0-9.]+)\)/.exec(transform) || [])[1]);
+  if (!(zoom >= 0.79)) throw new Error('the handed-off template opened below a readable zoom: ' + transform);`)),
 			SettleMS: 600,
 		},
 		{
@@ -5683,7 +5692,7 @@ const groupsRunFocusJS = `
 // cards, opens the tree's groups, then runs extraJS with `groups` in scope.
 func groupsProcessesJS(extraJS string) string {
 	return groupsProcessesTreeJS(`
-  if (!document.querySelector('[data-process-group="infra-crew"] [data-quickstart="infra-crew"]')) throw new Error('the group without processes does not offer Get started');
+  if (!document.querySelector('[data-process-group="infra-crew"] [data-quickstart-folded="infra-crew"]')) throw new Error('the group without processes does not fold Get started to a line once processes exist');
   if (!document.querySelector('[data-process-group="frontend-squad"] .gp-member.busy')) throw new Error('no busy member ring in the avatar strip');
 `+extraJS, true)
 }
@@ -5692,7 +5701,7 @@ func groupsProcessesJS(extraJS string) string {
 // list, fills its start input and waits for the server's validation, then
 // runs extraJS with `editor` bound.
 func stepEditorJS(extraJS string) string {
-	return `
+	return quickStartExpandJS + `
   document.querySelector('[data-quickstart="infra-crew"] [data-starter="build-review-ship"]').click();
   await new Promise(function(resolve){ setTimeout(resolve, 60); });
   var editor = document.querySelector('[data-step-editor="infra-crew"]');
@@ -5703,9 +5712,20 @@ func stepEditorJS(extraJS string) string {
   issue.dispatchEvent(new Event('input', {bubbles: true}));
   await new Promise(function(resolve){ setTimeout(resolve, 900); });
   if (editor.querySelector('.gq-problem, .gq-problems')) throw new Error('the starter draft has validation problems: ' + editor.querySelector('.gq-problem, .gq-problems').textContent);
+  var consent = editor.querySelector('[data-start-profile=""]');
+  if (!consent || !/Allow step 6 to run/.test(consent.closest('label').textContent)) throw new Error('the merge command lacks its named consent');
+  if (!editor.querySelector('[data-step-start]').disabled) throw new Error('Start is enabled before the command consent');
+  consent.click();
+  await new Promise(function(resolve){ setTimeout(resolve, 60); });
   if (editor.querySelector('[data-step-start]').disabled) throw new Error('Start stays disabled: ' + editor.querySelector('[data-step-start]').title);
   document.querySelector('details[data-group-key="frontend-squad"] .gp-group').querySelectorAll('[data-process-run-card]').forEach(function(card){ card.style.display = 'none'; });` + extraJS
 }
+
+// quickStartExpandJS opens infra-crew's folded Get started panel.
+const quickStartExpandJS = `
+  document.querySelector('[data-quickstart-folded="infra-crew"] [data-quickstart-expand]').click();
+  await new Promise(function(resolve){ setTimeout(resolve, 60); });
+  if (!document.querySelector('[data-quickstart="infra-crew"]')) throw new Error('Get started ▸ did not open the panel');`
 
 // groupsProcessesTreeJS is groupsProcessesJS without the fixture's
 // per-group checks; open expands every group of the tree first. The open

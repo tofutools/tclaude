@@ -162,8 +162,8 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, view, key: `${id}:${blank}:${Date.now()}` });
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false } = {}) {
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
@@ -624,7 +624,7 @@ export function createProcessesActions({
   }
   function refreshActive() { return load('templates'); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, openReferencedTemplate, applyLocation, announceLocation, correctLocation,
+    load, observeTemplateHeads, activateSubtab, openEditor, openReferencedTemplate, canLeaveEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,

@@ -8,25 +8,24 @@
 // Start.
 
 import { h } from 'preact';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ProcessMiniGraph } from './process-kit.js';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
   STARTERS, whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
-  collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListPreviewRun, stepListToView,
+  collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
   stepTargetLabel, stepText, stepWho,
 } from './process-step-list.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
+import { dashPrefs } from './prefs.js';
 
 const html = htm.bind(h);
 
 const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', decision: '◇', parallel: '‖' });
 const VALIDATE_DELAY_MS = 400;
-const MIN_PREVIEW_SCALE = 0.6;
 
 // createdEditView is the stored template's edit view after a create, as the
 // graph editor opens a stored template.
@@ -46,8 +45,22 @@ export async function openInGraphEditor(api, view, name) {
   const body = await api.createTemplate(named);
   const id = String(body?.id || '');
   if (!id) throw new Error('the template was not created');
+  markQuickStart();
   handOffProcessDraft({ id, name: named.template.name, view: createdEditView(named, id, body) });
   return id;
+}
+
+// QUICKSTART_PREF remembers that the operator is past the first run: 'used'
+// once they created or started a process here, 'dismissed' once they closed
+// the Get started panel. Either folds an empty group's panel to one line.
+export const QUICKSTART_PREF = 'tclaude.dash.groupsProcesses.getStarted';
+
+export function quickStartSeen() {
+  try { return !!dashPrefs.getItem(QUICKSTART_PREF); } catch { return false; }
+}
+
+export function markQuickStart(value = 'used') {
+  try { if (!dashPrefs.getItem(QUICKSTART_PREF)) dashPrefs.setItem(QUICKSTART_PREF, value); } catch { /* best effort */ }
 }
 
 export function defaultNotify(message, isError = false) {
@@ -62,8 +75,11 @@ function stepKind(step) {
 }
 
 // GetStarted is the first-run panel of a group without processes.
-export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onReuse }) {
+export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onReuse, onDismiss }) {
   const [templates, setTemplates] = useState(null);
+  // pending holds the panel while a starter is stored for the graph editor,
+  // so a double click creates one template, not two.
+  const [pending, setPending] = useState(false);
   useEffect(() => {
     let live = true;
     api.listTemplates().then((rows) => { if (live) setTemplates(rows); }).catch(() => { if (live) setTemplates([]); });
@@ -71,12 +87,17 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
   }, [api]);
   const pick = (starter) => {
     const built = starter.build(roster);
-    if (built.view) onOpenGraph(built.view, starter.key);
-    else onEditList(built.list, starter.title);
+    if (!built.view) { onEditList(built.list, starter.title); return; }
+    if (pending) return;
+    setPending(true);
+    void Promise.resolve(onOpenGraph(built.view, starter.key)).finally(() => setPending(false));
   };
   const shown = (templates || []).slice(0, 3);
   return html`<section class="gq-start" aria-label=${wizard ? 'Begin a first rite' : 'Get started with processes'} data-quickstart=${group.name}>
-    <h3>${wizard ? `Set ${group.name}'s familiars walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
+    <div class="gq-start-head">
+      <h3>${wizard ? `Set ${group.name}'s familiars walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
+      ${onDismiss && html`<button type="button" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now</button>`}
+    </div>
     <p class="gq-sub">A process is a set of steps. Each step is done by an agent of this group, by you, or by a command. Steps run in order, and your answers can branch them.</p>
     <div class="gq-ask">
       <input type="text" class="gq-ask-in" disabled aria-label="Describe the process in plain words"
@@ -87,7 +108,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
     <div class="gq-starters">
       ${STARTERS.map((starter) => {
         const uses = starter.build(roster).uses;
-        return html`<button key=${starter.key} type="button" class="gq-starter" data-starter=${starter.key} onClick=${() => pick(starter)}>
+        return html`<button key=${starter.key} type="button" class="gq-starter" data-starter=${starter.key} disabled=${pending} onClick=${() => pick(starter)}>
           <span class="gq-starter-title">${starter.title}</span>
           <span class="gq-flow">${starter.chain.map(([kind, label], i) => html`${i > 0 && html`<i aria-hidden="true">→</i>`}<span>${GLYPHS[kind] || ''} ${label}</span>`)}</span>
           <span class="gq-note">${starter.note}</span>
@@ -105,7 +126,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
         <button type="button" class="gq-link" onClick=${() => onReuse('')}>browse all ›</button>`}
       <span class="gq-spacer"></span>
       <button type="button" class="gq-btn" data-quickstart-blank onClick=${() => onEditList(blankStepList(''), '')}>blank step list</button>
-      <button type="button" class="gq-btn" data-quickstart-graph onClick=${() => onOpenGraph(null, '')}>⤢ full graph editor</button>
+      <button type="button" class="gq-btn" data-quickstart-graph disabled=${pending} onClick=${() => onOpenGraph(null, '')}>⤢ full graph editor</button>
     </div>
   </section>`;
 }
@@ -215,23 +236,66 @@ function problemsByStep(diagnostics, list) {
   return { out, general };
 }
 
-// FittedPreview scales the mini graph down toward the panel's width (never
-// below MIN_PREVIEW_SCALE, so labels stay legible; wider graphs scroll).
-function FittedPreview({ run, wizard, compact }) {
-  const box = useRef(null);
-  const [fit, setFit] = useState({ scale: 1, height: 0 });
-  useLayoutEffect(() => {
-    const graph = box.current?.querySelector?.('.pk-mini-graph');
-    const width = graph?.offsetWidth || 0;
-    const room = box.current?.clientWidth || 0;
-    const scale = width > 0 && room > 0 && width > room ? Math.max(MIN_PREVIEW_SCALE, room / width) : 1;
-    const height = Math.ceil((graph?.offsetHeight || 0) * scale);
-    if (Math.abs(scale - fit.scale) > 0.001 || height !== fit.height) setFit({ scale, height });
+// FlowPreview draws the step list top to bottom at the side panel's width:
+// a box per step (number, kind, wrapped name, who it would use now, and its
+// answers that jump elsewhere), a labelled arrow to the step below, and the
+// jumps as rails on the right. Row heights are fixed per kind so the rails
+// need no layout measuring; a long list scrolls with the panel.
+const FLOW = Object.freeze({ cap: 26, step: 56, answers: 16, gap: 22, lane: 11, rail: 9 });
+
+function FlowPreview({ flow, wizard }) {
+  const heights = flow.rows.map((row, i) => (row.kind === 'step'
+    ? FLOW.step + (flow.jumps.some((jump) => jump.from === i && jump.label) ? FLOW.answers : 0)
+    : FLOW.cap));
+  const tops = [];
+  let y = 0;
+  for (const height of heights) { tops.push(y); y += height + FLOW.gap; }
+  const total = Math.max(0, y - FLOW.gap);
+  const railWidth = flow.lanes ? FLOW.rail + flow.lanes * FLOW.lane : 0;
+  const outs = new Map();
+  const ins = new Map();
+  const port = (map, row) => { const k = map.get(row) || 0; map.set(row, k + 1); return k; };
+  const paths = flow.jumps.map((jump) => {
+    const fromY = tops[jump.from] + Math.min(heights[jump.from] - 6, 12 + port(outs, jump.from) * 7);
+    const toY = tops[jump.to] + Math.min(heights[jump.to] - 4, (flow.rows[jump.to].kind === 'step' ? 22 : 13) + port(ins, jump.to) * 7);
+    const x = FLOW.rail + jump.lane * FLOW.lane;
+    return { ...jump, toY, d: `M0 ${fromY} H${x} V${toY} H5` };
   });
-  const scaled = fit.scale < 1;
-  return html`<div ref=${box} class="gq-preview" style=${scaled ? `height:${fit.height}px` : ''}>
-    <div class="gq-preview-fit" style=${scaled ? `transform:scale(${fit.scale.toFixed(3)})` : ''}><${ProcessMiniGraph} run=${run} compact=${compact} wizard=${wizard} /></div>
+  return html`<div class=${`gq-flow-preview${wizard ? ' wizard' : ''}`} data-step-flow>
+    ${flow.rows.map((row, i) => {
+      const answers = flow.jumps.filter((jump) => jump.from === i && jump.label);
+      return html`<div key=${row.id} class=${`gq-flow-row ${row.kind}`} data-flow-row=${row.id} style=${`top:${tops[i]}px;height:${heights[i]}px;right:${railWidth}px`}>
+        ${row.kind === 'step' ? html`
+          <div class="gq-flow-head"><b>${row.number}</b> <span aria-hidden="true">${GLYPHS[stepKind(row.step)]}</span> <span class="gq-flow-name">${row.label}</span></div>
+          <div class="gq-flow-who">${row.who}</div>
+          ${answers.length > 0 && html`<div class="gq-flow-answers">${answers.map((jump) => html`<span key=${jump.label}>${jump.label} → ${flow.rows[jump.to].kind === 'step' ? flow.rows[jump.to].number : flow.rows[jump.to].label}</span>`)}</div>`}`
+        : html`<span aria-hidden="true">${row.kind === 'start' ? '▶' : '■'}</span> ${row.label}`}
+      </div>${i < flow.rows.length - 1 && row.down !== null && html`<div key=${`${row.id}-down`} class="gq-flow-down" style=${`top:${tops[i] + heights[i]}px;height:${FLOW.gap}px`}>
+        <span aria-hidden="true">↓</span>${row.down && html` <em>${row.down}</em>`}</div>`}`;
+    })}
+    <div class="gq-flow-spacer" style=${`height:${total}px`}></div>
+    ${flow.lanes > 0 && html`<svg class="gq-flow-rails" aria-hidden="true" width=${railWidth} height=${total} viewBox=${`0 0 ${railWidth} ${total}`}>
+      ${paths.map((path, i) => html`<path key=${i} class=${path.back ? 'back' : ''} d=${path.d} />
+        <path key=${`${i}-head`} class="head" d=${`M1 ${path.toY} l6 -4 v8 z`} />`)}
+    </svg>`}
   </div>`;
+}
+
+// commandSteps are the command steps that run under a program profile ('' is
+// the default profile), numbered as the list shows them.
+function commandSteps(list, profile) {
+  return list.steps.map((step, i) => ({ step, number: i + 1 }))
+    .filter(({ step }) => step.node.performer?.kind === 'program' && String(step.node.performer.profile || '') === profile)
+    .map(({ step, number }) => ({ number, command: stepText(step) }));
+}
+
+// consentSubject names what a consent checkbox allows: "step 6", "steps 3
+// and 6", or "commands" when no step of the list names the profile.
+function consentSubject({ steps }) {
+  if (!steps.length) return 'commands';
+  if (steps.length === 1) return `step ${steps[0].number}`;
+  const numbers = steps.map((step) => step.number);
+  return `steps ${numbers.slice(0, -1).join(', ')} and ${numbers.at(-1)}`;
 }
 
 function withName(list, name) {
@@ -253,6 +317,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
   const viewKey = JSON.stringify(view);
   const needs = templateStartRequirements(view.template);
   const programProfiles = [...new Set([...needs.programProfiles, ...extraProfiles])].sort();
+  const consents = programProfiles.map((profile) => ({ profile, steps: commandSteps(list, profile) }));
+  const unconsented = programProfiles.filter((profile) => !authorized.has(profile));
   useEffect(() => {
     let live = true;
     if (typeof api.validateTemplate !== 'function') return undefined;
@@ -266,11 +332,6 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
   const hasErrors = diagnostics.some((d) => d.severity === 'error');
   const update = (next) => { setError(''); setList(next); };
   const change = (step) => update(replaceStep(list, step));
-  const performerOf = (id) => {
-    const step = list.steps.find((s) => s.id === id);
-    const member = step ? whoNow(step, roster).member : null;
-    return member ? { id: member.id, label: member.name } : null;
-  };
   const roleSteps = list.steps.filter((step) => stepWho(step).mode === 'role');
   const spawning = roleSteps.length > 0 && roleSteps.every((step) => step.node.performer?.spawn === 'allowed');
   const setSpawning = (on) => {
@@ -293,12 +354,16 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
   };
   const label = name.trim() || 'this process';
   const start = async () => {
-    if (busy || !name.trim() || missing.length || hasErrors) return;
+    if (busy || !name.trim() || missing.length || hasErrors || unconsented.length) return;
     setBusy('start');
     setError('');
     try {
       const templateId = await ensureSaved(undefined);
-      await api.startGroupRun({ templateId, group: group.name, params: values, authorizeProgramProfiles: [...authorized] });
+      // Only the inputs the steps still use: a renamed {{param}} leaves its
+      // old value behind in `values`.
+      const params = Object.fromEntries(needs.params.filter((param) => values[param.name] !== undefined).map((param) => [param.name, values[param.name]]));
+      await api.startGroupRun({ templateId, group: group.name, params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)) });
+      markQuickStart();
       notify(`Started ${label} in ${group.name}`);
       void source?.refresh?.();
       onClose();
@@ -316,6 +381,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
     setError('');
     try {
       await ensureSaved(undefined);
+      markQuickStart();
       notify(`Saved ${label} to the template library`);
       onClose();
     } catch (cause) {
@@ -331,6 +397,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
     setError('');
     try {
       const id = await ensureSaved(undefined);
+      markQuickStart();
       handOffProcessDraft({ id, name: name.trim(), view: createdEditView(view, id, created.current.body) });
       onClose();
     } catch (cause) {
@@ -341,7 +408,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
   };
   const blockedWhy = !name.trim() ? 'Name the process first'
     : hasErrors ? 'Fix the problems first'
-      : missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : '';
+      : missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first`
+        : unconsented.length ? `Allow ${consentSubject(consents.find((c) => c.profile === unconsented[0]))} to run first` : '';
   const whoRows = list.steps.map((step, i) => ({ step, i, now: whoNow(step, roster) }));
   return html`<section class="gq-editor" aria-label=${`New process for ${group.name}`} data-step-editor=${group.name}>
     <div class="gq-main">
@@ -373,19 +441,20 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
     </div>
     <div class="gq-side">
       <div class="gq-sec">Preview</div>
-      <${FittedPreview} run=${stepListPreviewRun(list, { name: label, performerOf })} compact=${list.steps.length > 4} wizard=${wizard} />
+      <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => whoNow(step, roster).label })} wizard=${wizard} />
       ${needs.params.length > 0 && html`<div class="gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
         <div class="gq-params">${needs.params.map((param) => html`<label key=${param.name} class="gq-param">
           <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
           <input type="text" data-start-param=${param.name} value=${values[param.name] ?? ''}
             onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [param.name]: value })); }} />
         </label>`)}</div>`}
-      ${programProfiles.length > 0 && html`<div class="gq-profiles" role="group" aria-label="Program authorization">
-        <span class="gq-dim">Commands run on this host under:</span>
-        ${programProfiles.map((profile) => html`<label key=${profile || '(default)'} class="gq-profile">
+      ${consents.length > 0 && html`<div class="gq-profiles" role="group" aria-label="Allow commands to run">
+        <span class="gq-dim">Commands run on this host. Start needs your consent for each:</span>
+        ${consents.map(({ profile, steps }) => html`<label key=${profile || '(default)'} class="gq-profile" data-consent-profile=${profile}>
           <input type="checkbox" data-start-profile=${profile} checked=${authorized.has(profile)}
             onChange=${(event) => { const on = event.currentTarget.checked; setAuthorized((current) => { const next = new Set(current); if (on) next.add(profile); else next.delete(profile); return next; }); }} />
-          authorize <code>${profile || '(default profile)'}</code></label>`)}
+          <span>Allow ${consentSubject({ profile, steps })} to run${steps.length === 1 && steps[0].command ? html` <code>${steps[0].command}</code>` : ''}
+            <span class="gq-dim"> (program profile: ${profile || 'default'})</span></span></label>`)}
       </div>`}
       <div class="gq-sec">Who it will use now</div>
       <ul class="gq-whonow">${whoRows.map(({ step, i, now }) => html`<li key=${step.id} class=${now.waits ? 'waits' : ''}>
@@ -402,6 +471,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', api,
           onClick=${openGraph}>${busy === 'graph' ? 'opening…' : '⤢ open in graph editor'}</button>
         <button type="button" class="gq-link" onClick=${onClose}>cancel</button>
       </div>
+      ${blockedWhy && html`<div class="gq-why" data-start-blocked>▶ ${blockedWhy}</div>`}
       <p class="gq-hint">Start now saves the steps as a template, then starts it in ${group.name}; the graph editor also opens it saved. Nothing runs before Start.</p>
       ${error && html`<div class="gq-error" role="alert">${error}</div>`}
     </div>

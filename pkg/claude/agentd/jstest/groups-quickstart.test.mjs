@@ -96,13 +96,19 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
     ['role:dev', 'role:reviewer', 'you', 'role:dev', 'you', 'command']);
   assert.match(steps(root)[0].querySelector('.gq-res').textContent, /idle \(any dev\)/);
   assert.equal(steps(root)[0].querySelector('.gq-step-text').value, 'Implement {{issue}} on a branch and open a PR.', 'prompts read the {{name}} shorthand');
-  assert.ok(editor.querySelector('.pk-mini-graph [data-process-node="approve"]'), 'the preview draws the steps');
+  const flow = editor.querySelector('[data-step-flow]');
+  assert.deepEqual([...flow.querySelectorAll('[data-flow-row]')].map((el) => el.dataset.flowRow),
+    ['start', 'implement', 'review', 'approve', 'rework', 'final-say', 'merge', 'end', 'stopped'], 'the preview reads top to bottom');
+  assert.equal(flow.querySelector('[data-flow-row="approve"] .gq-flow-answers').textContent, 'ship → 6hold → stop (canceled)');
+  assert.equal(flow.querySelectorAll('.gq-flow-rails path:not(.head)').length, 3, 'ship, hold and final say\'s hold jump on rails');
   assert.deepEqual([...editor.querySelectorAll('[data-start-param]')].map((el) => el.dataset.startParam), ['issue']);
   const start = editor.querySelector('[data-step-start]');
   assert.ok(start.disabled, 'a required start input blocks Start');
   assert.match(start.getAttribute('title'), /Fill issue first/);
   await setValue(editor.querySelector('[data-start-param="issue"]'), 'JOH-412');
-  await setValue(editor.querySelector('[data-start-profile=""]'), true, 'change');
+  assert.match(start.getAttribute('title'), /Allow step 6 to run first/, 'commands need consent, named by step');
+  assert.match(editor.querySelector('[data-start-blocked]').textContent, /Allow step 6 to run first/);
+  assert.match(editor.querySelector('[data-consent-profile=""]').textContent, /Allow step 6 to run gh pr merge --squash \(program profile: default\)/);
   Object.defineProperty(editor.querySelector('[data-start-profile=""]'), 'checked', { configurable: true, value: true });
   await setValue(editor.querySelector('[data-start-profile=""]'), true, 'change');
   assert.equal(start.disabled, false);
@@ -126,9 +132,18 @@ test('a refused start keeps the editor, names the missing authorization, and doe
   await setValue(editor.querySelector('.gq-name'), 'nightly');
   await click(editor.querySelector('[data-add-step="command"]'));
   await setValue(steps(root)[0].querySelector('.gq-step-text'), 'make test', 'change');
+  assert.ok(editor.querySelector('[data-step-start]').disabled, 'no start before consent');
+  const tick = async (profile) => {
+    const box = editor.querySelector(`[data-start-profile="${profile}"]`);
+    Object.defineProperty(box, 'checked', { configurable: true, value: true });
+    await setValue(box, true, 'change');
+  };
+  await tick('');
   await click(editor.querySelector('[data-step-start]'));
   assert.match(editor.querySelector('.gq-error').textContent, /authorization: ci/);
   assert.ok(editor.querySelector('[data-start-profile="ci"]'), 'the refused profile is offered');
+  assert.ok(editor.querySelector('[data-step-start]').disabled, 'the refused profile needs consent too');
+  await tick('ci');
   await click(editor.querySelector('[data-step-start]'));
   assert.equal(api.calls.create.length, 1, 'the unchanged steps reuse the template already created');
   assert.equal(api.calls.start.length, 2);
@@ -184,6 +199,7 @@ test('reuse opens the start form with the template; the graph-shaped starter han
   await harness.act(() => harness.fireEvent(form, 'submit'));
   await settle();
   assert.equal(api.calls.start.at(-1).templateId, 'db-migrate', 'the reused template is the one started');
+  await click(root.querySelector('[data-quickstart-expand]'));
   await click(root.querySelector('[data-starter="plan-fan-out-merge"]'));
   const draft = handoff.takeProcessDraft();
   assert.equal(draft.name, 'plan-fan-out-merge');
@@ -214,7 +230,32 @@ test('open in graph editor saves the steps first, then hands the stored template
   assert.equal(draft.view.template.id, 'tmpl_1');
   assert.equal(draft.view.currentRef, 'x@sha256:1');
   assert.equal(root.querySelector('[data-step-editor]'), null);
+  assert.equal(root.querySelector('[data-quickstart]'), null, 'once a process exists, an empty group folds Get started');
+  await click(root.querySelector('[data-quickstart-expand]'));
   await click(root.querySelector('[data-quickstart-graph]'));
   assert.deepEqual(handoff.takeProcessDraft(), { create: true }, 'the blank graph editor is the tab\'s own create dialog');
   assert.equal(api.calls.create.length, 1);
+});
+
+test('a starter stored for the graph editor is created once, however often it is clicked', async (t) => {
+  const { root, api, harness, settle } = await mount(t);
+  const starter = root.querySelector('[data-starter="plan-fan-out-merge"]');
+  await harness.act(() => { harness.fireEvent(starter, 'click'); });
+  await harness.act(() => { harness.fireEvent(root.querySelector('[data-starter="plan-fan-out-merge"]'), 'click'); });
+  await settle();
+  assert.equal(api.calls.create.length, 1);
+});
+
+test('Start sends only the inputs the steps still use', async (t) => {
+  const { root, api, click, setValue } = await mount(t);
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'fix');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await setValue(steps(root)[0].querySelector('.gq-step-text'), 'Fix {{issue}}', 'change');
+  await setValue(editor.querySelector('[data-start-param="issue"]'), 'A-1');
+  await setValue(steps(root)[0].querySelector('.gq-step-text'), 'Fix {{ticket}}', 'change');
+  await setValue(editor.querySelector('[data-start-param="ticket"]'), 'T-2');
+  await click(editor.querySelector('[data-step-start]'));
+  assert.deepEqual(api.calls.start.at(-1).params, { ticket: 'T-2' });
 });

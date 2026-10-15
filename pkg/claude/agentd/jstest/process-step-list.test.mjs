@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   blankStepList, expandParamShorthand, forwardTargets, joinCommand, splitCommand, insertStep, moveStep, newStep, removeStep, replaceStep,
-  setStepChoices, setStepLinks, setStepText, setStepWho, stepListParams, stepListPreviewRun,
+  setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
 } from '../dashboard/js/process-step-list.js';
 
@@ -238,15 +238,46 @@ test('new step ids are unique and id-shaped', () => {
   assert.deepEqual(list.steps.map((s) => s.id), ['review', 'review-2', 'n-code', 'end-2']);
 });
 
-test('the preview run marks back edges and labels non-pass outcomes', () => {
+test('the flow preview lists steps top to bottom and puts jumps on the fewest lanes', () => {
   const { list } = viewToStepList(viewOf(structuredClone(SHIP_FEATURE)));
-  const run = stepListPreviewRun(list, { performerOf: (id) => (id === 'implement' ? { id: 'agt_1', label: 'checkout' } : null) });
-  const edge = (from, to) => run.edges.find((e) => e.from === from && e.to === to);
-  assert.equal(edge('review', 'implement').back, true);
-  assert.equal(edge('review', 'implement').label, 'changes');
-  assert.equal(edge('implement', 'review').back, false);
-  assert.equal(edge('implement', 'review').label, '');
-  assert.deepEqual(run.nodes.find((n) => n.id === 'implement').performer, { kind: 'agent', ref: 'agt_1', label: 'checkout' });
+  const flow = stepListFlow(list, { whoOf: (step) => (step.id === 'implement' ? 'checkout' : '') });
+  const ids = flow.rows.map((row) => row.id);
+  assert.equal(flow.rows.find((row) => row.id === 'implement').who, 'checkout');
+  const jump = (from, to) => flow.jumps.find((j) => ids[j.from] === from && ids[j.to] === to);
+  assert.equal(jump('review', 'implement').back, true, 'an existing backward link stays visible');
+  assert.equal(jump('review', 'implement').label, 'changes');
+  assert.equal(flow.rows.find((row) => row.id === 'implement').down, '', 'a pass edge to the next row is a plain arrow');
+  for (const a of flow.jumps) {
+    for (const b of flow.jumps) {
+      if (a === b || a.lane !== b.lane) continue;
+      const [a1, a2] = [Math.min(a.from, a.to), Math.max(a.from, a.to)];
+      const [b1, b2] = [Math.min(b.from, b.to), Math.max(b.from, b.to)];
+      assert.ok(a2 < b1 || b2 < a1, 'jumps sharing a lane never overlap');
+    }
+  }
+});
+
+test('a decision switched to an agent or a command keeps only its continue', () => {
+  let list = blankStepList('x');
+  list = insertStep(list, newStep(list, { kind: 'you' }));
+  list = insertStep(list, newStep(list, { kind: 'agent' }));
+  let decide = setStepChoices(list.steps[0], ['ship', 'hold'], 'end');
+  decide = setStepLinks({ ...decide }, [...decide.links]);
+  const task = setStepChoices(setStepWho(decide, { mode: 'agent', agent: 'a' }), [], '');
+  assert.equal(task.node.type, 'task');
+  assert.deepEqual(task.links, []);
+  const edges = stepListToView(replaceStep(list, task)).edges.filter((e) => e.from === task.id);
+  assert.equal(edges.length, 1, 'a task has exactly one route');
+});
+
+test('a list with no success end round-trips without an orphan end', () => {
+  const template = { start: 'a', nodes: {
+    a: { type: 'task', performer: { kind: 'agent', prompt: 'x' }, next: { next: 'b' } },
+    b: { type: 'decision', performer: { kind: 'human', ask: 'y?', choices: ['y', 'n'] }, next: { y: 'c', n: 'f' } },
+    c: { type: 'end', result: 'canceled' }, f: { type: 'end', result: 'failed' },
+  } };
+  const { list } = viewToStepList(viewOf(template));
+  assert.deepEqual(Object.keys(stepListToView(list).template.nodes).sort(), ['a', 'b', 'c', 'f']);
 });
 
 test('commands split into argv (programs run with no shell) and join back for display', () => {

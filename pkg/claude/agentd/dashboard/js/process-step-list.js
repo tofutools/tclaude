@@ -171,7 +171,8 @@ export function ensureMainEnd(list) {
 // stepListToView folds a step list back into an edit view. Params referenced
 // in the steps but not declared are declared as required strings.
 export function stepListToView(list) {
-  const working = list.steps.some((step) => step.cont) || !list.steps.length ? ensureMainEnd(list) : list;
+  // Only the last step's continue (or an empty list) runs to the main end.
+  const working = !list.steps.length || list.steps[list.steps.length - 1].cont ? ensureMainEnd(list) : list;
   const { startNode, steps, ends, mainEnd } = working;
   const nodes = {};
   const edges = [];
@@ -401,7 +402,10 @@ export function setStepChoices(step, choices, following) {
   delete performer.choices;
   delete performer.choiceOutcomes;
   node.performer = performer;
-  return { ...step, node, cont: STEP_CONTINUE_OUTCOME, links: step.links.filter((link) => !step.node.performer?.choices?.includes(link.outcome)) };
+  // A decision's links are all answers; the task it becomes keeps only its
+  // continue.
+  const links = step.node.type === 'decision' ? [] : step.links.filter((link) => !step.node.performer?.choices?.includes(link.outcome));
+  return { ...step, node, cont: STEP_CONTINUE_OUTCOME, links };
 }
 
 // setStepLinks replaces a step's "then" links. A link reusing the continue
@@ -507,23 +511,43 @@ export function stepTargetLabel(list, id) {
   return `${id} (missing)`;
 }
 
-// stepListPreviewRun shapes the list as a run for ProcessMiniGraph, so the
-// preview draws with the same kit as the run cards.
-export function stepListPreviewRun(list, { name = '', performerOf = () => null } = {}) {
+// stepListFlow shapes the list as the editor's top-to-bottom preview: one row
+// per start, step and end in list order, the edge to the row below as a
+// labelled "down" arrow, and every other edge as a jump on a side lane.
+// Jumps are packed into the fewest lanes whose row spans do not overlap, the
+// shortest first, so short hops hug the steps.
+export function stepListFlow(list, { whoOf = () => '' } = {}) {
   const view = stepListToView(list);
-  const nodes = Object.entries(view.template.nodes).map(([id, node]) => {
-    const performer = performerOf(id, node);
-    return {
-      id, kind: node.type, label: node.name || (node.type === 'start' || node.type === 'end' ? node.type : id),
-      performer: { kind: node.performer?.kind || '', ...(performer ? { ref: performer.id, label: performer.label } : {}) },
-      state: 'planned',
-    };
-  });
-  const index = new Map(list.steps.map((step, i) => [step.id, i]));
-  const edges = view.edges.filter((edge) => edge.from).map((edge) => ({
-    from: edge.from, to: edge.to,
-    label: PASS_LABELS.includes(edge.outcome) ? '' : edge.outcome,
-    back: index.has(edge.to) && index.has(edge.from) && index.get(edge.to) <= index.get(edge.from),
-  }));
-  return { runId: 'preview', name: name || view.template.name || 'New process', status: 'planned', nodes, edges };
+  const nodes = view.template.nodes;
+  const ends = [...list.ends].sort((a, b) => (a.id === list.mainEnd ? -1 : b.id === list.mainEnd ? 1 : 0));
+  const rows = [
+    ...(list.startNode ? [{ id: list.startNode.id, kind: 'start', label: list.startNode.node.name || 'start' }] : []),
+    ...list.steps.map((step, i) => ({ id: step.id, kind: 'step', number: i + 1, label: step.node.name || step.id, step, who: whoOf(step) })),
+    ...ends.filter((end) => nodes[end.id]).map((end) => ({ id: end.id, kind: 'end', label: stepTargetLabel(list, end.id) })),
+  ];
+  const at = new Map(rows.map((row, i) => [row.id, i]));
+  const down = rows.map(() => []);
+  const jumps = [];
+  for (const edge of view.edges) {
+    if (!edge.from || !at.has(edge.from) || !at.has(edge.to)) continue;
+    const from = at.get(edge.from);
+    const to = at.get(edge.to);
+    const label = PASS_LABELS.includes(edge.outcome) || edge.outcome === STEP_CONTINUE_OUTCOME ? '' : edge.outcome;
+    if (to === from + 1) down[from].push(label);
+    else jumps.push({ from, to, label, back: to <= from });
+  }
+  jumps.sort((a, b) => Math.abs(a.to - a.from) - Math.abs(b.to - b.from) || a.from - b.from || a.to - b.to);
+  const lanes = [];
+  for (const jump of jumps) {
+    const lo = Math.min(jump.from, jump.to);
+    const hi = Math.max(jump.from, jump.to);
+    let lane = lanes.findIndex((spans) => spans.every(([a, b]) => hi < a || lo > b));
+    if (lane < 0) lane = lanes.push([]) - 1;
+    lanes[lane].push([lo, hi]);
+    jump.lane = lane;
+  }
+  return {
+    rows: rows.map((row, i) => ({ ...row, down: down[i].length ? down[i].filter(Boolean).join(' / ') : null })),
+    jumps, lanes: lanes.length,
+  };
 }

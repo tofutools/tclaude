@@ -76,8 +76,9 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
 
   assert.equal(fe.querySelector('.gp-strip-text').textContent, '2 busy in processes · 1 free');
   assert.deepEqual([...fe.querySelectorAll('.gp-member.busy')].map((a) => a.getAttribute('title').split(' · ')[0]), ['fe-dev-forms', 'fe-dev-charts']);
-  assert.equal(group('infra-crew').querySelector('.gp-empty'), null, 'a group with no runs at all gets Get started instead');
-  assert.ok(group('infra-crew').querySelector('[data-quickstart="infra-crew"]'));
+  // Processes run elsewhere, so the empty group folds Get started to a line.
+  assert.ok(group('infra-crew').querySelector('[data-quickstart-folded="infra-crew"]'), 'an empty group folds Get started once processes exist');
+  assert.equal(group('infra-crew').querySelector('[data-quickstart]'), null);
   assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
   assert.equal(root.querySelector('[data-process-filter="running"]').getAttribute('aria-pressed'), 'true');
 });
@@ -314,4 +315,21 @@ test('an Ungrouped agent run opens in the single-run focus', async (t) => {
   assert.ok(root.querySelector('[data-run-focus="run_docs"]'), 'the agent run opens');
   assert.equal(root.querySelector('details[data-group-key]'), null, 'the run focus replaces the tree');
   assert.deepEqual(closed, [], 'the run is not treated as stranded');
+});
+
+// Kept last: dismissing writes the shared dashPrefs key that folds the panel.
+test('Get started shows in full only before the first process, folds when dismissed, and expands on demand', async (t) => {
+  const empty = { ...FIXTURE, runs: {}, groups: (FIXTURE.groups || []).map((entry) => ({ ...entry, active: [], needsYou: [], done: [], planned: [] })) };
+  const api = { listTemplates: async () => [] };
+  const { harness, group } = await mountFocus(t, { sourceOptions: { context: empty }, api });
+  await settle(harness);
+  const infra = () => group('infra-crew');
+  assert.ok(infra().querySelector('[data-quickstart="infra-crew"]'), 'no process anywhere yet: the full panel');
+  assert.equal(infra().querySelector('[data-quickstart-folded]'), null);
+  await harness.act(async () => { infra().querySelector('[data-quickstart-dismiss]').click(); });
+  assert.equal(infra().querySelector('[data-quickstart]'), null, 'dismissed: folded');
+  assert.ok(infra().querySelector('[data-quickstart-folded="infra-crew"]'));
+  await harness.act(async () => { infra().querySelector('[data-quickstart-expand]').click(); });
+  await settle(harness);
+  assert.ok(infra().querySelector('[data-quickstart="infra-crew"]'), 'Get started ▸ opens the panel again');
 });

@@ -627,7 +627,8 @@ export class ProcessGraph {
     this.bindEvents();
     this.render();
     container.replaceChildren(this.root);
-    if (options.fitOnRender !== false) requestAnimationFrame(() => this.fitToView());
+    if (Number.isFinite(options.readableZoom)) requestAnimationFrame(() => this.fitReadable(options.readableZoom));
+    else if (options.fitOnRender !== false) requestAnimationFrame(() => this.fitToView());
   }
 
   setGraph(graph, { fit = false, resetInteractionLayering = false } = {}) {
@@ -1943,6 +1944,22 @@ export class ProcessGraph {
     this.view.k = zoom;
     this.view.x = (rect.width - bounds.width * zoom) / 2 - bounds.x * zoom;
     this.view.y = (rect.height - bounds.height * zoom) / 2 - bounds.y * zoom;
+    this.applyView();
+    return true;
+  }
+
+  // fitReadable fits the graph, but never below minZoom: a graph too tall to
+  // fit at a readable zoom opens at minZoom with its start node centred
+  // across and near the top, so the flow reads downward from it.
+  fitReadable(minZoom, padding = 44) {
+    if (!this.fitToView(padding) || this.view.k >= minZoom) return false;
+    const rect = this.svg.getBoundingClientRect();
+    const nodes = this.layout?.nodes || [];
+    const start = nodes.find((node) => node.type === 'start') || nodes.find((node) => node.layer === 0) || nodes[0];
+    if (!start) return false;
+    this.view.k = Math.min(minZoom, MAX_ZOOM);
+    this.view.x = rect.width / 2 - start.x * this.view.k;
+    this.view.y = padding - (start.y - (start.height || 0) / 2) * this.view.k;
     this.applyView();
     return true;
   }

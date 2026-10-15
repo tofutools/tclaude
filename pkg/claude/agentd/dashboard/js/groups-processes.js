@@ -22,7 +22,7 @@ import {
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
 import { agentRunIndex, groupProcessCounts } from './groups-process-indicators.js';
-import { GetStarted, StepListEditor, defaultNotify, openInGraphEditor } from './groups-quickstart.js';
+import { GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen } from './groups-quickstart.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 
@@ -102,6 +102,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     setError('');
     try {
       await api.startGroupRun({ templateId, group: group.name, params: values, authorizeProgramProfiles: [...authorized] });
+      markQuickStart();
       onClose();
       void source.refresh();
     } catch (cause) {
@@ -238,6 +239,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes) or {list, origin} (the step-list editor).
   const [quick, setQuick] = useState(null);
+  // dismissed only re-renders this group at once; the pref folds the rest.
+  const [, setDismissed] = useState(false);
   const entry = groupContextEntry(context, group);
   const { runs, planned } = groupRunsFor(context, entry, filter);
   // The roster is the group's full membership: the Groups search narrows
@@ -252,18 +255,24 @@ function GroupRuns({ group, roster, context, filter, wizard, api, source, onFocu
   // A group with no runs at all, in any state, gets the Get started panel.
   const everything = groupRunsFor(context, entry, 'all');
   const fresh = !everything.runs.length && !everything.planned.length && !memberRunEntries(context, members, 'all').length;
+  // Past the first run (a process exists anywhere, or the operator used or
+  // dismissed the panel) an empty group folds Get started to one line.
+  const folded = fresh && (quickStartSeen() || Object.keys(context?.runs || {}).length > 0);
   const editing = quick && typeof quick === 'object';
-  const picking = !editing && !starting && (quick === 'pick' || fresh);
+  const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
   const quickStart = editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)} />`
-    : picking && html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
+    : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
         onOpenGraph=${(view, name) => (view
           ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
           : handOffProcessDraft({ create: true }))}
-        onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }} />`;
+        onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
+        onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
+      : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
+        ${wizard ? 'No rites yet' : 'No processes yet'} · <button type="button" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸</button></div>`;
   return html`<div class="gp-group" data-process-group=${group.name}>
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
