@@ -287,7 +287,7 @@ func TestOpenCodeModels_RefreshRateIsFloored(t *testing.T) {
 		2*time.Second, 10*time.Millisecond)
 	// The stub has been entered, but the refresh only stores its result
 	// after it returns; wait for that, or the store below races the backdate.
-	require.Eventually(t, func() bool { return openCodeRefreshesInFlight.Load() == 0 },
+	require.Eventually(t, backgroundRefreshIdle,
 		2*time.Second, time.Millisecond)
 
 	// A failed refresh stamps the entry, so the TTL alone would hold it off —
