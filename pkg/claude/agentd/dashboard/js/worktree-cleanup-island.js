@@ -19,7 +19,6 @@ import {
   selectedPrunableRepos,
   visibleWorktrees,
   worktreeCleanupSummary,
-  worktreeMatches,
 } from './worktree-cleanup-model.js';
 
 const html = htm.bind(h);
@@ -67,6 +66,14 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
     <span class=${`cleanup-badge cat-${candidate.category}`}>
       <${Words} plain=${candidate.category} wizard=${wizardCategory} />
     </span>
+    ${candidate.merged ? html`<span class="cleanup-badge" title=${candidate.base_ref}>merged</span>` : null}
+    ${candidate.unpushed_commits ? html`<span class="cleanup-badge dirty">${candidate.unpushed_commits} unpublished</span>` : null}
+    ${candidate.upstream_gone ? html`<span class="cleanup-badge">upstream gone</span>` : null}
+    ${candidate.stale ? html`<span class="cleanup-badge">stale ≥30d</span>` : null}
+    ${candidate.last_commit ? html`<span class="cleanup-badge"
+      title=${`Last commit: ${new Date(candidate.last_commit * 1000).toLocaleString()}; activity: ${new Date(candidate.last_activity * 1000).toLocaleString()}`}>
+      activity ${new Date(candidate.last_activity * 1000).toLocaleDateString()}</span>` : null}
+    ${candidate.signal_error ? html`<span class="cleanup-badge" title=${candidate.signal_error}>Git signals unavailable</span>` : null}
     ${candidate.dirty ? html`<span class="cleanup-badge dirty">uncommitted</span>` : null}
     ${candidate.agents.length ? html`<span class="cleanup-badge">
       <${Words}
@@ -75,7 +82,9 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
       />
     </span>` : null}
     <span class="path" title=${candidate.path}>${candidate.path}</span>
-  </label></div>`;
+  </label>
+    ${candidate.potentially_dangling ? html`<div class="cleanup-prune-note">Potentially dangling: ${candidate.dangling_reason}</div>` : null}
+  </div>`;
 }
 
 function PrunableRepoRow({ repo, locked, onToggle }) {
@@ -137,6 +146,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const [busyAction, setBusyAction] = useState('scan');
   const [error, setError] = useState('');
   const [submittedRequest, setSubmittedRequest] = useState(null);
+  const [danglingOnly, setDanglingOnly] = useState(false);
   const [result, setResult] = useState(null);
   const [wizard, setWizard] = useState(() => document.body.classList.contains('wizard'));
   const touchedChoices = useRef(new Map());
@@ -192,8 +202,8 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   const selected = selectedWorktrees(candidates);
   const selectedPruneRepos = selectedPrunableRepos(prunableRepos);
   const removable = removableWorktrees(candidates);
-  const visible = visibleWorktrees(candidates, query);
-  const visiblePruneRepos = prunableRepos.filter((repo) => prunableRepoMatches(repo, query));
+  const visible = visibleWorktrees(candidates, query, danglingOnly);
+  const visiblePruneRepos = (danglingOnly ? [] : prunableRepos).filter((repo) => prunableRepoMatches(repo, query));
   const staleRecords = prunableRecordCount(prunableRepos);
   const selectedStaleRecords = prunableRecordCount(selectedPruneRepos);
   const locked = !!submittedRequest || !!result;
@@ -323,12 +333,12 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       <div class="cleanup-toolbar">
         <button type="button" id="worktree-cleanup-select-all" disabled=${busy || locked}
           onClick=${() => {
-            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), true);
+            replaceChoices(visible, true);
             replacePruneChoices(visiblePruneRepos, true);
           }}>select all</button>
         <button type="button" id="worktree-cleanup-select-none" disabled=${busy || locked}
           onClick=${() => {
-            replaceChoices(removable.filter((candidate) => worktreeMatches(candidate, query)), false);
+            replaceChoices(visible, false);
             replacePruneChoices(visiblePruneRepos, false);
           }}>select none</button>
         <button type="button" id="worktree-cleanup-rescan" disabled=${busy || locked}
@@ -341,6 +351,12 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
         <span class="cleanup-count" id="worktree-cleanup-count">
           ${selectedCountCopy}
         </span>
+      </div>
+      <div class="cleanup-toolbar">
+        <button type="button" aria-pressed=${danglingOnly} class=${danglingOnly ? 'active' : ''}
+          disabled=${busy || locked} onClick=${() => setDanglingOnly(!danglingOnly)}>
+          Potentially dangling (${candidates.filter((candidate) => candidate.potentially_dangling).length})</button>
+        <span>Filter only; selection stays unchanged. No live agent + merged or inactive ≥30 days.</span>
       </div>
       <div class="cleanup-toolbar cleanup-categories" id="worktree-cleanup-categories">
         ${WORKTREE_CATEGORIES.map((definition) => {

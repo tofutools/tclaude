@@ -12,6 +12,7 @@ import {
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
+import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -49,6 +50,7 @@ const MAIL_PANES = [
 // dedicated caret button, which avoids overloading a folder row with two
 // meanings and keeps pane traversal consistent from every row in the sidebar.
 function movePaneFocus(event, controller) {
+  if (hasShownOverlay()) return false;
   if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
   const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
   if (!direction) return false;
@@ -239,22 +241,38 @@ function MessageHead({ message, aggregate, controller }) {
     ${party && html`<span class="mail-row-party" title=${conv ? idTooltip(agent, conv) : undefined}>${party}</span>`}</${Fragment}>`;
 }
 
-function MessageAttachmentIndicator({ count }) {
-  if (!count) return null;
-  const label = `${count} attachment${count === 1 ? '' : 's'}`;
+const ATTACHMENT_ICONS = {
+  file: html`<path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />`,
+  image: html`<rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 4-6 5 7" />`,
+  video: html`<rect x="3" y="5" width="13" height="14" rx="2" /><path d="m16 10 5-3v10l-5-3z" />`,
+};
+
+function MessageAttachmentIndicator({ attachments }) {
+  if (!attachments.length) return null;
+  const counts = { file: 0, image: 0, video: 0 };
+  for (const attachment of attachments) {
+    const mime = String(attachment.content_type || '').toLowerCase();
+    // Type counts include media the browser may not be able to preview.
+    const kind = attachment.video || mime.startsWith('video/') ? 'video'
+      : attachment.previewable || mime.startsWith('image/') ? 'image' : 'file';
+    counts[kind] += 1;
+  }
+  const kinds = Object.keys(counts).filter((kind) => counts[kind]);
+  const label = kinds.map((kind) => `${counts[kind]} ${kind}${counts[kind] === 1 ? '' : 's'}`).join(', ');
   return html`<span class="mail-row-attachments" role="img" title=${label} aria-label=${label}>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />
-    </svg>
-    ${count > 1 && html`<span class="mail-row-attachment-count" aria-hidden="true">${count}</span>`}
+    ${kinds.map((kind) => html`<span key=${kind} class="mail-row-attachment-type" data-type=${kind} aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ATTACHMENT_ICONS[kind]}</svg>
+      <span class="mail-row-attachment-count">${counts[kind]}</span>
+    </span>`)}
   </span>`;
 }
 
 function MessageRow({ message, current, aggregate, controller }) {
   const active = message.id === current.selectedMsgId;
   const unread = !message.read;
-  const attachmentCount = messageAttachments(message).length;
+  const attachments = messageAttachments(message);
   return html`<div class="mail-row-wrap" data-key=${message.id} data-kind=${controller.msgKind(message)}>
     <input type="checkbox" class="mail-msg-check" data-id=${message.id} checked=${current.selectedMsgs.has(message.id)}
       disabled=${current.busy} title="Select message"
@@ -270,7 +288,7 @@ function MessageRow({ message, current, aggregate, controller }) {
       </span>
       <span class="mail-row-subject-line">
         <span class="mail-row-subject">${controller.msgPreview(message)}</span>
-        <${MessageAttachmentIndicator} count=${attachmentCount} />
+        <${MessageAttachmentIndicator} attachments=${attachments} />
       </span>
     </button>
     <button class="mail-row-del" data-id=${message.id}
@@ -447,8 +465,8 @@ function HumanAttachment({ message }) {
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
     <div class="mail-attachment" key=${attachment.id || index}>
-      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
-      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="messages" />
+      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
+      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <span class="mail-attachment-label">Agent file</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>

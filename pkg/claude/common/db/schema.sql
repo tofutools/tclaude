@@ -1857,6 +1857,13 @@ CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 
+CREATE TABLE spend_alerts (
+ period TEXT NOT NULL,
+ period_start TEXT NOT NULL,
+ threshold INTEGER NOT NULL,
+ PRIMARY KEY (period, period_start, threshold)
+ );
+
 CREATE TABLE process_agent_dispatches (
 	run_id         TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
 	command_id     TEXT NOT NULL CHECK(length(CAST(command_id AS BLOB)) BETWEEN 1 AND 1024),

@@ -112,8 +112,8 @@ function Attachment({ message }) {
     const href = attachmentHref(message, attachment);
     const filename = attachment.filename || 'attachment';
     return html`<div class="human-notification-drawer-attachment" key=${attachment.id || index}>
-      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
-      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} surface="drawer" />
+      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="drawer" />
+      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="drawer" />
       <a class="human-notification-drawer-file-link" href=${href}
         download=${attachment.filename || ''} title=${`Download ${filename}`}>
         <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>

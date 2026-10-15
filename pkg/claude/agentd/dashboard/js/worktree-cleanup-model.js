@@ -26,6 +26,16 @@ export function normalizeWorktreeCandidate(worktree) {
     is_main: isMain,
     checked: !isMain && worktree?.checked === true,
     dirty: worktree?.dirty === true,
+    merged: worktree?.merged === true,
+    unpushed_commits: Number(worktree?.unpushed_commits || 0),
+    upstream_gone: worktree?.upstream_gone === true,
+    base_ref: String(worktree?.base_ref || ''),
+    last_commit: Number(worktree?.last_commit || 0),
+    last_activity: Number(worktree?.last_activity || 0),
+    stale: worktree?.stale === true,
+    signal_error: String(worktree?.signal_error || ''),
+    potentially_dangling: !isMain && worktree?.potentially_dangling === true,
+    dangling_reason: String(worktree?.dangling_reason || ''),
     reason: String(worktree?.reason || ''),
     agents: Object.freeze((worktree?.agents || []).map(normalizeAgent)),
   });
@@ -135,7 +145,8 @@ export function dirtyWorktrees(candidates) {
   return removableWorktrees(candidates).filter((candidate) => candidate.dirty);
 }
 
-export function visibleWorktrees(candidates, query) {
+export function visibleWorktrees(candidates, query, danglingOnly = false) {
+  if (danglingOnly) candidates = (candidates || []).filter((candidate) => candidate.potentially_dangling);
   const removable = removableWorktrees(candidates).filter((candidate) => worktreeMatches(candidate, query));
   const mains = (candidates || []).filter(
     (candidate) => candidate.is_main && worktreeMatches(candidate, query),

@@ -144,6 +144,14 @@ export function useViewerDisplay({ dialogRef, open, shouldHandle = () => true })
     // never shadows a browser shortcut.
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.isComposing || event.repeat || !handleRef.current()) return;
+      if (event.target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      if (event.key === 't' || event.key === 'T') {
+        if (document.fullscreenElement === node) return;
+        event.preventDefault();
+        setMaximized((value) => !value);
+        return;
+      }
       if (event.key !== 'f' && event.key !== 'F') return;
       if (!canFullscreen || !handleRef.current()) return;
       event.preventDefault();
@@ -193,7 +201,7 @@ export function ViewerDisplayButtons({ maximized, fullscreen, canFullscreen, tog
     ${!fullscreen && html`<button type="button" class="viewer-display-button viewer-maximize"
       onClick=${toggleMaximize} aria-pressed=${maximized}
       aria-label=${maximized ? 'Restore the viewer size' : 'Maximize the viewer'}
-      title=${maximized ? 'Restore size' : 'Maximize to the window'}>
+      title=${maximized ? 'Restore size (T)' : 'Maximize to the window (T)'}>
       <${Icon} name=${maximized ? 'restore' : 'maximize'} />
     </button>`}
     ${canFullscreen && html`<button type="button" class="viewer-display-button viewer-fullscreen"

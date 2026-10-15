@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// Scribe chat replies (agent_turn_replies, schema v261).
+// Scribe chat replies (agent_turn_replies, schema v262).
 //
 // The process editor's docked scribe chat shows the scribe's final message of
 // each turn. Nothing else persists assistant turns, so the Stop hook records

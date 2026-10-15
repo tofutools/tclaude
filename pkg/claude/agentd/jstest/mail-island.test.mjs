@@ -109,12 +109,12 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   assert.equal(mounted.container.querySelector('.mail-attachment a').getAttribute('download'), 'report.md');
   assert.equal(mounted.container.querySelector('.mail-attachment-size').textContent, '1.5 KiB');
   const attachmentIndicator = mounted.container.querySelector('.mail-row-attachments');
-  assert.equal(attachmentIndicator.getAttribute('title'), '1 attachment');
+  assert.equal(attachmentIndicator.getAttribute('title'), '1 file');
   assert.equal(attachmentIndicator.getAttribute('role'), 'img');
-  assert.equal(attachmentIndicator.getAttribute('aria-label'), '1 attachment');
+  assert.equal(attachmentIndicator.getAttribute('aria-label'), '1 file');
   assert.ok(attachmentIndicator.querySelector('svg'));
-  assert.equal(attachmentIndicator.querySelector('.mail-row-attachment-count'), null,
-    'a single attachment needs no redundant numeric count');
+  assert.equal(attachmentIndicator.querySelector('.mail-row-attachment-count').textContent, '1',
+    'every nonempty type shows its count');
   assert.equal(mounted.container.querySelector('[data-act="msg-focus"]').dataset.harness, 'copilot',
     'message focus carries the live sender harness into the terminal launcher');
 
@@ -135,8 +135,8 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
     }], attachment: undefined } : item
   )) }; });
   const multiIndicator = mounted.container.querySelector('.mail-row-attachments');
-  assert.equal(multiIndicator.getAttribute('title'), '2 attachments');
-  assert.equal(multiIndicator.querySelector('.mail-row-attachment-count').textContent, '2');
+  assert.equal(multiIndicator.getAttribute('title'), '1 file, 1 image');
+  assert.deepEqual([...multiIndicator.querySelectorAll('.mail-row-attachment-count')].map((node) => node.textContent), ['1', '1']);
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => { state.value = { ...state.value }; });
@@ -497,5 +497,67 @@ test('a paged sidebar list at the roster cap asks for the filter instead of offe
   const sidebar = mounted.container.querySelector('#mail-sidebar');
   assert.equal(sidebar.querySelector('button.mailbox-load-more'), null, 'no dead Show more at the cap');
   assert.match(sidebar.querySelector('.mailbox-load-more.capped').textContent, /2000 of 5000 shown · filter to narrow/);
+  await mounted.unmount();
+});
+
+test('message list counts files, images, and videos separately in normal and wizard modes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  state.value = { ...state.value, selectedMsgId: null, messages: [message(1, { attachments: [
+    { filename: 'archive.zip', content_type: 'application/zip' },
+    { filename: 'notes.md', content_type: 'text/markdown', markdown: true },
+    { filename: 'photo.png', content_type: 'image/png', previewable: true },
+    { filename: 'drawing.svg', content_type: 'image/svg+xml' },
+    { filename: 'screen.png', previewable: true },
+    { filename: 'clip.mp4', content_type: 'video/mp4', video: true },
+    { filename: 'movie.bin', video: true },
+    { filename: 'unplayable.mov', content_type: 'video/quicktime' },
+  ] }), message(2)] };
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controllerFor(state)} />`);
+  for (const wizard of [false, true]) {
+    if (wizard) {
+      harness.document.body.classList.add('wizard');
+      await harness.act(() => { state.value = { ...state.value }; });
+    }
+    const rows = mounted.container.querySelectorAll('.mail-row');
+    const indicator = rows[0].querySelector('.mail-row-attachments');
+    assert.equal(indicator.getAttribute('aria-label'), '2 files, 3 images, 3 videos');
+    assert.equal(indicator.getAttribute('title'), '2 files, 3 images, 3 videos');
+    assert.deepEqual([...indicator.querySelectorAll('.mail-row-attachment-type')].map((node) => [
+      node.dataset.type, node.querySelector('.mail-row-attachment-count').textContent,
+    ]), [['file', '2'], ['image', '3'], ['video', '3']]);
+    assert.equal(rows[1].querySelector('.mail-row-attachments'), null, 'no empty indicators');
+  }
+  await harness.act(() => { state.value = { ...state.value, messages: [message(1, {
+    attachments: [{ filename: 'only.png', content_type: 'image/png' }],
+  })] }; });
+  const single = mounted.container.querySelector('.mail-row-attachments');
+  assert.equal(single.getAttribute('aria-label'), '1 image');
+  assert.equal(single.querySelectorAll('.mail-row-attachment-type').length, 1, 'omit zero types');
+  assert.equal(single.querySelector('.mail-row-attachment-count').textContent, '1');
+  await mounted.unmount();
+});
+
+test('attachment preview arrows stay inside the modal instead of moving Messages panes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  const first = { id: 1, filename: 'one.png', url: '/one', previewable: true };
+  const second = { id: 2, filename: 'two.png', url: '/two', previewable: true };
+  state.value = { ...state.value, messages: [message(1, { attachments: [first, second] })] };
+  const controller = controllerFor(state);
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const settle = () => harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await harness.act(() => mounted.container.querySelectorAll('.human-attachment-preview-trigger')[1].click());
+  await settle();
+  const close = mounted.container.querySelector('.image-preview-close');
+  await harness.act(() => harness.fireEvent(close, 'keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(mounted.container.querySelector('.image-preview-dialog h2').textContent, 'one.png');
+  assertSameNode(harness.document.activeElement, close, 'pane traversal must not pull focus out of the preview');
   await mounted.unmount();
 });
