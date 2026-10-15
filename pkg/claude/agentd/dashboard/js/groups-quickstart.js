@@ -362,17 +362,21 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const ensureSaved = async ({ listed, pinGroup = '' } = {}) => {
     const current = created.current;
     if (current.key !== viewKey || !current.id) {
-      let body;
-      if (current.id) {
-        body = await api.saveTemplate(current.id, view, { sourceHash: current.sourceHash, ...(listed ? { listed } : {}), ...(pinGroup && !current.pinned ? { pinGroup } : {}) });
-        created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
-      } else {
-        body = await api.createTemplate(view, { ...(listed === undefined ? {} : { listed }), ...(pinGroup ? { pinGroup } : {}) });
-        const id = String(body?.id || '');
-        if (!id) throw new Error('the template was not created');
-        created.current = { key: viewKey, id, body, sourceHash: String(body?.sourceHash || ''), pinned: !!pinGroup, listed: listed !== false };
+      try {
+        return await storeSteps(current, { listed, pinGroup });
+      } catch (cause) {
+        // Saved, but its listing or pin failed: keep that version, so a
+        // retry only redoes the metadata instead of a second create or a
+        // stale-hash 409.
+        if (!cause.body?.ref || !cause.body?.id) throw cause;
+        const head = await api.getTemplate(cause.body.id).catch(() => null);
+        const listingFailed = cause.body.code === 'process_template_listing';
+        created.current = {
+          key: viewKey, id: String(cause.body.id), sourceHash: String(head?.sourceHash || ''), body: null,
+          pinned: !!current.pinned, listed: listingFailed ? !!current.listed : (!!current.listed || !!listed),
+        };
+        throw cause;
       }
-      return created.current.id;
     }
     if (pinGroup && !current.pinned) {
       await api.pinProcess(pinGroup, current.id);
@@ -383,6 +387,20 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       current.listed = true;
     }
     return current.id;
+  };
+  // storeSteps writes the steps: a new version of the template already
+  // stored, or a new template.
+  const storeSteps = async (current, { listed, pinGroup }) => {
+    if (current.id) {
+      const body = await api.saveTemplate(current.id, view, { sourceHash: current.sourceHash, ...(listed ? { listed } : {}), ...(pinGroup && !current.pinned ? { pinGroup } : {}) });
+      created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
+    } else {
+      const body = await api.createTemplate(view, { ...(listed === undefined ? {} : { listed }), ...(pinGroup ? { pinGroup } : {}) });
+      const id = String(body?.id || '');
+      if (!id) throw new Error('the template was not created');
+      created.current = { key: viewKey, id, body, sourceHash: String(body?.sourceHash || ''), pinned: !!pinGroup, listed: listed !== false };
+    }
+    return created.current.id;
   };
   const label = name.trim() || 'this process';
   const start = async () => {

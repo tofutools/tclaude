@@ -213,7 +213,13 @@ function saveMeta(listed, pinGroup) {
 async function processRequest(path, init, fetchImpl) {
   const response = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store', ...init });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
+  if (!response.ok) {
+    // The body rides along: a template save whose listing or pin failed
+    // names the version it did store ({id, ref}).
+    const error = new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
+    error.body = body;
+    throw error;
+  }
   return body;
 }
 

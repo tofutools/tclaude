@@ -17,7 +17,7 @@ const GROUPS = [
 
 const EMPTY_CONTEXT = { runs: {}, groups: [{ groupId: 1, group: 'webshop', active: [], needsYou: [], done: [], planned: [] }], agents: [], orphaned: [] };
 
-function fakeApi({ createError = null, startErrors = [], stored = {} } = {}) {
+function fakeApi({ createError = null, createErrorBody = null, startErrors = [], stored = {} } = {}) {
   const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [] };
   return {
     calls,
@@ -31,7 +31,7 @@ function fakeApi({ createError = null, startErrors = [], stored = {} } = {}) {
     validateTemplate: async (view) => { calls.validate.push(view); return []; },
     createTemplate: async (view, options) => {
       calls.create.push({ view, options });
-      if (createError) throw new Error(createError);
+      if (createError) throw Object.assign(new Error(createError), { body: createErrorBody });
       return { id: `tmpl_${calls.create.length}`, ref: 'x@sha256:1' };
     },
     startGroupRun: async (request) => {
@@ -415,4 +415,19 @@ test('a saved process the step list cannot show opens in the graph editor', asyn
   assert.equal(root.querySelector('[data-step-editor]'), null);
   assert.deepEqual(handoff.takeProcessDraft(), { id: 'tmpl_ship', name: 'ship-feature' });
   assert.match(notes[0].message, /opens in the graph editor/);
+});
+
+test('a save whose pin failed keeps the stored template, so a retry only pins it', async (t) => {
+  const api = fakeApi({ createError: 'the template was saved, but pinning it to the group failed: full',
+    createErrorBody: { id: 'tmpl_x', ref: 'tmpl_x@sha256:1', code: 'process_group_pin' }, stored: { tmpl_x: { sourceHash: 'hx' } } });
+  const { root, click, setValue } = await mount(t, { api });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.match(editor.querySelector('.gq-error').textContent, /pinning it to the group failed/);
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.equal(api.calls.create.length, 1, 'no second template');
+  assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
 });
