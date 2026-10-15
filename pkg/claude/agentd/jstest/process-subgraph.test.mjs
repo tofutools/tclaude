@@ -175,3 +175,23 @@ test('scribe context from inside a scope names body items by namespaced id on th
   assert.ok(input.template.nodes.qa && input.template.nodes.ship, 'the root template is described');
   assert.ok(input.edges.some((e) => e.from === 'qa/unit' && e.to === 'qa/ok'));
 });
+
+test('problems found through a templateRef badge the ▣ node and offer to open the template', async (t) => {
+  const opened = [];
+  const { harness, host, editor, q, click } = await openEditor(t, { onOpenTemplate: (id) => opened.push(id) });
+  await harness.act(() => editor.mutate(() => editor.model.replaceSubprocessWithRef('qa', 'qa-suite')));
+  await harness.act(() => editor.validation.applyDiagnostics([
+    { severity: 'error', scope: 'node', targetId: 'qa', code: 'unknown_input', templateRef: 'qa-suite',
+      message: 'template qa-suite: in-port "target" is not a declared param of the subprocess body' },
+    { severity: 'warning', scope: 'node', targetId: 'qa', code: 'w', templateRef: 'qa-suite', message: 'inside template qa-suite: slow step' },
+  ]));
+  assert.ok(q('[data-node-id="qa"] .process-overlay-glyph'), 'the ▣ node carries the marker');
+  await harness.act(() => editor.openNodeSettings('qa'));
+  assert.deepEqual([...host.querySelectorAll('.pni-diag')].map((li) => li.textContent), [
+    '✕ template qa-suite: in-port "target" is not a declared param of the subprocess body',
+    '⚠ inside template qa-suite: slow step',
+  ]);
+  assert.equal(host.querySelectorAll('[data-diag-open-template]').length, 1, 'one action per referenced template');
+  await click('[data-diag-open-template="qa-suite"]');
+  assert.deepEqual(opened, ['qa-suite']);
+});

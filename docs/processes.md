@@ -197,7 +197,12 @@ things there are specific to processes:
   dashed port nodes are its contract (⇄ ports binds body params and maps body
   ends onto the ▣ node's outcomes), and Esc or Alt+↑ goes back up. The
   palette's outline lists every nested body. *⇪ extract as template* saves a
-  body as its own template and turns the node into a reference to it.
+  body as its own template and turns the node into a reference to it. A
+  reference is not edited in place, since other templates may share it. While
+  you author, the editor resolves each reference the way a run would, and any
+  problem (a missing template, in-ports it does not declare or leaves unbound,
+  trouble further down) marks the ▣ node. Its inspector lists them as
+  "inside template X: …" with an *open X to fix* button.
 - **Composing on the canvas.** The palette also lists your other templates:
   drop one (or any node kind) on the canvas, or onto a connector to splice it
   in between. *⊞ expand* draws a ▣ node's body on the parent canvas as a
