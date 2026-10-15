@@ -538,3 +538,26 @@ test('message list counts files, images, and videos separately in normal and wiz
   assert.equal(single.querySelector('.mail-row-attachment-count').textContent, '1');
   await mounted.unmount();
 });
+
+test('attachment preview arrows stay inside the modal instead of moving Messages panes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const state = harness.signals.signal(populated());
+  const first = { id: 1, filename: 'one.png', url: '/one', previewable: true };
+  const second = { id: 2, filename: 'two.png', url: '/two', previewable: true };
+  state.value = { ...state.value, messages: [message(1, { attachments: [first, second] })] };
+  const controller = controllerFor(state);
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const settle = () => harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await harness.act(() => mounted.container.querySelectorAll('.human-attachment-preview-trigger')[1].click());
+  await settle();
+  const close = mounted.container.querySelector('.image-preview-close');
+  await harness.act(() => harness.fireEvent(close, 'keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(mounted.container.querySelector('.image-preview-dialog h2').textContent, 'one.png');
+  assertSameNode(harness.document.activeElement, close, 'pane traversal must not pull focus out of the preview');
+  await mounted.unmount();
+});
