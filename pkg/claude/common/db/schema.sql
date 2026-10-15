@@ -1840,3 +1840,8 @@ CREATE TABLE 'agent_messages_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term
 CREATE TABLE 'agent_messages_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'agent_messages_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID;
+
+CREATE TABLE saved_prompts (
+ name TEXT PRIMARY KEY NOT NULL,
+ body TEXT NOT NULL
+ );
