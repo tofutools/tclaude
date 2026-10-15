@@ -14,7 +14,8 @@ import { h } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import {
-  RUN_KINDS, RUN_KIND_LABELS, activeRunCount, processContext, runFilterHas, runKindCounts, toggleRunKind,
+  RUN_KINDS, RUN_KIND_LABELS, activeRunCount, normalizeRunFilter, processContext, runFilterHas, runKindCounts,
+  toggleRunKind,
 } from './process-context.js';
 
 const html = htm.bind(h);
@@ -105,7 +106,13 @@ function RunKindMenu({ state, wizard, counts }) {
       const checked = runFilterHas(filter, kind);
       return html`<label key=${kind} class=${`groups-run-kind groups-run-kind-${kind}${checked ? ' checked' : ''}`}>
         <input type="checkbox" data-process-filter=${kind} checked=${checked}
-          onChange=${() => state.setProcessFilter?.(toggleRunKind(state.processFilter?.value, kind))} />
+          onChange=${(event) => {
+            const next = toggleRunKind(state.processFilter?.value, kind);
+            // A refused untick leaves the signal unchanged, so nothing
+            // re-renders: put the browser-cleared tick back by hand.
+            if (next === normalizeRunFilter(state.processFilter?.value)) event.currentTarget.checked = true;
+            state.setProcessFilter?.(next);
+          }} />
         <span class="groups-run-dot" aria-hidden="true"></span>
         <span class="groups-run-label">${RUN_KIND_LABELS[kind][wizard ? 1 : 0]}</span>
         ${counts && html`<span class="groups-run-count">${counts[kind]}</span>`}
@@ -123,7 +130,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
       type="button"
       class=${`groups-focus-option${focus === value ? ' active' : ''}`}
       aria-pressed=${focus === value ? 'true' : 'false'}
-      aria-label=${wizard ? arcane : plain}
+      aria-label=${`${wizard ? arcane : plain}${count != null ? ` ${count}` : ''}`}
       data-groups-focus=${value}
       title=${title}
       onClick=${() => chooseGroupsFocus(state, value)}

@@ -96,7 +96,9 @@ export function GroupsControls({ state, actions }) {
     };
   }, []);
 
-  // The match count and × live inside the search box, only while filtering.
+  // The match count and × live inside the search box, shown only while
+  // filtering. The count's live region stays mounted (hidden, empty) so the
+  // first count after typing is announced.
   const filtering = Boolean(current.query);
 
   return html`
@@ -119,10 +121,10 @@ export function GroupsControls({ state, actions }) {
           queueRefresh();
         }}
       />
+      <span class="filter-count" id="filter-groups-count" aria-live="polite" hidden=${!filtering}
+        title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
+      >${filtering ? `${current.shownReal} / ${current.total}` : ''}</span>
       ${filtering && html`
-        <span class="filter-count" id="filter-groups-count" aria-live="polite"
-          title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
-        >${current.shownReal} / ${current.total}</span>
         <button
           class="clear-filter"
           id="filter-groups-clear"

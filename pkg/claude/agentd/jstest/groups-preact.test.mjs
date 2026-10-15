@@ -363,7 +363,8 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter groups' });
   assert.equal(filter.placeholder, 'Filter groups & members');
   assert.equal(filter.title, 'Matches group name + member title/role/descr/cwd/branch');
-  assert.equal(mounted.container.querySelector('#filter-groups-count'), null, 'no count while not filtering');
+  const idleCount = mounted.container.querySelector('#filter-groups-count');
+  assert.ok(idleCount.hasAttribute('hidden') && idleCount.textContent === '', 'the live region stays mounted, hidden and empty, while not filtering');
   assert.equal(mounted.container.querySelector('#filter-groups-clear'), null, 'no × while not filtering');
   await harness.input(filter, 'alpha');
   assert.equal(state.view.value.groups.filter((group) => !group.virtual).length, 1);

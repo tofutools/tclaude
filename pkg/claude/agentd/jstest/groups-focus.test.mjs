@@ -102,9 +102,11 @@ test('the Processes icon carries the run-kind checklist: running + planned by de
   await harness.act(() => harness.fireEvent(box('running'), 'change'));
   await harness.act(() => harness.fireEvent(box('planned'), 'change'));
   assert.equal(state.processFilter.value, 'done');
+  // As a browser does: the click clears the box before `change` fires.
+  box('done').checked = false;
   await harness.act(() => harness.fireEvent(box('done'), 'change'));
   assert.equal(state.processFilter.value, 'done', 'unticking the last kind is refused');
-  assert.equal(ticked('done'), true);
+  assert.equal(box('done').checked, true, 'the refused box is ticked again');
 });
 
 test('history restores set the focus; Route map restores leave it alone', async (t) => {
