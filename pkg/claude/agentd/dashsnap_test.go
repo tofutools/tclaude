@@ -860,32 +860,28 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-processes-step-editor",
 			Title:   "Groups — Processes quick start: step list",
-			Caption: "Mock Q2 (tcl-7p6bgt): the Build → review → ship starter opened as an inline step list. Each step has a Who picker (a specific agent, any member with a role, you, or a command), you-steps branch on their answers to later steps (one rework round, then you decide), {{issue}} in a prompt became a start input, and the preview (a top-to-bottom numbered flow at the panel's width, answers that jump drawn as rails), the start inputs and who it will use now update live. The merge command needs a named consent ('Allow step 6 to run … (program profile: default)'); unticked, Start is disabled with a one-line reason. The server validates the draft as it changes; nothing runs until Start.",
+			Caption: "Mock Q2 (tcl-7p6bgt): the Build → review → ship starter opened as an inline step list. Each step has a Who picker (a specific agent, any member with a role, you, or a command), you-steps branch on their answers (Approve's 'changes' goes back to step 1 for at most 3 rounds), {{issue}} in a prompt became a start input, and the preview (a top-to-bottom numbered flow at the panel's width, answers that jump drawn as rails), the start inputs and who it will use now update live. The merge command needs a named consent ('Allow step 4 to run … (program profile: default)'); unticked, Start is disabled with a one-line reason. The server validates the draft as it changes; nothing runs until Start.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + groupsProcessesJS(stepEditorJS(`
   editor.querySelector('[data-start-profile=""]').click();
   await new Promise(function(resolve){ setTimeout(resolve, 60); });
   if (!editor.querySelector('[data-start-blocked]')) throw new Error('Start lacks its one-line reason');
   var rows = editor.querySelectorAll('[data-step-flow] [data-flow-row]');
-  if (rows.length !== 9) throw new Error('the preview does not list every step top to bottom: ' + rows.length);
+  if (rows.length !== 7) throw new Error('the preview does not list every step top to bottom: ' + rows.length);
   editor.scrollIntoView({block: 'start'});`)),
 			SettleMS: 300,
 		},
 		{
 			Key:     "groups-processes-step-editor-loop",
 			Title:   "Groups — Processes quick start: an answer that goes back",
-			Caption: "tcl-eu70x9: the Approve step's 'rework' answer pointed back at step 1 becomes a bounded loop — '↺ back to 1 · Implement', at most [3] rounds, then [hold | ask again] — and the preview's rail reads 'rework → ↺ back to 1 (max 3 rounds…)'.",
+			Caption: "tcl-eu70x9 / tcl-lkkxph: the starter's Approve step sends 'changes' back to step 1 as a bounded loop — '↺ back to 1 · Implement', at most [3] rounds, then [hold | ask again] — and the preview's rail reads 'changes → ↺ back to 1 (max 3 rounds, then hold)'.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + groupsProcessesJS(stepEditorJS(`
-  var select = editor.querySelector('[aria-label="After rework"]');
-  if (!select) throw new Error('the Approve step has no rework answer');
-  var back = Array.from(select.options).find(function(option){ return /^↺ back to 1 · /.test(option.textContent); });
-  if (!back) throw new Error('the rework answer offers no way back to step 1');
-  select.value = back.value;
-  select.dispatchEvent(new Event('change', {bubbles: true}));
-  await new Promise(function(resolve){ setTimeout(resolve, 900); });
-  var loop = editor.querySelector('[data-loop="rework"]');
-  if (!loop) throw new Error('going back did not show the loop controls');
+  var select = editor.querySelector('[aria-label="After changes"]');
+  if (!select) throw new Error('the Approve step has no changes answer');
+  if (!/^↺ back to 1 · /.test(select.options[select.selectedIndex].textContent)) throw new Error('changes does not go back to step 1');
+  var loop = editor.querySelector('[data-loop="changes"]');
+  if (!loop) throw new Error('the loop controls are missing');
   if (loop.querySelector('.gq-loop-rounds').value !== '3') throw new Error('the loop did not start at 3 rounds');
   if (!/back to 1 \(max 3 rounds/.test(editor.querySelector('[data-step-flow]').textContent)) throw new Error('the preview does not show the loop');
   editor.scrollIntoView({block: 'start'});`)),
@@ -5968,7 +5964,7 @@ func stepEditorJS(extraJS string) string {
   await new Promise(function(resolve){ setTimeout(resolve, 900); });
   if (editor.querySelector('.gq-problem, .gq-problems')) throw new Error('the starter draft has validation problems: ' + editor.querySelector('.gq-problem, .gq-problems').textContent);
   var consent = editor.querySelector('[data-start-profile=""]');
-  if (!consent || !/Allow step 6 to run/.test(consent.closest('label').textContent)) throw new Error('the merge command lacks its named consent');
+  if (!consent || !/Allow step 4 to run/.test(consent.closest('label').textContent)) throw new Error('the merge command lacks its named consent');
   if (!editor.querySelector('[data-step-start]').disabled) throw new Error('Start is enabled before the command consent');
   consent.click();
   await new Promise(function(resolve){ setTimeout(resolve, 60); });

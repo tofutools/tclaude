@@ -61,7 +61,6 @@ test('insert after and before keep the main path connected', () => {
   assert.equal(edge(after.view, after.id, 'next'), 'review');
   const before = m.insertBefore(ship, 'merge', 'command');
   assert.equal(edge(before.view, 'approve', 'ship'), before.id, 'every edge into the step now enters the new one');
-  assert.equal(edge(before.view, 'final-say', 'ship'), before.id);
   assert.equal(edge(before.view, before.id, 'next'), 'merge');
   assert.equal(m.canInsertBefore(ship, 'start'), 'nothing runs before the start');
   assert.equal(m.canInsertAfter(ship, 'end'), 'nothing runs after an end');
@@ -70,7 +69,7 @@ test('insert after and before keep the main path connected', () => {
 test('a "you" step branches on a new answer that rejoins; a task does not branch', () => {
   const out = m.branch(ship, 'approve', 'agent');
   assert.equal(out.outcome, 'option');
-  assert.deepEqual(out.view.template.nodes.approve.performer.choices, ['ship', 'rework', 'hold', 'option']);
+  assert.deepEqual(out.view.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold', 'option']);
   assert.equal(edge(out.view, 'approve', 'option'), out.id);
   assert.equal(edge(out.view, out.id, 'next'), 'merge', 'the branch rejoins the main path');
   assert.match(m.canBranch(ship, 'implement'), /continues one way/);
@@ -82,7 +81,7 @@ test('alongside fans out through a parallel node and joins at what came next', (
   assert.equal(edge(out.view, 'implement', 'next'), out.fork);
   assert.deepEqual(out.view.edges.filter((e) => e.from === out.fork).map((e) => e.to).sort(), [out.id, 'review'].sort());
   assert.equal(out.view.template.nodes.approve.join, 'all');
-  assert.match(m.canRunAlongside(ship, 'merge'), /several steps leading/);
+  assert.match(m.canRunAlongside(ship, 'implement'), /several steps leading/, 'the start and the changes loop both lead to it');
   assert.match(m.canRunAlongside(ship, 'start'), /only a step/);
 });
 
@@ -91,8 +90,10 @@ test('delete rewires to the main path and removes the steps only it led to', () 
   assert.equal(edge(review.view, 'implement', 'next'), 'approve');
   assert.deepEqual(review.orphans, []);
   const approve = m.deleteStep(ship, 'approve');
-  assert.deepEqual(approve.orphans.sort(), ['final-say', 'rework', 'stopped'], 'the stop end only its answers reached goes too');
-  assert.deepEqual(m.deleteOrphans(ship, 'approve').sort(), ['Final say', 'Rework']);
+  assert.deepEqual(approve.orphans, ['stopped'], 'the stop end only its answers reached goes too');
+  assert.deepEqual(m.deleteOrphans(ship, 'approve'), [], 'an end is not a step to name');
+  const branched = m.branch(ship, 'approve', 'agent').view;
+  assert.deepEqual(m.deleteOrphans(branched, 'approve'), ['New step'], 'a step only its answers reach is named');
   assert.throws(() => m.deleteStep(ship, 'start'), /start cannot be deleted/);
 });
 
@@ -101,11 +102,12 @@ test('change kind: a "you" step is a decision, a task keeps one route', () => {
   assert.equal(you.template.nodes.implement.type, 'decision');
   assert.deepEqual(you.template.nodes.implement.performer.choices, ['continue']);
   assert.equal(edge(you, 'implement', 'continue'), 'review');
-  assert.equal(you.template.nodes.implement.performer.ask, 'Implement {{params.issue}} on a branch and open a PR.', 'the text moves along');
+  assert.equal(you.template.nodes.implement.performer.ask, 'Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR.', 'the text moves along');
   const cmd = m.changeKind(ship, 'approve', 'command');
   assert.equal(cmd.view.template.nodes.approve.type, 'task');
   assert.deepEqual(cmd.view.edges.filter((e) => e.from === 'approve'), [{ from: 'approve', outcome: 'next', to: 'merge' }]);
-  assert.deepEqual(cmd.orphans.sort(), ['final-say', 'rework', 'stopped']);
+  assert.deepEqual(cmd.orphans, ['stopped']);
+  assert.equal(cmd.view.template.nodes.approve.loops, undefined, 'only a decision bounds a loop');
 });
 
 test('outcomes: retarget, add, rename and remove', () => {
@@ -115,12 +117,12 @@ test('outcomes: retarget, add, rename and remove', () => {
   view = added.view;
   assert.equal(added.outcome, 'option');
   view = m.renameOutcome(view, 'approve', 'option', 'skip').view;
-  assert.deepEqual(view.template.nodes.approve.performer.choices, ['ship', 'rework', 'hold', 'skip']);
+  assert.deepEqual(view.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold', 'skip']);
   assert.equal(edge(view, 'approve', 'skip'), 'end');
   assert.throws(() => m.renameOutcome(view, 'approve', 'skip', 'ship'), /already an outcome/);
   view = m.removeOutcome(view, 'approve', 'skip').view;
-  assert.deepEqual(view.template.nodes.approve.performer.choices, ['ship', 'rework', 'hold']);
-  assert.deepEqual(m.outcomesOf(view, 'approve').map((o) => [o.outcome, o.main]), [['ship', true], ['rework', false], ['hold', false]]);
+  assert.deepEqual(view.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold']);
+  assert.deepEqual(m.outcomesOf(view, 'approve').map((o) => [o.outcome, o.main]), [['ship', true], ['changes', false], ['hold', false]]);
 });
 
 test('the draft projects onto the kit: kinds, who lines, outcome labels', () => {
@@ -132,16 +134,14 @@ test('the draft projects onto the kit: kinds, who lines, outcome labels', () => 
   assert.equal(node('merge').performer.kind, 'program');
   assert.equal(node('start').kind, 'start');
   assert.equal(run.edges.find((e) => e.from === 'implement').label, '', 'a plain pass is unlabelled');
-  assert.equal(run.edges.find((e) => e.from === 'approve' && e.to === 'rework').label, 'rework');
+  assert.equal(run.edges.find((e) => e.from === 'approve' && e.to === 'stopped').label, 'hold');
   assert.deepEqual(m.changeSummary(ship, m.insertAfter(ship, 'implement', 'agent').view), ['added “New step”', 'Implement changed']);
 });
 
 test('a bounded loop projects as a back edge carrying its bound', () => {
-  const looped = structuredClone(ship);
-  looped.template.nodes.approve.loops = { rework: { maxIterations: 3 } };
-  const run = m.draftProjection(looped);
-  const back = run.edges.find((e) => e.from === 'approve' && e.to === 'rework');
-  assert.deepEqual([back.back, back.maxIterations, back.label], [true, 3, 'rework']);
+  const run = m.draftProjection(ship);
+  const back = run.edges.find((e) => e.from === 'approve' && e.to === 'implement');
+  assert.deepEqual([back.back, back.maxIterations, back.label], [true, 3, 'changes']);
   assert.equal(run.edges.find((e) => e.from === 'implement').back, undefined, 'other edges stay forward');
 });
 
@@ -187,7 +187,7 @@ test('a loop keeps a way on, and its body only leaves through a decision', () =>
 });
 
 test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
-  assert.match(m.canRunAlongside(ship, 'final-say'), /other outcomes/, 'its hold answer would leave the branch');
+  assert.match(m.canRunAlongside(ship, 'approve'), /other outcomes/, 'its other answers would leave the branch');
   const fork = fill(m.runAlongside(ship, 'review', 'agent'));
   assert.match(m.canRunAlongside(fork, 'review'), /several paths meet/, 'a branch of an open fork cannot fork again at its join');
   const before = m.insertBefore(fork, 'approve', 'agent');

@@ -4,8 +4,9 @@
 // step will use right now. No DOM and no fetch; the components live in
 // groups-quickstart.js.
 
+import { LOOP_DEFAULT_ROUNDS } from './process-loops.js';
 import {
-  blankStepList, insertStep, newStep, replaceStep, setStepChoices, setStepLinks, stepWho,
+  blankStepList, insertStep, newStep, replaceStep, setOutcomeLoop, setStepChoices, setStepLinks, stepWho,
 } from './process-step-list.js';
 
 export function rosterMember(member) {
@@ -64,24 +65,23 @@ export const STARTERS = Object.freeze([
     key: 'build-review-ship',
     title: 'Build → review → ship',
     chain: [['agent', 'Implement'], ['agent', 'Review'], ['you', 'Approve'], ['command', 'Merge']],
-    note: 'you can ask for one rework round, then you decide',
+    note: `you can send it back for changes, up to ${LOOP_DEFAULT_ROUNDS} rounds`,
     build(roster) {
       const used = new Set();
       const dev = pickWho(roster, ['dev', 'developer', 'implementer', 'coder'], used);
       const reviewer = pickWho(roster, ['reviewer', 'review', 'qa'], used);
       let list = blankStepList('build-review-ship');
-      list = insertStep(list, newStep(list, { name: 'Implement', text: 'Implement {{issue}} on a branch and open a PR.', who: dev }));
+      list = insertStep(list, newStep(list, { name: 'Implement', text: 'Implement {{issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR.', who: dev }));
       list = insertStep(list, newStep(list, { name: 'Review', text: 'Review the PR for {{issue}} and post your verdict and notes on it.', who: reviewer }));
       list = insertStep(list, newStep(list, { kind: 'you', name: 'Approve', text: 'Ship {{issue}}? Read the review on the PR.' }));
-      list = insertStep(list, newStep(list, { name: 'Rework', text: 'Address the review notes on the PR for {{issue}}. This is the one rework round; the human decides next.', who: dev }));
-      list = insertStep(list, newStep(list, { kind: 'you', name: 'Final say', text: 'Ship the reworked {{issue}}?' }));
       list = insertStep(list, newStep(list, { kind: 'command', name: 'Merge', text: 'gh pr merge --squash' }));
-      const [, , approve, rework, finalSay, merge] = list.steps;
-      list = replaceStep(list, setStepChoices({ ...approve, cont: '' }, ['ship', 'rework', 'hold'], merge.id));
-      list = replaceStep(list, setStepLinks(list.steps[2], [{ outcome: 'ship', to: merge.id }, { outcome: 'rework', to: rework.id }, { outcome: 'hold', to: merge.id }]));
+      const [implement, , approve, merge] = list.steps;
+      // changes goes back to Implement for another round; once the rounds
+      // are used up it holds, which stops the run.
+      list = replaceStep(list, setStepChoices({ ...approve, cont: '' }, ['ship', 'changes', 'hold'], merge.id));
+      list = replaceStep(list, setStepLinks(list.steps[2], [{ outcome: 'ship', to: merge.id }, { outcome: 'changes', to: implement.id }, { outcome: 'hold', to: merge.id }]));
       list = withStopEnd(list, approve.id, 'hold');
-      list = replaceStep(list, setStepChoices({ ...finalSay, cont: 'ship' }, ['ship', 'hold'], merge.id));
-      list = withStopEnd(list, finalSay.id, 'hold');
+      list = setOutcomeLoop(list, approve.id, 'changes', { maxIterations: LOOP_DEFAULT_ROUNDS, onExhausted: 'hold' });
       return { list, uses: [whoLabel(dev), whoLabel(reviewer)].filter(Boolean) };
     },
   },
@@ -115,23 +115,21 @@ export const STARTERS = Object.freeze([
     key: 'ask-me-first',
     title: 'Ask me first',
     chain: [['you', 'Go?'], ['agent', 'Do it'], ['you', 'Accept']],
-    note: 'you give the go-ahead and sign off; one rework round if needed',
+    note: `you give the go-ahead and sign off; send it back up to ${LOOP_DEFAULT_ROUNDS} rounds`,
     build(roster) {
       const who = pickWho(roster, ['dev', 'developer', 'implementer'], new Set());
       let list = blankStepList('ask-me-first');
       list = insertStep(list, newStep(list, { kind: 'you', name: 'Brief', text: 'Go ahead with {{task}}?' }));
-      list = insertStep(list, newStep(list, { name: 'Do it', text: 'Do {{task}}.', who }));
+      list = insertStep(list, newStep(list, { name: 'Do it', text: 'Do {{task}}. When it comes back for rework, address the notes.', who }));
       list = insertStep(list, newStep(list, { kind: 'you', name: 'Accept', text: 'Accept the result of {{task}}?' }));
-      list = insertStep(list, newStep(list, { name: 'Rework', text: 'The human asked for a rework of {{task}}. This is the one rework round.', who }));
-      list = insertStep(list, newStep(list, { kind: 'you', name: 'Final say', text: 'Accept the reworked {{task}}?' }));
-      const [brief, , accept, rework, finalSay] = list.steps;
-      list = replaceStep(list, setStepChoices({ ...finalSay, cont: 'accept' }, ['accept', 'reject'], list.mainEnd));
-      list = withStopEnd(list, finalSay.id, 'reject');
+      const [brief, doIt, accept] = list.steps;
       list = replaceStep(list, setStepChoices({ ...brief, cont: 'go' }, ['go', 'stop'], list.mainEnd));
       list = withStopEnd(list, brief.id, 'stop');
-      list = replaceStep(list, setStepChoices({ ...accept, cont: '' }, ['accept', 'rework'], list.mainEnd));
+      list = replaceStep(list, setStepChoices({ ...accept, cont: '' }, ['accept', 'rework', 'reject'], list.mainEnd));
       const acceptNow = list.steps.find((s) => s.id === accept.id);
-      list = replaceStep(list, setStepLinks(acceptNow, [{ outcome: 'accept', to: list.mainEnd }, { outcome: 'rework', to: rework.id }]));
+      list = replaceStep(list, setStepLinks(acceptNow, [{ outcome: 'accept', to: list.mainEnd }, { outcome: 'rework', to: doIt.id }, { outcome: 'reject', to: list.mainEnd }]));
+      list = withStopEnd(list, accept.id, 'reject');
+      list = setOutcomeLoop(list, accept.id, 'rework', { maxIterations: LOOP_DEFAULT_ROUNDS, onExhausted: 'reject' });
       return { list, uses: [whoLabel(who)].filter(Boolean) };
     },
   },
