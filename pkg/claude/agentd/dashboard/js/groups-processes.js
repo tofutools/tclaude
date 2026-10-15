@@ -21,7 +21,9 @@ import {
 } from './process-context.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
 import { GroupsRunFocus } from './groups-run-focus.js';
-import { agentRunIndex, groupProcessCounts } from './groups-process-indicators.js';
+import {
+  ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
+} from './groups-process-indicators.js';
 
 const html = htm.bind(h);
 
@@ -329,20 +331,17 @@ export function SubgroupRunTotal({ node }) {
   return html`<span class="gp-subtree-total" title="Runs in this group's subgroups, shown while it is collapsed">↳ ${perspective.wizard ? 'in sub-parties' : 'in subgroups'}: ${text}</span>`;
 }
 
-// UngroupedRunCount is Ungrouped's summary-row count in the Processes
-// perspective.
-export function UngroupedRunCount({ group }) {
+// UngroupedRunCount is Ungrouped's summary-row process graphs, beside its
+// member bots in both perspectives; nothing when no agent runs a process.
+export function UngroupedRunCount({ group, snapshot, source = processContext }) {
   const perspective = useProcessesPerspective();
-  if (!perspective) return null;
-  const entries = memberRunEntries(perspective.context, group.members || [], 'running');
+  const context = perspective ? perspective.context : (enabled(snapshot, source) ? source.context.value : null);
+  if (!context) return null;
+  const entries = memberRunEntries(context, group.members || [], 'running');
   const needsYou = entries.filter((entry) => entry.run.needsYou === true).length;
   const counts = { running: entries.length - needsYou, needsYou, planned: 0 };
-  const { wizard } = perspective;
-  if (!entries.length) return html`<span class="gpi-none">${wizard ? 'no rites' : 'no processes'}</span>`;
-  return html`<span class="gpi-chips">
-    ${counts.running > 0 && html`<span class="pk-chip pk-state-running gpi-chip"><span aria-hidden="true">●</span> ${counts.running} ${wizard ? 'unfolding' : 'running'}</span>`}
-    ${counts.needsYou > 0 && html`<span class="pk-chip pk-state-waiting gpi-chip"><span aria-hidden="true">●</span> ${counts.needsYou} ${wizard ? 'awaits you' : 'needs you'}</span>`}
-  </span>`;
+  const wizard = perspective ? perspective.wizard : document.body.classList.contains('wizard');
+  return html`<${ProcessGraphRow} counts=${counts} wizard=${wizard} />`;
 }
 
 // findFocusGroup resolves the open run's group: a real group from the full

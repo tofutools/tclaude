@@ -20192,7 +20192,6 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member-runs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .gp-member-runs-label { color: #8b949e; font-size: 11px; }
 .gp-member-run { display: inline-flex; align-items: center; gap: 4px; }
-body.groups-focus-processes details[data-group-key] > summary > :is(.gpi-chips, .gpi-none) { margin-left: 8px; }
 .gp-subtree-total { color: #6e7681; font-size: 11px; }
 details[open] > summary .gp-subtree-total { display: none; }
 .gp-error { color: #ff7b72; }
@@ -20221,12 +20220,49 @@ body.wizard .gp-start-form { background: #140f28; border-color: rgba(122, 93, 17
 body.wizard .gp-start, body.wizard .gp-start-form button, body.wizard .gp-start-form select { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
 
-/* Groups › Agents focus process indicators (js/groups-process-indicators.js, mock G1). */
-.gpi-chips { display: inline-flex; gap: 6px; }
-.gpi-chip { cursor: pointer; font: inherit; font-size: 11px; }
-.gpi-chip:hover { filter: brightness(1.2); }
-.gpi-chip:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-.gpi-none { color: #6e7681; font-size: 11px; }
+/* Groups header process graphs (js/groups-process-indicators.js): the process
+   twin of the .group-activity bots, sat just after them in both perspectives.
+   One flow-graph glyph per state present: running sends a packet node to
+   node, needs-you pulses an amber gate node, planned is a quiet dashed
+   outline. Colours come from the process-kit tokens, so body.wizard
+   re-points them. Motion is transform/opacity/dash only and is dropped under
+   prefers-reduced-motion; the glyphs and counts stay. */
+.gpi-graphs { display: inline-flex; align-items: center; gap: 3px; margin: 0 6px 0 4px; vertical-align: middle; line-height: 0; }
+.gpi-graphs.level-waiting { filter: drop-shadow(0 0 3px rgba(210, 153, 34, 0.5)); }
+.gpi-graphs.level-running { filter: drop-shadow(0 0 3px rgba(88, 166, 255, 0.45)); }
+.gpi-graph { position: relative; display: inline-block; width: 26px; height: 18px; padding: 0; border: 0; background: none; line-height: 0; }
+button.gpi-graph { cursor: pointer; }
+button.gpi-graph:hover { filter: brightness(1.3); }
+button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; border-radius: 3px; }
+.gpi-flow { width: 26px; height: 18px; overflow: visible; }
+.gpi-flow * { transform-box: fill-box; transform-origin: center; }
+.gpi-edge { fill: none; stroke-width: 1.6; stroke: var(--pk-line); }
+.gpi-node { fill: var(--pk-running); }
+.gpi-packet { display: none; }
+.gpi-count {
+  position: absolute; bottom: -4px; right: -7px;
+  font-size: 9px; line-height: 1.1; min-width: 1em; padding: 0 2px; text-align: center;
+  border-radius: 6px; background: #1f6feb; color: #fff; box-shadow: 0 0 0 1px #0d1117;
+}
+.gpi-state-running .gpi-edge { stroke: color-mix(in srgb, var(--pk-running) 45%, transparent); }
+.gpi-state-running .gpi-packet { display: inline; fill: var(--pk-running-text); animation: gpi-travel 1.2s linear infinite; }
+.gpi-state-waiting .gpi-node { fill: var(--pk-planned); }
+.gpi-state-waiting .gpi-gate { fill: var(--pk-waiting); animation: gpi-pulse 0.6s ease-in-out infinite alternate; }
+.gpi-state-waiting .gpi-count { background: #9e6a03; }
+.gpi-state-planned .gpi-edge { stroke: var(--pk-planned); stroke-dasharray: 2 2; animation: gpi-march 1.2s linear infinite; }
+.gpi-state-planned .gpi-node { fill: none; stroke: var(--pk-planned); stroke-width: 1.3; }
+.gpi-state-planned .gpi-count { background: #484f58; }
+@keyframes gpi-travel {
+  0%   { transform: translate(0, 0); }
+  33%  { transform: translate(8px, -5px); }
+  66%  { transform: translate(16px, 0); opacity: 1; }
+  100% { transform: translate(16px, 0); opacity: 0; }
+}
+@keyframes gpi-pulse { from { transform: scale(0.75); opacity: 0.6; } to { transform: scale(1.25); opacity: 1; } }
+@keyframes gpi-march { to { stroke-dashoffset: -8; } }
+@media (prefers-reduced-motion: reduce) {
+  .gpi-packet, .gpi-gate, .gpi-edge { animation: none !important; }
+}
 .gpi-badges { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 
 /* Groups › Processes single-run focus (js/groups-run-focus.js, mock G5). */
