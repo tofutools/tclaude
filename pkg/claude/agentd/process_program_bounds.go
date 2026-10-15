@@ -106,7 +106,7 @@ func agentProgramBounds(agentID string) *executor.ProgramBounds {
 		snapshot = &empty
 	}
 	bounds.Profiles = appliedSandboxProfileNames(snapshot)
-	bounds.Reason = fmt.Sprintf("the agent's sandbox (%s)", implementation)
+	bounds.Reason = fmt.Sprintf("the agent's sandbox (%s)", implementation) + resourceLimitsNotice(snapshot)
 	bounds.Wrap = layerProgramWrap(bounds.Cwd, snapshot)
 	return bounds
 }
@@ -146,9 +146,19 @@ func groupProgramBounds(groupID int64) *executor.ProgramBounds {
 		bounds.Error = "the group is gone"
 		return bounds
 	}
-	profile := groupDefaultProfile(g)
-	if profile == nil {
+	if strings.TrimSpace(g.DefaultProfile) == "" {
 		bounds.Sandbox, bounds.Reason = executor.ProgramUnconfined, "the group has no default spawn profile"
+		return bounds
+	}
+	// Not groupDefaultProfile: a spawn may proceed past an unreadable or
+	// missing default, but a program must not run unconfined because of one.
+	profile, err := db.ResolveSpawnProfile(g.DefaultProfile)
+	if err != nil {
+		bounds.Error = fmt.Sprintf("load the group's default spawn profile %q: %v", g.DefaultProfile, err)
+		return bounds
+	}
+	if profile == nil {
+		bounds.Error = fmt.Sprintf("the group's default spawn profile %q no longer exists", g.DefaultProfile)
 		return bounds
 	}
 	bounds.Cwd = strings.TrimSpace(g.DefaultCwd)
@@ -177,9 +187,19 @@ func groupProgramBounds(groupID int64) *executor.ProgramBounds {
 		return bounds
 	}
 	bounds.Profiles = appliedSandboxProfileNames(&snapshot)
-	bounds.Reason = fmt.Sprintf("the group's default spawn profile %q", profile.Name)
+	bounds.Reason = fmt.Sprintf("the group's default spawn profile %q", profile.Name) + resourceLimitsNotice(&snapshot)
 	bounds.Wrap = layerProgramWrap(bounds.Cwd, &snapshot)
 	return bounds
+}
+
+// resourceLimitsNotice discloses that a profile's resource limits do not
+// reach program steps: tclaude's layer confines access here, but the cgroup a
+// launch applies limits through is not set up for a program attempt yet.
+func resourceLimitsNotice(snapshot *sandboxpolicy.Snapshot) string {
+	if snapshot == nil || !snapshot.Effective.ResourceLimits.Enabled() {
+		return ""
+	}
+	return "; its resource limits are not applied to program steps"
 }
 
 func appliedSandboxProfileNames(snapshot *sandboxpolicy.Snapshot) []string {
