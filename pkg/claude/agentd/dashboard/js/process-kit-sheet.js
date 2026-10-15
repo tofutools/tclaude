@@ -22,6 +22,8 @@ const html = htm.bind(h);
 const L = { id: 'lead', label: 'lead' };
 const C = { id: 'checkout-ui', label: 'checkout-ui' };
 const S = { id: 'search-indexer', label: 'search-indexer' };
+const W = { id: 'docs-writer', label: 'docs-writer' };
+const R = { id: 'reviewer', label: 'reviewer' };
 const HUMAN = { id: 'human', label: 'you', kind: 'human' };
 
 export const SAMPLE_GROUP_RUN = Object.freeze({
@@ -71,6 +73,32 @@ export const SAMPLE_AGENT_RUN = Object.freeze({
   ],
 });
 
+// SAMPLE_LOOP_RUN is a bounded review loop on its second round: its body
+// nodes carry {round, rounds} and the loop's back edge its maxIterations.
+export const SAMPLE_LOOP_RUN = Object.freeze({
+  id: 'run-docs-review',
+  name: 'docs-review',
+  status: 'running',
+  scope: { kind: 'group', name: 'docs' },
+  nodes: [
+    { id: 'start', kind: 'start', state: 'done' },
+    { id: 'draft', label: 'Draft the page', kind: 'agent', state: 'done', round: 2, rounds: 3, performers: [W] },
+    { id: 'review', label: 'Review', kind: 'agent', state: 'running', round: 2, rounds: 3, sub: 'reviewer', performers: [R] },
+    { id: 'verdict', label: 'Approved?', kind: 'decision', state: 'planned', round: 2, rounds: 3 },
+    { id: 'publish', label: 'Publish', kind: 'command', state: 'planned' },
+    { id: 'end', kind: 'end', state: 'planned' },
+  ],
+  edges: [
+    { from: 'start', to: 'draft' }, { from: 'draft', to: 'review' }, { from: 'review', to: 'verdict' },
+    { from: 'verdict', to: 'publish', label: 'approved' }, { from: 'publish', to: 'end' },
+    { from: 'verdict', to: 'draft', label: 'changes', back: true, maxIterations: 3 },
+  ],
+});
+
+// loopTemplate is the same loop before any run: its bound, no rounds.
+const loopTemplate = { ...SAMPLE_LOOP_RUN, status: 'pending',
+  nodes: SAMPLE_LOOP_RUN.nodes.map(({ round, rounds, ...node }) => ({ ...node, state: 'planned' })) };
+
 const STATE_ROWS = [['done', 'done'], ['running', 'running'], ['waiting', 'blocked on human'], ['failed', 'failed'], ['planned', 'planned / not reached']];
 
 function withRunStatus(run, status, overrides = {}) {
@@ -103,6 +131,10 @@ export function ProcessKitSheet({ wizard = false }) {
     </div>
     <div class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_GROUP_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_GROUP_RUN.scope} wizard=${wizard} /></h3>
       <${ProcessMiniGraph} run=${SAMPLE_GROUP_RUN} performerId="checkout-ui" wizard=${wizard} />
+    </div>
+    <div class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_LOOP_RUN.name} <${ProcessStateChip} state="running" /> <span class="pk-sheet-muted">bounded loop: template, then round 2 of 3</span></h3>
+      <${ProcessMiniGraph} run=${loopTemplate} wizard=${wizard} />
+      <${ProcessMiniGraph} run=${SAMPLE_LOOP_RUN} wizard=${wizard} />
     </div>
     <div class="pk-sheet-box pk-sheet-wide"><h3>${SAMPLE_AGENT_RUN.name} <${ProcessStateChip} state="running" /> <${ProcessScopeChip} scope=${SAMPLE_AGENT_RUN.scope} wizard=${wizard} /> <span class="pk-sheet-muted">compact</span></h3>
       <${ProcessMiniGraph} run=${SAMPLE_AGENT_RUN} compact wizard=${wizard} />

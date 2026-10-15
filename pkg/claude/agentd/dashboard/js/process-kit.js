@@ -346,6 +346,32 @@ function edgeVisualState(from, to) {
   return 'planned';
 }
 
+// loopRound is where a bounded loop is: the round its body is on, from the
+// body nodes' {round, rounds} (the loop's target opens its body), or null
+// before the run reached it.
+function loopRound(edge, known) {
+  const target = known.get(edge.to);
+  return target && Number(target.round) > 0 && Number(target.rounds) > 0 ? { round: Number(target.round), rounds: Number(target.rounds) } : null;
+}
+
+// loopLabel is a back edge's label with its bound: "changes · ≤3×" in a
+// template, "changes · round 2 of 3" while a run is in the loop.
+export function loopLabel(edge, known = new Map()) {
+  const base = String(edge.label || edge.outcome || '');
+  const max = Number(edge.maxIterations) || 0;
+  if (!max) return base;
+  const at = loopRound(edge, known);
+  const bound = at ? `round ${at.round} of ${at.rounds}` : `≤${max}×`;
+  return base ? `${base} · ${bound}` : bound;
+}
+
+// nodeRound is a loop body node's round ("2/3"), or '' outside loops.
+export function nodeRound(node) {
+  const round = Number(node?.round) || 0;
+  const rounds = Number(node?.rounds) || 0;
+  return round > 0 && rounds > 0 ? `${round}/${rounds}` : '';
+}
+
 // miniGraphLayout lays a run projection out left to right for the read-only
 // mini-graph. It reuses the editor's deterministic layered layout (ranks and
 // in-rank order) on a transposed graph, then draws its own simple curves so
@@ -354,7 +380,9 @@ export function miniGraphLayout(run, { compact = false } = {}) {
   const scale = compact ? MINI.compact : MINI.normal;
   const nodes = nodesOf(run);
   const known = new Map(nodes.map((node) => [node.id, node]));
-  const edges = edgesOf(run, known);
+  // A bounded loop's edge is a back edge with its bound in the label.
+  const edges = edgesOf(run, known).map((edge) => (Number(edge.maxIterations) > 0
+    ? { ...edge, back: true, loop: true, label: loopLabel(edge, known) } : edge));
   if (!nodes.length) return { width: 0, height: 0, nodes: [], edges: [] };
   const sizes = new Map(nodes.map((node) => [node.id, miniNodeSize(node, scale)]));
   let laid;
@@ -439,7 +467,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
       const y1 = a.y + a.height / 2;
       const y2 = b.y + b.height / 2 + 3;
       return {
-        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: true, state, label,
+        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: true, loop: !!edge.loop, state, label,
         path: `M${a.x},${y1} C${a.x},${lane} ${b.x},${lane} ${b.x},${y2}`,
         labelX: (a.x + b.x) / 2, labelY: lane - 4,
       };
@@ -595,12 +623,17 @@ export function ProcessMiniGraph({
     const selected = selectedId !== '' && node.id === String(selectedId);
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}`;
+    const round = nodeRound(node);
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}`;
+    // The round badge marks the loop body's active node; the others say
+    // their round in the tooltip.
+    const badge = round && (node.state === 'running' || node.state === 'waiting')
+      ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>` : null;
     const inner = isTerminalKind(node.kind)
       ? html`<span class="pk-gnode-label">${node.kind}</span>`
       : node.kind === 'decision'
         ? html`<span class="pk-gnode-label">${node.label}</span>`
-        : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />`;
+        : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
     const extra = {
       ...(typeof onNodeContextMenu === 'function' ? { onContextMenu: (event) => onNodeContextMenu(node, event) } : {}),
       ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
@@ -612,10 +645,10 @@ export function ProcessMiniGraph({
   });
   return html`<div class=${`pk-mini-graph${compact ? ' compact' : ''}`} role="group" aria-label=${`${runName(run)} graph`} style=${`width:${layout.width}px;height:${layout.height}px`}>
     <svg class="pk-edges" width=${layout.width} height=${layout.height} aria-hidden="true">
-      <defs>${Object.keys(ARROW_IDS).filter((k) => k !== 'skipped').map((state) => html`<marker key=${state} id=${`${prefix}-${state}`} class=${`pk-arrow ${state}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker>`)}</defs>
-      ${layout.edges.map((edge) => html`<path key=${edge.key} class=${`pk-edge ${edge.state}${edge.back ? ' back' : ''}`} d=${edge.path} marker-end=${`url(#${prefix}-${ARROW_IDS[edge.state]})`} />`)}
+      <defs>${[...Object.keys(ARROW_IDS).filter((k) => k !== 'skipped'), 'loop'].map((state) => html`<marker key=${state} id=${`${prefix}-${state}`} class=${`pk-arrow ${state}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker>`)}</defs>
+      ${layout.edges.map((edge) => html`<path key=${edge.key} class=${`pk-edge ${edge.state}${edge.back ? ' back' : ''}${edge.loop ? ' loop' : ''}`} d=${edge.path} marker-end=${`url(#${prefix}-${edge.loop ? 'loop' : ARROW_IDS[edge.state]})`} />`)}
     </svg>
-    ${layout.edges.filter((edge) => edge.label).map((edge) => html`<span key=${`l:${edge.key}`} class="pk-elabel" style=${`left:${edge.labelX}px;top:${edge.labelY}px`}>${edge.label}</span>`)}
+    ${layout.edges.filter((edge) => edge.label).map((edge) => html`<span key=${`l:${edge.key}`} class=${`pk-elabel${edge.loop ? ' loop' : ''}`} style=${`left:${edge.labelX}px;top:${edge.labelY}px`}>${edge.loop ? `↺ ${edge.label}` : edge.label}</span>`)}
     ${nodes}
     ${typeof overlay === 'function' ? overlay(layout) : null}
   </div>`;
