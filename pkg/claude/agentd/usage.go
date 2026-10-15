@@ -194,7 +194,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, display
 		now := time.Now()
 		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
 		if err == nil {
-			month, today := dashboardCostTotalsFromDeltas(deltas, now, "real")
+			month, today := dashboardCostTotalsFromDeltas(displayedCostDeltasFromRows(rows, false), now, "real")
 			spendLimits = evaluateSpendLimits(displayConfig, month, today, now)
 		}
 		if displayConfig != nil {

@@ -1,4 +1,5 @@
 import { h, render } from 'preact';
+import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { syncBotAnimations } from './helpers.js';
@@ -391,6 +392,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   const roots = [
     [hosts.activityHost, html`<${GlobalActivity} state=${state} groupsState=${groupsState} />`],
     [hosts.usageHost, html`<${Usage} state=${state} />`],
+    [hosts.spendLimitHost, html`<${SpendLimitBanner} state=${state} />`],
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],
     [hosts.metaHost, html`<${FooterMeta} state=${state} />`],

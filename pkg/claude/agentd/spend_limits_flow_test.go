@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,7 @@ import (
 )
 
 func TestSpendLimits_CrossingAndDurableDedup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
 	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
 	t.Cleanup(agentd.WaitForBackgroundForTest)
@@ -58,6 +60,7 @@ func TestSpendLimits_CrossingAndDurableDedup(t *testing.T) {
 }
 
 func TestSpendLimits_JumpPastLimit(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
 	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
 	t.Cleanup(agentd.WaitForBackgroundForTest)
@@ -70,4 +73,27 @@ func TestSpendLimits_JumpPastLimit(t *testing.T) {
 	messages, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	assert.Len(t, messages, 2) // one for each crossed threshold
+}
+
+func TestSpendLimits_IndependentOfWhatIfDisplayAfterBillingChange(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(func(_, _, _, _, _ string) {}))
+	t.Cleanup(agentd.WaitForBackgroundForTest)
+	cfg := &config.Config{Cost: &config.CostConfig{DailyLimitUSD: 5, ShowOnSubscription: true}}
+	require.NoError(t, config.Save(cfg))
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, virtual_cost_usd) VALUES
+ ('flip', ?, 'flip-conv', 0, 5), ('flip', ?, 'flip-conv', 6, 5)`, now.AddDate(0, 0, -1).Format("2006-01-02"), now.Format("2006-01-02"))
+	require.NoError(t, err)
+	mux := agentd.BuildDashboardHandlerForTest()
+	snapshot := fetchSnapshotOnly(t, mux)
+	require.Len(t, snapshot.Usage.SpendLimits, 1)
+	assert.Equal(t, 100, snapshot.Usage.SpendLimits[0].Threshold)
+	assert.Equal(t, 6.0, snapshot.Usage.SpendLimits[0].SpendUSD)
+	cfg.Cost.ShowOnSubscription = false
+	require.NoError(t, config.Save(cfg))
+	assert.Equal(t, snapshot.Usage.SpendLimits, fetchSnapshotOnly(t, mux).Usage.SpendLimits)
 }

@@ -101,7 +101,7 @@ are described below.
 ## Estimated spend limits and alerts
 
 Set **Config → Costs → Spend limits** in the dashboard, or edit the `cost`
-block in `~/.tclaude/config.json` (also available through `tclaude config`):
+block in `~/.tclaude/config.json`:
 
 ```json
 {"cost":{"daily_limit_usd":20,"monthly_limit_usd":300}}
@@ -113,7 +113,7 @@ calendar. The dashboard shows a banner at 80% and at 100%; each threshold also
 sends one notification through the existing notify-human path to Messages and,
 if enabled, desktop notifications. Threshold records survive daemon restarts,
 message deletion, and edits to limits. A jump past both thresholds records both.
-The daemon checks on its usage timer even when the dashboard is closed; checks
+The daemon checks every three minutes on its usage timer even when the dashboard is closed; checks
 use the latest recorded ledger, so newly reported costs can arrive later.
 
 Amounts are **estimates from the API cost ledger**, before display multipliers.

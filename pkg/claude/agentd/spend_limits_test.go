@@ -26,7 +26,7 @@ func TestSpendLimits_LocalPeriodRollover(t *testing.T) {
 	messages, err = db.ListHumanMessages()
 	require.NoError(t, err)
 	assert.Len(t, messages, 8)
-	evaluateSpendLimits(cfg, 11, 11, now.Add(24*time.Hour))
+	evaluateSpendLimits(cfg, 11, 11, now.Add(48*time.Hour))
 	messages, err = db.ListHumanMessages()
 	require.NoError(t, err)
 	assert.Len(t, messages, 10) // new day, same month

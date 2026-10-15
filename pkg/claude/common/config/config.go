@@ -1110,7 +1110,7 @@ func (c *Config) ScribeProfileName() string {
 	return strings.TrimSpace(c.Scribe.Profile)
 }
 
-// CostConfig holds display-only cost knobs.
+// CostConfig holds cost display knobs and estimated API spend alert limits.
 //
 // EstimateFactor is an opt-in multiplier applied to every *displayed*
 // cost figure (the per-agent cost badge, the Costs tab, and the top
