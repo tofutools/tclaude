@@ -361,6 +361,14 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 	if err != nil {
 		return view, err
 	}
+	memberRoles, err := db.ListActiveGroupMemberRoles()
+	if err != nil {
+		return view, err
+	}
+	roles := map[int64][]processGroupRole{}
+	for _, r := range memberRoles {
+		roles[r.GroupID] = append(roles[r.GroupID], processGroupRole{Role: r.Role, Count: r.Count})
+	}
 	for _, group := range all {
 		if group.IsArchived() || (!visible.all && !visible.groups[group.ID]) {
 			continue
@@ -371,7 +379,9 @@ func buildProcessContext(visible processContextVisible) (processContextView, err
 			groups[group.ID] = g
 		}
 		g.DefaultSpawnProfile = group.DefaultProfile
-		g.Roles = processGroupRoles(group.ID)
+		if r := roles[group.ID]; r != nil {
+			g.Roles = r
+		}
 	}
 	for _, g := range groups {
 		view.Groups = append(view.Groups, *g)
@@ -388,30 +398,6 @@ func newProcessGroupContext(scope db.ProcessRunScope) *processGroupContext {
 	return &processGroupContext{GroupID: scope.GroupID, Group: scope.GroupName,
 		Active: []string{}, NeedsYou: []string{}, Done: []string{}, Planned: []processPlannedRun{},
 		Roles: []processGroupRole{}}
-}
-
-// processGroupRoles counts the roles of a group's active members, the same
-// members performer resolution chooses from. It reads the database only: the
-// context is polled, and liveness does not change which roles exist.
-func processGroupRoles(groupID int64) []processGroupRole {
-	counts := map[string]int{}
-	members, _ := db.ListAgentGroupMembers(groupID)
-	for _, member := range members {
-		role := strings.TrimSpace(member.Role)
-		if role == "" {
-			continue
-		}
-		if performer, err := db.GetAgent(peerAgentID(member.ConvID)); err != nil || !performer.Active() {
-			continue
-		}
-		counts[role]++
-	}
-	out := make([]processGroupRole, 0, len(counts))
-	for role, count := range counts {
-		out = append(out, processGroupRole{Role: role, Count: count})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Role < out[j].Role })
-	return out
 }
 
 // agentStep places the run's performer at its earliest current work step;

@@ -114,6 +114,15 @@ func TestProcessPerformerFallback_ProcessDefaultFailAndStepOverride(t *testing.T
 	assert.Empty(t, view.Performers[0].AgentID)
 	assert.Contains(t, view.Performers[0].Note, `no group member has role "qa"; the step's fallback fails it`)
 
+	// The legacy explicit default spawn: never does not shadow the process
+	// fallback; only spawn: allowed is a step's own choice.
+	never := performerTemplate("fallback-never", selectorPerformer(func(p *model.Performer) {
+		p.Profile, p.Spawn = "qa", model.SpawnNever
+	}), nil)
+	never.Fallback = &model.PerformerFallback{Action: model.FallbackFail}
+	failed := startPerformerRun(t, f, root, "run_fallback_never", never, groupScope(g))
+	assert.Equal(t, engine.RunFailed, failed.Status, "%+v", failed)
+
 	waiting := performerTemplate("fallback-override", selectorPerformer(func(p *model.Performer) {
 		p.Role = "qa"
 		p.Fallback = &model.PerformerFallback{Action: model.FallbackWait}
@@ -193,7 +202,9 @@ func TestProcessResolvePreviewAndGroupContext(t *testing.T) {
 			"implement": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Implement."}, Next: model.Next{"next": "review"}},
 			"review":    {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Role: "reviewer", Prompt: "Review."}, Next: model.Next{"next": "qa"}},
 			"qa": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Role: "qa", Prompt: "Test.",
-				Fallback: &model.PerformerFallback{Action: model.FallbackFail}}, Next: model.Next{"next": "approve"}},
+				Fallback: &model.PerformerFallback{Action: model.FallbackFail}},
+				Review: &model.Step{Performer: model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Review the tests."}},
+				Next:   model.Next{"next": "approve"}},
 			"approve": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Ship?"}, Next: model.Next{"next": "end"}},
 			"end":     {Type: model.NodeTypeEnd, Result: "success"},
 		},
@@ -211,7 +222,15 @@ func TestProcessResolvePreviewAndGroupContext(t *testing.T) {
 		} `json:"nodes"`
 	}
 	testharness.DecodeJSON(t, rec, &preview)
-	require.Len(t, preview.Nodes, 3, "only agent steps are previewed: %+v", preview.Nodes)
+	require.Len(t, preview.Nodes, 4, "only agent steps are previewed: %+v", preview.Nodes)
+	var reviewStage string
+	for key := range preview.Nodes {
+		if key != "implement" && key != "review" && key != "qa" {
+			reviewStage = key
+		}
+	}
+	assert.Contains(t, reviewStage, "qa", "a compound task's review stage is previewed under its stage id")
+	assert.Equal(t, alice, preview.Nodes[reviewStage].AgentID)
 	assert.Equal(t, alice, preview.Nodes["implement"].AgentID, "the idle dev")
 	assert.Equal(t, "alice", preview.Nodes["implement"].Name)
 	assert.Contains(t, preview.Nodes["implement"].Reason, "idle now")

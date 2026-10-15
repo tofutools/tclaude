@@ -14,7 +14,8 @@ import (
 // POST /v1/process/resolve-preview — "who it will use now" (tcl-52p3cq).
 //
 // Given a template (saved or not) and a group, it answers for every agent
-// work step who would take it if the run started now: a member, a spawn of
+// work step — keyed by node id, and a compound task's plan, check and review
+// stages by their stage ids — who would take it if the run started now: a member, a spawn of
 // some profile, a wait, or a failure. It is a dry run of the group rules in
 // resolveProcessPerformer and has no effects: no spawn is authorized and no
 // rate budget is spent, so a previewed spawn can still be refused at run
@@ -78,11 +79,23 @@ func handleProcessResolvePreview(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(ids)
 		for _, id := range ids {
 			node := parsed.Template.Nodes[id]
-			if node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerAgent {
+			if node.Type != model.NodeTypeTask {
 				continue
 			}
-			spec := engine.AgentCommandFor(*node.Performer, parsed.Template.Fallback)
-			nodes[id] = previewProcessPerformer(group, members, spec)
+			preview := func(key string, performer *model.Performer) {
+				if performer == nil || performer.Kind != model.PerformerAgent {
+					return
+				}
+				nodes[key] = previewProcessPerformer(group, members, engine.AgentCommandFor(*performer, parsed.Template.Fallback))
+			}
+			preview(id, node.Performer)
+			// A compound task's plan, check and review stages are agent steps
+			// of their own, keyed as the run reports them.
+			for _, stage := range model.ExpandNode(id, node) {
+				if stage.Stage != model.StageDo {
+					preview(stage.ChildID, stage.Performer)
+				}
+			}
 		}
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"group": group.Name, "nodes": nodes})

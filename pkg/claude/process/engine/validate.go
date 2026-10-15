@@ -658,11 +658,14 @@ func AgentCommandFor(bound model.Performer, processFallback *model.PerformerFall
 	// A template written before fallbacks existed binds exactly the command
 	// it always did (FallbackAction empty, derived from Spawn): commands are
 	// compared field by field against persisted checkpoints, so an in-flight
-	// run must re-prepare to the same command.
+	// run must re-prepare to the same command. Such a template has no process
+	// fallback, so the process default may override the legacy spawn: never
+	// (the old explicit default) without changing any existing command; only
+	// spawn: allowed is a step's own choice.
 	switch {
 	case bound.Fallback != nil:
 		command.FallbackAction, command.FallbackProfile = bound.Fallback.Action, strings.TrimSpace(bound.Fallback.Profile)
-	case strings.TrimSpace(bound.Spawn) != "":
+	case bound.Spawn == model.SpawnAllowed:
 	case processFallback != nil:
 		command.FallbackAction, command.FallbackProfile = processFallback.Action, strings.TrimSpace(processFallback.Profile)
 	}
