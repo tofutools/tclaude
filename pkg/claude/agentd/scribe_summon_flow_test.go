@@ -358,6 +358,35 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 		reusedAudit[agentd.PermProcessTemplatesManage].GrantedBy)
 }
 
+// Scenario: the process editor summons its scoped scribe in the background.
+// The scribe starts in tmux only, like a regular spawn: neither the fresh
+// summon nor the same-scope reuse opens a terminal window, and the response
+// carries no focus handshake.
+func TestScribeSummon_BackgroundOpensNoWindow(t *testing.T) {
+	f := newFlow(t)
+	opens := stubScribeTerminal(t)
+	post := func() scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name": "process-scribe", "exclusive": true, "background": true,
+				"slugs": []string{agentd.PermProcessTemplatesRead, agentd.PermProcessTemplatesManage},
+				"scope": map[string]any{"kind": "process-template", "id": "release-flow"},
+				"brief": "Background process-template authoring brief.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+	first := post()
+	require.NotEmpty(t, first.ConvID)
+	assert.False(t, first.Reused)
+	assert.Empty(t, first.FocusMode, "a background summon reports no window")
+	second := post()
+	assert.True(t, second.Reused)
+	assert.Equal(t, first.ConvID, second.ConvID)
+	assert.Empty(t, second.FocusMode, "a background reuse reports no window")
+	assert.Zero(t, *opens, "no terminal window is opened for a background scribe")
+}
+
 func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T) {
 	f := newFlow(t)
 	stubScribeTerminal(t)

@@ -2581,7 +2581,10 @@ export class ProcessTemplateEditor {
       return false;
     }
     if (!freshnessGuard()) return false;
-    return !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard }));
+    const summoned = !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard }));
+    // The scribe starts in the background, so the dock is where it shows up.
+    if (summoned && !this.destroyed) this.toggleScribeDock?.(true);
+    return summoned;
   }
 
   async saveRequest(requestSeq) {

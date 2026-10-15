@@ -75,6 +75,11 @@ type scribeSummonRequest struct {
 	// regular spawn/task edit before it can reach the dashboard snapshot.
 	TaskURL   string `json:"task_ref_url,omitempty"`
 	TaskLabel string `json:"task_ref_label,omitempty"`
+	// Background starts the scribe in its detached tmux session only, like a
+	// regular agent spawn: no terminal window is opened, for a fresh or a
+	// reused scribe. Callers with their own surface (the process editor's chat
+	// dock) set it and open a terminal pane on demand.
+	Background bool `json:"background,omitempty"`
 	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
 	// pointer + scope anchor the human's chat starts from. Same charset/length
 	// rule as any spawn initial_message.
@@ -234,7 +239,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newApprovalID()
 	granter := scribeSummonGranter(r, spawnerConvID, permissionGrantSudoID, correlationID)
-	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
+	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, body.Background, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -313,8 +318,9 @@ var scribeSummonMu sync.Mutex
 
 // summonScribe is the reusable core: ensure the scribe-kind group, reuse one
 // exact compatible structured scope when requested, or spawn a fresh uniquely
-// named agent in the shared pre-trusted workdir with birth-time grants.
-func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
+// named agent in the shared pre-trusted workdir with birth-time grants. A
+// background summon never opens a terminal window.
+func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive, background bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -328,7 +334,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 	// group and continues its independent editing task.
 	pruneDeadScribes(g)
 	if scopeKey != "" {
-		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel); reused != nil || reuseFail != nil {
+		if reused, reuseFail := reuseScopedScribe(g, scopeKey, overrides, brief, taskURL, taskLabel, background); reused != nil || reuseFail != nil {
 			return reused, reused != nil, reuseFail
 		}
 	}
@@ -357,8 +363,9 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
-	// AutoFocus — opens its terminal window. Synchronous (Async left false) so
-	// the conv-id materialises for the grants + the response.
+	// AutoFocus, unless exclusive or background — opens its terminal window.
+	// Synchronous (Async left false) so the conv-id materialises for the
+	// grants + the response.
 	p := spawnParams{
 		Name:                uniqueScribeName(name),
 		Role:                scribeScopeRole(scopeKey),
@@ -367,7 +374,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 		TaskLabel:           taskLabel,
 		Cwd:                 cwd,
 		InitialMessage:      brief,
-		AutoFocus:           !exclusive,
+		AutoFocus:           !exclusive && !background,
 		PermissionOverrides: overrides,
 		PermissionGranter:   granter,
 		SpawnedByConv:       spawnerConvID,
@@ -387,7 +394,7 @@ func summonScribe(name string, overrides map[string]db.PermissionOverride, brief
 	if outcome.FocusMode == "browser" {
 		out.FocusWS = spawnFocusWSPath(outcome.Label)
 	}
-	if exclusive {
+	if exclusive && !background {
 		openScribeWindow(outcome.ConvID, out)
 	}
 	return out, false, nil
@@ -410,7 +417,7 @@ func scribeScopeDescr(scopeKey string) string {
 // reuseScopedScribe returns the one alive, active, permission-compatible
 // scribe for scopeKey. The caller holds scribeSummonMu, making lookup plus
 // potential spawn idempotent across concurrent clicks.
-func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]db.PermissionOverride, brief, taskURL, taskLabel string) (*scribeOutcome, *spawnFailure) {
+func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]db.PermissionOverride, brief, taskURL, taskLabel string, background bool) (*scribeOutcome, *spawnFailure) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "list reusable scribes: " + err.Error()}
@@ -460,7 +467,9 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]d
 			return nil, &spawnFailure{http.StatusInternalServerError, "brief", "refresh reusable scribe context: " + err.Error()}
 		}
 		out := &scribeOutcome{Name: agent.FreshTitle(member.ConvID), ConvID: member.ConvID}
-		openScribeWindow(member.ConvID, out)
+		if !background {
+			openScribeWindow(member.ConvID, out)
+		}
 		return out, nil
 	}
 	return nil, nil
