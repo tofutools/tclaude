@@ -84,20 +84,67 @@ function resolve(context, ids) {
   return out;
 }
 
-export const RUN_FILTERS = Object.freeze(['running', 'planned', 'done', 'all']);
+// The run filter is a checklist over RUN_KINDS, held as a canonical
+// comma-joined string ("running,planned") so a signal compares it by value.
+// 'all' (the old single-select value) reads as every kind; an empty or
+// unknown value falls back to DEFAULT_RUN_FILTER, so the list never shows
+// nothing at all.
+export const RUN_KINDS = Object.freeze(['running', 'planned', 'done']);
+export const DEFAULT_RUN_FILTER = 'running,planned';
+// [regular, wizard] label per kind.
+export const RUN_KIND_LABELS = Object.freeze({
+  running: ['Running', 'Unfolding'],
+  planned: ['Planned', 'Foretold'],
+  done: ['Done', 'Fulfilled'],
+});
 
 export function normalizeRunFilter(value) {
-  return RUN_FILTERS.includes(value) ? value : 'running';
+  if (value === 'all') return RUN_KINDS.join(',');
+  const parts = Array.isArray(value) ? value : String(value ?? '').split(',');
+  const kinds = RUN_KINDS.filter((kind) => parts.includes(kind));
+  return kinds.length ? kinds.join(',') : DEFAULT_RUN_FILTER;
 }
 
-// groupRunsFor returns the projections and planned entries one filter shows
-// for a group: Running is needs-you first, then the rest of the active runs.
+export function runFilterKinds(filter) {
+  return normalizeRunFilter(filter).split(',');
+}
+
+export function runFilterHas(filter, kind) {
+  return runFilterKinds(filter).includes(kind);
+}
+
+// toggleRunKind flips one kind; unticking the last ticked kind is a no-op.
+export function toggleRunKind(filter, kind) {
+  const kinds = runFilterKinds(filter);
+  if (!kinds.includes(kind)) return normalizeRunFilter([...kinds, kind]);
+  return kinds.length > 1 ? normalizeRunFilter(kinds.filter((k) => k !== kind)) : normalizeRunFilter(kinds);
+}
+
+export function withRunKind(filter, kind) {
+  return normalizeRunFilter([...runFilterKinds(filter), kind]);
+}
+
+// runKindCounts totals distinct runs per kind across every group's index,
+// for the run filter's checklist.
+export function runKindCounts(context) {
+  const running = new Set();
+  const done = new Set();
+  const planned = new Set();
+  for (const entry of context?.groups || []) {
+    for (const id of [...(entry.active || []), ...(entry.needsYou || [])]) running.add(id);
+    for (const id of entry.done || []) done.add(id);
+    for (const item of entry.planned || []) planned.add(`${item.source || ''}:${item.id || item.name || ''}`);
+  }
+  return { running: running.size, planned: planned.size, done: done.size };
+}
+
+// groupRunsFor returns the projections and planned entries the filter shows
+// for a group: running is needs-you first, then the rest of the active runs.
 export function groupRunsFor(context, entry, filter) {
-  const which = normalizeRunFilter(filter);
-  const running = which === 'running' || which === 'all'
+  const running = runFilterHas(filter, 'running')
     ? resolve(context, [...(entry?.needsYou || []), ...(entry?.active || [])]) : [];
-  const done = which === 'done' || which === 'all' ? resolve(context, entry?.done) : [];
-  const planned = which === 'planned' || which === 'all' ? (entry?.planned || []) : [];
+  const done = runFilterHas(filter, 'done') ? resolve(context, entry?.done) : [];
+  const planned = runFilterHas(filter, 'planned') ? (entry?.planned || []) : [];
   return { runs: [...running, ...done], planned };
 }
 

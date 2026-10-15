@@ -1904,3 +1904,19 @@ CREATE TABLE agent_turn_replies (
 ) STRICT;
 
 CREATE INDEX idx_agent_turn_replies_agent ON agent_turn_replies(agent_id, id);
+
+CREATE TABLE process_template_listing (
+	template_id TEXT PRIMARY KEY CHECK(length(CAST(template_id AS BLOB)) <= 256),
+	listed      INTEGER NOT NULL CHECK(listed IN (0, 1)),
+	updated_at  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE process_group_pins (
+	group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+	template_id TEXT NOT NULL CHECK(length(CAST(template_id AS BLOB)) <= 256),
+	position    INTEGER NOT NULL,
+	pinned_at   INTEGER NOT NULL,
+	PRIMARY KEY (group_id, template_id)
+) STRICT;
+
+CREATE INDEX idx_process_group_pins_template ON process_group_pins(template_id);

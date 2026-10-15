@@ -264,11 +264,12 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 		}
 	}
 
-	must("Filter (party name + familiar title/class/lore/grove/branch)", "the party filter explains its wizard-search fields")
+	must("'Filter parties & familiars'", "the party filter speaks the wizard voice")
+	must("'Matches party name + familiar title/class/lore/grove/branch'", "the party filter's tooltip explains its wizard-search fields")
 	must("document.addEventListener('tclaude:wizard', onWizard)", "the filter placeholder follows a live theme flip")
 	must("function useWizardTheme()", "the controls and group list share live wizard-theme state")
 	must("useWizardTheme();\n  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);", "the group list repaints theme-dependent title attributes and owns hover state")
-	must("current.total === 1 ? 'party' : 'parties'", "the unfiltered count names parties")
+	must("'Parties shown / all parties'", "the match count's tooltip names parties")
 	must("wizardLabel: 'show unbound'", "the view menu names the unbound tray")
 	must("wizardLabel: 'show banished'", "the view menu names the banished tray")
 	must("wizardLabel: 'show plain scrolls'", "the view menu names the plain-scroll tray")

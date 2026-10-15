@@ -56,6 +56,7 @@ const fullDaemonTemplateListing = `{"templates":[
                     "storedAt":"2026-07-20T10:11:12Z","actor":"agent:agt_writer",
                     "authoredAt":"2026-07-20T10:11:00Z"},
    "versionCount":2,
+   "listed":true,
    "versions":[{"ref":"demo@sha256:abc","semanticHash":"abc","sourceHash":"src2",
                 "storedAt":"2026-07-20T10:11:12Z","actor":"agent:agt_writer",
                 "authoredAt":"2026-07-20T10:11:00Z"},
@@ -65,6 +66,7 @@ const fullDaemonTemplateListing = `{"templates":[
    "latestVersion":{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src3",
                     "storedAt":"2026-07-18T07:06:05Z"},
    "versionCount":1,
+   "listed":false,
    "versions":[{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src3",
                 "storedAt":"2026-07-18T07:06:05Z"}]}]}`
 
@@ -134,14 +136,24 @@ func TestRunProcessTemplatesLsJSONOmitsAbsentAttribution(t *testing.T) {
 	assert.NotContains(t, entry, "authoredAt")
 }
 
+func TestRunProcessTemplatesLsAllIncludesUnpublished(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"templates":[]}`))
+	var stdout, stderr bytes.Buffer
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true, All: true}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	require.Len(t, calls, 1)
+	assert.Equal(t, "/v1/process/templates?all=1", calls[0].path)
+}
+
 func TestRunProcessTemplatesLsJSONEmitsEmptyCollectionsNotNull(t *testing.T) {
 	tests := map[string]struct{ response, want string }{
 		"empty array": {`{"templates":[]}`, `{"templates":[]}`},
 		"absent key":  {`{}`, `{"templates":[]}`},
 		"template without versions": {
-			`{"templates":[{"id":"demo","versionCount":0,` +
+			`{"templates":[{"id":"demo","versionCount":0,"listed":true,` +
 				`"latestVersion":{"ref":"","semanticHash":"","sourceHash":"","storedAt":"0001-01-01T00:00:00Z"}}]}`,
-			`{"templates":[{"id":"demo","versionCount":0,` +
+			`{"templates":[{"id":"demo","versionCount":0,"listed":true,` +
 				`"latestVersion":{"ref":"","semanticHash":"","sourceHash":"","storedAt":"0001-01-01T00:00:00Z"},` +
 				`"versions":[]}]}`,
 		},

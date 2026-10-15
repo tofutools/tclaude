@@ -38,20 +38,19 @@ async function mountFocus(t, props = {}) {
     harness.importDashboardModule('js/groups-interactions.js'),
   ]);
   const source = props.source || fakeSource(harness, props.sourceOptions);
-  const filters = [];
   const groups = props.groups || GROUPS;
   const allGroups = props.allGroups || groups;
   const snapshot = { processes_enabled: true, groups: allGroups.filter((group) => !group.virtual) };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${groups} allGroups=${allGroups} source=${source}
-      filter=${props.filter || 'running'} onFilter=${(value) => filters.push(value)} api=${props.api} wizard=${props.wizard || false}
+      filter=${props.filter || 'running'} api=${props.api} wizard=${props.wizard || false}
       focusedRun=${props.focusedRun || null} onFocusRun=${props.onFocusRun || (() => {})}>
       <${list.GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${{}} />
     <//>
   <//>`);
   const group = (name) => mounted.container.querySelector(`[data-process-group="${name}"]`);
   const details = (name) => mounted.container.querySelector(`details[data-group-key="${name}"]`);
-  return { harness, mod, source, filters, mounted, root: mounted.container, group, details };
+  return { harness, mod, source, mounted, root: mounted.container, group, details };
 }
 
 test('Running shows each group\'s live runs as graph cards, needs-you first, and an empty group says so', async (t) => {
@@ -80,13 +79,16 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   assert.ok(group('infra-crew').querySelector('[data-quickstart-folded="infra-crew"]'), 'an empty group folds Get started once processes exist');
   assert.equal(group('infra-crew').querySelector('[data-quickstart]'), null);
   assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
-  assert.equal(root.querySelector('[data-process-filter="running"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(root.querySelector('.gp-toolbar'), null, 'no filter row of its own: the checklist lives on the toolbar icon');
 });
 
-test('Done, Planned and All filters pick the matching runs', async (t) => {
+test('the ticked run kinds pick the matching runs', async (t) => {
   for (const [filter, cards, planned] of [
     ['done', ['run_hotfix'], []],
     ['planned', [], ['cron_nightly']],
+    ['running,planned', ['run_migrate', 'run_release', 'run_reindex'], ['cron_nightly']],
+    ['planned,done', ['run_hotfix'], ['cron_nightly']],
+    ['running,planned,done', ['run_migrate', 'run_release', 'run_reindex', 'run_hotfix'], ['cron_nightly']],
     ['all', ['run_migrate', 'run_release', 'run_reindex', 'run_hotfix'], ['cron_nightly']],
   ]) {
     await t.test(filter, async (t2) => {
@@ -96,9 +98,12 @@ test('Done, Planned and All filters pick the matching runs', async (t) => {
       assert.deepEqual([...fe.querySelectorAll('[data-process-planned]')].map((c) => c.dataset.processPlanned), planned);
     });
   }
-  const { harness, root, filters } = await mountFocus(t);
-  await harness.act(() => harness.fireEvent(getByRole(root, 'button', { name: 'Done' }), 'click'));
-  assert.deepEqual(filters, ['done']);
+  // A group with runs, none of the ticked kinds, says so; a group with no
+  // runs at all offers Get started instead.
+  const onlyRunning = { ...FIXTURE, groups: FIXTURE.groups.map((entry) => (entry.group === 'frontend-squad' ? { ...entry, done: [], planned: [] } : entry)) };
+  const { group } = await mountFocus(t, { filter: 'planned,done', sourceOptions: { context: onlyRunning } });
+  assert.equal(group('frontend-squad').querySelector('.gp-empty:not(.gq-folded)').textContent, 'No planned or done processes.');
+  assert.ok(group('infra-crew').querySelector('[data-quickstart-folded]'));
 });
 
 test('an agentd without the read model shows the placeholder', async (t) => {
