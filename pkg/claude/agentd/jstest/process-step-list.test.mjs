@@ -9,6 +9,7 @@ import {
   blankStepList, expandParamShorthand, forwardTargets, joinCommand, splitCommand, insertStep, moveStep, newStep, removeStep, replaceStep,
   setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
+  backTargetLabel, backTargets, isBackLink, pruneStaleLoops, setOutcomeLoop, setStepLoop, stepLoop,
 } from '../dashboard/js/process-step-list.js';
 
 // viewOf builds an edit view from a template whose nodes carry `next`, the
@@ -329,4 +330,61 @@ test('removing a step never points a link back at its own step', () => {
   list = replaceStep(list, { ...list.steps[1], links: [{ outcome: 'again', to: 'b' }] });
   const removed = removeStep(list, 'b');
   assert.deepEqual(removed.steps.map((s) => [s.id, s.links]), [['a', [{ outcome: 'skip', to: 'c' }]], ['c', [{ outcome: 'again', to: 'end' }]]]);
+});
+
+// reviewLoop is implement → review → decide {approved → merge, changes ↺
+// implement (max 3), escalate → stop}.
+function reviewLoop() {
+  return viewOf({
+    apiVersion: 'tclaude.dev/v1alpha1', kind: 'ProcessTemplate', id: 'loop', start: 'implement',
+    nodes: {
+      implement: { type: 'task', name: 'Implement', performer: { kind: 'agent', prompt: 'Implement' }, next: { next: 'review' } },
+      review: { type: 'task', name: 'Review', performer: { kind: 'agent', prompt: 'Review' }, next: { next: 'decide' } },
+      decide: {
+        type: 'decision', name: 'Ship it?', performer: { kind: 'human', ask: 'Ship it?', choices: ['approved', 'changes', 'escalate'] },
+        next: { approved: 'merge', changes: 'implement', escalate: 'stopped' },
+        loops: { changes: { maxIterations: 3, onExhausted: 'escalate' } },
+      },
+      merge: { type: 'task', name: 'Merge', performer: { kind: 'agent', prompt: 'Merge' }, next: { next: 'end' } },
+      end: { type: 'end', result: 'success' },
+      stopped: { type: 'end', result: 'canceled' },
+    },
+  });
+}
+
+test('a bounded loop survives the step list round trip and reads as going back', () => {
+  const input = reviewLoop();
+  const converted = viewToStepList(input);
+  assert.equal(converted.ok, true, converted.reason);
+  const { list } = converted;
+  assert.deepEqual(normalized(stepListToView(list)), normalized(input));
+  assert.deepEqual(backTargets(list, 'decide'), ['implement', 'review']);
+  assert.deepEqual(backTargets(list, 'review'), [], 'a task never goes back');
+  assert.equal(isBackLink(list, 'decide', 'implement'), true);
+  assert.equal(backTargetLabel(list, 'implement'), '↺ back to 1 · Implement');
+  const decide = list.steps.find((step) => step.id === 'decide');
+  assert.deepEqual(stepLoop(decide, 'changes'), { maxIterations: 3, onExhausted: 'escalate' });
+  const jump = stepListFlow(list).jumps.find((j) => j.label === 'changes');
+  assert.equal(jump.back, true);
+  assert.deepEqual(jump.loop, { maxIterations: 3, onExhausted: 'escalate' });
+});
+
+test('loop bounds are set, follow their answers, and drop when they no longer go back', () => {
+  let { list } = viewToStepList(reviewLoop());
+  list = setOutcomeLoop(list, 'decide', 'changes', { maxIterations: 5, onExhausted: '' });
+  assert.deepEqual(list.steps.find((s) => s.id === 'decide').node.loops, { changes: { maxIterations: 5 } });
+  // Removing the answer removes its bound; removing the exhaustion target clears it.
+  let decide = list.steps.find((s) => s.id === 'decide');
+  decide = setStepLoop(decide, 'changes', { maxIterations: 3, onExhausted: 'escalate' });
+  const narrowed = setStepChoices(decide, ['approved', 'changes'], 'merge');
+  assert.deepEqual(narrowed.node.loops, { changes: { maxIterations: 3 } });
+  assert.equal(setStepChoices(decide, ['approved', 'escalate'], 'merge').node.loops, undefined);
+  // Moving the decision above its target turns the link forward: the bound goes.
+  let moved = moveStep(list, 'decide', -2);
+  assert.equal(moved.steps[0].id, 'decide');
+  assert.equal(moved.steps[0].node.loops, undefined);
+  assert.equal(pruneStaleLoops(list), list, 'nothing stale, nothing changed');
+  moved = removeStep(list, 'implement');
+  assert.deepEqual(moved.steps.find((s) => s.id === 'decide').node.loops, { changes: { maxIterations: 5 } },
+    'the link retargets to review, which is still earlier');
 });

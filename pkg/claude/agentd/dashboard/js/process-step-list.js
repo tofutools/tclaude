@@ -12,6 +12,8 @@
 // (parallel, wait or subprocess nodes, or a start node with several edges)
 // converts to { ok: false, reason } so the caller opens the full editor.
 
+import { loopBound, setLoopBound } from './process-loops.js';
+
 export const STEP_LIST_START_OUTCOME = 'start';
 export const STEP_CONTINUE_OUTCOME = 'next';
 // YOU_CONTINUE is a new "you" step's single answer.
@@ -399,9 +401,19 @@ export function setStepChoices(step, choices, following) {
     const added = answers.filter((answer) => answer !== cont && !kept.some((link) => link.outcome === answer))
       .map((outcome) => ({ outcome, to: following }));
     node.performer = performer;
+    // A removed answer takes its loop bound with it, and no bound follows it.
+    for (const outcome of Object.keys(node.loops || {})) {
+      if (!answers.includes(outcome)) setLoopBound(node, outcome, null);
+    }
+    for (const [outcome, bound] of Object.entries(node.loops || {})) {
+      if (bound.onExhausted && !answers.includes(bound.onExhausted)) {
+        setLoopBound(node, outcome, { maxIterations: bound.maxIterations, onExhausted: '' });
+      }
+    }
     return { ...step, node, cont, links: [...kept, ...added].filter((link) => link.to) };
   }
   node.type = 'task';
+  delete node.loops;
   delete performer.choices;
   delete performer.choiceOutcomes;
   node.performer = performer;
@@ -452,15 +464,18 @@ export function removeStep(list, id) {
   const remaining = list.steps.filter((step) => step.id !== id);
   // A link to the removed step goes to whatever followed it -- unless that is
   // the linking step itself or above it, then to the linking step's own next.
-  const retarget = (at) => {
+  // A bounded loop back to the removed step goes back to the step that
+  // followed it instead, while that is still earlier than the decision.
+  const retarget = (at, link, step) => {
     const after = remaining[index]?.id || list.mainEnd;
+    if (index < at && loopBound(step.node, link.outcome)) return after;
     return index > at ? after : remaining[at + 1]?.id || list.mainEnd;
   };
   const steps = remaining.map((step, at) => ({
     ...step,
-    links: step.links.map((link) => (link.to === id ? { ...link, to: retarget(at) } : link)).filter((link) => link.to),
+    links: step.links.map((link) => (link.to === id ? { ...link, to: retarget(at, link, step) } : link)).filter((link) => link.to),
   }));
-  return { ...list, steps };
+  return pruneStaleLoops({ ...list, steps });
 }
 
 export function moveStep(list, id, delta) {
@@ -470,7 +485,7 @@ export function moveStep(list, id, delta) {
   const steps = [...list.steps];
   const [moved] = steps.splice(index, 1);
   steps.splice(target, 0, moved);
-  return { ...list, steps };
+  return pruneStaleLoops({ ...list, steps });
 }
 
 // replaceStep swaps the step with the same id.
@@ -491,8 +506,69 @@ export function blankStepList(name = '') {
   };
 }
 
+// ---- bounded review loops (tcl-eu70x9) ---------------------------------------
+//
+// A decision step's answer may go back to an earlier step for another round,
+// as long as it is bounded: node.loops[answer] = { maxIterations, onExhausted }.
+// The list keeps that bound on the step's node, like every other node field.
+
+// backTargets are the earlier steps a decision step's answer may go back to.
+// A task never goes back, and no step goes back to itself.
+export function backTargets(list, stepID) {
+  const index = list.steps.findIndex((step) => step.id === stepID);
+  if (index < 0 || list.steps[index].node.type !== 'decision') return [];
+  return list.steps.slice(0, index).map((step) => step.id);
+}
+
+// isBackLink reports whether a step's link to a target goes back.
+export function isBackLink(list, stepID, to) {
+  return backTargets(list, stepID).includes(to);
+}
+
+// backTargetLabel names a back target in a "then" menu: "↺ back to 1 · name".
+export function backTargetLabel(list, id) {
+  return `\u21ba back to ${stepTargetLabel(list, id)}`;
+}
+
+// setStepLoop bounds (or with a null bound unbounds) one answer of a step.
+export function setStepLoop(step, outcome, bound) {
+  const node = clone(step.node);
+  setLoopBound(node, outcome, bound);
+  return { ...step, node };
+}
+
+// setOutcomeLoop is setStepLoop addressed through the list.
+export function setOutcomeLoop(list, stepID, outcome, bound) {
+  const step = list.steps.find((s) => s.id === stepID);
+  return step ? replaceStep(list, setStepLoop(step, outcome, bound)) : list;
+}
+
+// stepLoop is one answer's bound, or null.
+export function stepLoop(step, outcome) {
+  return loopBound(step.node, outcome);
+}
+
+// pruneStaleLoops drops bounds whose answer no longer goes back: the step
+// moved above its target, or the link was retargeted forward.
+export function pruneStaleLoops(list) {
+  let changed = false;
+  const steps = list.steps.map((step) => {
+    const loops = step.node.loops;
+    if (!loops) return step;
+    let next = step;
+    for (const outcome of Object.keys(loops)) {
+      const to = step.links.find((link) => link.outcome === outcome)?.to;
+      if (to && isBackLink(list, step.id, to)) continue;
+      next = setStepLoop(next, outcome, null);
+      changed = true;
+    }
+    return next;
+  });
+  return changed ? { ...list, steps } : list;
+}
+
 // forwardTargets are the link targets a step may pick: the steps after it and
-// the ends. Templates are acyclic, so a link never points back; a backward
+// the ends. Going back is a decision's bounded loop (backTargets); a backward
 // link a template already has stays as it is.
 export function forwardTargets(list, stepID) {
   const index = list.steps.findIndex((step) => step.id === stepID);
@@ -536,8 +612,9 @@ export function stepListFlow(list, { whoOf = () => '' } = {}) {
     const from = at.get(edge.from);
     const to = at.get(edge.to);
     const label = PASS_LABELS.includes(edge.outcome) || edge.outcome === STEP_CONTINUE_OUTCOME ? '' : edge.outcome;
+    const loop = loopBound(nodes[edge.from], edge.outcome);
     if (to === from + 1) down[from].push(label);
-    else jumps.push({ from, to, label, back: to <= from });
+    else jumps.push({ from, to, label, back: to <= from, ...(loop ? { loop } : {}) });
   }
   jumps.sort((a, b) => Math.abs(a.to - a.from) - Math.abs(b.to - b.from) || a.from - b.from || a.to - b.to);
   const lanes = [];

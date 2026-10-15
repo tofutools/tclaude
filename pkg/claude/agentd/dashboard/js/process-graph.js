@@ -5,6 +5,7 @@
 
 import { layoutProcessGraph, rerouteProcessLayout } from './process-layout.js';
 import { edgeLabelVisible } from './process-outcome-vocabulary.js';
+import { loopEdgeSuffix } from './process-loops.js';
 import {
   makeSelection, nodesInMarquee, normalizeMarquee, selectionContains, selectionItems,
 } from './process-selection.js';
@@ -60,9 +61,12 @@ function hook(options, name) {
 
 function edgeLabel(edge, siblingCount = 2, nodeType = '', selected = false) {
   const bits = [];
-  if (edgeLabelVisible({
+  // A bounded loop edge always names its outcome: the round limit means
+  // nothing without the answer that takes it.
+  if (edge.maxIterations || edgeLabelVisible({
     outcome: edge.outcome, siblingCount, nodeType, pinned: edge.pinned, selected,
   })) bits.push(String(edge.outcome));
+  if (edge.maxIterations) bits.push(loopEdgeSuffix(edge.maxIterations, edge.round));
   if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
   if (!bits.length && edge.back) bits.push('return');
   return bits.join(' · ');
@@ -97,6 +101,11 @@ function symmetricDifference(a, b) {
 function edgeAccessibleName(edge, issues = []) {
   const bits = [];
   if (edge.outcome) bits.push(String(edge.outcome));
+  if (edge.maxIterations) {
+    bits.push(edge.round
+      ? `loop round ${edge.round} of at most ${edge.maxIterations}`
+      : `loops back at most ${edge.maxIterations} rounds`);
+  }
   if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
   if (!bits.length && edge.back) bits.push('return');
   const detail = bits.join(' \u00b7 ');
@@ -787,7 +796,7 @@ export class ProcessGraph {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
-      class: `process-edge${edge.back ? ' process-edge-back' : ''}${diffClasses(edge.diff)}`,
+      class: `process-edge${edge.back ? ' process-edge-back' : ''}${edge.maxIterations ? ' process-edge-loop' : ''}${diffClasses(edge.diff)}`,
       'data-key': key,
       'data-edge-id': edge.id,
       'data-edge-index': edge.inputIndex,

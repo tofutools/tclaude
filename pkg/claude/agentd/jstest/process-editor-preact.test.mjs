@@ -1481,3 +1481,43 @@ test('regression: opening the title editor prefills the current name', async (t)
   assert.equal(host.querySelector('[data-process-title-input]').value, 'Second name');
   editor.destroy();
 });
+
+test('a decision connector that goes back gets loop controls in the edge inspector', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  Object.assign(editor.model.template.nodes, {
+    implement: { type: 'task' },
+    decide: { type: 'decision' },
+    end: { type: 'end', result: 'success' },
+  });
+  Object.assign(editor.model.layout.nodes, {
+    implement: { x: 100, y: 200 }, decide: { x: 300, y: 200 }, end: { x: 500, y: 200 },
+  });
+  editor.model.edges.push(
+    { from: 'start', outcome: 'pass', to: 'implement' },
+    { from: 'implement', outcome: 'pass', to: 'decide' },
+    { from: 'decide', outcome: 'changes', to: 'implement' },
+    { from: 'decide', outcome: 'approved', to: 'end' },
+  );
+  await harness.act(() => editor.refresh());
+
+  await harness.act(() => editor.setSelection({ type: 'edge', from: 'decide', outcome: 'changes' }));
+  const make = host.querySelector('[data-make-loop]');
+  assert.ok(make, 'an unbounded back connector offers the one-click loop');
+  assert.match(make.textContent, /make it a loop \(3 rounds\)/);
+  await harness.act(() => harness.fireEvent(make, 'click'));
+  assert.deepEqual(editor.model.template.nodes.decide.loops, { changes: { maxIterations: 3 } });
+
+  const controls = host.querySelector('[data-loop-controls]');
+  assert.ok(controls, 'a bounded connector shows its round limit');
+  assert.equal(controls.querySelector('.process-loop-rounds').value, '3');
+  const exhausted = controls.querySelector('.process-loop-exhausted');
+  assert.deepEqual([...exhausted.options].map((option) => option.value), ['approved', '']);
+  Object.defineProperty(exhausted, 'value', { configurable: true, writable: true, value: 'approved' });
+  await harness.act(() => harness.fireEvent(exhausted, 'change'));
+  assert.deepEqual(editor.model.template.nodes.decide.loops, { changes: { maxIterations: 3, onExhausted: 'approved' } });
+
+  await harness.act(() => editor.setSelection({ type: 'edge', from: 'decide', outcome: 'approved' }));
+  assert.equal(host.querySelector('[data-loop-controls]'), null, 'a forward connector has no loop controls');
+  assert.equal(host.querySelector('[data-make-loop]'), null);
+  editor.destroy();
+});

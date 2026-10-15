@@ -17,8 +17,11 @@ import {
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
   collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
-  stepTargetLabel, stepText, stepWho,
+  stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop,
 } from './process-step-list.js';
+import {
+  LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
+} from './process-loops.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { dashPrefs } from './prefs.js';
 
@@ -160,13 +163,29 @@ function Answers({ list, step, onChange }) {
     const next = draft.split(',').map((answer) => answer.trim()).filter(Boolean);
     onChange(setStepChoices(step, next.length ? next : [YOU_CONTINUE], following));
   };
+  const back = backTargets(list, step.id);
   const linkFor = (answer) => (answer === step.cont ? following : step.links.find((link) => link.outcome === answer)?.to || '');
   // Retargeting keeps the continuing answer continuing only while it still
-  // goes to the next step.
+  // goes to the next step. Going back to an earlier step is a bounded loop:
+  // it starts at the default round limit, and going forward again drops it.
   const retarget = (answer, to) => {
     const targetOf = Object.fromEntries(answers.map((a) => [a, a === answer ? to : linkFor(a)]));
     const cont = step.cont && targetOf[step.cont] === following ? step.cont : '';
-    onChange({ ...step, cont, links: answers.filter((a) => a !== cont).map((a) => ({ outcome: a, to: targetOf[a] })) });
+    let next = { ...step, cont, links: answers.filter((a) => a !== cont).map((a) => ({ outcome: a, to: targetOf[a] })) };
+    const goesBack = back.includes(to);
+    if (goesBack && !stepLoop(step, answer)) next = setStepLoop(next, answer, { maxIterations: LOOP_DEFAULT_ROUNDS, onExhausted: '' });
+    if (!goesBack) next = setStepLoop(next, answer, null);
+    onChange(next);
+  };
+  const setRounds = (answer, text) => {
+    const rounds = normalizeRounds(text);
+    const bound = stepLoop(step, answer);
+    if (rounds == null || !bound) return;
+    onChange(setStepLoop(step, answer, { ...bound, maxIterations: rounds }));
+  };
+  const setExhausted = (answer, onExhausted) => {
+    const bound = stepLoop(step, answer);
+    if (bound) onChange(setStepLoop(step, answer, { ...bound, onExhausted }));
   };
   return html`<div class="gq-answers">
     <label class="gq-answers-in">answers <input type="text" value=${draft} aria-label="Answers you can give, comma separated"
@@ -174,11 +193,22 @@ function Answers({ list, step, onChange }) {
       onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></label>
     <div class="gq-then">${answers.map((answer) => {
       const to = linkFor(answer);
-      const options = [...new Set([...(to ? [to] : []), ...targets])];
-      return html`<label key=${answer} class="gq-then-link"><span class="gq-answer">${answer}</span> →
+      const options = [...new Set([...(to ? [to] : []), ...targets, ...back])];
+      const bound = back.includes(to) ? stepLoop(step, answer) : null;
+      const others = answers.filter((a) => a !== answer && !back.includes(linkFor(a)));
+      return html`<div key=${answer} class="gq-then-row"><label class="gq-then-link"><span class="gq-answer">${answer}</span> →
         <select aria-label=${`After ${answer}`} value=${to} onChange=${(event) => retarget(answer, event.currentTarget.value)}>
-          ${options.map((id) => html`<option key=${id} value=${id}>${stepTargetLabel(list, id)}</option>`)}
-        </select></label>`;
+          ${options.map((id) => html`<option key=${id} value=${id}>${back.includes(id) ? backTargetLabel(list, id) : stepTargetLabel(list, id)}</option>`)}
+        </select></label>
+        ${bound && html`<span class="gq-loop" data-loop=${answer}>at most
+          <input type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
+            aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget.value)} />
+          rounds, then
+          <select aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
+            onChange=${(event) => setExhausted(answer, event.currentTarget.value)}>
+            ${others.map((a) => html`<option key=${a} value=${a}>${a}</option>`)}
+            <option value="">ask again</option>
+          </select></span>`}</div>`;
     })}</div>
   </div>`;
 }
@@ -267,7 +297,7 @@ function FlowPreview({ flow, wizard }) {
         ${row.kind === 'step' ? html`
           <div class="gq-flow-head"><b>${row.number}</b> <span aria-hidden="true">${GLYPHS[stepKind(row.step)]}</span> <span class="gq-flow-name">${row.label}</span></div>
           <div class="gq-flow-who">${row.who}</div>
-          ${answers.length > 0 && html`<div class="gq-flow-answers">${answers.map((jump) => html`<span key=${jump.label}>${jump.label} → ${flow.rows[jump.to].kind === 'step' ? flow.rows[jump.to].number : flow.rows[jump.to].label}</span>`)}</div>`}`
+          ${answers.length > 0 && html`<div class="gq-flow-answers">${answers.map((jump) => html`<span key=${jump.label}>${jump.label} → ${jump.loop ? '\u21ba back to ' : ''}${flow.rows[jump.to].kind === 'step' ? flow.rows[jump.to].number : flow.rows[jump.to].label}${jump.loop ? ` (${loopSummary(jump.loop)})` : ''}</span>`)}</div>`}`
         : html`<span aria-hidden="true">${row.kind === 'start' ? '▶' : '■'}</span> ${row.label}`}
       </div>${i < flow.rows.length - 1 && row.down !== null && html`<div key=${`${row.id}-down`} class="gq-flow-down" style=${`top:${tops[i] + heights[i]}px;height:${FLOW.gap}px`}>
         <span aria-hidden="true">↓</span>${row.down && html` <em>${row.down}</em>`}</div>`}`;

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -130,5 +131,38 @@ func TestLoopBoundOnATaskIsRefused(t *testing.T) {
 	})
 	if _, ok := loopErrorCodes(tmpl)["loop_source"]; !ok {
 		t.Fatalf("errors = %v", loopErrorCodes(tmpl))
+	}
+}
+
+func TestUnboundedCycleHintNamesTheDecisionOrAsksForOne(t *testing.T) {
+	message := func(tmpl *Template) string {
+		for _, diagnostic := range Validate(tmpl, NormalizeEdges(tmpl)) {
+			if diagnostic.Code == "graph_cycle" {
+				return diagnostic.Message
+			}
+		}
+		t.Fatal("no graph_cycle")
+		return ""
+	}
+	decided := loopTestTemplate(func(nodes map[string]Node) {
+		decide := nodes["decide"]
+		decide.Loops = nil
+		nodes["decide"] = decide
+	})
+	got := message(decided)
+	if !strings.Contains(got, `bound decision "decide"'s outcome "changes"`) || strings.Contains(got, "start") {
+		t.Fatalf("message = %q", got)
+	}
+	taskOnly := loopTestTemplate(func(nodes map[string]Node) {
+		review := nodes["review"]
+		review.Next = Next{DefaultOutcome: "decide", "again": "implement"}
+		nodes["review"] = review
+		decide := nodes["decide"]
+		decide.Loops = nil
+		decide.Next = Next{"approved": "merge", "escalate": "escalated"}
+		nodes["decide"] = decide
+	})
+	if got := message(taskOnly); !strings.Contains(got, "only a decision can send work back") {
+		t.Fatalf("message = %q", got)
 	}
 }
