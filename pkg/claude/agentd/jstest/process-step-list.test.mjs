@@ -151,12 +151,17 @@ test('who switches keep the step text and drop fields the new kind cannot carry'
   const { list } = viewToStepList(viewOf(structuredClone(SHIP_FEATURE)));
   const implement = list.steps[0];
   const role = setStepWho(implement, { mode: 'role', role: 'dev' });
-  assert.deepEqual(role.node.performer, { kind: 'agent', profile: 'dev', prompt: 'Implement {{params.issue}} on a branch.' });
-  const roleNew = setStepWho(implement, { mode: 'role', role: 'dev' }, { legacyRoles: false });
-  assert.deepEqual(roleNew.node.performer, { kind: 'agent', role: 'dev', prompt: 'Implement {{params.issue}} on a branch.' });
-  const anyone = setStepWho(role, { mode: 'anyone' }, { legacyRoles: false });
-  assert.deepEqual(anyone.node.performer, { kind: 'agent', profile: 'dev', anyone: true, prompt: 'Implement {{params.issue}} on a branch.' },
-    'without legacy roles, a profile is kept as the spawn profile');
+  assert.deepEqual(role.node.performer, { kind: 'agent', role: 'dev', prompt: 'Implement {{params.issue}} on a branch.' },
+    'a role is performer.role');
+  const legacy = setStepWho(implement, { mode: 'role', role: 'dev' }, { legacyRoles: true });
+  assert.deepEqual(legacy.node.performer, { kind: 'agent', profile: 'dev', prompt: 'Implement {{params.issue}} on a branch.' });
+  const anyone = setStepWho(role, { mode: 'anyone' });
+  assert.deepEqual(anyone.node.performer, { kind: 'agent', anyone: true, prompt: 'Implement {{params.issue}} on a branch.' });
+  const reviewer = list.steps[1];
+  const spawning = { ...reviewer, node: { ...reviewer.node, performer: { ...reviewer.node.performer, spawn: 'allowed' } } };
+  assert.deepEqual(setStepWho(spawning, { mode: 'role', role: 'reviewer' }).node.performer,
+    { kind: 'agent', role: 'reviewer', fallback: { action: 'spawn', profile: 'reviewer' }, prompt: 'Answer approved or changes.' },
+    'a legacy spawn opt-in becomes a step fallback that spawns the same profile');
   const you = setStepWho(implement, { mode: 'you' });
   assert.deepEqual(you.node.performer, { kind: 'human', ask: 'Implement {{params.issue}} on a branch.' });
   const back = setStepWho(you, { mode: 'agent', agent: 'search' });

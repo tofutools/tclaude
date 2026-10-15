@@ -401,7 +401,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
   const quickStart = editing
-    ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null}
+    ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)} />`
     : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}

@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
-  STARTERS, whoFromValue, whoNow, whoOptions, whoValue,
+  STARTERS, ownFallback, whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
   YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
@@ -131,10 +131,10 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
   </section>`;
 }
 
-function WhoPicker({ step, roster, onChange }) {
+function WhoPicker({ step, roster, roles, onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
-  const options = whoOptions(roster);
+  const options = whoOptions(roster, { roles });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['other', 'Not an agent']];
   return html`<select class="gq-who-select" aria-label="Who does this step" data-who=${value} value=${value}
@@ -183,10 +183,9 @@ function Answers({ list, step, onChange }) {
   </div>`;
 }
 
-function StepRow({ list, step, index, roster, problems, onChange, onMove, onRemove }) {
+function StepRow({ list, step, index, roster, roles, now, problems, onChange, onMove, onRemove }) {
   const kind = stepKind(step);
   const decision = step.node.type === 'decision';
-  const now = whoNow(step, roster);
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
   const text = collapseParamShorthand(stepText(step));
   const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test' }[kind];
@@ -210,7 +209,7 @@ function StepRow({ list, step, index, roster, problems, onChange, onMove, onRemo
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>
     <div class="gq-who">
-      <${WhoPicker} step=${step} roster=${roster} onChange=${setWho} />
+      <${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
       <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>
     </div>
     <div class="gq-row-act">
@@ -302,10 +301,19 @@ function withName(list, name) {
   return { ...list, template: { ...list.template, name } };
 }
 
+// previewNow reads a resolve-preview answer for one step as whoNow does.
+function previewNow(node) {
+  if (!node) return null;
+  if (node.name || node.agentId) return { label: node.name || node.agentId, detail: node.reason || '' };
+  if (node.spawnProfile) return { label: `a new ${node.spawnProfile}`, detail: node.reason || '', spawns: node.spawnProfile };
+  return { label: 'nobody now', detail: node.reason || '', waits: true, fails: !!node.fails };
+}
+
 // StepListEditor is the inline step-list editor (mock Q2). With `saved` it
 // edits one of the group's saved processes ({templateId, sourceHash}):
 // saving writes a new version of that template instead of a new one.
-export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, api, source, wizard = false, onClose, notify = defaultNotify }) {
+// `groupInfo` is the group's process context ({roles, defaultSpawnProfile}).
+export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, api, source, wizard = false, onClose, notify = defaultNotify }) {
   const [list, setList] = useState(initial);
   const [name, setName] = useState(initial.template?.name || '');
   const [values, setValues] = useState({});
@@ -314,6 +322,9 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [diagnostics, setDiagnostics] = useState([]);
+  // preview is the server's "who it will use now" for the view it was asked
+  // about ({key, nodes}); a stale one is ignored until the next answer.
+  const [preview, setPreview] = useState({ key: '', nodes: null });
   const view = useMemo(() => stepListToView(withName(list, name.trim())), [list, name]);
   const viewKey = JSON.stringify(view);
   // created is the template these exact steps are stored as: a saved
@@ -337,22 +348,38 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     }, VALIDATE_DELAY_MS);
     return () => { live = false; clearTimeout(timer); };
   }, [viewKey]);
+  useEffect(() => {
+    let live = true;
+    if (typeof api.resolvePreview !== 'function') return undefined;
+    const key = viewKey;
+    const timer = setTimeout(() => {
+      api.resolvePreview(view, group.name).then((body) => { if (live) setPreview({ key, nodes: body?.nodes || {} }); })
+        .catch(() => { if (live) setPreview({ key: '', nodes: null }); });
+    }, VALIDATE_DELAY_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [viewKey, group.name]);
+  const fallback = list.template?.fallback || null;
+  const defaultSpawnProfile = String(groupInfo?.defaultSpawnProfile || '');
+  const served = preview.key === viewKey ? preview.nodes : null;
+  const nowOf = (step) => previewNow(served?.[step.id]) || whoNow(step, roster, { fallback, defaultSpawnProfile });
+  const roles = groupInfo?.roles || null;
   const { out: stepProblems, general } = problemsByStep(diagnostics, list);
   const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
   const hasErrors = diagnostics.some((d) => d.severity === 'error');
   const update = (next) => { setError(''); setList(next); };
   const change = (step) => update(replaceStep(list, step));
-  const roleSteps = list.steps.filter((step) => stepWho(step).mode === 'role');
-  const spawning = roleSteps.length > 0 && roleSteps.every((step) => step.node.performer?.spawn === 'allowed');
-  const setSpawning = (on) => {
-    let next = list;
-    for (const step of roleSteps) {
-      const performer = { ...step.node.performer };
-      if (on) performer.spawn = 'allowed';
-      else delete performer.spawn;
-      next = replaceStep(next, { ...step, node: { ...step.node, performer } });
-    }
-    update(next);
+  // The process fallback (template.fallback) covers every agent step that
+  // names none of its own: wait (the default, left unset), spawn the group's
+  // default spawn profile, or fail the step.
+  const agentSteps = list.steps.filter((step) => step.node.performer?.kind === 'agent');
+  const fallbackAction = fallback?.action || 'wait';
+  const ownFallbacks = agentSteps.filter(ownFallback).length;
+  const spawnProfile = fallback?.profile || defaultSpawnProfile;
+  const setFallback = (action) => {
+    const template = { ...list.template };
+    if (action === 'wait') delete template.fallback;
+    else template.fallback = { action, ...(action === 'spawn' && fallback?.profile ? { profile: fallback.profile } : {}) };
+    update({ ...list, template });
   };
   // ensureSaved stores the steps once per edit and returns the template id.
   // The first save creates the template with {listed, pinGroup}; edits
@@ -482,7 +509,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     : hasErrors ? 'Fix the problems first'
       : missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first`
         : unconsented.length ? `Allow ${consentSubject(consents.find((c) => c.profile === unconsented[0]))} to run first` : '';
-  const whoRows = list.steps.map((step, i) => ({ step, i, now: whoNow(step, roster) }));
+  const whoRows = list.steps.map((step, i) => ({ step, i, now: nowOf(step) }));
   const title = saved ? (wizard ? 'Rite' : 'Process') : (wizard ? 'New rite' : 'New process');
   return html`<section class="gq-editor" aria-label=${saved ? `Edit ${label} of ${group.name}` : `New process for ${group.name}`} data-step-editor=${group.name}
     data-step-editor-saved=${saved?.templateId}>
@@ -495,7 +522,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <span class="gq-spacer"></span>
         ${origin && html`<span class="gq-dim">from starter ${origin}</span>`}
       </div>
-      ${list.steps.map((step, index) => html`<${StepRow} key=${step.id} list=${list} step=${step} index=${index} roster=${roster}
+      ${list.steps.map((step, index) => html`<${StepRow} key=${step.id} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${whoRows[index].now}
         problems=${stepProblems.get(step.id) || []} onChange=${change}
         onMove=${(delta) => update(moveStep(list, step.id, delta))} onRemove=${() => update(removeStep(list, step.id))} />`)}
       ${!list.steps.length && html`<div class="gq-empty">No steps yet. Add the first one.</div>`}
@@ -504,18 +531,21 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<button key=${kind} type="button" class="gq-btn" data-add-step=${kind}
           onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}</button>`)}
       </div>
-      ${roleSteps.length > 0 && html`<div class="gq-fallback">
+      ${agentSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
         <span aria-hidden="true">↯</span>
-        <label>If nobody with the role can take an agent step:
-          <select aria-label="When nobody can take a step" value=${spawning ? 'spawn' : 'wait'} onChange=${(event) => setSpawning(event.currentTarget.value === 'spawn')}>
+        <label>If no member can take an agent step:
+          <select aria-label="When no member can take a step" value=${fallbackAction} onChange=${(event) => setFallback(event.currentTarget.value)}>
             <option value="wait">wait for one</option>
-            <option value="spawn">spawn one with the role's profile</option>
+            <option value="spawn" disabled=${!spawnProfile && fallbackAction !== 'spawn'}>${spawnProfile
+    ? `spawn one with profile ${spawnProfile}` : 'spawn one (the group has no default spawn profile)'}</option>
+            <option value="fail">fail the step</option>
           </select></label>
+        ${ownFallbacks > 0 && html`<span class="gq-dim" data-own-fallbacks=${ownFallbacks}>· ${ownFallbacks === 1 ? '1 step sets its own' : `${ownFallbacks} steps set their own`}</span>`}
       </div>`}
     </div>
     <div class="gq-side">
       <div class="gq-sec">Preview</div>
-      <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => whoNow(step, roster).label })} wizard=${wizard} />
+      <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => nowOf(step).label })} wizard=${wizard} />
       ${needs.params.length > 0 && html`<div class="gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
         <div class="gq-params">${needs.params.map((param) => html`<label key=${param.name} class="gq-param">
           <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
