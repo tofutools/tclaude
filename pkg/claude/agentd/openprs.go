@@ -474,7 +474,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			checksByURL[item.URL] = info
 		}
 		obs := &prReviewObservation{
-			Decision: normalizePRReviewDecision(node.ReviewDecision), Source: prReviewSourceSearch,
+			Decision: normalizePRReviewDecision(node.ReviewDecision),
 		}
 		if node.LatestOpinionatedReviews != nil {
 			obs.ReviewersFetched = true

@@ -304,7 +304,9 @@ each reviewer's latest review (linked), GitHub's review decision, and links to
 the conversation and the changed files. The panel reads the snapshot and makes
 no GitHub call. GitHub's `reviewDecision` rides every existing PR read for
 free. The reviewer list costs one extra GraphQL point, so the Open PRs search
-fetches it at most once a minute. In the footer, **Ready to merge** lists
+fetches it at most once a minute. Reviewer lists come only from that search of
+your own PRs; another author's PR shows a pill only when its repository's
+branch protection requires reviews. In the footer, **Ready to merge** lists
 approved PRs with passing CI, and requested changes count toward **Needs
 attention**.
 

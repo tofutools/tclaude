@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,13 @@ import (
 //     GraphQL cost. It is null unless branch protection REQUIRES reviews,
 //     though, so on many repositories it alone says nothing.
 //
+//   - Reviewer lists come only from the authored-PR search. gh's per-PR JSON
+//     cannot give an honest count: `latestReviews` keeps a later COMMENT that
+//     hides an earlier change request, `reviews` drags every review body
+//     along, and neither says whether an author is a bot. So a PR the search
+//     does not cover (one the operator did not author) shows a pill only when
+//     its repository requires reviews.
+//
 //   - The reviewer list (latestOpinionatedReviews) is a connection and costs
 //     one extra GraphQL point per search. The authored-PR search therefore
 //     asks for it at most once per authoredOpenPRReviewInterval rather than on
@@ -42,16 +50,7 @@ const (
 	authoredOpenPRReviewInterval = 60 * time.Second
 	// prReviewsMaxReviewers bounds one PR's reviewer list in cache and snapshot.
 	prReviewsMaxReviewers = 20
-	// prReviewsSearchListAuthority is how long a reviewer list from the
-	// authored-PR search outranks one from a per-PR `gh` call. gh only exposes
-	// latestReviews, whose per-reviewer entry can be a later COMMENT that
-	// hides an approval; the search reads latestOpinionatedReviews and knows
-	// bots. While the search keeps refreshing its list, gh only updates the
-	// decision; once the search stops covering the PR, gh's list is used.
-	prReviewsSearchListAuthority = 3 * authoredOpenPRReviewInterval
-
-	prReviewSourceSearch = "search"
-	prReviewSourceGH     = "gh"
+	prReviewSourceSearch  = "search"
 )
 
 // authoredOpenPRReviewsFetchedAt is the unix-nano time of the last successful
@@ -87,7 +86,6 @@ type prReviewSummary struct {
 	// fetched yet", which render differently.
 	ReviewersKnown     bool         `json:"reviewers_known,omitempty"`
 	Reviewers          []prReviewer `json:"reviewers,omitempty"`
-	ReviewersSource    string       `json:"reviewers_source,omitempty"`
 	ReviewersFetchedAt string       `json:"reviewers_fetched_at,omitempty"`
 	FetchedAt          string       `json:"fetched_at,omitempty"`
 }
@@ -99,7 +97,6 @@ type prReviewObservation struct {
 	Decision         string
 	Reviewers        []prReviewer
 	ReviewersFetched bool
-	Source           string
 }
 
 func prReviewsCacheKey(rawURL string) string {
@@ -159,7 +156,9 @@ func validPRReviewerLogin(login string) bool {
 		return false
 	}
 	for _, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
 			return false
 		}
 	}
@@ -172,10 +171,9 @@ func mergePRReviewObservation(prev *prReviewSummary, obs prReviewObservation, no
 	if prev != nil {
 		out.ReviewersKnown = prev.ReviewersKnown
 		out.Reviewers = prev.Reviewers
-		out.ReviewersSource = prev.ReviewersSource
 		out.ReviewersFetchedAt = prev.ReviewersFetchedAt
 	}
-	if obs.ReviewersFetched && !searchListStillAuthoritative(prev, obs.Source, now) {
+	if obs.ReviewersFetched {
 		reviewers := append([]prReviewer(nil), obs.Reviewers...)
 		sort.SliceStable(reviewers, func(i, j int) bool {
 			return reviewerRank(reviewers[i]) < reviewerRank(reviewers[j])
@@ -185,7 +183,6 @@ func mergePRReviewObservation(prev *prReviewSummary, obs prReviewObservation, no
 		}
 		out.ReviewersKnown = true
 		out.Reviewers = reviewers
-		out.ReviewersSource = obs.Source
 		out.ReviewersFetchedAt = now.Format(time.RFC3339)
 	}
 	for _, r := range out.Reviewers {
@@ -200,14 +197,6 @@ func mergePRReviewObservation(prev *prReviewSummary, obs prReviewObservation, no
 		}
 	}
 	return out
-}
-
-func searchListStillAuthoritative(prev *prReviewSummary, source string, now time.Time) bool {
-	if prev == nil || source == prReviewSourceSearch || prev.ReviewersSource != prReviewSourceSearch {
-		return false
-	}
-	at, err := time.Parse(time.RFC3339, prev.ReviewersFetchedAt)
-	return err == nil && now.Sub(at) < prReviewsSearchListAuthority
 }
 
 // reviewerRank keeps the rows that block or unblock a merge on top: changes
@@ -238,12 +227,19 @@ func loadPRReviews(rawURL string) (prReviewSummary, bool) {
 	return s, true
 }
 
+var prReviewsSaveMu sync.Mutex
+
 // savePRReviewObservation merges and stores one observation. Best-effort, as
 // savePRChecks: a failed write only means the badge waits for the next one.
 func savePRReviewObservation(rawURL string, obs prReviewObservation, now time.Time) {
 	if prStateKey(rawURL) == "" {
 		return
 	}
+	// The poller and the branch/presented refreshes write concurrently; an
+	// unserialized load-merge-save could put back a reviewer list the search
+	// just replaced.
+	prReviewsSaveMu.Lock()
+	defer prReviewsSaveMu.Unlock()
 	var prev *prReviewSummary
 	if cached, ok := loadPRReviews(rawURL); ok {
 		prev = &cached
@@ -259,27 +255,10 @@ func savePRReviewObservation(rawURL string, obs prReviewObservation, now time.Ti
 	}
 }
 
-// ghLatestReview is one element of `gh pr list/view --json latestReviews`.
-type ghLatestReview struct {
-	Author struct {
-		Login string `json:"login"`
-	} `json:"author"`
-	State       string `json:"state"`
-	SubmittedAt string `json:"submittedAt"`
-}
-
-// prReviewObservationFromGH builds an observation from the review fields a
-// per-PR gh call returned alongside its existing ones.
-func prReviewObservationFromGH(decision string, reviews []ghLatestReview) *prReviewObservation {
-	obs := &prReviewObservation{
-		Decision: normalizePRReviewDecision(decision), ReviewersFetched: true, Source: prReviewSourceGH,
-	}
-	for _, r := range reviews {
-		if reviewer, ok := normalizePRReviewer(r.Author.Login, r.State, "", r.SubmittedAt, false); ok {
-			obs.Reviewers = append(obs.Reviewers, reviewer)
-		}
-	}
-	return obs
+// prReviewDecisionFromGH is the observation a per-PR gh call contributes:
+// the decision only, never a reviewer list (see the file comment).
+func prReviewDecisionFromGH(decision string) *prReviewObservation {
+	return &prReviewObservation{Decision: normalizePRReviewDecision(decision)}
 }
 
 // prReviewsIndexFor batch-loads the review summaries for every PR URL the

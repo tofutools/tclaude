@@ -230,7 +230,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup,reviewDecision,latestReviews", gitProxyHardeningActive())
+	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup,reviewDecision", gitProxyHardeningActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -242,14 +242,13 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 		return livePresentedPRInfoWithoutChecks(rawURL)
 	}
 	var pr struct {
-		Number            int              `json:"number"`
-		Title             string           `json:"title"`
-		URL               string           `json:"url"`
-		State             string           `json:"state"`
-		IsDraft           bool             `json:"isDraft"`
-		StatusCheckRollup json.RawMessage  `json:"statusCheckRollup"`
-		ReviewDecision    string           `json:"reviewDecision"`
-		LatestReviews     []ghLatestReview `json:"latestReviews"`
+		Number            int             `json:"number"`
+		Title             string          `json:"title"`
+		URL               string          `json:"url"`
+		State             string          `json:"state"`
+		IsDraft           bool            `json:"isDraft"`
+		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+		ReviewDecision    string          `json:"reviewDecision"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return presentedPRInfo{}, false
@@ -260,7 +259,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	checks := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
 	return presentedPRInfo{
 		Title: truncateAuthoredPRTitle(pr.Title), Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft), Checks: &checks,
-		Reviews: prReviewObservationFromGH(pr.ReviewDecision, pr.LatestReviews),
+		Reviews: prReviewDecisionFromGH(pr.ReviewDecision),
 	}, true
 }
 

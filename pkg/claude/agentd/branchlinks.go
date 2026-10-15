@@ -710,14 +710,13 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 		return number, url, state, checks, nil
 	}
 	var prs []struct {
-		Number            int              `json:"number"`
-		URL               string           `json:"url"`
-		State             string           `json:"state"`
-		IsDraft           bool             `json:"isDraft"`
-		IsCrossRepository bool             `json:"isCrossRepository"`
-		StatusCheckRollup json.RawMessage  `json:"statusCheckRollup"`
-		ReviewDecision    string           `json:"reviewDecision"`
-		LatestReviews     []ghLatestReview `json:"latestReviews"`
+		Number            int             `json:"number"`
+		URL               string          `json:"url"`
+		State             string          `json:"state"`
+		IsDraft           bool            `json:"isDraft"`
+		IsCrossRepository bool            `json:"isCrossRepository"`
+		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+		ReviewDecision    string          `json:"reviewDecision"`
 	}
 	if json.Unmarshal([]byte(out), &prs) != nil {
 		return 0, "", "", nil, nil
@@ -741,7 +740,7 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 	resolved := parseStatusCheckRollup(prs[pick].StatusCheckRollup, time.Now())
 	return prs[pick].Number, prs[pick].URL,
 		prStateFromGH(prs[pick].State, prs[pick].IsDraft), &resolved,
-		prReviewObservationFromGH(prs[pick].ReviewDecision, prs[pick].LatestReviews)
+		prReviewDecisionFromGH(prs[pick].ReviewDecision)
 }
 
 // ghPRListArgs builds the argv for a branch's pull-request lookup.
@@ -774,7 +773,7 @@ func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string
 func ghPRListArgs(ownerRepo, branch string, rich bool) []string {
 	fields := "number,url,state,isCrossRepository"
 	if rich {
-		fields += ",isDraft,statusCheckRollup,reviewDecision,latestReviews"
+		fields += ",isDraft,statusCheckRollup,reviewDecision"
 	}
 	args := []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
 	if strings.TrimSpace(ownerRepo) != "" {

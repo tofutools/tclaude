@@ -94,27 +94,24 @@ func TestAuthoredOpenPRReviewsDue(t *testing.T) {
 	assert.True(t, authoredOpenPRReviewsDue(now))
 }
 
-func TestGHReviewListDoesNotOverrideAFreshSearchList(t *testing.T) {
+func TestGHDecisionKeepsTheSearchReviewerList(t *testing.T) {
 	now := time.Now()
 	search := mergePRReviewObservation(nil, prReviewObservation{
-		ReviewersFetched: true, Source: prReviewSourceSearch,
-		Reviewers: []prReviewer{{Login: "alice", State: "approved"}},
+		ReviewersFetched: true,
+		Reviewers:        []prReviewer{{Login: "alice", State: "approved"}},
 	}, now)
 	require.Equal(t, 1, search.Approved)
 
-	// gh's latestReviews can show alice's later COMMENT instead of her
-	// approval; while the search list is fresh, gh only updates the decision.
-	gh := prReviewObservationFromGH("APPROVED", []ghLatestReview{{State: "COMMENTED"}})
-	merged := mergePRReviewObservation(&search, *gh, now.Add(30*time.Second))
+	// gh can neither tell bots apart nor see a change request behind a later
+	// comment, so its observation carries the decision and nothing else.
+	merged := mergePRReviewObservation(&search, *prReviewDecisionFromGH("APPROVED"), now.Add(time.Hour))
 	assert.Equal(t, "approved", merged.Decision)
 	assert.Equal(t, 1, merged.Approved)
-	assert.Equal(t, prReviewSourceSearch, merged.ReviewersSource)
-
-	// Once the search stops covering the PR, gh's list is used.
-	merged = mergePRReviewObservation(&search, *gh, now.Add(prReviewsSearchListAuthority+time.Second))
-	assert.Equal(t, 0, merged.Approved)
-	assert.Equal(t, prReviewSourceGH, merged.ReviewersSource)
 	assert.True(t, merged.ReviewersKnown)
+
+	fresh := mergePRReviewObservation(nil, *prReviewDecisionFromGH("REVIEW_REQUIRED"), now)
+	assert.Equal(t, "review_required", fresh.Decision)
+	assert.False(t, fresh.ReviewersKnown, "a gh-only PR never claims to know its reviewers")
 }
 
 func TestNormalizePRReviewerConstrainsDisplayedValues(t *testing.T) {

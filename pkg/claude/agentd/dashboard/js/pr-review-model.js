@@ -52,7 +52,7 @@ export function prReviewDecisionText(decision) {
     case 'approved': return 'GitHub: approved';
     case 'changes_requested': return 'GitHub: changes requested';
     case 'review_required': return 'GitHub: review required';
-    default: return 'No review required by branch protection';
+    default: return 'no required reviews';
   }
 }
 
@@ -61,7 +61,7 @@ export function prReviewSummaryLine(reviews) {
   const approved = Number(reviews?.approved || 0);
   const changes = Number(reviews?.changes_requested || 0);
   if (approved) parts.push(`${approved} approval${approved === 1 ? '' : 's'}`);
-  if (changes) parts.push(`${changes} requested changes`);
+  if (changes) parts.push(`${changes} change request${changes === 1 ? '' : 's'}`);
   if (parts.length) return parts.join(' · ');
   return reviews?.reviewers_known ? 'No reviews yet' : 'Reviewer list not fetched yet';
 }
