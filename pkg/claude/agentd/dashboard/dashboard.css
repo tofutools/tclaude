@@ -18937,6 +18937,9 @@ body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
 body.wizard .psd-mode.is-active { background: #7c5cff; }
 @media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
+/* A remembered width never squeezes the canvas: the same 60% share the
+   drag clamps to also holds at render time and when the window shrinks. */
+.process-scribe-dock { max-width: 60%; min-width: min(260px, 60%); }
 /* The dock's resize separator: a full-height 6px track on its canvas edge,
    a thin line that turns blue on hover, focus or drag. */
 .psd-resize {

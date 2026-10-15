@@ -278,7 +278,7 @@ export function createProcessesActions({
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
-      const { freshnessGuard, ...briefOptions } = handoffOptions;
+      const { freshnessGuard, background = false, ...briefOptions } = handoffOptions;
       const handoff = processScribeHandoff(anchor);
       const task = processScribeTaskRef(handoff, dashboardOrigin);
       const scribes = processScribeSessions(dashboardState.snapshot.value);
@@ -316,11 +316,10 @@ export function createProcessesActions({
           name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
           exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions),
           task_ref_url: task.url, task_ref_label: task.label,
-          // An editor-anchored scribe starts in the background like a regular
-          // spawn: the editor's dock is its surface, and its terminal opens
-          // only on demand. The library scribe has no dock, so its terminal
-          // stays its surface.
-          background: handoff.anchor.kind !== 'library',
+          // A docked editor's scribe starts in the background like a regular
+          // spawn: the dock is its surface, and its terminal opens only on
+          // demand. Without a dock (the library) its terminal is its surface.
+          background: background === true,
         }),
       });
       const result = await response.json().catch(() => ({}));

@@ -1371,7 +1371,7 @@ export class ProcessTemplateEditor {
   toggleScribeDock(open = !this.scribeDock.open) {
     if (this.destroyed || !this.options.scribeDock) return false;
     const changed = this.scribeDock.open !== !!open;
-    this.scribeDock = { ...this.scribeDock, open: !!open };
+    this.scribeDock = { ...this.scribeDock, open: !!open, starting: !!open && !!this.scribeDock.starting };
     this.updateChrome?.();
     // The dock is a column beside the canvas: opening it narrows the view
     // and would clip the right-hand nodes. Refit once the column has laid
@@ -2581,9 +2581,15 @@ export class ProcessTemplateEditor {
       return false;
     }
     if (!freshnessGuard()) return false;
-    const summoned = !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard }));
-    // The scribe starts in the background, so the dock is where it shows up.
-    if (summoned && !this.destroyed) this.toggleScribeDock?.(true);
+    // With a dock the scribe starts in the background (tmux only) and the dock
+    // is where it shows up; without one its terminal is its surface.
+    const background = !!this.options.scribeDock;
+    const summoned = !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard, background }));
+    if (summoned && background && !this.destroyed) {
+      // Until the snapshot lists the new scribe the dock shows it starting.
+      this.scribeDock = { ...this.scribeDock, starting: true };
+      this.toggleScribeDock?.(true);
+    }
     return summoned;
   }
 

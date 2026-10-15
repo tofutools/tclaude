@@ -193,13 +193,26 @@ test('a remembered dock width is restored and clamped', async (t) => {
   assert.equal(clampDockWidth(100, 300), 260, 'the minimum wins on a very narrow body');
 });
 
-test('a successful summon opens the dock', async (t) => {
-  const { editor, dock, settle } = await openEditor(t);
-  editor.options.onScribe = async () => ({ conv_id: 'x' });
+test('a successful summon opens the dock, starting until the scribe is listed', async (t) => {
+  const { editor, dock, settle } = await openEditor(t, { scribes: [] });
+  const handoffs = [];
+  editor.options.onScribe = async (anchor, options) => { handoffs.push(options); return { conv_id: 'x' }; };
   editor.scribePreviewModal = async () => 'prompt';
   assert.equal(dock(), null);
   assert.equal(await editor.requestScribe('template'), true);
   await settle();
+  assert.equal(handoffs[0].background, true, 'a docked editor asks for a background start');
   assert.equal(editor.scribeDock.open, true);
-  assert.ok(dock());
+  assert.match(dock().textContent, /Starting the scribe/);
+  assert.equal(dock().querySelector('.psd-summon .process-action'), null, 'no second summon while it starts');
+});
+
+test('a cancelled or failed summon leaves the dock closed', async (t) => {
+  const { editor, dock, settle } = await openEditor(t);
+  editor.options.onScribe = async () => null;
+  editor.scribePreviewModal = async () => 'prompt';
+  assert.equal(await editor.requestScribe('template'), false);
+  await settle();
+  assert.equal(editor.scribeDock.open, false);
+  assert.equal(dock(), null);
 });

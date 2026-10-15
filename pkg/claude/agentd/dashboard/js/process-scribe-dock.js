@@ -221,10 +221,11 @@ export function ScribeDock({ controller, view }) {
   const external = view.external;
   const proposal = (external?.kind === 'clean' || external?.kind === 'dirty') && !view.diff?.open;
 
-  const shownWidth = resize.width ?? dockRef.current?.offsetWidth ?? 0;
+  const bodyWidth = dockRef.current?.parentElement?.clientWidth || 0;
+  const shownWidth = resize.width ?? (dockRef.current?.offsetWidth || 320);
   return html`<div class="psd-resize" role="separator" aria-orientation="vertical" tabindex="0"
     aria-label="Resize scribe panel" title="Drag to resize the scribe panel; double-click to reset"
-    aria-valuemin=${SCRIBE_DOCK_MIN_WIDTH} aria-valuemax=${SCRIBE_DOCK_MAX_WIDTH} aria-valuenow=${shownWidth || undefined}
+    aria-valuemin=${SCRIBE_DOCK_MIN_WIDTH} aria-valuemax=${clampDockWidth(SCRIBE_DOCK_MAX_WIDTH, bodyWidth)} aria-valuenow=${shownWidth}
     data-scribe-resize onPointerDown=${resize.onPointerDown} onKeyDown=${resize.onKeyDown} onDblClick=${resize.reset}></div>
   <aside ref=${dockRef} class="process-scribe-dock process-scroll-surface" aria-label="Process scribe" data-scribe-dock=${dock.mode}
     style=${resize.width ? { width: `${resize.width}px` } : undefined}>
@@ -244,7 +245,10 @@ export function ScribeDock({ controller, view }) {
       ${scribe && html`<div class="psd-scope">scope: ${scribe.scopeLabel}</div>`}
     </div>
 
-    ${!scribe && html`<div class="psd-summon">
+    ${!scribe && dock.starting && html`<div class="psd-summon" role="status">
+      <p>Starting the scribe in the background…</p>
+    </div>`}
+    ${!scribe && !dock.starting && html`<div class="psd-summon">
       <p>No scribe is scoped to this template yet.</p>
       <button type="button" class="process-action primary" disabled=${!context.saved}
         title=${context.saved ? 'Summon a scribe scoped to this template' : 'Save the template once first'}
