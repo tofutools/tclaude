@@ -10112,6 +10112,10 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-tip { padding: 6px 9px; min-width: 190px; box-shadow: 0 8px 20px rgba(0, 0, 0, .5); }
 .usage-ov-tip.projected { border-color: #9c7823; }
 .usage-ov-tip-sub { margin-top: 6px; padding-top: 4px; border-top: 1px solid #2a3340; color: #7d8590; }
+/* Its own focus class: the Costs tooltip's cost-series-focused would also
+   match [class*="cost-series-"] and blank the provider swatch. */
+.usage-ov-tip-focused { background: rgba(139, 148, 158, .14); border-radius: 3px; font-weight: 700; }
+.usage-ov-tip-focused .cost-tip-name, .usage-ov-tip-focused .cost-tip-amt { color: #e6edf3; }
 .usage-ov-tip-agent .cost-tip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9; }
 .usage-ov-tip-note { margin-top: 5px; color: #7d8590; font-size: 10px; }
 .usage-ov-spark-wrap { position: relative; margin: 6px 0 2px; cursor: crosshair; }

@@ -118,6 +118,8 @@ function TipRow({ swatch = '', name, amount, className = '' }) {
   </div>`;
 }
 
+// The breakdown lists providers top-down in the order the bar stacks them on
+// screen (the first segment sits at the bottom).
 function SpendTip({ slot, focus, costs, anchor }) {
   const projection = costs.projection;
   if (slot.projected) {
@@ -134,9 +136,9 @@ function SpendTip({ slot, focus, costs, anchor }) {
   }
   return html`<${FloatingTip} anchor=${anchor}>
     <div class="cost-tip-day">${slot.day} · ${weekday(slot.day)}</div>
-    ${slot.segments.map((segment) => html`<${TipRow} key=${segment.provider} swatch=${segment.className}
+    ${[...slot.segments].reverse().map((segment) => html`<${TipRow} key=${segment.provider} swatch=${segment.className}
       name=${segment.provider} amount=${fmtExactUSD(segment.cost)}
-      className=${focus && focus === segment.provider ? 'cost-series-focused' : ''} />`)}
+      className=${focus && focus === segment.provider ? 'usage-ov-tip-focused' : ''} />`)}
     <div class="cost-tip-total"><span class="cost-tip-sw" style="visibility:hidden"></span>
       <span class="cost-tip-name">day total</span><span class="cost-tip-amt">${fmtExactUSD(slot.cost)}</span></div>
     <${TipRow} name="accumulated" amount=${fmtExactUSD(slot.accumulated)} />
