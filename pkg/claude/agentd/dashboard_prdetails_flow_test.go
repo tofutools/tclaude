@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -134,4 +135,47 @@ func TestDashboardPRDetails_FailedReadCoolsDown(t *testing.T) {
 	}
 	agentd.WaitForBackgroundForTest()
 	assert.Equal(t, 1, calls, "one failed read, not one per poll")
+}
+
+// Scenario: an agent sits on a branch with a PR. The branch lookup that runs
+// anyway also reads the PR's title, and the snapshot carries it on the PR link
+// so the hover card can name the PR before any details are fetched — with no
+// hover and no extra gh call.
+func TestDashboardPRDetails_BranchLookupTitleReachesSnapshot(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		conv   = "prtitles-0000-0000-0000-000000000001"
+		branch = "feature-pr-title"
+		prURL  = "https://github.com/acme/app/pull/91"
+	)
+	t.Cleanup(agentd.SetGitInfoResolverForTest(
+		func(_, b string) (string, string, int, string, string, bool) {
+			if b != branch {
+				return "", "", 0, "", "", false
+			}
+			return "https://github.com/acme/app", "main", 91, prURL, "open", true
+		}))
+	t.Cleanup(agentd.SetBranchPRTitleForTest(func(string) string { return "Add the PR title to links" }))
+	t.Cleanup(agentd.SetPRDetailsFetcherForTest(func(string) (string, bool) {
+		t.Error("no hover happened, so no details read may run")
+		return "", false
+	}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-prtitle", "tmux-prtitle", f.TestCwd("wt/title"), branch)
+	f.HaveMember("squad", conv)
+	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+	snap := fetchDashSnapshot(t, mux)
+	member := findDashMember(snap, "squad", conv)
+	require.NotNil(t, member)
+	require.Equal(t, prURL, member.BranchPRURL)
+	assert.Equal(t, "Add the PR title to links", member.BranchPRTitle)
+	warm := findAgent(snap.Agents, conv)
+	require.NotNil(t, warm)
+	assert.Equal(t, "Add the PR title to links", warm.BranchPRTitle)
 }

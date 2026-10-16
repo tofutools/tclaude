@@ -506,6 +506,21 @@ func prChecksIndexFor(rawURLs []string) map[string]*prChecksSummary {
 	return out
 }
 
+// withPRTitles stamps the cached PR titles (keyed by prStateKey; see
+// cachedPresentedPRMetadata) onto every PR link in one row, so the link's
+// hover card can name the PR before its full details are fetched.
+func (v repoLinksView) withPRTitles(titles map[string]string) repoLinksView {
+	if len(titles) == 0 {
+		return v
+	}
+	v.BranchPRTitle = titles[prStateKey(v.BranchPRURL)]
+	v.StartupPRTitle = titles[prStateKey(v.StartupPRURL)]
+	for i := range v.PresentedPRs {
+		v.PresentedPRs[i].Title = titles[prStateKey(v.PresentedPRs[i].URL)]
+	}
+	return v
+}
+
 // withPRChecks stamps the cached summaries onto every badge in one row.
 func (v repoLinksView) withPRChecks(idx map[string]*prChecksSummary) repoLinksView {
 	if len(idx) == 0 {

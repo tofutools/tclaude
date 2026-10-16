@@ -3297,6 +3297,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 			withFreshestPRStates(freshPRStates).
 			withPRChecks(prChecks).
+			withPRTitles(cachedPRTitles).
 			withPRReviews(prReviews)
 		a := &dashboardAgent{
 			AgentID:           b.AgentID,
@@ -3526,6 +3527,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks).
+				withPRTitles(cachedPRTitles).
 				withPRReviews(prReviews)
 			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			online := b.Online
@@ -3582,6 +3584,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks).
+				withPRTitles(cachedPRTitles).
 				withPRReviews(prReviews)
 			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			ownerOnline := b.Online && (presence == nil || presence.State != "away")

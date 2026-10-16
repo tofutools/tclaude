@@ -1357,6 +1357,10 @@ body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .prd-excerpt-empty { color: #6e7681; font-style: italic; }
+/* A warm daemon cache answers in a few ms; only a read that is actually
+   taking a while earns the loading line, so a quick one never flashes it. */
+.prd-loading { animation: prd-loading-in 0s linear 300ms both; }
+@keyframes prd-loading-in { from { visibility: hidden; } to { visibility: visible; } }
 body.wizard .prd-title { color: #f3e6c0; }
 body.wizard .prd-num,
 body.wizard .prd-meta,

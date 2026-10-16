@@ -1193,6 +1193,21 @@ func SetPresentedPRInfoWithChecksResolverForTest(fn func(rawURL string) (number 
 	return func() { presentedPRInfoResolver = prev }
 }
 
+// SetBranchPRTitleForTest layers a PR title onto whatever the current
+// gitInfoResolver returns, modelling the `title` field the branch lookup's
+// `gh pr list` returns in production. Install it after the resolver it wraps.
+func SetBranchPRTitleForTest(title func(prURL string) string) func() {
+	prev := gitInfoResolver
+	gitInfoResolver = func(repoDir, branch string) (repoBranchInfo, bool) {
+		info, ok := prev(repoDir, branch)
+		if ok && info.PRURL != "" {
+			info.PRTitle = title(info.PRURL)
+		}
+		return info, ok
+	}
+	return func() { gitInfoResolver = prev }
+}
+
 // SetPRDetailsFetcherForTest swaps the `gh pr view --json` boundary behind
 // the PR link hover card (GET /api/pr-details). The fake returns raw gh JSON,
 // so the production parse/excerpt/cache path stays under test.

@@ -123,6 +123,7 @@ type dashMember struct {
 	BranchPRNum     int         `json:"branch_pr_number,omitempty"`
 	BranchPRURL     string      `json:"branch_pr_url,omitempty"`
 	BranchPRState   string      `json:"branch_pr_state,omitempty"`
+	BranchPRTitle   string      `json:"branch_pr_title,omitempty"`
 	BranchChecks    *dashChecks `json:"branch_checks,omitempty"`
 	PresentedPRs    []dashPR    `json:"presented_prs,omitempty"`
 	TaskURL         string      `json:"task_ref_url,omitempty"`
@@ -145,6 +146,7 @@ type dashAgent struct {
 	BranchPRNum     int         `json:"branch_pr_number,omitempty"`
 	BranchPRURL     string      `json:"branch_pr_url,omitempty"`
 	BranchPRState   string      `json:"branch_pr_state,omitempty"`
+	BranchPRTitle   string      `json:"branch_pr_title,omitempty"`
 	BranchChecks    *dashChecks `json:"branch_checks,omitempty"`
 	PresentedPRs    []dashPR    `json:"presented_prs,omitempty"`
 	Online          bool        `json:"online"`
