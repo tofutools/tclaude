@@ -52,9 +52,11 @@ var (
 // agent may want to present a PR after leaving the branch, or present multiple
 // related PRs. The frontend dedupes by URL against branch/startup PR links.
 type presentedPRView struct {
-	URL       string `json:"url"`
-	Number    int    `json:"number,omitempty"`
-	Summary   string `json:"summary,omitempty"`
+	URL     string `json:"url"`
+	Number  int    `json:"number,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Title is the PR's GitHub title when a background read has seen it.
+	Title     string `json:"title,omitempty"`
 	State     string `json:"state,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 	// Checks is the CI summary for this PR — counts only; see prchecks.go.

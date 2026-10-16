@@ -298,6 +298,13 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 		prDetailsFailedAt.Delete(key)
 		details.FetchedAt = time.Now()
 		savePRDetails(rawURL, details)
+		// Keep the per-PR title the snapshot stamps on links current too.
+		if ref, ok := githubPRRefFromURL(rawURL); ok && details.Title != "" {
+			savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
+				Title: truncateAuthoredPRTitle(details.Title), Number: ref.number, URL: rawURL,
+				State: details.State, FetchedAt: details.FetchedAt,
+			}, details.FetchedAt)
+		}
 	})
 	return true
 }

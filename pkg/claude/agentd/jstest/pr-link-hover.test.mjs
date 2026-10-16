@@ -43,6 +43,7 @@ test('hovering the PR link opens a details card', async (t) => {
 
   const mounted = await harness.mount(harness.html`
     <span><${PRLinkHover} url=${PR} prNumber=${3090} className="pr-state-draft" label="#3090"
+      title="Dock: remember collapsed sections" prState="draft"
       describe="Draft pull request #3090" /></span>
   `);
   try {
@@ -57,9 +58,17 @@ test('hovering the PR link opens a details card', async (t) => {
     await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
     await harness.act(async () => {});
     let panel = mounted.container.querySelector('.prd-panel');
-    assert.ok(panel, 'hover opens the card');
+    assert.ok(panel, 'hover opens the card at once');
+    assert.match(panel.querySelector('.prd-title').textContent, /Dock: remember collapsed sections\s+#3090/,
+      'the snapshot title shows before any fetch');
+    assert.equal(panel.querySelector('.prd-state').textContent, 'Draft');
+    assert.deepEqual(calls, [], 'the full read waits for the pointer to rest');
+
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 550)));
+    await harness.act(async () => {});
+    panel = mounted.container.querySelector('.prd-panel');
     assert.equal(calls[0], `/api/pr-details?url=${encodeURIComponent(PR)}`);
-    assert.match(panel.textContent, /Fetching pull request/);
+    assert.match(panel.textContent, /Fetching details/);
 
     // The daemon said a read was in flight; the card asks again and paints it.
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
@@ -106,6 +115,28 @@ test('only GitHub pull requests get a card; other forges keep the plain link', a
     const link = mounted.container.querySelector('a.pr-link');
     assert.equal(link.getAttribute('href'), other);
     assert.equal(link.getAttribute('title'), 'MR');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+test('sweeping the pointer across a PR link fetches nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRLinkHover } = await harness.importDashboardModule('js/pr-link-hover.js');
+  const saved = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(String(url)); return { ok: true, json: async () => ({}) }; };
+  t.after(() => { globalThis.fetch = saved; });
+  const mounted = await harness.mount(harness.html`
+    <span><${PRLinkHover} url=${`${PR}0`} prNumber=${30900} label="#30900" title="Some PR" /></span>
+  `);
+  try {
+    const root = mounted.container.querySelector('.prd-hover');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    assert.deepEqual(calls, []);
   } finally {
     await mounted.unmount();
   }

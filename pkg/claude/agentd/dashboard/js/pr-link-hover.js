@@ -12,9 +12,13 @@ const html = htm.bind(h);
 // follow the link keep their own panels; this one shares their placement,
 // hover-root and bridge mechanics and their .ci-panel styling.
 //
-// The card is fetched from /api/pr-details on open. Unlike the CI panel there
-// is nothing to watch move, so it does not keep polling: it re-polls only
-// while the daemon reports a read in flight, to pick up that answer.
+// The card opens at once with the title and state the snapshot already
+// carries (a background read that happens anyway fetches the title). The rest
+// comes from /api/pr-details, and only once the pointer has rested on the link
+// for PR_DETAILS_HOVER_MS — so sweeping across a column of PR links reads the
+// titles without spending a GitHub read per link. Keyboard focus and a tap
+// fetch at once. Unlike the CI panel there is nothing to watch move, so it
+// re-polls only while the daemon reports a read in flight.
 //
 // Only GitHub pull request URLs get a card — that is all the endpoint can
 // describe. A presented PR on another forge keeps the plain link.
@@ -22,6 +26,7 @@ const html = htm.bind(h);
 // Re-poll cadence while the daemon reports a read in flight, and a cap so a
 // hung read cannot keep an open card polling forever.
 const PR_DETAILS_RETRY_MS = 700;
+const PR_DETAILS_HOVER_MS = 500;
 const PR_DETAILS_MAX_RETRIES = 20;
 
 // The last card served per PR URL, so a second hover paints immediately
@@ -36,13 +41,13 @@ async function fetchPRDetails(url, signal) {
   return response.json();
 }
 
-function usePRDetails(url, open) {
-  const [details, setDetails] = useState(() => detailsCache.get(url) || null);
+function usePRDetails(url, active) {
+  const [details, setDetails] = useState(null);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    if (!open || !url) return undefined;
+    if (!active || !url) return undefined;
     const controller = new AbortController();
     let cancelled = false;
     let timer = 0;
@@ -74,10 +79,11 @@ function usePRDetails(url, open) {
       cancelled = true;
       controller.abort();
       if (timer) globalThis.clearTimeout(timer);
+      setPending(false);
     };
-  }, [url, open]);
+  }, [url, active]);
 
-  return { details, error, pending };
+  return { details: details || detailsCache.get(url) || null, error, pending };
 }
 
 // githubPRBase returns the canonical https://github.com/<owner>/<repo>/pull/<n>
@@ -141,8 +147,10 @@ function PRDetailsBody({ details, now }) {
   `;
 }
 
-function PRDetailsPanel({ prURL, prNumber, state, panelID, headingID, panelRef, placement }) {
+function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headingID, panelRef, placement }) {
   const { details, error, pending } = state;
+  const shownTitle = details?.title || title;
+  const chipState = details?.state || prState;
   const now = Date.now();
   const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;` +
@@ -154,13 +162,16 @@ function PRDetailsPanel({ prURL, prNumber, state, panelID, headingID, panelRef, 
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="prd-title" id=${headingID}>
         <a href=${prURL} target="_blank" rel="noopener noreferrer">
-          ${details?.title || (prNumber ? `Pull request #${prNumber}` : 'Pull request')}
-          ${details?.title && prNumber ? html` <span class="prd-num">#${prNumber}</span>` : null}
+          ${shownTitle || (prNumber ? `Pull request #${prNumber}` : 'Pull request')}
+          ${shownTitle && prNumber ? html` <span class="prd-num">#${prNumber}</span>` : null}
         </a>
       </div>
       ${details ? html`<${PRDetailsBody} details=${details} now=${now} />` : html`
-        <p class="ci-panel-empty">${error ? `Could not load pull request — ${error}`
-          : pending ? 'Fetching pull request…' : 'Pull request details are unavailable.'}</p>
+        ${STATE_LABELS[chipState] ? html`
+          <div class="prd-meta"><span class=${`prd-state prd-state-${chipState}`}>${STATE_LABELS[chipState]}</span></div>
+        ` : null}
+        ${error ? html`<p class="ci-panel-empty">Could not load details — ${error}</p>`
+          : pending ? html`<p class="ci-panel-empty prd-loading">Fetching details…</p>` : null}
       `}
       <p class="ci-panel-note">
         <a href=${prURL} target="_blank" rel="noopener noreferrer">Conversation ↗</a>
@@ -185,18 +196,29 @@ export function PRLinkHover(props) {
   return html`<${PRLinkCard} ...${props} />`;
 }
 
-function PRLinkCard({ url, prNumber, className = '', label, describe = '' }) {
+function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', label, describe = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [tapped, setTapped] = useState(false);
+  const [dwelled, setDwelled] = useState(false);
   const open = hovered || focused || tapped;
   const prURL = githubPRBase(url);
-  const state = usePRDetails(open ? prURL : '', open);
+  const state = usePRDetails(prURL, dwelled || focused || tapped);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
   const close = () => { setHovered(false); setFocused(false); setTapped(false); };
+
+  // Hover intent: the full fetch waits until the pointer has rested a moment.
+  useEffect(() => {
+    if (!hovered) {
+      setDwelled(false);
+      return undefined;
+    }
+    const timer = globalThis.setTimeout(() => setDwelled(true), PR_DETAILS_HOVER_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [hovered]);
 
   useEffect(() => {
     if (!tapped) return undefined;
@@ -241,7 +263,7 @@ function PRLinkCard({ url, prNumber, className = '', label, describe = '' }) {
         }}
       >${label}</a>
       ${open ? html`
-        <${PRDetailsPanel} prURL=${prURL} prNumber=${prNumber} state=${state}
+        <${PRDetailsPanel} prURL=${prURL} prNumber=${prNumber} title=${title} prState=${prState} state=${state}
           panelID=${panelID} headingID=${headingID} panelRef=${panelRef} placement=${placement} />
         ${placement && !placement.hidden ? html`
           <span class="ci-bridge" aria-hidden="true" style=${
