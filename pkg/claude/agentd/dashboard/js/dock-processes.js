@@ -12,7 +12,7 @@
 // - ⧉ opens Automations › Processes, where templates are managed and deleted.
 
 import { h } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
@@ -103,8 +103,12 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
     return () => { live = false; };
   }, [row.id]);
   useEffect(() => {
-    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    // The delete confirmation is a shell dialog outside the preview; answering
+    // it (or cancelling with Escape) must not also close the preview.
+    const inConfirm = (event) => Boolean(event.target?.closest?.('#shell-confirm-root'));
+    const onKey = (event) => { if (event.key === 'Escape' && !inConfirm(event)) onClose(); };
     const onDown = (event) => {
+      if (inConfirm(event)) return;
       if (!ref.current?.contains(event.target) && !anchor?.contains(event.target)) onClose();
     };
     document.addEventListener('keydown', onKey);
@@ -158,13 +162,28 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
   </div>`;
 }
 
-function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete }) {
+function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipHost = null }) {
   const ref = useRef(null);
   const name = row.name || row.id;
   // The ⚙ menu shares the dock's one-open-menu state, so the dock's outside
   // click and Escape close it like every other card's.
   const menuKey = `processes:${row.id}`;
   const menuOpen = openMenu === menuKey;
+  const menuRef = useRef(null);
+  const cogRef = useRef(null);
+  const [opensUp, setOpensUp] = useState(false);
+  // This is the dock's last section, so a bottom card's menu would open below
+  // the scroll area; flip it up like the other sections' cards do.
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuRef.current || !cogRef.current) {
+      setOpensUp(false);
+      return;
+    }
+    const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const cogTop = cogRef.current.getBoundingClientRect().top;
+    setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
+  }, [menuOpen, clipHost]);
   const act = (event, action) => {
     event.preventDefault();
     setOpenMenu(null);
@@ -186,10 +205,10 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete }) {
         : html`<span class="dock-chip dock-chip-more">not pinned</span>`}</span>
     </div>
     <span class="dock-card-actions">
-      <button type="button" class="dock-card-manage" data-dock-act="card-menu" data-dock-kind="processes" data-dock-name=${row.id}
+      <button ref=${cogRef} type="button" class="dock-card-manage" data-dock-act="card-menu" data-dock-kind="processes" data-dock-name=${row.id}
         aria-haspopup="menu" aria-expanded=${menuOpen ? 'true' : 'false'} title="More actions" aria-label=${`Actions for ${name}`}
         onClick=${(event) => { event.preventDefault(); setOpenMenu(menuOpen ? null : menuKey); }}>⚙</button>
-      <div class=${`dock-card-menu${menuOpen ? ' open' : ''}`} role="menu" aria-label=${name}>
+      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${opensUp ? ' opens-up' : ''}`} role="menu" aria-label=${name}>
         <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" data-dock-kind="processes" data-dock-name=${row.id}
           onClick=${(event) => act(event, () => handOffProcessDraft({ id: row.id, name }))}>Edit</button>
         <button type="button" role="menuitem" class="dock-card-menu-item danger" data-dock-act="delete-item" data-dock-kind="processes" data-dock-name=${row.id}
@@ -202,7 +221,7 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete }) {
 // DockProcesses is the section. groups are the real groups' names, for the
 // Start in / Pin to pickers.
 export function DockProcesses({
-  groups = [], isSectionOpen, setSectionOpen, openMenu = null, setOpenMenu = () => {},
+  groups = [], isSectionOpen, setSectionOpen, openMenu = null, setOpenMenu = () => {}, clipHost = null,
   fetchImpl = (...args) => fetch(...args), confirm = shellConfirm,
 }) {
   const [open, setOpen] = useState(() => isSectionOpen('processes'));
@@ -265,7 +284,7 @@ export function DockProcesses({
       ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
       ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
       ${(rows || []).map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview}
-        openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} />`)}
+        openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} clipHost=${clipHost} />`)}
       <div class=${`dock-process-drop${dropOver ? ' is-over' : ''}`}>⤓ ${wizWord('drop a .pwf here to import it', 'drop a .pwf scroll here')}</div>
     </div>
     ${current && html`<${Preview} row=${current} anchor=${preview.anchor} groups=${groups} fetchImpl=${fetchImpl}

@@ -595,6 +595,8 @@ export function createProcessesActions({
       }
       state.setNotice(`Deleted ${label}.`);
       notify(`deleted process template ${label}`);
+      // The dock's library and the groups' saved-process chips list it too.
+      document.dispatchEvent(new CustomEvent('tclaude:process-library-changed', { detail: { source: 'processes' } }));
       void load('templates', { quiet: true });
       return true;
     } catch (error) {

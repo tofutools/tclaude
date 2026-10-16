@@ -117,7 +117,7 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
   useEffect(() => { if (current.active) void actions.refreshActive(); }, [current.active]);
   useEffect(() => { const poll = () => { const view = state.view.value; if (view.active && view.canvas?.kind === 'editor') void actions.observeTemplateHeads(); }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   // The dock's process library deletes and pins too; keep this list current.
-  useEffect(() => { const changed = () => { if (state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:process-library-changed', changed); return () => document.removeEventListener('tclaude:process-library-changed', changed); }, []);
+  useEffect(() => { const changed = (event) => { if (event.detail?.source !== 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:process-library-changed', changed); return () => document.removeEventListener('tclaude:process-library-changed', changed); }, []);
   useEffect(() => { const reselected = (event) => { if (event.detail?.tab === 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:tab-reselected', reselected); return () => document.removeEventListener('tclaude:tab-reselected', reselected); }, []);
   const spec = current.canvas;
   // Processes is an Automations subtab: render the shared Automations row with
