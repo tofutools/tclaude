@@ -274,8 +274,12 @@ features, including `--reply-to`, `--auto-focus`, `--ask-for-approval`, and
 `--tools`, are unavailable; check `agent spawn --help` for the full list.
 Configured resource limits are enforced on Linux through a temporary cgroup;
 the run is refused if the daemon cannot apply them, including on macOS.
-Sandbox policies with pre-launch scripts or agent-owned directories are also
-refused. A `--worktree` remains after the run for inspection.
+Sandbox-profile agent-owned directories are private per-run bindings; pre-launch
+scripts use the same launch boundary as interactive workers. Directory cleanup
+waits for proven termination; without a delegated cgroup, retained trees are
+reported and swept after reboot. Named HTTP proxy URLs are omitted with a
+notice, and model gateways require an interactive worker. A `--worktree`
+remains after the run for inspection.
 
 ## Spawning workers — default resolution
 

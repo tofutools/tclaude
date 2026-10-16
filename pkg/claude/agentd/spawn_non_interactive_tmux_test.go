@@ -327,3 +327,23 @@ func TestRemoteJobBinaryResultFitsBrokerAndArtifactBounds(t *testing.T) {
 		t.Fatalf("artifact encoding=%d limit=%d", len(raw), jobLogType.MaxBytes)
 	}
 }
+
+func TestCleanupStaleOneShotHandoffsContinuesAfterJournalFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := filepath.Join(config.DataDir(), "one-shot")
+	stale := filepath.Join(root, "run-stale")
+	if err := os.MkdirAll(stale, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file instead of the journal directory makes its read fail even
+	// when tests run with elevated filesystem permissions.
+	if err := os.WriteFile(oneShotDirectoryJournalRoot(), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStaleOneShotHandoffs(); err == nil {
+		t.Fatal("journal failure was lost")
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale handoff remains: %v", err)
+	}
+}
