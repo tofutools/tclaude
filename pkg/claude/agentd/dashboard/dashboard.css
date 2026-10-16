@@ -10084,13 +10084,57 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-spend { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
 .usage-ov-chart { height: 170px; padding: 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; }
 .usage-ov-chart svg { width: 100%; height: 100%; display: block; }
+/* Overview hover: the plot is the hit area (any x picks its day slot), the
+   hovered slot gets a faint column, the other days recede, and a dot marks
+   the running total. Markers are HTML over the stretched SVG so they stay
+   round. The tooltip reuses the Costs chart's .cost-tip chrome. */
+.usage-ov-plot { position: relative; height: 100%; cursor: crosshair; outline: none; }
+.usage-ov-plot:focus-visible { box-shadow: 0 0 0 2px rgba(88, 166, 255, .45); border-radius: 3px; }
+.usage-ov-chart .hover-col { fill: rgba(139, 148, 158, .12); }
+.usage-ov-chart .hover-col.projected { fill: rgba(210, 153, 34, .1); }
+.usage-ov-chart .bar { transition: opacity .12s; }
+.usage-ov-plot.hovering g:not(.hovered) .bar { opacity: .5; }
+.usage-ov-plot.has-focus .bar:not(.focused) { opacity: .4; }
+.usage-ov-chart .bar.focused { opacity: 1; filter: brightness(1.25); stroke: #e6edf3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-ov-chart g.hovered .bar { filter: brightness(1.18); }
+.usage-ov-dot {
+  position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
+  background: #d4d4d4; box-shadow: 0 0 0 2px #0d1117; pointer-events: none;
+}
+.usage-ov-dot.projected, .usage-ov-dot.forecast { background: #e3a341; }
+.usage-ov-dot.observed { background: #58a6ff; }
+.usage-ov-legend .legend-provider { cursor: default; border-radius: 3px; padding: 0 3px; margin: 0 -3px; }
+.usage-ov-legend .legend-provider:hover, .usage-ov-legend .legend-provider.focused { color: #d4d4d4; background: #161b22; }
+.usage-ov-chart-status {
+  clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
+}
+.usage-ov-tip { padding: 6px 9px; min-width: 190px; box-shadow: 0 8px 20px rgba(0, 0, 0, .5); }
+.usage-ov-tip.projected { border-color: #9c7823; }
+.usage-ov-tip-sub { margin-top: 6px; padding-top: 4px; border-top: 1px solid #2a3340; color: #7d8590; }
+.usage-ov-tip-agent .cost-tip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9; }
+.usage-ov-tip-note { margin-top: 5px; color: #7d8590; font-size: 10px; }
+.usage-ov-spark-wrap { position: relative; margin: 6px 0 2px; cursor: crosshair; }
+/* Inside the wrap the SVG must fill it exactly, so the HTML hover dot's
+   percentage top lands on the line. */
+.usage-ov-spark-wrap .usage-ov-spark { display: block; margin: 0; }
+.usage-ov-spark .guide { stroke: rgba(201, 209, 217, .45); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-ov-spark .reset.hovered { stroke-width: 2; }
+.usage-ov-spark-tip { min-width: 0; }
+.usage-ov-spark-tip.forecast { border-color: #9c7823; }
+.usage-ov-spark-tip .cost-tip-day { display: flex; justify-content: space-between; gap: 14px; }
+.usage-ov-tip-pct { color: #58a6ff; font-variant-numeric: tabular-nums; }
+.usage-ov-spark-tip.forecast .usage-ov-tip-pct { color: #e3a341; }
+.usage-ov-tip-line { color: #9aa4b0; }
+.usage-ov-tip-line.muted { color: #7d8590; }
+.usage-ov-tip-line.warn { color: #f85149; }
 /* The Costs view's provider palette (.cost-seg-hN), as SVG fills. */
-.usage-ov-chart .bar.cost-seg-h0, .usage-ov-legend .cost-seg-h0 { fill: #6e9c7d; background: #6e9c7d; }
-.usage-ov-chart .bar.cost-seg-h1, .usage-ov-legend .cost-seg-h1 { fill: #6a8fd0; background: #6a8fd0; }
-.usage-ov-chart .bar.cost-seg-h2, .usage-ov-legend .cost-seg-h2 { fill: #b58cd6; background: #b58cd6; }
-.usage-ov-chart .bar.cost-seg-h3, .usage-ov-legend .cost-seg-h3 { fill: #d0a860; background: #d0a860; }
-.usage-ov-chart .bar.cost-seg-h4, .usage-ov-legend .cost-seg-h4 { fill: #5bb0a5; background: #5bb0a5; }
-.usage-ov-chart .bar.cost-seg-h5, .usage-ov-legend .cost-seg-h5 { fill: #cf8a8a; background: #cf8a8a; }
+.usage-ov-chart .bar.cost-seg-h0, .usage-ov-legend .cost-seg-h0, .usage-ov-tip .cost-seg-h0 { fill: #6e9c7d; background: #6e9c7d; }
+.usage-ov-chart .bar.cost-seg-h1, .usage-ov-legend .cost-seg-h1, .usage-ov-tip .cost-seg-h1 { fill: #6a8fd0; background: #6a8fd0; }
+.usage-ov-chart .bar.cost-seg-h2, .usage-ov-legend .cost-seg-h2, .usage-ov-tip .cost-seg-h2 { fill: #b58cd6; background: #b58cd6; }
+.usage-ov-chart .bar.cost-seg-h3, .usage-ov-legend .cost-seg-h3, .usage-ov-tip .cost-seg-h3 { fill: #d0a860; background: #d0a860; }
+.usage-ov-chart .bar.cost-seg-h4, .usage-ov-legend .cost-seg-h4, .usage-ov-tip .cost-seg-h4 { fill: #5bb0a5; background: #5bb0a5; }
+.usage-ov-chart .bar.cost-seg-h5, .usage-ov-legend .cost-seg-h5, .usage-ov-tip .cost-seg-h5 { fill: #cf8a8a; background: #cf8a8a; }
 .usage-ov-chart .what-if .bar { fill-opacity: .55; }
 .usage-ov-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: #7d8590; font-size: 11px; }
 .usage-ov-legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -10103,7 +10147,7 @@ body.hide-usage-costs #costs-root { display: none; }
   border-radius: 6px; color: #d29922; font-size: 12px; text-decoration: none;
 }
 .usage-ov-chart .cumulative { fill: none; stroke: #d4d4d4; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.usage-ov-chart .projection { stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
+.usage-ov-chart .projection { fill: none; stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
 .usage-ov-agents { width: 100%; border-collapse: collapse; border: 1px solid #2a3340; border-radius: 7px; }
 .usage-ov-agents th { text-align: left; color: #8b949e; font-size: 11px; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid #2a3340; }
 .usage-ov-agents td { padding: 7px 10px; border-bottom: 1px solid #21262d; }

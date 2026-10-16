@@ -1608,28 +1608,56 @@ setTimeout(function(){
 			SettleMS: 500,
 		},
 		{
-			Key:     "bounded-usage-overview",
-			Title:   "Bounded Preact — Usage overview",
-			Caption: "The Usage tab's Overview: spend and quota headline cards, a compact card per quota window, and the span's spend chart beside the top agents.",
-			JS: `return (async function(){
-  var store = await import('/static/js/snapshot-store.js');
-  var registry = await import('/static/js/feature-state-registry.js');
-  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
-    cost_tab_visible: true, usage_tab_visible: true
-  });
-  await Promise.resolve();
-  registry.featureState('usage-hub').select('overview');
-  document.querySelector('nav [data-tab="usage"]').click();
-  var deadline = Date.now() + 4000;
-  while (Date.now() < deadline) {
-    if (document.querySelector('#tab-usage.active .usage-ov-quota') && document.querySelector('#tab-usage.active .usage-ov-agents')) break;
-    await new Promise(function(resolve){ setTimeout(resolve, 25); });
-  }
-  if (!document.querySelector('.usage-ov-quota')) throw new Error('usage-overview: quota cards did not render');
-  if (!document.querySelector('.usage-ov-agents')) throw new Error('usage-overview: spend did not render');
-  if (document.querySelectorAll('.usage-subtab').length !== 3) throw new Error('usage-overview: subnav missing');
-  if (location.pathname !== '/usage') throw new Error('usage-overview: URL is ' + location.pathname);
-})();`,
+			Key:      "bounded-usage-overview",
+			Title:    "Bounded Preact — Usage overview",
+			Caption:  "The Usage tab's Overview: spend and quota headline cards, a compact card per quota window, and the span's spend chart beside the top agents.",
+			JS:       usageOverviewJS(""),
+			SettleMS: 500,
+		},
+		{
+			Key:     "bounded-usage-overview-spend-hover",
+			Title:   "Bounded Preact — Usage overview spend hover",
+			Caption: "Hovering a provider's slice of a day on the Overview spend chart: the column stands out, the slice is outlined, a dot marks the running total, and the tooltip breaks the day down by provider with its running total, share of span, and top agents.",
+			Width:   1300,
+			Height:  760,
+			JS: usageOverviewJS(`
+var groups = [].slice.call(document.querySelectorAll('.usage-ov-plot svg g'));
+groups.sort(function(a, b){ return b.querySelectorAll('rect.bar').length - a.querySelectorAll('rect.bar').length; });
+var bar = groups[0] && groups[0].querySelector('rect.bar');
+if (!bar) throw new Error('usage-overview-hover: no spend bars');
+var r = bar.getBoundingClientRect();
+bar.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+await new Promise(function(resolve){ setTimeout(resolve, 50); });
+if (!document.querySelector('.usage-ov-tip')) throw new Error('usage-overview-hover: tooltip did not open');`),
+			SettleMS: 500,
+		},
+		{
+			Key:     "bounded-usage-overview-projection-hover",
+			Title:   "Bounded Preact — Usage overview projection hover",
+			Caption: "Hovering a projected day on the Overview spend chart reads the projected day and running total and the average it extrapolates from.",
+			Width:   1300,
+			Height:  760,
+			JS: usageOverviewJS(`
+var plot = document.querySelector('.usage-ov-plot');
+var r = plot.getBoundingClientRect();
+plot.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.right - 3, clientY: r.top + r.height / 3 }));
+await new Promise(function(resolve){ setTimeout(resolve, 50); });
+if (!document.querySelector('.usage-ov-tip')) throw new Error('usage-overview-projection-hover: tooltip did not open');`),
+			SettleMS: 500,
+		},
+		{
+			Key:     "bounded-usage-overview-quota-hover",
+			Title:   "Bounded Preact — Usage overview quota hover",
+			Caption: "Hovering a quota card's sparkline reads the sample under the cursor: a guide line, a marker on the line, and its usage, time, and the window's reset.",
+			Width:   1300,
+			Height:  760,
+			JS: usageOverviewJS(`
+var wrap = document.querySelector('.usage-ov-spark-wrap');
+if (!wrap) throw new Error('usage-overview-quota-hover: no sparkline');
+var r = wrap.getBoundingClientRect();
+wrap.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width * 0.45, clientY: r.top + r.height / 2 }));
+await new Promise(function(resolve){ setTimeout(resolve, 50); });
+if (!document.querySelector('.usage-ov-spark-tip')) throw new Error('usage-overview-quota-hover: tooltip did not open');`),
 			SettleMS: 500,
 		},
 		{
@@ -5200,6 +5228,31 @@ func jobsCronRowDialogDashSnapJS(action string, stacked bool) string {
   }
 })();`, action, action, action, action, action, action, action, action, stacked,
 		action, action, action, action)
+}
+
+// usageOverviewJS opens the Usage tab's Overview, waits for both halves to
+// render, then runs after (async-capable JS) — the hover scenarios' hook.
+func usageOverviewJS(after string) string {
+	return `return (async function(){
+  var store = await import('/static/js/snapshot-store.js');
+  var registry = await import('/static/js/feature-state-registry.js');
+  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
+    cost_tab_visible: true, usage_tab_visible: true
+  });
+  await Promise.resolve();
+  registry.featureState('usage-hub').select('overview');
+  document.querySelector('nav [data-tab="usage"]').click();
+  var deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    if (document.querySelector('#tab-usage.active .usage-ov-quota') && document.querySelector('#tab-usage.active .usage-ov-agents')) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  if (!document.querySelector('.usage-ov-quota')) throw new Error('usage-overview: quota cards did not render');
+  if (!document.querySelector('.usage-ov-agents')) throw new Error('usage-overview: spend did not render');
+  if (document.querySelectorAll('.usage-subtab').length !== 3) throw new Error('usage-overview: subnav missing');
+  if (location.pathname !== '/usage') throw new Error('usage-overview: URL is ' + location.pathname);
+` + after + `
+})();`
 }
 
 func boundedTabJS(tab, readySelector string, afterReady ...string) string {

@@ -3,14 +3,15 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { isModifiedClick, shortAgentId } from './helpers.js';
 import { isWizardActive } from './slop.js';
-import {
-  COST_SPANS, costProviderLabel, dayKey, fmtExactUSD, fmtUSD, niceCeil, providerSegmentClass,
-} from './costs-model.js';
+import { COST_SPANS, dayKey, fmtUSD } from './costs-model.js';
 import {
   formatUsageDuration, formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView,
   usageProviderLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
 import { usageLocation } from './usage-hub-state.js';
+import { Sparkline, SpendChart, topCostAgents } from './usage-overview-charts.js';
+
+export { topCostAgents };
 
 const html = htm.bind(h);
 
@@ -80,23 +81,6 @@ export function spanLabel(costs) {
   return COST_SPANS.find((span) => span.key === costs.span)?.label || 'This month';
 }
 
-// topCostAgents folds the per agent-day slices of the shown rows (the Costs
-// view's provider/model filters apply) into one total per agent.
-export function topCostAgents(rows, limit = 5) {
-  const byAgent = new Map();
-  for (const row of rows || []) {
-    const key = row.agent_id || row.conv_id;
-    const entry = byAgent.get(key) || {
-      key, title: row.title || '(unknown)', agentID: row.agent_id, convID: row.conv_id, cost: 0, whatIf: false,
-    };
-    entry.cost += row.cost_usd || 0;
-    entry.whatIf ||= row.cost_kind === 'what_if' || row.cost_kind === 'mixed';
-    byAgent.set(key, entry);
-  }
-  return [...byAgent.values()].filter((entry) => entry.cost > 0)
-    .sort((a, b) => b.cost - a.cost || a.title.localeCompare(b.title)).slice(0, limit);
-}
-
 // todaySpend reads today's slice out of the shown span; null when the span
 // does not include today (an earlier calendar month).
 export function todaySpend(costs, now = new Date()) {
@@ -129,69 +113,21 @@ export function quotaStatusLine(item, wizard = false) {
   return item.view.headline.replace(/^(Prediction|Prophecy): /, '');
 }
 
-// spendDays splits each day of the shown span by provider, in the Costs
-// view's provider palette, so the Overview's bars read like its stacks.
-export function spendDays(costs) {
-  const providers = costs.providers || [];
-  const agents = costs.narrowed?.agents || [];
-  return (costs.narrowed?.days || []).map((day) => {
-    const byProvider = new Map();
-    for (const agent of agents) {
-      if (agent.day !== day.day || !(agent.cost_usd > 0)) continue;
-      const provider = costProviderLabel(agent);
-      byProvider.set(provider, (byProvider.get(provider) || 0) + agent.cost_usd);
-    }
-    const segments = [...byProvider].map(([provider, cost]) => ({
-      provider, cost, className: providerSegmentClass(provider, providers),
-    })).sort((a, b) => providers.indexOf(a.provider) - providers.indexOf(b.provider));
-    return { day: day.day, cost: day.cost_usd || 0, whatIf: day.cost_kind === 'what_if', segments };
-  });
-}
-
 // ---- Views -----------------------------------------------------------------
-
-function Sparkline({ points, forecast, now }) {
-  const W = 240;
-  const H = 40;
-  if (points.length < 2) return html`<div class="usage-ov-spark empty" aria-hidden="true"></div>`;
-  const from = new Date(points[0].at).getTime();
-  const hit = new Date(forecast?.hits_limit_at).getTime();
-  const reset = new Date(forecast?.reset_at).getTime();
-  const ends = [now, Number.isFinite(hit) ? hit : now, Number.isFinite(reset) ? reset : now];
-  const to = Math.max(...ends.filter((value) => value - now < 7 * 86_400_000));
-  const span = Math.max(1, to - from);
-  const x = (at) => ((at - from) / span) * W;
-  const y = (pct) => H - Math.max(0, Math.min(100, pct)) / 100 * H;
-  const line = points.map((point) => `${x(new Date(point.at).getTime()).toFixed(1)},${y(point.pct).toFixed(1)}`).join(' ');
-  const last = points[points.length - 1];
-  const lastX = x(new Date(last.at).getTime());
-  const rate = Number(forecast?.rate_pct_per_hour || 0);
-  const projectTo = Number.isFinite(reset) && reset > new Date(last.at).getTime() ? reset : to;
-  const projected = rate > 0
-    ? Math.min(100, last.pct + rate * (projectTo - new Date(last.at).getTime()) / 3_600_000)
-    : null;
-  return html`<svg class="usage-ov-spark" viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-    <line class="limit" x1="0" y1="0.5" x2=${W} y2="0.5" />
-    ${Number.isFinite(reset) && reset <= to && html`<line class="reset" x1=${x(reset)} y1="0" x2=${x(reset)} y2=${H} />`}
-    <polyline class="observed" points=${line} />
-    ${projected !== null && html`<line class="forecast" x1=${lastX} y1=${y(last.pct)}
-      x2=${x(projectTo)} y2=${y(projected)} />`}
-  </svg>`;
-}
 
 function QuotaCard({ item, wizard, onOpen }) {
   const { series, latest } = item;
   const tone = item.atRisk ? 'danger' : item.view.tone;
   return html`<a class=${`usage-ov-card usage-ov-quota${item.atRisk ? ' at-risk' : ''}`} href="/usage/quota"
-    data-series=${item.key} onClick=${onOpen}
-    title=${`${usageProviderLabel(series.provider)} ${usageWindowScopeLabel(series, wizard)} — open the full forecast`}>
-    <div class="usage-ov-card-head">
+    data-series=${item.key} onClick=${onOpen}>
+    <div class="usage-ov-card-head"
+      title=${`${usageProviderLabel(series.provider)} ${usageWindowScopeLabel(series, wizard)} — open the full forecast`}>
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <strong class="usage-ov-window">${usageWindowScopeLabel(series, wizard)}</strong></div>
       <span class="usage-ov-pct">${latest ? `${latest.pct.toFixed(0)}%` : '—'}</span>
     </div>
     <span class="usage-ov-meta">${item.reset || (latest ? formatUsageTime(latest.at, item.now) : '')}</span>
-    <${Sparkline} points=${item.points} forecast=${item.forecast} now=${item.now} />
+    <${Sparkline} points=${item.points} forecast=${item.forecast} now=${item.now} wizard=${wizard} />
     <span class=${`usage-ov-status ${tone}`} title=${item.view.headline}>${quotaStatusLine(item, wizard)}</span>
   </a>`;
 }
@@ -202,55 +138,6 @@ function Kpi({ label, value, meta, tone = '', onOpen, href }) {
     <span class="usage-ov-value">${value}</span>
     <span class="usage-ov-meta">${meta}</span>
   </a>`;
-}
-
-function SpendChart({ costs }) {
-  const days = spendDays(costs);
-  const W = 720;
-  const H = 150;
-  if (!days.length) return html`<div class="usage-ov-chart empty">No days in span.</div>`;
-  const future = costs.projection?.future || [];
-  const slots = days.length + future.length;
-  let running = 0;
-  const cumulative = days.map((day) => (running += day.cost));
-  // Two scales, as in the mock: the bars read the day-to-day pace, the line
-  // the running total and where the projection lands. The legend names both.
-  const dailyTop = niceCeil(Math.max(...days.map((day) => day.cost))) || 1;
-  const totalTop = Math.max(running, costs.projection?.total || 0) || 1;
-  const bw = W / slots;
-  const yDaily = (value) => (value / dailyTop) * (H - 4);
-  const yTotal = (value) => H - (value / totalTop) * (H - 6);
-  const line = cumulative.map((value, index) => `${(index + 0.5) * bw},${yTotal(value)}`).join(' ');
-  const providers = [...new Set(days.flatMap((day) => day.segments.map((segment) => segment.provider)))];
-  return html`<div class="usage-ov-chart-wrap">
-    <div class="usage-ov-chart" role="img"
-      aria-label=${`${spanLabel(costs)} spend ${fmtExactUSD(running)}${costs.projection ? `, projected ${fmtExactUSD(costs.projection.total)}` : ''}`}>
-      <svg viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-        ${days.map((day, index) => {
-          let top = H;
-          return html`<g key=${day.day} class=${day.whatIf ? 'what-if' : ''}>
-            <title>${day.day}: ${fmtExactUSD(day.cost)}${day.segments.length > 1
-              ? ` (${day.segments.map((segment) => `${segment.provider} ${fmtUSD(segment.cost)}`).join(', ')})` : ''}</title>
-            ${day.segments.map((segment) => {
-              const height = yDaily(segment.cost);
-              top -= height;
-              return html`<rect key=${segment.provider} class=${`bar ${segment.className}`}
-                x=${index * bw + bw * 0.15} y=${top} width=${bw * 0.7} height=${height} />`;
-            })}
-          </g>`;
-        })}
-        <polyline class="cumulative" points=${line} />
-        ${costs.projection && html`<line class="projection" x1=${(days.length - 0.5) * bw} y1=${yTotal(running)}
-          x2=${W - bw / 2} y2=${yTotal(costs.projection.total)} />`}
-      </svg>
-    </div>
-    <div class="usage-ov-legend">
-      ${providers.map((provider) => html`<span key=${provider}><i class=${`swatch ${providerSegmentClass(provider, costs.providers || [])}`}></i>${provider}</span>`)}
-      <span>bars: daily, up to ${fmtUSD(dailyTop)}</span>
-      <span><i class="line"></i>accumulated ${fmtUSD(running)}</span>
-      ${costs.projection && html`<span><i class="line dashed"></i>projected ~${fmtUSD(costs.projection.total)}</span>`}
-    </div>
-  </div>`;
 }
 
 function Overview({ quota, costs, wizard, open }) {
@@ -307,7 +194,7 @@ function Overview({ quota, costs, wizard, open }) {
       ? html`<div class="empty">${w('Costs failed to load', 'The ledger could not be read')}: ${costs.request.error}</div>`
       : !costsLoaded ? html`<div class="empty">Loading…</div>`
         : html`<div class="usage-ov-spend">
-          <${SpendChart} costs=${costs} />
+          <${SpendChart} costs=${costs} label=${spanLabel(costs)} />
           <table class="usage-ov-agents">
             <thead><tr><th>${w('Top agents', 'Top spenders')}</th><th>${w('Cost', 'Gold')}</th></tr></thead>
             <tbody>${top.length
