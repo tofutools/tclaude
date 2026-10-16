@@ -1,6 +1,7 @@
 import { computed, signal } from '@preact/signals';
 import { dashPrefs } from './prefs.js';
 import { normalizeSeed } from './terminals-core.js';
+import { findTerminalAgent } from './terminal-tab-status.js';
 
 export const TERMINAL_TAB_GROUP_KEY = 'tclaude.dash.terminals.groups';
 export const MAX_REMEMBERED_TERMINAL_PANES = 512;
@@ -659,6 +660,22 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return panes.value.find((pane) => wanted.has(pane.seed.agent))?.key || null;
   }
 
+  // syncAgentLabels follows agent renames: a pane opened for an agent shows
+  // the roster's current title, not the one captured when it was opened. The
+  // seed's label moves with it so a pop-out or handoff carries the new name.
+  function syncAgentLabels(snapshotValue) {
+    if (!snapshotValue) return false;
+    let changed = false;
+    const next = panes.peek().map((pane) => {
+      const title = findTerminalAgent(pane, snapshotValue)?.title;
+      if (typeof title !== 'string' || !title.trim() || title === pane.label) return pane;
+      changed = true;
+      return Object.freeze({ ...pane, label: title, seed: Object.freeze({ ...pane.seed, label: title }) });
+    });
+    if (changed) panes.value = next;
+    return changed;
+  }
+
   function dispose() {
     panes.value = [];
     activeKey.value = null;
@@ -698,6 +715,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     groupFor,
     groupMembers,
     findPaneKey,
+    syncAgentLabels,
     requestReveal,
     dispose,
   });
