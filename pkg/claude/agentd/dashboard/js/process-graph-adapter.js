@@ -111,6 +111,7 @@ export class ProcessGraphAdapter {
   }
 
   fit() { if (!this.disposed) this.widget.fitToView(); }
+  fitReadable(minZoom) { return this.disposed ? false : this.widget.fitReadable(minZoom); }
   centerOn(x, y) { if (!this.disposed) this.widget.centerOn(x, y); }
   revealPoint(x, y) { if (!this.disposed) this.widget.revealPoint(x, y); }
   zoomBy(factor) { return this.disposed ? false : this.widget.zoomBy(factor); }

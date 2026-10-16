@@ -2476,14 +2476,6 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
-			Key:      "process-editor-auto-layout-right-wizard",
-			Title:    "Process editor — auto layout flowing left to right (wizard)",
-			Caption:  "The direction picker under the wizard skin, → active.",
-			Wizard:   true,
-			JS:       processEditorStateJS(autoLayoutMessJS + autoLayoutRightJS),
-			SettleMS: 1100,
-		},
-		{
 			Key:     "process-editor-auto-layout-right-loop",
 			Title:   "Process editor — bounded review loop flowing left to right",
 			Caption: "A bounded loop in a left-to-right layout: forward connectors leave right and enter left, and the ↺ return edge routes below the flow.",

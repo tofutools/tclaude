@@ -764,6 +764,7 @@ test('graph adapter snapshots layout, preserves viewport on graph input, and dis
   assert.deepEqual(adapter.clientPointToHost({ clientX: 1, clientY: 2 }), { left: 0, top: 0 });
   assert.equal(adapter.zoomBy(2), false);
   assert.equal(adapter.resetZoom(), false);
+  assert.equal(adapter.fitReadable(0.8), false, 'the editor reframes a tidied graph through the adapter');
   assert.doesNotThrow(() => {
     adapter.setSelection(null);
     adapter.fit();
