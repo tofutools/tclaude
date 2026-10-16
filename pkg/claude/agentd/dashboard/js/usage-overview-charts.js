@@ -154,7 +154,7 @@ function SpendTip({ slot, focus, costs, anchor }) {
 
 function slotSummary(slot) {
   if (slot.projected) return `${slot.day}, projection, approximately ${fmtExactUSD(slot.cost)} that day, approximately ${fmtExactUSD(slot.accumulated)} accumulated.`;
-  const breakdown = slot.segments.map((segment) => `${segment.provider} ${fmtExactUSD(segment.cost)}`).join(', ');
+  const breakdown = [...slot.segments].reverse().map((segment) => `${segment.provider} ${fmtExactUSD(segment.cost)}`).join(', ');
   return `${slot.day}, ${fmtExactUSD(slot.cost)} that day${breakdown ? ` (${breakdown})` : ''}, ${fmtExactUSD(slot.accumulated)} accumulated.`;
 }
 
