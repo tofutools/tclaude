@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,14 @@ func homeMailPeer(t *testing.T, fh *fedHarness, name string) *fedPeer {
 	go func() { cl.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	fedEventually(t, "new mail peer", func() bool { _, ok := cl.LookupKey(p.agentdID); return ok })
-	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/peers/trust", map[string]any{"instance": id.ID(), "label": name})
+	// The client seeing the daemon does not mean the daemon has seen the client:
+	// the daemon learns new instances from the hub asynchronously, and trusting
+	// one it has not seen yet is a 404. Retry until it is visible.
+	var rec *httptest.ResponseRecorder
+	fedEventually(t, "daemon sees new mail peer", func() bool {
+		rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/peers/trust", map[string]any{"instance": id.ID(), "label": name})
+		return rec.Code != http.StatusNotFound
+	})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.NoError(t, db.PutFederationCatalog(id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	return p
