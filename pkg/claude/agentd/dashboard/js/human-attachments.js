@@ -42,3 +42,12 @@ export function attachmentSize(bytes) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
   return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
+
+// messageExportHref is the whole-message download the Messages reader offers:
+// the notification as Markdown, or — with attachments, when it has any — a
+// .zip of message.md plus attachments/. The daemon builds both, so the zip's
+// message.md and the plain download never disagree.
+export function messageExportHref(messageID, withAttachments) {
+  const href = `/api/human-messages/${encodeURIComponent(messageID)}/export`;
+  return withAttachments ? `${href}?attachments=1` : href;
+}

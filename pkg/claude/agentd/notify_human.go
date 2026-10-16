@@ -1177,6 +1177,7 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 //
 //	/api/human-messages/{id}/attachments/{attachmentID}  one specific file
 //	/api/human-messages/{id}/attachment                  the first file (legacy)
+//	/api/human-messages/{id}/export                      the whole message (human_message_export.go)
 func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -1185,6 +1186,10 @@ func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Reques
 	// preflights an attachment before deciding to display it.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "GET or HEAD only", http.StatusMethodNotAllowed)
+		return
+	}
+	if messageID, ok := parseHumanMessageExportPath(r.URL.Path); ok {
+		serveHumanMessageExport(w, r, messageID)
 		return
 	}
 	messageID, attachmentID, ok := parseHumanMessageAttachmentPath(r.URL.Path)
