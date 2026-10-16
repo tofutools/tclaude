@@ -10396,14 +10396,6 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
    ⚠ degraded strip names unreadable runs (never silently dropped); rows carry
    glyph+text kind cells, the nudge-schedule line, and inline dark-themed
    action buttons with a required comment input. */
-/* Terminals-tab auto-hide. body.hide-terminals is set by js/terminals-tab.js
-   whenever no terminal pane is open — the tab exists only while ≥1 web terminal
-   / window is live. Unlike Costs/Plugins (server flags), this is driven
-   client-side off the live pane count, but the shape is identical: hide the nav
-   button AND the section, and terminals-tab.js falls the active tab back to
-   Groups if Terminals was showing when it emptied. */
-body.hide-terminals nav [data-tab="terminals"],
-body.hide-terminals #tab-terminals { display: none; }
 
 /* The Terminals tab is a full-height app-shell like Messages: flex the
    body → main → section column through the document's content height so the

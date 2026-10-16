@@ -293,10 +293,10 @@
        label pair so they render in both themes; the palette reads the visible
        label span (js/palette.js) so "Scry the {name}" gets the arcane name. -->
   <a class="active" data-tab="groups" href="/"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚔</span> <span class="tab-title">Parties</span></span></a>
-  <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
-       body.hide-terminals until a browser terminal opens the first pane;
-       the badge counts the live terminals. -->
-  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
+  <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). Always shown,
+       even with nothing open; the badge counts the live terminals plus
+       background tmux sessions. -->
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals, plus tclaude sessions still running in the background. Each terminal can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
   <!-- Processes lives under Automations: its sub-nav entry there is the
        visible way in, so this anchor is permanently CSS-hidden. It stays the
@@ -391,8 +391,7 @@
     </aside>
   </section>
   <!-- Preact owns the in-SPA terminal pane chrome and leaves each xterm host as
-       an opaque imperative subtree. The section + its nav button are hidden
-       via body.hide-terminals until the first pane opens. -->
+       an opaque imperative subtree. -->
   <section id="tab-terminals">
     <div id="terminals-root"></div>
   </section>
