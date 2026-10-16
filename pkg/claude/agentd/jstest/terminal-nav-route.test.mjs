@@ -139,7 +139,7 @@ test('a retired agent is refused before a pane is ever opened', async (t) => {
 
   assert.deepEqual(opened, [], 'no pane is opened for an agent the daemon does not know');
   assert.equal(state.panes.value.length, 0);
-  assert.equal(left(), 1, 'nothing open and nothing to attach — leave the tab');
+  assert.equal(left(), 0, 'nothing open and nothing to attach — stay on the (never hidden) tab');
 });
 
 test('an empty roster attempts the attach rather than refusing everything', async (t) => {
@@ -170,18 +170,15 @@ test('a dead deep link with other terminals open corrects to the live one', asyn
   assert.equal(left(), 0, 'the tab still has something to show');
 });
 
-test('a dead cold deep link corrects the URL BEFORE leaving the tab', async (t) => {
-  // Order matters. leaveTab clicks a nav button, which the router records as an
-  // ordinary navigation. Correcting this entry to the fallback first makes that
-  // record a duplicate the router suppresses; the other order pushes a fresh
-  // entry and leaves Back bouncing off the dead link forever.
+test('a dead cold deep link corrects the URL to the bare Terminals tab and stays', async (t) => {
+  // A correction (not a push) so Back never bounces off the dead link.
   const { restore, announced, left, state } = await setup(t, { snapshot: rosterOf(OTHER) });
 
   await restore({ tab: 'terminals', selection: 'agt_retired' });
 
   assert.equal(state.panes.value.length, 0);
-  assert.equal(left(), 1);
-  assert.deepEqual(announced, [{ location: { tab: 'groups' }, correction: true }]);
+  assert.equal(left(), 0);
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
 });
 
 test('a restore that throws is contained and treated as a refusal', async (t) => {
@@ -192,7 +189,7 @@ test('a restore that throws is contained and treated as a refusal', async (t) =>
 
   await restore({ tab: 'terminals', selection: AGENT });
 
-  assert.equal(left(), 1, 'a thrown reattach must not wedge the router');
+  assert.equal(left(), 0, 'a thrown reattach must not wedge the router or leave the tab');
 });
 
 test('a background open does not move the address bar', async (t) => {

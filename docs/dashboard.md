@@ -420,9 +420,9 @@ Plain shells have no ⚙, and opening or using it never switches or closes the
 tab.
 
 
-The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden
-while no web terminal or web window is open and nothing is running in the
-background; its badge counts live panes, plus `+N` background sessions. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
+The Terminals tab is the in-dashboard terminal multiplexer. It is always
+shown, even with nothing open; its badge counts live panes, plus `+N`
+background sessions. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
 drag onto each other to form named, collapsible tab groups. Drag a tab off
 the strip to detach it into its own browser window; drag the pop-out's header
 back to reattach — `⧉ tab` / `↩ dashboard` buttons are the explicit path.

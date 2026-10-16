@@ -76,11 +76,12 @@ test('background terminals keep the tab, show a neutral counter and attach from 
     await s.actions.closeAllPanes();
     s.background.backgroundTerminals.value = ROWS.filter((row) => row.kind === 'other');
   });
-  assert.equal(document.body.classList.contains('hide-terminals'), false, 'a background session keeps the Terminals tab');
+  assert.equal(document.body.classList.contains('hide-terminals'), false, 'the Terminals tab never auto-hides');
   assert.match(s.host.querySelector('.mux-bg-empty').textContent, /1 tclaude session is still running/);
 
   await s.harness.act(() => { s.background.backgroundTerminals.value = []; });
-  assert.equal(document.body.classList.contains('hide-terminals'), true, 'nothing open and nothing in the background hides the tab');
+  assert.equal(document.body.classList.contains('hide-terminals'), false, 'not even with nothing open or in the background');
+  assert.match(s.host.querySelector('.mux-bg-empty').textContent, /No terminals open/);
 });
 
 test('background terminal helpers', async (t) => {

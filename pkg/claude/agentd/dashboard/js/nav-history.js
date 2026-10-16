@@ -118,16 +118,12 @@ function locationAvailable(loc) {
 }
 
 // pendingTerminalAttach reports whether `loc` is a terminals deep link that is
-// merely NOT ATTACHED YET rather than genuinely stale. It is the one location
-// that is legitimately unavailable at the moment we restore it: panes do not
-// survive a reload, so with none open the Terminals tab is CSS-hidden — which
-// is precisely the state the reattach is about to fix. Treating it as a stale
-// target would bounce every /terminals/<agent-id> deep link to the default tab
-// before the reattach it asks for could ever run. If the agent turns out to be
-// gone, the island answers with a correction (or leaves the tab), so the
-// stranded-on-a-hidden-section case the stale guard protects against is still
-// covered — just decided by the view that actually knows, and one async hop
-// later.
+// merely NOT ATTACHED YET rather than genuinely stale: panes do not survive a
+// reload, so the selection it names does not exist until the reattach runs.
+// Treating it as a stale target would bounce every /terminals/<agent-id> deep
+// link to the default tab before the reattach it asks for could ever run. If
+// the agent turns out to be gone, the island answers with a correction to the
+// pane it did land on, or to the bare (never hidden) Terminals tab.
 function pendingTerminalAttach(loc) {
   return loc.tab === 'terminals' && !!loc.selection;
 }
@@ -475,9 +471,8 @@ export function initNavHistory() {
   }
 
   // Stale-target fallback: a restored URL pointing at a tab that is currently
-  // hidden (e.g. /terminals reloaded with no live terminals, so the Terminals
-  // tab is CSS-hidden) has nothing to show — fall back to the default rather
-  // than stranding on a blank section. Runs here, after the tab binders and
+  // hidden (e.g. a feature-gated tab that is switched off) has nothing to
+  // show — fall back to the default rather than stranding on a blank section. Runs here, after the tab binders and
   // the Terminal Shell island set the visibility classes.
   if (!locationAvailable(loc)
     && !(loc.tab === DEFAULT_TAB && !loc.subtab)

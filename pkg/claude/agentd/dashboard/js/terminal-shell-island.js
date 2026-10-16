@@ -1343,7 +1343,9 @@ function TerminalTabs({
     if (!menuFocusRequest) return;
     const activeTab = shellRef.current?.querySelector('.mux-tab[aria-selected="true"]');
     if (activeTab) activeTab.focus();
-    else document.querySelector('nav [data-tab="groups"]')?.focus();
+    // No tab left: the Terminals tab stays selected (it never auto-hides), so
+    // its navigation entry is the natural place for focus to land.
+    else document.querySelector('nav [data-tab="terminals"]')?.focus();
   }, [menuFocusRequest]);
   const focusAfterTabMenuDismiss = (reverse) => {
     const trigger = tabMenu?.trigger;
@@ -1388,17 +1390,6 @@ function TerminalTabs({
     collapsedRef.current = next;
   }, [current.groups]);
 
-  useLayoutEffect(() => {
-    if (solo) return undefined;
-    // Background sessions keep the tab: it is where they are attached from.
-    const visible = hasPanes || hasBackground;
-    document.body.classList.toggle('hide-terminals', !visible);
-    if (!visible && document.getElementById('tab-terminals')?.classList.contains('active')) {
-      document.querySelector('nav [data-tab="groups"]')?.click();
-    }
-    return undefined;
-  }, [hasPanes, hasBackground, solo]);
-
   // Closing or opening a pane changes what is attached; re-read the listing
   // once tmux has seen the client come or go rather than waiting for a poll.
   useEffect(() => {
@@ -1423,7 +1414,6 @@ function TerminalTabs({
     if (solo || !hasPanes || current.revealRequest === 0) return;
     const terminalSection = document.getElementById('tab-terminals');
     const needsPostRevealFocus = !terminalSection?.classList.contains('active');
-    document.body.classList.remove('hide-terminals');
     document.querySelector('nav [data-tab="terminals"]')?.click();
     // Ordinary pane switches already run setActive(true) while this section is
     // visible. Only repeat fit/focus when the request had to reveal the section.
@@ -1594,10 +1584,12 @@ function TerminalTabs({
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
-      ${!solo && !hasPanes && hasBackground ? html`
+      ${!solo && !hasPanes ? html`
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
-          <div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running in tmux without a terminal. Hover the counter at the top right to attach or review them.</div>
+          ${hasBackground
+            ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running in tmux without a terminal. Hover the counter at the top right to attach or review them.</div>`
+            : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
         </div>
       ` : null}
       ${hasPanes || !empty ? html`
@@ -1678,7 +1670,6 @@ export function mountTerminalShellIsland({
     state,
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
-    leaveTab: () => document.querySelector('nav [data-tab="groups"]')?.click(),
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}

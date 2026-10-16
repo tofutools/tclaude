@@ -272,6 +272,10 @@ func TestFederation_MoveRestartFinishesCommittedRetirement(t *testing.T) {
 	aid := fedMoveSource(t, fh)
 	d := fedStartMove(t, fh)
 	agentd.ResetFederationForTest()
+	// A real crash takes in-flight work with it. Drain the stopped runtime's
+	// move reconcile first, or it can race the retirement below, see the agent
+	// still active, and block the move when its own retire loses that race.
+	agentd.WaitForBackgroundForTest()
 	// Model a daemon crash between the normal retirement commit and teardown.
 	m, err := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
 	require.NoError(t, err)

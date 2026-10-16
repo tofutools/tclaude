@@ -102,7 +102,8 @@ test('dashboard terminal feature owns its tab and badge hosts while preserving o
 
   assert.equal(host.dataset.islandOwner, 'terminals');
   assert.equal(badgeHost.dataset.islandOwner, 'terminals');
-  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), false,
+    'the Terminals tab is always available, even with nothing open');
 
   await harness.act(async () => {
     controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
@@ -390,15 +391,17 @@ test('a background open still keeps the current tab after an earlier reveal', as
   });
   assert.equal(terminals.classList.contains('active'), true, 'the first focus reveals Terminals');
 
-  // Closing the last pane returns hasPanes to false and bounces back to Groups,
-  // exactly as leaving a single web-terminal window does — but the counter stays >= 1.
+  // Closing the last pane leaves the (never auto-hidden) Terminals tab
+  // selected; the reveal counter stays >= 1.
   await harness.act(async () => {
     harness.fireEvent(getByRole(host, 'button', { name: 'Close one' }), 'click');
     await Promise.resolve();
   });
-  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true,
-    'closing the last pane returns to Groups');
-  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
+  assert.equal(terminals.classList.contains('active'), true,
+    'closing the last pane stays on Terminals');
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), false);
+  await harness.act(() => harness.document.querySelector('nav [data-tab="groups"]').click());
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true);
 
   // Ctrl/Cmd-click focus opens a fresh pane in the background: hasPanes flips
   // false->true while the counter is unchanged. The tab must stay on Groups.
@@ -528,9 +531,9 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   const allMenu = getByRole(host, 'menu', { name: 'Actions for four' });
   await harness.act(() => harness.fireEvent(getByRole(allMenu, 'menuitem', { name: 'Close all tabs' }), 'click'));
   assert.equal(host.querySelectorAll('[role="tab"]').length, 0);
-  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
-  assertSameNode(harness.document.activeElement, harness.document.querySelector('nav [data-tab="groups"]'),
-    'close all moves focus to the selected Groups navigation tab');
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), false);
+  assertSameNode(harness.document.activeElement, harness.document.querySelector('nav [data-tab="terminals"]'),
+    'close all moves focus to the still-selected Terminals navigation tab');
   assert.deepEqual(requests.sort(), [
     '/api/hide/agt_detached', '/api/hide/agt_five', '/api/hide/agt_four', '/api/hide/agt_one',
     '/api/hide/agt_three', '/api/hide/agt_two', '/api/hide/agt_two',
