@@ -806,7 +806,7 @@ test('an exit code inside the initial-retry window still retries a pop-out attac
   widget.dispose();
 });
 
-test('settled waits for parsed output and a quiet gap, or gives up at the timeout', async (t) => {
+test('settled waits for parsed output and a quiet gap or the busy cap, or gives up at the timeout', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -837,8 +837,16 @@ test('settled waits for parsed output and a quiet gap, or gives up at the timeou
   await widget.connect();
   fakes.sockets[0].open();
 
+  let timedOut = null;
+  const silent = widget.settled({ quietMs: 500, timeoutMs: 100 }).then((value) => { timedOut = value; });
+  clock += 150;
+  runTimers();
+  await silent;
+  assert.equal(timedOut, false, 'no output by the deadline: gives up');
+
   let result = null;
-  const pending = widget.settled({ quietMs: 500, timeoutMs: 6000 }).then((value) => { result = value; });
+  const pending = widget.settled({ quietMs: 500, maxAfterOutputMs: 5000, timeoutMs: 6000 })
+    .then((value) => { result = value; });
   clock += 1000;
   runTimers();
   await Promise.resolve();
@@ -854,11 +862,22 @@ test('settled waits for parsed output and a quiet gap, or gives up at the timeou
   await pending;
   assert.equal(result, true, 'quiet after the redraw: settled');
 
-  let timedOut = null;
-  fakes.sockets[0].onmessage({ data: 'more' });
-  const silent = widget.settled({ quietMs: 500, timeoutMs: 100 }).then((value) => { timedOut = value; });
-  clock += 150;
+  // A busy harness (spinner, elapsed-time counter) never goes quiet; once its
+  // attach redraw has been parsed for maxAfterOutputMs it counts as settled.
+  // quietMs is out of reach here, so only the cap can resolve it ('screen'
+  // was first parsed 600ms ago).
+  let busy = null;
+  const streaming = widget.settled({ quietMs: 5000, maxAfterOutputMs: 750, timeoutMs: 6000 })
+    .then((value) => { busy = value; });
+  fakes.sockets[0].onmessage({ data: 'tick' });
+  clock += 100;
   runTimers();
-  await silent;
-  assert.equal(timedOut, false, 'still busy at the deadline: gives up');
+  await Promise.resolve();
+  assert.equal(busy, null, 'still streaming, before the busy cap: waiting');
+  fakes.sockets[0].onmessage({ data: 'tick' });
+  clock += 100;
+  runTimers();
+  await Promise.resolve();
+  assert.equal(busy, true, 'still streaming, but past the busy cap: settled');
+  await streaming;
 });
