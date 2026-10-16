@@ -205,3 +205,27 @@ for (const wizard of [false, true]) {
     harness.window.dispatchEvent(new harness.window.Event('pagehide'));
   });
 }
+
+test('palette opens a web terminal in a group home dir only when the group has one', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `export let lastSnapshot = null; export function setLastSnapshot(v) { lastSnapshot=v; } export function webTerminalDefault() { return false; }`);
+  const { buildCommands } = await harness.importDashboardModule('js/palette.js');
+  const { registerTerminalShellController } = await harness.importDashboardModule('js/terminals-tab.js');
+  const opened = [];
+  t.after(registerTerminalShellController({ openPane: (seed) => { opened.push([seed.ws, seed.label, seed.key]); return seed; } }));
+  for (const wizard of [false, true]) {
+    harness.document.body.classList.toggle('wizard', wizard);
+    const commands = buildCommands({
+      groups: [{ name: 'tclaude', default_cwd: ' ~/git/tclaude ', agents: [] }, { name: 'homeless', agents: [] }],
+      agents: [],
+    });
+    const term = commands.filter((c) => c.keywords?.startsWith('open terminal shell'));
+    assert.equal(term.length, 1);
+    assert.match(term[0].label, wizard ? /Open party portal: tclaude/ : /Open terminal in group: tclaude/);
+    assert.match(term[0].hint, /~\/git\/tclaude$/);
+    term[0].run();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const want = ['/api/group-term-ws/tclaude', 'tclaude', 'groupterm:tclaude'];
+  assert.deepEqual(opened, [want, want]);
+});

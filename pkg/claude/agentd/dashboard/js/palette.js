@@ -71,7 +71,7 @@ import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
 import { scribeGroupVisible } from './scribe-groups.js';
-import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
+import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openGroupWebTermPane, openWebWindowPane } from './terminals-tab.js';
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
 import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
@@ -310,6 +310,21 @@ export function buildCommands(snapshot) {
         hint: wiz(`Update repositories in and below group ${g.name}`, `Refresh repositories in and below party ${g.name}`),
         keywords: `git ${mode} ${g.name} repositories group home fetch summon latest harmonize`,
         run: () => { recordGroupInteraction(g.name); return openGitRepositories(mode, g.name); },
+      });
+    }
+    // Open a throwaway web shell in the group's home (default) directory —
+    // the palette entry point for the group ⚙ menu's "open web terminal"
+    // (row action group-web-term). Like that menu item it is only offered
+    // when the group HAS a default dir, so the server resolve has a target.
+    const home = (g.default_cwd || '').trim();
+    if (home) {
+      cmds.push({
+        icon: wiz('🖥', '🔮'),
+        label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
+        hint: wiz(`web shell in ${home}`, `browser scrying portal in ${home}`),
+        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name}`
+          + ' portal scrying party',
+        run: () => { recordGroupInteraction(g.name); openGroupWebTermPane(g.name, g.name); },
       });
     }
   }

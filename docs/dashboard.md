@@ -86,6 +86,9 @@ to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile
 and speed prefilled; the group remains editable and defaults to the last used
 group. Fast mode uses a higher-cost service tier.
+Type `terminal <group>` (or `shell <group>`) to open a web terminal in a
+group's default directory — the same pane as the group ⚙ menu's **open web
+terminal**, offered only for groups that have a default directory.
 Automations' Processes subtab appears only with `features.processes`. A theme-gated **Vegas** button appears in the slop and
 wizard themes (or via `slop.vegas_in_regular_mode`).
 
