@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { effect } from '@preact/signals';
 import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
@@ -973,6 +974,10 @@ function TerminalTabs({
   const scopedActions = scopeView?.fused
     ? { ...actions, movePaneByOffset: skipHidden(actions.movePaneByOffset, (key) => [key]) }
     : actions;
+  // Renames land in the roster snapshot; carry them onto the open tabs. A
+  // signal effect (not a render dependency) so each poll does not re-render
+  // the whole strip just to find nothing changed.
+  useEffect(() => (snapshot ? effect(() => { state.syncAgentLabels?.(snapshot.value); }) : undefined), [snapshot, state]);
   const moveGroupScoped = skipHidden(actions.moveGroupByOffset, (gid) => (current.segments.find((sg) => sg.type === 'group' && sg.group.id === gid)?.panes || []).map((p) => p.key));
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);

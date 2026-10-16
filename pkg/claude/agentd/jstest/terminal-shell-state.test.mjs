@@ -265,3 +265,24 @@ test('terminal actions close one, other, and all panes through detach-only seman
   assert.equal(five.widget.disposeCount, 1);
   assert.deepEqual(requests.slice(3).sort(), ['/api/hide/agt_five', '/api/hide/agt_one']);
 });
+
+test('terminal shell state follows agent renames from the roster snapshot', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
+  const byId = state.openPane({ ws: '/w1', key: 'window:agt_one', label: 'old-one', agent: 'agt_one' });
+  state.openPane({ ws: '/w2', key: 'window:conv-two', label: 'old-two', hideConv: 'conv-two' });
+  state.openPane({ ws: '/g', key: 'groupterm:g', label: 'group shell' });
+
+  assert.equal(state.syncAgentLabels({ agents: [
+    { agent_id: 'agt_one', conv_id: 'conv-one', title: 'new-one' },
+    { agent_id: 'agt_two', conv_id: 'conv-two', title: 'new-two' },
+  ] }), true);
+  assert.deepEqual(state.panes.value.map((pane) => pane.label), ['new-one', 'new-two', 'group shell']);
+  assert.equal(state.panes.value[0].id, byId.id, 'a rename keeps the pane identity');
+  assert.equal(state.panes.value[0].seed.label, 'new-one', 'pop-outs carry the new name');
+
+  const before = state.panes.value;
+  assert.equal(state.syncAgentLabels({ agents: [{ agent_id: 'agt_one', title: 'new-one' }, { agent_id: 'agt_two', conv_id: 'conv-two', title: '' }] }), false);
+  assert.equal(state.panes.value, before, 'an unchanged or blank title publishes nothing');
+});
