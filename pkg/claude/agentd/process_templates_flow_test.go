@@ -611,9 +611,9 @@ func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"code":"unknown_field"`)
 
-	// The dashboard edit model still allows advisory draft saves, but the raw
-	// YAML scribe path refuses validation errors so a skipped validate cannot
-	// silently canonicalize away unknown fields.
+	// Raw YAML saves keep semantic findings advisory (see
+	// TestProcessTemplateRawSourceSavesUnfinishedDraft), but refuse source
+	// findings canonicalization would silently erase, such as unknown fields.
 	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/raw", map[string]any{
 		"source": source,
 	})
@@ -622,6 +622,53 @@ func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T
 	list := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	assert.NotContains(t, list.Body.String(), `"id":"raw"`)
+}
+
+// An unfinished process (no performers, parallel branches that never join)
+// must still save through the scribe's raw-YAML path, so a scribe can persist
+// work in progress the human then sees in the editor.
+func TestProcessTemplateRawSourceSavesUnfinishedDraft(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: wip
+start: hello
+nodes:
+  hello:
+    type: task
+    next:
+      pass: fan
+  fan:
+    type: parallel
+    next:
+      a: p1
+      b: p2
+  p1:
+    type: task
+    next:
+      pass: end-a
+  p2:
+    type: task
+    next:
+      pass: end-b
+  end-a:
+    type: end
+  end-b:
+    type: end
+`
+	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": source})
+	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
+	require.Contains(t, validate.Body.String(), `"severity":"error"`, "fixture must be an invalid draft")
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/wip", map[string]any{"source": source})
+	require.Equal(t, http.StatusCreated, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"severity":"error"`, "the save reports the remaining errors")
+
+	show := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/wip", nil)
+	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
+	heads := processTemplateRequest(t, f, http.MethodGet, "/v1/process/template-heads", nil)
+	require.Equal(t, http.StatusOK, heads.Code, heads.Body.String())
+	assert.Contains(t, heads.Body.String(), `"id":"wip"`, "the editor's head poll sees the draft")
 }
 
 func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T) {

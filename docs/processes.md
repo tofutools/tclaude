@@ -351,7 +351,10 @@ things there are specific to processes:
   issue, or a description to draft from. When the scribe saves a version, *Review on
   canvas* paints it over your draft (added, changed, removed) and you accept
   or reject each change; your own unsaved edits are never overwritten, and
-  conflicting edits are flagged rather than merged silently.
+  conflicting edits are flagged rather than merged silently. The scribe can
+  save an unfinished template too: graph and semantic validation errors are
+  advisory on save (the draft just cannot run yet), so each step it makes
+  reaches your canvas as it goes.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
   in place: a breadcrumb and a minimap of the parent show where you are, the

@@ -84,7 +84,26 @@ tclaude agent process-templates show release-flow
 
 `show` emits valid YAML. Its three leading comments carry `currentRef`,
 `sourceHash`, and `semanticHash`; comments may remain in the edited file.
-`validate` must succeed before `save`. After saving, re-show and verify.
+Run `validate` before `save` and read its findings. After saving, re-show and
+verify.
+
+### Save work in progress
+
+A template does not have to be finished to be saved. Graph and semantic errors
+(a node without a performer, parallel branches that never join, a missing
+route) are advisory on save: the version is stored with its diagnostics, shows
+up in the dashboard's process editor, and simply cannot run until the errors
+are fixed. Saving never starts a run. When a human is co-editing with you,
+save each agreed step as a draft so the step reaches their editor. Unsaved
+edits in your local YAML file are invisible to them, and a saved version is
+offered to them as *Review on canvas*. Do not hold back a requested edit just
+because the template still has errors, and do not pile unrequested fixes onto
+it to make it validate. Report which errors remain, and offer to fix them.
+
+Some errors still block a save, because the store keeps a canonical
+re-encoding and would otherwise silently drop the content: unknown fields,
+duplicate keys, YAML merge keys, graph-size/budget limits, and an invalid id.
+Fix those before saving.
 
 CAS compares `--expect-source-hash` with the current head under the store lock.
 On `process_template_conflict`, never retry with an empty or guessed hash and
@@ -287,7 +306,8 @@ retains successive layout-only authoring events that share one semantic ref.
 
 ## Validation and safety
 
-Treat every error diagnostic as blocking and fix it before save. Review
+Every error diagnostic blocks a run, but only the source-fidelity and budget
+errors listed under *Save work in progress* block a save. Review
 warnings deliberately; do not suppress them by deleting unrelated content.
 Unknown fields, duplicate keys, bad ids, unreachable nodes, missing targets,
 unbounded retry loops, cycles with no bounded `loops` outcome, undeclared params, wrong-kind performer fields, and
