@@ -924,12 +924,12 @@ button.tool:hover { border-color: #58a6ff; }
    end of the action bar, just before delete, and its menu opens DOWNWARD: the
    reader scrolls, so a menu below the bar only lengthens the scroll area,
    while one above a short message would be clipped by the pane's top edge.
-   The menu-item selector carries [type] to outrank the wizard skin's
-   per-kind .mail-reader-actions button chrome. */
+   The split halves and menu items carry [type] so they outrank the wizard
+   skin's per-kind .mail-reader-actions button chrome. */
 .mail-download { position: relative; display: inline-flex; margin-left: auto; }
-.mail-reader-actions .mail-download-main { border-radius: 4px 0 0 4px; }
-.mail-reader-actions .mail-download-caret { border-radius: 0 4px 4px 0; border-left: none; padding: 3px 6px; }
-.mail-reader-actions .mail-download-caret[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; border-left: none; }
+.mail-reader .mail-reader-actions .mail-download .mail-download-main[type] { border-radius: 4px 0 0 4px; }
+.mail-reader .mail-reader-actions .mail-download .mail-download-caret[type] { border-radius: 0 4px 4px 0; border-left: none; padding: 3px 6px; }
+.mail-reader .mail-reader-actions .mail-download .mail-download-caret[type][aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; border-left: none; }
 .mail-download-menu {
   position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; width: 280px;
   background: #1c2330; border: 1px solid #58a6ff; border-radius: 6px;

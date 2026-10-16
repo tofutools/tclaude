@@ -85,8 +85,12 @@ export function MessageDownloadMenu({
   };
 
   const filesNote = count ? `${count} file${count === 1 ? '' : 's'} · ${attachmentSize(totalBytes)}` : '';
-  return html`<span class="mail-download" ref=${rootRef}>
-    <button type="button" class="mail-download-main" data-act="msg-download"
+  // Tabbing out of the open menu closes it, like a click elsewhere does.
+  const onFocusOut = (event) => {
+    if (open && !rootRef.current?.contains(event.relatedTarget)) setOpen(false);
+  };
+  return html`<span class="mail-download" ref=${rootRef} onFocusOut=${onFocusOut}>
+    <button type="button" class="mail-download-main"
       title=${count ? `Download this message with its ${filesNote} as a .zip` : 'Download this message as Markdown'}
       onClick=${() => download(messageExportHref(message.id, count > 0))}>⤓ download</button><button
       type="button" class="mail-download-caret" ref=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
