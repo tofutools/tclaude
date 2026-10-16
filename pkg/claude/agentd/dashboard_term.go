@@ -769,6 +769,15 @@ initialSize:
 	if hook != nil && hook.OnStart != nil {
 		hook.OnStart(cmd.Process)
 	}
+	// One waiter reaps the command, so the PTY reader can learn HOW it exited
+	// (see cleanExit) while the teardown below still waits for the reap.
+	exited := make(chan struct{})
+	var exitState *os.ProcessState
+	go func() {
+		_ = cmd.Wait()
+		exitState = cmd.ProcessState
+		close(exited)
+	}()
 	// The initial size was applied (by StartWithSize) exactly like a resize
 	// message's Setsize, so the smoke's applied-resize observer sees it too.
 	if hook != nil && hook.OnResize != nil && initial != nil {
@@ -781,7 +790,7 @@ initialSize:
 		detachTmuxSession(detachSession)
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
-		_ = cmd.Wait()
+		<-exited
 		// Copy mode is pane state, so clear it only after this tmux client has
 		// actually detached. This is separate from the optional whole-session
 		// detach above: the standalone TUI must preserve other viewers.
@@ -827,8 +836,9 @@ initialSize:
 			n, err := ptmx.Read(buf)
 			if err != nil {
 				// Nothing closed us first, so the attached command exited by
-				// itself: tell the browser why before the socket goes.
-				if !closing.Load() {
+				// itself: tell the browser why before the socket goes. Only a
+				// clean exit is a settled answer, though — see cleanExit.
+				if !closing.Load() && cleanExit(exited, &exitState) && !closing.Load() {
 					if code, reason, ok := terminalExitClose(hook, detachSession, exitTarget); ok {
 						_ = conn.WriteControl(websocket.CloseMessage,
 							websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
@@ -884,6 +894,29 @@ const (
 	termCloseDetachedKeep      = 4003
 	termCloseDetachedClose     = 4004
 )
+
+// ptyExitWait bounds how long the PTY reader waits, after the PTY hit EOF, for
+// the command to be reaped before it gives up on classifying the exit.
+const ptyExitWait = 2 * time.Second
+
+// cleanExit reports whether the PTY's command exited with status 0 — the only
+// exit terminalExitClose may classify. A tmux client the operator detached, or
+// whose session ended, exits 0 (as does `tclaude session attach` around it).
+// One killed from outside does not: when systemd stops or restarts agentd it
+// SIGTERMs the whole unit cgroup at once, these clients included, and a
+// SIGTERM'd tmux client prints "[terminated]" and exits 1 (a wrapper or shell
+// in between dies of the signal). Classifying that as "detached" — the session
+// is still alive — told the browser it had a settled answer from a live
+// daemon, so it skipped the restart watch and no terminal reconnected after an
+// upgrade. Anything but a clean exit closes the socket plainly instead.
+func cleanExit(exited <-chan struct{}, state **os.ProcessState) bool {
+	select {
+	case <-exited:
+	case <-time.After(ptyExitWait):
+		return false
+	}
+	return *state != nil && (*state).Success()
+}
 
 // terminalExitClose classifies a PTY whose attached tmux client exited on its
 // own: the session is gone (session ended) or still alive (the client was

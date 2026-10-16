@@ -24,6 +24,7 @@ import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
 import { ViewersBadge } from './remote-viewers.js';
+import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
 import { paneScope } from './skynet-scope.js';
 import { nodeColor } from './skynet-model.js';
@@ -203,6 +204,12 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
 }
 
 function TerminalDisconnectNotice({ onReconnect }) {
+  // While the dashboard-wide "Disconnected from agentd" curtain is up, this
+  // terminal dropped for the same reason (the daemon is gone) and its restart
+  // watch reconnects once agentd answers again; a second card on top of the
+  // first only repeats it. Reading the signal here, not in TerminalPane, keeps
+  // the subscription to panes that are actually disconnected.
+  if (dashboardState.connection.value.status === 'disconnected') return null;
   return html`
     <div class="mux-terminal-disconnect-overlay" role="alert" aria-live="assertive">
       <div class="mux-terminal-disconnect-card">
