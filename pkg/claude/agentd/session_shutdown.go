@@ -13,12 +13,16 @@ import (
 // waiting for it, so that last callback reaches the daemon from an orphan
 // whose pane is going or gone, and the live-pane proof refuses it. That is
 // ordinary teardown, not a starved agent. The daemon knows when a session is
-// shutting down — it started the soft exit, or it recorded the pane's exit —
-// so it remembers that here for a short window and the hook broker treats a
+// shutting down — it started the soft exit (retire, stop), or it recorded the
+// pane's exit itself (reaper, soft-exit escalation, SessionEnd recording) — so
+// it remembers that here for a short window and the hook broker treats a
 // failed SessionEnd claiming such a session as teardown (hook_broker.go).
 //
-// Memory only, like the refusal recorder: a daemon restart forgets it, and the
-// proof-side inference (layerProof.orphanTeardown) still covers that case.
+// Exits recorded by the separate `tclaude session exit-callback` process that
+// tmux's pane-died hook runs are NOT seen here: that process has its own
+// memory. A self-initiated exit (/exit, a crash) therefore relies on the
+// proof-side inference (layerProof.orphanTeardown), as does everything after
+// a daemon restart, since this is memory only, like the refusal recorder.
 
 // sessionShutdownTTL bounds how long a shutdown is remembered: long enough to
 // cover the shutdown window (the last hook lands within about a second), short

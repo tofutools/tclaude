@@ -1836,7 +1836,9 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 	pane, paneSource, err := brokerPaneFacts(row.TmuxSession, identity.Generation)
 	timing.paneSource = paneSource
 	lap(&timing.paneDur)
-	if errors.Is(err, errTmuxSessionNotFound) || (err == nil && pane.state == paneProbeDead) {
+	// Gone includes a tmux server that is no longer running: retiring the
+	// last agent takes the server down with its session (exit-empty).
+	if errors.Is(err, errTmuxSessionNotFound) || tmuxServerNotRunning(err) || (err == nil && pane.state == paneProbeDead) {
 		timing.orphanTeardown = t.exists(callerPID) && !callerHasHarnessAncestor(t, callerPID)
 	}
 	switch {
