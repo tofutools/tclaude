@@ -1130,9 +1130,10 @@ function DescrCell({ member, group, actions }) {
   return html`<span class="descr-edit" ...${editableMemberCellAttrs(member, group, actions, 'edit-descr', 'descr')} title="Edit description and tags">${text || member.tags?.length ? body : html`<span class="descr-add">+ descr / tags</span>`}</span>`;
 }
 
-function StackedLocation({ start, current, differ }) {
+function StackedLocation({ start, current, differ, wrap = false }) {
   if (!differ) return current || start;
-  return html`<div class="loc-pair"><span class="loc-row"><span class="loc-tag">init</span>${start}</span><span class="loc-row"><span class="loc-tag">now</span>${current}</span></div>`;
+  const row = wrap ? 'loc-row loc-wrap' : 'loc-row';
+  return html`<div class="loc-pair"><span class=${row}><span class="loc-tag">init</span>${start}</span><span class=${row}><span class="loc-tag">now</span>${current}</span></div>`;
 }
 
 function CwdCell({ member, group }) {
@@ -1170,7 +1171,7 @@ function BranchCell({ member }) {
     if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return false;
     seen.add(url); return true;
   });
-  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
+  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
     const stateClass = prStateClass(pr.state);
     return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${stateClass} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
   })}</span>` : null}`;

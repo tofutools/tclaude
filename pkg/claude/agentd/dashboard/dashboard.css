@@ -1454,6 +1454,14 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
    is working now — keeps the column narrow instead of adding a 2nd. */
 .loc-pair { display: flex; flex-direction: column; gap: 1px; }
 .loc-row { display: flex; align-items: baseline; gap: 5px; }
+/* A Branch row may wrap its PR triplet onto a second line when the cell is
+   narrow. The padding/negative-margin pair (tag width + gap) hangs the tag in
+   the gutter so the wrapped line starts under the branch name, not the tag. */
+.loc-row.loc-wrap { flex-wrap: wrap; padding-left: 31px; }
+.loc-row.loc-wrap > .loc-tag { margin-left: -31px; }
+/* Cap a long branch name at the row width so it truncates beside its tag
+   instead of wrapping away and leaving the tag alone on a line. */
+.loc-row.loc-wrap > .branch { max-width: min(200px, 100%); }
 .loc-tag {
   flex: 0 0 auto; width: 26px; font-size: 9px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.5px; color: #6e7681;
