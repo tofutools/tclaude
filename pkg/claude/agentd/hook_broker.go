@@ -260,6 +260,16 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	case layerClaim && proof.row != nil:
 		row, harnessPID = proof.row, proof.harnessPID
 		timing.resolved = row.ID
+	case layerClaim && proof.outsidePane && req.Input.HookEventName == "SessionEnd":
+		// The harness's last hook, orphaned: the harness fired SessionEnd on
+		// its way out and exited without waiting, so the hook process was
+		// reparented away from the pane and cannot prove it. Still refused
+		// (an orphan proves nothing), but this is ordinary teardown — the
+		// pane exit observer records the exit itself — not a starved agent,
+		// so it is neither badged nor warned about.
+		brokerRefusals.noteOrphanedSessionEnd(refusal)
+		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
+		return
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.refuseAttributed(

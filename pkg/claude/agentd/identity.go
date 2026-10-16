@@ -1755,6 +1755,11 @@ type layerProof struct {
 	// delivered to it. Endpoints report it as such rather than badging the
 	// row for a render the client retries anyway.
 	callerGone bool
+	// outsidePane is set when the caller is alive but its ancestry ran off
+	// the top of the process tree without meeting the claimed pane: it has
+	// been reparented away from the pane, typically an orphan left behind
+	// by a harness that exited without waiting for its last hook.
+	outsidePane bool
 	// Where the time went, for the slow-request log: the database reads,
 	// the pane facts (and whether the cache or a live probe answered), and
 	// the ancestry walk.
@@ -1860,6 +1865,7 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 					"caller pid %d no longer exists; it exited before the proof finished", callerPID)
 				return timing
 			}
+			timing.outsidePane = true
 			return fail(fmt.Sprintf(
 				"pane pid %d is not an ancestor of caller pid %d (walk ended at pid %d after %d hops)",
 				panePID, callerPID, cur, hops))
