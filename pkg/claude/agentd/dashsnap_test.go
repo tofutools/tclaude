@@ -793,6 +793,10 @@ func baseStates() []dashsnap.State {
   var registry = await import('/static/js/feature-state-registry.js');
   var groups = registry.featureState('groups');
   if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  // Switching perspectives must not nudge the tree: every group header sits
+  // where Agents put it.
+  function headerTops(){ return Array.prototype.map.call(document.querySelectorAll('#groups-list details[data-group-key] > summary'), function(el){ return el.checkVisibility() ? Math.round(el.getBoundingClientRect().top) : '-'; }).join(','); }
+  var agentTops = headerTops();
   groups.focus.value = 'processes';
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var processes = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
@@ -803,6 +807,9 @@ func baseStates() []dashsnap.State {
   if (!document.querySelector('#groups-list details[data-group-key] [data-process-group]')) throw new Error('Processes focus lost the groups tree');
   if (document.querySelector('#groups-list [data-act="spawn-agent"]')) throw new Error('agent details still shown in Processes focus');
   if (document.querySelector('.gp-toolbar')) throw new Error('the Processes focus added a toolbar row');
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var processTops = headerTops();
+  if (processTops !== agentTops) throw new Error('group headers moved on the switch: Agents ' + agentTops + ' vs Processes ' + processTops);
 })();`,
 			SettleMS: 200,
 		},

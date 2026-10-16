@@ -20433,6 +20433,11 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
    space as in Agents: the head row matches .group-header-actions and the
    empty note the member table's one-line placeholder. */
 .gp-tree { display: block; }
+/* .gp-tree is a flex item of .gp-focus, so its first group's top margin
+   cannot collapse out of it the way it collapses out of #groups-list in
+   Agents; it would push the whole tree 4px down on every switch. The
+   .gp-focus top margin already stands in for it. */
+.gp-tree > :first-child { margin-top: 0; }
 .subtable > .gp-group { padding: 0; }
 .subtable > .gp-group .gp-card, .subtable > .gp-group .gp-planned-list { margin-left: 0; }
 .subtable > .gp-group .gp-empty { margin: 0; }
