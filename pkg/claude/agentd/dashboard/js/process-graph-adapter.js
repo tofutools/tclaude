@@ -3,6 +3,7 @@
 // flow out as semantic events. Consumers never inspect ProcessGraph DOM.
 
 import { ProcessGraph } from './process-graph.js';
+import { processPortOffset } from './process-layout.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -62,10 +63,8 @@ export class ProcessGraphAdapter {
       onPortDragStart: (payload) => {
         if (payload.keyboard) this.interactionGeneration += 1;
         const laid = this.widget.layout.nodes.find((node) => node.id === payload.nodeId);
-        if (laid) this.beginConnectionBand({
-          x: laid.x,
-          y: laid.y + (payload.port === 'in' ? -laid.height / 2 : laid.height / 2),
-        });
+        const offset = laid && processPortOffset(laid, payload.port, this.widget.layout.direction);
+        if (laid) this.beginConnectionBand({ x: laid.x + offset.x, y: laid.y + offset.y });
         emit('portDragStart')(payload);
       },
       onPortDragMove: (payload) => this.updateConnectionBand(payload.point),

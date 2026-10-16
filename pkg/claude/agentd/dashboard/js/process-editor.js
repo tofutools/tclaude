@@ -775,7 +775,7 @@ export class ProcessTemplateEditor {
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
     const decorated = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
-    this.graph?.setGraph({ ...this.overlayGraph(decorated), direction: this.model.layoutDirection() }, { fit });
+    this.graph?.setGraph(this.overlayGraph(decorated), { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
     this.setSelection(this.selection);
@@ -1151,7 +1151,10 @@ export class ProcessTemplateEditor {
     const painted = review ? overlayDraftDiff(graph, {
       theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
     }) : graph;
-    return this.model.inScope ? overlayScopePorts(painted, this.model.scopePorts()) : painted;
+    const out = this.model.inScope ? overlayScopePorts(painted, this.model.scopePorts()) : painted;
+    // The overlays rebuild the graph object; every repaint (validation's too)
+    // must keep the template's flow direction.
+    return { ...out, direction: this.model.layoutDirection?.() || 'down' };
   }
 
   diffReviewSnapshot() {
