@@ -805,3 +805,60 @@ test('an exit code inside the initial-retry window still retries a pop-out attac
   assert.deepEqual(disconnects, [], 'an unstable detach neither settles nor closes the tab');
   widget.dispose();
 });
+
+test('settled waits for parsed output and a quiet gap, or gives up at the timeout', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  let clock = 1000;
+  const timers = [];
+  // Run only what is queued now: settled re-arms its own check.
+  const runTimers = () => { for (const fn of timers.splice(0)) fn(); };
+  class ParsingTerminal extends fakes.FakeTerminal {
+    write(_data, parsed) { super.write(); parsed?.(); }
+  }
+  const widget = mountTerminalWidget({
+    host,
+    wsPath: '/api/open-window-ws/agt_one',
+    fetchImpl: async () => ({ ok: true }),
+    TerminalCtor: ParsingTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+    now: () => clock,
+    setTimeoutImpl: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeoutImpl: () => {},
+  });
+  t.after(() => widget.dispose());
+  await widget.connect();
+  fakes.sockets[0].open();
+
+  let result = null;
+  const pending = widget.settled({ quietMs: 500, timeoutMs: 6000 }).then((value) => { result = value; });
+  clock += 1000;
+  runTimers();
+  await Promise.resolve();
+  assert.equal(result, null, 'no output yet: still waiting');
+
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  clock += 200;
+  runTimers();
+  await Promise.resolve();
+  assert.equal(result, null, 'output just parsed: not quiet yet');
+  clock += 400;
+  runTimers();
+  await pending;
+  assert.equal(result, true, 'quiet after the redraw: settled');
+
+  let timedOut = null;
+  fakes.sockets[0].onmessage({ data: 'more' });
+  const silent = widget.settled({ quietMs: 500, timeoutMs: 100 }).then((value) => { timedOut = value; });
+  clock += 150;
+  runTimers();
+  await silent;
+  assert.equal(timedOut, false, 'still busy at the deadline: gives up');
+});

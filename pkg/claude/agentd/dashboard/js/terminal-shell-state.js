@@ -264,14 +264,16 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     revealRequest.value += 1;
   }
 
-  function openPane(raw, { reveal = true } = {}) {
+  // activate=false opens the pane without taking focus from the active one
+  // (it still becomes active when nothing else is open).
+  function openPane(raw, { reveal = true, activate = true } = {}) {
     const seed = normalizeSeed(raw);
     if (!seed) return null;
     loadGroups();
     const key = terminalSeedKey(seed);
     const existing = panes.value.find((pane) => pane.key === key);
     if (existing) {
-      activeKey.value = key;
+      if (activate || !activeKey.value) activeKey.value = key;
       if (reveal) requestReveal();
       return existing;
     }
@@ -285,10 +287,12 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     // Opening is a new strip action. Put it after the panes that are open now;
     // normalizeGrouping only pulls it back beside remembered group siblings.
     panes.value = normalizeGrouping([...panes.value, pane], groupIDFor);
-    activeKey.value = key;
-    // A pane that lands in a collapsed stack must be visible to be usable, so
-    // the stack opens rather than the activation being silently invisible.
-    expandGroupFor(key);
+    if (activate || !activeKey.value) {
+      activeKey.value = key;
+      // A pane that lands in a collapsed stack must be visible to be usable, so
+      // the stack opens rather than the activation being silently invisible.
+      expandGroupFor(key);
+    }
     if (reveal) requestReveal();
     return pane;
   }

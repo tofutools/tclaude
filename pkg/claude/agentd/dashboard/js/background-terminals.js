@@ -10,7 +10,9 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
-import { openGroupWebTermPane, openWebTermPane, openWebWindowPane } from './terminals-tab.js';
+import {
+  openGroupWebTermPane, openWebTermPane, openWebWindowPane, waitForTerminalSettled,
+} from './terminals-tab.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 
 const html = htm.bind(h);
@@ -111,20 +113,51 @@ export function idleText(lastActivity, nowSeconds = Date.now() / 1000) {
   return { text: age < 60 ? text : `idle ${text}`, stale: age >= STALE_SECONDS };
 }
 
-export function attachBackgroundTerminal(row, snapshotValue) {
+// attachBackgroundTerminal opens row as a normal terminal tab and returns the
+// promise of its pane (null when the row cannot be attached from here).
+export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, activate = true } = {}) {
   const { title } = rowView(row, snapshotValue);
   const selector = selectorOf(row);
+  const options = { reveal, activate };
+  let opened = null;
   if ((row.kind === 'agent' || row.kind === 'session') && selector) {
-    openWebWindowPane(selector, title, { harness: row.harness || '' });
+    opened = openWebWindowPane(selector, title, { harness: row.harness || '', ...options });
   } else if (row.kind === 'shell' && selector && row.which) {
-    openWebTermPane(selector, title, row.which, { group: row.group || '' });
+    opened = openWebTermPane(selector, title, row.which, { group: row.group || '', ...options });
   } else if (row.kind === 'group_shell' && row.group) {
-    openGroupWebTermPane(row.group, `group shell · ${row.group}`);
-  } else {
-    return false;
+    opened = openGroupWebTermPane(row.group, `group shell · ${row.group}`, options);
   }
+  if (!opened) return null;
   setTimeout(refreshBackgroundTerminals, SETTLE_MS);
-  return true;
+  return opened;
+}
+
+let attachAllRunning = false;
+
+// attachAllBackgroundTerminals brings the rows up ONE AT A TIME: each attach
+// makes its harness redraw its whole screen, and xterm parses that on the main
+// thread, so opening them all at once froze the page for seconds. The first
+// pane takes focus and is usable immediately; the rest open behind it, each
+// after the previous one has attached and redrawn (or timed out).
+export async function attachAllBackgroundTerminals(rows, snapshotValue, {
+  waitForSettled = waitForTerminalSettled, timeoutMs = 6000,
+} = {}) {
+  if (attachAllRunning) return 0;
+  attachAllRunning = true;
+  let opened = 0;
+  try {
+    for (const row of rows) {
+      if (!row.key) continue;
+      const first = opened === 0;
+      const pane = await attachBackgroundTerminal(row, snapshotValue, { reveal: first, activate: first });
+      if (!pane) continue;
+      opened += 1;
+      await waitForSettled(pane.key, { timeoutMs });
+    }
+  } finally {
+    attachAllRunning = false;
+  }
+  return opened;
 }
 
 function BackgroundIcon() {
@@ -172,7 +205,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
     attachBackgroundTerminal(row, snapshotValue);
   };
   const attachAll = () => {
-    for (const row of attachable) attachBackgroundTerminal(row, snapshotValue);
+    void attachAllBackgroundTerminals(attachable, snapshotValue);
     close();
   };
   const now = Date.now() / 1000;
