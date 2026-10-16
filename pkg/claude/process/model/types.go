@@ -204,7 +204,11 @@ type WaitConfig struct {
 type Metadata map[string]any
 
 type Layout struct {
-	Nodes map[string]LayoutNode `json:"nodes,omitempty" yaml:"nodes,omitempty"`
+	// Direction is the way the editor's auto layout flows: "down" (also what
+	// an absent value means), "right", "up" or "left". Authoring metadata like
+	// the rest of Layout; pinned node positions are stored as drawn.
+	Direction string                `json:"direction,omitempty" yaml:"direction,omitempty"`
+	Nodes     map[string]LayoutNode `json:"nodes,omitempty" yaml:"nodes,omitempty"`
 	// Edges carries per-connector authoring metadata, keyed by source node id
 	// and then by outcome -- the same (from, outcome) pair that identifies an
 	// edge everywhere else. Nested rather than a composite key so neither node
@@ -215,6 +219,9 @@ type Layout struct {
 	// what a process means or invalidate a pinned template ref.
 	Edges map[string]map[string]LayoutEdge `json:"edges,omitempty" yaml:"edges,omitempty"`
 }
+
+// LayoutDirections lists the valid Layout.Direction values ("" means down).
+var LayoutDirections = []string{"down", "right", "up", "left"}
 
 type LayoutNode struct {
 	X float64 `json:"x" yaml:"x"`

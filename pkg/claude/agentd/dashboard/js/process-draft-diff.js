@@ -350,7 +350,8 @@ export function mergeDraftDecisions({ ours, theirs, changes = [], decisions = {}
 }
 
 // sameDraftContent compares merged editor content to a saved view: semantic
-// template + edges, plus node positions for every surviving node.
+// template + edges, plus node positions for every surviving node and the
+// layout's flow direction (absent means down).
 export function sameDraftContent(a = {}, b = {}) {
   const nodesOf = (view) => Object.fromEntries(Object.entries(view?.template?.nodes || {})
     .map(([id, node]) => [id, semanticNode(node)]));
@@ -359,7 +360,8 @@ export function sameDraftContent(a = {}, b = {}) {
     && same(nodesOf(a), nodesOf(b))
     && same(edgesOf(a), edgesOf(b))
     && same(a.layout?.nodes || {}, b.layout?.nodes || {})
-    && same(a.layout?.edges || {}, b.layout?.edges || {});
+    && same(a.layout?.edges || {}, b.layout?.edges || {})
+    && (a.layout?.direction || 'down') === (b.layout?.direction || 'down');
 }
 
 function changeState(change, decisions, cursorID) {

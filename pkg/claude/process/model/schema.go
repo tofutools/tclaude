@@ -18,7 +18,7 @@ var (
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
 	loopFields       = stringSet("maxIterations", "onExhausted")
-	layoutFields     = stringSet("nodes", "edges")
+	layoutFields     = stringSet("direction", "nodes", "edges")
 	layoutNodeFields = stringSet("x", "y")
 	layoutEdgeFields = stringSet("pinned")
 	// subprocessFields deliberately omits "resolved": only run creation embeds a

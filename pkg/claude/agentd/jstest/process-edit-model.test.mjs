@@ -485,6 +485,37 @@ test('auto layout drops pins for the selection or the whole scope, as one undo s
   assert.equal(model.expansions.size, 0);
 });
 
+test('auto layout turns the flow direction: recorded in the layout, whole scope, one undo step', () => {
+  const model = new ProcessEditModel(view());
+  assert.equal(model.layoutDirection(), 'down', 'absent means down');
+  assert.equal(model.graph().direction, undefined, 'a down graph carries no direction');
+  model.moveNodes([{ id: 'begin', x: 20, y: 30 }, { id: 'build', x: 120, y: 130 }]);
+  const before = model.undoStack.length;
+  assert.equal(model.autoLayout(['begin'], 'right'), true);
+  assert.equal(model.layout.direction, 'right');
+  assert.equal(model.layoutDirection(), 'right');
+  assert.equal(model.graph().direction, 'right');
+  assert.deepEqual(Object.keys(model.layout.nodes), [], 'a turn tidies the whole scope, not just the selection');
+  assert.equal(model.undoStack.length, before + 1);
+  assert.equal(model.autoLayout([], 'right'), false, 'same direction, nothing pinned: no undo step');
+  assert.equal(model.autoLayout([], 'left'), true, 'a turn with nothing pinned still records the direction');
+  assert.equal(model.layout.direction, 'left');
+  assert.equal(model.autoLayout([], 'down'), true);
+  assert.equal('direction' in model.layout, false, 'down is stored as absent');
+  assert.ok(model.undo());
+  assert.equal(model.layout.direction, 'left');
+  assert.ok(model.undo());
+  assert.ok(model.undo());
+  assert.equal(model.layout.direction, undefined);
+  assert.deepEqual(model.layout.nodes.begin, { x: 20, y: 30 }, 'undo restores the hand-placed pins');
+  assert.throws(() => model.autoLayout([], 'sideways'), /unknown layout direction/);
+
+  // The direction survives the save shape and a fresh open.
+  model.autoLayout([], 'up');
+  const reopened = new ProcessEditModel({ ...view(), layout: model.rootState().layout });
+  assert.equal(reopened.layoutDirection(), 'up');
+});
+
 test('multi-selection delete rewires across selected nodes atomically', () => {
   const seeded = view();
   seeded.template.nodes.review = { type: 'task' };

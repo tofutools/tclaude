@@ -22,6 +22,7 @@
 // editor value is accepted as HTML.
 
 import { createProcessGraphAdapter } from './process-graph-adapter.js';
+import { normalizeLayoutDirection, processPortOffset } from './process-layout.js';
 import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS, SCOPE_SEPARATOR,
@@ -388,6 +389,7 @@ export class ProcessTemplateEditor {
         start: model.template.start || '', sourceHash: model.sourceHash || '',
         semanticHash: model.semanticHash || '', currentRef: model.currentRef || '',
         dirty: model.dirty, canUndo: model.canUndo, canRedo: model.canRedo,
+        layoutDirection: model.layoutDirection?.() || 'down',
       },
       pending: {
         save: this.savePending,
@@ -773,7 +775,7 @@ export class ProcessTemplateEditor {
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
     const decorated = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
-    this.graph?.setGraph(this.overlayGraph(decorated), { fit });
+    this.graph?.setGraph({ ...this.overlayGraph(decorated), direction: this.model.layoutDirection() }, { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
     this.setSelection(this.selection);
@@ -1635,7 +1637,8 @@ export class ProcessTemplateEditor {
   portPoint(nodeId, port) {
     const laid = this.graph?.layoutSnapshot().nodes.find((candidate) => candidate.id === nodeId);
     if (!laid) return { x: 0, y: 0 };
-    return { x: laid.x, y: laid.y + (port === 'in' ? -laid.height / 2 : laid.height / 2) };
+    const offset = processPortOffset(laid, port, this.model.layoutDirection());
+    return { x: laid.x + offset.x, y: laid.y + offset.y };
   }
 
   onPortDragStart({ nodeId, port, point }) {
@@ -1969,10 +1972,16 @@ export class ProcessTemplateEditor {
 
   // autoLayout tidies the graph: the selected nodes, or the whole open scope
   // when nothing is selected, go back to the layered layout. Undo restores
-  // the hand-placed positions.
-  autoLayout() {
+  // the hand-placed positions. A direction other than the current one turns
+  // the whole graph to flow that way (one undo step, saved with the layout).
+  autoLayout(direction) {
     if (this.destroyed || !this.graph) return false;
-    const selected = selectionItems(this.selection);
+    const turn = direction !== undefined && normalizeLayoutDirection(direction) !== this.model.layoutDirection();
+    if (turn && this.model.inScope) {
+      this.status('Change the layout direction from the top-level graph; it applies to the whole template.', true);
+      return false;
+    }
+    const selected = turn ? [] : selectionItems(this.selection);
     const ids = selected.filter((item) => item.type === 'node'
       && !this.model.nestedTarget?.(item.id)).map((item) => item.id);
     // A selection never widens to the whole graph: one that holds no node of
@@ -1982,14 +1991,18 @@ export class ProcessTemplateEditor {
       return false;
     }
     const whole = ids.length === 0;
-    const changed = this.mutate(() => this.model.autoLayout(ids));
+    const changed = this.mutate(() => this.model.autoLayout(ids, turn ? normalizeLayoutDirection(direction) : undefined));
     if (changed === undefined) return false;
-    // A tidied tall graph fits only at an unreadable zoom, so the whole-graph
+    // A tidied long graph fits only at an unreadable zoom, so the whole-graph
     // case frames it readably from its start instead.
     if (changed && whole) requestAnimationFrame(() => { if (!this.destroyed) this.graph?.fitReadable(READABLE_OPEN_ZOOM); });
     if (!changed) {
       this.status(whole ? 'The graph already follows the auto layout.' : 'The selected nodes already follow the auto layout.');
       return false;
+    }
+    if (turn) {
+      this.status(`Auto layout applied, flowing ${this.model.layoutDirection()} (undo restores).`);
+      return true;
     }
     this.status(whole ? 'Auto layout applied (undo restores).'
       : `Auto layout applied to ${ids.length} node${ids.length === 1 ? '' : 's'} (undo restores).`);
@@ -2046,6 +2059,7 @@ export class ProcessTemplateEditor {
         canDelete: false, deleteReason: closedReason,
         canValidate: false, validateReason: closedReason,
         canAutoLayout: false, autoLayoutReason: closedReason,
+        layoutDirection: 'down', canTurnLayout: false, turnLayoutReason: closedReason,
         issueCount: 0, hasCurrentIssue: false,
         canSave: false, saveReason: closedReason,
       };
@@ -2094,6 +2108,9 @@ export class ProcessTemplateEditor {
       validateReason: busyReason || 'Validation is not available.',
       canAutoLayout: !pending && Object.keys(this.model.template.nodes).length > 0,
       autoLayoutReason: busyReason || 'The graph is empty.',
+      layoutDirection: this.model.layoutDirection?.() || 'down',
+      canTurnLayout: !pending && Object.keys(this.model.template.nodes).length > 0 && !this.model.inScope,
+      turnLayoutReason: busyReason || (this.model.inScope ? 'Change the layout direction from the top-level graph.' : 'The graph is empty.'),
       issueCount,
       hasCurrentIssue,
       canSave: !pending && !this.savePending && !!id && (this.model.dirty || this.blank),

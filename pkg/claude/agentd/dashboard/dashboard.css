@@ -10159,6 +10159,15 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
 .process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
 .process-action.primary { color: #fff; background: #238636; border-color: #2ea043; }
 .process-action.primary:hover { background: #2ea043; }
+/* Auto layout + its flow-direction picker read as one segmented control. */
+.process-auto-layout-group { display: inline-flex; align-items: stretch; }
+.process-auto-layout-group > .process-action { border-radius: 0; margin-left: -1px; }
+.process-auto-layout-group > .process-action:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.process-auto-layout-group > .process-action:last-child { border-radius: 0 6px 6px 0; }
+.process-auto-layout-group > .process-layout-direction { padding: 6px 7px; min-width: 26px; }
+.process-auto-layout-group > .process-layout-direction.is-active {
+  position: relative; color: #fff; background: #1f6feb33; border-color: #388bfd;
+}
 .process-panel { display: none; }
 .process-panel.active { display: block; }
 .process-toolbar { min-height: 34px; }
@@ -18709,6 +18718,7 @@ body.wizard .process-editor .process-inspector-input {
 body.wizard .process-editor .process-action:hover,
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
 body.wizard .process-editor .process-action.primary { background: #6d4aa2; border-color: #d4af37; }
+body.wizard .process-editor .process-layout-direction.is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }

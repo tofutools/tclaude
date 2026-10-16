@@ -954,6 +954,37 @@ func TestLayoutWarningsDoNotMakeTemplateInvalid(t *testing.T) {
 	}
 }
 
+func TestLayoutDirection(t *testing.T) {
+	baseline, err := Parse([]byte(validTemplateYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direction := range []string{"down", "right", "up", "left"} {
+		data := strings.Replace(validTemplateYAML, "layout:\n", "layout:\n  direction: "+direction+"\n", 1)
+		parsed, err := Parse([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Diagnostics.HasErrors() {
+			t.Fatalf("%s: unexpected errors: %#v", direction, parsed.Diagnostics.Errors())
+		}
+		if parsed.Template.Layout == nil || parsed.Template.Layout.Direction != direction {
+			t.Fatalf("%s: direction not parsed: %#v", direction, parsed.Template.Layout)
+		}
+		if parsed.SemanticHash != baseline.SemanticHash {
+			t.Fatalf("%s: layout direction changed the semantic hash", direction)
+		}
+	}
+	data := strings.Replace(validTemplateYAML, "layout:\n", "layout:\n  direction: sideways\n", 1)
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(parsed.Diagnostics, SeverityError, "invalid_layout_direction") {
+		t.Fatalf("expected invalid_layout_direction, got %#v", parsed.Diagnostics)
+	}
+}
+
 func TestInvalidTemplates(t *testing.T) {
 	tests := []struct {
 		name string

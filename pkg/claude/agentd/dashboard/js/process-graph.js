@@ -3,7 +3,7 @@
 // behind hooks; this module never fetches, validates, mutates templates, or
 // computes run state.
 
-import { layoutProcessGraph, rerouteProcessLayout } from './process-layout.js';
+import { layoutProcessGraph, normalizeLayoutDirection, processPortOffset, rerouteProcessLayout } from './process-layout.js';
 import { edgeLabelVisible } from './process-outcome-vocabulary.js';
 import { loopEdgeSuffix } from './process-loops.js';
 import {
@@ -477,7 +477,9 @@ function renderOverlay(parent, node, presentation) {
   parent.append(group);
 }
 
-function renderPorts(parent, node, feedbackFor) {
+function renderPorts(parent, node, feedbackFor, direction) {
+  const inAt = processPortOffset(node, 'in', direction);
+  const outAt = processPortOffset(node, 'out', direction);
   const portAttributes = (port) => {
     const label = `${port === 'in' ? 'Input' : 'Output'} port for ${node.label || node.id}`;
     const feedback = feedbackFor?.(port);
@@ -493,7 +495,7 @@ function renderPorts(parent, node, feedbackFor) {
   if (node.portAvailability?.in !== false) {
     const inputFeedback = portAttributes('in');
     parent.append(svgElement('circle', {
-      class: inputFeedback.class, cx: 0, cy: -node.height / 2, r: 6,
+      class: inputFeedback.class, cx: inAt.x, cy: inAt.y, r: 6,
       'data-port': 'in', role: 'button', tabindex: '0', 'aria-pressed': 'false',
       'aria-label': inputFeedback.label, 'data-base-aria-label': inputFeedback.baseLabel || inputFeedback.label,
       'data-source-aria-label': inputFeedback.label,
@@ -504,7 +506,7 @@ function renderPorts(parent, node, feedbackFor) {
   if (node.portAvailability?.out !== false) {
     const outputFeedback = portAttributes('out');
     parent.append(svgElement('circle', {
-      class: outputFeedback.class, cx: 0, cy: node.height / 2, r: 6,
+      class: outputFeedback.class, cx: outAt.x, cy: outAt.y, r: 6,
       'data-port': 'out', role: 'button', tabindex: '0', 'aria-pressed': 'false',
       'aria-label': outputFeedback.label, 'data-base-aria-label': outputFeedback.baseLabel || outputFeedback.label,
       'data-source-aria-label': outputFeedback.label,
@@ -867,7 +869,7 @@ export class ProcessGraph {
     });
     renderPorts(group, node, this.feedbackEnabled ? (port) => this.connectionFeedback({
       phase: 'source', source: { nodeId: node.id, port },
-    }) : null);
+    }) : null, this.layout?.direction);
     return group;
   }
 
@@ -1795,7 +1797,8 @@ export class ProcessGraph {
       const nodeId = target.node.dataset.nodeId;
       const port = target.port.dataset.port;
       const node = this.layout.nodes.find((candidate) => candidate.id === nodeId);
-      const point = { x: node.x, y: node.y + (port === 'out' ? node.height / 2 : -node.height / 2) };
+      const offset = processPortOffset(node, port, this.layout.direction);
+      const point = { x: node.x + offset.x, y: node.y + offset.y };
       if (!this.keyboardPort) {
         const feedback = sourceFeedback;
         if (feedback?.enabled === false) {
@@ -1957,18 +1960,28 @@ export class ProcessGraph {
     return true;
   }
 
-  // fitReadable fits the graph, but never below minZoom: a graph too tall to
+  // fitReadable fits the graph, but never below minZoom: a graph too long to
   // fit at a readable zoom opens at minZoom with its start node centred
-  // across and near the top, so the flow reads downward from it.
+  // across the flow and near the edge it flows from (the top for a downward
+  // flow, the left for a rightward one), so the flow reads on from it.
   fitReadable(minZoom, padding = 44) {
     if (!this.fitToView(padding) || this.view.k >= minZoom) return false;
     const rect = this.svg.getBoundingClientRect();
     const nodes = this.layout?.nodes || [];
     const start = nodes.find((node) => node.type === 'start') || nodes.find((node) => node.layer === 0) || nodes[0];
     if (!start) return false;
-    this.view.k = Math.min(minZoom, MAX_ZOOM);
-    this.view.x = rect.width / 2 - start.x * this.view.k;
-    this.view.y = padding - (start.y - (start.height || 0) / 2) * this.view.k;
+    const k = Math.min(minZoom, MAX_ZOOM);
+    const halfW = (start.width || 0) / 2;
+    const halfH = (start.height || 0) / 2;
+    this.view.k = k;
+    this.view.x = rect.width / 2 - start.x * k;
+    this.view.y = rect.height / 2 - start.y * k;
+    switch (normalizeLayoutDirection(this.layout?.direction)) {
+      case 'right': this.view.x = padding - (start.x - halfW) * k; break;
+      case 'left': this.view.x = rect.width - padding - (start.x + halfW) * k; break;
+      case 'up': this.view.y = rect.height - padding - (start.y + halfH) * k; break;
+      default: this.view.y = padding - (start.y - halfH) * k;
+    }
     this.applyView();
     return true;
   }

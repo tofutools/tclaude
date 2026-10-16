@@ -12,6 +12,93 @@ export const PROCESS_LAYOUT_DEFAULTS = Object.freeze({
   sweeps: 6,
 });
 
+// Layout directions name the way the flow reads: 'down' (the default and the
+// only one before directions existed), 'right', 'up' and 'left'. The engine
+// always lays out and routes in a canonical top-down space; a direction is a
+// pure axis transform (transpose and/or flip) applied to node positions, sizes
+// and every route point on the way in and out. Port sides, back-edge lanes and
+// self loops therefore turn with the flow without a second implementation.
+export const PROCESS_LAYOUT_DIRECTIONS = Object.freeze(['down', 'right', 'up', 'left']);
+
+export function normalizeLayoutDirection(value) {
+  return PROCESS_LAYOUT_DIRECTIONS.includes(value) ? value : 'down';
+}
+
+function transposed(direction) {
+  return direction === 'right' || direction === 'left';
+}
+
+// toCanonical maps a drawn point into the top-down space; fromCanonical is its
+// exact inverse (only swaps and negations, so round trips are lossless).
+function toCanonical(direction, point) {
+  switch (direction) {
+    case 'right': return { x: point.y, y: point.x };
+    case 'up': return { x: point.x, y: -point.y };
+    case 'left': return { x: point.y, y: -point.x };
+    default: return { x: point.x, y: point.y };
+  }
+}
+
+function fromCanonical(direction, point) {
+  switch (direction) {
+    case 'right': return { x: point.y, y: point.x };
+    case 'up': return { x: point.x, y: -point.y };
+    case 'left': return { x: -point.y, y: point.x };
+    default: return { x: point.x, y: point.y };
+  }
+}
+
+// processPortOffset is where a node's in/out connection port sits relative to
+// its centre: the side the flow enters and leaves by. Sizes are drawn sizes.
+export function processPortOffset(node, port, direction) {
+  const sign = port === 'out' ? 1 : -1;
+  switch (normalizeLayoutDirection(direction)) {
+    case 'right': return { x: sign * node.width / 2, y: 0 };
+    case 'up': return { x: 0, y: -sign * node.height / 2 };
+    case 'left': return { x: -sign * node.width / 2, y: 0 };
+    default: return { x: 0, y: sign * node.height / 2 };
+  }
+}
+
+const PATH_NUMBER = /-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi;
+
+// Route paths only use absolute M/L/C commands, so their numbers are plain
+// x,y pairs in order.
+function transformPath(path, map) {
+  if (typeof path !== 'string') return path;
+  const numbers = path.match(PATH_NUMBER) || [];
+  const mapped = [];
+  for (let i = 0; i + 1 < numbers.length; i += 2) {
+    const point = map({ x: Number(numbers[i]), y: Number(numbers[i + 1]) });
+    mapped.push(point.x, point.y);
+  }
+  let index = 0;
+  return path.replace(PATH_NUMBER, () => String(mapped[index++] ?? 0));
+}
+
+function transformNode(node, direction, map) {
+  const out = { ...node, ...map(direction, node) };
+  if (transposed(direction)) {
+    out.width = node.height;
+    out.height = node.width;
+  }
+  return out;
+}
+
+function transformEdge(edge, direction, map) {
+  const point = (p) => map(direction, p);
+  const out = { ...edge };
+  if (Array.isArray(edge.points)) out.points = edge.points.map(point);
+  if (edge.path) out.path = transformPath(edge.path, point);
+  if (edge.label && Number.isFinite(edge.label.x)) {
+    out.label = { ...edge.label, ...point(edge.label) };
+    if (transposed(direction) && edge.label.orientation) {
+      out.label.orientation = edge.label.orientation === 'vertical' ? 'horizontal' : 'vertical';
+    }
+  }
+  return out;
+}
+
 const TYPE_SIZES = Object.freeze({
   task: [168, 68],
   decision: [108, 108],
@@ -706,6 +793,30 @@ function graphBounds(nodes, marginX, marginY) {
 // every drag frame; the model and the stable layout remain untouched until the
 // pointerup commit.
 export function rerouteProcessLayout(layout, positions, overrides = {}) {
+  const direction = normalizeLayoutDirection(layout?.direction ?? overrides.direction);
+  if (direction === 'down') return rerouteCanonical(layout, positions, overrides);
+  const moved = positions instanceof Map ? positions : new Map(Object.entries(positions || {}));
+  const canonical = rerouteCanonical({
+    ...layout,
+    nodes: (layout?.nodes || []).map((node) => transformNode(node, direction, toCanonical)),
+    edges: (layout?.edges || []).map((edge) => transformEdge(edge, direction, toCanonical)),
+  }, positions == null ? null : new Map([...moved].map(([id, p]) => [id, toCanonical(direction, p)])), overrides);
+  return drawnLayout(canonical, direction, overrides);
+}
+
+// drawnLayout maps a canonical (top-down) result into the chosen direction.
+function drawnLayout(canonical, direction, overrides) {
+  const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
+  const nodes = canonical.nodes.map((node) => transformNode(node, direction, fromCanonical));
+  const edges = canonical.edges.map((edge) => transformEdge(edge, direction, fromCanonical));
+  const bounds = graphBounds([
+    ...nodes,
+    ...edges.flatMap((edge) => (edge.points || []).map((point) => ({ ...point, width: 0, height: 0 }))),
+  ], options.marginX, options.marginY);
+  return { ...canonical, nodes, edges, bounds, direction };
+}
+
+function rerouteCanonical(layout, positions, overrides = {}) {
   const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
   const transient = positions != null;
   const moved = positions instanceof Map ? positions : new Map(Object.entries(positions || {}));
@@ -763,9 +874,17 @@ export function rerouteProcessLayout(layout, positions, overrides = {}) {
 // serialisable positions/routes out. The renderer depends on no intermediate
 // Sugiyama data structure, so a vendored dagre-class implementation can replace
 // this module later without touching editor/viewer callers.
+// graph.direction (or options.direction) picks the flow direction; pinned
+// positions are always drawn coordinates.
 export function layoutProcessGraph(graph, overrides = {}) {
   const options = { ...PROCESS_LAYOUT_DEFAULTS, ...overrides };
-  const nodes = stableNodes(graph || {}, options.nodeSize);
+  const direction = normalizeLayoutDirection(graph?.direction ?? options.direction);
+  const nodes = stableNodes(graph || {}, options.nodeSize).map((node) => {
+    if (direction === 'down') return node;
+    const canonical = transposed(direction) ? { ...node, width: node.height, height: node.width } : { ...node };
+    if (node.pinned) canonical.pinned = toCanonical(direction, { x: finite(node.pinned.x, 0), y: finite(node.pinned.y, 0) });
+    return canonical;
+  });
   const byID = new Map(nodes.map((n) => [n.id, n]));
   const edges = stableEdges(graph || {}, byID);
   const feedbackArc = typeof options.feedbackArc === 'function' ? options.feedbackArc : defaultFeedbackArc;
@@ -773,9 +892,10 @@ export function layoutProcessGraph(graph, overrides = {}) {
   const layers = reduceCrossings(nodes, layered.layer, layered.edges, Math.max(0, finite(options.sweeps, 6)));
   const positions = assignCoordinates(nodes, layers, options);
   const laidNodes = nodes.map((node) => ({ ...node, ...positions.get(node.id) }));
-  return rerouteProcessLayout({
+  const canonical = rerouteCanonical({
     nodes: laidNodes,
     edges: layered.edges,
     layers: layers.map((ids) => [...ids]),
   }, null, options);
+  return direction === 'down' ? canonical : drawnLayout(canonical, direction, options);
 }
