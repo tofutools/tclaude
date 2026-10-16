@@ -208,14 +208,23 @@ test('Overview spend chart inspects a day, a provider slice, the projection and 
   await hover(day10);
   let text = tip().textContent.replace(/\s+/g, ' ');
   assert.match(text, /2026-07-10 · Fri/);
-  assert.match(text, /claude\$2\.00codex\$1\.00day total\$3\.00accumulated\$4\.00share of span75\.0%/);
+  assert.match(text, /codex\$1\.00claude\$2\.00day total\$3\.00accumulated\$4\.00share of span75\.0%/);
   assert.match(text, /2 agentsalpha\$2\.00beta\$1\.00/, 'the day names its agents');
   assert.ok(mounted.container.querySelector('.usage-ov-dot'), 'a marker sits on the running total');
   assert.ok(mounted.container.querySelector('g.hovered'), 'the hovered day stands out');
 
   const codexBar = mounted.container.querySelector('g.hovered rect[data-provider="codex"]');
   await hover(day10, codexBar);
-  assert.match(tip().querySelector('.cost-series-focused').textContent, /codex/, 'the hovered slice is singled out');
+  const focusedRow = tip().querySelector('.usage-ov-tip-focused');
+  assert.match(focusedRow.textContent, /codex/, 'the hovered slice is singled out');
+  assert.match(focusedRow.querySelector('.cost-tip-sw').getAttribute('class'), /cost-seg-h\d/, 'and keeps its swatch');
+  assert.doesNotMatch(focusedRow.getAttribute('class'), /cost-series-/,
+    'no cost-series-* class, whose Costs swatch rule would blank the provider colour');
+  const stacked = [...mounted.container.querySelectorAll('g.hovered rect.bar')]
+    .sort((a, b) => Number(a.getAttribute('y')) - Number(b.getAttribute('y'))).map((bar) => bar.getAttribute('data-provider'));
+  const listed = [...tip().querySelectorAll('.cost-tip-row .cost-tip-sw[class*="cost-seg-h"]')]
+    .map((sw) => sw.parentElement.querySelector('.cost-tip-name').textContent);
+  assert.deepEqual(listed, stacked, 'the breakdown reads top-down like the stack');
   assert.ok(codexBar.getAttribute('class').includes('focused'));
 
   await hover(slots.length - 1);
