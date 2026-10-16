@@ -1316,6 +1316,61 @@ body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
 @media (max-width: 640px) {
   .ci-panel { width: min(320px, calc(100vw - 24px)); }
 }
+/* PR link hover card: the #1234 link is its own hover root (.prd-hover)
+   holding a .ci-panel that describes the PR — title, state, author, branches,
+   diffstat and the opening of its description. Shares the CI panel's
+   placement and theming; only the card's own rows are styled here. */
+.prd-hover .pr-link { display: inline-block; }
+.prd-title { color: #f0f6fc; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.prd-title a {
+  color: inherit; text-decoration: none; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.prd-title a:hover { text-decoration: underline; }
+.prd-num { color: #8b949e; font-weight: 400; }
+.prd-meta { margin-top: 4px; color: #8b949e; font-size: 11px; }
+.prd-state {
+  display: inline-block; margin-right: 5px; padding: 0 6px; border-radius: 9px;
+  font-size: 10.5px; font-weight: 600; line-height: 16px;
+}
+.prd-state-open { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+.prd-state-draft { background: rgba(139, 148, 158, 0.18); color: #8b949e; }
+.prd-state-merged { background: rgba(163, 113, 247, 0.16); color: #a371f7; }
+.prd-state-closed { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+.prd-branches {
+  margin-top: 3px; color: #8b949e; font-family: ui-monospace, monospace; font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+.prd-stat {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
+  font-family: ui-monospace, monospace; font-size: 11px;
+}
+.prd-add { color: #3fb950; }
+.prd-del { color: #f85149; }
+.prd-bar { display: inline-flex; gap: 1px; }
+.prd-bar i { width: 7px; height: 7px; border-radius: 1px; background: #30363d; }
+.prd-bar i.a { background: #3fb950; }
+.prd-bar i.d { background: #f85149; }
+.prd-counts { color: #8b949e; }
+.prd-excerpt {
+  margin: 8px 0 0; color: #adbac7; font-size: 11.5px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.prd-excerpt-empty { color: #6e7681; font-style: italic; }
+body.wizard .prd-title { color: #f3e6c0; }
+body.wizard .prd-num,
+body.wizard .prd-meta,
+body.wizard .prd-branches,
+body.wizard .prd-counts { color: #9a86c4; }
+body.wizard .prd-excerpt { color: #e7d9f5; }
+body.wizard .prd-bar i { background: #3a2a63; }
+body.slop .prd-title { color: #fff4bd; }
+body.slop .prd-num,
+body.slop .prd-meta,
+body.slop .prd-branches,
+body.slop .prd-counts { color: #d8b95e; }
+body.slop .prd-excerpt { color: #ffe88c; }
+body.slop .prd-bar i { background: #684500; }
 /* Task column: an existing label remains a conventional link; its pencil
    opens the URL + display-name editor. Empty cells offer ＋ attach. */
 .task-cell { white-space: nowrap; }

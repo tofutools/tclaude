@@ -206,6 +206,7 @@ var peerViewLocalRoutes = []string{
 	"/api/pick-directory",
 	"/api/power-on",
 	"/api/pr-checks",
+	"/api/pr-details",
 	"/api/rename-directory",
 	"/api/replaced",
 	"/api/retired",

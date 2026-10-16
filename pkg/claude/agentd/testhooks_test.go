@@ -1193,6 +1193,15 @@ func SetPresentedPRInfoWithChecksResolverForTest(fn func(rawURL string) (number 
 	return func() { presentedPRInfoResolver = prev }
 }
 
+// SetPRDetailsFetcherForTest swaps the `gh pr view --json` boundary behind
+// the PR link hover card (GET /api/pr-details). The fake returns raw gh JSON,
+// so the production parse/excerpt/cache path stays under test.
+func SetPRDetailsFetcherForTest(fn func(rawURL string) (string, bool)) func() {
+	prev := prDetailsFetcher
+	prDetailsFetcher = fn
+	return func() { prDetailsFetcher = prev }
+}
+
 // SetPRChecksResolverForTest swaps the `gh pr view --json statusCheckRollup`
 // boundary behind the hover-driven CI refresh (GET /api/pr-checks). The fake
 // receives the PR URL and returns the raw statusCheckRollup array exactly as
