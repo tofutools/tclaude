@@ -401,6 +401,20 @@ func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
 		"the client timed out while the daemon was busy and will retry, so nothing is badged", attrs...)
 }
 
+// noteOrphanedSessionEnd logs, at info and without recording a refusal, a
+// SessionEnd hook whose caller had been orphaned out of its pane: the
+// harness exited without waiting for its last hook. That happens on every
+// soft exit (retire, stop), and the exit itself is recorded by the pane
+// exit observer, so it is neither a starved agent nor worth a WARN.
+func (r *brokerRefusalRecorder) noteOrphanedSessionEnd(ctx brokerRefusalContext) {
+	slog.Info("broker: ignored a SessionEnd hook that arrived after its harness exited",
+		"endpoint", ctx.Endpoint,
+		"caller_pid", ctx.CallerPID,
+		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
+		"detail", ctx.Detail,
+		"module", "hooks")
+}
+
 // brokerRefusalContext is what a refusal log line needs beyond the
 // recorder's own decision. Every field is daemon-derived except Claimed,
 // which is the caller's own string and labelled as such in the log.
