@@ -191,6 +191,7 @@ var peerViewLocalRoutes = []string{
 	"/api/jobs",
 	"/api/jump/",
 	"/api/logs",
+	"/api/logs/export",
 	"/api/mailbox",
 	"/api/mailboxes",
 	"/api/notifications",

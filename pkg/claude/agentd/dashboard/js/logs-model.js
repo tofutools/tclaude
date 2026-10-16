@@ -60,3 +60,15 @@ export function logsParams(view, now = Date.now()) {
   if (view.hideRaw) params.set('hide_raw', '1');
   return params;
 }
+
+// logsExportUrl is the download link for the current filter. It drops the
+// pager (the export streams every matching line, oldest first, and is not
+// bounded by the page size or the view's tail cap) and stamps the relative
+// "since" window at click time, like a load does.
+export function logsExportUrl(view, now = Date.now()) {
+  const params = logsParams(view, now);
+  params.delete('page');
+  params.delete('page_size');
+  const query = params.toString();
+  return `/api/logs/export${query ? `?${query}` : ''}`;
+}

@@ -6129,12 +6129,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
   cursor: pointer; font-family: inherit;
 }
 .filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
-.filter-bar button.tool {
+.filter-bar button.tool, .filter-bar a.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.filter-bar button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* A download link styled as a toolbar button (Logs tab "export"). */
+.filter-bar a.tool { display: inline-block; text-decoration: none; line-height: normal; }
+.filter-bar button.tool:hover, .filter-bar a.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;

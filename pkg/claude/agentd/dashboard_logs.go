@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -595,21 +596,15 @@ func parseLogTimeParam(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
-	if !checkDashboardAuth(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
-		return
-	}
-
-	q := r.URL.Query()
-	filter := logFilter{search: strings.ToLower(strings.TrimSpace(q.Get("q")))}
+// parseLogsQuery turns the Logs tab's filter query parameters into a
+// logFilter. Shared by the paged view and the export so a download always
+// applies exactly the filter the operator is looking at.
+func parseLogsQuery(q url.Values) (filter logFilter, normLevel string, includeRotated bool) {
+	filter = logFilter{search: strings.ToLower(strings.TrimSpace(q.Get("q")))}
 
 	// Level is a MINIMUM severity: "warn" shows warn + error. "all" (or
 	// blank / unrecognised) applies no level filter.
-	normLevel := "all"
+	normLevel = "all"
 	switch strings.ToLower(strings.TrimSpace(q.Get("level"))) {
 	case "debug":
 		filter.minLevel, filter.hasLevel, normLevel = slog.LevelDebug, true, "debug"
@@ -628,8 +623,22 @@ func handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
 		filter.to, filter.hasTo = t, true
 	}
 
-	includeRotated := q.Get("include_rotated") == "1" || q.Get("include_rotated") == "true"
+	includeRotated = q.Get("include_rotated") == "1" || q.Get("include_rotated") == "true"
 	filter.hideRaw = q.Get("hide_raw") == "1" || q.Get("hide_raw") == "true"
+	return filter, normLevel, includeRotated
+}
+
+func handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	filter, normLevel, includeRotated := parseLogsQuery(q)
 
 	page := max(atoiOr(q.Get("page"), 1), 1)
 	pageSize := atoiOr(q.Get("page_size"), defaultLogPageSize)
