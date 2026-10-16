@@ -605,7 +605,7 @@ func TestBrokerRefusals_OrphanedSessionEndIsTeardownNotARefusal(t *testing.T) {
 	f := newFlow(t)
 	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
 	const orphanPID = 8310
-	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{orphanPID: 1}))
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "tclaude"}, map[int]int{orphanPID: 1}))
 
 	code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
 		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
@@ -627,6 +627,19 @@ func TestBrokerRefusals_OrphanedSessionEndIsTeardownNotARefusal(t *testing.T) {
 	})
 	require.Equal(t, http.StatusForbidden, code)
 	require.Len(t, refusalLogLines(t, logs), 1, "only SessionEnd is teardown")
+
+	// A live process in some other agent's pane (a harness above it) that
+	// labels its forged claim SessionEnd is not teardown: it stays a WARN.
+	const foreignHook, foreignHarness = 8320, 8319
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{foreignHook: "sh", foreignHarness: "claude"},
+		map[int]int{foreignHook: foreignHarness, foreignHarness: 1}))
+	code, _ = postBrokeredHook(t, f, foreignHook, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+	assert.Len(t, refusalLogLines(t, logs), 2, "a SessionEnd with a live harness above it is still a refusal")
 }
 
 // The statusline endpoint refuses through the same recorder, and so logs
