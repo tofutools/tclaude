@@ -13,6 +13,10 @@ import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
+import {
+  BackgroundTerminalsChip, backgroundTerminals, refreshBackgroundTerminals,
+  startBackgroundTerminalsPoll, visibleBackgroundTerminals,
+} from './background-terminals.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from './cost-display-toggle.js';
 import {
@@ -973,6 +977,10 @@ function TerminalTabs({
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
+  // Sessions still running in tmux with no terminal attached. The dashboard
+  // tab lists them; a pop-out window shows only its own panes.
+  const backgroundRows = solo ? [] : visibleBackgroundTerminals(backgroundTerminals.value, current.panes);
+  const hasBackground = backgroundRows.length > 0;
   const shellRef = useRef(null);
   const tabsRef = useRef(null);
   const panesRef = useRef(null);
@@ -1382,12 +1390,22 @@ function TerminalTabs({
 
   useLayoutEffect(() => {
     if (solo) return undefined;
-    document.body.classList.toggle('hide-terminals', !hasPanes);
-    if (!hasPanes && document.getElementById('tab-terminals')?.classList.contains('active')) {
+    // Background sessions keep the tab: it is where they are attached from.
+    const visible = hasPanes || hasBackground;
+    document.body.classList.toggle('hide-terminals', !visible);
+    if (!visible && document.getElementById('tab-terminals')?.classList.contains('active')) {
       document.querySelector('nav [data-tab="groups"]')?.click();
     }
     return undefined;
-  }, [hasPanes, solo]);
+  }, [hasPanes, hasBackground, solo]);
+
+  // Closing or opening a pane changes what is attached; re-read the listing
+  // once tmux has seen the client come or go rather than waiting for a poll.
+  useEffect(() => {
+    if (solo) return undefined;
+    const timer = setTimeout(refreshBackgroundTerminals, 1200);
+    return () => clearTimeout(timer);
+  }, [current.panes.length, solo]);
 
   // Preact flushes layout effects child-first, so the active pane's own
   // activation attempt runs while this tab is still display:none, and a real
@@ -1486,7 +1504,7 @@ function TerminalTabs({
           Drag this pill, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow, to move the whole group among the other tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
-        <${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
+        <div class="mux-tabbar"><${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
           ${current.segments.map((segment) => {
             const renderTab = (pane) => html`
               <${PaneTab}
@@ -1569,11 +1587,19 @@ function TerminalTabs({
               onDrop=${dropOnEnd}
             />` : null}
         </div><//>
+        ${hasBackground ? html`<div class="mux-bg-slot"><${BackgroundTerminalsChip} rows=${backgroundRows} snapshot=${snapshot} /></div>` : null}
+        </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
+      ${!solo && !hasPanes && hasBackground ? html`
+        <div class="mux-bg-empty">
+          <div class="mux-empty-title">No terminals open</div>
+          <div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running in tmux without a terminal. Hover the counter at the top right to attach or review them.</div>
+        </div>
+      ` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
           ${current.panes.map((pane) => html`
@@ -1610,7 +1636,12 @@ function TerminalTabs({
 
 function TerminalBadge({ state }) {
   const count = state.view.value.count;
-  return html`<span id="terminals-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
+  const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
+  const title = background
+    ? `${count} open, ${background} running in the background without a terminal`
+    : `${count} open`;
+  return html`<span id="terminals-badge" class="tab-badge count" title=${title}
+    hidden=${count === 0 && background === 0}>${count}${background ? ` +${background}` : ''}</span>`;
 }
 
 
@@ -1653,7 +1684,9 @@ export function mountTerminalShellIsland({
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} scope=${scope} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
+  const stopBackgroundPoll = startBackgroundTerminalsPoll();
   registerCleanup(() => {
+    stopBackgroundPoll();
     unbindNavRouting();
     unbindHandoff();
     unregisterController();

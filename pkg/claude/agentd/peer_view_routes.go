@@ -55,6 +55,7 @@ var peerViewLocalRoutes = []string{
 	"/",
 	"/api/agent-generations/",
 	"/api/agent-windows",
+	"/api/background-terminals",
 	"/api/agents/",
 	"/api/audit",
 	"/api/auth/session",

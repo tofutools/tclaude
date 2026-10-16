@@ -526,3 +526,66 @@ body.wizard .mux-pane-xterm {
 .mux-tab-gear .cog-btn:hover, .mux-tab-gear .cog-btn[aria-expanded="true"] { color: #ffb52e; border-color: #6b4f1d; }
 .mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; overflow-y: auto; }
 .mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }
+
+/* Background terminals: tclaude tmux sessions still running with no terminal
+   attached (js/background-terminals.js). The counter sits in its own slot to
+   the right of the scrolling tab strip so it neither scrolls away nor has its
+   popover clipped by the strip's overflow. Neutral colours on purpose: it is a
+   reminder, not an alert. */
+.mux-tabbar { display: flex; flex: none; min-width: 0; }
+.mux-tabbar > .mux-tabs { flex: 1 1 auto; min-width: 0; }
+.mux-bg-slot {
+  position: relative; flex: none; display: flex; align-items: flex-end;
+  padding: 5px 6px 3px; background: #161b22; border-bottom: 1px solid #2a3340;
+}
+.mux-bg { position: relative; }
+.mux-bg-trigger {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border: 1px solid #3d4451; border-radius: 11px; background: #0d1117;
+  color: #aeb9c6; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.mux-bg-trigger:hover, .mux-bg.open .mux-bg-trigger { background: #1b222b; color: #e6edf3; border-color: #58a6ff; }
+.mux-bg-trigger:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.mux-bg-icon { flex: none; }
+.mux-bg-count {
+  min-width: 18px; padding: 0 5px; border-radius: 9px; background: #21262d;
+  color: #c9d1d9; font-size: 11px; font-weight: 600; text-align: center;
+}
+.mux-bg-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  width: min(440px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;
+  background: #161b22; border: 1px solid #3d4451; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6); font-size: 12px; color: #c9d1d9;
+}
+.mux-bg-pop-head { padding: 9px 12px; border-bottom: 1px solid #2a3340; color: #8b949e; }
+.mux-bg-pop-head b { color: #e6edf3; font-size: 13px; }
+.mux-bg-sec { padding: 6px 0; border-bottom: 1px solid #21262d; }
+.mux-bg-sec:last-of-type { border-bottom: none; }
+.mux-bg-sec-head {
+  padding: 3px 12px; color: #8b949e; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.mux-bg-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
+.mux-bg-row:hover { background: #1b222b; }
+.mux-bg-row .mux-tab-status-shell {
+  color: #6e7681;
+  --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M3.5 5L6.5 7.5L3.5 10' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/><rect x='7.5' y='9.6' width='4.5' height='1.4' rx='0.7'/></svg>");
+}
+.mux-bg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mux-bg-idle { color: #6e7681; font-size: 11px; white-space: nowrap; }
+.mux-bg-idle.stale { color: #d29922; }
+.mux-bg-attach { padding: 2px 10px; font-size: 11px; }
+.mux-bg-noattach { color: #6e7681; font-size: 11px; font-style: italic; white-space: nowrap; }
+.mux-bg-foot { display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid #2a3340; }
+.mux-bg-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1 1 auto; gap: 8px; padding: 48px 24px; color: #8b949e; text-align: center;
+}
+.mux-bg-empty .mux-empty-title { color: #c9d1d9; font-size: 15px; }
+body.wizard .mux-bg-slot {
+  background: linear-gradient(180deg, #211832 0%, #171024 100%);
+  border-bottom-color: #7a5db0;
+  box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.18);
+}
+body.wizard .mux-bg-trigger { background: #171024; border-color: #4a3a6b; color: #a997ca; }
+body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }

@@ -421,11 +421,18 @@ tab.
 
 
 The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden
-until the first web terminal or web window is opened; its badge counts live
-panes. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
+while no web terminal or web window is open and nothing is running in the
+background; its badge counts live panes, plus `+N` background sessions. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
 drag onto each other to form named, collapsible tab groups. Drag a tab off
 the strip to detach it into its own browser window; drag the pop-out's header
 back to reattach — `⧉ tab` / `↩ dashboard` buttons are the explicit path.
+
+Background sessions are tclaude tmux sessions with no client attached:
+agents, plain sessions, and agent or group shells that were minimized or
+whose tab was closed. A counter to the right of the tab strip counts them so
+idle sessions are not left running by mistake. Hovering it peeks a breakdown
+by kind with each session's idle time; clicking pins it open. `Attach` opens
+the session as a normal tab, and `Attach all` opens every one.
 
 With `features.processes` on, a pane whose agent takes part in a process run
 shows a collapsible top-right cluster of run icons (also on its tab). An icon

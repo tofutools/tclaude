@@ -92,6 +92,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/api/power-on", handlePowerOn)
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
+	mux.HandleFunc("/api/background-terminals", handleDashboardBackgroundTerminals)
 	mux.HandleFunc("/api/export-jobs/", handleDashboardExportJobsAPI)
 	mux.HandleFunc("/api/human-messages/read", handleDashboardHumanMessagesRead)
 	mux.HandleFunc("/api/human-messages/clear", handleDashboardHumanMessagesClear)

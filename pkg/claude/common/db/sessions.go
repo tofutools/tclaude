@@ -468,6 +468,42 @@ func LatestSessionStatusForTmux(name string) (string, error) {
 	return status, err
 }
 
+// FindLatestSessionsByTmux returns, per exact tmux session name, the newest
+// session row recorded against it in one query. A name tclaude never recorded
+// (an ad hoc shell, or a session started outside tclaude on its socket) is
+// absent from the map.
+func FindLatestSessionsByTmux(names []string) (map[string]*SessionRow, error) {
+	out := map[string]*SessionRow{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	args := make([]any, len(names))
+	for i, name := range names {
+		args[i] = name
+	}
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE tmux_session IN (`+strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")+`)
+		ORDER BY updated_at DESC, created_at DESC, id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	all, err := scanSessions(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range all {
+		if _, seen := out[row.TmuxSession]; !seen {
+			out[row.TmuxSession] = row
+		}
+	}
+	return out, nil
+}
+
 // FindSessionByConvID finds a session by conversation ID using the index.
 // When multiple rows exist for the same conv_id (e.g. auto-register
 // created a new row alongside an old one with a different short id), we

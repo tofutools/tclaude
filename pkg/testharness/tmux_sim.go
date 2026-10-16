@@ -268,6 +268,16 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 				alive = append(alive, name)
 			}
 		}
+		// Render -F formats so callers asking for more than the name (the
+		// background-terminal listing reads #{session_attached}) parse real
+		// fields. Plain #{session_name} renders exactly as before.
+		if len(args) >= 3 && args[1] == "-F" {
+			lines := make([]string, 0, len(alive))
+			for _, name := range alive {
+				lines = append(lines, t.renderSessionFormat(args[2], name))
+			}
+			alive = lines
+		}
 		return exec.Command(echoBin, strings.Join(alive, "\n"))
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		if strings.HasPrefix(args[2], "=%") {
@@ -922,6 +932,26 @@ func (t *TmuxSim) KillBySignalForTest(name string) {
 	}
 	t.mu.Unlock()
 	t.killSession(name)
+}
+
+// renderSessionFormat expands the list-sessions format variables the sim
+// models. Clients come from AttachClient; times are a fixed zero.
+func (t *TmuxSim) renderSessionFormat(format, name string) string {
+	t.mu.Lock()
+	attached := 0
+	for _, session := range t.clients {
+		if session == name {
+			attached++
+		}
+	}
+	t.mu.Unlock()
+	return strings.NewReplacer(
+		"#{session_name}", name,
+		"#{session_attached}", strconv.Itoa(attached),
+		"#{session_activity}", "0",
+		"#{session_created}", "0",
+		"#{pane_dead}", "0",
+	).Replace(format)
 }
 
 // AttachClient registers a simulated tmux client tty on sessionName.
