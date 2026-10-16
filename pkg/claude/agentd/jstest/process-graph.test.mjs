@@ -242,6 +242,23 @@ test('a readable open fits a small graph but floors a tall one at the zoom floor
   assert.equal(tall.view.y + (40 - 29) * 0.8, 44, 'and its top sits at the padding');
 });
 
+test('a readable open of a long left-to-right graph anchors its start at the left, centred down', () => {
+  const wide = {
+    view: { x: 0, y: 0, k: 1 },
+    svg: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) },
+    layout: {
+      direction: 'right',
+      bounds: { x: 0, y: 0, width: 2400, height: 300 },
+      nodes: [{ id: 'start', type: 'start', x: 40, y: 150, width: 58, height: 58, layer: 0 }, { id: 'a', type: 'task', x: 2360, y: 150, width: 168, height: 68, layer: 1 }],
+    },
+    applyView() {},
+    fitToView: ProcessGraph.prototype.fitToView,
+  };
+  assert.equal(ProcessGraph.prototype.fitReadable.call(wide, 0.8), true);
+  assert.equal(wide.view.x + (40 - 29) * 0.8, 44, 'the start node\'s left edge sits at the padding');
+  assert.equal(wide.view.y + 150 * 0.8, 300, 'and it is centred down');
+});
+
 test('editor wheel pans while Ctrl-wheel pinches, and viewer wheel still zooms', () => {
   const graph = (options) => ({
     options, view: { x: 10, y: 20, k: 1 },

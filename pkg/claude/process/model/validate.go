@@ -1195,6 +1195,11 @@ func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 	if tmpl.Layout == nil {
 		return true
 	}
+	if direction := tmpl.Layout.Direction; direction != "" && !slices.Contains(LayoutDirections, direction) {
+		if !diagnostics.Add(diagError("invalid_layout_direction", "layout.direction", fmt.Sprintf("layout direction %q must be one of %s", direction, strings.Join(LayoutDirections, ", ")))) {
+			return false
+		}
+	}
 	for _, nodeID := range sortedKeys(tmpl.Layout.Nodes) {
 		if _, ok := layoutNode(tmpl.Nodes, nodeID); !ok {
 			if !diagnostics.Add(diagWarning("stale_layout_node", "layout.nodes."+nodeID, fmt.Sprintf("layout references undeclared node %q", nodeID))) {

@@ -20,7 +20,7 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
-import { layoutProcessGraph } from './process-layout.js';
+import { layoutProcessGraph, normalizeLayoutDirection } from './process-layout.js';
 import {
   cycleFixEdge, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound,
 } from './process-loops.js';
@@ -119,8 +119,11 @@ export function foldBody(sub = {}, template = {}, edges = []) {
   return out;
 }
 
+// The flow direction is template-wide: a drilled-in scope carries the root's
+// so its body lays out the same way, and folding it back keeps the root's.
 function scopedLayout(layout = {}, prefix) {
   const out = { nodes: {} };
+  if (layout.direction) out.direction = layout.direction;
   for (const [key, value] of Object.entries(layout.nodes || {})) {
     if (key.startsWith(prefix)) out.nodes[key.slice(prefix.length)] = clone(value);
   }
@@ -719,11 +722,29 @@ export class ProcessEditModel {
     return this.moveNodes([{ id, x, y }]);
   }
 
+  // layoutDirection is the way the auto layout flows: 'down' unless the
+  // template's layout says otherwise.
+  layoutDirection() {
+    return normalizeLayoutDirection(this.layout?.direction);
+  }
+
   // autoLayout drops position pins so the layered layout places those nodes
   // again: the given nodes, or every node in this scope (and the pins of
   // their inline subprocess bodies) when none are given. Nodes nobody pinned
   // already follow the layout. One undo step; the graph itself is unchanged.
-  autoLayout(ids = []) {
+  //
+  // A direction other than the current one turns the flow: it is recorded in
+  // the layout (absent means 'down') and always tidies the whole scope, since
+  // pins placed for the old direction would read against the new one.
+  autoLayout(ids = [], direction) {
+    if (direction !== undefined && normalizeLayoutDirection(direction) !== direction) {
+      throw new Error(`unknown layout direction ${direction}`);
+    }
+    const turn = direction !== undefined && direction !== this.layoutDirection();
+    if (turn) {
+      if (this.inScope) throw new Error('change the layout direction from the top-level graph');
+      ids = [];
+    }
     const scope = Object.keys(this.template.nodes);
     const chosen = ids?.length ? ids.filter((id) => this.template.nodes[id]) : scope;
     const keys = Object.keys(this.layout.nodes || {}).filter((key) => chosen.includes(key)
@@ -732,10 +753,12 @@ export class ProcessEditModel {
     // expanded; tidying the whole scope moves that node, so the bodies fold
     // back rather than stay stranded at the old place.
     const folded = !ids?.length && this.expansions?.size > 0;
-    if (!keys.length && !folded) return false;
+    if (!keys.length && !folded && !turn) return false;
     for (const id of chosen) this.assertNodeEditable(id);
     this.begin();
     for (const key of keys) delete this.layout.nodes[key];
+    if (turn && direction === 'down') delete this.layout.direction;
+    else if (turn) this.layout.direction = direction;
     if (folded) this.expansions.clear();
     return true;
   }
@@ -1205,7 +1228,8 @@ export class ProcessEditModel {
           : loopableEdge(this.template.nodes, this.edges, edge.from, edge.outcome) ? { back: true } : {}),
       });
     }
-    return this.expandGraph({ nodes, edges });
+    const direction = this.layoutDirection();
+    return this.expandGraph(direction === 'down' ? { nodes, edges } : { nodes, edges, direction });
   }
 
   // ---- inline expansion (E2) -------------------------------------------------
@@ -1268,6 +1292,7 @@ export class ProcessEditModel {
       })),
       edges: scopeEdges(body).filter((edge) => edge.from && body.nodes?.[edge.to])
         .map((edge) => ({ id: graphEdgeID(edge.from, edge.outcome), ...edge })),
+      direction: this.layoutDirection(),
     });
     return new Map(laid.nodes.map((node) => [node.id, node]));
   }

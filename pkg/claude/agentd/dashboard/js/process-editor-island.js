@@ -18,6 +18,9 @@ import {
   PROCESS_SNIPPET_NAME_MAX_BYTES, PROCESS_SNIPPET_NAME_MAX_RUNES, validateProcessSnippetName,
 } from './process-snippet-library.js';
 
+// The auto layout's flow directions, in picker order: [direction, arrow, words].
+const LAYOUT_DIRECTIONS = [['down', '↓', 'down'], ['right', '→', 'right'], ['up', '↑', 'up'], ['left', '←', 'left']];
+
 const html = htm.bind(h);
 
 function shortHash(hash) { return hash ? hash.slice(0, 8) : ''; }
@@ -149,7 +152,17 @@ function Header({ controller, view }) {
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title="Undo (Ctrl+Z)" onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
     <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
-    <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title="Auto layout: tidy the graph, or just the selected nodes (Ctrl/Cmd+Shift+L). Undo restores hand-placed positions." onClick=${() => controller.autoLayout()}>▦ auto layout</button>
+    <span class="process-auto-layout-group" role="group" aria-label="Auto layout">
+      <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title="Auto layout: tidy the graph, or just the selected nodes (Ctrl/Cmd+Shift+L). Undo restores hand-placed positions." onClick=${() => controller.autoLayout()}>▦ auto layout</button>
+      ${LAYOUT_DIRECTIONS.map(([direction, arrow, label]) => html`
+        <button class=${`process-action process-layout-direction${model.layoutDirection === direction ? ' is-active' : ''}`} type="button"
+          data-process-layout-direction=${direction} aria-pressed=${String(model.layoutDirection === direction)}
+          disabled=${externalPending || (view.scope?.depth > 0 && model.layoutDirection !== direction)}
+          title=${view.scope?.depth > 0 ? 'The layout direction belongs to the root process; exit the subgraph first'
+            : model.layoutDirection === direction ? `The graph flows ${label}; click to tidy it` : `Auto layout flowing ${label} (whole graph; undo restores)`}
+          aria-label=${`Auto layout flowing ${label}`}
+          onClick=${() => controller.autoLayout(direction)}>${arrow}</button>`)}
+    </span>
     <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
     <button class="process-action" type="button" title="Process commands (Ctrl/Cmd-K)" aria-label="Open process commands (Ctrl/Cmd-K)" onClick=${() => controller.openCommands()}>⌘K commands</button>
     <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"

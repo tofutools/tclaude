@@ -77,6 +77,13 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'clear deselect unselect release', context.hasSelection, 'Nothing is selected.', () => editor.clearSelection()),
     command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (Ctrl/Cmd+Shift+L)',
       'auto layout arrange tidy organize reflow relayout clean up', context.canAutoLayout, context.autoLayoutReason, () => editor.autoLayout()),
+    ...[['down', '↓', 'top to bottom'], ['right', '→', 'left to right'], ['up', '↑', 'bottom to top'], ['left', '←', 'right to left']].map(([direction, arrow, words]) => command(
+      `auto-layout-${direction}`, arrow, `Auto layout ${words}`, `Let the runes flow ${direction}`,
+      `Lay the whole graph out flowing ${direction}; saved with the template, undo restores${context.layoutDirection === direction ? ' (current direction)' : ''}`,
+      `auto layout direction flow orientation rotate ${direction} ${words} horizontal vertical`,
+      context.layoutDirection === direction ? context.canAutoLayout : context.canTurnLayout,
+      context.layoutDirection === direction ? context.autoLayoutReason : context.turnLayoutReason,
+      () => editor.autoLayout(direction))),
     command('fit', '⊡', 'Fit graph to view', 'Survey the whole graph', 'Show the complete process graph',
       'fit view frame all survey', context.hasGraph, 'The graph is empty.', () => editor.fitGraph()),
     command('center', '◎', 'Center selection', 'Center the chosen runes', 'Pan the selected graph items into view',

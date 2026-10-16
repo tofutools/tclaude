@@ -2469,6 +2469,24 @@ setTimeout(function(){
 			SettleMS: 1100,
 		},
 		{
+			Key:      "process-editor-auto-layout-right",
+			Title:    "Process editor — auto layout flowing left to right",
+			Caption:  "The → direction next to ▦ auto layout turns the whole graph to flow left to right in one undoable step: ports sit on the node sides and the return lane runs below. Saved as layout.direction.",
+			JS:       processEditorStateJS(autoLayoutMessJS + autoLayoutRightJS),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-auto-layout-right-loop",
+			Title:   "Process editor — bounded review loop flowing left to right",
+			Caption: "A bounded loop in a left-to-right layout: forward connectors leave right and enter left, and the ↺ return edge routes below the flow.",
+			JS: processEditorStateJS(reviewLoopFixtureJS(true) + `
+  await editorPaint();
+  if (!ed.autoLayout('right')) throw new Error('turning the layout right failed');
+  await editorPaint(); await editorPaint();
+  if (!document.querySelector('.process-edge-loop')) throw new Error('bounded loop edge not drawn as a loop');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:      "process-editor-selected",
 			Title:    "Process editor — node selected",
 			Caption:  "A selected node: accent outline on the canvas and the inspector strip showing type, id, label input, and dark-themed action buttons.",
@@ -6165,6 +6183,17 @@ const autoLayoutMessJS = `var m=ed.model;
   m.addEdge(fix,'pass','ship');
   var ids=Object.keys(m.template.nodes); m.moveNodes(ids.map(function(id,i){ return {id:id, x: 80+((i*263)%900), y: 60+((i*197)%460)}; }));
   ed.refresh({fit:true});`
+
+// autoLayoutRightJS clicks the → direction picker after autoLayoutMessJS and
+// checks the turn landed: pins dropped, direction recorded, ports on the sides.
+const autoLayoutRightJS = ` await editorPaint();
+  document.querySelector('[data-process-layout-direction="right"]').click(); await editorPaint(); await editorPaint();
+  if (Object.keys(ed.model.layout.nodes||{}).length) throw new Error('turning the layout left pins behind');
+  if (ed.model.layout.direction !== 'right') throw new Error('layout direction not recorded');
+  if (document.querySelector('[data-process-layout-direction="right"]').getAttribute('aria-pressed') !== 'true') throw new Error('→ not shown as current');
+  var port = document.querySelector('.process-port-out');
+  if (!port || Number(port.getAttribute('cx')) <= 0 || Number(port.getAttribute('cy')) !== 0) throw new Error('out port not on the right side');
+  if (!/flowing right/.test(document.querySelector('.process-editor-status').textContent)) throw new Error('no direction status');`
 
 // reviewLoopFixtureJS seeds the editor with implement → review → decide
 // {approved → done, changes ↺ implement, escalate → escalated}, the changes

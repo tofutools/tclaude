@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  defaultFeedbackArc, edgeEndpoint, endpointTangent, layoutProcessGraph, rerouteProcessLayout,
-  terminalTangent,
+  defaultFeedbackArc, edgeEndpoint, endpointTangent, layoutProcessGraph, processPortOffset,
+  rerouteProcessLayout, terminalTangent,
 } from '../dashboard/js/process-layout.js';
 
 const linear = {
@@ -606,4 +606,65 @@ test('every routed edge reports an orientation', () => {
     assert.ok(['horizontal', 'vertical'].includes(edge.label.orientation),
       `${edge.from} -> ${edge.to} reported ${edge.label.orientation}`);
   }
+});
+
+test('down is the default direction and lays out byte-for-byte as before', () => {
+  assert.deepEqual(layoutProcessGraph({ ...linear, direction: 'down' }), layoutProcessGraph(linear));
+  assert.deepEqual(layoutProcessGraph({ ...linear, direction: 'bogus' }), layoutProcessGraph(linear));
+});
+
+test('each direction lays the flow out along its axis with ports on the flow sides', () => {
+  const looped = { ...linear, edges: [...linear.edges, { from: 'wait', to: 'work', back: true }] };
+  const along = {
+    right: (a, b) => b.x - b.width / 2 > a.x + a.width / 2,
+    left: (a, b) => b.x + b.width / 2 < a.x - a.width / 2,
+    up: (a, b) => b.y + b.height / 2 < a.y - a.height / 2,
+    down: (a, b) => b.y - b.height / 2 > a.y + a.height / 2,
+  };
+  for (const direction of ['down', 'right', 'up', 'left']) {
+    const layout = layoutProcessGraph({ ...looped, direction });
+    const at = new Map(layout.nodes.map((node) => [node.id, node]));
+    const work = at.get('work');
+    assert.equal(work.width, 168, `${direction}: drawn sizes are unchanged`);
+    assert.equal(work.height, 68);
+    for (const [from, to] of [['start', 'work'], ['work', 'wait'], ['wait', 'end']]) {
+      assert.ok(along[direction](at.get(from), at.get(to)), `${direction}: ${from} -> ${to} follows the flow`);
+    }
+    const into = layout.edges.find((edge) => edge.from === 'start' && edge.to === 'work');
+    const port = processPortOffset(work, 'in', direction);
+    assert.deepEqual(into.points.at(-1), { x: work.x + port.x, y: work.y + port.y }, `${direction}: enters by the in port`);
+    const out = layout.edges.find((edge) => edge.from === 'work' && edge.to === 'wait');
+    const outPort = processPortOffset(work, 'out', direction);
+    assert.deepEqual(out.points[0], { x: work.x + outPort.x, y: work.y + outPort.y }, `${direction}: leaves by the out port`);
+    assert.ok(!/NaN|undefined/.test(layout.edges.map((edge) => edge.path).join(' ')), `${direction}: paths stay numeric`);
+    // The return lane runs beside the flow: right of a vertical flow, below a
+    // horizontal one.
+    const back = layout.edges.find((edge) => edge.back);
+    const lane = back.points[1];
+    if (direction === 'right' || direction === 'left') assert.ok(lane.y > Math.max(...layout.nodes.map((n) => n.y + n.height / 2)), `${direction}: return lane below`);
+    else assert.ok(lane.x > Math.max(...layout.nodes.map((n) => n.x + n.width / 2)), `${direction}: return lane to the right`);
+    assert.equal(layout.direction, direction === 'down' ? undefined : direction);
+  }
+});
+
+test('a turned layout keeps pins as drawn and reroutes transient drags in the same direction', () => {
+  const graph = {
+    ...linear,
+    direction: 'right',
+    nodes: linear.nodes.map((node) => (node.id === 'wait' ? { ...node, pinned: { x: 900, y: 400 } } : node)),
+  };
+  const layout = layoutProcessGraph(graph);
+  const wait = layout.nodes.find((node) => node.id === 'wait');
+  assert.equal(wait.x, 900);
+  assert.equal(wait.y, 400);
+  const work = layout.nodes.find((node) => node.id === 'work');
+  const moved = rerouteProcessLayout(layout, { work: { x: work.x, y: work.y + 40 } });
+  assert.equal(moved.direction, 'right');
+  const edge = moved.edges.find((candidate) => candidate.from === 'start' && candidate.to === 'work');
+  const port = processPortOffset(work, 'in', 'right');
+  assert.deepEqual(edge.points.at(-1), { x: work.x + port.x, y: work.y + 40 + port.y });
+  // Untouched routes come back exactly as they were.
+  const untouched = rerouteProcessLayout(layout, {});
+  assert.deepEqual(untouched.edges, layout.edges);
+  assert.deepEqual(untouched.nodes, layout.nodes);
 });
