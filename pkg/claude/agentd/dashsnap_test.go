@@ -1160,6 +1160,13 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:      "messages-download-menu",
+			Title:    "Messages — download menu open",
+			Caption:  "The reader's ⤓ download split button with its caret menu open: message + attachments (.zip), message only (.md), and Copy as Markdown, opening downward from the action bar.",
+			JS:       messagesDownloadMenuJS(),
+			SettleMS: 300,
+		},
+		{
 			Key:     "groups-notification-preview",
 			Title:   "Groups — notification hover preview",
 			Caption: "TCL-875: focusing the clickable agent marker reveals the preview-only subject, three-line body excerpt, age and attachment status without opening the reader or changing read state.",
@@ -3854,6 +3861,33 @@ return new Promise(function(resolve, reject){
   }, 250);
 });
 `
+}
+
+func messagesDownloadMenuJS() string {
+	return `return (async function(){
+  var wait = async function(find) {
+    var deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      var el = find();
+      if (el) return el;
+      await new Promise(function(resolve){ setTimeout(resolve, 30); });
+    }
+    return null;
+  };
+  var tab = document.querySelector('nav [data-tab="messages"]');
+  if (!tab) throw new Error('missing Messages tab');
+  tab.click();
+  var human = await wait(function(){ return document.querySelector('#mail-sidebar .mailbox[data-id="human"]'); });
+  if (!human) throw new Error('human mailbox missing');
+  human.click();
+  var row = await wait(function(){ return document.querySelector('#mail-list .mail-row'); });
+  if (!row) throw new Error('no message row');
+  row.click();
+  var caret = await wait(function(){ return document.querySelector('#mail-reader .mail-download-caret'); });
+  if (!caret) throw new Error('download split button missing');
+  caret.click();
+  if (!await wait(function(){ return document.querySelector('#mail-reader .mail-download-menu'); })) throw new Error('download menu did not open');
+})();`
 }
 
 func boundedMessagesJS() string {

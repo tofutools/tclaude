@@ -16,6 +16,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
+import { MessageDownloadMenu } from './message-download-menu.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -726,6 +727,7 @@ function MessageReader({ current, controller, model }) {
         onClick=${human ? undefined : () => controller.setMessagesRead([message.id], !message.read)}
         data-id=${message.id} title=${message.read ? (human ? 'Mark this message unread' : 'Mark this message unread for the recipient')
           : (human ? 'Mark this message read' : 'Mark this message read on the recipient’s behalf')}>${message.read ? 'mark unread' : 'mark read'}</button>
+      ${human && html`<${MessageDownloadMenu} message=${message} toast=${shellToast} />`}
       <button class="danger" data-act=${human ? 'msg-delete' : undefined} data-id=${message.id}
         onClick=${human ? undefined : () => controller.deleteOneMessage(message.id)} title="Permanently delete this message">delete</button>
     </div>
