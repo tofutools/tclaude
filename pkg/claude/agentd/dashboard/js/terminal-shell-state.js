@@ -273,7 +273,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     const key = terminalSeedKey(seed);
     const existing = panes.value.find((pane) => pane.key === key);
     if (existing) {
-      activeKey.value = key;
+      if (activate || !activeKey.value) activeKey.value = key;
       if (reveal) requestReveal();
       return existing;
     }
