@@ -15,6 +15,7 @@
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
+import { clickNavExactly } from './automations-nav.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import {
@@ -241,7 +242,7 @@ function activate(loc, { traversal = false } = {}) {
   applying = true;
   try {
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
-    if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
+    if (navBtn && !navBtn.classList.contains('active')) clickNavExactly(navBtn);
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
     } else if (loc.tab === 'terminals' && loc.selection) {
