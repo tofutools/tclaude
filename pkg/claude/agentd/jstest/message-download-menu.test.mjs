@@ -46,6 +46,18 @@ test('download splits into one-click zip and a menu of variants, including copy 
   assert.deepEqual(toasts, ['Message #7 copied as Markdown']);
 
   await harness.act(() => caret.click());
+  const menuItem = root.querySelector('[data-export="md"]');
+  harness.fireEvent(menuItem, 'focusout', { bubbles: true, relatedTarget: null });
+  await harness.act(() => {});
+  assert.ok(root.querySelector('[role="menu"]'), 'a blur with no successor (macOS mouse click) keeps the menu open');
+  const outside = harness.document.createElement('button');
+  harness.document.body.appendChild(outside);
+  harness.fireEvent(menuItem, 'focusout', { bubbles: true, relatedTarget: outside });
+  await harness.act(() => {});
+  outside.remove();
+  assert.equal(root.querySelector('[role="menu"]'), null, 'tabbing focus out of the menu closes it');
+
+  await harness.act(() => caret.click());
   harness.fireEvent(root.querySelector('[role="menu"]'), 'keydown', { key: 'Escape' });
   await harness.act(() => {});
   assert.equal(root.querySelector('[role="menu"]'), null, 'Escape closes the menu');

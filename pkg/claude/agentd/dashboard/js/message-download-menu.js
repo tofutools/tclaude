@@ -87,9 +87,14 @@ export function MessageDownloadMenu({
   };
 
   const filesNote = count ? `${count} file${count === 1 ? '' : 's'} · ${attachmentSize(totalBytes)}` : '';
-  // Tabbing out of the open menu closes it, like a click elsewhere does.
+  // Tabbing out of the open menu closes it, like a click elsewhere does. A
+  // null relatedTarget is NOT treated as leaving: macOS Safari/Firefox do not
+  // focus a button on mouse click, so pressing a menu item blurs the focused
+  // one with no successor — closing then would swallow the click. Real clicks
+  // outside are the mousedown listener's job.
   const onFocusOut = (event) => {
-    if (open && !rootRef.current?.contains(event.relatedTarget)) setOpen(false);
+    const next = event.relatedTarget;
+    if (open && next && !rootRef.current?.contains(next)) setOpen(false);
   };
   return html`<span class="mail-download" ref=${rootRef} onFocusOut=${onFocusOut}>
     <button type="button" class="mail-download-main"
