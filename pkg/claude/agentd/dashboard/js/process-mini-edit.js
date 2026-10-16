@@ -301,6 +301,8 @@ export function changeKind(view, id, kind) {
     // steps only the other answers led to go.
     const before = reachable(next);
     changed.type = 'task';
+    // Only a decision bounds a loop; its back answers go with the others.
+    delete changed.loops;
     next.edges = next.edges.filter((edge) => edge.from !== id || edge === main);
     if (main) main.outcome = 'next';
     const after = reachable(next);

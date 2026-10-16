@@ -99,24 +99,24 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
   assert.ok(editor, 'the step-list editor opens in the group body');
   assert.equal(root.querySelector('[data-quickstart]'), null);
   assert.equal(editor.querySelector('.gq-name').value, 'build-review-ship');
-  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['implement', 'review', 'approve', 'rework', 'final-say', 'merge']);
+  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['implement', 'review', 'approve', 'merge']);
   assert.deepEqual(steps(root).map((el) => el.querySelector('.gq-who-select').dataset.who),
-    ['role:dev', 'role:reviewer', 'you', 'role:dev', 'you', 'command']);
+    ['role:dev', 'role:reviewer', 'you', 'command']);
   assert.match(steps(root)[0].querySelector('.gq-res').textContent, /idle \(any dev\)/);
-  assert.equal(steps(root)[0].querySelector('.gq-step-text').value, 'Implement {{issue}} on a branch and open a PR.', 'prompts read the {{name}} shorthand');
+  assert.equal(steps(root)[0].querySelector('.gq-step-text').value, 'Implement {{issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR.', 'prompts read the {{name}} shorthand');
   const flow = editor.querySelector('[data-step-flow]');
   assert.deepEqual([...flow.querySelectorAll('[data-flow-row]')].map((el) => el.dataset.flowRow),
-    ['start', 'implement', 'review', 'approve', 'rework', 'final-say', 'merge', 'end', 'stopped'], 'the preview reads top to bottom');
-  assert.equal(flow.querySelector('[data-flow-row="approve"] .gq-flow-answers').textContent, 'ship → 6hold → stop (canceled)');
-  assert.equal(flow.querySelectorAll('.gq-flow-rails path:not(.head)').length, 3, 'ship, hold and final say\'s hold jump on rails');
+    ['start', 'implement', 'review', 'approve', 'merge', 'end', 'stopped'], 'the preview reads top to bottom');
+  assert.equal(flow.querySelector('[data-flow-row="approve"] .gq-flow-answers').textContent, 'changes → ↺ back to 1 (max 3 rounds, then hold)hold → stop (canceled)');
+  assert.equal(flow.querySelectorAll('.gq-flow-rails path:not(.head)').length, 2, 'the changes loop and hold jump on rails');
   assert.deepEqual([...editor.querySelectorAll('[data-start-param]')].map((el) => el.dataset.startParam), ['issue']);
   const start = editor.querySelector('[data-step-start]');
   assert.ok(start.disabled, 'a required start input blocks Start');
   assert.match(start.getAttribute('title'), /Fill issue first/);
   await setValue(editor.querySelector('[data-start-param="issue"]'), 'JOH-412');
-  assert.match(start.getAttribute('title'), /Allow step 6 to run first/, 'commands need consent, named by step');
-  assert.match(editor.querySelector('[data-start-blocked]').textContent, /Allow step 6 to run first/);
-  assert.match(editor.querySelector('[data-consent-profile=""]').textContent, /Allow step 6 to run gh pr merge --squash \(program profile: default\)/);
+  assert.match(start.getAttribute('title'), /Allow step 4 to run first/, 'commands need consent, named by step');
+  assert.match(editor.querySelector('[data-start-blocked]').textContent, /Allow step 4 to run first/);
+  assert.match(editor.querySelector('[data-consent-profile=""]').textContent, /Allow step 4 to run gh pr merge --squash \(program profile: default\)/);
   Object.defineProperty(editor.querySelector('[data-start-profile=""]'), 'checked', { configurable: true, value: true });
   await setValue(editor.querySelector('[data-start-profile=""]'), true, 'change');
   assert.equal(start.disabled, false);
@@ -126,7 +126,8 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
   const created = api.calls.create[0].view;
   assert.equal(created.template.name, 'build-review-ship');
   assert.deepEqual(Object.keys(created.template.params), ['issue']);
-  assert.ok(created.edges.some((e) => e.from === 'approve' && e.outcome === 'rework' && e.to === 'rework'));
+  assert.ok(created.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'implement'));
+  assert.deepEqual(created.template.nodes.approve.loops, { changes: { maxIterations: 3, onExhausted: 'hold' } }, 'changes is a bounded loop');
   assert.deepEqual(api.calls.start, [{ templateId: 'tmpl_1', group: 'webshop', params: { issue: 'JOH-412' }, authorizeProgramProfiles: [''] }]);
   assert.deepEqual(notes, [{ message: 'Started build-review-ship in webshop', error: false }]);
   assert.ok(source.refreshes >= 2, 'the run card shows on the next refresh');
@@ -589,7 +590,7 @@ test('✎ opens a saved process in place as a graph of the same steps', async (t
   assert.ok(card(), 'the mini editor opens in the group body');
   assert.ok(root.querySelector('[data-saved-editing="tmpl_ship"]'), 'the chip says it is being edited');
   assert.ok(root.querySelector('[data-saved-edit-graph="tmpl_nightly"]').hasAttribute('disabled'), 'another process waits until this editor closes');
-  for (const id of ['start', 'implement', 'review', 'approve', 'rework', 'final-say', 'merge', 'end']) assert.ok(node(id), `node ${id}`);
+  for (const id of ['start', 'implement', 'review', 'approve', 'merge', 'end', 'stopped']) assert.ok(node(id), `node ${id}`);
   assert.match(node('implement').textContent, /any dev/, 'a step says who does it');
   assert.ok(card().querySelector('[data-mini-save]').hasAttribute('disabled'), 'nothing to save yet');
   assert.equal(card().querySelector('[data-mini-changes]'), null);
@@ -615,16 +616,17 @@ test('right-click structure: branch a "you" step, and delete names what goes wit
   await fire(node('approve'), 'contextmenu');
   const menu = card().querySelector('.gm-menu');
   assert.ok(menu, 'right-click opens the structure menu');
-  assert.match(menu.querySelector('[data-mini-menu="delete"]').textContent, /Delete step \(and Rework, Final say, only reached through it\)/);
+  assert.equal(menu.querySelector('[data-mini-menu="delete"]').textContent.trim(), 'Delete step', 'no other step goes with it yet');
   assert.ok(menu.querySelector('[data-mini-menu="before"] [data-mini-kind="agent"]'));
   await click(menu.querySelector('[data-mini-menu="branch"] [data-mini-kind="agent"]'));
   assert.ok(node('new-step'), 'the branch step is drawn');
   const inspector = card().querySelector('[data-mini-inspector="new-step"]');
   assert.ok(inspector);
   await fire(node('approve'), 'contextmenu');
+  assert.match(card().querySelector('.gm-menu [data-mini-menu="delete"]').textContent, /Delete step \(and New step, only reached through it\)/);
   await click(card().querySelector('.gm-menu [data-mini-menu="delete"]'));
   assert.equal(node('approve'), null);
-  assert.equal(node('rework'), null, 'the steps only it led to went too');
+  assert.equal(node('new-step'), null, 'the steps only it led to went too');
 });
 
 test('the inspector edits a step; Save writes a new version against the opened hash', async (t) => {
