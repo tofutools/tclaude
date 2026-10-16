@@ -136,9 +136,13 @@ let attachAllRunning = false;
 
 // attachAllBackgroundTerminals brings the rows up ONE AT A TIME: each attach
 // makes its harness redraw its whole screen, and xterm parses that on the main
-// thread, so opening them all at once froze the page for seconds. The first
-// pane takes focus and is usable immediately; the rest open behind it, each
-// after the previous one has attached and redrawn (or timed out).
+// thread, so opening them all at once froze the page for seconds. Each pane
+// takes focus as it opens, exactly like attaching it by hand: a hidden pane
+// (display:none) cannot measure its grid, so it would attach at xterm's
+// default 80x24, and with tmux's `window-size latest` that shrinks the
+// harness's window and triggers a full reprint now and another on reveal.
+// The next pane opens once the previous has attached and redrawn (or timed
+// out).
 export async function attachAllBackgroundTerminals(rows, snapshotValue, {
   waitForSettled = waitForTerminalSettled, timeoutMs = 6000,
 } = {}) {
@@ -148,8 +152,7 @@ export async function attachAllBackgroundTerminals(rows, snapshotValue, {
   try {
     for (const row of rows) {
       if (!row.key) continue;
-      const first = opened === 0;
-      const pane = await attachBackgroundTerminal(row, snapshotValue, { reveal: first, activate: first });
+      const pane = await attachBackgroundTerminal(row, snapshotValue, { reveal: opened === 0 });
       if (!pane) continue;
       opened += 1;
       await waitForSettled(pane.key, { timeoutMs });

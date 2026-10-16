@@ -107,7 +107,7 @@ test('background terminal helpers', async (t) => {
   assert.equal(backgroundTerminals.value.length, 1);
 });
 
-test('attach all opens one terminal at a time and only the first takes focus', async (t) => {
+test('attach all opens one terminal at a time, each taking focus as it opens', async (t) => {
   const s = await mountTabs(t);
   const order = [];
   let release = null;
@@ -131,7 +131,8 @@ test('attach all opens one terminal at a time and only the first takes focus', a
   await tick();
   assert.deepEqual(s.state.panes.value.map((pane) => pane.key), ['window:agt_bg', 'term:agt_bg:current:'],
     'the next opens once the previous has settled');
-  assert.equal(s.state.activeKey.value, 'window:agt_bg', 'later panes open behind the first');
+  assert.equal(s.state.activeKey.value, 'term:agt_bg:current:',
+    'each pane takes focus so it attaches at the real grid, not a hidden 80x24');
 
   release(false);
   await run;
