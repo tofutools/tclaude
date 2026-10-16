@@ -450,15 +450,21 @@ const brokerCallerOwnerMaxDepth = 64
 //     badged — and a caller that wanted to hide could simply stay silent.
 //     A live agent whose claim names a live session still counts.
 //
+// When tmux's pane table cannot be read, the walk has nothing to match and
+// the claim alone decides. Returning "" there instead would make the owner
+// unknown for good — the owner is fixed at record time, so a refusal noted
+// during one failed list-panes would keep counting for the whole window even
+// after tmux recovers and plainly no longer lists the claimed session. That
+// is exactly the retire case: the last SessionEnd hook lands while the pane is
+// being torn down. A nil table at count time still counts everything
+// (liveCount), so this hides nothing while tmux stays unreadable.
+//
 // Cost: the walk reads the request's own process table, which the identity
 // walk has already filled for these pids (on macOS from the shared ps
 // snapshot), and the pane table is the shared list-panes cache the proof
 // itself reads. It runs only on a refusal.
 func brokerCallerOwner(t *brokerProcTable, panes map[string]brokerPaneEntry, callerPID int, claimedTmux string) string {
-	if panes == nil {
-		return ""
-	}
-	if t != nil {
+	if t != nil && panes != nil {
 		byPID := make(map[int]string, len(panes))
 		for name, p := range panes {
 			if p.panePID > 1 {

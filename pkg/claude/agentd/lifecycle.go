@@ -599,6 +599,13 @@ func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err
 	}
 	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) == 7 && parts[0] == "" && parts[1] == "" {
+		// tmux 3.7 no longer fails display-message for a target that does
+		// not exist: it exits 0 and expands every field empty. Older tmux
+		// errored with "can't find session". Same outcome either way, but
+		// name it, so a log line does not read as a garbled probe.
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("tmux session %q not found", tmuxSession)
+	}
 	if len(parts) != 7 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
 	}
