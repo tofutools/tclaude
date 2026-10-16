@@ -596,15 +596,19 @@ func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
 	out, err := tmuxOutputWithTimeout(
 		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format)
 	if err != nil {
+		if strings.Contains(err.Error(), "can't find session") {
+			err = fmt.Errorf("tmux session %q %w (%v)", tmuxSession, errTmuxSessionNotFound, err)
+		}
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err
 	}
 	parts := strings.Split(strings.TrimSpace(string(out)), "|")
 	if len(parts) == 7 && parts[0] == "" && parts[1] == "" {
 		// tmux 3.7 no longer fails display-message for a target that does
 		// not exist: it exits 0 and expands every field empty. Older tmux
-		// errored with "can't find session". Same outcome either way, but
-		// name it, so a log line does not read as a garbled probe.
-		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("tmux session %q not found", tmuxSession)
+		// errored with "can't find session" (handled above). Both report
+		// errTmuxSessionNotFound, so a caller can tell "gone" from a
+		// garbled probe whatever the tmux version.
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("tmux session %q %w", tmuxSession, errTmuxSessionNotFound)
 	}
 	if len(parts) != 7 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
@@ -618,6 +622,10 @@ func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
 	}
 	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
 }
+
+// errTmuxSessionNotFound is what probeLifecyclePane reports when tmux does
+// not know the session at all.
+var errTmuxSessionNotFound = errors.New("not found")
 
 func validLifecyclePaneID(v string) bool { return strings.HasPrefix(v, "%") && len(v) > 1 }
 
@@ -848,6 +856,7 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // are what lets an operator line up per-pane batch timings against how long
 // each stop actually took, without copying pane contents into the logs.
 func logSoftExitBatchStart(target *lifecycleTarget, reason string, attempt int, signalKeys []string) {
+	markSessionShuttingDown(target.sessionID)
 	mode := "typed"
 	if len(signalKeys) > 0 {
 		mode = "signal"

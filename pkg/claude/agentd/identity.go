@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -1755,11 +1756,13 @@ type layerProof struct {
 	// delivered to it. Endpoints report it as such rather than badging the
 	// row for a render the client retries anyway.
 	callerGone bool
-	// outsidePane is set when the caller is alive but its ancestry ran off
-	// the top of the process tree without meeting the claimed pane or any
-	// harness process: an orphan left behind by a harness that exited
-	// without waiting for its last hook.
-	outsidePane bool
+	// orphanTeardown is set when the proof failed because the claimed
+	// agent is going away and the caller is a live orphan of it: no
+	// harness process anywhere above the caller (its harness has exited),
+	// and either the claimed session's pane is already gone or dead, or
+	// the caller's ancestry ran off the top without meeting that pane.
+	// That is a harness's last hook, fired on its way out without waiting.
+	orphanTeardown bool
 	// Where the time went, for the slow-request log: the database reads,
 	// the pane facts (and whether the cache or a live probe answered), and
 	// the ancestry walk.
@@ -1833,6 +1836,11 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 	pane, paneSource, err := brokerPaneFacts(row.TmuxSession, identity.Generation)
 	timing.paneSource = paneSource
 	lap(&timing.paneDur)
+	// Gone includes a tmux server that is no longer running: retiring the
+	// last agent takes the server down with its session (exit-empty).
+	if errors.Is(err, errTmuxSessionNotFound) || tmuxServerNotRunning(err) || (err == nil && pane.state == paneProbeDead) {
+		timing.orphanTeardown = t.exists(callerPID) && !callerHasHarnessAncestor(t, callerPID)
+	}
 	switch {
 	case err != nil:
 		return fail(fmt.Sprintf("pane probe of tmux session %q failed: %v", row.TmuxSession, err))
@@ -1868,7 +1876,7 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 			// Only a caller with no harness left above it: an orphan whose
 			// harness already exited. A live process in another agent's pane
 			// still has its own harness in the ancestry.
-			timing.outsidePane = harnessPID == 0
+			timing.orphanTeardown = harnessPID == 0
 			return fail(fmt.Sprintf(
 				"pane pid %d is not an ancestor of caller pid %d (walk ended at pid %d after %d hops)",
 				panePID, callerPID, cur, hops))
@@ -1887,6 +1895,24 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 	lap(&timing.walkDur)
 	return fail(fmt.Sprintf(
 		"pane pid %d not found within %d ancestors of caller pid %d", panePID, maxAncestorHops, callerPID))
+}
+
+// callerHasHarnessAncestor reports whether a harness process sits anywhere
+// in the caller's ancestry, the caller included. A live hook process with
+// none above it has outlived its harness.
+func callerHasHarnessAncestor(t *brokerProcTable, callerPID int) bool {
+	cur := callerPID
+	for range 256 {
+		if cur <= 1 {
+			return false
+		}
+		if t.harnessName(cur) != "" {
+			return true
+		}
+		cur = t.parent(cur)
+	}
+	// Deeper than any real tree: do not call it an orphan.
+	return true
 }
 
 // Indirected so the startup-race regression can pin the kernel/tmux proof

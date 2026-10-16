@@ -1785,6 +1785,17 @@ func ResetBrokerRefusalsForTest() func() {
 	return func() { brokerRefusals.resetForTest() }
 }
 
+// MarkSessionShuttingDownForTest records sessionID as shutting down, as a
+// soft exit or a recorded pane exit would. The cleanup forgets every mark.
+func MarkSessionShuttingDownForTest(sessionID string) func() {
+	markSessionShuttingDown(sessionID)
+	return func() {
+		sessionShutdowns.Lock()
+		sessionShutdowns.at = map[string]time.Time{}
+		sessionShutdowns.Unlock()
+	}
+}
+
 // AgentLaunchClaimsForTest reports how many agent launches are currently
 // claimed as in flight — the in-memory set that keeps a materialising agent's
 // pane out of the terminal console's plain-session listing. A finished launch

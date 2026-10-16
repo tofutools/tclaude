@@ -625,7 +625,16 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	return result, entry, true, nil
 }
 
+// AgentExitObservedHook, when set, is told the session id of every pane exit
+// this process records. agentd sets it to remember recently shut-down
+// sessions; it only fires in the process that recorded the exit, so exits
+// recorded by the pane-died exit-callback process do not reach the daemon.
+var AgentExitObservedHook func(sessionID string)
+
 func logAgentExitObservation(entry AuditLogEntry, result AgentExitRecordResult) {
+	if AgentExitObservedHook != nil {
+		AgentExitObservedHook(entry.SessionID)
+	}
 	attrs := []any{
 		"event_id", entry.EventID,
 		"related_event_id", entry.RelatedEventID,
