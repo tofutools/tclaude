@@ -310,7 +310,9 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
   assert.equal(notice.parentElement.classList.contains('mux-pane-xterm'), true,
     'the notice is scoped to the xterm area rather than the whole pane');
 
-  await harness.act(() => fake.widgets[0].options.onStatus('connected'));
+  const centered = getByRole(notice, 'button', { name: 'Reconnect terminal' });
+  await harness.act(() => harness.fireEvent(centered, 'click'));
+  assert.equal(fake.widgets[0].connectCount, 2, 'the centered button reconnects the same widget');
   assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
     'reconnecting removes the terminal-area notice');
   cleanup();

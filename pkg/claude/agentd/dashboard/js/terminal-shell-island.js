@@ -197,14 +197,17 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   `;
 }
 
-function TerminalDisconnectNotice() {
+function TerminalDisconnectNotice({ onReconnect }) {
   return html`
     <div class="mux-terminal-disconnect-overlay" role="alert" aria-live="assertive">
       <div class="mux-terminal-disconnect-card">
         <div class="mux-terminal-disconnect-icon" aria-hidden="true">⚠️</div>
         <h2 class="mux-terminal-disconnect-title">Terminal disconnected</h2>
         <p class="mux-terminal-disconnect-body">This terminal is no longer connected.</p>
-        <p class="mux-terminal-disconnect-status">Use Reconnect above to try again.</p>
+        <button type="button" class="mux-terminal-disconnect-reconnect" aria-label="Reconnect terminal" onClick=${onReconnect}>
+          <span aria-hidden="true">⟳</span> Reconnect
+        </button>
+        <p class="mux-terminal-disconnect-status">Also available in the header above.</p>
       </div>
     </div>
   `;
@@ -258,6 +261,7 @@ function TerminalPane({
     setDragging(false);
     if (dragLeftRegion(event, headerRef.current)) void actions.reattachPane(pane.key);
   };
+  const reconnectPane = () => void actions.widgetFor(pane.id)?.connect();
   const snapshotReady = Boolean(snapshot?.value);
   useEffect(() => {
     if (active && manageTitle) {
@@ -294,7 +298,7 @@ function TerminalPane({
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
-        ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
+        ${reconnect ? html`<button type="button" class="mux-btn" onClick=${reconnectPane}>Reconnect</button>` : null}
         ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
         ${composeMessage ? html`
@@ -340,7 +344,7 @@ function TerminalPane({
         onSelectionChange=${setHasSelection}
         onRemoteChange=${setRemote}
         onComposeMessage=${composeMessage}
-        disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} />` : null}
+        disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} onReconnect=${reconnectPane} />` : null}
       />
     </div>
   `;
