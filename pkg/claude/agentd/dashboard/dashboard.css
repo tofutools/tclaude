@@ -1170,6 +1170,13 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    flow onto separate lines in a narrow cell, but one triplet never splits.
    (.ci-panel resets white-space, so the hover list still wraps.) */
 .pr-chain { white-space: nowrap; }
+/* A presented PR without a number labels itself with its summary (up to 200
+   chars); cap it so the unbreakable triplet cannot blow out the column. The
+   full summary stays in the link's title. */
+.pr-chain .pr-link.pr-label {
+  display: inline-block; max-width: 24ch; overflow: hidden;
+  text-overflow: ellipsis; vertical-align: bottom;
+}
 .pr-chain .ci-badge:not(.rv-badge) { margin-left: 7px; }
 .pr-chain .ci-badge.rv-badge { margin-left: 4px; }
 /* The badge is a link, not a button: clicking it opens the build it is
