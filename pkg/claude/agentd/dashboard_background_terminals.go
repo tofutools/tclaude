@@ -44,7 +44,6 @@ type backgroundTerminalsResponse struct {
 // backgroundTmuxSession is one parsed list-sessions line.
 type backgroundTmuxSession struct {
 	name     string
-	attached int
 	activity int64
 	created  int64
 }
