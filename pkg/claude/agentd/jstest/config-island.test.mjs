@@ -870,3 +870,34 @@ test('Config auto-close terminal tabs matrix shows defaults and persists only ov
   });
   await mounted.unmount();
 });
+
+test('Config ask sandbox defaults to global and round-trips modes and exact library profiles', async (t) => {
+  const harness = await createPreactHarness(t);
+  t.mock.method(globalThis, 'fetch', async (url) => ({
+    ok: true, json: async () => url === '/api/sandbox-profiles' ? [{ name: 'dev' }, { name: 'off' }] : [],
+  }));
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  adapter.populateConfigForm({});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const sandbox = mounted.container.querySelector('select[aria-label="Ask sandbox policy"]');
+  assert.ok(sandbox);
+  assert.equal(sandbox.querySelector('option[value="global"]').selected, true);
+  assert.equal(adapter.assembleConfig().ask?.sandbox, undefined);
+  assert.equal(sandbox.querySelector('option[value="profile:off"]').textContent, 'off');
+  for (const value of ['auto', 'off', 'profile:dev', 'profile:off']) {
+    await selectValue(harness, sandbox, value);
+    assert.equal(adapter.assembleConfig().ask.sandbox, value);
+  }
+  adapter.populateConfigForm({ ask: { sandbox: 'deleted', model: 'haiku' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.match(sandbox.querySelector('option[value="profile:deleted"]').textContent, /missing/);
+  assert.equal(adapter.assembleConfig().ask.sandbox, 'profile:deleted');
+  assert.equal(adapter.assembleConfig().ask.model, 'haiku');
+  await mounted.unmount();
+});

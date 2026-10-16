@@ -2,10 +2,12 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -151,6 +153,13 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	if errs := config.Validate(cfg); len(errs) > 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"errors": errs})
 		return
+	}
+
+	if name, named := config.AskSandboxProfileName(cfg.AskSandboxSetting()); named {
+		if _, err := db.ResolveNamedSandboxSnapshot(name); err != nil {
+			configErrors(w, fmt.Sprintf("ask.sandbox profile %q is unavailable: %v; choose an existing library profile, auto, global, or off", name, err))
+			return
+		}
 	}
 
 	// Normalize to the same canonical shape Load produces, so the

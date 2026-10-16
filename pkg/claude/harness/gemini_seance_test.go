@@ -87,3 +87,8 @@ func TestGeminiRemoveEphemeralSessionDeletesThePinnedConversation(t *testing.T) 
 	assert.NoFileExists(t, path)
 	geminiAsker{}.RemoveEphemeralSession(geminiUsageTestConv) // nothing left: a no-op
 }
+
+func TestGeminiAskInteractiveReplaysPostureAndResume(t *testing.T) {
+	argv := geminiAsker{}.BuildAskArgv(AskSpec{ResumeID: geminiUsageTestConv, Prompt: "next", LaunchPosture: &SpawnSpec{HarnessBuiltinMode: GeminiSandboxOff, ApprovalPolicy: GeminiApprovalYolo}})
+	require.Equal(t, []string{"env", "GEMINI_SANDBOX=false", "SANDBOX=", "NODE_USE_ENV_PROXY=1", "gemini", "--resume", geminiUsageTestConv, "--approval-mode=yolo", "--prompt-interactive=next"}, argv)
+}

@@ -12,3 +12,7 @@ func readOneShotBootIdentity() string {
 	} // Missing evidence cannot authorize cleanup.
 	return strings.TrimSpace(string(data))
 }
+
+func readOneShotOwnerIdentity(pid int) (string, error) {
+	return oneShotProcessStartTime(pid)
+}

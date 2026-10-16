@@ -37,39 +37,39 @@ var _ Asker = codexAsker{}
 func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 	argv := []string{"codex"}
 
-	if spec.Print {
-		hasLaunchContainment := false
-		if posture := spec.LaunchPosture; posture != nil {
-			if posture.StrongNestedSandbox {
-				argv = append(argv, "-c", "features.use_legacy_landlock=false")
-			}
-			// These are top-level Codex options, so they must precede `exec`.
-			// `exec resume` lacks its own --sandbox/--ask-for-approval/-p
-			// switches but inherits the top-level configuration exactly like
-			// the interactive resume used for a stopped agent.
-			if posture.PermissionProfile != "" {
-				argv = append(argv, "-p", posture.PermissionProfile)
-				hasLaunchContainment = true
-			} else if posture.HarnessBuiltinMode != "" {
-				argv = append(argv, "--sandbox", posture.HarnessBuiltinMode)
-				hasLaunchContainment = true
-			}
-			if posture.ApprovalPolicy != "" {
-				argv = append(argv, "--ask-for-approval", posture.ApprovalPolicy)
-			}
-			if posture.AutoReview {
-				argv = append(argv, "-c", codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
-			}
-			names := make([]string, 0, len(posture.ShellEnvironment))
-			for name := range posture.ShellEnvironment {
-				names = append(names, name)
-			}
-			slices.Sort(names)
-			for _, name := range names {
-				argv = append(argv, "-c",
-					"shell_environment_policy.set."+name+"="+codexTOMLString(posture.ShellEnvironment[name]))
-			}
+	hasLaunchContainment := false
+	if posture := spec.LaunchPosture; posture != nil {
+		if posture.StrongNestedSandbox {
+			argv = append(argv, "-c", "features.use_legacy_landlock=false")
 		}
+		// These are top-level Codex options, so they must precede `exec`.
+		// `exec resume` lacks its own --sandbox/--ask-for-approval/-p
+		// switches but inherits the top-level configuration exactly like
+		// the interactive resume used for a stopped agent.
+		if posture.PermissionProfile != "" {
+			argv = append(argv, "-p", posture.PermissionProfile)
+			hasLaunchContainment = true
+		} else if posture.HarnessBuiltinMode != "" {
+			argv = append(argv, "--sandbox", posture.HarnessBuiltinMode)
+			hasLaunchContainment = true
+		}
+		if posture.ApprovalPolicy != "" {
+			argv = append(argv, "--ask-for-approval", posture.ApprovalPolicy)
+		}
+		if posture.AutoReview {
+			argv = append(argv, "-c", codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+		}
+		names := make([]string, 0, len(posture.ShellEnvironment))
+		for name := range posture.ShellEnvironment {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			argv = append(argv, "-c",
+				"shell_environment_policy.set."+name+"="+codexTOMLString(posture.ShellEnvironment[name]))
+		}
+	}
+	if spec.Print {
 		// Non-interactive capture: `codex exec` (+ `resume <id>` to continue).
 		argv = append(argv, "exec")
 		if spec.ResumeID != "" {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -1075,6 +1076,10 @@ func (c *Config) RemoteAccessBind() string {
 // is a follow-up (JOH-252), so a future codex profile would validate the
 // same fields against the codex catalog.
 type AskConfig struct {
+	// Sandbox selects current policy each turn: global (default), auto (global
+	// plus the exact directory group's rules), one library profile, or off.
+	Sandbox string `json:"sandbox,omitempty"`
+
 	// Profile names a spawn profile (groups-tab profile) whose
 	// harness/model/effort a FRESH ask adopts — the harness-independent way
 	// to run `tclaude ask` on Codex as well as Claude (JOH-252). It is
@@ -1104,6 +1109,23 @@ func (c *Config) AskProfileName() string {
 		return ""
 	}
 	return c.Ask.Profile
+}
+
+// AskSandboxSetting is default-global even for existing configurations with
+// no ask block. A named profile can use profile:<name> to escape reserved modes.
+func (c *Config) AskSandboxSetting() string {
+	if c == nil || c.Ask == nil || strings.TrimSpace(c.Ask.Sandbox) == "" {
+		return "global"
+	}
+	return strings.TrimSpace(c.Ask.Sandbox)
+}
+
+func AskSandboxProfileName(setting string) (string, bool) {
+	switch setting {
+	case "auto", "global", "off":
+		return "", false
+	}
+	return strings.TrimPrefix(setting, "profile:"), true
 }
 
 // DefaultAskModel / DefaultAskEffort are the built-in `tclaude ask`
@@ -3688,6 +3710,11 @@ func Validate(c *Config) []string {
 		return []string{"config is nil"}
 	}
 	var errs []string
+	if name, named := AskSandboxProfileName(c.AskSandboxSetting()); named {
+		if _, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{Name: name}); err != nil {
+			errs = append(errs, "ask.sandbox: choose auto, global, off, or a valid sandbox profile name: "+err.Error())
+		}
+	}
 	if c.StatusSnapshot != nil && (c.StatusSnapshot.FreshnessMS < 0 || c.StatusSnapshot.FreshnessMS > 60000) {
 		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
 	}

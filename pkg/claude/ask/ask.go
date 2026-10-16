@@ -35,6 +35,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -129,6 +130,8 @@ type askInput struct {
 	// stderr, so we only show it when stderr is a real terminal (never into a
 	// redirected stderr). Defaults false, so tests get no spinner.
 	StderrIsTerminal bool
+	SandboxSetting   string
+	LaunchProfiles   []*db.SpawnProfile
 }
 
 // askIO carries the streams runAsk wires into the harness process. In an
@@ -201,6 +204,8 @@ func runFromCLI(p *Params, args []string) error {
 		ModelGlobal:      target.ModelGlobal,
 		EffortGlobal:     target.EffortGlobal,
 		GlobalHarness:    target.GlobalHarness,
+		SandboxSetting:   cfg.AskSandboxSetting(),
+		LaunchProfiles:   target.LaunchProfiles,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
@@ -276,14 +281,15 @@ func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harness
 // Claude-shaped built-ins from an explicit flag or configured default after it
 // switches to the thread's recorded harness.
 type resolvedAskTarget struct {
-	Harness       string
-	Model         string
-	Effort        string
-	ModelBuiltin  bool
-	EffortBuiltin bool
-	ModelGlobal   bool
-	EffortGlobal  bool
-	GlobalHarness string
+	Harness        string
+	Model          string
+	Effort         string
+	ModelBuiltin   bool
+	EffortBuiltin  bool
+	ModelGlobal    bool
+	EffortGlobal   bool
+	GlobalHarness  string
+	LaunchProfiles []*db.SpawnProfile
 }
 
 func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (resolvedAskTarget, error) {
@@ -350,6 +356,8 @@ func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (
 			}
 		}
 	}
+
+	target.LaunchProfiles = []*db.SpawnProfile{selected, global}
 
 	// The built-in defaults only make sense for the Claude catalog.
 	// ResolvedAskProfile already applied them on the no-profile path; for a
@@ -535,6 +543,22 @@ func runAsk(in askInput, aio askIO) error {
 		resolveFresh = newFreshConvResolver(h, in.Cwd)
 	}
 
+	prepared, disclosure, err := prepareAskSandbox(in, h, spec)
+	if err != nil {
+		return err
+	}
+	if prepared != nil {
+		fmt.Fprintln(aio.Stderr, disclosure)
+		defer func() {
+			for _, note := range prepared.Close() {
+				fmt.Fprintln(aio.Stderr, "ask: "+note)
+			}
+		}()
+		if cfg, err := config.Load(); err == nil && cfg.HTTPProxyConfigured() {
+			fmt.Fprintln(aio.Stderr, "ask: named HTTP proxy URLs are omitted without a tracked gateway caller identity; use an interactive worker for named proxies")
+		}
+	}
+
 	plan := runPlan{
 		Argv: h.Ask.BuildAskArgv(spec),
 		Cwd:  in.Cwd,
@@ -548,6 +572,9 @@ func runAsk(in askInput, aio askIO) error {
 	}
 	if !printMode {
 		plan.Stdin = aio.Stdin
+	}
+	if prepared != nil {
+		plan.Argv, plan.Env, plan.Preparation = prepared.Argv, prepared.Env, prepared
 	}
 
 	// In streaming mode the harness's stdout is its raw event stream, not the
@@ -740,6 +767,9 @@ type runPlan struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
+	Env         []string
+	Preparation *agentd.PreparedOneShotLaunch
+
 	// ScrubEnv are environment variable NAMES to drop from the child's
 	// environment (harness.AskEnvScrubber). Empty leaves the caller's
 	// environment untouched, which is the default for every harness that names
@@ -796,7 +826,11 @@ func liveRunner(p runPlan) (started bool, err error) {
 	}
 	cmd := exec.Command(bin, p.Argv[1:]...)
 	cmd.Dir = p.Cwd
-	if env, scrubbed := scrubEnv(os.Environ(), p.ScrubEnv); scrubbed {
+	environ := p.Env
+	if environ == nil {
+		environ = os.Environ()
+	}
+	if env, scrubbed := scrubEnv(environ, p.ScrubEnv); scrubbed || p.Env != nil {
 		// Only set Env when something was actually removed: an explicit Env
 		// otherwise reproduces the inherited one, and leaving it nil keeps the
 		// ordinary "child inherits the caller's environment" path for every
@@ -807,7 +841,23 @@ func liveRunner(p runPlan) (started bool, err error) {
 	cmd.Stdout = p.Stdout
 	cmd.Stderr = p.Stderr
 
-	runErr := cmd.Run()
+	if p.Preparation != nil {
+		closeFD, err := p.Preparation.ConfigureProcess(cmd)
+		if err != nil {
+			return false, err
+		}
+		defer closeFD()
+		if err := p.Preparation.MarkLaunchAttempt(); err != nil {
+			return false, err
+		}
+	}
+	if err := cmd.Start(); err != nil {
+		if p.Preparation != nil {
+			p.Preparation.LaunchFailed()
+		}
+		return false, err
+	}
+	runErr := cmd.Wait()
 	if runErr == nil {
 		return true, nil
 	}

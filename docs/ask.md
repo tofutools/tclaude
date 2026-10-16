@@ -68,9 +68,10 @@ tclaude ask -m haiku -e low "give me the short version"
 
 To change the default harness for fresh asks, select a saved spawn profile
 in the dashboard (**Config → Ask & scribe defaults**) or set `ask.profile`
-in `~/.tclaude/data/config.json`. Only the profile's harness, model, and
-effort fields are used; its sandbox, identity, and other spawn fields are
-ignored. A deleted profile falls through to ask-specific settings and the
+in `~/.tclaude/data/config.json`. The profile supplies harness, model, and effort defaults. When an ask sandbox
+policy is active, compatible ask/global spawn profiles also supply its sandbox
+implementation, native mode, and approval policy. Identity fields require a
+tracked worker. A deleted profile falls through to ask-specific settings and the
 global default instead of failing. `ask.model` and `ask.effort` override the
 corresponding global values. The global profile can select any supported
 harness; unset non-Claude model/effort fields use that harness's defaults.
@@ -80,9 +81,72 @@ Resolution order per field: per-call flags → selected ask profile →
 The harness comes from the ask profile, then the global profile, then Claude
 Code. Group defaults never participate. Incompatible ambient global
 model/effort values are skipped, including when resuming a thread recorded
-under another harness; explicit ask values are still validated. Sandbox
-profiles, including the global sandbox-profile default, are currently not
-applied by `ask`.
+under another harness; explicit ask values are still validated.
+
+## Sandbox policy
+
+`ask.sandbox` controls sandbox-profile resolution for both captured asks and
+`-i` foreground TUIs. Configure it beside **Ask — agent profile** in the
+dashboard's **Config → Ask & scribe defaults**, or in the config file:
+
+```json
+{"ask": {"sandbox": "global"}}
+```
+
+- `global` (the default): use the dashboard global sandbox profile. With no
+  global profile configured, ask retains its ordinary harness behavior.
+- `auto`: combine global and group sandbox profiles. Match the ask's canonical
+  working directory exactly against active groups' default directories, as
+  session auto-join does. Zero matches uses global only. Among multiple matches,
+  one group marked as the default spawn group wins; otherwise ask refuses and
+  suggests `global` or a named policy. Matching never creates or joins a group.
+- A profile name: use exactly that library profile and its includes, without
+  global or group policy. `profile:<name>` also works, including for a library
+  profile named `auto`, `global`, or `off`.
+- `off`: skip sandbox profiles and preserve ordinary ask behavior.
+
+Existing threads resolve the **current configured policy each turn**. Their
+conversation IDs and harnesses remain intact; changing policy does not create
+or migrate a thread. Successful confined launches disclose the resolved policy
+on stderr. Missing policies, unavailable host tooling, and unsupported policy
+shapes fail before the harness starts.
+
+An active policy uses the compatible ask/global spawn profile's implementation,
+otherwise `tclaude-layer`. `off` and `resource-only` implementations cannot
+satisfy a requested ask policy. Native implementations must establish actual
+confinement and represent the authored rules. Claude, Codex, and Gemini support
+foreground policy replay; Copilot and OpenCode lack that replay contract, and
+Pi's isolated state currently requires tracked-session lifetime. These asks
+refuse an active policy with guidance to use a supported harness or tracked
+worker.
+
+| Harness | Ask sandbox support |
+| --- | --- |
+| Claude Code | Outer wall, stacked, or a verified confined native sandbox capable of the authored rules |
+| Codex | Outer wall, stacked, or a confined native sandbox capable of the authored rules |
+| Gemini CLI | Outer wall; its native sandbox cannot represent the requested profile |
+| Copilot CLI | Refused: foreground policy replay is not supported |
+| OpenCode | Refused: foreground policy replay is not supported |
+| pi | Refused: isolated state needs tracked-session lifetime |
+
+With a global policy configured, the default `global` setting therefore changes
+Copilot, OpenCode, and pi asks from direct execution to an actionable refusal.
+Set **Ask — sandbox → Off** (`ask.sandbox=off`) to retain direct asks, select an
+ask profile for Claude, Codex, or Gemini, or use a tracked worker. Foreground
+replay for Copilot/OpenCode and pi isolated-state lifetime are known follow-ups.
+
+Directory provisioning, pre-launch scripts, native profiles, outer and stacked
+walls, and resource limits share the one-shot worker launch preparation.
+Foreground stdio and terminal process-group behavior are preserved. Cleanup
+reaps a delegated cgroup when available. Without proof that all descendants
+have stopped, per-run directories are retained until a boot change; the stderr
+notice gives the path for manual removal after descendants stop. A live
+foreground owner is protected from background sweeps.
+
+Model-gateway caller identity is not available to untracked asks: a configured
+gateway with an active policy is refused. Named-proxy access is disclosed as
+unavailable when a confined ask would otherwise inherit it. Use a tracked
+interactive worker when either is needed.
 
 ## Piped input
 

@@ -723,6 +723,14 @@ operator-token persistence), logging, retention, slop mode, experimental
 features, and the remote-access panel described in
 [Operating remotely](remote.md).
 
+**Ask & scribe defaults** includes an **Ask — sandbox** selector next to the ask
+agent profile. It defaults to the dashboard global sandbox profile, with no
+confinement added when that default is unset. Choose **Auto** to combine global
+and directory-matched group policy, a library profile for exactly that profile
+and its includes, or **Off** to skip profiles. Existing ask threads take the
+current choice on every turn. See [Ask sandbox policy](ask.md#sandbox-policy)
+for directory ambiguity, supported harnesses, refusals, and cleanup behavior.
+
 ## Skynet UI: linked nodes
 
 Once this node trusts at least one federation peer (see

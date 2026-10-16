@@ -251,7 +251,7 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Ephemeral && spec.Print {
 		argv = append(argv, "--no-session-persistence")
 	}
-	if posture := spec.LaunchPosture; posture != nil && spec.Print {
+	if posture := spec.LaunchPosture; posture != nil {
 		// A brokered resume replays the exact launch posture recorded for the
 		// conversation. In particular, do not replace an active agent's
 		// sandbox/permission mode with generic plan mode: that makes a séance

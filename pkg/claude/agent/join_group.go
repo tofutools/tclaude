@@ -141,14 +141,16 @@ func spawnParamsForJoinedSession(params *session.NewParams, group string) *Spawn
 // cwd exactly equals this launch's canonical cwd. Parent/child containment is
 // intentionally not a match: a nested repository can have its own group and a
 // directory must never ambiguously inherit the nearest-looking parent.
-func automaticGroupForDir(params *session.NewParams) (string, error) {
-	cwd, err := canonicalGroupDir(launchDir(params))
+// MatchingDirectoryGroup is the common canonical-CWD matcher for session
+// auto-join and ask sandbox policy. It never creates or joins a group.
+func MatchingDirectoryGroup(raw string) (*db.AgentGroup, error) {
+	cwd, err := canonicalGroupDir(raw)
 	if err != nil {
-		return "", fmt.Errorf("normalize launch directory: %w", err)
+		return nil, fmt.Errorf("normalize launch directory: %w", err)
 	}
 	groups, err := db.ListAgentGroups()
 	if err != nil {
-		return "", fmt.Errorf("list groups for directory auto-join: %w", err)
+		return nil, fmt.Errorf("list groups for directory auto-join: %w", err)
 	}
 
 	var matches []*db.AgentGroup
@@ -171,16 +173,36 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 			}
 		}
 		if len(defaults) == 1 {
-			return defaults[0].Name, nil
+			return defaults[0], nil
 		}
 		if len(defaults) > 1 {
-			return "", fmt.Errorf("directory %q matches multiple groups (%s) and more than one is marked as the directory auto-join default; clear the conflicting defaults in the dashboard group settings", cwd, strings.Join(names, ", "))
+			return nil, fmt.Errorf("directory %q matches multiple groups (%s) and more than one is marked as the directory auto-join default; clear the conflicting defaults in the dashboard group settings", cwd, strings.Join(names, ", "))
 		}
-		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group, or in the dashboard Groups tab open that group's ⚙ menu and select 'make directory auto-join default'", cwd, strings.Join(names, ", "))
+		return nil, fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group, or in the dashboard Groups tab open that group's ⚙ menu and select 'make directory auto-join default'", cwd, strings.Join(names, ", "))
 	}
 	if len(matches) == 1 {
-		return matches[0].Name, nil
+		return matches[0], nil
 	}
+	return nil, nil
+}
+
+func automaticGroupForDir(params *session.NewParams) (string, error) {
+	cwd, err := canonicalGroupDir(launchDir(params))
+	if err != nil {
+		return "", fmt.Errorf("normalize launch directory: %w", err)
+	}
+	match, err := MatchingDirectoryGroup(cwd)
+	if err != nil {
+		return "", err
+	}
+	if match != nil {
+		return match.Name, nil
+	}
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return "", err
+	}
+
 	if !params.AutoJoinOrCreateGroup {
 		return "", nil
 	}

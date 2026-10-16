@@ -1219,7 +1219,7 @@ func GetAgentGroupSandboxProfile(group string) (*SandboxProfile, error) {
 // composed values. Mutable profile references are never returned as launch
 // authority: only the versioned value snapshot is.
 func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandboxpolicy.Snapshot, error) {
-	return resolveEffectiveSandboxSnapshot(groupID, strings.TrimSpace(explicitName), 0)
+	return resolveEffectiveSandboxSnapshot(groupID, strings.TrimSpace(explicitName), 0, false)
 }
 
 // ResolveEffectiveSandboxSnapshotByID is the lifecycle-boundary counterpart to
@@ -1227,10 +1227,19 @@ func ResolveEffectiveSandboxSnapshot(groupID int64, explicitName string) (sandbo
 // identified by the stable registry ID recorded in its previous snapshot, so a
 // profile rename does not silently drop or retarget that explicit policy.
 func ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID int64) (sandboxpolicy.Snapshot, error) {
-	return resolveEffectiveSandboxSnapshot(groupID, "", explicitProfileID)
+	return resolveEffectiveSandboxSnapshot(groupID, "", explicitProfileID, false)
 }
 
-func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explicitProfileID int64) (sandboxpolicy.Snapshot, error) {
+// ResolveNamedSandboxSnapshot freezes exactly one library profile (including
+// its authored includes), without adding global or group assignments.
+func ResolveNamedSandboxSnapshot(name string) (sandboxpolicy.Snapshot, error) {
+	if strings.TrimSpace(name) == "" {
+		return sandboxpolicy.Snapshot{}, ErrSandboxProfileNotFound
+	}
+	return resolveEffectiveSandboxSnapshot(0, strings.TrimSpace(name), 0, true)
+}
+
+func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explicitProfileID int64, exactNamed bool) (sandboxpolicy.Snapshot, error) {
 	d, err := Open()
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
@@ -1255,14 +1264,16 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		return profile, nil
 	}
 	var globalID, groupProfileID int64
-	if err := tx.QueryRow(`SELECT COALESCE((SELECT profile_id FROM sandbox_profile_global_assignment WHERE id = 1), 0)`).Scan(&globalID); err != nil {
-		return sandboxpolicy.Snapshot{}, err
-	}
-	if groupID > 0 {
-		if err := tx.QueryRow(`SELECT COALESCE(sandbox_profile_id, 0) FROM agent_groups WHERE id = ?`, groupID).Scan(&groupProfileID); errors.Is(err, sql.ErrNoRows) {
-			return sandboxpolicy.Snapshot{}, fmt.Errorf("agent group %d not found", groupID)
-		} else if err != nil {
+	if !exactNamed {
+		if err := tx.QueryRow(`SELECT COALESCE((SELECT profile_id FROM sandbox_profile_global_assignment WHERE id = 1), 0)`).Scan(&globalID); err != nil {
 			return sandboxpolicy.Snapshot{}, err
+		}
+		if groupID > 0 {
+			if err := tx.QueryRow(`SELECT COALESCE(sandbox_profile_id, 0) FROM agent_groups WHERE id = ?`, groupID).Scan(&groupProfileID); errors.Is(err, sql.ErrNoRows) {
+				return sandboxpolicy.Snapshot{}, fmt.Errorf("agent group %d not found", groupID)
+			} else if err != nil {
+				return sandboxpolicy.Snapshot{}, err
+			}
 		}
 	}
 	global, err := loadByID(globalID)
