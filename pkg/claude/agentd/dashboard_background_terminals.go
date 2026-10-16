@@ -24,22 +24,22 @@ type backgroundTerminal struct {
 	// Kind is agent, session (a plain conversation), shell (an agent's web
 	// shell), group_shell, or other (an unrecognised session on the socket,
 	// listed for the count but not attachable from the dashboard).
-	Kind         string `json:"kind"`
-	TmuxSession  string `json:"tmux_session"`
-	Key          string `json:"key,omitempty"`
-	Label        string `json:"label"`
-	AgentID      string `json:"agent_id,omitempty"`
-	ConvID       string `json:"conv_id,omitempty"`
-	Harness      string `json:"harness,omitempty"`
-	Which        string `json:"which,omitempty"`
-	Group        string `json:"group,omitempty"`
+	Kind        string `json:"kind"`
+	TmuxSession string `json:"tmux_session"`
+	Key         string `json:"key,omitempty"`
+	Label       string `json:"label"`
+	AgentID     string `json:"agent_id,omitempty"`
+	ConvID      string `json:"conv_id,omitempty"`
+	Harness     string `json:"harness,omitempty"`
+	Which       string `json:"which,omitempty"`
+	Group       string `json:"group,omitempty"`
 	// Superseded marks a session or shell left over from an agent generation
 	// that has since been replaced. The attach endpoints always follow an
 	// agent to its latest generation, so it has no Key: the dashboard cannot
 	// reattach it, only point at `tmux attach`.
-	Superseded bool `json:"superseded,omitempty"`
-	LastActivity int64  `json:"last_activity,omitempty"`
-	Created      int64  `json:"created,omitempty"`
+	Superseded   bool  `json:"superseded,omitempty"`
+	LastActivity int64 `json:"last_activity,omitempty"`
+	Created      int64 `json:"created,omitempty"`
 }
 
 type backgroundTerminalsResponse struct {
