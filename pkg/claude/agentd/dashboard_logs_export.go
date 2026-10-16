@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -78,9 +80,26 @@ func openLogExportFiles(path string, includeRotated bool) (files []*os.File, siz
 	return files, sizes
 }
 
+// abortableReader fails the next Read once stop reports an error, so a
+// non-strict ScanLines (which ignores its callback's return value) returns at
+// the next buffer refill instead of scanning the rest of the log set for a
+// client that has already gone away.
+type abortableReader struct {
+	r    io.Reader
+	stop func() error
+}
+
+func (a abortableReader) Read(p []byte) (int, error) {
+	if err := a.stop(); err != nil {
+		return 0, err
+	}
+	return a.r.Read(p)
+}
+
 // writeLogExport streams every line of the log set that passes filter to w,
-// oldest first, and returns how many lines it wrote.
-func writeLogExport(w io.Writer, path string, includeRotated bool, filter logFilter) (int, error) {
+// oldest first, and returns how many lines it wrote. It stops early when ctx
+// is done or a write fails.
+func writeLogExport(ctx context.Context, w io.Writer, path string, includeRotated bool, filter logFilter) (int, error) {
 	files, sizes := openLogExportFiles(path, includeRotated)
 	defer func() {
 		for _, f := range files {
@@ -89,8 +108,17 @@ func writeLogExport(w io.Writer, path string, includeRotated bool, filter logFil
 	}()
 	written := 0
 	var writeErr error
+	stop := func() error {
+		if writeErr != nil {
+			return writeErr
+		}
+		return ctx.Err()
+	}
 	for i, f := range files {
-		_, _, err := filefollow.ScanLines(io.LimitReader(f, sizes[i]), filefollow.LineConfig{MaxRecordBytes: maxLogRecordBytes}, func(line filefollow.Line) bool {
+		if err := stop(); err != nil {
+			return written, err
+		}
+		_, _, err := filefollow.ScanLines(abortableReader{r: io.LimitReader(f, sizes[i]), stop: stop}, filefollow.LineConfig{MaxRecordBytes: maxLogRecordBytes}, func(line filefollow.Line) bool {
 			text := strings.TrimRight(string(line.Data), "\r\n")
 			if strings.TrimSpace(text) == "" {
 				return true
@@ -100,6 +128,9 @@ func writeLogExport(w io.Writer, path string, includeRotated bool, filter logFil
 			}
 			if !filter.match(parseLogLine(text)) {
 				return true
+			}
+			if writeErr != nil {
+				return false
 			}
 			if _, err := io.WriteString(w, text+"\n"); err != nil {
 				writeErr = err
@@ -134,7 +165,7 @@ func handleDashboardLogsExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Headers are committed with the first byte, so a mid-stream failure
 	// can only be logged; the client sees a short file.
-	if _, err := writeLogExport(w, common.OutputLogPath(), includeRotated, filter); err != nil {
+	if _, err := writeLogExport(r.Context(), w, common.OutputLogPath(), includeRotated, filter); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("logs export aborted", "error", err)
 	}
 }

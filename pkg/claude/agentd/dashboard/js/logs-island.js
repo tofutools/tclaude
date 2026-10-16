@@ -86,7 +86,7 @@ export function LogsApp({ state, actions }) {
       <label class="filter-toggle"><input type="checkbox" id="logs-rotated" checked=${current.includeRotated} onChange=${(event) => filter('includeRotated', event.currentTarget.checked)} /> <span>rotated</span></label>
       <label class="filter-toggle"><input type="checkbox" id="logs-hide-raw" checked=${current.hideRaw} onChange=${(event) => filter('hideRaw', event.currentTarget.checked)} /> <span>hide raw</span></label>
       <button class="tool" id="logs-refresh" disabled=${current.request.phase === 'loading' || current.request.phase === 'refreshing'} onClick=${actions.load}>⟳ refresh</button>
-      <a class="tool" id="logs-export" href="/api/logs/export" download title="Download every line matching the current filter (search, level, since, rotated, hide raw) as JSON lines, oldest first — not limited to this page" onClick=${(event) => { event.currentTarget.href = logsExportUrl(current); }}>⤓ export</a>
+      <a class="tool" id="logs-export" href=${logsExportUrl(current)} download title="Download every line matching the current filter (search, level, since, rotated, hide raw) as JSON lines, oldest first — not limited to this page" onClick=${(event) => { event.currentTarget.href = logsExportUrl(current); }}>⤓ export</a>
       <label class="filter-toggle"><input type="checkbox" id="logs-stream" checked=${current.stream} onChange=${(event) => state.setStream(event.currentTarget.checked)} /> <span>stream</span></label>
       <span class="spacer"></span><span id="logs-status" class="muted"><${Status} current=${current} state=${state} actions=${actions} /></span>
     </div>
