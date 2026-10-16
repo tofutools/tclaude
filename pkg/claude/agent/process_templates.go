@@ -284,7 +284,7 @@ func processTemplatesSaveCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesSaveParams]{
 		Use:         "save --file <path> [--expect-source-hash <hash>]",
 		Short:       "CAS-save process-template YAML",
-		Long:        "Creates a new template when --expect-source-hash is omitted and the id does not exist. For edits, pass the sourceHash emitted by show; a stale hash is refused with re-show and merge guidance. Saving has no execution side effects.",
+		Long:        "Creates a new template when --expect-source-hash is omitted and the id does not exist. For edits, pass the sourceHash emitted by show; a stale hash is refused with re-show and merge guidance. An unfinished template with graph or semantic validation errors still saves as a work-in-progress draft (it cannot run until fixed); unknown fields, duplicate keys, and size-limit errors are refused because saving would drop them. Saving has no execution side effects.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesSaveParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -342,9 +342,12 @@ func runProcessTemplatesSave(p *processTemplatesSaveParams, stdin io.Reader, std
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	renderProcessTemplateDiagnostics(response.Diagnostics, stdout)
+	hasErrors := renderProcessTemplateDiagnostics(response.Diagnostics, stdout)
 	fmt.Fprintf(stdout, "Saved process template %q.\nref=%s\nsourceHash=%s\nsemanticHash=%s\nactor=%s\n",
 		id, response.Ref, response.SourceHash, response.SemanticHash, response.Actor)
+	if hasErrors {
+		fmt.Fprintln(stdout, "Saved as a work-in-progress draft: it has validation errors and cannot run until they are fixed.")
+	}
 	return rcOK
 }
 

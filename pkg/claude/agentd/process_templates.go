@@ -510,7 +510,8 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	}
 	cardinalityErrors := model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors()
 	resourceErrors := parsed.Diagnostics.HasNormalizedGraphBudgetError()
-	if (rawSource && parsed.Diagnostics.HasErrors()) || cardinalityErrors || resourceErrors {
+	sourceLoss := rawSource && (parsed.Template == nil || hasSourceFidelityError(parsed.Diagnostics))
+	if sourceLoss || cardinalityErrors || resourceErrors {
 		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
 			"code":        "process_template_invalid",
@@ -527,11 +528,14 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusUnprocessableEntity, "process_template_invalid_id", err.Error())
 		return
 	}
-	// Validation findings are deliberately advisory for editor saves. The
-	// draft remains serializable and content-addressed, so persisting it lets a
-	// human fix multi-step graph edits without the server discarding their work.
-	// Only malformed JSON, a model CanonicalYAML cannot represent, or a template
-	// identity the content-addressed store cannot safely key is blocked.
+	// Validation findings are deliberately advisory for editor and scribe
+	// saves. The draft remains serializable and content-addressed, so
+	// persisting it lets a human (or a scribe working alongside them) save
+	// unfinished multi-step graph edits without the server discarding the work;
+	// run eligibility still refuses an invalid template. Only malformed input,
+	// raw YAML whose content canonicalization would silently drop, a model
+	// CanonicalYAML cannot represent, or a template identity the
+	// content-addressed store cannot safely key is blocked.
 	actor, err := processTemplateAuthor(caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "auth", err.Error())
@@ -563,6 +567,25 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		"authoredAt":   commit.AuthoredAt,
 		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	})
+}
+
+// hasSourceFidelityError reports a raw-YAML finding that saving would erase
+// rather than preserve: the store keeps the canonical re-encoding of the
+// decoded model, so an unknown field, a merge key, or a duplicate key's shadowed value would
+// vanish without the author ever seeing it fixed. Graph and semantic findings
+// (missing performers, unjoined branches, ...) survive canonicalization and
+// stay advisory, so an unfinished draft can still be saved.
+func hasSourceFidelityError(diagnostics model.Diagnostics) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != model.SeverityError {
+			continue
+		}
+		switch diagnostic.Code {
+		case "unknown_field", "duplicate_key", "merge_key_unsupported":
+			return true
+		}
+	}
+	return false
 }
 
 func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
