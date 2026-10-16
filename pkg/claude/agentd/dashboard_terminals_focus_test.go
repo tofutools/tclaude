@@ -74,8 +74,9 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 		readDashboardJS(t, "terminal-shell-actions.js") +
 		readDashboardJS(t, "terminal-shell-state.js")
 	for _, needle := range []string{
-		"openTerminalPane(seedOrPromise, { reveal = true } = {})",
-		"current.openPane(seed, { reveal })",
+		"openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {})",
+		"const paneOptions = activate ? { reveal } : { reveal, activate }",
+		"current.openPane(seed, paneOptions)",
 		"state.openPane(seed, options)",
 		"if (reveal) requestReveal()",
 		"state.activatePane(key, options)",

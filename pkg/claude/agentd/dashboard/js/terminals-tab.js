@@ -20,15 +20,18 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
 }
 
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
+  // activate rides along only when a caller opts out, so every ordinary open
+  // keeps the plain { reveal } contract.
+  const paneOptions = activate ? { reveal } : { reveal, activate };
   return Promise.resolve(seedOrPromise).then((rawSeed) => {
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed, { reveal, activate });
+    if (!prepareRuntime) return current.openPane(seed, paneOptions);
     return prepareRuntime().then(
-      () => controller === current ? current.openPane(seed, { reveal, activate }) : null,
+      () => controller === current ? current.openPane(seed, paneOptions) : null,
       (error) => {
         console.error('terminal runtime load failed:', error);
         return null;
