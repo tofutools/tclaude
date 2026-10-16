@@ -132,6 +132,17 @@ export function remoteCloseText(closed) {
   return detail ? `${known.text} (${detail})` : known.text;
 }
 
+// TERMINAL_EXIT maps the close codes agentd sends when a terminal's own command
+// exited (dashboard_term.go terminalExitClose) to the pane status and whether
+// dashboard.close_terminal_tabs wants the tab closed. Either way it is a
+// settled answer from a live daemon, so no retry or restart watch follows.
+export const TERMINAL_EXIT = Object.freeze({
+  4001: { text: 'session ended', closeTab: false },
+  4002: { text: 'session ended', closeTab: true },
+  4003: { text: 'detached', closeTab: false },
+  4004: { text: 'detached', closeTab: true },
+});
+
 export function normalizeSeed(seed) {
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }
@@ -613,10 +624,22 @@ export function mountTerminalWidget({
       firstOutputSeen = true;
       scheduleRepairAfterOutput(mine, socket);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
       cancelInitialResize();
+      const exit = !remote && TERMINAL_EXIT[event?.code];
+      // A pop-out or reattach can briefly lose to the client it replaces: the
+      // old socket's teardown detaches every client, ours included, which
+      // reads as a detach. Inside the initial-retry window that race still
+      // earns its retry before an exit code is trusted.
+      if (exit && (openedAt === null || now() - openedAt < initialRetryStabilityMs) && scheduleInitialRetry()) return;
+      if (exit) {
+        setStatus(exit.text);
+        setReconnectAvailable(true);
+        onDisconnect({ closeTab: exit.closeTab });
+        return;
+      }
       if (remote) {
         // The pinned viewer is gone with the socket: no more file links.
         setRemote({ files: false, viewer: '' });

@@ -1533,3 +1533,22 @@ func TestStatusSnapshotWindowValidation(t *testing.T) {
 		assert.Equal(t, ms < 0 || ms > 60000, found, "freshness %d", ms)
 	}
 }
+
+func TestCloseTerminalTab(t *testing.T) {
+	var nilCfg *Config
+	assert.True(t, nilCfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabGroupTerminal))
+	assert.True(t, nilCfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabAgentTerminal))
+	assert.False(t, nilCfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabAgentWindow))
+	assert.False(t, nilCfg.CloseTerminalTab(TerminalTabDetached, TerminalTabGroupTerminal))
+	assert.False(t, nilCfg.CloseTerminalTab(TerminalTabSessionEnded, ""), "unknown target → false")
+
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"dashboard":{"close_terminal_tabs":{"session_ended":{"group_terminal":false,"agent_window":true},"detached":{"agent_terminal":true}}}}`),
+		&cfg))
+	assert.False(t, cfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabGroupTerminal), "explicit opt-out")
+	assert.True(t, cfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabAgentTerminal), "absent cell keeps default")
+	assert.True(t, cfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabAgentWindow), "explicit opt-in")
+	assert.True(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabAgentTerminal))
+	assert.False(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabGroupTerminal))
+}
