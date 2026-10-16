@@ -322,7 +322,7 @@ export function buildCommands(snapshot) {
         icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home}`, `browser scrying portal in ${home}`),
-        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name}`
+        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
           + ' portal scrying party',
         run: () => { recordGroupInteraction(g.name); openGroupWebTermPane(g.name, g.name); },
       });
