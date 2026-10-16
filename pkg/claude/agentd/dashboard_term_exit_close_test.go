@@ -61,12 +61,36 @@ func TestBrowserTerminalExitWithoutTargetClosesPlainly(t *testing.T) {
 	}
 }
 
+// A command killed from outside — systemd SIGTERMing agentd's whole cgroup on a
+// restart, tmux clients included — is not a detach or a session end: the plain
+// close keeps the browser's restart watch, so the terminal reconnects.
+func TestBrowserTerminalKilledCommandClosesPlainly(t *testing.T) {
+	previous := termWSTestHook
+	termWSTestHook = &TermWSHook{SessionAlive: func(string) bool { return true }}
+	t.Cleanup(func() { termWSTestHook = previous })
+	for name, command := range map[string]string{
+		"tmux client SIGTERM exit": "printf '[terminated]\\n'; exit 1",
+		"wrapper killed by signal": "printf '[terminated]\\n'; kill -TERM $$",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := dialTerminalCommand(t, command, config.TerminalTabAgentWindow); got >= 4000 {
+				t.Fatalf("close code = %d, want no terminal-exit code", got)
+			}
+		})
+	}
+}
+
 func dialExitingTerminal(t *testing.T, target config.TerminalTabTarget) int {
+	t.Helper()
+	return dialTerminalCommand(t, "printf 'BYE\\n'", target)
+}
+
+func dialTerminalCommand(t *testing.T, command string, target config.TerminalTabTarget) int {
 	t.Helper()
 	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
-		runPTYOverWS(w, r, "printf 'BYE\\n'", "tclaude-term-test", "", nil, target)
+		runPTYOverWS(w, r, command, "tclaude-term-test", "", nil, target)
 	}))
 	t.Cleanup(func() { server.Close(); <-done })
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

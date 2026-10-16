@@ -311,6 +311,14 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
   assert.equal(notice.parentElement.classList.contains('mux-pane-xterm'), true,
     'the notice is scoped to the xterm area rather than the whole pane');
 
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  await harness.act(() => dashboardState.setConnection('disconnected'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'the dashboard-wide agentd curtain already says it; no second card on top');
+  await harness.act(() => dashboardState.setConnection('connected'));
+  assert.ok(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'the terminal notice returns once agentd answers but this terminal is still down');
+
   const centered = getByRole(notice, 'button', { name: 'Reconnect terminal' });
   await harness.act(() => harness.fireEvent(centered, 'click'));
   assert.equal(fake.widgets[0].connectCount, 2, 'the centered button reconnects the same widget');
