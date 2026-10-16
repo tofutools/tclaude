@@ -834,3 +834,39 @@ test('Config moves the static remote-access certificate panel into Daemon & netw
   await mounted.unmount();
   assert.equal(admin.parentElement, tab);
 });
+
+test('Config auto-close terminal tabs matrix shows defaults and persists only overrides', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = '{}';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+  const cell = (event, target) => mounted.container.querySelector(`#cfg-close-tabs-${event}-${target}`);
+
+  await adapter.loadConfigTab();
+  assert.equal(cell('session_ended', 'group_terminal').checked, true);
+  assert.equal(cell('session_ended', 'agent_terminal').checked, true);
+  assert.equal(cell('session_ended', 'agent_window').checked, false);
+  assert.equal(cell('detached', 'group_terminal').checked, false);
+  assert.equal(adapter.assembleConfig().dashboard?.close_terminal_tabs, undefined, 'defaults stay sparse');
+
+  raw = JSON.stringify({ dashboard: { close_terminal_tabs: {
+    session_ended: { group_terminal: false, agent_window: true },
+    detached: { agent_terminal: true },
+  } } });
+  await adapter.loadConfigTab();
+  assert.equal(cell('session_ended', 'group_terminal').checked, false);
+  assert.equal(cell('session_ended', 'agent_window').checked, true);
+  assert.equal(cell('detached', 'agent_terminal').checked, true);
+  cell('detached', 'agent_terminal').checked = false;
+  assert.deepEqual(adapter.assembleConfig().dashboard.close_terminal_tabs, {
+    session_ended: { group_terminal: false, agent_window: true },
+  });
+  await mounted.unmount();
+});

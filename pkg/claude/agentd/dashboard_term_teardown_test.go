@@ -22,7 +22,7 @@ func TestBrowserTerminalDisconnectReapsIdlePTY(t *testing.T) {
 	t.Cleanup(func() { termWSTestHook = previous })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
-		runPTYOverWS(w, r, "printf 'READY\\n'; exec cat", "", "", nil)
+		runPTYOverWS(w, r, "printf 'READY\\n'; exec cat", "", "", nil, "")
 	}))
 	t.Cleanup(server.Close)
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

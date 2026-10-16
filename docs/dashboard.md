@@ -346,6 +346,15 @@ typing into its pane. Reconnection is deliberately conservative: bounded
 auto-retries, then only a proven `agentd` restart earns one automatic
 reattach; otherwise you get a manual Reconnect button.
 
+When a terminal's own tmux client goes away, the pane says why — **session
+ended** (the shell or agent exited, or the session was killed) or **detached**
+(the session lives on) — and `dashboard.close_terminal_tabs` decides whether
+the tab closes by itself. It is a matrix of event × terminal kind (group
+terminal, agent-dir terminal, agent window), editable under Config → Web
+terminal tabs. By default only shell tabs close, and only when their session
+ended: reconnecting would just start a fresh shell. Agent windows and detaches
+keep their tab.
+
 Directory fields also use the in-dashboard web picker by default. Set
 `dashboard.default_directory_picker` to `"native"` to use the host OS chooser
 on a local dashboard; remote dashboards always use the web picker.

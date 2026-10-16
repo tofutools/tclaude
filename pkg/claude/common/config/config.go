@@ -496,6 +496,12 @@ type DashboardConfig struct {
 	// after the first screen arrives. See TerminalAttachConfig and
 	// (*Config).ResolvedTerminalAttach.
 	TerminalAttach *TerminalAttachConfig `json:"terminal_attach,omitempty"`
+	// CloseTerminalTabs decides which dashboard terminal tabs close on their
+	// own when their tmux side goes away, per event and per kind of terminal.
+	// Absent keeps the defaults: shell terminals close when their session
+	// ends, agent windows and every detach keep the tab. See
+	// TerminalTabCloseConfig and (*Config).CloseTerminalTab.
+	CloseTerminalTabs *TerminalTabCloseConfig `json:"close_terminal_tabs,omitempty"`
 	// ActivityBots selects the style of the per-group + global "activity
 	// bot" indicator — the deduped row of robot icons that rides in each
 	// group <summary> header (visible even when the group is folded) and in
@@ -653,6 +659,83 @@ func (c *Config) ResolvedTerminalAttach() (mode string, initialDelayMS, repairDe
 	repairDelayMS = resolve(t.RepairDelayMS, DefaultTerminalAttachRepairDelayMS)
 	preAttachDelayMS = resolve(t.PreAttachDelayMS, DefaultTerminalAttachPreAttachDelayMS)
 	return
+}
+
+// TerminalTabEvent names why a dashboard terminal's tmux client went away —
+// the rows of dashboard.close_terminal_tabs.
+type TerminalTabEvent string
+
+const (
+	// TerminalTabSessionEnded: the tmux session is gone (the shell exited, the
+	// agent exited, or the session was killed).
+	TerminalTabSessionEnded TerminalTabEvent = "session_ended"
+	// TerminalTabDetached: the tmux client exited but its session lives on
+	// (prefix+d, or another client took the session over).
+	TerminalTabDetached TerminalTabEvent = "detached"
+)
+
+// TerminalTabTarget names the kind of dashboard terminal — the columns of
+// dashboard.close_terminal_tabs.
+type TerminalTabTarget string
+
+const (
+	// TerminalTabGroupTerminal is a shell opened in a group's home dir.
+	TerminalTabGroupTerminal TerminalTabTarget = "group_terminal"
+	// TerminalTabAgentTerminal is a shell opened in an agent's directory.
+	TerminalTabAgentTerminal TerminalTabTarget = "agent_terminal"
+	// TerminalTabAgentWindow is an agent's own harness pane.
+	TerminalTabAgentWindow TerminalTabTarget = "agent_window"
+)
+
+// TerminalTabCloseConfig is dashboard.close_terminal_tabs: one target set per
+// event. Each switch is a *bool so absent keeps its default (see
+// CloseTerminalTab) while an explicit false opts out.
+type TerminalTabCloseConfig struct {
+	SessionEnded *TerminalTabCloseTargets `json:"session_ended,omitempty"`
+	Detached     *TerminalTabCloseTargets `json:"detached,omitempty"`
+}
+
+// TerminalTabCloseTargets holds one event's per-terminal-kind switches.
+type TerminalTabCloseTargets struct {
+	GroupTerminal *bool `json:"group_terminal,omitempty"`
+	AgentTerminal *bool `json:"agent_terminal,omitempty"`
+	AgentWindow   *bool `json:"agent_window,omitempty"`
+}
+
+// CloseTerminalTab reports whether a dashboard terminal tab of kind target
+// should close itself on event. Defaults: shell terminals (group and agent
+// dir) close once their session has ended, since reconnecting would only
+// start a fresh shell; agent windows keep the tab so the exit stays visible,
+// and a detach never closes anything. Nil-safe; unknown values are false.
+func (c *Config) CloseTerminalTab(event TerminalTabEvent, target TerminalTabTarget) bool {
+	def := event == TerminalTabSessionEnded &&
+		(target == TerminalTabGroupTerminal || target == TerminalTabAgentTerminal)
+	if c == nil || c.Dashboard == nil || c.Dashboard.CloseTerminalTabs == nil {
+		return def
+	}
+	var targets *TerminalTabCloseTargets
+	switch event {
+	case TerminalTabSessionEnded:
+		targets = c.Dashboard.CloseTerminalTabs.SessionEnded
+	case TerminalTabDetached:
+		targets = c.Dashboard.CloseTerminalTabs.Detached
+	}
+	if targets == nil {
+		return def
+	}
+	var v *bool
+	switch target {
+	case TerminalTabGroupTerminal:
+		v = targets.GroupTerminal
+	case TerminalTabAgentTerminal:
+		v = targets.AgentTerminal
+	case TerminalTabAgentWindow:
+		v = targets.AgentWindow
+	}
+	if v == nil {
+		return def
+	}
+	return *v
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,

@@ -20813,3 +20813,11 @@ body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; 
 body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
 body.wizard .dock-process-toggle button.on { background: #2d2145; }
+/* Auto-close terminal tabs: event rows × terminal-kind columns of checkboxes. */
+.cfg-close-tabs { border-collapse: collapse; font-size: 12px; }
+.cfg-close-tabs th, .cfg-close-tabs td { padding: 4px 10px; text-align: center; }
+.cfg-close-tabs thead th { color: #7d8590; font-weight: 500; }
+.cfg-close-tabs tbody th { text-align: left; font-weight: 500; white-space: nowrap; }
+@media (max-width: 600px) {
+  .cfg-close-tabs th, .cfg-close-tabs td { padding: 4px 5px; }
+}

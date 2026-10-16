@@ -727,3 +727,49 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   assert.equal(reconnect.at(-1), true, 'a kicked view may reconnect');
   widget.dispose();
 });
+
+test('a terminal-exit close code settles the pane and reports whether to close the tab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  for (const [code, text, closeTab] of [
+    [4001, 'session ended', false], [4002, 'session ended', true],
+    [4003, 'detached', false], [4004, 'detached', true],
+  ]) {
+    const host = harness.document.body.appendChild(harness.document.createElement('div'));
+    const fakes = widgetFakes(harness.document);
+    const statuses = [];
+    const reconnect = [];
+    const disconnects = [];
+    let instanceFetches = 0;
+    const widget = mountTerminalWidget({
+      host,
+      wsPath: '/api/group-term-ws/tclaude',
+      onStatus: (value) => statuses.push(value),
+      onReconnectChange: (value) => reconnect.push(value),
+      onDisconnect: (info) => disconnects.push(info),
+      fetchImpl: async (url) => {
+        if (String(url).includes('/api/instance')) instanceFetches += 1;
+        return { ok: true, json: async () => ({}) };
+      },
+      TerminalCtor: fakes.FakeTerminal,
+      FitAddonCtor: fakes.FakeFitAddon,
+      WebSocketCtor: fakes.FakeWebSocket,
+      ResizeObserverCtor: fakes.FakeResizeObserver,
+      locationRef: { protocol: 'https:', host: 'dashboard.test' },
+      documentRef: harness.document,
+      interactionsFactory: fakes.interactionsFactory,
+      initialRetry: true,
+    });
+    await widget.connect();
+    fakes.sockets[0].open();
+    const fetchesBefore = instanceFetches;
+    fakes.sockets[0].readyState = 3;
+    fakes.sockets[0].onclose({ code });
+    assert.equal(statuses.at(-1), text, `code ${code} status`);
+    assert.equal(reconnect.at(-1), true, `code ${code} keeps Reconnect available`);
+    assert.deepEqual(disconnects, [{ closeTab }], `code ${code} close decision`);
+    assert.equal(fakes.sockets.length, 1, `code ${code} never retries`);
+    assert.equal(instanceFetches, fetchesBefore, `code ${code} never watches for a restart`);
+    widget.dispose();
+  }
+});

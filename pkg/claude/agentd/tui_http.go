@@ -86,7 +86,7 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
 	)
 	h, _ := harness.Get(sess.Harness)
-	runPTYOverWS(w, r, command, "", sess.TmuxSession, h)
+	runPTYOverWS(w, r, command, "", sess.TmuxSession, h, "")
 }
 
 // authenticateTUIHTTPRequest accepts either an existing dashboard session or

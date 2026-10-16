@@ -792,3 +792,35 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   cleanup();
   skynetState.clearFleet();
 });
+
+test('a widget disconnect asking to close the tab closes only that pane, without a detach', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const requests = [];
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    confirm: async () => true,
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+  });
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/api/group-term-ws/g', key: 'groupterm:g', label: 'shell' });
+    controller.openTerminalPane({ ws: '/api/open-window-ws/agt_one', key: 'window:agt_one', label: 'agent', agent: 'agt_one', hideConv: 'agt_one' });
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 2);
+
+  await harness.act(() => fake.widgets[1].options.onDisconnect({ closeTab: false }));
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 2, 'a kept exit leaves the tab open');
+
+  await harness.act(() => fake.widgets[0].options.onDisconnect({ closeTab: true }));
+  const labels = [...host.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
+  assert.equal(labels.length, 1);
+  assert.ok(labels[0].includes('agent'), 'only the exited pane closed');
+  assert.equal(fake.widgets[0].disposeCount, 1);
+  assert.equal(requests.filter((url) => String(url).includes('/api/hide/')).length, 0,
+    'closing an exited pane sends no detach');
+  await harness.act(() => cleanup());
+});

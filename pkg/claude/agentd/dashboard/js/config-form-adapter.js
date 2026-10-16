@@ -1,6 +1,7 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
+import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
 import { dashboardState } from './snapshot-store.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 
@@ -543,6 +544,14 @@ function populateConfigForm(cfg) {
   $('#cfg-terminal-attach-pre-delay').value = terminalAttach.pre_attach_delay_ms != null
     ? terminalAttach.pre_attach_delay_ms : '';
 
+  // Auto-close terminal tabs matrix; absent cells show their default.
+  const closeTabs = closeTabsChecked(cfg.dashboard && cfg.dashboard.close_terminal_tabs);
+  for (const [event] of CLOSE_TAB_EVENTS) {
+    for (const [target] of CLOSE_TAB_TARGETS) {
+      $(`#cfg-close-tabs-${event}-${target}`).checked = closeTabs[`${event}.${target}`];
+    }
+  }
+
   // Local dashboards use the web chooser by default too; only an explicit
   // native preference unchecks it. Remote origins use web regardless.
   $('#cfg-dashboard-default-web-directory-picker').checked = cfg.dashboard?.default_directory_picker !== 'native';
@@ -892,6 +901,16 @@ function assembleConfig() {
   }
   if (Object.keys(terminalAttach).length) dashboard.terminal_attach = terminalAttach;
   else delete dashboard.terminal_attach;
+  // close_terminal_tabs: only cells that differ from the Go defaults persist.
+  const closeTabsMatrix = {};
+  for (const [event] of CLOSE_TAB_EVENTS) {
+    for (const [target] of CLOSE_TAB_TARGETS) {
+      closeTabsMatrix[`${event}.${target}`] = $(`#cfg-close-tabs-${event}-${target}`).checked;
+    }
+  }
+  const closeTabs = closeTabsStored(closeTabsMatrix);
+  if (closeTabs) dashboard.close_terminal_tabs = closeTabs;
+  else delete dashboard.close_terminal_tabs;
   // Web is also the local default; persist only an explicit opt-out to the
   // native OS dialog. Remote dashboards still always route to web.
   if (!$('#cfg-dashboard-default-web-directory-picker').checked) dashboard.default_directory_picker = 'native'; else delete dashboard.default_directory_picker;

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -135,7 +136,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand)
-	runPTYOverWS(w, r, cmd, name, "", nil)
+	runPTYOverWS(w, r, cmd, name, "", nil, config.TerminalTabAgentTerminal)
 }
 
 func termSessionNameForGroup(convID, which, group string) string {
@@ -245,7 +246,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand)
-	runPTYOverWS(w, r, cmd, sessName, "", nil)
+	runPTYOverWS(w, r, cmd, sessName, "", nil, config.TerminalTabGroupTerminal)
 }
 
 func groupTerminalBootstrap(environment []sandboxpolicy.EnvironmentEntry) string {
@@ -327,7 +328,7 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// until then this is still strictly better than the pre-fix behaviour and
 	// correct for the common native-terminal case.
 	h, _ := harness.Get(sess.Harness)
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, sess.TmuxSession, h)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -371,7 +372,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h, _ := harness.Get(sess.Harness)
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow)
 }
 
 // waitForDashboardSpawnFocusSession bridges the one spawn shape where the
@@ -429,6 +430,12 @@ type termWSHook struct {
 	// OnTeardown observes the completed per-connection teardown (detach +
 	// PTY close + process-group hangup + reap) — exactly once per PTY.
 	OnTeardown func()
+	// SessionAlive replaces the tmux liveness probe run when a PTY exits on
+	// its own (see terminalExitClose).
+	SessionAlive func(tmuxSession string) bool
+	// Config replaces the config read that decides whether that exit closes
+	// the browser tab.
+	Config func() *config.Config
 }
 
 var termWSTestHook *termWSHook
@@ -596,7 +603,11 @@ func webTerminalAttachCmd(attachCommand string) string {
 // managed pane whose copy mode must be cancelled after this PTY's tmux client
 // exits. Keeping them separate lets the standalone TUI clean up its own detach
 // without evicting other viewers. Ad hoc terminals pass no cleanup harness.
-func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness) {
+//
+// exitTarget names the dashboard terminal kind for the close-tab decision made
+// when the PTY's command exits on its own (see terminalExitClose); "" (the TUI
+// page, tests) skips that decision and closes the socket plainly.
+func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness, exitTarget config.TerminalTabTarget) {
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {
 		shellCommand, detachSession = hook.RewriteCommand(shellCommand, detachSession)
@@ -789,8 +800,10 @@ initialSize:
 	// The tmux server lives outside this group, so its session keeps running.
 	// Closing conn also releases the frame reader and the input pump.
 	var closeOnce sync.Once
+	var closing atomic.Bool
 	closeBoth := func() {
 		closeOnce.Do(func() {
+			closing.Store(true)
 			hangupProcessGroup(cmd.Process)
 			_ = ptmx.Close()
 			_ = conn.Close()
@@ -813,6 +826,14 @@ initialSize:
 		for {
 			n, err := ptmx.Read(buf)
 			if err != nil {
+				// Nothing closed us first, so the attached command exited by
+				// itself: tell the browser why before the socket goes.
+				if !closing.Load() {
+					if code, reason, ok := terminalExitClose(hook, detachSession, exitTarget); ok {
+						_ = conn.WriteControl(websocket.CloseMessage,
+							websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+					}
+				}
 				return
 			}
 			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
@@ -851,6 +872,49 @@ initialSize:
 	}()
 
 	wg.Wait()
+}
+
+// Close codes a browser terminal socket carries when its command exited on its
+// own. The browser keys off the code alone (terminals-core.js TERMINAL_EXIT):
+// it words the pane status from the event and closes the tab only for the
+// *Close codes, which the daemon picks from dashboard.close_terminal_tabs.
+const (
+	termCloseSessionEndedKeep  = 4001
+	termCloseSessionEndedClose = 4002
+	termCloseDetachedKeep      = 4003
+	termCloseDetachedClose     = 4004
+)
+
+// terminalExitClose classifies a PTY whose attached tmux client exited on its
+// own: the session is gone (session ended) or still alive (the client was
+// detached). Config is read now rather than at attach so a Config-tab change
+// applies to tabs already open. ok is false when there is nothing to classify.
+func terminalExitClose(hook *termWSHook, tmuxSession string, target config.TerminalTabTarget) (code int, reason string, ok bool) {
+	if tmuxSession == "" || target == "" {
+		return 0, "", false
+	}
+	alive := session.IsTmuxSessionAlive
+	if hook != nil && hook.SessionAlive != nil {
+		alive = hook.SessionAlive
+	}
+	var cfg *config.Config
+	if hook != nil && hook.Config != nil {
+		cfg = hook.Config()
+	} else if loaded, err := config.Load(); err == nil {
+		cfg = loaded
+	} else {
+		slog.Warn("browser terminal exit: load config failed; using defaults", "error", err)
+	}
+	if alive(tmuxSession) {
+		if cfg.CloseTerminalTab(config.TerminalTabDetached, target) {
+			return termCloseDetachedClose, "detached", true
+		}
+		return termCloseDetachedKeep, "detached", true
+	}
+	if cfg.CloseTerminalTab(config.TerminalTabSessionEnded, target) {
+		return termCloseSessionEndedClose, "session ended", true
+	}
+	return termCloseSessionEndedKeep, "session ended", true
 }
 
 // upgradeTerminalWebSocket carries response headers already written by the

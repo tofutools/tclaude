@@ -3,6 +3,7 @@ import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
 import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
+import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -445,6 +446,22 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             </div>
           </div>
         </div>
+      </${Group}>
+
+      <${Group} title="Web terminal tabs">
+        <${Setting} title="Auto-close tabs" k="dashboard.close_terminal_tabs" wide
+          summary="Close a terminal tab by itself when its tmux side goes away."
+          more=${html`<strong>Session ended</strong>: the tmux session is gone — the shell exited (<code>exit</code> / Ctrl-D), the agent exited, or the session was killed. Reconnecting a shell would only start a fresh one, so shell tabs close by default; agent windows stay open so the exit stays visible. <strong>Detached</strong>: the tmux client left but the session lives on — <kbd>prefix</kbd>+<kbd>d</kbd>, or the session was opened elsewhere. Kept by default so Reconnect can bring it back. Applies to tabs already open. Stored under <code>dashboard.close_terminal_tabs</code> (defaults are omitted).`}>
+          <table class="cfg-close-tabs" aria-label="Auto-close terminal tabs">
+            <thead><tr><th></th>${CLOSE_TAB_TARGETS.map(([, label]) => html`<th scope="col">${label}</th>`)}</tr></thead>
+            <tbody>${CLOSE_TAB_EVENTS.map(([event, label]) => html`<tr>
+              <th scope="row">${label}</th>
+              ${CLOSE_TAB_TARGETS.map(([target, targetLabel]) => html`<td>
+                <${ConfigInput} type="checkbox" id=${`cfg-close-tabs-${event}-${target}`} aria-label=${`Close ${targetLabel} tabs when ${label.toLowerCase()}`} />
+              </td>`)}
+            </tr>`)}</tbody>
+          </table>
+        </${Setting}>
       </${Group}>
     </${Panel}>
 
