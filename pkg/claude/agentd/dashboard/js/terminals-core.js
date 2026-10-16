@@ -629,6 +629,11 @@ export function mountTerminalWidget({
       cancelPostAttachResize();
       cancelInitialResize();
       const exit = !remote && TERMINAL_EXIT[event?.code];
+      // A pop-out or reattach can briefly lose to the client it replaces: the
+      // old socket's teardown detaches every client, ours included, which
+      // reads as a detach. Inside the initial-retry window that race still
+      // earns its retry before an exit code is trusted.
+      if (exit && (openedAt === null || now() - openedAt < initialRetryStabilityMs) && scheduleInitialRetry()) return;
       if (exit) {
         setStatus(exit.text);
         setReconnectAvailable(true);

@@ -758,7 +758,6 @@ test('a terminal-exit close code settles the pane and reports whether to close t
       locationRef: { protocol: 'https:', host: 'dashboard.test' },
       documentRef: harness.document,
       interactionsFactory: fakes.interactionsFactory,
-      initialRetry: true,
     });
     await widget.connect();
     fakes.sockets[0].open();
@@ -772,4 +771,37 @@ test('a terminal-exit close code settles the pane and reports whether to close t
     assert.equal(instanceFetches, fetchesBefore, `code ${code} never watches for a restart`);
     widget.dispose();
   }
+});
+
+test('an exit code inside the initial-retry window still retries a pop-out attach', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  const statuses = [];
+  const disconnects = [];
+  const timers = [];
+  const widget = mountTerminalWidget({
+    host,
+    wsPath: '/api/group-term-ws/tclaude',
+    onStatus: (value) => statuses.push(value),
+    onDisconnect: (info) => disconnects.push(info),
+    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+    setTimeoutImpl: (fn) => { timers.push(fn); return timers.length; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+    initialRetry: true,
+  });
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].readyState = 3;
+  fakes.sockets[0].onclose({ code: 4004 });
+  assert.equal(statuses.at(-1), 'retrying…');
+  assert.deepEqual(disconnects, [], 'an unstable detach neither settles nor closes the tab');
+  widget.dispose();
 });
