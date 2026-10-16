@@ -864,11 +864,18 @@ test('settled waits for parsed output and a quiet gap or the busy cap, or gives 
 
   // A busy harness (spinner, elapsed-time counter) never goes quiet; once its
   // attach redraw has been parsed for maxAfterOutputMs it counts as settled.
+  // quietMs is out of reach here, so only the cap can resolve it ('screen'
+  // was first parsed 600ms ago).
   let busy = null;
-  const streaming = widget.settled({ quietMs: 500, maxAfterOutputMs: 750, timeoutMs: 6000 })
+  const streaming = widget.settled({ quietMs: 5000, maxAfterOutputMs: 750, timeoutMs: 6000 })
     .then((value) => { busy = value; });
   fakes.sockets[0].onmessage({ data: 'tick' });
-  clock += 200;
+  clock += 100;
+  runTimers();
+  await Promise.resolve();
+  assert.equal(busy, null, 'still streaming, before the busy cap: waiting');
+  fakes.sockets[0].onmessage({ data: 'tick' });
+  clock += 100;
   runTimers();
   await Promise.resolve();
   assert.equal(busy, true, 'still streaming, but past the busy cap: settled');
