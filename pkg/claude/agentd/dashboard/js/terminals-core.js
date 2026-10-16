@@ -216,6 +216,9 @@ export function mountTerminalWidget({
   let initialResizeTimer = null;
   let initialResizeReady = false;
   let firstOutputSeen = false;
+  // When xterm last finished parsing output from this connection (0 = none
+  // yet). settled() reads it to tell "attached and redrawn" from "still busy".
+  let lastOutputParsedAt = 0;
   let postOpenFitFrame = null;
   let postAttachResizeTimer = null;
   let postAttachResizeScheduled = false;
@@ -550,6 +553,7 @@ export function mountTerminalWidget({
     const mine = generation;
     postAttachResizeScheduled = false;
     firstOutputSeen = false;
+    lastOutputParsedAt = 0;
     initialResizeReady = false;
     abortAuth();
     closeSocket();
@@ -611,12 +615,15 @@ export function mountTerminalWidget({
         // federation stream's window stays bounded through the renderer.
         const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new TextEncoder().encode(String(event.data));
         term.write(bytes, () => {
+          lastOutputParsedAt = now();
           if (disposed || mine !== generation || ws !== socket || socket.readyState !== WebSocketCtor.OPEN || !bytes.byteLength) return;
           socket.send(JSON.stringify({ type: 'credit', bytes: bytes.byteLength }));
         });
         return;
       }
-      term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+      term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, () => {
+        lastOutputParsedAt = now();
+      });
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually
       // producing a screen, so anchor the delayed harness reflow here instead
@@ -691,6 +698,25 @@ export function mountTerminalWidget({
     }
   }
 
+  // settled resolves true once this terminal has drawn output and xterm has
+  // then been idle for quietMs — the attach and the harness's redraw (with
+  // the repair reflow) are done — or false at timeoutMs or disposal. Lets a
+  // caller opening several terminals bring them up one at a time instead of
+  // parsing every harness's full redraw on the main thread at once.
+  function settled({ quietMs = 500, timeoutMs = 6000 } = {}) {
+    const started = now();
+    return new Promise((resolve) => {
+      const check = () => {
+        if (disposed) { resolve(false); return; }
+        const at = now();
+        if (lastOutputParsedAt && at - lastOutputParsedAt >= quietMs) { resolve(true); return; }
+        if (at - started >= timeoutMs) { resolve(false); return; }
+        setTimeoutImpl(check, 100);
+      };
+      check();
+    });
+  }
+
   function connect() {
     cancelRetry();
     retryIndex = 0;
@@ -730,6 +756,7 @@ export function mountTerminalWidget({
 
   return Object.freeze({
     connect,
+    settled,
     fit,
     focus,
     sendResize,

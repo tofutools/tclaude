@@ -19,16 +19,16 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
   };
 }
 
-export function openTerminalPane(seedOrPromise, { reveal = true } = {}) {
+export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   return Promise.resolve(seedOrPromise).then((rawSeed) => {
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed, { reveal });
+    if (!prepareRuntime) return current.openPane(seed, { reveal, activate });
     return prepareRuntime().then(
-      () => controller === current ? current.openPane(seed, { reveal }) : null,
+      () => controller === current ? current.openPane(seed, { reveal, activate }) : null,
       (error) => {
         console.error('terminal runtime load failed:', error);
         return null;
@@ -52,8 +52,8 @@ export function openWebWindowPane(agent, label, options) {
   }, paneOptions);
 }
 
-export function openWebTermPane(agent, label, whichOrPromise, { group = '' } = {}) {
-  openTerminalPane(
+export function openWebTermPane(agent, label, whichOrPromise, { group = '', ...paneOptions } = {}) {
+  return openTerminalPane(
     Promise.resolve(whichOrPromise).then((which) => (which
       ? {
         ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}${group ? `&group=${encodeURIComponent(group)}` : ''}`,
@@ -62,15 +62,23 @@ export function openWebTermPane(agent, label, whichOrPromise, { group = '' } = {
         agent,
       }
       : null)),
+    paneOptions,
   );
 }
 
 export function openGroupWebTermPane(group, label, options) {
-  openTerminalPane({
+  return openTerminalPane({
     ws: `/api/group-term-ws/${encodeURIComponent(group)}`,
     label,
     key: `groupterm:${group}`,
   }, options);
+}
+
+// waitForTerminalSettled resolves once the terminal opened under key has
+// attached and drawn its first screen (true), or false on timeout / when no
+// terminal shell is mounted.
+export function waitForTerminalSettled(key, options) {
+  return controller?.waitForPaneSettled?.(key, options) || Promise.resolve(false);
 }
 
 export function focusTerminalForConv(selectors, options) {

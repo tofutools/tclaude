@@ -50,6 +50,27 @@ export function createTerminalShellActions({
     return state.openPane(seed, options);
   }
 
+  // waitForPaneSettled resolves once the pane under key has attached and its
+  // first redraw has been parsed (see the widget's settled), or false on
+  // timeout. The widget registers on mount, a tick after the pane appears.
+  function waitForPaneSettled(key, { quietMs, timeoutMs = 6000 } = {}) {
+    const started = Date.now();
+    return new Promise((resolve) => {
+      const poll = () => {
+        const pane = state.panes.value.find((candidate) => candidate.key === key);
+        const widget = pane && widgets.get(pane.id);
+        const remaining = timeoutMs - (Date.now() - started);
+        if (widget?.settled) {
+          widget.settled({ quietMs, timeoutMs: Math.max(0, remaining) }).then(resolve, () => resolve(false));
+          return;
+        }
+        if (disposed || remaining <= 0) { resolve(false); return; }
+        setTimeout(poll, 50);
+      };
+      poll();
+    });
+  }
+
   async function receiveHandoffPane(seed) {
     if (disposed) return null;
     const key = seed?.key || seed?.ws;
@@ -224,6 +245,7 @@ export function createTerminalShellActions({
 
   return Object.freeze({
     registerWidget,
+    waitForPaneSettled,
     widgetFor,
     openPane,
     receiveHandoffPane,

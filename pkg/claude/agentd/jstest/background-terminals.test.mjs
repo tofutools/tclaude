@@ -105,3 +105,34 @@ test('background terminal helpers', async (t) => {
   assert.deepEqual(requests, ['/api/background-terminals']);
   assert.equal(backgroundTerminals.value.length, 1);
 });
+
+test('attach all opens one terminal at a time and only the first takes focus', async (t) => {
+  const s = await mountTabs(t);
+  const order = [];
+  let release = null;
+  const waitForSettled = (key) => new Promise((resolve) => {
+    order.push(`settle:${key}`);
+    release = resolve;
+  });
+  const rows = ROWS.filter((row) => row.key && row.key !== 'one');
+  let done = false;
+  const run = s.background.attachAllBackgroundTerminals(rows, null, { waitForSettled }).then((count) => { done = count; });
+  const tick = () => s.harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  await tick();
+  assert.deepEqual(s.state.panes.value.map((pane) => pane.key), ['window:agt_bg'], 'only the first is opened');
+  assert.equal(s.state.activeKey.value, 'window:agt_bg');
+  assert.deepEqual(order, ['settle:window:agt_bg']);
+  assert.equal(await s.background.attachAllBackgroundTerminals(rows, null, { waitForSettled }), 0,
+    'a second click while one runs is ignored');
+
+  release(true);
+  await tick();
+  assert.deepEqual(s.state.panes.value.map((pane) => pane.key), ['window:agt_bg', 'term:agt_bg:current:'],
+    'the next opens once the previous has settled');
+  assert.equal(s.state.activeKey.value, 'window:agt_bg', 'later panes open behind the first');
+
+  release(false);
+  await run;
+  assert.equal(done, 2);
+});
