@@ -63,3 +63,34 @@ test('a Start in request expands the group and expires if never taken', async (t
   requestProcessStart({ group: 'webshop', templateId: 'ship' }, opts);
   assert.equal(takeProcessStart('webshop', { now: () => 60_000 }), null, 'stale request dropped');
 });
+
+test('deleteFromLibrary asks first with the shared copy, then deletes and reloads', async (t) => {
+  const { deleteFromLibrary, PROCESS_LIBRARY_EVENT } = await load(t);
+  const row = { id: 'ship', name: 'Ship it', versionCount: 3 };
+  const asked = [];
+  const calls = [];
+  const events = [];
+  const doc = { body: { classList: { contains: () => false } }, dispatchEvent: (event) => events.push(event.type) };
+  const fetchImpl = async (url, init) => { calls.push([url, init.method]); return { ok: true, status: 200, json: async () => ({}) }; };
+
+  assert.equal(await deleteFromLibrary(row, { confirm: async (request) => { asked.push(request); return false; }, fetchImpl, doc, notify: null, context: null }), false);
+  assert.deepEqual(calls, [], 'declined: nothing deleted');
+  assert.equal(asked[0].title, 'Delete this process template?');
+  assert.match(asked[0].body, /Ship it and all 3 versions/);
+  assert.equal(asked[0].meta, 'ship');
+
+  const refreshed = [];
+  assert.equal(await deleteFromLibrary(row, { confirm: async () => true, fetchImpl, doc, notify: null, context: { refresh: async () => refreshed.push(1) } }), true);
+  assert.deepEqual(calls, [['/v1/process/templates/ship', 'DELETE']]);
+  assert.deepEqual(events, [PROCESS_LIBRARY_EVENT]);
+  assert.equal(refreshed.length, 1);
+});
+
+test('deleteFromLibrary reports a refused delete', async (t) => {
+  const { deleteFromLibrary } = await load(t);
+  const doc = { body: null, dispatchEvent: () => assert.fail('no reload on failure') };
+  await assert.rejects(deleteFromLibrary({ id: 'ship' }, {
+    confirm: async () => true, doc, notify: null, context: null,
+    fetchImpl: async () => ({ ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ message: 'not allowed' }) }),
+  }), /not allowed/);
+});

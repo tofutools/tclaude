@@ -12,7 +12,7 @@
 // - ⧉ opens Automations › Processes, where templates are managed and deleted.
 
 import { h } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
@@ -22,6 +22,8 @@ import { handOffProcessDraft } from './process-draft-handoff.js';
 import { requestProcessStart } from './process-start-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { groupsState } from './groups-state.js';
+import { shellConfirm, shellToast } from './shell-state.js';
+import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 
 const html = htm.bind(h);
 
@@ -65,7 +67,29 @@ export async function pinToGroup(group, templateId, { api = processRunApi, doc =
   void context?.refresh?.();
 }
 
-function Preview({ row, anchor, groups, onClose, onChanged, fetchImpl }) {
+// deleteFromLibrary asks first (the same confirmation as Automations ›
+// Processes), deletes the template with its whole version history, and asks
+// every library view and the group chips to reload. False when declined.
+export async function deleteFromLibrary(row, {
+  confirm = shellConfirm, notify = shellToast, fetchImpl = (...args) => fetch(...args),
+  doc = document, context = processContext,
+} = {}) {
+  const wizard = doc.body?.classList?.contains('wizard');
+  if (!(await confirm(processTemplateDeleteConfirmation({ ...row, wizard })))) return false;
+  const response = await fetchImpl(`/v1/process/templates/${encodeURIComponent(row.id)}`, {
+    method: 'DELETE', credentials: 'same-origin',
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok && response.status !== 404) {
+    throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+  }
+  notify?.(`deleted process template ${String(row.name || '').trim() || row.id}`);
+  doc.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+  void context?.refresh?.();
+  return true;
+}
+
+function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl }) {
   const [view, setView] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -79,8 +103,12 @@ function Preview({ row, anchor, groups, onClose, onChanged, fetchImpl }) {
     return () => { live = false; };
   }, [row.id]);
   useEffect(() => {
-    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    // The delete confirmation is a shell dialog outside the preview; answering
+    // it (or cancelling with Escape) must not also close the preview.
+    const inConfirm = (event) => Boolean(event.target?.closest?.('#shell-confirm-root'));
+    const onKey = (event) => { if (event.key === 'Escape' && !inConfirm(event)) onClose(); };
     const onDown = (event) => {
+      if (inConfirm(event)) return;
       if (!ref.current?.contains(event.target) && !anchor?.contains(event.target)) onClose();
     };
     document.addEventListener('keydown', onKey);
@@ -127,14 +155,40 @@ function Preview({ row, anchor, groups, onClose, onChanged, fetchImpl }) {
         ${groups.filter((group) => !pinned.has(group)).map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
       </select>
       <${WorkflowExportButton} id=${row.id} />
+      <span class="dpp-spacer"></span>
+      <button type="button" class="process-action process-action-danger" data-dock-process-delete onClick=${() => onDelete(row)}>${wizWord('Delete', 'Dispel')}</button>
     </div>
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
   </div>`;
 }
 
-function ProcessCard({ row, open, onOpen }) {
+function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipHost = null }) {
   const ref = useRef(null);
   const name = row.name || row.id;
+  // The ⚙ menu shares the dock's one-open-menu state, so the dock's outside
+  // click and Escape close it like every other card's.
+  const menuKey = `processes:${row.id}`;
+  const menuOpen = openMenu === menuKey;
+  const menuRef = useRef(null);
+  const cogRef = useRef(null);
+  const [opensUp, setOpensUp] = useState(false);
+  // This is the dock's last section, so a bottom card's menu would open below
+  // the scroll area; flip it up like the other sections' cards do.
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuRef.current || !cogRef.current) {
+      setOpensUp(false);
+      return;
+    }
+    const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const cogTop = cogRef.current.getBoundingClientRect().top;
+    setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
+  }, [menuOpen, clipHost]);
+  const act = (event, action) => {
+    event.preventDefault();
+    setOpenMenu(null);
+    action();
+  };
   // The body is not a <button>: the dock's drag gesture stands down on
   // buttons, and the whole card should drag.
   const toggle = () => onOpen(open ? null : { row, anchor: ref.current });
@@ -150,12 +204,26 @@ function ProcessCard({ row, open, onOpen }) {
         ? row.pinnedGroups.map((group) => html`<span key=${group} class="dock-chip dock-process-pin">${group}</span>`)
         : html`<span class="dock-chip dock-chip-more">not pinned</span>`}</span>
     </div>
+    <span class="dock-card-actions">
+      <button ref=${cogRef} type="button" class="dock-card-manage" data-dock-act="card-menu" data-dock-kind="processes" data-dock-name=${row.id}
+        aria-haspopup="menu" aria-expanded=${menuOpen ? 'true' : 'false'} title="More actions" aria-label=${`Actions for ${name}`}
+        onClick=${(event) => { event.preventDefault(); setOpenMenu(menuOpen ? null : menuKey); }}>⚙</button>
+      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${opensUp ? ' opens-up' : ''}`} role="menu" aria-label=${name}>
+        <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" data-dock-kind="processes" data-dock-name=${row.id}
+          onClick=${(event) => act(event, () => handOffProcessDraft({ id: row.id, name }))}>Edit</button>
+        <button type="button" role="menuitem" class="dock-card-menu-item danger" data-dock-act="delete-item" data-dock-kind="processes" data-dock-name=${row.id}
+          onClick=${(event) => act(event, () => onDelete(row))}>${wizWord('Delete', 'Dispel')}</button>
+      </div>
+    </span>
   </div>`;
 }
 
 // DockProcesses is the section. groups are the real groups' names, for the
 // Start in / Pin to pickers.
-export function DockProcesses({ groups = [], isSectionOpen, setSectionOpen, fetchImpl = (...args) => fetch(...args) }) {
+export function DockProcesses({
+  groups = [], isSectionOpen, setSectionOpen, openMenu = null, setOpenMenu = () => {}, clipHost = null,
+  fetchImpl = (...args) => fetch(...args), confirm = shellConfirm,
+}) {
   const [open, setOpen] = useState(() => isSectionOpen('processes'));
   const [all, setAll] = useState(false);
   const [rows, setRows] = useState(null);
@@ -171,6 +239,14 @@ export function DockProcesses({ groups = [], isSectionOpen, setSectionOpen, fetc
     document.addEventListener(PROCESS_LIBRARY_EVENT, load);
     return () => document.removeEventListener(PROCESS_LIBRARY_EVENT, load);
   }, [load]);
+  const remove = async (row) => {
+    try {
+      if (!(await deleteFromLibrary(row, { confirm, fetchImpl }))) return;
+      if (preview?.row.id === row.id) setPreview(null);
+    } catch (cause) {
+      setError(`Delete failed: ${cause.message}`);
+    }
+  };
   const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
   const current = preview && rows?.find((row) => row.id === preview.row.id);
   return html`<details class="dock-section dock-processes" data-key="processes" open=${open}
@@ -192,7 +268,7 @@ export function DockProcesses({ groups = [], isSectionOpen, setSectionOpen, fetc
         <span class="dock-section-count">${rows ? rows.length : ''}</span>
       </span>
       <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
-        title="Open Automations › Processes (manage and delete templates)"
+        title="Open Automations › Processes"
         onClick=${(event) => { event.preventDefault(); document.querySelector('nav [data-tab="processes"]')?.click(); }}>⧉</button>
     </summary>
     <div class="dock-section-items">
@@ -207,10 +283,11 @@ export function DockProcesses({ groups = [], isSectionOpen, setSectionOpen, fetc
       </div>
       ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
       ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
-      ${(rows || []).map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview} />`)}
+      ${(rows || []).map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview}
+        openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} clipHost=${clipHost} />`)}
       <div class=${`dock-process-drop${dropOver ? ' is-over' : ''}`}>⤓ ${wizWord('drop a .pwf here to import it', 'drop a .pwf scroll here')}</div>
     </div>
     ${current && html`<${Preview} row=${current} anchor=${preview.anchor} groups=${groups} fetchImpl=${fetchImpl}
-      onClose=${() => setPreview(null)} onChanged=${load} />`}
+      onClose=${() => setPreview(null)} onChanged=${load} onDelete=${remove} />`}
   </details>`;
 }

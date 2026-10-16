@@ -3502,6 +3502,31 @@ return (async function(){
 			SettleMS: 900,
 		},
 		{
+			Key:     "dock-processes-delete",
+			Title:   "Palette dock — deleting a process from the library",
+			Caption: "A library card's ⚙ menu has Edit and Delete, like the other dock sections; Delete (here, or in the preview) asks with the same confirmation as Automations › Processes before it removes every version.",
+			JS: showGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var deadline=Date.now()+4000, sec, card;
+  while(!(sec=document.querySelector('.dock-processes')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!sec) throw new Error('no Processes section in the dock');
+  sec.open=false; await new Promise(function(r){ setTimeout(r,60); }); sec.open=true;
+  while(!(card=document.querySelector('.dock-process-card[data-dock-name="release-train"]')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!card) throw new Error('release-train is not in the library');
+  var host=document.querySelector('#agent-dock .dock-inner')||document.querySelector('#agent-dock'); host.scrollTop=host.scrollHeight;
+  card.scrollIntoView({block:'center'});
+  card.querySelector('.dock-card-manage').click();
+  await new Promise(function(r){ setTimeout(r,60); });
+  var del=card.querySelector('.dock-card-menu.open [data-dock-act="delete-item"]');
+  if(!del) throw new Error('⚙ menu has no Delete');
+  del.click();
+  var root=document.querySelector('#shell-confirm-root'), asks=/Delete this process template\\?|Unmake this rite\\?/;
+  while(!(root && asks.test(root.textContent)) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!root || !asks.test(root.textContent)) throw new Error('delete confirmation did not open: '+(root&&root.textContent));
+})();`,
+			SettleMS: 500,
+		},
+		{
 			// JOH-388 req 5: each category folds on its own. Collapse Templates
 			// to its header (chevron flips); Profiles + Roles stay expanded. The
 			// fold is set on the live keyed <details>; Preact preserves it across

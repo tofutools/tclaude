@@ -346,7 +346,7 @@ export function Dock({ host, state, sections, isSectionOpen, setSectionOpen }) {
       />
     `),
     snapshot?.processes_enabled ? html`<${DockProcesses} key="processes" groups=${groups}
-      isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} />` : null,
+      isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} openMenu=${openMenu} setOpenMenu=${setOpenMenu} clipHost=${host} />` : null,
   ];
 }
 

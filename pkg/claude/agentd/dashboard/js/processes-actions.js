@@ -1,5 +1,6 @@
 import { templateHeadSignature } from './process-external-change.js';
 import { idempotentRequestHeaders } from './request-idempotency.js';
+import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { dashboardState } from './snapshot-store.js';
 import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
@@ -559,24 +560,14 @@ export function createProcessesActions({
       return false;
     }
   }
-  // deleteTemplate is the shared commit for BOTH delete affordances (the row
-  // button and the drag-to-bin drop), so the confirm copy
-  // and the list refresh cannot drift between them.
-  //
-  // Deleting drops the whole version history for the id.
+  // deleteTemplate is the shared commit for BOTH delete affordances here (the
+  // row button and the drag-to-bin drop), so the list refresh cannot drift
+  // between them; the confirm copy is shared with the dock's library too.
   async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {
     if (!id) return false;
     const label = String(name || '').trim() || id;
-    const versions = Number(versionCount) || 0;
     const wizard = document.body?.classList?.contains('wizard');
-    const approved = await confirm({
-      title: wizard ? 'Unmake this rite?' : 'Delete this process template?',
-      body: wizard
-        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail.`
-        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. This cannot be undone.`,
-      meta: id,
-      okLabel: wizard ? 'Unmake rite' : 'Delete template',
-    });
+    const approved = await confirm(processTemplateDeleteConfirmation({ id, name, versionCount, wizard }));
     if (!approved) return false;
     if (!state.beginMutation()) {
       state.setNotice('Another process action is still running; retry the delete once it settles.');
@@ -604,6 +595,8 @@ export function createProcessesActions({
       }
       state.setNotice(`Deleted ${label}.`);
       notify(`deleted process template ${label}`);
+      // The dock's library and the groups' saved-process chips list it too.
+      document.dispatchEvent(new CustomEvent('tclaude:process-library-changed', { detail: { source: 'processes' } }));
       void load('templates', { quiet: true });
       return true;
     } catch (error) {
