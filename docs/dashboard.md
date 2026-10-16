@@ -693,7 +693,11 @@ full recording policy is in [Permissions and audit](permissions-and-audit.md).
 
 A paged viewer over `~/.tclaude/output.log` and its rotated files: level
 pills, structured fields, search, a level floor, a since filter, and a
-2-second live-stream toggle.
+2-second live-stream toggle. **⤓ export** downloads every line matching the
+current filter (search, level, since, rotated, hide raw) as JSON lines,
+oldest first, verbatim from disk. The download ignores paging and the view's
+64 MiB tail cap, so it can cover more history than the tab can page through.
+Turn on **rotated** to include the rotated files.
 
 ### Performance
 

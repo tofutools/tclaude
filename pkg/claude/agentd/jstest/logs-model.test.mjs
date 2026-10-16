@@ -19,4 +19,7 @@ test('Logs model formats records, builds API params, and keys duplicate rows sta
   assert.deepEqual(keyed.map((item) => item.key), ['server:2', 'server:1'], 'server identity survives a full sliding page');
   const params = model.logsParams({ page: 2, pageSize: 50, query: ' boom ', level: 'warn', rangeMs: 1000, includeRotated: true, hideRaw: true }, 5000);
   assert.equal(params.toString(), 'page=2&page_size=50&q=boom&level=warn&from=4000&include_rotated=1&hide_raw=1');
+  assert.equal(model.logsExportUrl({ page: 2, pageSize: 50, query: ' boom ', level: 'warn', rangeMs: 1000, includeRotated: true, hideRaw: true }, 5000),
+    '/api/logs/export?q=boom&level=warn&from=4000&include_rotated=1&hide_raw=1', 'export keeps the filter but drops the pager');
+  assert.equal(model.logsExportUrl({ page: 1, pageSize: 100, query: '', level: '', rangeMs: 0 }), '/api/logs/export');
 });
