@@ -64,3 +64,18 @@ test('a message without files downloads Markdown and offers no zip', async (t) =
   assert.deepEqual([...mounted.container.querySelectorAll('[role="menuitem"]')].map((item) => item.dataset.export), ['md', 'copy']);
   await mounted.unmount();
 });
+
+test('the default download hands the export URL to a transient anchor and removes it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { triggerDownload } = await harness.importDashboardModule('js/message-download-menu.js');
+  const clicked = [];
+  const onClick = (event) => {
+    clicked.push({ href: event.target.getAttribute('href'), download: event.target.hasAttribute('download') });
+    event.preventDefault();
+  };
+  harness.document.addEventListener('click', onClick);
+  t.after(() => harness.document.removeEventListener('click', onClick));
+  triggerDownload('/api/human-messages/9/export?attachments=1', harness.document);
+  assert.deepEqual(clicked, [{ href: '/api/human-messages/9/export?attachments=1', download: true }]);
+  assert.equal(harness.document.querySelector('a[download]'), null, 'the anchor does not outlive the click');
+});

@@ -16,12 +16,14 @@ const html = htm.bind(h);
 
 // triggerDownload hands an authenticated same-origin URL to the browser's own
 // download path, so a large zip streams to disk instead of through JS memory.
-function triggerDownload(href) {
-  const link = document.createElement('a');
+// The anchor lives only for the click.
+// dashboard-imperative-boundary: browser-io
+export function triggerDownload(href, documentRef = globalThis.document) {
+  const link = documentRef.createElement('a');
   link.href = href;
   link.download = '';
   link.rel = 'noopener';
-  document.body.appendChild(link);
+  documentRef.body.appendChild(link);
   link.click();
   link.remove();
 }
