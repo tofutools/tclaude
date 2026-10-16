@@ -9,6 +9,7 @@ import htm from 'htm';
 import { $, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
 import { toPath } from './nav-history-core.js';
+import { clickNavExactly } from './automations-nav.js';
 import { JOBS_KINDS, jobsLocation } from './jobs-state.js';
 
 const html = htm.bind(h);
@@ -48,7 +49,7 @@ export function openAutomationsEntry(key) {
     return;
   }
   featureState('jobs')?.setKind?.(key);
-  $('nav [data-tab="jobs"]')?.click();
+  clickNavExactly($('nav [data-tab="jobs"]'));
 }
 
 // AutomationsSubnav renders the row. `onSelect(key)` handles a plain

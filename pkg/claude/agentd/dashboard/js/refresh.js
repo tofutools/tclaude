@@ -42,6 +42,7 @@ import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
+import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -396,6 +397,16 @@ function bindTabs() {
       // preventDefault is a harmless no-op there.
       if (isModifiedClick(e)) return;
       e.preventDefault();
+      // Automations reopens the section the operator left it on: a return
+      // from /automations/processes/... goes back to Processes, not Jobs.
+      const current = $$('nav [data-tab]').find(x => x.classList.contains('active'))?.dataset.tab;
+      const processesUsable = !document.body.classList.contains('hide-processes') && peerViewTabUsable('processes');
+      const target = automationsNavTarget(b.dataset.tab, current, processesUsable);
+      if (target !== b.dataset.tab) {
+        $(`nav [data-tab="${target}"]`)?.click();
+        return;
+      }
+      noteAutomationsSection(b.dataset.tab);
       $$('nav [data-tab]').forEach(x => x.classList.toggle('active', x === b));
       $$('main section').forEach(s => {
         s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
