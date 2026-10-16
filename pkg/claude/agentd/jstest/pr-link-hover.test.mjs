@@ -89,3 +89,24 @@ test('hovering the PR link opens a details card', async (t) => {
     await mounted.unmount();
   }
 });
+
+test('only GitHub pull requests get a card; other forges keep the plain link', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRLinkHover, githubPRBase } = await harness.importDashboardModule('js/pr-link-hover.js');
+  assert.equal(githubPRBase(`${PR}/files?w=1#diff`), PR);
+  assert.equal(githubPRBase('https://gitlab.com/a/b/-/merge_requests/3'), '');
+  assert.equal(githubPRBase('javascript:alert(1)'), '');
+
+  const other = 'https://gitlab.com/a/b/-/merge_requests/3';
+  const mounted = await harness.mount(harness.html`
+    <span><${PRLinkHover} url=${other} prNumber=${3} className="pr-state-open" label="#3" describe="MR" /></span>
+  `);
+  try {
+    assert.equal(mounted.container.querySelector('.prd-hover'), null, 'no hover root, so no card');
+    const link = mounted.container.querySelector('a.pr-link');
+    assert.equal(link.getAttribute('href'), other);
+    assert.equal(link.getAttribute('title'), 'MR');
+  } finally {
+    await mounted.unmount();
+  }
+});

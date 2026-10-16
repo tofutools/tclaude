@@ -42,9 +42,18 @@ const (
 	prDetailsMaxTitleRunes = 300
 	// prDetailsMaxRefRunes truncates a pathological branch name.
 	prDetailsMaxRefRunes = 200
+	// prDetailsFailureCooldown holds off another `gh` call after a failed
+	// read (gh missing or logged out, PR gone, rate limit), so a hover — or a
+	// pointer sweeping across a column of PR links — does not spawn one
+	// subprocess per poll against something that just failed.
+	prDetailsFailureCooldown = 30 * time.Second
 )
 
-var prDetailsInflight sync.Map
+var (
+	prDetailsInflight sync.Map
+	// prDetailsFailedAt records, per cache key, when the last read failed.
+	prDetailsFailedAt sync.Map
+)
 
 // prDetailsFields is the `gh pr view --json` field list the card needs.
 const prDetailsFields = "title,body,state,isDraft,author,createdAt,mergedAt,closedAt," +
@@ -255,36 +264,47 @@ func loadPRDetails(rawURL string) (prDetails, bool) {
 }
 
 // schedulePRDetailsRefresh kicks one background `gh` resolution for a PR,
-// deduplicated per PR identity. Reports whether it actually started one.
+// deduplicated per PR identity, unless a read failed within the cooldown.
+// Reports whether a read is now in flight — one it started or one already
+// running — so the panel knows whether asking again will bring a newer card.
 func schedulePRDetailsRefresh(rawURL string) bool {
+	key := prDetailsCacheKey(rawURL)
+	if _, busy := prDetailsInflight.Load(key); busy {
+		return true
+	}
+	if at, failed := prDetailsFailedAt.Load(key); failed && time.Since(at.(time.Time)) < prDetailsFailureCooldown {
+		return false
+	}
 	if err := presentedPRRemotePolicyCheck(rawURL); err != nil {
 		slog.Warn("pr-details: refusing refresh outside git proxy policy",
 			"error", err, "url", rawURL, "module", "agentd")
+		prDetailsFailedAt.Store(key, time.Now())
 		return false
 	}
-	key := prDetailsCacheKey(rawURL)
 	if _, busy := prDetailsInflight.LoadOrStore(key, struct{}{}); busy {
-		return false
+		return true
 	}
 	goBackground(func() {
 		defer prDetailsInflight.Delete(key)
 		raw, ok := prDetailsFetcher(rawURL)
+		var details prDetails
+		if ok {
+			details, ok = parsePRDetails(raw)
+		}
 		if !ok {
+			prDetailsFailedAt.Store(key, time.Now())
 			return
 		}
-		details, ok := parsePRDetails(raw)
-		if !ok {
-			return
-		}
+		prDetailsFailedAt.Delete(key)
 		details.FetchedAt = time.Now()
 		savePRDetails(rawURL, details)
 	})
 	return true
 }
 
-// prDetailsResponse is the hover card's wire shape. Refreshing marks a
-// response that started a `gh` call behind itself, so the panel knows a newer
-// answer is coming and re-polls once more.
+// prDetailsResponse is the hover card's wire shape. Refreshing marks a `gh`
+// read in flight behind this response, so the panel knows a newer answer is
+// coming and polls again; once it is false, asking again changes nothing.
 type prDetailsResponse struct {
 	URL        string     `json:"url"`
 	Details    *prDetails `json:"details,omitempty"`
@@ -293,8 +313,9 @@ type prDetailsResponse struct {
 }
 
 // handleDashboardPRDetails serves GET /api/pr-details?url=<github pr url>.
-// Cookie-authed (dashboard-only) and read-only. A merged or closed PR's card
-// is frozen once cached: nothing about it changes any more.
+// Cookie-authed (dashboard-only) and read-only. A merged PR's card is frozen
+// once cached: nothing about it changes any more. A closed one is not — it
+// can be reopened.
 func handleDashboardPRDetails(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -313,7 +334,7 @@ func handleDashboardPRDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	details, ok := loadPRDetails(rawURL)
-	stale := !ok || (time.Since(details.FetchedAt) >= prDetailsTTL && !isTerminalPresentedPRState(details.State))
+	stale := !ok || (time.Since(details.FetchedAt) >= prDetailsTTL && details.State != "merged")
 	resp := prDetailsResponse{URL: rawURL, Resolved: ok}
 	if stale {
 		resp.Refreshing = schedulePRDetailsRefresh(rawURL)

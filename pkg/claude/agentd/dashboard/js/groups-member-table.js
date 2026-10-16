@@ -1172,7 +1172,7 @@ function BranchCell({ member }) {
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
     const stateClass = prStateClass(pr.state);
-    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} className=${stateClass} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `Presented pull request: ${pr.summary}` : 'Presented pull request'} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
+    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} className=${stateClass} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
   })}</span>` : null}`;
 }
 

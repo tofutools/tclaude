@@ -108,3 +108,30 @@ func TestDashboardPRDetails_RejectsPROutsideRemotePolicy(t *testing.T) {
 		"/api/pr-details?url="+url.QueryEscape("https://example.com/not-a-pr"), nil))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+// A failed gh read (logged out, PR gone, rate limit) must not turn every poll
+// of an open card into another subprocess: the failure holds off retries, and
+// the response stops promising a newer answer so the panel stops polling.
+func TestDashboardPRDetails_FailedReadCoolsDown(t *testing.T) {
+	const prURL = "https://github.com/acme/app/pull/404"
+	_ = newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	savePresentedPRPolicy(t, "github.com/acme")
+	calls := 0
+	t.Cleanup(agentd.SetPRDetailsFetcherForTest(func(string) (string, bool) {
+		calls++
+		return "", false
+	}))
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	first := fetchPRDetails(t, mux, prURL)
+	assert.True(t, first.Refreshing)
+	agentd.WaitForBackgroundForTest()
+	for range 3 {
+		again := fetchPRDetails(t, mux, prURL)
+		assert.False(t, again.Resolved)
+		assert.False(t, again.Refreshing, "nothing is in flight during the cooldown")
+	}
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, 1, calls, "one failed read, not one per poll")
+}

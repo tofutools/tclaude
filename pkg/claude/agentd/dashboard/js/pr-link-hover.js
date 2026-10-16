@@ -15,9 +15,12 @@ const html = htm.bind(h);
 // The card is fetched from /api/pr-details on open. Unlike the CI panel there
 // is nothing to watch move, so it does not keep polling: it re-polls only
 // while the daemon reports a read in flight, to pick up that answer.
+//
+// Only GitHub pull request URLs get a card — that is all the endpoint can
+// describe. A presented PR on another forge keeps the plain link.
 
-// Re-poll cadence while the daemon is resolving a card, and how many times
-// before giving up on a cold one (gh can be slow or unavailable).
+// Re-poll cadence while the daemon reports a read in flight, and a cap so a
+// hung read cannot keep an open card polling forever.
 const PR_DETAILS_RETRY_MS = 700;
 const PR_DETAILS_MAX_RETRIES = 20;
 
@@ -55,9 +58,7 @@ function usePRDetails(url, open) {
           setDetails(payload.details);
         }
         setError('');
-        // A cold card keeps asking while it is unresolved, even when this
-        // poll landed on someone else's in-flight read (refreshing=false).
-        const again = (payload?.refreshing || !payload?.resolved) && ++tries < PR_DETAILS_MAX_RETRIES;
+        const again = payload?.refreshing && ++tries < PR_DETAILS_MAX_RETRIES;
         if (again) {
           timer = globalThis.setTimeout(poll, PR_DETAILS_RETRY_MS);
           return;
@@ -77,6 +78,13 @@ function usePRDetails(url, open) {
   }, [url, open]);
 
   return { details, error, pending };
+}
+
+// githubPRBase returns the canonical https://github.com/<owner>/<repo>/pull/<n>
+// for a GitHub PR URL (dropping any /files tab, query or fragment), or ''.
+export function githubPRBase(url) {
+  const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#]|$)/i.exec(String(url || '').trim());
+  return match ? `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}` : '';
 }
 
 const STATE_LABELS = { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' };
@@ -167,7 +175,17 @@ function PRDetailsPanel({ prURL, prNumber, state, panelID, headingID, panelRef, 
 // PRLinkHover renders the PR link with its hover card. On a hoverless device
 // a tap opens the card instead of navigating; the card's title and footer
 // links then lead to GitHub.
-export function PRLinkHover({ url, prNumber, className = '', label, describe = '' }) {
+export function PRLinkHover(props) {
+  if (!githubPRBase(props.url)) {
+    const href = safeCheckURL(props.url);
+    if (!href) return null;
+    return html`<a class=${`pr-link ${props.className || ''}`.trim()} href=${href} target="_blank"
+      rel="noopener noreferrer" draggable=${false} title=${props.describe || ''}>${props.label}</a>`;
+  }
+  return html`<${PRLinkCard} ...${props} />`;
+}
+
+function PRLinkCard({ url, prNumber, className = '', label, describe = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
@@ -175,7 +193,7 @@ export function PRLinkHover({ url, prNumber, className = '', label, describe = '
   const [focused, setFocused] = useState(false);
   const [tapped, setTapped] = useState(false);
   const open = hovered || focused || tapped;
-  const prURL = safeCheckURL(url).replace(/\/+$/, '');
+  const prURL = githubPRBase(url);
   const state = usePRDetails(open ? prURL : '', open);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
   const close = () => { setHovered(false); setFocused(false); setTapped(false); };
@@ -189,7 +207,6 @@ export function PRLinkHover({ url, prNumber, className = '', label, describe = '
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [tapped]);
 
-  if (!prURL) return null;
   const panelID = `prd-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
 
@@ -204,7 +221,7 @@ export function PRLinkHover({ url, prNumber, className = '', label, describe = '
     >
       <a
         class=${`pr-link ${className}`.trim()}
-        href=${prURL}
+        href=${safeCheckURL(url) || prURL}
         target="_blank"
         rel="noopener noreferrer"
         draggable=${false}
