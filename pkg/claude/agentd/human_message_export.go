@@ -178,8 +178,10 @@ func humanMessageMarkdown(m *db.HumanMessage, sender string, zipNames []string) 
 	if body := strings.TrimSpace(m.Body); body != "" {
 		b.WriteString(body)
 		b.WriteString("\n")
-	} else {
+	} else if len(m.Attachments) > 0 {
 		b.WriteString("_No message body — the attached file is the notification._\n")
+	} else {
+		b.WriteString("_Empty message._\n")
 	}
 	if len(m.Attachments) == 0 {
 		return b.String()
