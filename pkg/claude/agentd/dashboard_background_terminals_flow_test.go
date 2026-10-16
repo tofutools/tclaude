@@ -66,6 +66,25 @@ func TestBackgroundTerminals_ListsUnattachedSessions(t *testing.T) {
 	shell := fmt.Sprintf("tclaude-term-%x-current", sum[:8])
 	f.World.Tmux.MarkAlive(shell)
 	f.World.Tmux.MarkAlive("someone-elses-session")
+	f.World.Tmux.MarkAlive("__tclaude-opencode-abc123")
+
+	// A shell opened under an earlier generation of a since-reincarnated
+	// agent is addressed by its own conversation: the agent id would attach
+	// the successor's shell instead.
+	const oldConv = "bgtd-1111-2222-3333-444444444444"
+	const newConv = "bgte-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(oldConv, "rotated")
+	f.HaveEnrolledAgent(oldConv)
+	rotatedID, err := db.AgentIDForConv(oldConv)
+	require.NoError(t, err)
+	f.HaveConvWithTitle(newConv, "rotated")
+	require.NoError(t, db.LinkConvToAgent(newConv, rotatedID, db.ConvRoleHead, "reincarnate"))
+	swapped, err := db.SetAgentCurrentConv(rotatedID, oldConv, newConv)
+	require.NoError(t, err)
+	require.True(t, swapped)
+	oldSum := sha256.Sum256([]byte(oldConv))
+	staleShell := fmt.Sprintf("tclaude-term-%x-start", oldSum[:8])
+	f.World.Tmux.MarkAlive(staleShell)
 
 	rows := fetchBackgroundTerminals(t, mux)
 	byTmux := map[string]backgroundTerminalRow{}
@@ -93,6 +112,13 @@ func TestBackgroundTerminals_ListsUnattachedSessions(t *testing.T) {
 	require.Contains(t, byTmux, "someone-elses-session")
 	assert.Equal(t, "other", byTmux["someone-elses-session"].Kind)
 	assert.Empty(t, byTmux["someone-elses-session"].Key, "an unrecognised session has no dashboard attach")
+
+	assert.NotContains(t, byTmux, "__tclaude-opencode-abc123", "tclaude's own plumbing is not a background terminal")
+
+	require.Contains(t, byTmux, staleShell)
+	assert.Equal(t, "shell", byTmux[staleShell].Kind)
+	assert.Empty(t, byTmux[staleShell].AgentID)
+	assert.Equal(t, "term:"+oldConv+":start:", byTmux[staleShell].Key)
 
 	assert.Equal(t, "agent", rows[0].Kind, "agents sort first")
 }

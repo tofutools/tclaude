@@ -85,8 +85,10 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		name := strings.TrimSpace(fields[0])
 		// A restart bridge only holds a client across an agent restart and
-		// removes itself; it is never something the operator left behind.
-		if name == "" || len(fields) < 2 || strings.HasPrefix(name, "restart-") {
+		// removes itself, and a __tclaude- session is tclaude's own plumbing
+		// (OpenCode's managed `opencode serve`) that no client ever attaches
+		// to. Neither is something the operator left behind.
+		if name == "" || len(fields) < 2 || strings.HasPrefix(name, "restart-") || strings.HasPrefix(name, "__tclaude-") {
 			continue
 		}
 		attached, err := strconv.Atoi(strings.TrimSpace(fields[1]))
@@ -110,7 +112,7 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 // hashed shell names (termSessionNameForGroup / groupTermSessionName).
 func classifyBackgroundTerminals(sessions []backgroundTmuxSession) []backgroundTerminal {
 	out := make([]backgroundTerminal, 0, len(sessions))
-	var shells, groupShells []backgroundTmuxSession
+	var shells, groupShells, others []backgroundTmuxSession
 	for _, s := range sessions {
 		switch {
 		case strings.HasPrefix(s.name, "tclaude-groupterm-"):
@@ -118,7 +120,17 @@ func classifyBackgroundTerminals(sessions []backgroundTmuxSession) []backgroundT
 		case strings.HasPrefix(s.name, "tclaude-term-"):
 			shells = append(shells, s)
 		default:
-			out = append(out, classifySessionRow(s))
+			others = append(others, s)
+		}
+	}
+	if len(others) > 0 {
+		names := make([]string, len(others))
+		for i, s := range others {
+			names[i] = s.name
+		}
+		rows, _ := db.FindLatestSessionsByTmux(names)
+		for _, s := range others {
+			out = append(out, classifySessionRow(s, rows[s.name]))
 		}
 	}
 	if len(shells)+len(groupShells) > 0 {
@@ -148,17 +160,16 @@ func backgroundKindRank(kind string) int {
 	return 4
 }
 
-func classifySessionRow(s backgroundTmuxSession) backgroundTerminal {
+func classifySessionRow(s backgroundTmuxSession, row *db.SessionRow) backgroundTerminal {
 	t := backgroundTerminal{Kind: "other", TmuxSession: s.name, Label: s.name, LastActivity: s.activity, Created: s.created}
-	row, err := db.FindLatestSessionByTmux(s.name)
-	if err != nil || row == nil || row.ConvID == "" {
+	if row == nil || row.ConvID == "" {
 		return t
 	}
 	t.ConvID = row.ConvID
 	t.Harness = row.Harness
 	t.Label = backgroundConvTitle(row.ConvID)
 	t.Kind = "session"
-	if agentID, _ := db.AgentIDForConv(row.ConvID); agentID != "" {
+	if agentID := currentAgentIDForConv(row.ConvID); agentID != "" {
 		t.Kind = "agent"
 		t.AgentID = agentID
 	}
@@ -198,7 +209,7 @@ func classifyShells(shells, groupShells []backgroundTmuxSession) []backgroundTer
 			if which, valid := normaliseWhich(which); valid {
 				t.Kind = "shell"
 				t.ConvID = owner.conv
-				t.AgentID, _ = db.AgentIDForConv(owner.conv)
+				t.AgentID = currentAgentIDForConv(owner.conv)
 				t.Which = which
 				t.Group = owner.group
 				t.Label = backgroundConvTitle(owner.conv)
@@ -229,6 +240,19 @@ func classifyShells(shells, groupShells []backgroundTmuxSession) []backgroundTer
 func shellHashPrefix(identity string) string {
 	sum := sha256.Sum256([]byte(identity))
 	return fmt.Sprintf("%x", sum[:8])
+}
+
+// currentAgentIDForConv returns the agent owning convID only while convID is
+// that agent's current generation. The attach endpoints resolve an agent id to
+// its CURRENT conversation, so a session left over from a replaced generation
+// must be addressed by its own conversation id or Attach would open the
+// successor's session (and a new shell) instead of the listed one.
+func currentAgentIDForConv(convID string) string {
+	a, err := db.GetAgentByConv(convID)
+	if err != nil || a == nil || a.CurrentConvID != convID {
+		return ""
+	}
+	return a.AgentID
 }
 
 // backgroundSelector mirrors the row actions: the stable agent id when there
