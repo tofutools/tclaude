@@ -260,10 +260,16 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	case layerClaim && proof.row != nil:
 		row, harnessPID = proof.row, proof.harnessPID
 		timing.resolved = row.ID
-	case layerClaim && proof.outsidePane && req.Input.HookEventName == "SessionEnd":
+	case layerClaim && req.Input.HookEventName == "SessionEnd" &&
+		(proof.orphanTeardown || (sessionRecentlyShutDown(claimed) && !callerHasHarnessAncestor(procs, p.PID))):
 		// The harness's last hook, orphaned: the harness fired SessionEnd on
 		// its way out and exited without waiting, so the hook process was
-		// reparented away from the pane and cannot prove it. Still refused
+		// reparented away from the pane (or the pane is already gone) and
+		// cannot prove it. Recognised from the daemon's own record that the
+		// claimed session is shutting down (session_shutdown.go), or failing
+		// that from what the proof observed. Either way, only for a caller
+		// with no harness above it — a live process in another agent's pane
+		// has one. Still refused
 		// (an orphan proves nothing), but this is ordinary teardown — the
 		// pane exit observer records the exit itself — not a starved agent,
 		// so it is neither badged nor warned about.

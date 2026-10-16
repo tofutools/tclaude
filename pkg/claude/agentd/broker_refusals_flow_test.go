@@ -642,6 +642,72 @@ func TestBrokerRefusals_OrphanedSessionEndIsTeardownNotARefusal(t *testing.T) {
 	assert.Len(t, refusalLogLines(t, logs), 2, "a SessionEnd with a live harness above it is still a refusal")
 }
 
+// The other side of the same race: the hook lands after tmux already reports
+// the claimed pane dead (or the session gone), so the proof fails at the pane
+// probe before any ancestry walk. A live orphan's SessionEnd is still
+// teardown; the same claim from under a live harness is not.
+func TestBrokerRefusals_SessionEndAfterThePaneIsGoneIsTeardown(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	logs := captureDaemonLog(t)
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	f.World.Tmux.MarkPaneDead("tmux-broker-layer", nil, "SIGINT")
+
+	const orphanPID, foreignHook, foreignHarness = 8330, 8340, 8339
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{orphanPID: "tclaude", foreignHook: "sh", foreignHarness: "claude"},
+		map[int]int{orphanPID: 1, foreignHook: foreignHarness, foreignHarness: 1}))
+
+	code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+	assert.Empty(t, refusalLogLines(t, logs), "no WARN for ordinary teardown; got %s", logs.String())
+	assert.Contains(t, logs.String(), "ignored a SessionEnd hook that arrived after its harness exited")
+
+	code, _ = postBrokeredHook(t, f, foreignHook, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+	assert.Len(t, refusalLogLines(t, logs), 1, "a live harness above the caller: still a refusal")
+}
+
+// The daemon's own record decides when the proof cannot tell why it failed:
+// here the tmux session is simply gone and the probe reports a bare error.
+// Without a shutdown on record that stays a WARN refusal; once the daemon has
+// noted the session shutting down (soft exit started, or pane exit recorded),
+// the orphan's SessionEnd is teardown.
+func TestBrokerRefusals_SessionEndOfARecordedShutdownIsTeardown(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	logs := captureDaemonLog(t)
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	f.World.Tmux.KillBySignalForTest("tmux-broker-layer")
+
+	const orphanPID = 8350
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "tclaude"}, map[int]int{orphanPID: 1}))
+	sessionEnd := session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+		ClaimedSessionID: brokerLayerLabel,
+	}
+
+	code, _ := postBrokeredHook(t, f, orphanPID, sessionEnd)
+	require.Equal(t, http.StatusForbidden, code)
+	require.Len(t, refusalLogLines(t, logs), 1, "no shutdown on record: still a refusal")
+
+	t.Cleanup(agentd.MarkSessionShuttingDownForTest(brokerLayerLabel))
+	code, _ = postBrokeredHook(t, f, orphanPID, sessionEnd)
+	require.Equal(t, http.StatusForbidden, code, "an orphan still proves nothing")
+	assert.Len(t, refusalLogLines(t, logs), 1, "a recorded shutdown makes it teardown")
+	assert.Contains(t, logs.String(), "ignored a SessionEnd hook that arrived after its harness exited")
+}
+
 // The statusline endpoint refuses through the same recorder, and so logs
 // the same way.
 func TestBrokerRefusals_StatuslineRefusalsAreLoggedToo(t *testing.T) {
