@@ -346,7 +346,9 @@ func TestBrokerCallerOwner_UsesPanesNotProcessNames(t *testing.T) {
 	assert.Equal(t, "spwn-gone", brokerCallerOwner(procs, map[string]brokerPaneEntry{}, hook, "spwn-gone"),
 		"no pane in the ancestry: the claimed row's session decides")
 	assert.Empty(t, brokerCallerOwner(procs, map[string]brokerPaneEntry{}, hook, ""))
-	assert.Empty(t, brokerCallerOwner(procs, nil, hook, "spwn-a"), "unreadable tmux: unknown")
+	assert.Equal(t, "spwn-a", brokerCallerOwner(procs, nil, hook, "spwn-a"),
+		"unreadable tmux: the claim still names the owner, so a later read can retire it")
+	assert.Empty(t, brokerCallerOwner(procs, nil, hook, ""), "unreadable tmux and no claim: unknown")
 }
 
 // Refusal-side pane reads back off after a failed one: a wedged tmux must not
