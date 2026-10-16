@@ -1670,7 +1670,6 @@ export function mountTerminalShellIsland({
     state,
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
-    leaveTab: () => document.querySelector('nav [data-tab="groups"]')?.click(),
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}

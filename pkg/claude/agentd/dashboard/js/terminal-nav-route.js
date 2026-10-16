@@ -26,11 +26,6 @@
 // would rewrite the address bar to a terminal the operator is not looking at,
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
-// FALLBACK_TAB is where a terminals deep link goes when there is nothing left to
-// show. It mirrors the Terminals island's own "last pane closed" behaviour and
-// the router's DEFAULT_TAB.
-const FALLBACK_TAB = 'groups';
-
 const RESTORE_EVENT = 'tclaude:restore-location';
 const NAVIGATED_EVENT = 'tclaude:navigated';
 
@@ -85,7 +80,6 @@ function knownAgent(snapshotValue, agent) {
 export function bindTerminalNavRouting({
   state,
   openAgentPane,
-  leaveTab = () => {},
   snapshot = null,
   documentRef = globalThis.document,
   isTabActive = () => !!documentRef?.getElementById('tab-terminals')?.classList?.contains('active'),
@@ -172,16 +166,11 @@ export function bindTerminalNavRouting({
         // pane we DID end up on. A push here would both truncate the forward
         // tail and grow history on every retry.
         if (state.panes.value.length > 0) { announce(state.location.value, true); return; }
-        // With nothing open at all the tab is hidden and there is nothing to
-        // correct TO — this is the cold deep link to a terminal that no longer
-        // exists. Correct the URL to the fallback tab FIRST, then leave: the
-        // click leaveTab performs is itself an ordinary navigation the router
-        // records, and having already replaced this entry makes that record a
-        // duplicate it suppresses. Done in the other order the click would push
-        // a fresh entry, and Back would bounce off this dead link forever
-        // instead of returning where the operator came from.
-        announce({ tab: FALLBACK_TAB }, true);
-        leaveTab();
+        // With nothing open at all — the cold deep link to a terminal that no
+        // longer exists — the Terminals tab (which never hides) is still a real
+        // place to be: stay on its empty state and correct the URL to the bare
+        // tab, so Back and reload never bounce off the dead link.
+        announce({ tab: 'terminals' }, true);
       });
   };
 
