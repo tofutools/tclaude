@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -22,6 +23,7 @@ type backgroundTerminalRow struct {
 	AgentID     string `json:"agent_id"`
 	ConvID      string `json:"conv_id"`
 	Which       string `json:"which"`
+	Superseded  bool   `json:"superseded"`
 }
 
 func fetchBackgroundTerminals(t *testing.T, mux http.Handler) []backgroundTerminalRow {
@@ -69,19 +71,18 @@ func TestBackgroundTerminals_ListsUnattachedSessions(t *testing.T) {
 	f.World.Tmux.MarkAlive("__tclaude-opencode-abc123")
 
 	// A shell opened under an earlier generation of a since-reincarnated
-	// agent is addressed by its own conversation: the agent id would attach
-	// the successor's shell instead.
+	// agent is listed but not attachable: every attach endpoint follows the
+	// agent (even by its old conversation id) to the successor's shell.
 	const oldConv = "bgtd-1111-2222-3333-444444444444"
 	const newConv = "bgte-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(oldConv, "rotated")
 	f.HaveEnrolledAgent(oldConv)
-	rotatedID, err := db.AgentIDForConv(oldConv)
-	require.NoError(t, err)
 	f.HaveConvWithTitle(newConv, "rotated")
-	require.NoError(t, db.LinkConvToAgent(newConv, rotatedID, db.ConvRoleHead, "reincarnate"))
-	swapped, err := db.SetAgentCurrentConv(rotatedID, oldConv, newConv)
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err)
-	require.True(t, swapped)
+	resolved, _, err := agent.ResolveSelector(oldConv)
+	require.NoError(t, err)
+	require.Equal(t, newConv, resolved.ConvID, "attach selectors follow the succession chain")
 	oldSum := sha256.Sum256([]byte(oldConv))
 	staleShell := fmt.Sprintf("tclaude-term-%x-start", oldSum[:8])
 	f.World.Tmux.MarkAlive(staleShell)
@@ -117,8 +118,9 @@ func TestBackgroundTerminals_ListsUnattachedSessions(t *testing.T) {
 
 	require.Contains(t, byTmux, staleShell)
 	assert.Equal(t, "shell", byTmux[staleShell].Kind)
+	assert.True(t, byTmux[staleShell].Superseded)
 	assert.Empty(t, byTmux[staleShell].AgentID)
-	assert.Equal(t, "term:"+oldConv+":start:", byTmux[staleShell].Key)
+	assert.Empty(t, byTmux[staleShell].Key, "no dashboard attach would reach the listed shell")
 
 	assert.Equal(t, "agent", rows[0].Kind, "agents sort first")
 }

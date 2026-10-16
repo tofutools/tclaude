@@ -33,6 +33,11 @@ type backgroundTerminal struct {
 	Harness      string `json:"harness,omitempty"`
 	Which        string `json:"which,omitempty"`
 	Group        string `json:"group,omitempty"`
+	// Superseded marks a session or shell left over from an agent generation
+	// that has since been replaced. The attach endpoints always follow an
+	// agent to its latest generation, so it has no Key: the dashboard cannot
+	// reattach it, only point at `tmux attach`.
+	Superseded bool `json:"superseded,omitempty"`
 	LastActivity int64  `json:"last_activity,omitempty"`
 	Created      int64  `json:"created,omitempty"`
 }
@@ -167,12 +172,19 @@ func classifySessionRow(s backgroundTmuxSession, row *db.SessionRow) backgroundT
 	t.ConvID = row.ConvID
 	t.Harness = row.Harness
 	t.Label = backgroundConvTitle(row.ConvID)
-	t.Kind = "session"
-	if agentID := currentAgentIDForConv(row.ConvID); agentID != "" {
+	agentID, superseded := agentGenerationForConv(row.ConvID)
+	switch {
+	case superseded:
+		t.Kind = "agent"
+		t.Superseded = true
+	case agentID != "":
 		t.Kind = "agent"
 		t.AgentID = agentID
+		t.Key = "window:" + agentID
+	default:
+		t.Kind = "session"
+		t.Key = "window:" + row.ConvID
 	}
-	t.Key = "window:" + backgroundSelector(t.AgentID, t.ConvID)
 	return t
 }
 
@@ -208,11 +220,15 @@ func classifyShells(shells, groupShells []backgroundTmuxSession) []backgroundTer
 			if which, valid := normaliseWhich(which); valid {
 				t.Kind = "shell"
 				t.ConvID = owner.conv
-				t.AgentID = currentAgentIDForConv(owner.conv)
 				t.Which = which
 				t.Group = owner.group
 				t.Label = backgroundConvTitle(owner.conv)
-				t.Key = fmt.Sprintf("term:%s:%s:%s", backgroundSelector(t.AgentID, t.ConvID), which, owner.group)
+				agentID, superseded := agentGenerationForConv(owner.conv)
+				t.Superseded = superseded
+				if agentID != "" {
+					t.AgentID = agentID
+					t.Key = fmt.Sprintf("term:%s:%s:%s", agentID, which, owner.group)
+				}
 			}
 		}
 		out = append(out, t)
@@ -241,26 +257,20 @@ func shellHashPrefix(identity string) string {
 	return fmt.Sprintf("%x", sum[:8])
 }
 
-// currentAgentIDForConv returns the agent owning convID only while convID is
-// that agent's current generation. The attach endpoints resolve an agent id to
-// its CURRENT conversation, so a session left over from a replaced generation
-// must be addressed by its own conversation id or Attach would open the
-// successor's session (and a new shell) instead of the listed one.
-func currentAgentIDForConv(convID string) string {
+// agentGenerationForConv returns the agent whose CURRENT generation convID
+// is, or superseded=true when convID belongs to an agent but has since been
+// replaced. Every attach endpoint resolves a selector through the succession
+// chain to the latest generation, so a superseded session cannot be addressed
+// from the dashboard by either its agent id or its own conversation id.
+func agentGenerationForConv(convID string) (agentID string, superseded bool) {
 	a, err := db.GetAgentByConv(convID)
-	if err != nil || a == nil || a.CurrentConvID != convID {
-		return ""
+	if err != nil || a == nil {
+		return "", false
 	}
-	return a.AgentID
-}
-
-// backgroundSelector mirrors the row actions: the stable agent id when there
-// is one, the conversation id otherwise.
-func backgroundSelector(agentID, convID string) string {
-	if agentID != "" {
-		return agentID
+	if a.CurrentConvID != convID {
+		return "", true
 	}
-	return convID
+	return a.AgentID, false
 }
 
 func backgroundConvTitle(convID string) string {

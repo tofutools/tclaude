@@ -212,7 +212,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                       ${row.key
                         ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
                             aria-label=${`Attach ${view.label}`}>Attach</button>`
-                        : html`<span class="mux-bg-noattach" title=${`tmux -L tclaude attach -t ${row.tmux_session}`}>not a tclaude terminal</span>`}
+                        : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
                     </div>`;
                 })}
               </div>`;
