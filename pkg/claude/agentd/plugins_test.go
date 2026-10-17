@@ -100,7 +100,7 @@ func TestPlugins_CRUDAndCatalog(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	// Create fires its first status check in the background; drain it
 	// so the assertions below are deterministic.
-	bgWG.Wait()
+	waitBackground()
 
 	// Duplicate name refused.
 	w = servePlugins(t, http.MethodPost, "/api/plugins",
@@ -118,7 +118,7 @@ func TestPlugins_CRUDAndCatalog(t *testing.T) {
 	w = servePlugins(t, http.MethodPut, "/api/plugins/demo",
 		`{"name":"demo2","steps":[{"name":"probe","check":"true"}]}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	bgWG.Wait()
+	waitBackground()
 	w = servePlugins(t, http.MethodGet, "/api/plugins", "")
 	list = decodePluginsList(t, w)
 	require.Len(t, list.Plugins, 1)
@@ -128,7 +128,7 @@ func TestPlugins_CRUDAndCatalog(t *testing.T) {
 	w = servePlugins(t, http.MethodPost, "/api/plugins",
 		`{"name":"other","steps":[{"name":"x","run":"true"}]}`)
 	require.Equal(t, http.StatusCreated, w.Code)
-	bgWG.Wait()
+	waitBackground()
 	w = servePlugins(t, http.MethodPut, "/api/plugins/other",
 		`{"name":"demo2","steps":[{"name":"x","run":"true"}]}`)
 	assert.Equal(t, http.StatusConflict, w.Code)
@@ -409,7 +409,7 @@ func TestPlugins_UpdatePreservesDisabled(t *testing.T) {
 	w := servePlugins(t, http.MethodPut, "/api/plugins/svc",
 		`{"name":"svc","steps":[{"name":"probe","check":"true","stop":"true"}]}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	bgWG.Wait()
+	waitBackground()
 	stored, err := loadPlugins()
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
@@ -537,7 +537,7 @@ func TestPlugins_InstallFromCatalog(t *testing.T) {
 	require.NoError(t, err)
 	w := servePlugins(t, http.MethodPost, "/api/plugins", string(def))
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-	bgWG.Wait()
+	waitBackground()
 	w = servePlugins(t, http.MethodGet, "/api/plugins", "")
 	list := decodePluginsList(t, w)
 	require.Len(t, list.Plugins, 1)
