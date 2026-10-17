@@ -128,7 +128,8 @@ for discovery scope, selection defaults, and removal safeguards.
 With `features.processes` on, a **Both | Agents | Processes** switch sits
 beside the group filter (deep links `/groups`, `/groups/agents`,
 `/groups/processes`). Agents is the roster above, with run counts on each
-group header and a Process column of *run › node* badges on member rows.
+group header and an opt-in Process column (under "▾ view") of *run › node*
+badges on member rows.
 Processes shows each group's runs as live graph cards with *+ start process*
 (template, params, explicit program-profile authorization); *open ›* focuses
 one run with its graph, a node inspector for decisions, a performer dock to
@@ -140,7 +141,11 @@ row with the agent controls and the process controls captioned apart, then an
 line, and the choice is remembered per group; with no choice made, a group
 with nothing running shows its Processes section as a single line. In Both,
 clicking a group header's run counts opens that group's Processes section
-instead of switching lenses. See
+instead of switching lenses. Hovering links the two halves with dashed
+lines: an agent row to every step it performs, a step to its performers, and
+anywhere else on a run card to all of that run's agents. Lines start at the
+agent's state pill, stay within the hovered group, and an end that is off
+screen becomes a small tag that scrolls to it. See
 [Processes › In the dashboard](processes.md#in-the-dashboard).
 
 ### The member row

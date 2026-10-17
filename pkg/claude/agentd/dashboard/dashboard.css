@@ -20488,6 +20488,33 @@ details[open] > summary .gp-subtree-total { display: none; }
 .gf-section > .gp-group { padding: 0; }
 .gf-section > .gp-group .gp-card, .gf-section > .gp-group .gp-planned-list { margin-left: 0; }
 .gf-section > .gp-group .gp-empty { margin: 0 0 4px; }
+/* Both's hover links (js/groups-fused-links.js): a quiet dashed curve from
+   an agent's state pill to each step it performs, drawn only on hover. */
+.gf-focus { position: relative; }
+.gf-links { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.gf-links-svg { position: absolute; left: 0; top: 0; overflow: visible; }
+.gf-link { fill: none; stroke: #58a6ff; stroke-width: 1.25; stroke-dasharray: 4 3; opacity: 0.65; }
+.gf-link-end { fill: #58a6ff; opacity: 0.85; }
+.gf-link-tag {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: auto;
+  padding: 1px 8px; border: 1px solid #58a6ff88; border-radius: 10px; background: #0d1117;
+  color: #9ecbff; font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer;
+}
+.gf-link-tag:hover { border-color: #58a6ff; color: #e6edf3; }
+tr.gf-link-hot > td { background: rgba(88, 166, 255, 0.07); }
+tr.gf-link-hot > td:first-child { box-shadow: inset 2px 0 0 #58a6ff; }
+.pk-gnode.gf-link-hot { box-shadow: 0 0 0 2px #58a6ff, 0 0 12px rgba(88, 166, 255, 0.35); }
+.pk-gnode.gf-link-dim { opacity: 0.45; }
+@media (prefers-reduced-motion: no-preference) {
+  .gf-links { animation: gf-links-in 0.12s ease-out; }
+  @keyframes gf-links-in { from { opacity: 0; } to { opacity: 1; } }
+}
+body.wizard .gf-link { stroke: #a97bd6; }
+body.wizard .gf-link-end { fill: #a97bd6; }
+body.wizard .gf-link-tag { border-color: rgba(169, 123, 214, 0.55); background: #140f28; color: #e7d9f5; }
+body.wizard tr.gf-link-hot > td { background: rgba(169, 123, 214, 0.08); }
+body.wizard tr.gf-link-hot > td:first-child { box-shadow: inset 2px 0 0 #d4af37; }
+body.wizard .pk-gnode.gf-link-hot { box-shadow: 0 0 0 2px #a97bd6, 0 0 12px rgba(169, 123, 214, 0.35); }
 body.wizard .gf-divider { background: rgba(122, 93, 176, 0.5); }
 body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gf-label { color: #f3e6c0; }

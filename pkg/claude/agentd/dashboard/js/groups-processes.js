@@ -32,6 +32,7 @@ import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
 import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
+import { FusedLinks } from './groups-fused-links.js';
 
 const html = htm.bind(h);
 
@@ -660,6 +661,7 @@ export function GroupsProcessesFocus({
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
+  const fusedFrame = useRef(null);
   useEffect(() => {
     void source.refresh();
     const poll = () => { void source.refresh(); };
@@ -693,13 +695,14 @@ export function GroupsProcessesFocus({
   }
   const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused };
   if (fused) {
-    return html`<div class="gp-focus gf-focus" data-groups-fused>
+    return html`<div class="gp-focus gf-focus" data-groups-fused ref=${fusedFrame}>
       ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
       ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
       ${status === 'ready'
         ? html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`
         : html`<div class="gp-tree">${children}</div>`}
       ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}
+      ${status === 'ready' && html`<${FusedLinks} frame=${fusedFrame} />`}
     </div>`;
   }
   return html`<div class="gp-focus" data-groups-processes>

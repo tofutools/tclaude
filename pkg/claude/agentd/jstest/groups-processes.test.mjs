@@ -494,3 +494,38 @@ for (const status of ['idle', 'unavailable']) {
     assert.equal(root.querySelector('.groups-processes-placeholder'), null);
   });
 }
+
+test('Both links an agent to its steps, a step to its performers, and a run card to all of its agents, on hover only', async (t) => {
+  const { harness, root, details } = await mountFocus(t, { fused: true });
+  const wait = (ms) => harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const lines = () => [...root.querySelectorAll('.gf-links path.gf-link')].length;
+  const hover = (el) => harness.act(() => el.dispatchEvent(new harness.window.Event('pointerover', { bubbles: true })));
+  const fe = details('frontend-squad');
+  assert.equal(root.querySelector('.gf-links'), null, 'nothing at rest');
+
+  const forms = fe.querySelector('tr[data-dnd-agent="agt_fe_forms"]');
+  await hover(forms.querySelector('td'));
+  assert.equal(lines(), 0, 'the first hover waits a moment');
+  await wait(160);
+  assert.equal(lines(), 2, 'fe-dev-forms performs checkout (release) and verify (migrate)');
+  assert.ok(forms.classList.contains('gf-link-hot'));
+  const release = fe.querySelector('[data-process-run-card="run_release"]');
+  assert.ok(release.querySelector('[data-process-node="checkout"]').classList.contains('gf-link-hot'));
+  assert.ok(release.querySelector('[data-process-node="plan"]').classList.contains('gf-link-dim'), 'the rest of the card dims');
+
+  await hover(release.querySelector('.gp-card-head'));
+  await wait(20);
+  assert.equal(lines(), 3, 'a run card links each agent-performed step: plan, checkout, charts');
+  assert.equal(forms.classList.contains('gf-link-dim'), false);
+
+  await hover(release.querySelector('[data-process-node="charts"]'));
+  await wait(20);
+  assert.equal(lines(), 1, 'a step links only its performer');
+  assert.ok(fe.querySelector('tr[data-dnd-agent="agt_fe_charts"]').classList.contains('gf-link-hot'));
+  assert.equal(forms.classList.contains('gf-link-hot'), false, 'the previous highlights clear');
+
+  await harness.act(() => root.querySelector('[data-groups-fused]').dispatchEvent(new harness.window.Event('pointerleave')));
+  await wait(260);
+  assert.equal(root.querySelector('.gf-links'), null, 'leaving the frame clears the links');
+  assert.equal(fe.querySelectorAll('.gf-link-hot, .gf-link-dim').length, 0);
+});

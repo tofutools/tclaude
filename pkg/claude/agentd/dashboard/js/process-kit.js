@@ -635,14 +635,16 @@ export function ProcessMiniGraph({
       : node.kind === 'decision'
         ? html`<span class="pk-gnode-label">${node.label}</span>${badge}`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
+    // Performer ids let the Groups Both lens link a step to its agents' rows.
+    const performerIds = (node.performers || []).map((performer) => performer?.id).filter(Boolean).join(' ') || undefined;
     const extra = {
       ...(typeof onNodeContextMenu === 'function' ? { onContextMenu: (event) => onNodeContextMenu(node, event) } : {}),
       ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
     };
     if (typeof onNodeClick === 'function') {
-      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
+      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
     }
-    return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id}>${inner}</div>`;
+    return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id} data-performers=${performerIds}>${inner}</div>`;
   });
   return html`<div class=${`pk-mini-graph${compact ? ' compact' : ''}`} role="group" aria-label=${`${runName(run)} graph`} style=${`width:${layout.width}px;height:${layout.height}px`}>
     <svg class="pk-edges" width=${layout.width} height=${layout.height} aria-hidden="true">

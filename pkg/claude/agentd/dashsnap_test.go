@@ -791,6 +791,33 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "groups-focus-both-links",
+			Title:   "Groups — Both hover links",
+			Caption: "Hovering an agent row in Both draws quiet dashed curves from its state pill to every process step it performs in the group, rings those steps and dims the rest of their cards. Nothing is drawn at rest.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + `return (async function(){
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('[data-groups-fused] [data-process-node][data-performers]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = true; });
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var node = document.querySelector('#groups-list [data-fused-section="processes"] [data-process-node][data-performers]');
+  if (!node) throw new Error('no performed step in Both');
+  var agent = node.dataset.performers.split(' ')[0];
+  var group = node.closest('details[data-group-key]');
+  var row = Array.prototype.find.call(group.querySelectorAll('[data-fused-section="agents"] tr[data-dnd-agent]'), function(r){ return r.dataset.dndAgent === agent && r.closest('details[data-group-key]') === group; });
+  if (!row) throw new Error('performer row missing for ' + agent);
+  var head = group.querySelector(':scope > .subtable > .group-fused-actions');
+  (head || row).scrollIntoView({ block: 'start' });
+  row.querySelector('td').dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+  await new Promise(function(resolve){ setTimeout(resolve, 260); });
+  if (!document.querySelector('.gf-links path.gf-link')) throw new Error('hovering an agent drew no links');
+  if (!row.classList.contains('gf-link-hot')) throw new Error('the hovered row is not highlighted');
+})();`,
+			SettleMS: 200,
+		},
+		{
 			Key:     "groups-focus-agents",
 			Title:   "Groups — Agents focus",
 			Caption: "The Agents focus (/groups/agents): the member tables alone, with process state as small indicators, as before Both existed.",
