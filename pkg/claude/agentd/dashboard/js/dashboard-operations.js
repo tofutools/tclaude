@@ -8,6 +8,7 @@
 import { fetchListFull } from './list-paging.js';
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refresh } from './refresh.js';
+import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
 import { markPendingWake, clearPendingWake } from './waking-state.js';
 import { wizWord } from './slop.js';
 import {
@@ -32,8 +33,10 @@ import { openWorktreeCleanup as openWorktreeCleanupDialog } from './worktree-cle
 // that this is stop-only (no data deleted), POSTs /api/shutdown, then
 // toasts the outcome summary. scope is "group" (groupName set) or
 // "all" (groupName ignored).
-export async function shutdownScope(scope, groupName) {
-  const snap = lastSnapshot || {};
+// node names another node's group (the fused Groups view): its snapshot
+// counts the agents, and the request goes to its group route there.
+export async function shutdownScope(scope, groupName, node = '') {
+  const snap = nodeSnapshot(node) || lastSnapshot || {};
   let running = 0;
   let where = '';
   let metaLine = '';
@@ -69,11 +72,7 @@ export async function shutdownScope(scope, groupName) {
       meta: metaLine,
       okLabel: `Shut down ${running === 1 ? '1 agent' : running + ' agents'}`,
       busyLabel: 'Shutting down…',
-      action: () => fetch('/api/shutdown', {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload),
-      }),
+      action: () => powerRequest('shutdown', scope, groupName, node, payload),
     });
   } catch (e) {
     toast(`shutdown failed: ${e && e.message || e}`, true);
@@ -87,6 +86,7 @@ export async function shutdownScope(scope, groupName) {
   const out = await r.json().catch(() => null);
   if (!out) {
     toast('shutdown: done');
+    announceNodeChanged(node);
     refresh();
     return;
   }
@@ -94,8 +94,20 @@ export async function shutdownScope(scope, groupName) {
   if (out.already_offline) parts.push(`${out.already_offline} already offline`);
   if (out.failed) parts.push(`${out.failed} failed`);
   toast(`shutdown (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+  announceNodeChanged(node);
   refresh();
   await reportBulkPowerFailures('Shutdown', out);
+}
+
+// powerRequest posts a shutdown or power on: a group's to its own route
+// (which a peer's grant for that group covers), on the group's node.
+function powerRequest(op, scope, groupName, node, payload) {
+  const url = scope === 'group' ? `/api/groups/${encodeURIComponent(groupName)}/${op}` : `/api/${op}`;
+  return nodeFetch(node)(url, {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(scope === 'group' ? {} : payload),
+  });
 }
 
 // powerOnScope is the inverse of shutdownScope — it drives the
@@ -103,8 +115,8 @@ export async function shutdownScope(scope, groupName) {
 // OFFLINE agents in scope from the last snapshot, pops a confirm modal,
 // POSTs /api/power-on, then toasts the outcome summary. scope is
 // "group" (groupName set) or "all" (groupName ignored).
-export async function powerOnScope(scope, groupName) {
-  const snap = lastSnapshot || {};
+export async function powerOnScope(scope, groupName, node = '') {
+  const snap = nodeSnapshot(node) || lastSnapshot || {};
   let offline = 0;
   let where = '';
   let metaLine = '';
@@ -138,11 +150,7 @@ export async function powerOnScope(scope, groupName) {
       meta: metaLine,
       okLabel: `Power on ${offline === 1 ? '1 agent' : offline + ' agents'}`,
       busyLabel: 'Powering on…',
-      action: () => fetch('/api/power-on', {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload),
-      }),
+      action: () => powerRequest('power-on', scope, groupName, node, payload),
     });
   } catch (e) {
     toast(`power on failed: ${e && e.message || e}`, true);
@@ -156,6 +164,7 @@ export async function powerOnScope(scope, groupName) {
   const out = await r.json().catch(() => null);
   if (!out) {
     toast('power on: done');
+    announceNodeChanged(node);
     refresh();
     return;
   }
@@ -163,6 +172,7 @@ export async function powerOnScope(scope, groupName) {
   if (out.already_online) parts.push(`${out.already_online} already online`);
   if (out.failed) parts.push(`${out.failed} failed`);
   toast(`power on (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+  announceNodeChanged(node);
   refresh();
   await reportBulkPowerFailures('Power on', out);
 }

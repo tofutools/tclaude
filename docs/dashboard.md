@@ -910,7 +910,9 @@ A group's quick options — description, default directory (typed: the folder
 browser reads this machine), member cap, default profile, sandbox profile and
 attachment — its rename, and the ⚙ menu's settings dialog, startup context,
 notifications, remote policy and nesting work as on this node when the peer
-grants `groups.settings` for that group (unrestricted trust holds it). The
+grants `groups.settings` for that group (unrestricted trust holds it), and its
+shut down and power on buttons under `groups.members.stop` and
+`groups.members.resume` there. The
 settings dialog sends only what you changed and disables the fields the peer
 keeps. The default directory, default saved prompts and sandbox profile also
 need the matching spawn grant, and the

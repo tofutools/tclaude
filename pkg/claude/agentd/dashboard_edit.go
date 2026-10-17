@@ -91,6 +91,8 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/api/power-on", handlePowerOn)
+	mux.HandleFunc("POST /api/groups/{name}/shutdown", groupRoute(handleGroupShutdown))
+	mux.HandleFunc("POST /api/groups/{name}/power-on", groupRoute(handleGroupPowerOn))
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
 	mux.HandleFunc("/api/background-terminals", handleDashboardBackgroundTerminals)
 	mux.HandleFunc("/api/background-terminals/kill", handleDashboardBackgroundTerminalKill)

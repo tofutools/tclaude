@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -164,25 +166,44 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the grace window: the body override wins, clamped to
-	// [0, cap]. 0 is legitimate ("no grace — escalate immediately").
-	grace := shutdownGrace
-	if body.GraceMs != nil {
-		ms := *body.GraceMs
-		if ms < 0 {
-			ms = 0
-		}
-		grace = time.Duration(ms) * time.Millisecond
-		if grace > shutdownGraceCap {
-			grace = shutdownGraceCap
-		}
-	}
-
 	scope := strings.TrimSpace(body.Scope)
 	groupName, memberIDs, ok := resolvePowerScope(w, scope, body.Group)
 	if !ok {
 		return
 	}
+	serveShutdown(w, scope, groupName, memberIDs, shutdownGraceFor(body.GraceMs))
+}
+
+// handleGroupShutdown serves POST /api/groups/{name}/shutdown: the group
+// scope of /api/shutdown, addressed by its path so a peer's grant for that
+// one group can cover it (peer_grant_routes.go). Body: {grace_ms?}.
+func handleGroupShutdown(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	var body struct {
+		GraceMs *int64 `json:"grace_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	memberIDs, ok := groupMemberConvIDs(w, g)
+	if !ok {
+		return
+	}
+	serveShutdown(w, "group", g.Name, memberIDs, shutdownGraceFor(body.GraceMs))
+}
+
+// shutdownGraceFor resolves the grace window: the body override wins,
+// clamped to [0, cap]. 0 is legitimate ("no grace — escalate immediately").
+func shutdownGraceFor(ms *int64) time.Duration {
+	if ms == nil {
+		return shutdownGrace
+	}
+	grace := time.Duration(max(*ms, 0)) * time.Millisecond
+	return min(grace, shutdownGraceCap)
+}
+
+// serveShutdown stops the running agents among memberIDs and reports each.
+func serveShutdown(w http.ResponseWriter, scope, groupName string, memberIDs []string, grace time.Duration) {
 	targets := aliveConvIDs(memberIDs)
 
 	outcomes := runShutdown(targets, grace)
@@ -249,6 +270,21 @@ func handlePowerOn(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	servePowerOn(w, scope, groupName, memberIDs)
+}
+
+// handleGroupPowerOn serves POST /api/groups/{name}/power-on: the group
+// scope of /api/power-on, addressed by its path like handleGroupShutdown.
+func handleGroupPowerOn(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
+	memberIDs, ok := groupMemberConvIDs(w, g)
+	if !ok {
+		return
+	}
+	servePowerOn(w, "group", g.Name, memberIDs)
+}
+
+// servePowerOn resumes the offline agents among memberIDs and reports each.
+func servePowerOn(w http.ResponseWriter, scope, groupName string, memberIDs []string) {
 	targets := offlineConvIDs(memberIDs)
 
 	outcomes := runPowerOn(targets)
@@ -302,16 +338,8 @@ func resolvePowerScope(w http.ResponseWriter, scope, group string) (resolvedGrou
 			http.Error(w, "no such group "+groupName, http.StatusNotFound)
 			return "", nil, false
 		}
-		members, err := db.ListAgentGroupMembers(g.ID)
-		if err != nil {
-			http.Error(w, "list members: "+err.Error(), http.StatusInternalServerError)
-			return "", nil, false
-		}
-		ids := make([]string, 0, len(members))
-		for _, m := range members {
-			ids = append(ids, m.ConvID)
-		}
-		return groupName, ids, true
+		ids, ok := groupMemberConvIDs(w, g)
+		return groupName, ids, ok
 	case "all":
 		agents, err := db.ListActiveAgents()
 		if err != nil {
@@ -605,4 +633,18 @@ func waitForConvOffline(convID string, grace time.Duration) bool {
 		}
 		time.Sleep(sleep)
 	}
+}
+
+// groupMemberConvIDs lists g's members' conversations.
+func groupMemberConvIDs(w http.ResponseWriter, g *db.AgentGroup) ([]string, bool) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		http.Error(w, "list members: "+err.Error(), http.StatusInternalServerError)
+		return nil, false
+	}
+	ids := make([]string, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m.ConvID)
+	}
+	return ids, true
 }

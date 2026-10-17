@@ -55,6 +55,9 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'set-group-remote-control': ['groups.settings'],
   'nest-group': ['groups.settings'],
   'unnest-group': ['groups.settings'],
+  // Shut down / power on every member: the member lifecycle grants.
+  'shutdown-group': ['groups.members.stop'],
+  'power-on-group': ['groups.members.resume'],
   // Fields of the settings dialog with no control of their own: the
   // environment reaches every spawned agent's process, and the default saved
   // prompts every spawn's brief.

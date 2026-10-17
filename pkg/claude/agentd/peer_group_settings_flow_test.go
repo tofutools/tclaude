@@ -192,3 +192,45 @@ func TestPeerGroupNestingAndDefaultPrompts(t *testing.T) {
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, map[string][]string{"child": {agentd.PermGroupsSettings, agentd.PermGroupsMembersSpawnPrompts}}, out.PeerView.Groups)
 }
+
+// A group's ⚙ shut down and power on run under the member lifecycle grants
+// for that group, through the group's own routes.
+func TestPeerGroupPowerUnderLifecycleGrants(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	grant := func(slug string) {
+		t.Helper()
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=crew"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	h := agentd.PeerViewHandler(p.id.ID())
+	call := func(path string) (int, string) {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", path, map[string]any{}))
+		return rec.Code, rec.Body.String()
+	}
+
+	grant(agentd.PermGroupsRosterRead)
+	code, body := call("/api/groups/crew/shutdown")
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsMembersStop)
+	grant(agentd.PermGroupsMembersStop)
+	code, body = call("/api/groups/crew/shutdown")
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"group":"crew"`)
+	code, body = call("/api/groups/crew/power-on")
+	require.Equal(t, 403, code, body)
+	grant(agentd.PermGroupsMembersResume)
+	code, body = call("/api/groups/crew/power-on")
+	require.Equal(t, 200, code, body)
+
+	snap := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	var out struct {
+		PeerView struct {
+			Groups map[string][]string `json:"groups"`
+		} `json:"peer_view"`
+	}
+	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
+	require.Equal(t, map[string][]string{"crew": {agentd.PermGroupsMembersStop, agentd.PermGroupsMembersResume}}, out.PeerView.Groups)
+}

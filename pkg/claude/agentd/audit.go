@@ -330,6 +330,8 @@ var auditRoutes = []auditRoute{
 	// or all agents is a fleet-wide state change.
 	{method: http.MethodPost, segs: []string{"shutdown"}, verb: "power.shutdown", describe: describePower},
 	{method: http.MethodPost, segs: []string{"power-on"}, verb: "power.on", describe: describePower},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "shutdown"}, verb: "power.shutdown"},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "power-on"}, verb: "power.on"},
 
 	// Git-remote / GitHub proxy. Every one of these spends the OPERATOR'S
 	// credential against a remote host, so all of them are audited —

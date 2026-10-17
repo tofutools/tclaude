@@ -857,7 +857,7 @@ export async function handleRowAction(action) {
       case 'shutdown-group': {
         // shutdownScope owns its confirm modal, POST, toast
         // and refresh — return so the default toast doesn't fire.
-        await shutdownScope('group', group);
+        await shutdownScope('group', group, node);
         return;
       }
       case 'shutdown-all': {
@@ -869,7 +869,7 @@ export async function handleRowAction(action) {
       case 'power-on-group': {
         // The inverse of shutdown-group: resume every offline agent
         // in this group. powerOnScope owns its confirm + POST + toast.
-        await powerOnScope('group', group);
+        await powerOnScope('group', group, node);
         return;
       }
       case 'power-on-all': {

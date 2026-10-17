@@ -303,7 +303,9 @@ default directory needs `groups.members.spawn.cwd`, the default saved prompts
 default profile must be one the peer may pick for a spawn there (see "Launch
 settings a peer may choose"). The environment needs
 `groups.settings.environment`. The dashboard's profile pickers list this
-node's profiles under `node.spawn.read`. Member permissions, owner scopes and
+node's profiles under `node.spawn.read`. A group's shut down and power on
+buttons stop or wake every member under `groups.members.stop` and
+`groups.members.resume` for that group. Member permissions, owner scopes and
 the directory auto-join default stay with this node's operator. Unrestricted trust holds every peer grant, so its groups work
 from the peer's dashboard as they do here. Each change is in this node's
 federation audit as `federation.peer_view`.
