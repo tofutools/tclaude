@@ -17,7 +17,7 @@ laptops behind NAT or a corporate network work as-is.
     mail, automatic or operator-approved remote spawn, and cross-instance
     group routes, remote session state, and remote terminal watch and
     interactive attach. Everything here is a CLI command; the dashboard shows
-    and manages linked nodes too, and its **⚙ Fleet → Setup guide** joins a
+    and manages linked nodes too, and its **⚙ Fleet config → Setup guide** joins a
     hub, trusts peers and shares groups without the CLI; see
     [Fleet UI](dashboard.md#fleet-ui-linked-nodes).
 
@@ -2717,7 +2717,7 @@ nonzero.
 For a how-to tour of the dashboard side, see
 [Fleet UI](dashboard.md#fleet-ui-linked-nodes).
 
-The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
+The dashboard's **⚙ Fleet config** view (beside Map and Groups · all nodes, or
 "Fleet administration" in the command palette before any peer is trusted)
 covers `federation status`, `peers`, `trust`, `untrust` and `disconnect`:
 this node's identity and hub connection, the trusted peers with their level,

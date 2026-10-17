@@ -94,7 +94,7 @@ test('without a hub, local terminal gear shows move/teleport greyed out with the
 test('connected to a hub with no linked node, move/teleport say a peer is needed', async (t) => {
   const harness = await createPreactHarness(t);
   const { sendElsewhereOffReason } = await harness.importDashboardModule('js/groups-member-table.js');
-  assert.match(sendElsewhereOffReason({ hub: 'connected' }), /No linked nodes .* trust a peer in ⚙ Fleet/);
+  assert.match(sendElsewhereOffReason({ hub: 'connected' }), /No linked nodes .* trust a peer in ⚙ Fleet config/);
   assert.match(sendElsewhereOffReason({ hub: 'off' }), /Connect this node to a tclaude hub[\s\S]*federation is off/);
   assert.match(sendElsewhereOffReason(null), /Connect this node to a tclaude hub/);
 });

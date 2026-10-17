@@ -176,7 +176,7 @@ your report.
 
 ### 7. Optional
 
-- Run scripts on a peer node (Fleet → Run scripts)
+- Run scripts on a peer node (⚙ Fleet config → Run scripts)
 - Human inbox and answers across nodes
 - Peer mail: `federation export` / `import`, then `agent message <member>@b`
 

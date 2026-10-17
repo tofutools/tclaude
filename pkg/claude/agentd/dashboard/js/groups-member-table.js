@@ -874,7 +874,7 @@ export function sendElsewhereOffReason(node) {
   const hubOff = hubOffReason(node);
   return hubOff
     ? `Connect this node to a tclaude hub (Fleet → Hub) to move or teleport agents. ${hubOff}`
-    : 'No linked nodes to move or teleport agents to yet: trust a peer in ⚙ Fleet.';
+    : 'No linked nodes to move or teleport agents to yet: trust a peer in ⚙ Fleet config.';
 }
 
 function SendElsewhereItems({ member, group, snapshot }) {

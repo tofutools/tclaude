@@ -8,6 +8,14 @@ import { dashPrefs } from './prefs.js';
 // which retires the "set up" hint on the Fleet chip.
 export const SETUP_SEEN_PREF = 'tclaude.dash.fleet.setupSeen';
 
+// LAST_VIEW_PREF remembers the fleet view (map or Fleet config) the operator
+// used last, which the ⌘ Fleet chip returns to.
+export const LAST_VIEW_PREF = 'tclaude.dash.fleet.lastView';
+
+function readLastView(prefs) {
+  try { return prefs.getItem(LAST_VIEW_PREF) === 'fleet-admin' ? 'fleet-admin' : 'map'; } catch { return 'map'; }
+}
+
 function readSetupSeen(prefs) {
   try { return !!prefs.getItem(SETUP_SEEN_PREF); } catch { return false; }
 }
@@ -42,7 +50,15 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   // lastLocal remembers the per-node tab the operator left for the map, so the
   // ⌂ chip and "Open dashboard" return there rather than always to Groups.
   let lastLocal = activeTab.value && !TOP_LEVEL_TABS.has(activeTab.value) ? activeTab.value : 'groups';
-  const stopTracking = effect(() => { const tab = activeTab.value; if (tab && !TOP_LEVEL_TABS.has(tab)) lastLocal = tab; });
+  let lastFleet = readLastView(prefs);
+  const stopTracking = effect(() => {
+    const tab = activeTab.value;
+    if (tab && !TOP_LEVEL_TABS.has(tab)) lastLocal = tab;
+    if (TOP_LEVEL_TABS.has(tab) && tab !== lastFleet) {
+      lastFleet = tab;
+      try { prefs.setItem(LAST_VIEW_PREF, tab); } catch { /* best effort */ }
+    }
+  });
   const view = computed(() => ({
     mapActive: activeTab.value === 'map',
     adminActive: activeTab.value === 'fleet-admin',
@@ -86,7 +102,8 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   function setFused(value) { fused.value = value || null; }
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
-  return Object.freeze({ fleet, node, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
+  function lastFleetTab() { return lastFleet; }
+  return Object.freeze({ fleet, node, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
 }
 
 export const fleetState = createFleetState();

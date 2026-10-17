@@ -199,46 +199,31 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
 
 // NO_PEERS says why there is nothing to fuse on a connected node that has no
 // linked nodes yet.
-const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet';
+const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet config';
 
-// FleetChip opens Fleet administration while there is no fleet to reach it
-// through the map: before the hub is set up, while it is down, or before the
-// first peer is trusted. It is never greyed out, since Fleet is where all of
-// that gets fixed. Until the setup guide has been opened once, a node that
-// was never set up says so on the chip.
-function FleetChip({ state, node, off, navigate }) {
+// FleetChip is the right end's third scope, beside ⌂ this node and the nodes
+// dropdown: the whole fleet. It is lit on every fleet view and opens the one
+// used last (the map, or Fleet config), or Fleet config while the hub is not
+// connected, since that is where the hub and the first peer are set up. It is
+// never greyed out on this node. In a peer's view it can only open the map,
+// so it hides while there is none. Until the setup guide has been opened once,
+// a node that was never set up says so on the chip.
+function FleetChip({ state, node, off, remote, navigate }) {
   const current = state.view.value;
-  const active = current.adminActive;
-  const hint = !!node && !node.configured && !current.setupSeen;
+  const mapOK = !off && !!current.mapFleet;
+  if (remote && !mapOK) return null;
+  const active = current.topLevel;
+  const target = remote || (mapOK && state.lastFleetTab() !== 'fleet-admin') ? 'map' : 'fleet-admin';
+  const hint = !remote && !!node && !node.configured && !current.setupSeen;
   const title = off
     ? `Fleet: ${node?.configured ? 'the hub connection and peers' : 'link this node with your other machines or colleagues'} (${off.replace(/^Not connected to a federation hub: /, 'not connected: ')})`
-    : 'Fleet: trust a peer to link nodes';
-  return html`<button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry
-    aria-current=${active ? 'page' : undefined} aria-label=${`Fleet administration${hint ? ': set up' : ''}`} title=${title}
-    onClick=${() => { if (!active) navigate('fleet-admin'); }}>
-    <span aria-hidden="true">⚙</span><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
+    : !current.fleet ? 'Fleet: trust a peer to link nodes'
+      : `Fleet: every linked node (${target === 'map' ? 'the map' : 'Fleet config'})`;
+  return html`<button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry data-fleet-target=${target}
+    aria-current=${active ? 'page' : undefined} aria-label=${`Fleet${hint ? ': set up' : ''}`} title=${title}
+    onClick=${() => { if (!active) navigate(target); }}>
+    <${MapGlyph} /><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
   </button>`;
-}
-
-// MapGate greys out the static map anchor (it is not ours to render) when
-// there is no map to show: the hub is not connected. A connected node with no
-// linked nodes yet still gets its map, showing this node alone.
-function MapGate({ reason, doc = globalThis.document }) {
-  useEffect(() => {
-    const anchor = doc?.querySelector?.('nav [data-tab="map"]');
-    if (!anchor) return;
-    anchor.classList.toggle('node-chip-off', !!reason);
-    if (reason) {
-      anchor.setAttribute('aria-disabled', 'true');
-      anchor.setAttribute('tabindex', '-1');
-      anchor.title = reason;
-    } else {
-      anchor.removeAttribute('aria-disabled');
-      anchor.removeAttribute('tabindex');
-      anchor.title = 'Fleet map: every linked node';
-    }
-  }, [reason]);
-  return null;
 }
 
 // IdleChips is the chip row before there is a fleet to pick from: this node's
@@ -262,24 +247,23 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
     : html`<button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
       <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>`}
-    ${!remote && html`<${FleetChip} state=${state} node=${node} off=${off} navigate=${navigate} />`}
+    <span class="node-chips-sep" aria-hidden="true"></span>
+    <${FleetChip} state=${state} node=${node} off=${off} remote=${remote} navigate=${navigate} />
   </span>`;
 }
 
 // NodeChips is the tab-bar node selector: a button per node (or one node
 // dropdown past BUTTON_LIMIT nodes), then the fused-view dropdown. The row is
 // always there, greyed out until this node's hub connection is up (and again
-// when it drops); peers only add buttons. The map entry is the static
-// nav[data-tab="map"] anchor right after this host, so tab routing keeps one
-// owner; MapGate greys it out while the hub is not connected.
+// when it drops); peers only add buttons. ⌘ Fleet ends the row. The static
+// nav[data-tab="map"] anchor stays the map's routing target, hidden.
 export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
   const off = hubOffReason(current.node);
   const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
-  const gate = html`<${MapGate} reason=${off} />`;
   // A fused view already on keeps its row, so it can be left.
-  if (!fleet || (off && !current.fused)) return html`${gate}<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} navigate=${navigate} />`;
+  if (!fleet || (off && !current.fused)) return html`<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} navigate=${navigate} />`;
   const fused = current.fused;
   const pageNode = remote || fleet.self.id;
   const onFuse = (value) => {
@@ -293,7 +277,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const cls = (node) => `node-chip${node.local ? ' local' : ''}${node.local || node.online ? '' : ' offline'}${isCurrent(node.id) ? ' active' : ''}${fused && isTicked(fused, node.id) ? ' ticked' : ''}`;
   const self = fleet.self;
   const buttons = selectorKind(fleet) === 'buttons';
-  return html`${gate}<span class="node-chips has-fleet" role="group" aria-label="Nodes">
+  return html`<span class="node-chips has-fleet" role="group" aria-label="Nodes">
     ${buttons ? html`
     <button type="button" class=${cls(self)} style=${`--nc:${self.color}`}
       aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
@@ -308,6 +292,8 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
     : html`<${NodeDropdown} state=${state} fleet=${fleet} pageNode=${pageNode} fused=${fused} onPick=${onPick} />`}
     <span class="node-chips-sep" aria-hidden="true"></span>
     <${FusedDropdown} state=${state} fleet=${fleet} fused=${fused} pageNode=${pageNode} onPick=${onPick} onFuse=${onFuse} />
+    <span class="node-chips-sep" aria-hidden="true"></span>
+    <${FleetChip} state=${state} node=${current.node} off=${off} remote=${remote} navigate=${navigate} />
   </span>`;
 }
 
@@ -373,8 +359,8 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   };
   const seg = (tab, on, label) => html`<button type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
   return html`<span class="fleet-toplevel-bar">
-    <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('groups-fused', false, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
-    <span class="fleet-toplevel-note">Fleet · ${n} node${n === 1 ? '' : 's'} · hub ${hub} · pick ⌂ ${fleet.self.name} to return to its dashboard</span>
+    <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('groups-fused', false, '▦ Groups · all nodes')}${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet-admin', current.adminActive, '⚙ Fleet config')}</span>
+    <span class="fleet-toplevel-note">${n} node${n === 1 ? '' : 's'} · hub ${hub}</span>
   </span>`;
 }
 
@@ -412,7 +398,7 @@ function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef,
       <span class=${`fleet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
       <span class=${`fleet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
-    ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
+    ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
     ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
 }

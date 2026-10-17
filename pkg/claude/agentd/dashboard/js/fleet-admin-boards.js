@@ -43,7 +43,7 @@ export function inviteHub(token) {
 // joinError says what to do about a refused join, in plain words.
 export function joinError(e, token, hubURL) {
   switch (e?.code) {
-    case 'hub_required': return 'Set this node\'s hub first (settings… at the top of ⚙ Fleet), then paste the invite again.';
+    case 'hub_required': return 'Set this node\'s hub first (settings… at the top of ⚙ Fleet config), then paste the invite again.';
     case 'hub_mismatch': {
       const hub = inviteHub(token);
       return `This invite is for ${hub ? `the hub at ${hub}` : 'another hub'}, but this node uses ${hubURL || 'no hub'}. Switch this node's hub first, or ask for an invite on your hub.`;
