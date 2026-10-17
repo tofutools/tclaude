@@ -31,8 +31,8 @@ import { enterFirstRow, focusRow, leaveFirstRow, movePaneFocus, moveRowSelection
 import { messageKind, msgPreview } from './mail-labels.js';
 import { messageDeleteEndpoint } from './mail-state.js';
 import {
-  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, LocalHumanActions, MailFilters, MailFooterToggles, MailGutters,
-  MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, PeerHumanReply, SectionToggle, SelectAll,
+  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { senderOnline } from './mail-bridge.js';
@@ -85,7 +85,7 @@ export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(
     markAgent: (node, ids, read) => post(node, ownerRoutes(node).markRead, { ids: [].concat(ids), read }),
     markFolderRead: (node, conv) => post(node, ownerRoutes(node).markRead, { conv, read: true }),
     reply: (node, to, subject, body) => post(node, ownerRoutes(node).message, { to, subject, body }),
-    humanRead: (node, id) => post(node, ownerRoutes(node).humanRead, { id }),
+    humanRead: (node, id, read = true) => post(node, ownerRoutes(node).humanRead, read ? { id } : { id, read: false }),
     humanReply: (node, id, body) => post(node, ownerRoutes(node).humanReply, { id, body }),
     decide: (node, id, decision) => post(node, ownerRoutes(node).decide(id), { decision: decision === 'approve' ? 'approve' : 'deny' }),
     deleteLocal: (node, folder, ids) => post(node, `${apiBase(node)}${messageDeleteEndpoint(folder).replace(/^\/api\//, '')}`, { ids }),
@@ -274,28 +274,22 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
     const human = item.kind === 'human';
     const headers = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
       <${MessageBody} message=${item} />`;
-    if (human && (!node.local || remote)) {
-      // A peer's notification (its files already point at this node's peer
-      // attachment route) is answered through the peer's human-inbox; so is
-      // this node's on a peer's page, where its data-act buttons are refused.
-      return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0">
-        ${headers}
-        <${HumanAttachment} message=${item} />
-        <${PeerHumanReply} message=${item} nodeName=${node.name} canAnswer=${canActOnHuman(node)} toast=${toast} onDone=${onDone}
-          actions=${{ read: (id) => actions.humanRead(node, id), reply: (id, body) => actions.humanReply(node, id, body) }}>${open}</${PeerHumanReply}>
-      </div>`;
-    }
     if (human) {
-      // This node's notification: the same buttons as its own Messages, run
-      // by the page's action handlers. The view re-reads once they act.
+      // The same buttons as each node's own Messages. This node's are run by
+      // the page's action handlers, and the view re-reads once they act. A
+      // peer's (its files already point at this node's peer attachment
+      // route) is answered through the peer's human-inbox; so is this node's
+      // on a peer's page, where its data-act buttons are refused.
+      const peer = node.local && !remote ? null : {
+        name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node),
+        mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
+      };
       return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
-        onClick=${(e) => { if (e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
+        onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
         <${HumanAttachment} message=${item} />
-        <div class="mail-reader-actions fused-mail-actions">
-          <${LocalHumanActions} message=${item} senderLive=${senderOnline(item.from_agent, item.from_conv, snapshot.value)}
-            harness=${senderHarness(item, snapshot)} toast=${toast} />
-          <span class="spacer"></span>${open}</div>
+        <${HumanActions} message=${item} senderLive=${senderOnline(item.from_agent, item.from_conv, snapshot.value)}
+          harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;
     }
     body = html`${headers}

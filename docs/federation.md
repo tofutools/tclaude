@@ -3299,7 +3299,7 @@ An operator running several nodes of their own can read and answer each node's
 human inbox from one dashboard. A node serves `GET /api/human-inbox` (the
 newest 50 unread human notifications and the pending ask-human requests of its own
 agents) and the answers `POST /api/human-inbox/reply {id, body}`,
-`POST /api/human-inbox/read {id}` and
+`POST /api/human-inbox/read {id[, read:false]} | {all:true}` and
 `POST /api/human-inbox/access/{id} {decision: approve|deny}` only to a peer it
 trusts unrestricted (`human.inbox.read` / `human.inbox.answer`); these slugs
 cannot be granted or requested. Decisions are one-shot: "always allow" and
@@ -4030,7 +4030,11 @@ peer, under the same grant; `length=0` reads only the file's name, type and
 size) and serves it to the dashboard with Range support. The
 peer's declared type is narrowed to images (not SVG), video, audio or plain
 text, anything else is an opaque download, and the response is a sandboxed,
-`nosniff` attachment.
+`nosniff` attachment. `GET /api/peer-message-export/INSTANCE/MESSAGE` (local-only,
+`?attachments=1` for the zip) is the reader's download for a peer's
+notification: the peer's `GET /api/human-message-export-parts?message=` (same
+grant) returns the Markdown its own export serves, and this node zips it with
+the files read in chunks.
 
 Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped

@@ -37,6 +37,7 @@ function controllerFor(signal) {
     msgPreview: (item) => item.subject || item.body,
     msgKind: (item) => item.parent_id ? 'reply' : 'decree',
     senderOnline: () => true,
+    reloadMail: () => {},
     accessIsPending: (request) => !request.status || request.status === 'pending',
     accessWho: (request) => request.conv_title,
     accessSubject: (request) => request.perm,
@@ -565,6 +566,9 @@ test('attachment preview arrows stay inside the modal instead of moving Messages
 test('on a peer\'s page, Messages answers notifications through the peer and leaves deleting to its operator', async (t) => {
   const harness = await createPreactHarness(t);
   const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const dialogs = await harness.importDashboardModule('js/message-access-dialog-controller.js');
+  const replies = [];
+  t.after(dialogs.registerMessageAccessDialogController({ openHumanReply: (context) => replies.push(context) }));
   const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
   const previousRemote = globalThis.__tclaudeRemoteNode;
   const previousFetch = globalThis.fetch;
@@ -577,28 +581,39 @@ test('on a peer\'s page, Messages answers notifications through the peer and lea
   const mounted = await harness.mount(harness.html`<${MailApp} controller=${controllerFor(state)} />`);
   const c = mounted.container;
 
-  // A notification: the peer's own routes answer it; this node's (data-act)
-  // buttons, which would act on this node's mail, are not offered.
+  // A notification: the same row as this node's own, answered through the
+  // peer's routes; this node's (data-act) buttons, which would act on this
+  // node's mail, are not offered.
   for (const act of ['msg-reply', 'msg-focus', 'msg-mark-read', 'msg-delete', 'msg-clear', 'msg-mark-all-read']) assertAbsent(c.querySelector(`[data-act="${act}"]`), act);
-  assert.equal(c.querySelector('#mail-bulk-bar').hidden, true, 'no bulk delete of the peer\'s notifications');
+  const labels = (root) => [...root.querySelectorAll('button')].map((b) => b.textContent.trim());
+  assert.deepEqual(labels(c.querySelector('#mail-reader .mail-reader-actions')).slice(0, 3), ['reply', 'focus', 'mark read']);
+  assert.ok(c.querySelector('#mail-reader .mail-download'), 'the download menu is there');
+  assert.ok(c.querySelector('[data-human="focus"]').disabled && c.querySelector('[data-human="delete"]').disabled);
+  // The bulk bar is the local one, deleting greyed.
+  const bar = c.querySelector('#mail-bulk-bar');
+  assert.equal(bar.hidden, false);
+  assert.ok(labels(bar).some((l) => /mark all read/.test(l)) && labels(bar).some((l) => /delete read/.test(l)));
+  assert.ok([...bar.querySelectorAll('button')].filter((b) => /delete/.test(b.textContent)).every((b) => b.disabled), 'no deleting the peer\'s notifications');
   assert.equal(c.querySelector('.mail-row-del').disabled, true);
-  const box = c.querySelector('.mail-reply-text');
-  await harness.act(() => { box.value = 'ack'; harness.fireEvent(box, 'input'); });
-  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { harness.fireEvent(c.querySelector('#mail-mark-all'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(posts.includes('POST /api/human-inbox/read {"all":true}'), posts.join('\n'));
+  await harness.act(() => harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'));
+  assert.equal(replies.length, 1);
+  await harness.act(async () => { await replies[0].send('ack'); });
   assert.ok(posts.includes('POST /api/human-inbox/reply {"id":1,"body":"ack"}'), posts.join('\n'));
-  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="read"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="mark"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(posts.includes('POST /api/human-inbox/read {"id":1}'));
 
   // Without the peer's answer grant the notification is read-only here.
   await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } }); });
-  assertAbsent(c.querySelector('.mail-reply-text'), 'reply box');
-  assert.match(c.querySelector('#mail-reader').textContent, /answer them on its own dashboard/);
+  assert.ok(c.querySelector('[data-human="reply"]').disabled && c.querySelector('[data-human="mark"]').disabled);
+  assert.match(c.querySelector('[data-human="reply"]').title, /for reading only/);
 
   // Agent mail: read state goes to the peer; deleting stays its operator's.
   await harness.act(() => { state.value = { ...state.value, selected: 'conv-a' }; });
   const reader = c.querySelector('#mail-reader');
   assert.ok([...reader.querySelectorAll('button')].some((b) => b.textContent === 'mark read' && !b.dataset.act));
-  assert.ok(![...reader.querySelectorAll('button')].some((b) => b.textContent === 'delete'));
-  assert.ok(![...c.querySelectorAll('#mail-bulk-bar button')].some((b) => /delete selected/.test(b.textContent)));
+  assert.ok([...reader.querySelectorAll('button')].filter((b) => b.textContent === 'delete').every((b) => b.disabled));
+  assert.ok([...c.querySelectorAll('#mail-bulk-bar button')].filter((b) => /delete selected/.test(b.textContent)).every((b) => b.disabled));
   await mounted.unmount();
 });

@@ -272,7 +272,9 @@ const fleetFederationStubJS = `(function(){
       var local = '/api/' + path.slice(forgePrefix.length) + u.search;
       if (path === forgePrefix + 'snapshot') return realFetch(local, init).then(function(r){
         return r.json().then(function(snap){
-          snap.peer_view = window.__dashsnapPeerActions
+          snap.peer_view = window.__dashsnapPeerMail
+            ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'node.messages', 'human.inbox.answer'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
+            : window.__dashsnapPeerActions
             ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'spawn', 'lifecycle.stop', 'lifecycle.retire', 'lifecycle.clone', 'lifecycle.move', 'lifecycle.teleport'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
             : { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
           delete snap.assets_version;
@@ -520,6 +522,29 @@ func fleetStates() []dashsnap.State {
   if (!document.querySelector('.fused-mail-chip[data-node="inst_hn3cxq7a"]')) throw new Error('fleet: no forge chip in fused Messages');
   row.click();
   for (var j = 0; j < 30 && !document.querySelector('#fused-mail-reader .mail-headers'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-fused-messages-notification",
+			Title:   "Messages · fused nodes, a peer's notification",
+			Caption: "A human notification from forge in the fused view: the same reply, focus, mark read, ⤓ download and delete row as this node's own Messages. Reply opens the usual dialog and sends through forge; what forge keeps for its own operator (focus, delete) stays greyed in place.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('#fused-mail-list .mail-row'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var human = Array.prototype.find.call(document.querySelectorAll('#fused-mail-sidebar .mailbox, .fused-mail-sidebar .mailbox'), function(b){ return /Human notifications/.test(b.textContent); });
+  if (!human) throw new Error('fleet: no fused human folder');
+  human.click();
+  for (var j = 0; j < 80 && !document.querySelector('.mail-row-wrap[data-key^="inst_hn3cxq7a/human/"] .mail-row'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var row = document.querySelector('.mail-row-wrap[data-key^="inst_hn3cxq7a/human/"] .mail-row');
+  if (!row) throw new Error('fleet: no forge notification in the fused view');
+  row.click();
+  for (var k = 0; k < 30 && !document.querySelector('#fused-mail-reader [data-human="reply"]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fused-mail-reader [data-human="reply"]')) throw new Error('fleet: no reply on a forge notification');
 })();`,
 			SettleMS: 400,
 		},
@@ -1425,6 +1450,26 @@ func fleetStates() []dashsnap.State {
   if (!document.querySelector('.remote-node-pop')) throw new Error('fleet: remote marker popover did not open');
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "fleet-remote-messages",
+			Title:   "Messages · a peer node",
+			Caption: "Messages on forge's page, where forge shares its mail (node.messages.read) and lets this node answer its notifications: the same Messages client as this node's own, with forge's mailboxes, a human notification open in the reader, and its reply and read actions going to forge.",
+			InitJS:  "window.__dashsnapPeerMail = true;" + fleetRemoteViewJS + fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var j = 0; j < 50 && !document.querySelector('#mail-sidebar .mailbox[data-id="human"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var human = document.querySelector('#mail-sidebar .mailbox[data-id="human"]');
+  if (!human) throw new Error('fleet: no human mailbox on forge Messages');
+  human.click();
+  for (var k = 0; k < 50 && !document.querySelector('#mail-list .mail-row'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  var row = document.querySelector('#mail-list .mail-row');
+  if (!row) throw new Error('fleet: no rows on forge Messages');
+  row.click();
+  for (var m = 0; m < 30 && !document.querySelector('#mail-reader .mail-headers'); m++) await new Promise(function(r){ setTimeout(r, 100); });
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "fleet-remote-view",

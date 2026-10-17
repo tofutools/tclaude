@@ -60,8 +60,11 @@ export function attachmentSize(bytes) {
 // messageExportHref is the whole-message download the Messages reader offers:
 // the notification as Markdown, or — with attachments, when it has any — a
 // .zip of message.md plus attachments/. The daemon builds both, so the zip's
-// message.md and the plain download never disagree.
-export function messageExportHref(messageID, withAttachments) {
-  const href = `/api/human-messages/${encodeURIComponent(messageID)}/export`;
+// message.md and the plain download never disagree. A peer's notification
+// (node, its instance ID) is exported through this node's peer route.
+export function messageExportHref(messageID, withAttachments, node = '') {
+  const href = node
+    ? `/api/peer-message-export/${encodeURIComponent(node)}/${encodeURIComponent(messageID)}`
+    : `/api/human-messages/${encodeURIComponent(messageID)}/export`;
   return withAttachments ? `${href}?attachments=1` : href;
 }

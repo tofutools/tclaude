@@ -419,10 +419,14 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   const [error, setError] = useState('');
   const [serverOffline, setServerOffline] = useState(false);
   useEffect(() => { setServerOffline(false); }, [snapshot]);
-  const online = !serverOffline && senderOnline(snapshot, context.agent || '', context.conv || '');
+  // A notification on another node is answered through that node
+  // (context.send, its human-inbox reply): the sender's liveness comes from
+  // that node's view, and the reply carries text only.
+  const remote = typeof context.send === 'function';
+  const online = !serverOffline && (remote ? context.online !== false : senderOnline(snapshot, context.agent || '', context.conv || ''));
   const label = context.label || context.conv || '(agent)';
   const addFiles = (incoming) => {
-    if (busyRef.current) return;
+    if (busyRef.current || remote) return;
     setFiles((current) => [...current, ...Array.from(incoming || []).filter(Boolean)].slice(0, 8));
   };
   const removeFile = (index) => {
@@ -432,11 +436,15 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   const submit = async () => {
     if (busyRef.current) return;
     const clean = body.trim(); setError('');
-    if (!clean && !files.length) { setError('Write a reply or attach a file.'); return; }
+    if (!clean && !files.length) { setError(remote ? 'Write a reply.' : 'Write a reply or attach a file.'); return; }
     if (!online) { setError('The agent is offline — it has no live session to receive a reply.'); return; }
     busyRef.current = true;
     setBusy(true);
-    try { await actions.replyHuman({ id: Number(context.id), body: clean, files: [...files], label }); state.close(); }
+    try {
+      if (remote) await context.send(clean);
+      else await actions.replyHuman({ id: Number(context.id), body: clean, files: [...files], label });
+      state.close();
+    }
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -459,22 +467,24 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       addFiles(dropped);
     }}>
     <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
-    <p id="human-reply-desc" class="modal-hint">Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator.</p>
+    <p id="human-reply-desc" class="modal-hint">${remote
+      ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
+      : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
-      <div class="human-reply-to-name">${label}</div>${context.subject ? html`<div class="human-reply-to-subject">re: ${context.subject}</div>` : null}
+      <div class="human-reply-to-name">${label}${remote && context.nodeName ? ` on ${context.nodeName}` : ''}</div>${context.subject ? html`<div class="human-reply-to-subject">re: ${context.subject}</div>` : null}
     </div><div id="human-reply-status" class=${`human-reply-status ${online ? 'online' : 'offline'}`}>${online
       ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea id="human-reply-body" rows="4" value=${body}
       placeholder="your reply — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
-    <div class="cron-create-row"><span class="cron-create-label">Attachments</span>
+    ${!remote && html`<div class="cron-create-row"><span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
         <button type="button" id="human-reply-attach-btn" disabled=${busy}
           onClick=${() => fileInputRef.current?.click()}>📎 Attach files…</button>
         <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
         <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
-      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>
+      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
       <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
       <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>

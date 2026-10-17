@@ -122,7 +122,10 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
 
 test('switching folders never shows the old folder\'s rows; human actions use each node\'s own routes; lost trust drops a node', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const [stateMod, island, dialogs] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js')]);
+  const replies = [];
+  t.after(dialogs.registerMessageAccessDialogController({ openHumanReply: (context) => replies.push(context) }));
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
   const timers = fakeTimers(); const calls = [];
@@ -157,15 +160,23 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   for (const act of ['msg-reply', 'msg-focus', 'msg-mark-read', 'msg-delete']) assert.ok(acts.includes(act), act);
   assert.ok(c.querySelector('#fused-mail-reader .mail-download'), 'the download menu is there');
   assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/human-messages/5/attachments/7');
-  // forge's is answered through forge's human-inbox.
+  const labels = () => [...c.querySelectorAll('#fused-mail-reader .mail-reader-actions > button, #fused-mail-reader .mail-download > button:first-child')]
+    .map((b) => b.textContent.trim()).filter((l) => !l.startsWith('Open on'));
+  const localLabels = labels();
+  // forge's has the same row, answered through forge's human-inbox; what
+  // forge does not take from here stays greyed in place.
   await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_forge/human/5"] .mail-row'), 'click'));
+  assert.deepEqual(labels(), localLabels, 'the same buttons as this node\'s notification');
   assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/peer-attachments/inst_forge/5/7',
     'a peer\'s file loads through this node\'s peer attachment route, never the local URL the peer sent');
-  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="read"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(c.querySelector('[data-human="focus"]').disabled && c.querySelector('[data-human="delete"]').disabled);
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="mark"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(calls.includes('POST /api/peer/inst_forge/human-inbox/read {"id":5}'));
-  const humanReply = c.querySelector('.mail-reply-text');
-  await harness.act(() => { humanReply.value = 'on it'; harness.fireEvent(humanReply, 'input'); });
-  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  // reply opens the same reply dialog, which sends through forge.
+  await harness.act(() => harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'));
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].nodeName, 'forge');
+  await harness.act(async () => { await replies[0].send('on it'); });
   assert.ok(calls.includes('POST /api/peer/inst_forge/human-inbox/reply {"id":5,"body":"on it"}'));
   forgeTrusted = false;
   await once();

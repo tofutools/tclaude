@@ -218,6 +218,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/peer/{node}/{tail...}",
 	// Reads a peer's attachment for this node's own dashboard.
 	"GET /api/peer-attachments/{node}/{message}/{attachment}",
+	"GET /api/peer-message-export/{node}/{message}",
 	"POST /api/peer/{node}/{tail...}",
 	"/api/perf",
 	"/api/perf/reset",
