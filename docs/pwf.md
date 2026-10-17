@@ -33,7 +33,16 @@ tclaude agent process-templates export ship-feature --version sha256:<hex> --tit
 Exporting an older version (`--version`) makes that version the current one
 wherever the file is imported. The file is signed with this node's federation
 key when the node has one.
-Exporting never creates a key. A step that names one specific agent (an
+Exporting never creates a key.
+
+A template that fails validation, such as an unfinished draft or one whose
+subprocess step names a template that does not exist yet, exports as it is
+saved: `export` warns and lists the problems but still writes the file, and
+the dashboard's share button asks before downloading it. The importing node
+sees the same list in its review, and the workflow cannot run there until the
+problems are fixed.
+
+A step that names one specific agent (an
 `assignee`) is exported as written, but it is not portable: the importing node
 has different agents, so export points those steps out and they wait there
 until someone reassigns them.
@@ -46,7 +55,8 @@ tclaude agent process-templates inspect ship-feature.pwf
 
 `inspect` verifies the file and prints what the workflow needs: its inputs,
 the agent roles its steps ask for, the steps that ask you something, every
-command it would run, and the steps that name a specific agent.
+command it would run, the steps that name a specific agent, and anything that
+keeps it from running (validation problems).
 
 Import it on another node:
 
@@ -105,6 +115,8 @@ run (see [Processes](processes.md#running)). Export needs
 
 - Read the commands `inspect` lists. They run on the importing node with that
   node's authorizations.
+- If the workflow fails validation, say so to whoever you share it with;
+  they will need to finish it before it runs.
 - Template text (prompts, questions, descriptions) travels as written. Keep
   secrets, internal hostnames and customer details out of it.
 - Prefer roles over specific agents, so the workflow runs anywhere.
@@ -200,12 +212,18 @@ namespaced as the runtime does, and a compound task's stages suffixed
 
 ### Templates and completeness
 
-Every `templates/` entry must be listed in `workflow.json`, parse as a valid
-process template, and hash to the ref it is stored under. Every subprocess
-step in every carried template must resolve inside the file: a pinned
-reference (`templateRef` plus `version`) to that exact ref, an unpinned one to
-the id's head. A file that references a template it does not carry is
-refused.
+Every `templates/` entry must be listed in `workflow.json`, parse as a
+process template, and hash to the ref it is stored under. A reader refuses a
+template that tclaude's template store could not keep as written (an unknown
+field, a duplicate or merge key) or whose graph exceeds the size budget.
+
+A template may fail validation, as an unfinished draft saved in the editor
+does, and a subprocess step may reference a template the file does not carry
+(a pinned reference, `templateRef` plus `version`, resolves to that exact ref;
+an unpinned one to the id's head). Neither makes the file invalid. A reader
+reports both as the workflow's problems, recomputed from the templates rather
+than read from the file, since validation rules evolve between versions. A
+run of an imported template refuses to start until its problems are fixed.
 
 ### Signatures
 

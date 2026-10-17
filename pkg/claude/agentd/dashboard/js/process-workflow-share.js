@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { downloadBlob } from './paf-model.js';
+import { shellConfirm } from './shell-state.js';
 
 const html = htm.bind(h);
 const PWF_TYPE = 'application/vnd.tclaude.pwf+zip';
@@ -37,9 +38,29 @@ export function displayArg(arg) {
   return text === '' || /[\s'"]/.test(text) ? `'${text.replace(/'/g, "'\\''")}'` : text;
 }
 
-// exportWorkflow downloads <id>.pwf. It resolves to '' or an error message.
-export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob } = {}) {
-  const response = await fetchImpl(`/v1/process/templates/${encodeURIComponent(id)}/export`, { credentials: 'same-origin' });
+// exportProblemsConfirmation is the confirm() request before sharing a
+// workflow that fails validation. It exports as it is, the way a draft saves;
+// the importer sees the same list in their review.
+export function exportProblemsConfirmation(id, problems) {
+  const shown = problems.slice(0, 12).map((p) => `• ${p}`);
+  if (problems.length > shown.length) shown.push(`…and ${problems.length - shown.length} more`);
+  return {
+    title: 'Share a workflow that fails validation?',
+    body: `${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${shown.join('\n')}`,
+    preformatted: true,
+    okLabel: 'Share anyway',
+  };
+}
+
+// exportWorkflow downloads <id>.pwf, asking first when it fails validation.
+// It resolves to '' (also when the operator declines) or an error message.
+export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob, confirm = shellConfirm } = {}) {
+  const url = `/v1/process/templates/${encodeURIComponent(id)}/export`;
+  const check = await fetchImpl(`${url}?check=1`, { credentials: 'same-origin' });
+  if (!check.ok) return errorText(check);
+  const { problems = [] } = await check.json().catch(() => ({}));
+  if (problems.length > 0 && !(await confirm(exportProblemsConfirmation(id, problems)))) return '';
+  const response = await fetchImpl(url, { credentials: 'same-origin' });
   if (!response.ok) return errorText(response);
   download(await response.blob(), `${String(id).replace(/[^A-Za-z0-9._-]+/g, '-')}.pwf`);
   return '';
@@ -121,6 +142,7 @@ export function importReview(preview) {
     humans: preview.humans || [],
     programs: (preview.programs || []).map((p) => ({ ...p, command: [p.run, ...(p.args || [])].map(displayArg).join(' ') })),
     assignees: preview.assignees || [],
+    problems: preview.problems || [],
     templates,
     updates: preview.updates || 0,
     nothingToDo: templates.length > 0 && templates.every((t) => t.status === 'identical'),
@@ -230,6 +252,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one.</p></div>`}
     ${review.humans.length > 0 && html`<div class="pwf-section"><h4>Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
     ${review.params.length > 0 && html`<div class="pwf-section"><h4>Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
+    ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4>Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
     ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps wait until reassigned.</li>`)}</ul></div>`}
     <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
       ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}

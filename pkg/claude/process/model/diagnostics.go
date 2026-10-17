@@ -31,6 +31,26 @@ func (d Diagnostics) HasErrors() bool {
 	return false
 }
 
+// HasSourceFidelityError reports a raw-YAML finding that storing the source
+// would erase rather than preserve: the store keeps the canonical re-encoding
+// of the decoded model, so an unknown field, a merge key, or a duplicate key's
+// shadowed value would vanish without the author ever seeing it fixed. Graph
+// and semantic findings (missing performers, unjoined branches, ...) survive
+// canonicalization and stay advisory, so an unfinished draft can still be
+// saved and shared.
+func (d Diagnostics) HasSourceFidelityError() bool {
+	for _, diag := range d {
+		if diag.Severity != SeverityError {
+			continue
+		}
+		switch diag.Code {
+		case "unknown_field", "duplicate_key", "merge_key_unsupported":
+			return true
+		}
+	}
+	return false
+}
+
 func (d Diagnostics) Errors() Diagnostics {
 	return d.withSeverity(SeverityError)
 }

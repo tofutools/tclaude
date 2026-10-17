@@ -510,7 +510,7 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	}
 	cardinalityErrors := model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors()
 	resourceErrors := parsed.Diagnostics.HasNormalizedGraphBudgetError()
-	sourceLoss := rawSource && (parsed.Template == nil || hasSourceFidelityError(parsed.Diagnostics))
+	sourceLoss := rawSource && (parsed.Template == nil || parsed.Diagnostics.HasSourceFidelityError())
 	if sourceLoss || cardinalityErrors || resourceErrors {
 		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
@@ -567,25 +567,6 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		"authoredAt":   commit.AuthoredAt,
 		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
 	})
-}
-
-// hasSourceFidelityError reports a raw-YAML finding that saving would erase
-// rather than preserve: the store keeps the canonical re-encoding of the
-// decoded model, so an unknown field, a merge key, or a duplicate key's shadowed value would
-// vanish without the author ever seeing it fixed. Graph and semantic findings
-// (missing performers, unjoined branches, ...) survive canonicalization and
-// stay advisory, so an unfinished draft can still be saved.
-func hasSourceFidelityError(diagnostics model.Diagnostics) bool {
-	for _, diagnostic := range diagnostics {
-		if diagnostic.Severity != model.SeverityError {
-			continue
-		}
-		switch diagnostic.Code {
-		case "unknown_field", "duplicate_key", "merge_key_unsupported":
-			return true
-		}
-	}
-	return false
 }
 
 func handleProcessValidate(w http.ResponseWriter, r *http.Request) {

@@ -141,10 +141,55 @@ func TestRoundTripSummarizesWhatTheWorkflowNeeds(t *testing.T) {
 	assert.Empty(t, a.Signatures)
 }
 
-func TestWriteRefusesAnIncompleteWorkflow(t *testing.T) {
+// draftSource fails validation: its task has no performer. The store keeps
+// such drafts, so a workflow carries them too.
+const draftSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: draft
+start: s
+nodes:
+  s:
+    type: start
+    next:
+      pass: work
+  work:
+    type: task
+    next:
+      pass: done
+  done:
+    type: end
+`
+
+func TestAnIncompleteWorkflowIsWrittenAndItsProblemsReported(t *testing.T) {
+	bundle := pwf.Bundle{Root: refOf(t, rootSource), Templates: []pwf.Template{{Source: []byte(rootSource), Head: true}}}
+	want := `template "ship-feature" references "review-loop", which the file does not carry`
+	problems, err := pwf.Problems(bundle)
+	require.NoError(t, err)
+	assert.Equal(t, []string{want}, problems)
 	var buf bytes.Buffer
-	err := pwf.Write(&buf, pwf.Bundle{Root: refOf(t, rootSource), Templates: []pwf.Template{{Source: []byte(rootSource), Head: true}}}, pwf.WriteOptions{})
-	require.ErrorContains(t, err, `references "review-loop", which the file does not carry`)
+	require.NoError(t, pwf.Write(&buf, bundle, pwf.WriteOptions{}))
+	a, err := open(t, buf.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, []string{want}, a.Problems, "a reader recomputes the same problems")
+}
+
+func TestATemplateWithValidationErrorsIsCarried(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{Root: refOf(t, draftSource), Templates: []pwf.Template{{Source: []byte(draftSource), Head: true}}}, pwf.WriteOptions{}))
+	a, err := open(t, buf.Bytes())
+	require.NoError(t, err)
+	require.NotEmpty(t, a.Problems)
+	assert.Contains(t, a.Problems[0], `template "draft": `)
+	assert.Equal(t, a.Root().Problems[0], strings.TrimPrefix(a.Problems[0], `template "draft": `))
+
+	clean, err := open(t, writeBundle(t))
+	require.NoError(t, err)
+	assert.Empty(t, clean.Problems)
+}
+
+func TestATemplateTheStoreCouldNotKeepIsRefused(t *testing.T) {
+	_, _, err := pwf.ParseTemplate([]byte(draftSource + "surprise: true\n"))
+	require.ErrorContains(t, err, `template "draft" cannot be carried`)
 }
 
 func TestSignaturesVerifyAndAreFormatSeparated(t *testing.T) {

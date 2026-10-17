@@ -74,6 +74,9 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	out := strings.TrimSpace(p.Output)
 	if out == "-" {
 		_, _ = stdout.Write(data)
+		if archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits()); err == nil {
+			warnWorkflowProblems(stderr, archive)
+		}
 		return rcOK
 	}
 	if out == "" {
@@ -92,7 +95,27 @@ func runProcessTemplatesExport(p *processTemplatesExportParams, stdout, stderr i
 	if n := len(archive.Workflow.Assignees); n > 0 {
 		fmt.Fprintf(stdout, "Note: %d step(s) name a specific agent, which the importing node will not have; they wait until reassigned there.\n", n)
 	}
+	warnWorkflowProblems(stderr, archive)
 	return rcOK
+}
+
+// warnWorkflowProblems warns that an export fails validation. The export
+// still succeeds: sharing an unfinished workflow is allowed, as saving one is.
+func warnWorkflowProblems(stderr io.Writer, archive *pwf.Archive) {
+	if len(archive.Problems) == 0 {
+		return
+	}
+	fmt.Fprintln(stderr, "Warning: the workflow fails validation. It was exported as it is, but it cannot run until these are fixed:")
+	renderProblems(stderr, archive.Problems)
+}
+
+// renderProblems lists what keeps a workflow from running as carried. Every
+// string comes from the file (template ids, node paths), so each goes through
+// shown.
+func renderProblems(out io.Writer, problems []string) {
+	for _, p := range problems {
+		fmt.Fprintf(out, "  %s\n", shown(p))
+	}
 }
 
 func signedNote(a *pwf.Archive) string {
@@ -144,10 +167,18 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{"workflow": a.Workflow, "signatures": sigs})
+		problems := a.Problems
+		if problems == nil {
+			problems = []string{}
+		}
+		_ = enc.Encode(map[string]any{"workflow": a.Workflow, "signatures": sigs, "problems": problems})
 		return rcOK
 	}
 	renderWorkflow(stdout, a.Workflow)
+	if len(a.Problems) > 0 {
+		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed):")
+		renderProblems(stdout, a.Problems)
+	}
 	if len(a.Signatures) == 0 {
 		fmt.Fprintln(stdout, "Signature: none (valid but unverified)")
 	}
@@ -160,7 +191,8 @@ func runProcessTemplatesInspect(p *processTemplatesInspectParams, stdin io.Reade
 // workflowImportJSON mirrors the daemon's import preview (pwfImportView).
 type workflowImportJSON struct {
 	pwf.Workflow
-	RootID     string `json:"rootId"`
+	RootID     string   `json:"rootId"`
+	Problems   []string `json:"problems"`
 	Signatures []struct {
 		KeyID  string `json:"keyId"`
 		Status string `json:"status"`
@@ -249,6 +281,10 @@ func runProcessTemplatesImport(p *processTemplatesImportParams, stdin io.Reader,
 	}
 	for _, s := range view.Signatures {
 		fmt.Fprintf(stdout, "Signature: %s, key %s (%s)\n", shown(s.Status), shown(s.KeyID), shown(s.Trust))
+	}
+	if len(view.Problems) > 0 {
+		fmt.Fprintln(stdout, "Fails validation (it imports, but cannot run until fixed here):")
+		renderProblems(stdout, view.Problems)
 	}
 	renderImportChanges(stdout, &view)
 	if !p.Yes {

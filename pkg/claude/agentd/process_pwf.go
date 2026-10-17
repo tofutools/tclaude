@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -31,7 +33,12 @@ import (
 // many templates still fits comfortably.
 const maxPWFUpload = 32 << 20
 
-// GET /v1/process/templates/{id}/export?version=&title=&summary=
+// GET /v1/process/templates/{id}/export?version=&title=&summary=[&check=1]
+//
+// A template that fails validation exports as it is, as the store saves it:
+// the file carries it and every reader reports its problems. With check=1
+// the response is those problems as JSON instead of the file, so the
+// dashboard can ask before sharing a workflow that cannot run yet.
 func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -52,6 +59,18 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bundle.Title, bundle.Summary = q.Get("title"), q.Get("summary")
+	if q.Get("check") == "1" {
+		problems, err := pwf.Problems(bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		if problems == nil {
+			problems = []string{}
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems})
+		return
+	}
 	opts := pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
 	// Signed only when this node already has a federation identity; exporting
 	// never creates one (the same rule as a local PAF export).
@@ -71,7 +90,8 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 // collectPWFBundle loads a template version and, transitively, every stored
 // template its subprocess steps reference: the pinned version, or the head
 // for an unpinned reference (marked head so it resolves the same way on the
-// importing node).
+// importing node). A reference with nothing stored behind it is left out;
+// the file reports it as a problem rather than refusing the export.
 func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bundle, error) {
 	root, err := resolveProcessTemplateVersion(r, fs, id, version)
 	if err != nil {
@@ -90,6 +110,9 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 			return errors.New("subprocess references nest too deeply")
 		}
 		source, err := fs.GetTemplateSource(ctx, ref)
+		if depth > 0 && isPWFNotFound(err) {
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("load %s: %w", ref, err)
 		}
@@ -103,6 +126,11 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 		byRef[ref] = &pwf.Template{Ref: ref, Head: head, Source: source}
 		order = append(order, ref)
 		for _, sp := range pwf.SubprocessRefs(tmpl) {
+			if !wellFormedPWFRef(sp) {
+				// A half-typed reference in a draft names nothing the store
+				// could hold; the file reports it as not carried.
+				continue
+			}
 			if sp.Version != "" {
 				if err := load(sp.TemplateRef+"@"+sp.Version, false, depth+1); err != nil {
 					return err
@@ -110,8 +138,11 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 				continue
 			}
 			child, err := fs.GetTemplateHead(ctx, sp.TemplateRef)
+			if isPWFNotFound(err) {
+				continue
+			}
 			if err != nil {
-				return fmt.Errorf("template %q references %q, which has no saved version: %w", tmpl.ID, sp.TemplateRef, err)
+				return fmt.Errorf("template %q references %q: %w", tmpl.ID, sp.TemplateRef, err)
 			}
 			if err := load(child.Ref, true, depth+1); err != nil {
 				return err
@@ -129,21 +160,39 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 	return bundle, nil
 }
 
+// pwfVersionRE is a subprocess pin's version: sha256:<64 lowercase hex>.
+var pwfVersionRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func wellFormedPWFRef(sp model.Subprocess) bool {
+	if store.ValidateTemplateID(sp.TemplateRef) != nil {
+		return false
+	}
+	return sp.Version == "" || pwfVersionRE.MatchString(sp.Version)
+}
+
+func isPWFNotFound(err error) bool {
+	return errors.Is(err, store.ErrNotFound) || errors.Is(err, os.ErrNotExist)
+}
+
 // pwfImportView is the review an importer acts on: what the workflow is,
 // who signed it, what it needs, and what importing would change locally.
 type pwfImportView struct {
-	Title      string                `json:"title"`
-	Summary    string                `json:"summary,omitempty"`
-	Root       string                `json:"root"`
-	RootID     string                `json:"rootId"`
-	Readme     string                `json:"readme,omitempty"`
-	Signatures []pwfSignatureView    `json:"signatures"`
-	Params     []pwf.Param           `json:"params"`
-	Roles      []pwf.Use             `json:"roles"`
-	Programs   []pwf.Program         `json:"programs"`
-	Assignees  []pwf.Use             `json:"assignees"`
-	Humans     []string              `json:"humans"`
-	Templates  []pwfTemplateImported `json:"templates"`
+	Title      string             `json:"title"`
+	Summary    string             `json:"summary,omitempty"`
+	Root       string             `json:"root"`
+	RootID     string             `json:"rootId"`
+	Readme     string             `json:"readme,omitempty"`
+	Signatures []pwfSignatureView `json:"signatures"`
+	Params     []pwf.Param        `json:"params"`
+	Roles      []pwf.Use          `json:"roles"`
+	Programs   []pwf.Program      `json:"programs"`
+	Assignees  []pwf.Use          `json:"assignees"`
+	Humans     []string           `json:"humans"`
+	// Problems keep the workflow from running as carried (pwf
+	// Archive.Problems): it imports all the same, and a run refuses to start
+	// until they are fixed here.
+	Problems  []string              `json:"problems"`
+	Templates []pwfTemplateImported `json:"templates"`
 	// RoleMap lists every role name the agent steps use (the role they ask
 	// for and the profile a fallback spawns) and what they use after the
 	// import; LocalRoles are the names a role can be mapped to here.
@@ -357,6 +406,7 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 	view := pwfImportView{
 		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
 		Params: wf.Params, Roles: wf.Roles, Programs: wf.Programs, Assignees: wf.Assignees, Humans: wf.Humans,
+		Problems:   append([]string{}, a.Problems...),
 		Signatures: pwfSignatureViews(a.Signatures), RoleMap: []pwfRoleMapping{}, LocalRoles: local,
 		Rename: opts.Rename, Group: opts.Group,
 	}
