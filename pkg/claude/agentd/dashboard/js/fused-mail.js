@@ -124,8 +124,9 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, roster
   const nodesKey = nodes.map((n) => `${n.id}:${n.online}:${n.level}`).join(',');
   const scopeKey = scoped.map((n) => n.id).join(',');
   // A merged folder reads each node's newest messages down to the open page;
-  // a node folder reads the node's own page.
-  const merged = !folder.node;
+  // a node folder, or a fused one narrowed to one node, reads the node's own
+  // page.
+  const merged = !folder.node && scoped.length > 1;
   const depth = merged ? mergedDepth(page, pageSize) : pageSize;
   const readPage = merged ? 1 : page;
   // sig names what a page shows; a page read for another folder is never shown.
@@ -158,6 +159,17 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, roster
         if (mode === 'requests') {
           const data = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
           commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, at: now() });
+          // Its folders still follow the sidebar filter and toggles.
+          const url = rosterURL(node, rosters[node.id]);
+          if (ref.current[node.id]?.rosterURL !== url) {
+            const roster = await readJSON(fetchFn, url);
+            commit(node.id, {
+              rosterURL: url,
+              mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [],
+              agentsTotal: Number.isFinite(roster?.agents_total) ? roster.agents_total : null,
+              agentsUnread: Number.isFinite(roster?.agents_unread) ? roster.agents_unread : 0,
+            });
+          }
         } else {
           const url = rosterURL(node, rosters[node.id]);
           if (mode === 'roster' || ticks % ROSTER_EVERY === 0 || !ref.current[node.id]?.mailboxes || ref.current[node.id].rosterURL !== url) {

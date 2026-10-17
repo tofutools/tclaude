@@ -126,8 +126,6 @@ export function RecipientNames({ recipients }) {
   </${Fragment}>`)}</${Fragment}>`;
 }
 
-// GroupLinkReader is a peer's cross-node link request (tcl-2ksi0k): one exact
-
 export function messageDeliveryState(message) {
   if (message.forward_state === 'queued' || message.forward_state === 'handoff') return 'forwarded to ' + message.forwarded_to;
   if (message.forward_state === 'refused') return 'forwarding refused';

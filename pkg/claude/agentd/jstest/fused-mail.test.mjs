@@ -261,6 +261,12 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   assert.equal(c.querySelectorAll('.fused-mail-section').length, 1, 'only forge\'s folders');
   assert.ok(subjects().every((s) => s.startsWith('forge')), 'only forge\'s messages');
   assert.ok(!calls.some((u) => u.startsWith('/api/mailbox?')), 'this node\'s page is not read');
+  assert.ok(calls.includes('/api/peer/inst_forge/mailbox?id=all&page=1&page_size=50'), 'one node in view pages on that node');
+  await click(c.querySelector('.mail-row'));
+  const replyBox = c.querySelector('.fused-mail-reply');
+  let key;
+  await harness.act(() => { key = harness.fireEvent(replyBox, 'keydown', { key: 'ArrowLeft' }); });
+  assert.equal(key.defaultPrevented, false, 'arrows in the reply box move its caret, not the focus');
   assert.equal(c.querySelector('#fused-mail-filter-count').textContent, '30 messages');
 
   // Bulk read goes to forge; delete stays disabled, since only this node's

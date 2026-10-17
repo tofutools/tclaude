@@ -296,6 +296,7 @@ function MessagePager({ current, controller, model }) {
 }
 
 
+// GroupLinkReader is a peer's cross-node link request (tcl-2ksi0k): one exact
 // directed edge into one of this node's groups. Approving stores only that
 // edge; "allow future" also grants the peer groups.link.accept for the
 // destination group. It never grants the peer broader messaging.

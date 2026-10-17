@@ -166,6 +166,8 @@ export function focusPaneRows(container, rowSelector, select) {
 // things and traversal works the same from every row in the sidebar.
 export function movePaneFocus(event, panes) {
   if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  // Arrow keys in a text field move its caret, not the focus.
+  if (event.target?.closest?.('textarea, select, [contenteditable]:not([contenteditable="false"]), input:not([type="checkbox"]):not([type="radio"])')) return false;
   const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
   if (!direction) return false;
   const source = panes.findIndex(({ selector }) => event.target?.closest?.(selector));
