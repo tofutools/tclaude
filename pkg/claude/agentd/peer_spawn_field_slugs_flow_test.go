@@ -231,6 +231,7 @@ func TestPeerSpawnWorktreeRoutesUnderTheirGrant(t *testing.T) {
 		"a worktree is a directory too: it needs groups.members.spawn.cwd")
 	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/worktrees", map[string]any{"repo": repo, "branch": "b", "path": "/tmp/elsewhere"}))
 	require.Equal(t, 403, rec.Code, "the peer does not choose where a worktree goes: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "cannot choose where its worktree is created")
 	require.NotEqual(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/worktrees/progress?id=x", nil)).Code, "progress reaches the route")
 	for _, path := range []string{"/api/worktrees/cleanup", "/api/browse-directories"} {
 		require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "POST", path, map[string]any{})).Code, path)

@@ -465,11 +465,11 @@ func fedSpawnOverridesText(o db.FederationSpawnOverrides) string {
 	// Launch settings show their JSON values, which approving applies.
 	var launch []string
 	for key, value := range o.Launch {
-		shown := proto.StripControls(string(value))
+		shown := []rune(proto.StripControls(string(value)))
 		if len(shown) > 120 {
-			shown = shown[:117] + "..."
+			shown = append(shown[:117], []rune("...")...)
 		}
-		launch = append(launch, fmt.Sprintf("\n  %s: %s", key, shown))
+		launch = append(launch, fmt.Sprintf("\n  %s: %s", key, string(shown)))
 	}
 	slices.Sort(launch)
 	return out + strings.Join(launch, "")
