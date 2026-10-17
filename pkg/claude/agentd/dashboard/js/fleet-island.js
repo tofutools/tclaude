@@ -219,7 +219,9 @@ function FleetChip({ state, node, off, remote, navigate }) {
     ? `Fleet: ${node?.configured ? 'the hub connection and peers' : 'link this node with your other machines or colleagues'} (${off.replace(/^Not connected to a federation hub: /, 'not connected: ')})`
     : !current.fleet ? 'Fleet: trust a peer to link nodes'
       : `Fleet: every linked node (${target === 'map' ? 'the map' : 'Fleet config'})`;
-  return html`<button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry data-fleet-target=${target}
+  // The separator comes with the chip, so a row without it ends cleanly.
+  return html`<span class="node-chips-sep" aria-hidden="true"></span>
+  <button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry data-fleet-target=${target}
     aria-current=${active ? 'page' : undefined} aria-label=${`Fleet${hint ? ': set up' : ''}`} title=${title}
     onClick=${() => { if (!active) navigate(target); }}>
     <${MapGlyph} /><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
@@ -247,7 +249,6 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
     : html`<button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
       <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>`}
-    <span class="node-chips-sep" aria-hidden="true"></span>
     <${FleetChip} state=${state} node=${node} off=${off} remote=${remote} navigate=${navigate} />
   </span>`;
 }
@@ -292,7 +293,6 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
     : html`<${NodeDropdown} state=${state} fleet=${fleet} pageNode=${pageNode} fused=${fused} onPick=${onPick} />`}
     <span class="node-chips-sep" aria-hidden="true"></span>
     <${FusedDropdown} state=${state} fleet=${fleet} fused=${fused} pageNode=${pageNode} onPick=${onPick} onFuse=${onFuse} />
-    <span class="node-chips-sep" aria-hidden="true"></span>
     <${FleetChip} state=${state} node=${current.node} off=${off} remote=${remote} navigate=${navigate} />
   </span>`;
 }

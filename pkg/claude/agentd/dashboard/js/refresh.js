@@ -457,7 +457,7 @@ function bindTabs() {
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
   // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
-  // A greyed-out tab (the map without linked nodes) is skipped too.
+  // A greyed-out (aria-disabled) tab is skipped too.
   return $$('nav [data-tab]').filter(b => b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true' && peerViewTabUsable(b.dataset.tab));
 }
 
@@ -483,17 +483,17 @@ export function isCyclingTabs() { return cyclingTabs; }
 // identically to a mouse click. Returns the newly-activated button (or
 // null if there are somehow no visible tabs).
 function cycleTab(dir) {
-  const tabs = visibleTabButtons();
-  if (!tabs.length) return null;
-  // The Fleet map is a top-level view that hides the per-node tabs, so it is
-  // the only visible tab while open. Cycling hands off to its island, which
-  // returns to the per-node tab the operator left for the map.
-  // Fleet administration is top-level too; its anchor is never visible.
-  if (document.querySelector('nav [data-tab="fleet-admin"].active')
-    || (tabs.length === 1 && tabs[0].dataset.tab === 'map' && tabs[0].classList.contains('active'))) {
+  // The Fleet map and Fleet administration are top-level views that hide the
+  // per-node tabs, and their own anchors are never visible (⌘ Fleet opens
+  // them), so check before the visible-tab list, which is empty there.
+  // Cycling hands off to the fleet island, which returns to the per-node tab
+  // the operator left.
+  if (document.querySelector('nav [data-tab="fleet-admin"].active, nav [data-tab="map"].active')) {
     document.dispatchEvent(new CustomEvent('tclaude:leave-map', { detail: { dir } }));
     return null;
   }
+  const tabs = visibleTabButtons();
+  if (!tabs.length) return null;
   // Processes is an Automations subtab whose own anchor is always hidden, so
   // while it is open, step from the Automations position instead.
   const processesActive = !!document.querySelector('nav [data-tab="processes"].active');

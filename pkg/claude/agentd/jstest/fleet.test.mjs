@@ -157,7 +157,7 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   await mounted.unmount(); state.dispose();
 });
 
-test('without a fleet ⚙ Fleet is always clickable, and a node never set up says so until the guide was opened', async (t) => {
+test('without a fleet ⌘ Fleet is always clickable, and a node never set up says so until the guide was opened', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('groups');
   const stored = new Map();

@@ -382,6 +382,23 @@ func fleetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "fleet-map-leave",
+			Title:   "] leaves the map",
+			Caption: "Map and Fleet config hide every per-node tab and their own anchors, so ] (like [ and ←/→) hands off to the fleet island, which returns to the per-node tab the operator left — here Groups.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="groups"]').click();
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 50 && document.querySelector('nav [data-tab="groups"]').offsetParent !== null; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }));
+  for (var j = 0; j < 30 && !document.querySelector('nav [data-tab="groups"].active'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('nav [data-tab="groups"].active')) throw new Error('fleet: ] did not leave the map');
+  if (document.querySelector('nav [data-tab="map"].active')) throw new Error('fleet: map still active after ]');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "fleet-node-update",
 			Title:   "Node self-update from the map",
 			Caption: "Each map card shows the node's tclaude version and ↑ when a newer release is known; update…/manage… opens the node's update dialog: version and install method, latest release and when it was checked, the binaries, version-skew warnings, Check now, Update to the latest (confirms the binary swap and daemon restart) and Roll back.",
@@ -434,7 +451,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-setup-join",
 			Title:   "Fleet setup guide: join a hub",
-			Caption: "A node that has never been set up: the node row's ⚙ Fleet chip stays clickable and says set up, and Fleet opens on the setup guide. Step 1 takes a pasted join code and shows what the daemon read from it — hub, space, invite expiry and the self-signed certificate's SHA-256 to compare with the admin — before one Join confirmation. A hub address and a bare invite still work below it, and the instance ID and fingerprint are there for an admin who admits by ID.",
+			Caption: "A node that has never been set up: the ⌘ Fleet chip stays clickable and says set up, and opens Fleet config on the setup guide. Step 1 takes a pasted join code and shows what the daemon read from it — hub, space, invite expiry and the self-signed certificate's SHA-256 to compare with the admin — before one Join confirmation. A hub address and a bare invite still work below it, and the instance ID and fingerprint are there for an admin who admits by ID.",
 			InitJS:  "window.__dashsnapSetupFresh = true;" + fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('[data-fleet-entry] .node-chip-hint'); w++) await new Promise(function(r){ setTimeout(r, 100); });
