@@ -497,13 +497,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
   if (fused) {
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0;
-    const counts = countText(groupProcessCounts(entry), wizard);
-    const n = savedProcesses.length;
-    const saved = !n ? '' : wizard ? `${n} written rite${n === 1 ? '' : 's'}` : `${plural(n, 'saved process')}`;
-    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} summary=${fused.agentsSummary}
+    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
         actions=${fused.actions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-        summary=${[counts || (wizard ? 'none walking' : 'none running'), saved].filter(Boolean).join(' · ')}
         actions=${html`${controls(true)}${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}`}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class="gp-group" data-process-group=${group.name}>${body}</div>
@@ -524,12 +520,13 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // FusedSection is one of Both's two sections in a group: a thin labelled
 // divider row, not a box, so the content keeps the exact left edge it has
 // in Agents and Processes -- Both adds a line, never a nesting level. The
-// line carries the section's own controls (`actions`) after its counts, so
-// they stay in reach while the section is folded. The label, and the empty
+// line carries the section's own controls (`actions`), so they stay in reach
+// while the section is folded; it has no counts, which the group's header
+// row already shows (its member bots and process graphs). The label, and the empty
 // rest of the line, fold the section; the choice is remembered per group
 // (see groups-fused-sections.js), and `force` holds it open while a start
 // or edit form inside needs it.
-export function FusedSection({ group, section, label, summary = '', auto = true, force = false, attrs = {}, actions = null, children }) {
+export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
   const toggle = () => { if (!force) { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); } };
@@ -539,7 +536,6 @@ export function FusedSection({ group, section, label, summary = '', auto = true,
       <button type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
-        ${summary && html`<span class="gf-summary">${summary}</span>`}
       </button>
       ${actions && html`<span class="group-header-actions gf-section-actions">${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
@@ -586,7 +582,7 @@ export function UngroupedProcessBody({ group }) {
   if (perspective.fused) {
     if (!entries.length) return null;
     return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-      summary=${`${entries.length} ${wizard ? 'rite' : 'run'}${entries.length === 1 ? '' : 's'}`} attrs=${{ 'data-fused-processes': group.key || group.name }}>
+      attrs=${{ 'data-fused-processes': group.key || group.name }}>
       <div class="gp-group" data-process-group=${group.key || group.name}>
         <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
           onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
