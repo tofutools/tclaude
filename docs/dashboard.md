@@ -117,8 +117,9 @@ In order across the top:
 | Activity | Audit trail, daemon log, and poll performance (three subtabs) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
-With trusted federation peers, node chips and the Map / Groups · all nodes /
-⚙ Fleet views join the tab bar; see [Fleet UI](#fleet-ui-linked-nodes).
+With trusted federation peers, node chips and **⌘ Fleet** join the tab bar,
+and ⌘ Fleet opens the Groups · all nodes / Map / ⚙ Fleet config views; see
+[Fleet UI](#fleet-ui-linked-nodes).
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog.
@@ -817,13 +818,16 @@ unreachable, still connecting or refused the connection) until this node is
 connected to its federation hub, and greys out again if that connection drops;
 it follows the connection within about five seconds, without a reload. Once
 connected, ⌂ works with no peers at all; each trusted peer adds a button.
-Until there is a linked node, a **⚙ Fleet** chip ends the row and is never
-greyed out: it opens Fleet administration, where the hub connection and the
+**⌘ Fleet** ends the row: the third place you can be, after this node and
+another node. It is lit on the fleet views and opens the one you used last
+(the map, or ⚙ Fleet config). It is never greyed out on this node: while the
+hub is not connected it opens ⚙ Fleet config, where the hub connection and the
 first peer are set up. On a node that was never set up it reads **set up**
-until you have opened the setup guide once.
-**nodes ▾** and the map icon stay greyed out until there is a linked node to
-show. ⌂ always works where it leads somewhere: home from a peer's view, and
-back from the map or ⚙ Fleet.
+until you have opened the setup guide once. In a peer's view it opens the map,
+and hides while there is none.
+**nodes ▾** stays greyed out until there is a linked node to show. ⌂ always
+works where it leads somewhere: home from a peer's view, and back from the
+fleet views.
 
 ### Fused nodes
 
@@ -842,9 +846,10 @@ address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 
 ### The map
 
-The map icon at the end of the node row opens the top-level views, and the tab
-strip turns into their switch: **Map**, **Groups · all nodes** (the fused
-Groups view of every node) and **⚙ Fleet**.
+**⌘ Fleet** at the end of the node row opens the fleet views, and the tab
+strip turns into their switch: **Groups · all nodes** (the fused Groups view
+of every node), **Map** and **⚙ Fleet config**. The right end stays the same,
+with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
 
 The map draws this node and each peer as a card joined by link edges (solid:
@@ -942,7 +947,7 @@ onto another node's group opens the same dialog on Move, pre-filled. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. Until this node is connected to a hub with a linked peer, **move
 to…** and **teleport to…** stay in the menu greyed out, saying why (as the
-node chips do); connect under ⚙ Fleet → Hub. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
+node chips do); connect under ⚙ Fleet config → Hub. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
 `tclaude agent morph`, `tclaude agent teleport`.
 
 Cloning on this node has one entry: **send elsewhere → clone…**, whose
@@ -1014,7 +1019,7 @@ A proposal offers a peer several items in one go: groups of yours they may see
 (name, description and member count; the member list only when you tick
 *include member list*) and link edges between your groups and theirs, one
 direction or both (each direction is a separate edge). Open it with
-**Propose…** on a trusted peer in **⚙ Fleet**, or **Propose several items…**
+**Propose…** on a trusted peer in **⚙ Fleet config**, or **Propose several items…**
 in the link dialog's Peer node mode. A preview lists exactly what is offered.
 Nothing changes on either node until the peer's operator accepts.
 
@@ -1028,10 +1033,10 @@ already accepted, the button reads **Withdraw pending items**: accepted edges
 stay until they are removed in Inter-group links. Each node applies only its own
 items. Accepting grants nothing beyond them.
 
-### Fleet administration (⚙ Fleet)
+### Fleet administration (⚙ Fleet config)
 
-**⚙ Fleet** (the node row's ⚙ Fleet chip before any peer is linked, the map's
-⚙ Fleet after, or "Fleet administration" in the command palette) manages this
+**⚙ Fleet config** (⌘ Fleet at the end of the node row, then ⚙ Fleet config,
+or "Fleet administration" in the command palette) manages this
 node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
 the hub connection with **Disconnect**, **version & updates…** for this
@@ -1191,7 +1196,7 @@ first and says what will happen. Most pages name their CLI.
 The full federation model, grants and CLI are in
 [Federation](federation.md).
 
-### Boards (⚙ Fleet → Boards)
+### Boards (⚙ Fleet config → Boards)
 
 The page opens on **Browse content**: everything posted to every board this
 node is a member of, in one list. **List** is a dense table with a detail

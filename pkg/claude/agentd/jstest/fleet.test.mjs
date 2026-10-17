@@ -99,19 +99,15 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   const activeTab = harness.signals.signal('access');
   const state = stateMod.createFleetState({ activeTab });
   const nav = []; const switched = [];
-  const map = harness.document.createElement('nav'); map.innerHTML = '<a data-tab="map" class="node-chip map">map</a>'; harness.document.body.appendChild(map);
-  const anchor = map.firstChild;
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
   const home = () => getByRole(mounted.container, 'button', { name: /this node/ });
   const fuse = () => getByRole(mounted.container, 'button', { name: /Show several nodes together/ });
   assert.equal(home().disabled, true, 'before any status read: ⌂ shown, disabled');
-  assert.equal(anchor.getAttribute('aria-disabled'), 'true');
 
   await harness.act(() => { state.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] }); });
   assert.equal(home().disabled, true, 'federation off');
   assert.match(home().title, /federation is off/);
   assert.equal(fuse().disabled, true);
-  assert.match(anchor.title, /federation is off/);
 
   await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'connecting' } }); });
   assert.equal(home().disabled, true, 'a hub not connected yet greys the row out, peers or not');
@@ -131,7 +127,7 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.match(pop.textContent, /No linked nodes yet/);
   assert.equal(state.fused.value, null, 'opening it turns on no fused view');
   await harness.act(() => harness.fireEvent(fuse(), 'click'));
-  assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected without peers: the map opens, showing this node alone');
+  assert.equal(mounted.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'map', 'connected without peers: ⌘ Fleet opens the map, showing this node alone');
   await harness.act(() => { activeTab.value = 'fleet-admin'; });
   await harness.act(() => harness.fireEvent(home(), 'click'));
   assert.deepEqual(nav, ['access'], 'with no peers ⌂ still leaves Fleet administration');
@@ -142,7 +138,7 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   await harness.act(() => { activeTab.value = 'access'; state.setStatus({ ...status([]), peers: [] }); });
 
   await harness.act(() => { state.setStatus(status([])); });
-  assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected with peers: the map opens');
+  assert.equal(mounted.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'fleet-admin', 'connected with peers: ⌘ Fleet ends the row and returns to Fleet config, the fleet view used last');
   assert.equal(fuse().disabled, false);
   const local = getByRole(mounted.container, 'button', { name: 'desk (this node)' });
   assert.equal(local.getAttribute('aria-current'), 'page');
@@ -157,11 +153,11 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.match(home().title, /hub unreachable/);
   await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'refused', last_error: 'hub refused: shutting_down: hub shutting down' } }); });
   assert.match(home().title, /shutting down/, 'a refusal shows the hub\'s reason');
-  assert.equal(anchor.getAttribute('aria-disabled'), 'true');
-  await mounted.unmount(); state.dispose(); map.remove();
+  assert.equal(mounted.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'fleet-admin', 'with the hub down ⌘ Fleet opens Fleet config');
+  await mounted.unmount(); state.dispose();
 });
 
-test('without a fleet ⚙ Fleet is always clickable, and a node never set up says so until the guide was opened', async (t) => {
+test('without a fleet ⌘ Fleet is always clickable, and a node never set up says so until the guide was opened', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('groups');
   const stored = new Map();
@@ -201,7 +197,8 @@ test('without a fleet ⚙ Fleet is always clickable, and a node never set up say
   await harness.act(() => { activeTab.value = 'groups'; state.setStatus({ ...status([]), peers: [] }); });
   assert.match(fleet().title, /trust a peer/);
   await harness.act(() => { state.setStatus(status([])); });
-  assert.equal(fleet(), null, 'with a fleet, the map leads to Fleet');
+  assert.ok(fleet(), 'with a fleet, ⌘ Fleet stays at the end of the row');
+  assert.match(fleet().title, /every linked node/);
   await mounted.unmount(); state.dispose();
 });
 
@@ -333,7 +330,9 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   assert.match(hub.textContent, /space-a/);
   assert.equal(timers.queue.length, 1, 'only this node is polled');
   const bar = await harness.mount(harness.html`<${island.TopLevelBar} state=${state} navigate=${(tab) => nav.push(tab)} />`);
-  assert.match(bar.container.textContent, /Fleet · 1 node · hub connected/);
+  assert.deepEqual([...bar.container.querySelectorAll('.fleet-seg-btn')].map((b) => b.textContent.trim()), ['▦ Groups · all nodes', 'Map', '⚙ Fleet config']);
+  assert.match(bar.container.textContent, /1 node · hub connected/);
+  assert.doesNotMatch(bar.container.textContent, /pick ⌂/);
   await harness.act(() => { state.setStatus({ ...status([]), peers: [], hub: { state: 'disconnected' } }); });
   assert.deepEqual(nav, ['groups'], 'the hub dropping leaves the map');
   await bar.unmount(); await mounted.unmount(); state.dispose();
@@ -401,4 +400,48 @@ test('node self-update: the card shows the version and an available update; the 
   await settle();
   assert.match(q('#fleet-node-update-modal').textContent, /forge does not let you manage its updates \(needs node\.update\)/);
   await mounted.unmount(); state.dispose();
+});
+
+test('⌘ Fleet is lit on the fleet views and returns to the one used last', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('groups');
+  const stored = new Map();
+  const prefs = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, v); } };
+  const state = stateMod.createFleetState({ activeTab, prefs });
+  state.setStatus(status([]));
+  const nav = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${() => {}} />`);
+  const chip = () => mounted.container.querySelector('[data-fleet-entry]');
+  assert.equal(chip().dataset.fleetTarget, 'map', 'the map by default');
+  assert.equal(chip().getAttribute('aria-current'), null);
+  await harness.act(() => { activeTab.value = 'fleet-admin'; });
+  assert.equal(chip().getAttribute('aria-current'), 'page', 'lit on Fleet config');
+  await harness.act(() => harness.fireEvent(chip(), 'click'));
+  assert.deepEqual(nav, [], 'no navigation while on a fleet view');
+  await harness.act(() => { activeTab.value = 'groups'; });
+  assert.equal(chip().dataset.fleetTarget, 'fleet-admin', 'back to Fleet config, the view used last');
+  assert.equal(stored.get(stateMod.LAST_VIEW_PREF), 'fleet-admin');
+  await harness.act(() => harness.fireEvent(chip(), 'click'));
+  assert.deepEqual(nav, ['fleet-admin']);
+  await harness.act(() => { activeTab.value = 'map'; });
+  await harness.act(() => { activeTab.value = 'groups'; });
+  assert.equal(chip().dataset.fleetTarget, 'map');
+  const fresh = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), prefs });
+  assert.equal(fresh.lastFleetTab(), 'map', 'a reload keeps the last view');
+  fresh.dispose();
+  // The state is built at module load, before initDashPrefs() fills the
+  // cache, so a pref that lands afterwards must still be honoured.
+  const late = new Map();
+  const early = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'),
+    prefs: { getItem: (k) => late.get(k) ?? null, setItem: (k, v) => { late.set(k, v); } } });
+  assert.equal(early.lastFleetTab(), 'map');
+  late.set(stateMod.LAST_VIEW_PREF, 'fleet-admin');
+  assert.equal(early.lastFleetTab(), 'fleet-admin', 'prefs loaded after the state was built still count');
+  early.dispose();
+  await mounted.unmount();
+
+  const peerView = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="inst_forge" switchNode=${() => {}} />`);
+  assert.equal(peerView.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'map', 'a peer view opens the map');
+  await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'disconnected' } }); });
+  await peerView.unmount(); state.dispose();
 });

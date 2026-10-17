@@ -703,8 +703,17 @@ export function buildCommands(snapshot) {
       });
     }
   }
-  // Fleet administration: the node row's ⚙ Fleet chip (or the map, once
-  // there is a fleet) opens it too.
+  // The fleet views: their anchors are always hidden (⌘ Fleet opens them),
+  // so the per-button loop above never lists them.
+  const fleetMap = $$('nav [data-tab="map"]')[0];
+  if (fleetMap && document.querySelector('#node-chips-root :is(.has-fleet, .has-map)')) {
+    cmds.push({
+      peerView: 'view', icon: '⌘', label: 'Go to map',
+      hint: 'every linked node and the hub, on one map',
+      keywords: 'fleet map nodes peers hub topology overview linked',
+      run: () => fleetMap.click(),
+    });
+  }
   const fleetAdmin = $$('nav [data-tab="fleet-admin"]')[0];
   if (fleetAdmin) {
     cmds.push({

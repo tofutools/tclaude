@@ -19830,8 +19830,11 @@ nav [data-tab].node-chip.map { color: #8b949e; margin-left: 0; flex: 0 1000 auto
 nav [data-tab].node-chip.map .node-chip-name { display: none; }
 nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 .node-chips-sep { width: 1px; height: 16px; background: #2a3340; margin: 0 3px; }
-/* ⚙ Fleet while there is no fleet to reach it through the map. Never greyed
-   out: it is where the hub connection and the first peer are set up. */
+/* ⌘ Fleet ends the node row: the whole fleet as a scope, beside this node and
+   the other nodes. Never greyed out on this node, since Fleet config is where
+   the hub connection and the first peer are set up. The static map anchor
+   stays the map's routing target and is not shown; ⌘ Fleet reaches it. */
+nav [data-tab="map"].node-chip { display: none; }
 .node-chip.fleet-entry { --nc: #58a6ff; color: #8b949e; margin-left: 3px; flex: none; }
 .node-chip.fleet-entry:hover { color: #f0f6fc; }
 .node-chip-hint { font: 600 10px/14px ui-sans-serif, system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: #1f6feb; color: #f0f6fc; }

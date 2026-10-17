@@ -84,7 +84,7 @@ test('past four nodes one dropdown names the shown node, filters as you type and
   const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="inst_review0000" switchNode=${(id) => switched.push(id)} />`);
   const c = mounted.container;
-  assert.equal(c.querySelectorAll('button.node-chip:not(.node-pick-btn):not(.node-fuse)').length, 0, 'no per-node buttons');
+  assert.equal(c.querySelectorAll('button.node-chip:not(.node-pick-btn):not(.node-fuse):not(.fleet-entry)').length, 0, 'no per-node buttons');
   const pick = getByRole(c, 'button', { name: 'Node: review. Choose a node' });
   await harness.act(() => harness.fireEvent(pick, 'click'));
   const input = c.querySelector('.node-pop-filter input');

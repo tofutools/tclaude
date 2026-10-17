@@ -10,8 +10,8 @@ You need three things:
 - **tclaude** on each machine, with `tclaude agentd` running;
 - a group with at least one agent on each side.
 
-Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet →
-Setup guide** (the ⚙ Fleet chip at the right of the tab bar) joins the hub
+Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet config →
+Setup guide** (⌘ Fleet at the right of the tab bar, then ⚙ Fleet config) joins the hub
 from a pasted join code (or the address and invite), trusts the other machine after you compare
 fingerprints, and shares a group. It shows the CLI command for every step,
 and step 4 of the guide lists what each peer shares and the agent grants
@@ -80,7 +80,7 @@ tclaude-hub ls                              # later: who is admitted, last seen
 
 A join code carries a bearer invite and decides which certificate the
 machine trusts for its hub: send it like a password, and only accept one from
-your hub admin. Once a node is a hub admin, its dashboard (**⚙ Fleet → Hub →
+your hub admin. Once a node is a hub admin, its dashboard (**⚙ Fleet config → Hub →
 Invites**) and `tclaude federation hub invites create` mint invites as join
 codes too, using the hub address and CA file that node connects with.
 
@@ -97,7 +97,7 @@ tclaude federation status
 SHA-256 of any certificate it trusts; compare that with the hub admin), then
 stores the certificate under `~/.tclaude/data/federation/hub-ca/` and
 connects. `--preview` only prints. The code can also be the argument or come
-from `--code-file`. In the dashboard, paste it into **⚙ Fleet → Setup guide**.
+from `--code-file`. In the dashboard, paste it into **⚙ Fleet config → Setup guide**.
 
 Or with a bare invite token:
 
@@ -166,7 +166,7 @@ tclaude agent permissions peer-reach add lead --peer desktop/builders --slug mes
 
 `peer-reach add` keeps any other peer groups `lead` can already mail. Use
 `--group <group>` instead of `lead` to give every member of a local group
-the reach. In the dashboard, step 4 of **⚙ Fleet → Setup guide** does the
+the reach. In the dashboard, step 4 of **⚙ Fleet config → Setup guide** does the
 same in place.
 
 The agent can then discover the shared members:
