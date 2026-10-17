@@ -18,13 +18,17 @@ import "sync"
 // panics on an Add that races a returning Wait ("WaitGroup is reused
 // before previous Wait has returned"). A counter under a cond simply
 // keeps waiting.
-var bg = struct {
+var bg = func() *bgCounter {
+	c := &bgCounter{}
+	c.cond = sync.NewCond(&c.mu)
+	return c
+}()
+
+type bgCounter struct {
 	mu   sync.Mutex
 	cond *sync.Cond
 	n    int
-}{}
-
-func init() { bg.cond = sync.NewCond(&bg.mu) }
+}
 
 // goBackground replaces a bare `go f()` for post-init work that
 // outlives its HTTP handler. Wraps the launch with the bookkeeping
