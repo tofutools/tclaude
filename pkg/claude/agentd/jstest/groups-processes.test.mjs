@@ -468,13 +468,12 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   const runs = section(fe, 'processes');
   assert.ok(runs.classList.contains('open'), 'a group with runs shows them');
   assert.ok(runs.querySelector('[data-process-run-card="run_release"]'));
-  assert.match(runs.querySelector('.gf-summary').textContent, /3 running · 2 needs you · 1 planned/);
+  assert.equal(root.querySelector('.gf-summary'), null, 'section lines carry no counts: the group header shows them');
 
   const infra = details('infra-crew');
   const quiet = section(infra, 'processes');
   assert.equal(quiet.classList.contains('open'), false, 'a quiet group folds its runs to one line');
   assert.equal(quiet.querySelector('[data-process-group]'), null);
-  assert.equal(quiet.querySelector('.gf-summary').textContent, 'none running');
   assert.ok(quiet.querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'a folded section keeps its controls');
   await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-toggle'), 'click'));
   assert.ok(section(infra, 'processes').querySelector('[data-quickstart-folded="infra-crew"]'), 'opened, Get started stays a line');

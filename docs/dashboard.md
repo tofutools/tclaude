@@ -178,9 +178,10 @@ drag-reassign agent nodes, and pause (⏸) / resume (⏵).
 
 Both, the default, shows each group's members and runs together as an
 **Agents** and a **Processes** section. Each section's header line carries
-its counts and then its own controls (spawn, subgroup, power on, shutdown for
+its own controls (spawn, subgroup, power on, shutdown for
 Agents; agent process, group process, resume, pause for Processes), which
-stay usable while it is folded. Each section folds from its header line, and
+stay usable while it is folded; the counts are on the group's header row
+(its member bots and run counts). Each section folds from its header line, and
 the choice is remembered per group; with no choice made, a group
 with nothing running shows its Processes section as a single line. In Both,
 clicking a group header's run counts opens that group's Processes section

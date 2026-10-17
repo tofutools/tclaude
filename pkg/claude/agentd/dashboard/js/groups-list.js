@@ -617,7 +617,6 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     // line, which would move its controls when the card folds.
     after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
     agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
-    agentsSummary: membersSummary(group, view),
   } : null;
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
@@ -636,16 +635,6 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;
-}
-
-// membersSummary is the Agents section's count line in Both.
-function membersSummary(group, view) {
-  const total = view.members.length;
-  const parts = [`${total} member${total === 1 ? '' : 's'}`, `${group.online || 0} online`];
-  if (view.hiddenOffline) parts.push(`${view.hiddenOffline} offline hidden`);
-  if (view.away) parts.push(`${view.away} away`);
-  if (group.pending?.length) parts.push(`${group.pending.length} pending`);
-  return parts.join(' · ');
 }
 
 function OnlineDot({ online }) {
