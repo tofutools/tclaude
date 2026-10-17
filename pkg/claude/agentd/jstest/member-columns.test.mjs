@@ -26,13 +26,16 @@ import {
 const KEY = 'tclaude.dash.members.hidden';
 const reset = () => dashPrefs.removeItem(KEY);
 const visKeys = () => visibleMemberCols().map(c => c.key);
+// The opt-in columns: ID and Process start hidden.
+const shownByDefault = () => MEMBER_COLS.filter(c => !c.defaultHidden);
 
 // --- defaults ----------------------------------------------------------
 
-test('with no pref, ID is hidden by default and nothing deviates', () => {
+test('with no pref, ID and Process are hidden by default and nothing deviates', () => {
   reset();
-  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => c.key !== 'id').map(c => c.key));
+  assert.deepEqual(visKeys(), shownByDefault().map(c => c.key));
   assert.equal(memberColHidden('id'), true);
+  assert.equal(memberColHidden('process'), true);
   assert.equal(memberColDeviationCount(), 0);
 });
 
@@ -53,7 +56,7 @@ test('order is preserved when a middle column is hidden', () => {
   setMemberColHidden('state', true);
   // visibleMemberCols is MEMBER_COLS minus the hidden entry, same order — so
   // the header (sortHead) and each row emit the same cells in the same order.
-  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => !['id', 'state'].includes(c.key)).map(c => c.key));
+  assert.deepEqual(visKeys(), shownByDefault().filter(c => c.key !== 'state').map(c => c.key));
 });
 
 test('unhiding restores the column and clears the deviation', () => {
@@ -93,7 +96,7 @@ test('the controls and Name columns can never be hidden', () => {
 test('a malformed pref degrades to "everything at its default"', () => {
   dashPrefs.setItem(KEY, 'not-json{');
   assert.equal(memberColHidden('id'), true);
-  assert.deepEqual(visKeys(), MEMBER_COLS.filter(c => c.key !== 'id').map(c => c.key));
+  assert.deepEqual(visKeys(), shownByDefault().map(c => c.key));
   assert.equal(memberColDeviationCount(), 0);
   reset();
 });

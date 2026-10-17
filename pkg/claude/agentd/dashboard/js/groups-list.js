@@ -601,8 +601,21 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   ].filter(Boolean).join(' ');
   const fleet = group.fleet_node;
   // Processes swaps only the agent details (pending spawns, spawn and power
-  // actions, the task-force card, the member table) for the group's runs.
+  // actions, the task-force card, the member table) for the group's runs;
+  // Both hands them to the runs body, which lays the two out as sections.
   const processes = useProcessesPerspective();
+  const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null;
+  const members = !view.members.length && !view.away
+    ? html`<div class="muted">(no members yet)</div>`
+    : !view.visible.length
+      ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
+      : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
+  const fused = processes?.fused ? {
+    actions: html`<${GroupActions} group=${group} actions=${actions} />`,
+    between: html`<${ForceBlock} group=${group} /><${GroupTriggersSection} group=${group} triggers=${triggers} />`,
+    agents: html`${pending}${members}`,
+    agentsSummary: membersSummary(group, view),
+  } : null;
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
     data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name}
@@ -611,18 +624,25 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
       ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
-      ${processes ? null : group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
-      ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
-      <${ForceBlock} group=${group} />`}
-      <${GroupTriggersSection} group=${group} triggers=${triggers} />
-      ${processes ? html`<${GroupProcessBody} group=${group} />` : !view.members.length && !view.away
-        ? html`<div class="muted">(no members yet)</div>`
-        : !view.visible.length
-          ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
-          : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`}
+      ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
+        ${processes ? null : pending}
+        ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
+        <${ForceBlock} group=${group} />`}
+        <${GroupTriggersSection} group=${group} triggers=${triggers} />
+        ${processes ? html`<${GroupProcessBody} group=${group} />` : members}`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;
+}
+
+// membersSummary is the Agents section's count line in Both.
+function membersSummary(group, view) {
+  const total = view.members.length;
+  const parts = [`${total} member${total === 1 ? '' : 's'}`, `${group.online || 0} online`];
+  if (view.hiddenOffline) parts.push(`${view.hiddenOffline} offline hidden`);
+  if (view.away) parts.push(`${view.away} away`);
+  if (group.pending?.length) parts.push(`${group.pending.length} pending`);
+  return parts.join(' · ');
 }
 
 function OnlineDot({ online }) {
@@ -653,7 +673,7 @@ function VirtualUngrouped({ group, snapshot, actions }) {
       regular=${`${view.members.length} agent${view.members.length === 1 ? '' : 's'} not in any group${view.hiddenOffline ? ` · ${view.hiddenOffline} offline hidden` : ''}`}
       wizard=${`${view.members.length} unbound familiar${view.members.length === 1 ? '' : 's'}${view.hiddenOffline ? ` · ${view.hiddenOffline} slumbering hidden` : ''}`}
     /></span>`;
-  const body = processes ? html`<${UngroupedProcessBody} group=${group} />` : !view.members.length
+  const agentsBody = !view.members.length
     ? html`<div class="muted"><${ThemeText} regular="(no ungrouped agents)" wizard="(no unbound familiars)" /></div>`
     : !view.visible.length
       ? html`<div class="muted"><${ThemeText}
@@ -661,6 +681,9 @@ function VirtualUngrouped({ group, snapshot, actions }) {
         wizard=${`(${view.hiddenOffline} slumbering familiar${view.hiddenOffline === 1 ? '' : 's'} hidden — enable "show slumbering" to reveal ${view.hiddenOffline === 1 ? 'it' : 'them'})`}
       /></div>`
       : html`<${MemberTable} members=${view.visible} tableKey="virtual:ungrouped" ungrouped=${true} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
+  const body = !processes ? agentsBody
+    : processes.fused ? html`${agentsBody}<${UngroupedProcessBody} group=${group} />`
+      : html`<${UngroupedProcessBody} group=${group} />`;
   return html`<${VirtualShell} group=${group} target="ungrouped" summary=${summary}>${body}<//>`;
 }
 

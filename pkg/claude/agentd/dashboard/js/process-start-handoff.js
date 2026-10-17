@@ -11,7 +11,7 @@ let pending = null;
 const PENDING_TTL_MS = 10_000;
 
 // requestProcessStart queues the start, opens the group and switches the
-// Groups tab to its Processes perspective.
+// Groups tab to a lens that shows its runs (setFocus may keep Both).
 export function requestProcessStart({ group, templateId }, {
   doc = document, prefs = null, setFocus = null, rerender = null, now = Date.now,
 } = {}) {

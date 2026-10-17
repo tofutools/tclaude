@@ -375,7 +375,7 @@ things there are specific to processes:
   node — the ports come from the connectors crossing its boundary — and
   *⇲ unwrap* inlines a body again.
 
-**Starting a run.** In Groups, switch the focus to **Processes** and use
+**Starting a run.** In Groups, in the **Both** or **Processes** focus, use
 *+ start process* on a group: pick a template, fill its params, and tick the
 program profiles you authorize it to run under (never pre-ticked). The run is
 group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.

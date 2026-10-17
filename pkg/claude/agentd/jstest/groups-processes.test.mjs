@@ -44,7 +44,7 @@ async function mountFocus(t, props = {}) {
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${groups} allGroups=${allGroups} source=${source}
       filter=${props.filter || 'running'} api=${props.api} wizard=${props.wizard || false}
-      focusedRun=${props.focusedRun || null} onFocusRun=${props.onFocusRun || (() => {})}>
+      focusedRun=${props.focusedRun || null} onFocusRun=${props.onFocusRun || (() => {})} fused=${props.fused || false}>
       <${list.GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${{}} />
     <//>
   <//>`);
@@ -450,4 +450,87 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   assert.equal(started.length, 1);
   assert.equal(started[0].agent, 'agt_fe_charts');
   assert.equal(started[0].group, undefined, 'an agent-scoped run names no group');
+});
+
+test('Both shows each group\'s members and runs as sections under one captioned action row', async (t) => {
+  const { harness, root, details } = await mountFocus(t, { fused: true });
+  assert.ok(root.querySelector('[data-groups-fused]'));
+  assert.equal(root.querySelector('[data-groups-processes]'), null);
+  const fe = details('frontend-squad');
+  const row = fe.querySelector('.group-fused-actions');
+  assert.deepEqual([...row.querySelectorAll('.gf-cap')].map((el) => el.textContent), ['agents', 'processes']);
+  assert.ok(row.querySelector('[data-act="spawn-agent"]'), 'agent controls first');
+  assert.ok(row.querySelector('[data-process-start-agent="frontend-squad"]'), 'then the process controls');
+  assert.ok(row.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
+  assert.equal(fe.querySelectorAll('.group-header-actions').length, 1, 'one action row, not two');
+
+  const section = (el, name) => el.querySelector(`:scope > .subtable > [data-fused-section="${name}"]`);
+  assert.ok(section(fe, 'agents').querySelector('table'), 'the member table shows');
+  const runs = section(fe, 'processes');
+  assert.ok(runs.classList.contains('open'), 'a group with runs shows them');
+  assert.ok(runs.querySelector('[data-process-run-card="run_release"]'));
+  assert.match(runs.querySelector('.gf-summary').textContent, /3 running · 2 needs you · 1 planned/);
+
+  const infra = details('infra-crew');
+  const quiet = section(infra, 'processes');
+  assert.equal(quiet.classList.contains('open'), false, 'a quiet group folds its runs to one line');
+  assert.equal(quiet.querySelector('[data-process-group]'), null);
+  assert.equal(quiet.querySelector('.gf-summary').textContent, 'none running');
+  await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-head'), 'click'));
+  assert.ok(section(infra, 'processes').querySelector('[data-quickstart-folded="infra-crew"]'), 'opened, Get started stays a line');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1', 'the choice is remembered');
+  await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-head'), 'click'));
+  assert.equal(section(fe, 'agents').querySelector('table'), null, 'Agents folds too');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '0');
+});
+
+for (const status of ['idle', 'unavailable']) {
+  test(`Both shows the member tree while runs are ${status}`, async (t) => {
+    const { root, details } = await mountFocus(t, { fused: true, sourceOptions: { status, context: null } });
+    assert.ok(details('frontend-squad').querySelector('table'), 'members show');
+    assert.ok(details('frontend-squad').querySelector('[data-act="spawn-agent"]'));
+    assert.equal(root.querySelector('[data-fused-section]'), null, 'no sections without runs');
+    assert.equal(root.querySelector('.groups-processes-placeholder'), null);
+  });
+}
+
+test('Both links an agent to its steps, a step to its performers, and a run card to all of its agents, on hover only', async (t) => {
+  const { harness, root, details } = await mountFocus(t, { fused: true });
+  const wait = (ms) => harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const lines = () => [...root.querySelectorAll('.gf-links path.gf-link')].length;
+  const hover = (el) => harness.act(() => el.dispatchEvent(new harness.window.Event('pointerover', { bubbles: true })));
+  const fe = details('frontend-squad');
+  assert.equal(root.querySelector('.gf-links'), null, 'nothing at rest');
+
+  const forms = fe.querySelector('tr[data-dnd-agent="agt_fe_forms"]');
+  await hover(forms.querySelector('td'));
+  assert.equal(lines(), 0, 'the first hover waits a moment');
+  await wait(160);
+  assert.equal(lines(), 2, 'fe-dev-forms performs checkout (release) and verify (migrate)');
+  assert.ok(forms.classList.contains('gf-link-hot'));
+  const release = fe.querySelector('[data-process-run-card="run_release"]');
+  assert.ok(release.querySelector('[data-process-node="checkout"]').classList.contains('gf-link-hot'));
+  assert.ok(release.querySelector('[data-process-node="plan"]').classList.contains('gf-link-dim'), 'the rest of the card dims');
+
+  // jsdom lays nothing out, so every end reads as off screen and gets a tag;
+  // with a tag showing, moving on to another link waits a short dwell.
+  assert.ok(root.querySelector('.gf-link-tag'), 'an off-screen end becomes a tag');
+  await hover(release.querySelector('.gp-card-head'));
+  await wait(40);
+  assert.equal(lines(), 2, 'with a tag showing, a passing hover does not switch at once');
+  await wait(300);
+  assert.equal(lines(), 3, 'a run card links each agent-performed step: plan, checkout, charts');
+  assert.equal(forms.classList.contains('gf-link-dim'), false);
+
+  await hover(release.querySelector('[data-process-node="charts"]'));
+  await wait(340);
+  assert.equal(lines(), 1, 'a step links only its performer');
+  assert.ok(fe.querySelector('tr[data-dnd-agent="agt_fe_charts"]').classList.contains('gf-link-hot'));
+  assert.equal(forms.classList.contains('gf-link-hot'), false, 'the previous highlights clear');
+
+  await harness.act(() => root.querySelector('[data-groups-fused]').dispatchEvent(new harness.window.Event('pointerleave')));
+  await wait(260);
+  assert.equal(root.querySelector('.gf-links'), null, 'leaving the frame clears the links');
+  assert.equal(fe.querySelectorAll('.gf-link-hot, .gf-link-dim').length, 0);
 });

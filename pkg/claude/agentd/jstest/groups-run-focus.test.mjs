@@ -378,10 +378,14 @@ test('a member badge opens its run; a header chip goes back to the cards', async
     <${indicators.GroupProcessGraphs} group=${GROUPS[0]} snapshot=${on} source=${source} />
   </div>`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('.pk-run-badge'), 'click'));
-  assert.equal(state.focus.value, 'processes');
+  assert.equal(state.focus.value, 'both', 'Both shares the single-run focus, so it stays');
   assert.deepEqual(state.focusedRun.value, { group: 'frontend-squad', runId: 'run_release' });
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="running"]'), 'click'));
   assert.equal(state.focusedRun.value, null);
+  state.setFocus('agents');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.pk-run-badge'), 'click'));
+  assert.equal(state.focus.value, 'processes', 'from Agents the run opens in Processes');
+  assert.deepEqual(state.focusedRun.value, { group: 'frontend-squad', runId: 'run_release' });
 });
 
 test('the focus header pauses a live run', async (t) => {
