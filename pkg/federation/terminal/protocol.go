@@ -16,6 +16,9 @@ const (
 	Resize
 	Credit
 	Closed
+	// Status carries a proto.SessionStatus JSON body to a viewer that asked to
+	// share the size; older viewers never receive it.
+	Status
 	MaxPayload = 16 << 10
 	WindowSize = 256 << 10
 )
@@ -28,7 +31,7 @@ type Frame struct {
 }
 
 func Encode(f Frame) ([]byte, error) {
-	if f.Kind < Output || f.Kind > Closed || len(f.Data) > MaxPayload {
+	if f.Kind < Output || f.Kind > Status || len(f.Data) > MaxPayload {
 		return nil, ErrProtocol
 	}
 	out := make([]byte, 5+len(f.Data))
@@ -38,7 +41,7 @@ func Encode(f Frame) ([]byte, error) {
 	return out, nil
 }
 func Decode(p []byte) (Frame, error) {
-	if len(p) < 5 || int(binary.BigEndian.Uint32(p[1:5])) != len(p)-5 || len(p) > MaxPayload+5 || p[0] < Output || p[0] > Closed {
+	if len(p) < 5 || int(binary.BigEndian.Uint32(p[1:5])) != len(p)-5 || len(p) > MaxPayload+5 || p[0] < Output || p[0] > Status {
 		return Frame{}, ErrProtocol
 	}
 	return Frame{Kind: p[0], Data: p[5:]}, nil

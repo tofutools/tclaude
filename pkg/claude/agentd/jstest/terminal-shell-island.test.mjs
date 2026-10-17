@@ -842,3 +842,30 @@ test('a widget disconnect asking to close the tab closes only that pane, without
     'closing an exited pane sends no detach');
   await harness.act(() => cleanup());
 });
+
+test('a shared remote pane names what else is attached, says when the size is limited, and offers a take-over only when granted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RemoteSharedNotice } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const seed = { remote: { peer: 'inst_forge7', peerLabel: 'brain', agent: 'agt_ada1' } };
+  let takeOvers = 0;
+  const others = ['a local terminal', 'another remote viewer'];
+  const mounted = await harness.mount(harness.html`<${RemoteSharedNotice} seed=${seed}
+    remote=${{ shared: true, others, canTakeOver: true, limited: true }} onTakeOver=${() => { takeOvers += 1; }} />`);
+  const notice = () => mounted.container.querySelector('.term-remote-shared');
+  assert.equal(notice().textContent.replace('Take over', '').trim(),
+    'Also attached on brain: a local terminal, another remote viewer · sharing the size · size limited by another viewer');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Take over' }), 'click', { button: 0 }));
+  assert.equal(takeOvers, 1);
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others, canTakeOver: false, limited: false }} onTakeOver=${() => {}} />`);
+  assert.equal(notice().textContent.trim(), 'Also attached on brain: a local terminal, another remote viewer · sharing the size');
+  assertAbsent(mounted.container.querySelector('[data-term-take-over]'), 'no take-over without the grant');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others: [], canTakeOver: true, limited: true }} onTakeOver=${() => {}} />`);
+  assert.equal(notice().textContent.trim(), 'Size limited by another viewer');
+  assertAbsent(mounted.container.querySelector('[data-term-take-over]'), 'nobody to take over from');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others: [], limited: false }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'alone at its own size: nothing to say');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: false, others: ['x'] }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'a pinned view (an older peer) shows none');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${{}} remote=${{ shared: true, others: ['x'] }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'a local pane never shows it');
+});

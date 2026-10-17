@@ -658,6 +658,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermSessionsFilesRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Download bounded non-secret project files through a live remote terminal viewer. Independent of watch/attach; default off."},
 	{Slug: PermSessionsWatch, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Watch a shared remote agent pane. Requires peer= scope."},
 	{Slug: PermSessionsAttach, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Full keyboard access to a shared remote agent pane, including approval prompts. Requires peer= scope."},
+	{Slug: PermSessionsTakeover, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Take over a shared remote agent pane: disconnect its other viewers, including the peer's own local terminals, to be its only viewer. Used together with sessions.watch or sessions.attach. Requires peer= scope; default off."},
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
 	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
 	{Slug: PermNodeUpdate, Description: "Permit trusted peers to replace installed tclaude binaries and restart agentd. High trust, default off; instance-wide peer grant."},

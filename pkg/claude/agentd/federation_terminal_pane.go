@@ -159,6 +159,7 @@ func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, err
 	}
 	// Do not wire the PTY master write side: a writable tmux client would
 	// interpret prefix bindings and commands. Only its output is exposed.
+	fedRendererAdd(pin.tmux, 1)
 	return &fedPaneTerminal{f: f, cmd: cmd, pin: pin, resize: func(c, r int) error { return pty.Setsize(f, &pty.Winsize{Cols: uint16(c), Rows: uint16(r)}) }}, nil
 }
 func (p *fedPaneTerminal) Read(b []byte) (int, error) { return p.f.Read(b) }
@@ -206,7 +207,12 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	return nil
 }
 func (p *fedPaneTerminal) Close() error {
-	p.once.Do(func() { _ = p.f.Close(); hangupProcessGroup(p.cmd.Process); _ = p.cmd.Wait() })
+	p.once.Do(func() {
+		_ = p.f.Close()
+		hangupProcessGroup(p.cmd.Process)
+		_ = p.cmd.Wait()
+		fedRendererAdd(p.pin.tmux, -1)
+	})
 	return nil
 }
 
@@ -406,7 +412,9 @@ func cleanupFedTerminalIndicators() {
 
 var _ io.ReadCloser = (*fedPaneTerminal)(nil)
 
-// size queries the pinned pane; a browser renderer never chooses target size.
+// size queries the pinned pane. A pinned browser view renders at this size;
+// only a view that owns the session's size (federation_terminal_owner.go)
+// resizes the window.
 func (pin *fedPanePin) size() (int, int, error) {
 	raw, err := clcommon.TmuxCommand("display-message", "-p", "-t", pin.pane, "#{pane_width} #{pane_height}").Output()
 	if err != nil {

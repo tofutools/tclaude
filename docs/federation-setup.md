@@ -230,6 +230,8 @@ tclaude federation grant laptop sessions.read --scope group=builders
 tclaude federation grant laptop sessions.watch --scope group=builders
 # Optional full keyboard authority, including harness approval answers:
 tclaude federation grant laptop sessions.attach --scope group=builders
+# Optional: let the laptop disconnect every other viewer (--take-over):
+tclaude federation grant laptop sessions.takeover --scope group=builders
 
 # On the laptop, use the stable address returned by sessions:
 tclaude federation sessions desktop
@@ -242,7 +244,8 @@ grant scoped to `peer=desktop/builders`, plus `sessions.read` to discover the
 address. Unrestricted trust includes these permissions.
 
 The target requires tmux 3.2+, one window and one pane. A visible pane border
-indicator identifies remote viewers; viewer resizing never resizes the target.
+indicator identifies remote viewers. Viewers and the target's own terminals
+share the window size: the smallest attached terminal sets it.
 Its operator can run `tclaude federation viewers` and
 `tclaude federation kick <viewer-id>` to remove a viewer immediately.
 See [remote terminals](federation.md#remote-terminals) for revocation and audit

@@ -97,7 +97,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	if p.ReadOnly {
 		mode = "watch"
 	}
-	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent, "viewer_id": v.ID, "files": v.files}) != nil {
+	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent, "viewer_id": v.ID, "files": v.files, "shared": v.shared, "others": v.others, "take_over": v.canTakeOver}) != nil {
 		return
 	}
 	fedTerminalAudit("sessions.attach.open", "", peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" browser mode="+mode, 200)
@@ -151,7 +151,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			if frame.Kind == terminal.Closed {
 				reason := string(frame.Data)
 				switch reason {
-				case "exit", "reincarnated", "revoked", "untrusted", "kicked", "error":
+				case "exit", "reincarnated", "revoked", "untrusted", "kicked", fedTerminalTakenOver, "error":
 				default:
 					reason = "error"
 				}
@@ -185,6 +185,14 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 				if err == nil {
 					err = control(map[string]any{"type": "size", "cols": c, "rows": rows})
 				}
+			case terminal.Status:
+				// What else is attached now; only a sharing view receives it.
+				var status proto.SessionStatus
+				if !v.shared || json.Unmarshal(frame.Data, &status) != nil {
+					err = terminal.ErrProtocol
+				} else {
+					err = control(map[string]any{"type": "others", "others": sanitizeFedOthers(status.Others)})
+				}
 			default:
 				err = terminal.ErrProtocol
 			}
@@ -204,12 +212,22 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			}
 			if kind == websocket.TextMessage {
 				var control struct {
-					Type  string
-					Bytes int
+					Type       string
+					Bytes      int
+					Cols, Rows int
 				}
 				if json.Unmarshal(body, &control) == nil {
 					if control.Type == "resize" {
-						continue
+						// A sharing view reports the size it could show; a pinned
+						// view's fits stay in this browser.
+						if !v.shared || control.Cols < 1 || control.Rows < 1 || control.Cols > 1000 || control.Rows > 1000 {
+							continue
+						}
+						if authorized() == "" && write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(control.Cols, control.Rows)}) == nil {
+							continue
+						}
+						stopped <- "error"
+						return
 					}
 					if control.Type == "credit" {
 						creditMu.Lock()

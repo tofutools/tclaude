@@ -225,6 +225,24 @@ function TerminalDisconnectNotice({ onReconnect }) {
   `;
 }
 
+// RemoteSharedNotice explains a shared remote terminal: the peer's session is
+// also attached elsewhere, and the smallest attached terminal sets the size.
+// When the peer granted sessions.takeover, taking it over disconnects the
+// others so this view alone sizes the pane.
+export function RemoteSharedNotice({ seed, remote, onTakeOver }) {
+  if (!seed?.remote || !remote?.shared) return null;
+  const others = remote.others || [];
+  if (!others.length && !remote.limited) return null;
+  const peer = seed.remote.peerLabel || seed.remote.peer;
+  const text = others.length
+    ? `Also attached on ${peer}: ${others.join(', ')} · sharing the size${remote.limited ? ' · size limited by another viewer' : ''}`
+    : 'Size limited by another viewer';
+  return html`<div class="term-remote-shared" role="status">
+    <span>${text}</span>
+    ${others.length && remote.canTakeOver ? html`<button type="button" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over</button>` : null}
+  </div>`;
+}
+
 // RemoteBadge marks a peer's terminal: whose it is and whether this view can
 // type (interactive) or only watch, as the peer granted it.
 function RemoteBadge({ seed, remote }) {
@@ -339,6 +357,8 @@ function TerminalPane({
         snapshot=${processSnapshot} onComposeMessage=${onComposeMessage
           ? (seed) => onComposeMessage({ ...seed, restoreFocus: () => actions.activatePane(pane.key) })
           : null} />` : null}
+      <${RemoteSharedNotice} seed=${pane.seed} remote=${remote}
+        onTakeOver=${() => void actions.widgetFor(pane.id)?.takeOver()} />
       ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}

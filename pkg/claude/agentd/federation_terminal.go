@@ -10,11 +10,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 	"github.com/tofutools/tclaude/pkg/federation/terminal"
@@ -56,6 +58,19 @@ type fedTerminalView struct {
 	fileRootPath string
 	fileRootErr  error
 	files        bool
+	// Requesting side: the peer shares the window size with this view (it
+	// reports its size and gets the shared grid); others: what else was
+	// attached at open; canTakeOver: the peer grants sessions.takeover.
+	shared      bool
+	others      []string
+	canTakeOver bool
+	// Target side, for a ShareSize viewer (federation_terminal_share.go).
+	sharing                bool
+	wantCols, wantRows     int
+	sharedCols, sharedRows int
+	liveOthers, sentOthers []string
+	sizeCh                 chan struct{}
+	sizer                  *fedWindowSizer
 }
 
 func (rt *fedRuntime) terminalsLocked() *fedTerminalState {
@@ -205,6 +220,8 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 			}
 			v.cols, v.rows = a.answer.Cols, a.answer.Rows
 			v.files = a.answer.Files
+			v.shared = p.ShareSize && a.answer.SharedSize
+			v.others = sanitizeFedOthers(a.answer.Others)
 			return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.answer.Key, true)
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -231,7 +248,7 @@ func resolveFedTerminalTarget(address string, readOnly bool) (*db.FederationPeer
 		return nil, proto.SessionOpenPayload{}, errors.New("no peer catalog; list federation sessions first")
 	}
 	var matches []proto.SessionOpenPayload
-	for _, g := range cat.Groups {
+	for _, g := range fedTerminalGroups(cat) {
 		if !g.HasCap(fedTerminalCap(readOnly)) {
 			continue
 		}
@@ -278,7 +295,9 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 	if !human {
 		cat, _, _ := fedCatalogFor(peer.InstanceID)
 		allowed := false
-		for _, g := range cat.Groups {
+		// Groups granting take-over come first; an agent still needs its own
+		// sessions.takeover for one to be offered (below).
+		for _, g := range fedTerminalGroups(cat) {
 			if !g.HasCap(fedTerminalCap(readOnly)) {
 				continue
 			}
@@ -309,9 +328,25 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		return
 	}
 	p.FixedSize = browser
+	// The browser bridge always shares the size. The CLI asks with
+	// share_size=1, which also opts it into a JSON hello frame and the Resize
+	// and Status frames an older CLI would reject.
+	p.ShareSize = browser || r.URL.Query().Get("share_size") == "1"
+	p.TakeOver = p.ShareSize && r.URL.Query().Get("take_over") == "1"
 	p.Cols, p.Rows = queryInt(r, "cols", 80), queryInt(r, "rows", 24)
 	if p.Cols < 1 || p.Cols > 1000 || p.Rows < 1 || p.Rows > 1000 {
 		writeError(w, 400, "invalid_arg", "terminal dimensions must be 1..1000")
+		return
+	}
+	// Take-over needs the peer's sessions.takeover grant (the target checks it
+	// again) and, for an agent, the matching local permission.
+	canTakeOver := fedCatalogGroupHasCap(peer.InstanceID, p.Group, proto.CapSessionsTakeover)
+	if canTakeOver && !human {
+		yes, _, err := permissionAllowsAction(r, caller, PermSessionsTakeover, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: p.Group})
+		canTakeOver = err == nil && yes
+	}
+	if p.TakeOver && !canTakeOver {
+		writeError(w, 403, "permission_denied", "take-over requires "+PermSessionsTakeover+" scoped to peer="+peer.InstanceID+"/"+p.Group)
 		return
 	}
 	v, err := rt.addTerminal(peer.InstanceID, p, false)
@@ -319,6 +354,7 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		writeError(w, 429, "limit", err.Error())
 		return
 	}
+	v.canTakeOver = canTakeOver
 	defer v.close()
 	conn, err := rt.openTerminalStream(v, p)
 	if err != nil {
@@ -352,6 +388,13 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 	}
 	ws.SetReadLimit(terminal.MaxPayload + 5)
 	v.addCleanup(func() { _ = ws.Close() })
+	// Only a CLI that asked to share the size reads this one text frame; the
+	// rest of the stream stays binary terminal frames.
+	if p.ShareSize {
+		if ws.WriteJSON(map[string]any{"type": "hello", "shared": v.shared, "others": v.others, "take_over": v.canTakeOver}) != nil {
+			return
+		}
+	}
 	fedTerminalAudit("sessions.attach.open", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(readOnly), 200)
 	defer fedTerminalAudit("sessions.attach.close", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID, 200)
 	authorized := func() bool {
@@ -474,11 +517,16 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 	}
 	var v *fedTerminalView
 	answer := func(ok bool, key []byte, reason string) {
-		cols, rows := 0, 0
+		a := proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason}
 		if v != nil {
-			cols, rows = v.cols, v.rows
+			v.mu.Lock()
+			a.Cols, a.Rows, a.Files = v.cols, v.rows, v.files
+			if ok {
+				a.SharedSize, a.Others = v.sharing, v.others
+			}
+			v.mu.Unlock()
 		}
-		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason, Cols: cols, Rows: rows, Files: v != nil && v.files})
+		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, a)
 	}
 	if p.Cols < 1 || p.Rows < 1 || p.Cols > 1000 || p.Rows > 1000 {
 		answer(false, nil, "invalid terminal dimensions")
@@ -506,9 +554,33 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	v.mu.Lock()
 	v.pin, v.fileRoot, v.fileRootPath, v.fileRootErr = pin, root, rootPath, rootErr
 	v.files = rootErr == nil && fedPeerAllows(peer.InstanceID, pin.group, PermSessionsFilesRead)
+	// Sharing is published with the pin: other viewers' sizers find v by it.
+	if p.ShareSize {
+		v.sharing, v.sizeCh = true, make(chan struct{}, 1)
+	}
 	v.mu.Unlock()
 	if root != nil {
 		v.addCleanup(func() { v.mu.Lock(); _ = root.Close(); v.fileRoot = nil; v.mu.Unlock() })
+	}
+	// Take-over needs its own grant; this side's check is authoritative.
+	if p.TakeOver && !fedPeerAllows(peer.InstanceID, pin.group, PermSessionsTakeover) {
+		answer(false, nil, "take-over requires the "+PermSessionsTakeover+" grant")
+		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: take-over not granted", 403)
+		return
+	}
+	// A take-over's displacement waits until this open can no longer fail on
+	// this side; the answer already reports what else is attached.
+	displace := false
+	if p.ShareSize {
+		var others []string
+		displace, others = rt.planFedTakeOver(pin, v, p.TakeOver)
+		v.mu.Lock()
+		v.others, v.sentOthers, v.liveOthers = others, others, others
+		v.mu.Unlock()
+		// A CLI reports its real size at open; a browser reports once fitted.
+		if !p.FixedSize {
+			v.setWant(p.Cols, p.Rows)
+		}
 	}
 	if p.FixedSize {
 		cols, rows, err := pin.size()
@@ -539,7 +611,9 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		answer(false, nil, "viewer closed")
 		return
 	}
+	v.mu.Lock()
 	v.cols, v.rows = p.Cols, p.Rows
+	v.mu.Unlock()
 	answer(true, kp.Pub, "")
 	conn, err := rt.joinStream(v.ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 	if err != nil {
@@ -548,6 +622,18 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	v.addCleanup(func() { _ = conn.Close() })
 	if !pin.authorized(peer.InstanceID, p) || !fedIndicatorPresent(pin.window) {
 		return
+	}
+	// The viewer is live: only now displace the others for a take-over.
+	if displace {
+		rt.displaceFedClients(pin, v)
+	}
+	// A sharing viewer takes part in the window's shared size from now on.
+	if v.sharing {
+		sizer := rt.joinFedWindowSizer(pin)
+		v.mu.Lock()
+		v.sizer = sizer
+		v.mu.Unlock()
+		v.addCleanup(sizer.leave)
 	}
 	recordFederationAudit("sessions.attach.open", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(p.ReadOnly), 200)
 	defer recordFederationAudit("sessions.attach.close", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID, 200)
@@ -578,6 +664,9 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	}()
 
 	errs := make(chan error, 2)
+	// rendererEnded marks the renderer's tmux client going away by itself:
+	// while the session lives on, that is a detach — another terminal took it.
+	var rendererEnded atomic.Bool
 	go func() {
 		defer workers.Done()
 		b := make([]byte, terminal.MaxPayload)
@@ -602,6 +691,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 				}
 			}
 			if err != nil {
+				rendererEnded.Store(true)
 				errs <- err
 				return
 			}
@@ -650,6 +740,17 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 					errs <- err
 					return
 				}
+				// A sharing view reports the size it could show; the window and
+				// its renderer follow the shared size (sharedUpdate below).
+				if v.sharing {
+					v.setWant(c, r)
+					v.sizer.kick()
+					continue
+				}
+				// A pinned browser view renders at the target's size.
+				if v.fixedSize {
+					continue
+				}
 				if err := backend.Resize(c, r); err != nil {
 					errs <- err
 					return
@@ -667,14 +768,42 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	for {
 		select {
 		case err := <-errs:
-			if !authorized() {
+			switch {
+			case !authorized():
 				reason = "revoked"
-			} else if err != io.EOF {
+			case rendererEnded.Load() && session.IsTmuxSessionAlive(backend.pin.tmux):
+				reason = fedTerminalTakenOver
+			case rendererEnded.Load():
+				reason = "exit"
+			case err != io.EOF:
 				reason = "error"
 			}
 			return
 		case <-v.ctx.Done():
 			return
+		case <-v.sizeCh:
+			// The shared size or the other clients changed: render the grid at
+			// that size and tell the viewer both.
+			cols, rows, status := v.sharedUpdate()
+			if cols > 0 && (cols != v.cols || rows != v.rows) {
+				if !authorized() {
+					reason = "revoked"
+					return
+				}
+				// The frame goes first so a CLI clears its screen before
+				// tmux's redraw at the new size arrives.
+				if write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(cols, rows)}) != nil || backend.Resize(cols, rows) != nil {
+					reason = "error"
+					return
+				}
+				v.mu.Lock()
+				v.cols, v.rows = cols, rows
+				v.mu.Unlock()
+			}
+			if status != nil && write(terminal.Frame{Kind: terminal.Status, Data: status}) != nil {
+				reason = "error"
+				return
+			}
 		case <-inputTicker.C:
 			if v.ReadOnly || !backend.InputPending() {
 				continue
@@ -684,7 +813,12 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 				return
 			}
 		case <-ticker.C:
-			if v.fixedSize {
+			// A sharing view re-checks the shared size: local clients come and
+			// go (and resize) without telling us. A pinned view follows the
+			// target's size.
+			if v.sharing {
+				v.sizer.kick()
+			} else if v.fixedSize {
 				cols, rows, err := backend.pin.size()
 				if err != nil {
 					reason = "exit"

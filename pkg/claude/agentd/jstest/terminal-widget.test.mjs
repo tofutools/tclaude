@@ -648,6 +648,86 @@ test('a remote terminal shrinks its font to fit the peer grid, down to a floor, 
   assert.deepEqual(socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'nothing resizes the peer');
 });
 
+test('a shared remote terminal reports its panel, renders the shared size, and takes over only when allowed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  class SizedTerminal extends fakes.FakeTerminal {
+    resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+  }
+  let fitAddon = null;
+  const panel = { cols: 190, rows: 52 };
+  class GridFit extends fakes.FakeFitAddon {
+    constructor() { super(); fitAddon = this; }
+    proposeDimensions() { return { ...panel }; }
+  }
+  const remotes = []; const statuses = [];
+  // Only the "limited" grace timer is faked; it fires when the test says so.
+  let graces = [];
+  const elapse = () => { const due = graces; graces = []; due.forEach((g) => !g.cleared && g.handler()); };
+  const wsPath = core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'watch' });
+  const widget = core.mountTerminalWidget({
+    host, wsPath, authenticate: false, onRemoteChange: (v) => remotes.push(v), onStatus: (v) => statuses.push(v),
+    setTimeoutImpl: (handler, ms) => { const g = { handler, cleared: false }; if (ms === 800) graces.push(g); else g.id = setTimeout(handler, ms); return g; },
+    clearTimeoutImpl: (g) => { if (g) { g.cleared = true; clearTimeout(g.id); } },
+    TerminalCtor: SizedTerminal, FitAddonCtor: GridFit, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
+  });
+  widget.setActive(true);
+  await widget.connect();
+  const shared = fakes.sockets[0];
+  assert.ok(shared.url.endsWith(wsPath), 'a first open asks for no take-over');
+  shared.open();
+  shared.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 120, rows: 40, shared: true, take_over: true, others: ['a local terminal', '\u0007x'.repeat(60), 3] }) });
+  assert.equal(remotes.at(-1).shared, true);
+  assert.equal(remotes.at(-1).canTakeOver, true);
+  assert.deepEqual(remotes.at(-1).others, ['a local terminal', ' x'.repeat(60).trim().slice(0, 80)], 'others are bounded, control-free strings');
+  assert.equal(fitAddon.fitCount, 0, 'a shared view never fits its grid to the panel');
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [120, 40], 'the grid is the shared size the peer sent');
+  assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [JSON.stringify({ type: 'resize', cols: 190, rows: 52 })], 'it reports what its panel could show');
+  assert.equal(remotes.at(-1).limited, false, 'no note while the peer may still be answering this report');
+  elapse();
+  assert.equal(remotes.at(-1).limited, true, 'a grid still smaller after the grace says another viewer limits it');
+
+  shared.onmessage({ data: JSON.stringify({ type: 'size', cols: 190, rows: 52 }) });
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [190, 52], 'the peer grants the panel size');
+  assert.equal(remotes.at(-1).limited, false, 'the note clears at once');
+  panel.cols = 200;
+  widget.setActive(false);
+  fakes.observer().handler();
+  assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')).at(-1), JSON.stringify({ type: 'resize', cols: 200, rows: 52 }), 'an inactive but visible pane still reports a resize');
+  assert.equal(remotes.at(-1).limited, false, 'its own growing panel does not flash the note');
+  shared.onmessage({ data: JSON.stringify({ type: 'size', cols: 200, rows: 52 }) });
+  elapse();
+  assert.equal(remotes.at(-1).limited, false);
+  panel.cols = 150;
+  widget.setActive(true);
+  assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')).at(-1), JSON.stringify({ type: 'resize', cols: 150, rows: 52 }), 'a smaller panel reports its new size');
+  const resizes = shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')).length;
+  widget.setActive(true);
+  assert.equal(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')).length, resizes, 'an unchanged panel is not re-reported');
+  shared.onmessage({ data: JSON.stringify({ type: 'others', others: [] }) });
+  assert.deepEqual(remotes.at(-1).others, [], 'others follow the peer');
+
+  await widget.takeOver();
+  const taken = fakes.sockets[1];
+  assert.equal(taken.url, `wss://dashboard.test${wsPath}&take_over=1`, 'take over reopens asking the peer to disconnect the others');
+  taken.open();
+  taken.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 120, rows: 40, shared: true, others: [] }) });
+  assert.equal(remotes.at(-1).canTakeOver, false, 'take_over is per hello');
+  assert.ok(taken.sent.includes(JSON.stringify({ type: 'resize', cols: 150, rows: 52 })), 'a reopened view reports its panel again');
+
+  await widget.connect();
+  assert.ok(fakes.sockets[2].url.endsWith(wsPath), 'a plain reconnect does not take over again');
+  fakes.sockets[2].open();
+  fakes.sockets[2].onmessage({ data: JSON.stringify({ type: 'closed', reason: 'taken_over' }) });
+  fakes.sockets[2].disconnect();
+  assert.equal(statuses.at(-1), 'closed: another viewer took over this terminal');
+  widget.dispose();
+});
+
 test('a remote terminal follows the hello: pinned size, no resizes, watch-only drops input, and a closure says why', async (t) => {
   const harness = await createPreactHarness(t);
   const core = await harness.importDashboardModule('js/terminals-core.js');

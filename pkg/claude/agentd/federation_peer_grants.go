@@ -22,6 +22,7 @@ const (
 	PermSessionsRead         = "sessions.read"
 	PermSessionsWatch        = "sessions.watch"
 	PermSessionsAttach       = "sessions.attach"
+	PermSessionsTakeover     = "sessions.takeover"
 	PermSessionsFilesRead    = "sessions.files.read"
 	PermGroupsRosterRead     = "groups.roster.read"
 	PermGroupsPresenceRead   = "groups.presence.read"
@@ -42,6 +43,7 @@ var federationPeerSlugs = map[string]string{
 	PermSessionsRead:             proto.CapSessions,
 	PermSessionsWatch:            proto.CapSessionsWatch,
 	PermSessionsAttach:           proto.CapSessionsAttach,
+	PermSessionsTakeover:         proto.CapSessionsTakeover,
 	PermSessionsFilesRead:        proto.CapSessionsFilesRead,
 	PermGroupsPresenceRead:       proto.CapPresence,
 	PermMessageDirect:            proto.CapMail,

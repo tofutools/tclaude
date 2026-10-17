@@ -130,6 +130,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'sessions.read', kind: 'group', what: 'live agent sessions, harness, state and waiting reason' },
   { slug: 'sessions.watch', kind: 'group', what: 'read-only terminal view of member agents' },
   { slug: 'sessions.attach', kind: 'group', sensitive: true, what: 'terminal view and full keyboard input, including answering harness approvals' },
+  { slug: 'sessions.takeover', kind: 'group', sensitive: true, what: 'take over a member agent\'s terminal: disconnect its other viewers, including your local ones (with sessions.watch or sessions.attach)' },
   { slug: 'message.direct', kind: 'group', what: 'mail to members (shares their names and ids)' },
   { slug: 'message.attachments', kind: 'group', what: 'attachments, together with message.direct on the same group' },
   { slug: 'routes.consume', kind: 'group', what: 'list and open ready group routes' },
