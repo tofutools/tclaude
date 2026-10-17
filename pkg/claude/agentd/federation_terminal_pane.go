@@ -203,8 +203,25 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	if dropped > 0 {
 		slog.Debug("federation: discarded unknown keyboard sequences", "count", dropped)
 	}
+	// Keystrokes batch into one tmux exec as a chain of send-keys commands: a
+	// paste or a fast typist then costs one fork, not one per key.
+	var batch []string
+	batched := 0
+	flush := func() error {
+		if batched == 0 {
+			return nil
+		}
+		err := clcommon.TmuxCommand(batch...).Run()
+		batch, batched = batch[:0], 0
+		return err
+	}
 	for i := 0; i < len(keys); i++ {
 		key := keys[i]
+		if key.Mouse != nil {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 		if key.Mouse != nil && key.Mouse.Wheel() {
 			// A touchpad emits bursts: coalesce a run of identical wheel
 			// buttons into one pane query and one tmux action.
@@ -235,20 +252,31 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 			}
 			continue
 		}
-		args := []string{"send-keys", "-t", p.pin.pane}
+		if batched > 0 {
+			batch = append(batch, ";")
+		}
+		batch = append(batch, "send-keys", "-t", p.pin.pane)
 		if key.Name != "" {
-			args = append(args, key.Name)
+			batch = append(batch, key.Name)
 		} else {
-			args = append(args, "-l", "--", terminal.TmuxLiteralArg(key.Literal))
+			batch = append(batch, "-l", "--", terminal.TmuxLiteralArg(key.Literal))
 		}
 		// Names come only from the fixed keyboard table. User-controlled text is
-		// exclusively a -l argument, escaped for tmux's argv separator grammar.
-		if err := clcommon.TmuxCommand(args...).Run(); err != nil {
-			return err
+		// exclusively a -l argument, escaped for tmux's argv separator grammar,
+		// so it can never become the ";" that chains the next command.
+		if batched++; batched == fedSendKeysBatch {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	return flush()
 }
+
+// fedSendKeysBatch bounds how many keys one tmux exec carries. tmux refuses a
+// client command over ~16KB; with input frames capped at 1KB (see
+// servePaneTerminal) a full batch stays near 3KB. Raise that cap with care.
+const fedSendKeysBatch = 64
 
 // fedPaneMouse is the pane state that decides where a viewer's mouse event
 // goes, as tmux would see it for a real client.
