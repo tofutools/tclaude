@@ -162,3 +162,12 @@ test('the greying rule is generated from what the peer shares and removed on dis
   dispose();
   assert.equal(doc.getElementById('peer-view-limits-style'), null);
 });
+
+test('the spawn button stays usable for a spawn request or an older peer\'s spawn feature', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const usable = (included) => mod.usableActSelectors({ included: ['agents.status', ...included] });
+  assert.ok(usable(['spawn.request']).includes('[data-act="spawn-agent"]'));
+  assert.ok(usable(['spawn']).includes('[data-act="spawn-agent"]'), 'an older peer only offers spawn');
+  assert.ok(!usable([]).includes('[data-act="spawn-agent"]'));
+});
