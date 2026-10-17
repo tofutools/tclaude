@@ -61,6 +61,7 @@ nav:
       - Group routes: group-routes.md
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
+      - Profiling agentd: profiling.md
       - Federation: federation.md
       - Portable Agent Format: paf.md
       - Portable Workflow Format: pwf.md

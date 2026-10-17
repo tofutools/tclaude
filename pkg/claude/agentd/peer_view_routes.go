@@ -3,6 +3,12 @@ package agentd
 // Dashboard routes deliberately left local-only. The route guard test requires
 // an explicit decision here whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	// Daemon profiling captures this node's own process.
+	"GET /api/profiles",
+	"POST /api/profiles",
+	"DELETE /api/profiles/{id}",
+	"GET /api/profiles/{id}/files/{name}",
+	"/api/profiles/{id}/ui/{kind}/",
 	// Process runs are this node's own; a peer view never serves them.
 	"GET /v1/process/context",
 	"POST /v1/process/resolve-preview",

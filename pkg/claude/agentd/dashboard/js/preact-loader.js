@@ -692,6 +692,36 @@ export function mountDebugFeature(dependencies = {}) {
   return mountIslandDescriptor(debugDescriptor, dependencies);
 }
 
+const profilesDescriptor = createIslandDescriptor({
+  name: 'profiles',
+  label: 'Profiling',
+  hosts: { host: '#profiles-root' },
+  failureClass: 'debug-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./profiles-island.js');
+    const stateModule = import('./profiles-state.js');
+    const actionsModule = import('./profiles-actions.js');
+    const [{ mountProfilesIsland }, { profilesState }, { createProfilesActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createProfilesActions({ state: profilesState, ...dependencies });
+    return {
+      state: profilesState,
+      mount: (registerCleanup) => mountProfilesIsland({
+        host,
+        state: profilesState,
+        actions,
+        registerCleanup,
+        setTimeoutImpl: dependencies.setTimeoutImpl,
+        clearTimeoutImpl: dependencies.clearTimeoutImpl,
+      }),
+    };
+  },
+});
+
+export function mountProfilesFeature(dependencies = {}) {
+  return mountIslandDescriptor(profilesDescriptor, dependencies);
+}
+
 export async function mountConfigFeature(dependencies = {}) {
   const host = document.querySelector('#config-root');
   if (!host) return null;

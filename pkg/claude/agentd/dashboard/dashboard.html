@@ -517,7 +517,7 @@
     <div class="access-subnav activity-subnav" role="tablist" aria-label="Activity views">
       <a class="access-subtab activity-subtab active" data-subtab="audit" href="/activity/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
       <a class="access-subtab activity-subtab" data-subtab="logs" href="/activity/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="performance" href="/activity/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+      <a class="access-subtab activity-subtab" data-subtab="performance" href="/activity/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
     </div>
     <div class="activity-panel active" id="activity-audit" role="tabpanel" aria-label="Audit">
       <div id="audit-root"></div>
@@ -528,8 +528,11 @@
       <div id="logs-root"></div>
     </div>
     <!-- Preact owns the Performance toolbar, endpoint cards, phase breakdowns
-         and its active-only 10s /api/perf poll inside this stable feature host. -->
+         and its active-only 10s /api/perf poll inside this stable feature host.
+         #profiles-root (profiles-island.js) holds daemon profiling: the
+         capture dialog and the /api/profiles capture list. -->
     <div class="activity-panel" id="activity-performance" role="tabpanel" aria-label="Performance">
+      <div id="profiles-root"></div>
       <div id="debug-root"></div>
     </div>
   </section>
