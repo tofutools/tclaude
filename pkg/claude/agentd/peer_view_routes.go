@@ -347,5 +347,4 @@ var peerViewLocalRoutes = []string{
 	"POST /v1/process/templates",
 	"POST /v1/process/templates/{id}",
 	"POST /v1/process/validate",
-	"PUT /api/groups/{name}/parent",
 }

@@ -61,8 +61,8 @@ export function createActionDialogState() {
     openReincarnate({ conv, label = '' }) {
       return !!open({ kind: 'reincarnate-agent', conv, label });
     },
-    openNest({ group }) {
-      return !!open({ kind: 'nest-group', group });
+    openNest({ group, node = '' }) {
+      return !!open({ kind: 'nest-group', group, node });
     },
     openTaskLink({ conv, agentLabel = '', url = '', taskLabel = '' }) {
       return !!open({ kind: 'task-link', conv, agentLabel, url, taskLabel });
@@ -70,8 +70,8 @@ export function createActionDialogState() {
     openGroupAttachment({ group, node = '', url = '', attachmentLabel = '' }) {
       return !!open({ kind: 'group-attachment', group, node, url, attachmentLabel });
     },
-		openGroupSettings({ group }) {
-			return !!open({ kind: 'group-settings', group });
+		openGroupSettings({ group, node = '' }) {
+			return !!open({ kind: 'group-settings', group, node });
 		},
     openPresetClone({ kind, kindWizard, source, create }) {
       return !!open({ kind: 'preset-clone', presetKind: kind, kindWizard, source, create });

@@ -1096,7 +1096,7 @@ export function GroupContextDialog({
     setBusy(true);
     setError('');
     try {
-      await actions.saveGroupContext(descriptor.group, context);
+      await actions.saveGroupContext(descriptor.group, context, descriptor.node || '');
     } catch (err) {
       setError(message(err));
     } finally {

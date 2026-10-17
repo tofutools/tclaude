@@ -249,7 +249,7 @@ test('nest dialog uses an explicit parent model and controlled selection', async
   Object.defineProperty(enter, 'key', { value: 'Enter' });
   host.querySelector('#group-nest-modal [role="dialog"]').dispatchEvent(enter);
   await harness.act(() => Promise.resolve());
-  assert.deepEqual(calls[0], ['nest', { group: 'child', parent: 'beta' }]);
+  assert.deepEqual(calls[0], ['nest', { group: 'child', parent: 'beta', node: '' }]);
   await mounted.cleanup();
 });
 
@@ -306,6 +306,34 @@ test('group settings saves against the old name before renaming the group', asyn
   assert.deepEqual(notices, ['beta: settings saved']);
   assert.equal(refreshes, 1);
   assert.equal(state.dialog.value, null);
+});
+
+test("group settings sends only the parts that changed, to the group's own node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const actions = createActionDialogActions({
+    state,
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: () => {},
+    refresh: async () => {},
+  });
+  const initial = {
+    name: 'alpha', descr: 'builders', defaultCwd: '/repo', defaultContext: 'context', defaultProfile: '',
+    defaultPrompts: [], sandboxProfile: 'confined', environment: [{ name: 'TEAM', value: 'alpha' }], maxMembers: '3',
+    notifyEnabled: true, remoteControlPolicy: 'inherit', reinjectAfterCompact: 'contexts', attachmentURL: '', attachmentLabel: '',
+  };
+  state.openGroupSettings({ group: 'alpha', node: 'inst_forge7' });
+  await actions.saveGroupSettings({ group: 'alpha', node: 'inst_forge7', initial, values: { ...initial, maxMembers: '5', descr: ' builders ' } }, state.dialog.value);
+  assert.deepEqual(requests.map(([url, options]) => [url, options.method]), [['/api/peer/inst_forge7/groups/alpha', 'PATCH']]);
+  assert.deepEqual(JSON.parse(requests[0][1].body), { max_members: 5 }, 'an unchanged environment or directory is not sent');
 });
 
 test('action mutations preserve endpoint payloads, notifications, and refresh boundaries', async (t) => {

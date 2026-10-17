@@ -21,8 +21,8 @@ export function openReincarnateAgentDialog(conv, label) {
   return requireController().openReincarnate({ conv, label });
 }
 
-export function openNestGroupDialog({ group }) {
-  return requireController().openNest({ group });
+export function openNestGroupDialog({ group, node = '' }) {
+  return requireController().openNest({ group, node });
 }
 
 export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
@@ -33,8 +33,8 @@ export function openGroupAttachmentDialog({ group, node = '', url, attachmentLab
   return requireController().openGroupAttachment({ group, node, url, attachmentLabel });
 }
 
-export function openGroupSettingsDialog({ group }) {
-	return requireController().openGroupSettings({ group });
+export function openGroupSettingsDialog({ group, node = '' }) {
+	return requireController().openGroupSettings({ group, node });
 }
 
 export function openPresetCloneDialog(options) {

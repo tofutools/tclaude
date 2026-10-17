@@ -16,7 +16,7 @@ import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } 
 import {
   GROUP_GRANT_ACTS, actOf, groupGrantHeld, groupGrantSelectors, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
-import { announceNodeChanged, nodeFetch, onNodeChanged } from './node-api.js';
+import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -298,6 +298,8 @@ export function MergedGroups({
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
   const snapRef = useRef(snapOf);
   snapRef.current = snapOf;
+  // A dialog on another node's group reads that node's snapshot from here.
+  useEffect(() => setNodeSnapshotSource((id) => snapRef.current(id)), []);
   // A fold/unfold persisted by refresh.js moves which header owns subgroup
   // activity: re-render now rather than on the next poll.
   const [, setDisclosures] = useState(0);

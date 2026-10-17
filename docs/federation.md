@@ -251,7 +251,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.prompts` | choose the spawn's saved prompts from this node's, replacing the profile and group defaults, with `groups.members.spawn` |
 | `groups.members.spawn.worktree` | launch the spawn in a git worktree: list and create worktrees in any repository on this node, with `groups.members.spawn` and `.cwd` |
 | `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
-| `groups.settings` | change the group's ordinary settings from the peer's dashboard: description, startup context, member cap, notifications, remote-control policy, attachment and name; its default directory, default profile and sandbox profile also need the matching spawn grant (see "Changing a peer's groups") |
+| `groups.settings` | change the group's ordinary settings from the peer's dashboard: description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting; its default directory, default profile, default saved prompts and sandbox profile also need the matching spawn grant (see "Changing a peer's groups") |
 | `groups.settings.environment` | change the group's spawn environment, whose values reach every agent spawned into it |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
@@ -293,10 +293,13 @@ tclaude federation grant alice groups.settings --scope group=builders
 tclaude federation grant alice groups.members.spawn.sandbox --scope group=builders
 ```
 
-`groups.settings` opens the ordinary settings. What every spawn into the
-group inherits also needs the peer's say over that part of a spawn: the
-default directory needs `groups.members.spawn.cwd`, the sandbox profile
-`groups.members.spawn.sandbox` (`groups.members.spawn.all` covers both), and a
+`groups.settings` opens the ordinary settings, from the quick options to the
+⚙ menu's settings dialog, startup context, notifications, remote policy and
+nesting (under another group this node shows the peer). What every spawn into
+the group inherits also needs the peer's say over that part of a spawn: the
+default directory needs `groups.members.spawn.cwd`, the default saved prompts
+`groups.members.spawn.prompts`, the sandbox profile
+`groups.members.spawn.sandbox` (`groups.members.spawn.all` covers them), and a
 default profile must be one the peer may pick for a spawn there (see "Launch
 settings a peer may choose"). The environment needs
 `groups.settings.environment`. The dashboard's profile pickers list this

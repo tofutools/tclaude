@@ -908,9 +908,12 @@ requests are answered in the fused Messages view.
 
 A group's quick options — description, default directory (typed: the folder
 browser reads this machine), member cap, default profile, sandbox profile and
-attachment — and its rename work as on this node when the peer grants
-`groups.settings` for that group (unrestricted trust holds it). The default
-directory and sandbox profile also need the matching spawn grant, and the
+attachment — its rename, and the ⚙ menu's settings dialog, startup context,
+notifications, remote policy and nesting work as on this node when the peer
+grants `groups.settings` for that group (unrestricted trust holds it). The
+settings dialog sends only what you changed and disables the fields the peer
+keeps. The default directory, default saved prompts and sandbox profile also
+need the matching spawn grant, and the
 profile pickers the peer's `node.spawn.read` (docs/federation.md, "Changing a
 peer's groups").
 
@@ -982,10 +985,10 @@ controls that peer shares with you run through its peer routes, exactly as on
 its per-node view: the status dot (stop, or wake a stopped agent), restart,
 sandbox restart, retire, clone, the group's spawn button (the regular spawn
 dialog, aimed at that node, as above), its ✉ message button (one agent at a
-time) and the group quick options and rename it grants (`groups.settings`, as
-above), which go to that node's own group. This node's groups work as on its
-own view; on a peer's page their quick options and rename still go straight
-to this node. Everything else stays an overview: click a group's `@node`
+time) and the group settings it grants (`groups.settings`, as above: the
+quick options, rename and the ⚙ menu's settings items), which go to that
+node's own group. This node's groups work as on its own view; on a peer's
+page their group settings still go straight to this node. Everything else stays an overview: click a group's `@node`
 suffix to act on it in that node's dashboard. An unreachable node keeps its last rows, marked
 stale; a node no longer trusted drops them. The old `/fleet` address opens this
 view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
