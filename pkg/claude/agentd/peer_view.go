@@ -147,6 +147,10 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
+	// The Usage tab's Quota view reads the node's own subscription quota
+	// history; it sits under the same costs grant as the Costs view. Excluding
+	// a point (POST /api/usage-history/point) stays local-only.
+	rules["GET /api/usage-history"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGrantedRead(handleDashboardUsageHistory)}
 	rules["GET /api/audit"] = peerViewRule{feature: "audit", requires: PermFederationAuditRead, serve: servePeerGlobalRead(handleDashboardAudit)}
 	// Any visible group takes a spawn request (spawn.request): without a spawn
 	// grant it waits for this node's operator. "spawn" says the grant that
@@ -323,6 +327,18 @@ func servePeerGlobalRead(next http.HandlerFunc) func(http.ResponseWriter, *http.
 		next(w, r)
 	}
 }
+// servePeerGrantedRead runs a local dashboard read whose response has no
+// empty "rows" shape to fall back to; a peer without the grant gets a 403.
+func servePeerGrantedRead(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
+	return func(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+		if !v.allows(rule, 0) {
+			writeError(w, 403, "permission", "requires "+rule.requires)
+			return
+		}
+		next(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+	}
+}
+
 // servePeerUnrestrictedRead runs a local dashboard read for a peer whose
 // rule only unrestricted trust holds; anyone else gets the 403 naming it.
 func servePeerUnrestrictedRead(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
