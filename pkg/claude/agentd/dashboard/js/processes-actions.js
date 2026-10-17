@@ -163,8 +163,10 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, key: `${id}:${blank}:${Date.now()}` });
+  // `scribe` ({prompt}) asks for a process scribe on the template once its
+  // editor is up: the Groups quick start's "Draft steps" hands one over.
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, scribe = null } = {}) {
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, scribe, key: `${id}:${blank}:${Date.now()}` });
     state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.

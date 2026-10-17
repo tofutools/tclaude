@@ -25,7 +25,9 @@ import { GroupsRunFocus } from './groups-run-focus.js';
 import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
-import { GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen } from './groups-quickstart.js';
+import {
+  GetStarted, StepListEditor, defaultNotify, draftWithScribe, markQuickStart, openInGraphEditor, quickStartSeen,
+} from './groups-quickstart.js';
 import { SavedProcesses } from './groups-saved-processes.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
@@ -466,6 +468,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onOpenGraph=${(view, name) => (view
           ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
           : handOffProcessDraft({ create: true }))}
+        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people })
+          .catch((cause) => (notify || defaultNotify)(`Could not draft the process: ${cause.message}`, true))}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
       : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>

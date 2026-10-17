@@ -89,7 +89,40 @@ test('an empty group offers Get started: starters, the library, a blank list and
     ['build-review-ship', 'plan-fan-out-merge', 'check-fix', 'ask-me-first']);
   assert.match(panel.querySelector('[data-starter="build-review-ship"] .gq-tag').textContent, /uses: dev, reviewer/);
   assert.deepEqual([...panel.querySelectorAll('[data-reuse-template]')].map((el) => el.dataset.reuseTemplate), ['release-train', 'db-migrate']);
-  assert.ok(panel.querySelector('.gq-ask-in').disabled, 'describing in words is a later ticket');
+  assert.equal(panel.querySelector('.gq-ask-in').disabled, false, 'the flow can be described in words');
+  assert.ok(panel.querySelector('[data-quickstart-draft] button[type="submit"]').disabled, 'an empty description cannot be sent');
+});
+
+test('describing the flow saves a draft pinned to the group and hands it to the editor with a scribe request', async (t) => {
+  const { harness, root, api, handoff, setValue, settle } = await mount(t);
+  const form = root.querySelector('[data-quickstart-draft]');
+  await setValue(form.querySelector('.gq-ask-in'), '  Build it,\n then review   and ship  ');
+  assert.equal(form.querySelector('button[type="submit"]').disabled, false);
+  await harness.act(() => harness.fireEvent(form, 'submit'));
+  await settle();
+  assert.equal(api.calls.create.length, 1);
+  assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the draft is saved to the group, not the library');
+  assert.equal(api.calls.create[0].view.template.name, 'Build it,');
+  const draft = handoff.takeProcessDraft();
+  assert.equal(draft.id, 'tmpl_1');
+  assert.equal(draft.view.template.id, 'tmpl_1');
+  assert.match(draft.scribe.prompt, /^Build it,\n then review   and ship/);
+  assert.match(draft.scribe.prompt, /agent group "webshop"/);
+  assert.match(draft.scribe.prompt, /- review-bot \(role: reviewer\)/);
+  assert.match(draft.scribe.prompt, /do not start it/);
+});
+
+test('the scribe draft request and name are bounded', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { scribeDraftName, scribeDraftRequest } = await harness.importDashboardModule('js/groups-quickstart.js');
+  assert.equal(scribeDraftName('  \n '), 'untitled process');
+  assert.equal(scribeDraftName('a  b\nsecond line'), 'a b');
+  assert.equal(scribeDraftName('x'.repeat(100)).length, 60);
+  assert.match(scribeDraftRequest('flow', 'g', []), /no members yet/);
+  const roster = Array.from({ length: 400 }, (_, i) => ({ name: `agent-${i}`, role: 'dev' }));
+  const request = scribeDraftRequest('flow', 'g', roster);
+  assert.ok(request.length <= 2000, `request fits the scribe prompt (${request.length})`);
+  assert.match(request, /…and \d+ more/);
 });
 
 test('a starter opens as a filled step list; Start saves it and starts it in the group', async (t) => {

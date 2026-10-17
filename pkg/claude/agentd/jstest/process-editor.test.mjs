@@ -785,6 +785,20 @@ test('process scribe handoff anchors a clean saved editor exactly', async () => 
   assert.equal(emitted[0][1].context.template.sourceHash, 'b'.repeat(64));
 });
 
+test('a scribe request handed to the editor prefills the preview prompt', async () => {
+  const emitted = [];
+  const fake = {
+    blank: false, dirty: false, savePending: false,
+    selection: null, validation: null,
+    model: { template: { id: 'draft', nodes: {} }, edges: [], currentRef: `draft@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
+    scribePreviewModal: async (preview) => { assert.equal(preview.prompt, 'Draft the steps.'); return preview.prompt; },
+    options: { onScribe: async (...args) => { emitted.push(args); return { conv_id: 'scribe' }; } },
+    abort: { signal: { aborted: false } },
+  };
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake, 'template', { prompt: 'Draft the steps.' }), true);
+  assert.equal(emitted[0][1].prompt, 'Draft the steps.');
+});
+
 test('selection and diagnostic scribe handoffs fail visibly without current context', async () => {
   const statuses = [];
   const fake = {
