@@ -1585,3 +1585,39 @@ test('the column menu recomputes when processes turn on or off', async (t) => {
   await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 });
+
+test('queued spawns ride the member table as rows, even in an empty group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const state = createGroupsState({
+    prefs: memoryPrefs({ 'tclaude.dash.ungrouped.groups': '0', 'tclaude.dash.retired.groups': '0' }),
+    resetOffsets: () => {},
+    ...stateDependencies(),
+  });
+  state.initialize();
+  state.publish({
+    ...snapshot([{ name: 'crew', members: [] }]),
+    queued_spawns: [
+      { id: 7, group: 'crew', created_at: '2026-07-15T12:00:00Z', draft: { group: 'crew', name: 'db-migration-2', harness: 'claude', model: 'opus', roleRefs: ['dev'] } },
+      { id: 8, group: 'other', draft: { group: 'other', name: 'elsewhere' } },
+    ],
+  });
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${{}} />`, host);
+  t.after(() => host.remove());
+
+  const rows = host.querySelectorAll('details[data-group-key="crew"] tr.queued-row');
+  assert.equal(rows.length, 1, 'only the group\'s own queued spawn gets a row');
+  const row = rows[0];
+  assert.equal(row.getAttribute('data-dnd-pending'), '1', 'the row drags like a pending spawn: trash only');
+  assert.equal(row.getAttribute('data-dnd-queued'), '7');
+  assert.equal(row.getAttribute('data-dnd-queued-group'), 'crew');
+  assert.equal(row.getAttribute('data-dnd-label'), 'db-migration-2');
+  assert.equal(row.querySelector('.queued-name').textContent, 'db-migration-2');
+  assert.equal(host.querySelector('.group-queued-block'), null, 'no separate queued block above the table');
+  assert.equal(host.textContent.includes('(no members yet)'), false, 'the queued row stands in for the empty note');
+  await mounted.unmount();
+});

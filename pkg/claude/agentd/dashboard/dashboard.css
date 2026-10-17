@@ -6146,17 +6146,12 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 2px 4px; cursor: pointer; font-family: inherit;
 }
 .queued-spawn-discard:hover { color: #f85149; }
-/* Per-group block: the "Pending spawns" slot, striped to read as not-yet-real. */
-.group-queued-block {
-  margin: 2px 0 10px 0; padding: 6px 8px;
-  border: 1px dashed #9e6a03; border-radius: 6px;
-  background: repeating-linear-gradient(135deg, rgba(158, 106, 3, 0.05) 0 8px, rgba(158, 106, 3, 0.10) 8px 16px);
-}
-.group-queued-title {
-  margin: 0 0 4px 2px; color: #e3b341; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.4px;
-}
-.group-queued-block .queued-spawn-name { font-style: italic; }
+/* Per-group queued rows: a member-table row with ▶ in the status light's
+   slot and an amber "queued" pill; the italic name reads as not-yet-real. */
+.status-dot.queued-play { color: #3fb950; font-size: 11px; }
+.status-dot.queued-play:hover { color: #56d364; }
+.state-queued { background: #2b2111; color: #e3b341; border-color: #9e6a03; border-style: dashed; }
+.queued-row .queued-name { font-style: italic; cursor: pointer; }
 /* Spawn dialog: the queue action sits beside Spawn; a reopened queued spawn
    gets a banner and a green launch button instead of the blue primary. */
 #agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn { background: #2b2111; border-color: #9e6a03; color: #e3b341; font-weight: 600; }

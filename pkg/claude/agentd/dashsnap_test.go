@@ -659,7 +659,7 @@ func seedPalette(t *testing.T, f *testharness.Flow) {
 		}
 	}
 	// Two prepared-but-unlaunched spawns, so the ⏸ queued chip and the
-	// infra-crew Queued block have content.
+	// infra-crew member table's queued row have content.
 	for _, draft := range []string{
 		`{"group":"infra-crew","name":"db-migration-2","roleRefs":["dev"],"harness":"claude","model":"opus","initialMessage":"Once db-migration-1 lands, rebase onto main and run the second migration."}`,
 		`{"group":"frontend-squad","name":"fe-reviewer","roleRefs":["reviewer"],"harness":"codex","initialMessage":"Review the charts PR when fe-dev-charts opens it."}`,
@@ -3583,7 +3583,7 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 		{
 			Key:     "queued-spawns-dock",
 			Title:   "Queued spawns — dock chip + popover",
-			Caption: "⏸ queued chip in the dock head beside + new group / ⚙, popover open: ▶ spawns, a row click reopens the dialog, ✕ discards. infra-crew shows its striped Queued block.",
+			Caption: "⏸ queued chip in the dock head beside + new group / ⚙, popover open: ▶ spawns, a row click reopens the dialog, ✕ discards. infra-crew heads its member table with a queued row (▶ light, \"queued\" state).",
 			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');
 return (async function(){
   var deadline=Date.now()+5000;
@@ -3593,7 +3593,7 @@ return (async function(){
   chip.click();
   await new Promise(function(r){setTimeout(r,100);});
   if(document.querySelectorAll('.queued-spawns-popover .queued-spawn-row').length!==2) throw new Error('popover rows missing');
-  if(!document.querySelector('details[data-group-key="infra-crew"] .group-queued-block .queued-spawn-row')) throw new Error('infra-crew queued block missing');
+  if(!document.querySelector('details[data-group-key="infra-crew"] tr.queued-row .queued-play')) throw new Error('infra-crew queued row missing');
 })();`,
 			SettleMS: 300,
 		},
@@ -3614,14 +3614,14 @@ return (async function(){
 		{
 			Key:     "queued-spawns-edit",
 			Title:   "Queued spawns — reopened in the spawn dialog",
-			Caption: "Clicking a queued row reopens the full spawn dialog pre-filled, with a Queued banner and Discard / Close / Save / ▶ Spawn now.",
+			Caption: "Clicking a queued row's cog reopens the full spawn dialog pre-filled, with a Queued banner and Discard / Close / Save / ▶ Spawn now.",
 			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');
 return (async function(){
   var deadline=Date.now()+5000;
   var row;
-  while(!(row=document.querySelector('details[data-group-key="infra-crew"] .group-queued-block .queued-spawn-row')) && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
+  while(!(row=document.querySelector('details[data-group-key="infra-crew"] tr.queued-row')) && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
   if(!row) throw new Error('queued row missing');
-  row.querySelector('.queued-spawn-name').click();
+  row.querySelector('[data-act="queued-spawn-edit"]').click();
   while(!document.querySelector('#agent-spawn-queued-banner') && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
   if(document.querySelector('#agent-spawn-name').value!=='db-migration-2') throw new Error('queued draft not restored');
 })();`,
