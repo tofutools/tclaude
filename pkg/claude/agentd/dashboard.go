@@ -3929,6 +3929,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Roles = roles
 	out.SavedPrompts = savedPrompts
+	// Queued drafts are this operator's unlaunched plans (briefs, env values,
+	// permission overrides) and the routes acting on them are local-only, so a
+	// federation peer's snapshot carries an empty queue.
+	if isPeerSnapshot(r) {
+		queuedSpawns = []queuedSpawnJSON{}
+	}
 	out.QueuedSpawns = queuedSpawns
 	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
