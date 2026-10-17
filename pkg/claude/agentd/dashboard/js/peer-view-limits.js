@@ -32,6 +32,76 @@ const SUBTAB_FEATURES = Object.freeze({
 // (The status dot is a power control — wake / shut down — so it is not here.)
 const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
+// GROUP_GRANT_ACTS are group controls a peer serves through its peer-granted
+// routes (peer_grant_routes.go), with the peer grants they need in their
+// group (or, as feature:<name>, a node-wide feature the peer shares: the
+// profile pickers read its spawn catalog). The peer names the grants it
+// holds per group in peer_view.groups; unrestricted trust holds them all. A
+// control listed here runs its normal handler, whose requests reach the peer
+// (remote-node.js, node-api.js). A group's default directory and sandbox
+// profile reach every spawn into it, so they need the matching spawn grant.
+export const GROUP_GRANT_ACTS = Object.freeze({
+  'set-group-descr': ['groups.settings'],
+  'set-group-dir': ['groups.settings', 'groups.members.spawn.cwd'],
+  'set-group-max-members': ['groups.settings'],
+  'set-group-profile': ['groups.settings', 'feature:spawn.catalog'],
+  'set-group-sandbox-profile': ['groups.settings', 'groups.members.spawn.sandbox', 'feature:spawn.catalog'],
+  'group-attachment': ['groups.settings'],
+  'rename-group': ['groups.settings'],
+});
+
+// groupGrantHeld reports whether the peer lets a group control act on group
+// (its own name for the group).
+export function groupGrantHeld(act, group, peerView) {
+  const need = GROUP_GRANT_ACTS[act];
+  if (!need || !group) return false;
+  if (peerView?.level === 'unrestricted') return true;
+  const held = peerView?.groups?.[group];
+  return Array.isArray(held) && need.every((slug) => (slug.startsWith('feature:')
+    ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
+    : held.includes(slug)));
+}
+
+// cssString quotes a value for an attribute selector: group names come from
+// the peer, so they never reach the stylesheet unescaped.
+function cssString(value) {
+  return `"${String(value).replace(/[\\"]/g, '\\$&').replace(/[\n\r\f]/g, '')}"`;
+}
+
+// groupGrantSelectors lists the group controls the peer lets run: every one
+// under unrestricted trust, otherwise each group's own. The default
+// directory chip's text opens its editor (its terminal link needs Ctrl), so
+// it counts as the chip. groupName maps the peer's own group name to the
+// one its controls carry (the fused view's group@node).
+export function groupGrantSelectors(peerView, groupName = (g) => g) {
+  const out = [];
+  const add = (act, qualifier) => {
+    out.push(`[data-act="${act}"]${qualifier}`);
+    if (act === 'set-group-dir') out.push(`[data-act="${act}"]${qualifier} [data-act="group-web-term"]`);
+  };
+  if (peerView?.level === 'unrestricted') {
+    for (const act of Object.keys(GROUP_GRANT_ACTS)) add(act, '');
+    return out;
+  }
+  for (const group of Object.keys(peerView?.groups || {})) {
+    for (const act of Object.keys(GROUP_GRANT_ACTS)) {
+      if (groupGrantHeld(act, group, peerView)) add(act, `[data-group=${cssString(groupName(group))}]`);
+    }
+  }
+  return out;
+}
+
+// actOf is the control a click or key press acts on: the closest data-act,
+// except that a plain click on the default directory chip's text opens the
+// chip's editor (only Ctrl/Cmd-click opens its terminal).
+export function actOf(target, event = null) {
+  const act = target?.closest?.('[data-act]');
+  if (act?.dataset.act === 'group-web-term' && !(event?.ctrlKey || event?.metaKey)) {
+    return act.parentElement?.closest?.('[data-act="set-group-dir"]') || act;
+  }
+  return act;
+}
+
 // GATED_CONTROLS are mutation controls without a data-act: group creation and
 // the management overlays, which edit the shown node's configuration.
 const GATED_CONTROLS = [
@@ -224,8 +294,9 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 // really runs: the view-only ones, the terminal attach, and the PEER_ACTS the
 // peer shares (the status dot per direction, as peerAction picks it). The
 // greying below is built from it, so it can never disagree with the guard.
-export function usableActSelectors(peerView, extra = []) {
+export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
+  out.push(...groupGrantSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
@@ -263,7 +334,7 @@ export function setLimitStyle(doc, id, css) {
 }
 
 // blockedControl returns the element a click must not reach, and why.
-export function blockedControl(target, peerView) {
+export function blockedControl(target, peerView, event = null) {
   if (target?.closest?.(FUSED_ROOT)) return null;
   const tab = target?.closest?.('nav [data-tab]');
   if (tab) {
@@ -277,7 +348,10 @@ export function blockedControl(target, peerView) {
   }
   const managed = managedControl(target, peerView);
   if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what };
-  const act = target?.closest?.('[data-act]');
+  const act = actOf(target, event);
+  if (act && GROUP_GRANT_ACTS[act.dataset.act]) {
+    return groupGrantHeld(act.dataset.act, act.dataset.group, peerView) ? null : { el: act, state: 'omitted', what: "this group's settings" };
+  }
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   const pa = act && peerAction(act, peerView);
   if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
@@ -336,7 +410,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   });
 
   const refuse = (event) => {
-    const blocked = blockedControl(event.target, peerView);
+    const blocked = blockedControl(event.target, peerView, event);
     if (!blocked) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -359,7 +433,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   };
   // Hover explanation for controls (tabs get theirs from the effect).
   const onOver = (event) => {
-    const blocked = blockedControl(event.target, peerView);
+    const blocked = blockedControl(event.target, peerView, event);
     if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
   };
   // Drags spawn, move and reorder on the node — never on a peer view.

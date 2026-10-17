@@ -202,6 +202,12 @@ func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuma
 // delegate to handleCronCreate / handleCronPatch — same DB writes,
 // same validation, without duplicating either.
 func asDashboardHumanPeer(r *http.Request) *http.Request {
+	// A peer's operator on a peer-granted route is not this node's human: its
+	// request stays unidentified, so human-only checks refuse it and every
+	// permission gate answers from its grants (peer_grant_routes.go).
+	if peerGrantFromRequest(r) != nil {
+		return r
+	}
 	p := &peer{PID: 1, DashboardHuman: true}
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
@@ -1280,6 +1286,9 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
 	if a := peerActionFromRequest(r); a != nil {
 		return peerActionGate(w, r, a, perm, "", actionContextOf(actx))
+	}
+	if a := peerGrantFromRequest(r); a != nil {
+		return a.gate(w, r, perm, actionContextOf(actx))
 	}
 	// Authorization code may only name capabilities in the central registry.
 	// Fail before identity resolution (including the implicit-human path), so a

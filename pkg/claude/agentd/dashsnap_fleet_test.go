@@ -274,6 +274,8 @@ const fleetFederationStubJS = `(function(){
         return r.json().then(function(snap){
           snap.peer_view = window.__dashsnapPeerMail
             ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'node.messages', 'human.inbox.answer'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
+            : window.__dashsnapPeerSettings
+            ? { peer: 'desk', level: 'unrestricted', included: ['agents.status', 'groups', 'groups.settings', 'messaging'], omitted: [] }
             : window.__dashsnapPeerActions
             ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'spawn', 'lifecycle.stop', 'lifecycle.retire', 'lifecycle.clone', 'lifecycle.move', 'lifecycle.teleport'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
             : { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
@@ -503,6 +505,26 @@ func fleetStates() []dashsnap.State {
   if (!document.querySelector('#fleetview-fused-groups-root .fleet-node-suffix[data-fleet-open=""]')) throw new Error('fleet: no local groups in the fused view');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent === null) throw new Error('fleet: per-node tabs hidden in the fused view');
   if (new URLSearchParams(location.search).get('nodes') !== 'all') throw new Error('fleet: fused set not in the address: ' + location.search);
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-merged-groups-peer-settings",
+			Title:   "Groups · fused nodes, a peer's group settings",
+			Caption: "A peer that grants groups.settings (here: unrestricted trust) lets its groups' quick options run from the fused view, as on its own dashboard: the member cap editor is open on a forge group, and its save goes to forge's own group through the peer proxy. Controls a peer does not grant stay greyed in place.",
+			InitJS:  fleetFederationStubJS + `;window.__dashsnapPeerSettings = true;`,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  var sel = '#fleetview-fused-groups-root details[data-fleet-node="inst_hn3cxq7a"] .group-max-members';
+  for (var i = 0; i < 80 && !document.querySelector(sel); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var chip = document.querySelector(sel);
+  if (!chip) throw new Error('fleet: no forge group cap chip in the fused view');
+  if (getComputedStyle(chip).opacity !== '1') throw new Error('fleet: a granted forge quick option is greyed');
+  chip.click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleetview-fused-groups-root .group-max-members-input'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleetview-fused-groups-root .group-max-members-input')) throw new Error('fleet: the forge cap editor did not open');
 })();`,
 			SettleMS: 400,
 		},

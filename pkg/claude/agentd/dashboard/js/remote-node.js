@@ -22,7 +22,8 @@
     // A peer's notification files, read by this node from the peer.
     '/api/peer-attachments/', '/api/peer-message-export/',
   ];
-  const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST']);
+  // Peer-granted routes change settings with the dashboard's own methods.
+  const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE']);
   const prefix = '/api/peer/' + encodeURIComponent(id) + '/';
   const nativeFetch = window.fetch.bind(window);
 

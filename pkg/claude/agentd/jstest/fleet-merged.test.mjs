@@ -407,3 +407,53 @@ test('fused view lets this node\'s process drags through, the run focus\'s perfo
   const peer = add('<details data-fleet-node="inst_forge"><span draggable="true" data-saved-process-drag="tpl">p</span></details>').querySelector('span');
   assert.equal(harness.fireEvent(peer, 'dragstart').defaultPrevented, true, "a peer group's drags stay stopped");
 });
+
+test("another node's group controls run through actions bound to that node, as far as its grants reach", async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const [stateMod, island, nodeApi] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'), harness.importDashboardModule('js/node-api.js')]);
+  // homeActions hands another node's group to its own actions, under its own name.
+  const calls = [];
+  const forgeActions = { patchGroup: async (g, field, value) => { calls.push(['forge', g.name, field, value]); } };
+  const routed = island.homeActions(() => ({}), () => null, (node) => (node.id === 'inst_forge' ? forgeActions : null));
+  await routed.patchGroup({ name: 'build@forge', fleet_node: { id: 'inst_forge', name: 'forge' } }, 'max_members', 3);
+  await routed.patchGroup({ name: 'x@lab', fleet_node: { id: 'inst_lab', name: 'lab' } }, 'max_members', 3);
+  assert.deepEqual(calls, [['forge', 'build', 'max_members', 3]], 'a node without actions is a no-op');
+
+  // createNodeGroupsActions sends that node's requests through its route and reads it again.
+  const requests = []; const changed = [];
+  t.after(nodeApi.onNodeChanged((node) => changed.push(node)));
+  const actions = island.createNodeGroupsActions({
+    node: 'inst_forge', notify: () => {},
+    fetchImpl: async (url, init) => { requests.push([url, init?.method, init?.body]); return { ok: true, status: 200, json: async () => [{ name: 'fast' }], text: async () => '' }; },
+  });
+  await actions.patchGroup({ name: 'build' }, 'default_cwd', '/srv/build');
+  assert.deepEqual(requests.pop(), ['/api/groups/build', 'PATCH', '{"default_cwd":"/srv/build"}']);
+  assert.deepEqual(changed, ['inst_forge'], 'the fused view reads forge again now');
+  assert.deepEqual((await actions.groupProfileChoices('profile', { name: 'build' })).map((c) => c.value), ['fast'], "forge's own profiles");
+  assert.equal(requests.pop()[0], '/api/spawn-profiles');
+  assert.equal(actions.openMemberEditor, undefined, 'only the node-bound group controls exist');
+
+  // The click guard lets a granted control through and stops the rest; this node's always pass.
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const timers = fakeTimers(); const toasts = [];
+  const peerSnap = { groups: [group('build'), group('ops')], agents: [], peer_view: { level: 'restricted', included: ['agents.status', 'groups.settings'], groups: { build: ['groups.settings'] } } };
+  // On forge's page forge is the page snapshot; this node is read directly.
+  const localFetch = async () => ({ ok: true, status: 200, json: async () => ({ groups: [group('mine')], agents: [] }) });
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal(peerSnap)} fetchImpl=${localFetch} localFetch=${localFetch} timers=${timers} remote="inst_forge" toast=${(m) => toasts.push(m)} switchNode=${() => {}} />`);
+  await harness.act(() => { state.setFused('all'); });
+  const doc = harness.document;
+  const inGroup = (node, name, inner) => { const d = doc.createElement('div'); d.innerHTML = `<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`; host.appendChild(d); return d.firstElementChild.firstElementChild; };
+  const granted = inGroup('inst_forge', 'forge', '<span data-act="set-group-max-members" data-group="build@forge">👥</span>');
+  const notGranted = inGroup('inst_forge', 'forge', '<span data-act="set-group-max-members" data-group="ops@forge">👥</span>');
+  const mine = inGroup('inst_self', 'desk', '<span data-act="set-group-dir" data-group="mine@desk"><span data-act="group-web-term" data-group="mine@desk">~</span></span>');
+  assert.equal(harness.fireEvent(granted, 'click').defaultPrevented, false, "forge's grant covers build");
+  assert.equal(harness.fireEvent(notGranted, 'click').defaultPrevented, true, 'but not ops');
+  assert.equal(harness.fireEvent(mine.firstElementChild, 'click').defaultPrevented, false, "on forge's page this node's own group settings still run");
+  await mounted.unmount(); state.dispose();
+});

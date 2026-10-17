@@ -12,8 +12,11 @@ import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
-import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './fleet-merged-model.js';
-import { peerAction, refusedActsRule, usableActSelectors } from './peer-view-limits.js';
+import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
+import {
+  GROUP_GRANT_ACTS, actOf, groupGrantHeld, groupGrantSelectors, peerAction, refusedActsRule, usableActSelectors,
+} from './peer-view-limits.js';
+import { announceNodeChanged, nodeFetch, onNodeChanged } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -53,10 +56,17 @@ const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 export function limitsCSS(nodes, { self, home = '' }) {
   const always = [...VIEW_ONLY_ACTS, 'send-elsewhere'];
   const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(details[data-fleet-node] [data-act])')];
+  // Controls carry each node's name as the merged view shows it.
+  const names = uniqueNodeNames(nodes.map(({ id, name, local }) => ({ node: { id, name, local } })));
   for (const { id, peerView } of nodes) {
     if (!NODE_ID.test(id || '') || id === home) continue;
     const scope = `${ROOT} details[data-fleet-node="${id}"]`;
-    const usable = id !== self ? usableActSelectors(peerView, ['send-elsewhere']) : always.map((a) => `[data-act="${a}"]`);
+    const merged = (g) => `${g}@${names.get(id)}`;
+    // This node's groups on a peer's page take its group controls directly
+    // (node-api.js), as though this node trusted itself unrestricted.
+    const usable = id !== self
+      ? usableActSelectors(peerView, ['send-elsewhere'], merged)
+      : [...always.map((a) => `[data-act="${a}"]`), ...groupGrantSelectors({ level: 'unrestricted' })];
     rules.push(refusedActsRule(scope, usable));
   }
   return rules.join('\n');
@@ -94,17 +104,52 @@ const readOnlyActions = new Proxy({}, {
   get: (_, key) => (key === 'reportError' ? () => {} : () => Promise.resolve()),
 });
 
+// NODE_GROUP_ACTIONS are the Groups actions another node's groups run here,
+// bound to that node (createNodeGroupsActions): its group controls'
+// requests (GROUP_GRANT_ACTS) and the reads they need. Every other action on
+// such a group resolves without doing anything.
+const NODE_GROUP_ACTIONS = new Set([
+  'patchGroup', 'renameGroup', 'setGroupProfile', 'groupProfileChoices', 'openGroupAttachment',
+  'pickGroupDirectory', 'openNewGroupProfile', 'reportError',
+]);
+
+// createNodeGroupsActions builds the Groups actions for one node's groups in
+// this view: requests through nodeFetch (this node's daemon, or the peer
+// proxy), and a refresh that reads that node again now. The actions module
+// loads on first use (it reaches the page's controllers).
+export function createNodeGroupsActions({
+  node, notify = shellToast, refresh = () => {}, fetchImpl, state = groupsState,
+  load = () => import('./groups-actions.js'),
+}) {
+  let built = null;
+  const actions = () => {
+    built ||= load().then(({ createGroupsActions }) => createGroupsActions({
+      state, node, notify, fetchImpl: fetchImpl || nodeFetch(node),
+      refresh: async () => { announceNodeChanged(node); await refresh(); },
+    }));
+    return built;
+  };
+  return Object.freeze(Object.fromEntries([...NODE_GROUP_ACTIONS].map((key) => [key, (...args) => actions().then((a) => a[key](...args))])));
+}
+
 // homeActions routes the Groups actions by the group they act on: a home
 // group's go to this node's Groups actions with the group as this node names
-// it (ownOf), a peer group's resolve without doing anything. A call naming no
-// group (a profile list, an error report, an inline rename the click guard
-// only lets open on home rows) goes to this node's actions.
-export function homeActions(live, ownOf) {
+// it (ownOf), another node's to forNode(node) with the group under its own
+// name, or resolve without doing anything when that node has no such
+// action. A call naming no group (a sort, an error report) goes to this
+// node's actions.
+export function homeActions(live, ownOf, forNode = () => null) {
   return new Proxy({}, {
     get: (_, key) => (...args) => {
       const real = live();
       const group = args.find((a) => a && typeof a === 'object' && a.fleet_node);
-      if (!real || typeof real[key] !== 'function' || (group && !group.fleet_node.home)) return readOnlyActions[key](...args);
+      if (group && !group.fleet_node.home) {
+        const actions = forNode(group.fleet_node);
+        if (!actions || typeof actions[key] !== 'function') return readOnlyActions[key](...args);
+        const own = (a) => ({ ...a, name: ownGroup(a.name, a.fleet_node.name) || a.name, fleet_node: undefined });
+        return actions[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? own(a) : a)));
+      }
+      if (!real || typeof real[key] !== 'function') return readOnlyActions[key](...args);
       return real[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? ownOf(a) : a)));
     },
   });
@@ -192,7 +237,18 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
       if (!disposed) schedule(peer, pollDelay({ base: ok && empty ? MERGED_IDLE_POLL_MS : MERGED_POLL_MS, failures: ok ? 0 : failures }));
     }
     peers.forEach((peer, i) => schedule(peer, staggerOffset(i, peers.length, MERGED_POLL_MS)));
-    return () => { disposed = true; pending.forEach((t) => timers.clearTimeout(t)); };
+    // A control here just changed a node: read it again now.
+    const stopChanged = onNodeChanged((node) => {
+      const peer = peers.find((p) => p.id === node);
+      if (!peer || inflight.has(peer.id)) return;
+      timers.clearTimeout(pending.get(peer.id));
+      schedule(peer, 0);
+    });
+    return () => {
+      disposed = true;
+      pending.forEach((t) => timers.clearTimeout(t));
+      stopChanged();
+    };
   }, [active, peersKey]);
   return entries;
 }
@@ -261,8 +317,20 @@ export function MergedGroups({
   };
   const ownOfRef = useRef(ownOf);
   ownOfRef.current = ownOf;
+  // Another node's groups run their group controls through actions bound to
+  // that node, one set per node.
+  const nodeActions = useRef(new Map());
+  const forNode = (node) => {
+    if (!NODE_ID.test(node?.id || '')) return null;
+    if (!nodeActions.current.has(node.id)) {
+      nodeActions.current.set(node.id, createNodeGroupsActions({
+        node: node.id, notify: toast, fetchImpl: nodeFetch(node.id, { self: state.view.value.fleet?.self?.id || '', fetchImpl, remote: remote ? { id: remote, localFetch } : null }),
+      }));
+    }
+    return nodeActions.current.get(node.id);
+  };
   const routed = useRef(null);
-  if (!routed.current) routed.current = homeActions(() => groupsActions(), (g) => ownOfRef.current(g));
+  if (!routed.current) routed.current = homeActions(() => groupsActions(), (g) => ownOfRef.current(g), forNode);
   // processScope resolves a listed group to the group the run context names:
   // a home group to this node's own, any other to none (its node's runs are
   // not read here; see groups-process-scope.js).
@@ -305,10 +373,16 @@ export function MergedGroups({
         switchNode(suffix.dataset.fleetOpen);
         return;
       }
-      const act = event.target.closest?.('[data-act]');
+      const act = actOf(event.target, event);
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
       const group = act.closest('details[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
+      // A group control another node lets run goes to its own handler, whose
+      // actions are bound to that node (forNode); this node's always may.
+      if (group && instance !== homeRef.current && GROUP_GRANT_ACTS[act.dataset.act]) {
+        const own = ownGroup(act.dataset.group || '', group.dataset.fleetNodeName || '');
+        if (instance === state.view.value.fleet?.self?.id || groupGrantHeld(act.dataset.act, own, snapRef.current(instance)?.peer_view)) return;
+      }
       // A home group's control runs as on this node's Groups view (the
       // document's data-act handler maps its group@node names back), except
       // "Send elsewhere", which opens the fleet-wide dialog below.
@@ -428,7 +502,7 @@ export function MergedGroups({
 
   if (!current.fused) return null;
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
-  const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
+  const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, name: node.name, local: !!node.local, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
   // This node's standing-orders dialog renders with its Groups view, hidden
   // while fused: open it here for a home group.
   const standingOrders = groupsFeature()?.standingOrdersDialog?.value || null;

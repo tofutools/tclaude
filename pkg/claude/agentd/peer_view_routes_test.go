@@ -10,6 +10,19 @@ import (
 	"testing"
 )
 
+// Every peer-granted group settings route keeps its declaration: a later
+// rule for the same pattern would silently replace it.
+func TestPeerGroupSettingsRulesAreNotReplaced(t *testing.T) {
+	declared := map[string]peerViewRule{}
+	addPeerGroupSettingsRules(declared)
+	rules := peerViewRules()
+	for pattern := range declared {
+		if rules[pattern].invoke == nil {
+			t.Errorf("%s: peer-granted rule replaced by another declaration", pattern)
+		}
+	}
+}
+
 func TestPeerViewDashboardRouteClassification(t *testing.T) {
 	files, err := filepath.Glob("dashboard*.go")
 	if err != nil {

@@ -29,8 +29,8 @@ export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
   return requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
 }
 
-export function openGroupAttachmentDialog({ group, url, attachmentLabel }) {
-  return requireController().openGroupAttachment({ group, url, attachmentLabel });
+export function openGroupAttachmentDialog({ group, node = '', url, attachmentLabel }) {
+  return requireController().openGroupAttachment({ group, node, url, attachmentLabel });
 }
 
 export function openGroupSettingsDialog({ group }) {

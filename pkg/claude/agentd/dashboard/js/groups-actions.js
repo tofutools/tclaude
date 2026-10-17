@@ -63,8 +63,11 @@ async function sandboxAssignmentError(response) {
   return error;
 }
 
+// createGroupsActions builds the Groups actions for the page's node, or with
+// node set for that node's groups in the fused view: its requests then go
+// through fetchImpl (node-api.js nodeFetch) and its pickers read that node.
 export function createGroupsActions({
-  state, refresh, notify = () => {}, fetchImpl = fetch,
+  state, refresh, notify = () => {}, fetchImpl = fetch, node = '',
   openMemberPermissions = () => { throw new Error('permissions editor is not ready'); },
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
@@ -150,7 +153,7 @@ export function createGroupsActions({
     },
     openGroupAttachment(group) {
       return openGroupAttachmentDialog({
-        group: group.name,
+        group: group.name, node,
         url: group.attachment_url || '',
         attachmentLabel: group.attachment_label_override || '',
       });
@@ -224,19 +227,21 @@ export function createGroupsActions({
       const oldName = group.name;
       const newName = String(rawName || '').trim();
       if (!newName || newName === oldName) return false;
-      const response = await fetch(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
+      const response = await fetchImpl(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ new_name: newName }),
       });
       if (!response.ok) throw new Error(`rename failed: ${await responseError(response)}`);
-      migrateGroupRenamePrefs(oldName, newName);
+      // This browser's prefs name the page's own groups; another node's
+      // group may share a name with one of them.
+      if (!node) migrateGroupRenamePrefs(oldName, newName);
       notify(`renamed: ${oldName} → ${newName}`);
       void refresh();
       return true;
     },
     async patchGroup(group, field, value, message) {
-      const response = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
+      const response = await fetchImpl(`/api/groups/${encodeURIComponent(group.name)}`, {
         method: 'PATCH', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
@@ -247,6 +252,8 @@ export function createGroupsActions({
       return true;
     },
     async pickGroupDirectory(group) {
+      // The folder browser reads this machine; another node's path is typed.
+      if (node) throw new Error(`type the directory: the folder browser reads this machine, not ${group.name}'s node`);
       const result = await pickDirectory({
         startDir: group.default_cwd || '',
         title: `Default spawn directory for "${group.name}"`,
@@ -257,6 +264,14 @@ export function createGroupsActions({
         (value) => `${group.name}: default dir → ${value}`);
     },
     async groupProfileChoices(kind) {
+      if (node) {
+        // Another node's own catalogs, read uncached through its route.
+        const response = await fetchImpl(kind === 'sandbox' ? '/api/sandbox-profiles' : '/api/spawn-profiles', { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`load profiles failed: ${await responseError(response)}`);
+        const list = await response.json();
+        const rows = Array.isArray(list) ? list : [];
+        return kind === 'sandbox' ? rows.map((profile) => ({ value: profile.name, label: profile.name })) : profileChoices(rows);
+      }
       if (kind === 'sandbox') {
         const profiles = await loadSandboxProfiles();
         return profiles.map((profile) => ({ value: profile.name, label: profile.name }));
@@ -264,6 +279,10 @@ export function createGroupsActions({
       return profileChoices(await loadProfiles());
     },
     openNewGroupProfile(kind, onSaved) {
+      if (node) {
+        notify("create the profile on that node's own dashboard, then pick it here", true);
+        return;
+      }
       if (kind === 'sandbox') {
         openSandboxProfileEditor(null, { onCreate: onSaved });
       } else {
@@ -272,16 +291,16 @@ export function createGroupsActions({
     },
     async setGroupProfile(group, kind, name) {
       if (kind === 'sandbox') {
-        const response = await fetch(`/api/groups/${encodeURIComponent(group.name)}/sandbox-profile`, {
+        const response = await fetchImpl(`/api/groups/${encodeURIComponent(group.name)}/sandbox-profile`, {
           method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: name ? JSON.stringify({ name }) : undefined,
         });
         if (!response.ok) throw await sandboxAssignmentError(response);
         notify(name ? `${group.name} sandbox profile: ${name}` : `${group.name} sandbox profile cleared`);
-        refreshAgentSpawnSandboxPolicy();
+        if (!node) refreshAgentSpawnSandboxPolicy();
       } else {
-        const response = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
+        const response = await fetchImpl(`/api/groups/${encodeURIComponent(group.name)}`, {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ default_profile: name }),

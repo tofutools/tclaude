@@ -5,6 +5,9 @@ import "net/http"
 func registerFederationPeerViewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
 	mux.HandleFunc("POST /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
+	mux.HandleFunc("PATCH /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
+	mux.HandleFunc("PUT /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
+	mux.HandleFunc("DELETE /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
 	mux.HandleFunc("GET /v1/federation/node-summary", handleFederationLocalSummary)
 }
 
