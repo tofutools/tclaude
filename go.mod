@@ -3,10 +3,10 @@ module github.com/tofutools/tclaude
 go 1.26.9
 
 require (
-	filippo.io/age v1.2.1
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/lipgloss/v2 v2.0.6
+	filippo.io/age v1.2.1
 	fyne.io/systray v1.12.2
 	github.com/GiGurra/boa v1.0.31
 	github.com/charmbracelet/x/ansi v0.11.8
@@ -17,6 +17,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/nftables v0.3.0
+	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jedib0t/go-pretty/v6 v6.8.3
@@ -32,8 +33,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/mod v0.41.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
@@ -57,6 +58,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/ianlancetaylor/demangle v0.0.0-20250417193237-f615e6bd150b // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect

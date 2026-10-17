@@ -3458,6 +3458,21 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .debug-phase-toggle:hover { color: #d4d4d4; }
 .debug-phase-toggle:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .debug-phase-child td { color: #9da7b3; background: rgba(255, 255, 255, 0.012); }
+
+/* Daemon profiling (profiles-island.js): capture list above the poll cards. */
+.profile-section { margin-bottom: 18px; }
+.profile-notice { margin: 4px 0 8px; font-size: 12px; }
+.profile-table { width: 100%; }
+.profile-table td { vertical-align: top; }
+.profile-id { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.profile-error { font-size: 11px; max-width: 280px; overflow-wrap: anywhere; }
+.profile-links { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.profile-links a { color: #58a6ff; text-decoration: none; }
+.profile-links a.muted { color: #8b949e; }
+.profile-links a:hover { text-decoration: underline; }
+.profile-done { background: #161b22; color: #9da7b3; border-color: #2a3340; }
+#profile-modal .cron-create-row input[type=number] { flex: 0 0 7em; }
+#profile-modal p.muted { font-size: 12px; margin: 0 0 10px; max-width: 520px; }
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
    The message column is greedy + monospace; When / Level shrink to fit.
    Warn/error rows get a faint tinted gutter so they catch the eye. */

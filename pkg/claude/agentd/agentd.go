@@ -22,6 +22,7 @@ func subCmds() []*cobra.Command {
 	return []*cobra.Command{
 		serveCmd(),
 		oneShotExecCmd(),
+		profileCmd(),
 	}
 }
 

@@ -3,6 +3,8 @@ package common
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
 )
 
 // TmuxSocketName is the named socket for tclaude's independent tmux server.
@@ -39,6 +41,7 @@ type LiveTmux struct{}
 
 // Command builds an exec.Cmd that invokes the real tmux binary.
 func (LiveTmux) Command(args ...string) *exec.Cmd {
+	perfstats.CountSubprocess(tmuxCounterKey(args))
 	return exec.Command("tmux", TmuxArgs(args...)...)
 }
 
@@ -68,6 +71,15 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 		alive[name] = struct{}{}
 	}
 	return alive, nil
+}
+
+// tmuxCounterKey names a tmux invocation by its subcommand for the perfstats
+// subprocess table ("tmux list-sessions"), so hot polling paths stand out.
+func tmuxCounterKey(args []string) string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "tmux"
+	}
+	return "tmux " + args[0]
 }
 
 // TmuxCommand is a thin facade over Default.Command. Kept so the
