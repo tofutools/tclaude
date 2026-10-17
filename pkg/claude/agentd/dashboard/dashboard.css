@@ -20645,6 +20645,10 @@ details[open] > summary .gp-subtree-total { display: none; }
    member table's untitled header cell, and the runs' slim title row,
    padded like that cell so both rows of controls share one left edge. */
 .group-header-actions.gf-table-actions { display: inline-flex; margin: 0; }
+/* The controls are taller than a column title, so the head row with them
+   pads less and bottom-aligns the titles beside the buttons; the default
+   8px padding around them left the titles floating high above the rows. */
+thead.gf-lead-head th { padding-top: 4px; padding-bottom: 6px; vertical-align: bottom; }
 .group-header-actions.gf-title-row { display: flex; align-items: center; gap: 4px; padding: 0 12px 6px; margin: 0 0 6px; border-bottom: 1px solid #21262d; }
 body.wizard .group-header-actions.gf-title-row { border-bottom-color: rgba(122, 93, 176, 0.35); }
 .gf-section-fill { flex: 1; align-self: stretch; min-width: 12px; cursor: pointer; }

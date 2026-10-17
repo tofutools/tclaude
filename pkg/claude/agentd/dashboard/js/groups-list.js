@@ -215,7 +215,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
 // SortHead's `lead` fills the untitled control column's header cell.
 function SortHead({ table, columns, lead = null }) {
   const active = tableSortState(table, columns);
-  return html`<thead><tr>${columns.map((column) => {
+  return html`<thead class=${lead ? 'gf-lead-head' : undefined}><tr>${columns.map((column) => {
     const label = column.wizardLabel
       ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
       : (column.label || '');
