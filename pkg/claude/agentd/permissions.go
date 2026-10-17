@@ -124,6 +124,7 @@ func init() { initPermissionRegistry() }
 // build registers it; all mutation and authorization boundaries accept only
 // this vocabulary.
 var permissionRegistry = []PermSlug{
+	{Slug: PermHostBreakGlass, Description: "Local operator-only time-bounded host execution; not requestable or grantable through ordinary permissions."},
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
 	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
@@ -1704,6 +1705,10 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if body.Slug == PermHostBreakGlass {
+		writeError(w, 403, "operator_grant_required", "use the dedicated break-glass operator grant/revoke commands")
+		return
+	}
 	if !IsKnownPermSlug(body.Slug) {
 		writeError(w, http.StatusBadRequest, "unknown_slug",
 			fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
@@ -1795,6 +1800,10 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if len(scope) != 0 {
 		writeError(w, http.StatusBadRequest, "invalid_scope", "deny overrides cannot carry a scope")
+		return
+	}
+	if body.Slug == PermHostBreakGlass {
+		writeError(w, 403, "operator_grant_required", "use the dedicated break-glass operator grant/revoke commands")
 		return
 	}
 	if !IsKnownPermSlug(body.Slug) {

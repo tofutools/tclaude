@@ -279,6 +279,8 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"permissions"}, verb: "permissions.set", describe: describePermSet},
 
 	// Sudo (time-bounded elevation).
+	{method: http.MethodPost, segs: []string{"break-glass", "grant"}, verb: "break-glass.grant"},
+	{method: http.MethodPost, segs: []string{"break-glass", "revoke"}, verb: "break-glass.revoke"},
 	{method: http.MethodPost, segs: []string{"sudo"}, verb: "sudo.grant", describe: describeSudo},
 	{method: http.MethodDelete, segs: []string{"sudo", "{id}"}, verb: "sudo.revoke"},
 

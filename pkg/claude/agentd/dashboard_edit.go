@@ -74,6 +74,26 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/delete-directory", handleDashboardDeleteDirAPI)
 	mux.HandleFunc("/api/pending/focus/", handleDashboardPendingFocusAPI)
 	mux.HandleFunc("/api/pending/delete/", handleDashboardPendingDeleteAPI)
+	mux.HandleFunc("POST /api/break-glass/grant", func(w http.ResponseWriter, r *http.Request) {
+		if checkDashboardAuth(w, r) {
+			handleBreakGlassGrant(w, asDashboardHumanPeer(r))
+		}
+	})
+	mux.HandleFunc("POST /api/break-glass/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if checkDashboardAuth(w, r) {
+			handleBreakGlassRevoke(w, asDashboardHumanPeer(r))
+		}
+	})
+	mux.HandleFunc("GET /api/break-glass/runs", func(w http.ResponseWriter, r *http.Request) {
+		if checkDashboardAuth(w, r) {
+			handleBreakGlassRuns(w, asDashboardHumanPeer(r))
+		}
+	})
+	mux.HandleFunc("GET /api/break-glass/runs/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if checkDashboardAuth(w, r) {
+			handleBreakGlassRuns(w, asDashboardHumanPeer(r))
+		}
+	})
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/permissions", handleDashboardPermissionsAPI)

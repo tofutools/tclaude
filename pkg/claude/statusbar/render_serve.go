@@ -72,6 +72,7 @@ func ApplyBrokeredRender(req BrokeredRenderRequest, sessionID, rowConvID string)
 	}
 	resp.PinnedWindow = resolved
 	resp.SandboxOff = temporarySandboxOff(workspaceConv)
+	resp.BreakGlassCount, resp.BreakGlassUntil = breakGlassStatus(workspaceConv)
 
 	writes := renderWrites{
 		Input:         input,

@@ -1,4 +1,5 @@
-import { h, render } from 'preact';
+import { Fragment, h, render } from 'preact';
+import { BreakGlassIndicator } from './break-glass.js';
 import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -52,6 +53,10 @@ function UsageToken({ token }) {
 }
 
 function Usage({ state }) {
+ return html`<${Fragment}><${BreakGlassIndicator} state=${state}/><${UsageContent} state=${state}/></${Fragment}>`;
+}
+
+function UsageContent({ state }) {
   const prefKey = (provider) => `tclaude.dash.headerUsageMode.${provider}`;
   const [modes, setModes] = useState({});
   const usage = state.snapshot.value?.usage;
@@ -399,7 +404,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   const roots = [
     [hosts.activityHost, html`<${GlobalActivity} state=${state} groupsState=${groupsState} />`],
     [hosts.usageHost, html`<${Usage} state=${state} />`],
-    [hosts.spendLimitHost, html`<${SpendLimitBanner} state=${state} />`],
+    [hosts.spendLimitHost, html`<${Fragment}><${BreakGlassIndicator} state=${state} banner=${true} /><${SpendLimitBanner} state=${state} /></${Fragment}>`],
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],
     [hosts.metaHost, html`<${FooterMeta} state=${state} />`],

@@ -26,6 +26,7 @@ import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { skynetState } from './skynet-state.js';
 import { presenceView } from './agent-presence.js';
 import { hubOffReason } from './skynet-model.js';
+import { BreakGlassBadge, liveBreakGlass } from './break-glass.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 
 const html = htm.bind(h);
@@ -931,6 +932,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
       <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this familiar an owner of the party')} />` : null}
     <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
     <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
+    ${!snapshot?.peer_view && html`<${MenuButton} member=${member} act="break-glass" className="break-glass-menu" regular=${liveBreakGlass(snapshot).some(row => row.agent_id === member.agent_id) ? '🚨 break-glass: extend / revoke…' : '🚨 break the glass…'} title="Enable unsandboxed shell execution as you" />`}
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
@@ -1027,7 +1029,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
   const state = member.state || {};
   const canRename = harnessCanRename(snapshot, state.harness);
   const idPrefix = memberColHidden('id') ? `${idTooltip(member.agent_id, member.conv_id)} — ` : '';
-  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${BreakGlassBadge} member=${member} snapshot=${snapshot} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
   return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><${InlineEditor}
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"
@@ -1037,7 +1039,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
       ...memberAttrs(member), 'data-current': member.title || '', 'data-editor-key': editorKey,
       title: `${idPrefix}Click to rename this agent — Enter saves, Esc cancels`,
     }}
-  >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${BreakGlassBadge} member=${member} snapshot=${snapshot} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
 }
 
 // PresenceBadge marks a visiting agent with its home, and a returned one with
@@ -1222,7 +1224,7 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
   const presence = presenceView(member, skynetState.fleet.value);
   if (presence?.kind === 'away') return html`<${AwayRow} member=${member} view=${presence} columns=${columns} group=${group} />`;
   return html`<tr
-    class=${`dnd-draggable${presence ? ` presence-row-${presence.kind}` : ''}`} draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}
+    class=${`dnd-draggable${liveBreakGlass(snapshot).some(row => row.agent_id === member.agent_id) ? ' break-glass-row' : ''}${presence ? ` presence-row-${presence.kind}` : ''}`} draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}
     data-dnd-source-ungrouped=${ungrouped ? '1' : undefined}
     data-dnd-source-group=${ungrouped ? undefined : group.name}
     data-dnd-conv=${member.conv_id} data-dnd-agent=${member.agent_id || member.conv_id}

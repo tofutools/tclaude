@@ -332,3 +332,24 @@ func temporarySandboxOff(convID string) bool {
 	_, active, err := db.TemporaryHarnessBuiltinModeForAgent(agentID)
 	return err == nil && active
 }
+
+// breakGlassStatus is global on purpose: every pane warns while any local
+// agent holds host execution authority; the holder also gets its own expiry.
+func breakGlassStatus(convID string) (int, string) {
+	rows, err := db.ListHostBreakGlassGrants("")
+	if err != nil {
+		return 0, ""
+	}
+	agents := map[string]bool{}
+	var until time.Time
+	for _, row := range rows {
+		agents[row.AgentID] = true
+		if convID != "" && row.ConvID == convID && row.ExpiresAt.After(until) {
+			until = row.ExpiresAt
+		}
+	}
+	if until.IsZero() {
+		return len(agents), ""
+	}
+	return len(agents), until.Format(time.RFC3339Nano)
+}

@@ -995,7 +995,8 @@ type snapshotPayload struct {
 	// active state also surfaces on Agents[*].ActiveSudo so the Groups
 	// + Agents tabs can render the 🔓 indicator without a second
 	// round-trip.
-	Sudo []dashboardSudoEntry `json:"sudo"`
+	Sudo       []dashboardSudoEntry `json:"sudo"`
+	BreakGlass []dashboardSudoEntry `json:"break_glass"`
 	// Links surfaces every inter-group link in the system. The dashboard
 	// renders these in a dedicated panel (read-only in v1) and uses them
 	// to annotate group rows with outbound/inbound counts. Empty slice
@@ -3706,6 +3707,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// feed the top-level Sudo[] for the dedicated tab.
 	sudoByAgent := map[string][]dashboardSudoEntry{}
 	out.Sudo = []dashboardSudoEntry{}
+	out.BreakGlass = []dashboardSudoEntry{}
 	sudoNow := time.Now()
 	for _, g := range sudoGrants {
 		// Grantee name from the batch-loaded conv_index cache — custom
@@ -3732,6 +3734,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			GrantedBy:        g.GrantedBy,
 			Reason:           g.Reason,
 			RemainingSeconds: remaining,
+		}
+		if g.Slug == PermHostBreakGlass {
+			if g.GrantedBy == breakGlassGrantOrigin {
+				if r.Context().Value(peerSnapshotCtxKey{}) != true {
+					out.BreakGlass = append(out.BreakGlass, topEntry)
+				}
+			}
+			continue
 		}
 		out.Sudo = append(out.Sudo, topEntry)
 		// On the per-agent slice we omit ConvID — the agent row's

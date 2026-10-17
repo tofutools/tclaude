@@ -35,6 +35,10 @@ export function openSudoGrantModal(prefillAgentID = '') {
   return requireController().openSudoGrant({ agentID: prefillAgentID || '' });
 }
 
+export function openBreakGlassModal(agentID = '', mode = 'grant') {
+ return requireController().openBreakGlass({agentID, mode});
+}
+
 export function openPermEditModal(conv, label = '') {
   return requireController().openAgentPermissions({ conv, label });
 }

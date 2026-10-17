@@ -57,6 +57,7 @@ func Cmd() *cobra.Command {
 			inboxCmd(),
 			permissionsCmd(),
 			sudoCmd(),
+			breakGlassCmd(),
 			cronCmd(),
 			ordersCmd(),
 			triggersCmd(),

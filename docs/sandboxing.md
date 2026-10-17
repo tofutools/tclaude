@@ -680,8 +680,14 @@ list lives in [Spawning and lifecycle](spawning-and-lifecycle.md).
 `tclaude setup --install-sandbox-hardening` protects the daemon's trust anchors
 — `~/.tclaude/data` (database, config, operator token, remote-access CA keys)
 and `~/.claude/sessions` (identity forgery) — from the agents it coordinates.
-agentd's identity and permission layer is a coordination guardrail, not a
-security boundary; the OS sandbox is what makes it hold.
+For ordinary coordination commands, agentd's identity and permission layer is
+a coordination guardrail; the OS sandbox protects the private state. The
+`host.break-glass` execution gate is an explicit exception and a real security
+boundary: it deliberately executes outside those sandboxes and must admit
+only an identified local agent with a live, deliberate operator grant.
+Generic permission defaults, ownership, group grants, spawn roles/templates,
+ordinary sudo requests, and approval popups cannot enable it. See
+[Break-glass host execution](permissions-and-audit.md#break-glass-host-execution).
 
 The installer writes an append-only, idempotent block into user-scope
 `~/.claude/settings.json` covering **both Claude Code layers**, because neither

@@ -237,6 +237,10 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, slug := range body.Slugs {
+		if slug == PermHostBreakGlass {
+			writeError(w, 403, "not_requestable", "break-glass cannot be requested through sudo; only the operator may enable it deliberately")
+			return
+		}
 		if !IsKnownPermSlug(slug) {
 			writeError(w, http.StatusBadRequest, "unknown_slug",
 				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",

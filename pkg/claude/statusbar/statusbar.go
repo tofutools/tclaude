@@ -321,6 +321,15 @@ func run() error {
 	ctxPct := derived.CtxPct
 
 	var line2 []string
+	if facts.BreakGlassUntil != "" {
+		until, _ := time.Parse(time.RFC3339Nano, facts.BreakGlassUntil)
+		if remain := time.Until(until); remain > 0 {
+			line2 = append(line2, colorRed+"🚨 BREAK-GLASS "+remain.Round(time.Second).String()+colorReset)
+		}
+	} else if facts.BreakGlassCount > 0 {
+		line2 = append(line2, fmt.Sprintf("%s🚨 %d agents break-glass%s", colorRed, facts.BreakGlassCount, colorReset))
+	}
+
 	if facts.SandboxOff {
 		line2 = append(line2, colorRed+"⚠ SB-OFF"+colorReset)
 	}

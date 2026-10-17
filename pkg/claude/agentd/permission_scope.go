@@ -309,6 +309,9 @@ func permissionScopeDimsForSlug(slug string) []ScopeDim {
 // general but not declared for this slug. Unknown slugs remain subject to the
 // existing endpoint rule; an empty scope does not add a new rejection path.
 func validatePermissionScopeForSlug(slug string, scope PermissionScope) error {
+	if slug == PermHostBreakGlass {
+		return fmt.Errorf("host.break-glass requires the dedicated operator grant surface")
+	}
 	if len(scope) == 0 {
 		return nil
 	}

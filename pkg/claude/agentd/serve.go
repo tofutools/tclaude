@@ -1299,6 +1299,12 @@ func isLoopbackHost(host string) bool {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", handleInfo)
+	mux.HandleFunc("GET /v1/break-glass/status", handleBreakGlassStatus)
+	mux.HandleFunc("GET /v1/break-glass/runs", handleBreakGlassRuns)
+	mux.HandleFunc("GET /v1/break-glass/runs/{name}", handleBreakGlassRuns)
+	mux.HandleFunc("POST /v1/break-glass/grant", handleBreakGlassGrant)
+	mux.HandleFunc("POST /v1/break-glass/revoke", handleBreakGlassRevoke)
+	mux.HandleFunc("GET /v1/break-glass/exec", handleBreakGlassExec)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)

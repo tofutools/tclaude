@@ -142,7 +142,9 @@ type BrokeredRenderResponse struct {
 	PinnedWindow int64 `json:"pinned_window,omitempty"`
 
 	// SandboxOff drives the ⚠ SB-OFF badge.
-	SandboxOff bool `json:"sandbox_off,omitempty"`
+	SandboxOff      bool   `json:"sandbox_off,omitempty"`
+	BreakGlassCount int    `json:"break_glass_count,omitempty"`
+	BreakGlassUntil string `json:"break_glass_until,omitempty"`
 
 	// Usage is the usage-API cache, present only when WantUsage was set.
 	Usage *usageapi.CachedUsage `json:"usage,omitempty"`
@@ -238,10 +240,11 @@ func brokeredHostState(req renderRequest) renderFacts {
 // path it came from.
 func factsFromBroker(req renderRequest, resp BrokeredRenderResponse) renderFacts {
 	facts := renderFacts{
-		PinnedWindow: resp.PinnedWindow,
-		SandboxOff:   resp.SandboxOff,
-		Usage:        resp.Usage,
-		UsageStale:   resp.UsageStale,
+		PinnedWindow:    resp.PinnedWindow,
+		SandboxOff:      resp.SandboxOff,
+		BreakGlassCount: resp.BreakGlassCount, BreakGlassUntil: resp.BreakGlassUntil,
+		Usage:      resp.Usage,
+		UsageStale: resp.UsageStale,
 	}
 	if resp.Owned {
 		// The identifiers are only ever used to decide whether a write

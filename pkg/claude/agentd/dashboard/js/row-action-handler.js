@@ -11,7 +11,7 @@ import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
-  openPermEditModal, openSudoGrantModal,
+  openPermEditModal, openSudoGrantModal, openBreakGlassModal,
 } from './message-access-dialog-controller.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport, openSnapshots } from './modal-templates.js';
 import {
@@ -509,6 +509,7 @@ export async function handleRowAction(action) {
         toast(`terminal opened: ${info.dir || which}`);
         return;
       }
+      case 'break-glass': { openBreakGlassModal(agent); return; }
       case 'sudo-grant': {
         // Per-row affordance: open the same modal the Sudo tab's
         // "+ Grant sudo" button uses, pre-filled with this stable agent id.

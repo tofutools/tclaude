@@ -289,3 +289,68 @@ output tail in the dashboard's Activity › Logs view.
 
 Empty cause fields mean the evidence was unavailable — the ledger never
 infers a cause it didn't observe.
+
+
+## Break-glass host execution
+
+The operator can deliberately let a local agent run arbitrary shell commands
+as agentd's UID, outside its sandbox and harness command filters:
+
+```bash
+# Operator only; the default duration is 30 minutes.
+tclaude agent break-glass grant infra-setup --for 30m --reason "host setup"
+tclaude agent break-glass revoke infra-setup
+tclaude agent break-glass revoke all
+tclaude agent break-glass status  # operator: all live grants; agent: self
+tclaude agent break-glass logs    # operator: recent private run logs
+
+# Agent with an existing live grant:
+tclaude agent break-glass run --cwd /srv/project --timeout 10m --env LANG=C --reason "diagnosis" -- command args
+tclaude agent break-glass run -c 'shell pipeline' --reason "diagnosis"
+```
+
+The shorter `break-glass -- command args` and `break-glass -c 'shell string'`
+forms also work. `--stdin` streams standard input. Output streams back over the
+local Unix socket and the CLI propagates the command's exit code. A timeout or
+lost/revoked grant stops the process group (timeout/cancellation exit code 124).
+Disconnect also kills the group. PTY mode is not available.
+
+The dashboard agent cogwheel has **Break the glass…**, or **extend / revoke**
+while enabled. Duration defaults to 30m, with presets and a custom Go duration;
+there is no policy maximum. A replacement grant starts a new window from now.
+A red header pill and banner appear across tabs while any grant is live;
+holders get a red countdown badge and row edge. The banner can be dismissed
+for the page session while the header warning remains. Statuslines show the
+local count and a louder countdown for the holder where the harness supports
+the tclaude statusline.
+
+Agents cannot request this grant, even with `--ask-human`, sudo configuration,
+permission-management privileges, group ownership, or inherited role/template
+permissions. Only the dedicated operator grant surface enables it. Grants
+follow the stable agent identity through reincarnation and do not transfer to
+a clone. Execution, grants and run logs are local-only, unavailable through
+federation/hub. This feature does not restore the removed sandbox-profile
+`break_glass_filesystem` mechanism.
+
+**This gives the agent your host access.** It can read/write private tclaude
+state, credentials and SSH keys, and could create lasting access. Expiry and
+process-group teardown are guardrails for cooperative commands; they cannot
+undo changes or catch a command that deliberately starts a new session. This
+runs as the daemon UID, not automatically as root; any sudo policy remains the
+host operator's configuration.
+
+Runs inherit agentd's environment and working directory unless overridden.
+A systemd or launchd service often has a different PATH and cwd from an
+interactive shell; use absolute executable paths and `--cwd` when needed.
+Shell strings use `/bin/sh -c`. `--env` overrides are passed to the command.
+
+Grant/revoke actions are audited. Each execution writes bounded command text,
+cwd, reason, exit code, duration and a log filename to the audit trail. Output
+and command metadata are stored as private JSONL logs under
+`~/.tclaude/data/break-glass/` (directory 0700, files 0600). The dashboard's
+**view runs** lists the latest 200 files and opens their decoded text. Logs may
+contain secrets printed by commands; retention is operator-managed. This is a
+deliberate exception to the usual symbolic-only command audit.
+
+`tclaude setup --install-agent-skills` installs the `break-glass` skill. It
+explains existing-grant use and explicitly forbids agents asking for a grant.

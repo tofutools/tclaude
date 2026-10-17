@@ -482,6 +482,51 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   </${Overlay}>`;
 }
 
+function BreakGlassDialog({ descriptor, state, actions, snapshot }) {
+ const { requestClose, registerClose } = useGuardedOverlayClose();
+ const [duration,setDuration] = useState('30m');
+ const [reason,setReason] = useState('');
+ const [busy,setBusy] = useState(false);
+ const [error,setError] = useState('');
+ const [runs,setRuns] = useState([]);
+ const holder = (snapshot?.break_glass || []).find(row => row.agent_id === descriptor.agentID);
+ const agent = (snapshot?.agents || []).find(row => row.agent_id === descriptor.agentID);
+ const label = agent?.title || holder?.conv_title || descriptor.agentID;
+ useEffect(() => {
+  if (descriptor.mode !== 'runs') return;
+  let active = true;
+  actions.breakGlassRuns().then(rows => { if (active) setRuns(rows); }).catch(err => { if (active) setError(err.message); });
+  return () => { active = false; };
+ }, [descriptor.mode]);
+ const mutate = async (revoke = false) => {
+  if (busy) return;
+  setBusy(true); setError('');
+  try { await actions.breakGlass({ target:descriptor.agentID,duration,reason,revoke }); state.close(); }
+  catch (err) { setError(err.message); setBusy(false); }
+ };
+ if (descriptor.mode === 'runs') return html`<${Overlay} id="break-glass-modal" dialogClass="break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
+  <h3 id="break-glass-title">🚨 Break-glass runs</h3>
+  <p>Commands and output recorded on this host. Run logs may contain sensitive data.</p>
+  <ul>${runs.map(run => html`<li key=${run.name}><a href=${`/api/break-glass/runs/${encodeURIComponent(run.name)}`} target="_blank" rel="noopener">${run.name}</a> — ${run.command || ''}</li>`)}</ul>
+  <${ErrorLine} value=${error}/><div class="modal-buttons"><button onClick=${() => { void requestClose(); }}>Close</button></div>
+ </${Overlay}>`;
+ return html`<${Overlay} id="break-glass-modal" dialogClass="break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
+  <h3 id="break-glass-title">🚨 ${holder ? 'Extend / revoke break-glass' : 'Break the glass'} for ${label}</h3>
+  <div class="break-glass-warning">While live, this agent can run <strong>any shell command as you</strong> through agentd — outside its sandbox, harness command filters and tclaude's permission model.
+   <ul><li>It can read/write ~/.tclaude/data, credentials, SSH keys…</li><li>It could grant itself permanent access: the timer is a guardrail for a cooperative agent, not a wall.</li><li>Agents can never request this — only you can enable it.</li></ul>
+  </div>
+  ${holder && html`<p>Currently enabled until ${new Date(holder.expires_at).toLocaleString()}.</p>`}
+  <label class="sudo-grant-row"><span class="sudo-grant-label">Duration</span><div class="break-glass-presets">${['15m','30m','1h','4h','8h','24h'].map(value => html`<button key=${value} type="button" class=${duration === value ? 'selected' : ''} onClick=${() => setDuration(value)}>${value}</button>`)}<input aria-label="Custom break-glass duration" value=${duration} onInput=${event => setDuration(event.currentTarget.value)} /></div></label>
+  <p>No upper limit — you choose. A new grant replaces the existing window.</p>
+  <label class="sudo-grant-row"><span class="sudo-grant-label">Reason (recorded in audit)</span><input value=${reason} onInput=${event => setReason(event.currentTarget.value)} /></label>
+  <${ErrorLine} value=${error}/><div class="modal-buttons">
+   <button disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+   ${holder && html`<button disabled=${busy} class="danger" onClick=${() => mutate(true)}>Revoke</button>`}
+   <button disabled=${busy} class="break-glass-confirm" onClick=${() => mutate(false)}>${busy ? 'Working…' : `Break the glass for ${duration}`}</button>
+  </div>
+ </${Overlay}>`;
+}
+
 function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [agentID, setAgentID] = useState(descriptor.agentID || '');
@@ -1006,6 +1051,7 @@ export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscar
   if (descriptor?.kind === 'operator-message') parent = html`<${OperatorMessageDialog} key=${`operator:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'message') parent = html`<${MessageDialog} key=${`message:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'human-reply') parent = html`<${HumanReplyDialog} key=${`reply:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
+  else if (descriptor?.kind === 'break-glass') parent = html`<${BreakGlassDialog} key=${`glass:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} />`;
   else if (descriptor?.kind === 'sudo-grant') parent = html`<${SudoGrantDialog} key=${`sudo:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'context-features') parent = html`<${ContextFeaturesDialog} key=${`context-features:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
@@ -1022,6 +1068,7 @@ export function mountMessageAccessDialogIsland({
     dialogKind: state.dialogKind,
     openHumanReply: state.openHumanReply,
     openSudoGrant: state.openSudoGrant,
+ openBreakGlass:state.openBreakGlass,
     openAgentPermissions: state.openAgentPermissions,
     openGroupPermissions: state.openGroupPermissions,
     openBufferedPermissions: state.openBufferedPermissions,

@@ -3,6 +3,8 @@ package agentd
 // Dashboard routes deliberately left local-only. The route guard test requires
 // an explicit decision here whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	"POST /api/break-glass/grant", "POST /api/break-glass/revoke", "GET /api/break-glass/runs", "GET /api/break-glass/runs/{name}",
+
 	// Daemon profiling captures this node's own process.
 	"GET /api/profiles",
 	"POST /api/profiles",

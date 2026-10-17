@@ -1,4 +1,4 @@
-const SUDO_BLOCKLIST = new Set(['permissions.grant', 'permissions.revoke']);
+const SUDO_BLOCKLIST = new Set(['permissions.grant', 'permissions.revoke', 'host.break-glass']);
 
 export function snapshotAgents(snapshot) {
   const seen = new Set();
@@ -62,7 +62,7 @@ export function sudoByAgent(snapshot) {
 }
 
 export function sudoSlugRows(snapshot) {
-  return (snapshot?.slugs || []).map((slug) => ({
+  return (snapshot?.slugs || []).filter(row => row.slug !== 'host.break-glass').map((slug) => ({
     ...slug,
     blocked: SUDO_BLOCKLIST.has(slug.slug),
   }));

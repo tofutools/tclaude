@@ -828,6 +828,15 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 // many slugs for one agent loads the sources once and calls this per
 // slug, paying no more queries than a single gate check.
 func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed bool) permVerdict {
+	if slug == PermHostBreakGlass {
+		if grant, ok := src.sudo[slug]; ok && src.resolvable {
+			row, err := db.GetSudoGrant(grant.ID)
+			if err == nil && row != nil && row.GrantedBy == breakGlassGrantOrigin && row.IsActive(time.Now()) {
+				return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grant.ID}
+			}
+		}
+		return permVerdict{Resolution: permDeny, Source: permSourceNone}
+	}
 	if !src.resolvable {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}

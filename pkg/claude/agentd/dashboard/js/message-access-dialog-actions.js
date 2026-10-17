@@ -166,5 +166,10 @@ export function createMessageAccessDialogActions({
     return { overrides: kept };
   }
 
-  return Object.freeze({ sendMessage, sendOperatorMessage, replyHuman, grantSudo, savePermissions });
+  async function breakGlass({target,duration,reason,revoke}) {
+   const response = await requestJSON(fetchImpl, '/api/break-glass/' + (revoke ? 'revoke' : 'grant'), {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target,duration,reason})});
+   void refresh(); notify(revoke ? 'Break-glass revoked' : 'Break-glass enabled'); return response;
+  }
+  async function breakGlassRuns() { return requestJSON(fetchImpl,'/api/break-glass/runs',{method:'GET'}); }
+  return Object.freeze({ sendMessage, sendOperatorMessage, replyHuman, grantSudo, savePermissions, breakGlass, breakGlassRuns });
 }

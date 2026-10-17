@@ -57,7 +57,9 @@ type renderFacts struct {
 	PinnedWindow int64
 
 	// SandboxOff drives the ⚠ SB-OFF badge.
-	SandboxOff bool
+	SandboxOff      bool
+	BreakGlassCount int
+	BreakGlassUntil string
 
 	// Usage is the usage-API cache, populated only when WantUsage.
 	Usage *usageapi.CachedUsage
@@ -96,11 +98,13 @@ func directHostState(req renderRequest) renderFacts {
 	}
 
 	observed, resolved := resolvePinnedWindow(req.EnvPinnedWindow, owned)
+	glassCount, glassUntil := breakGlassStatus(workspaceConv)
 	facts := renderFacts{
-		Owned:         owned,
-		WorkspaceConv: workspaceConv,
-		PinnedWindow:  resolved,
-		SandboxOff:    temporarySandboxOff(workspaceConv),
+		Owned:           owned,
+		WorkspaceConv:   workspaceConv,
+		PinnedWindow:    resolved,
+		SandboxOff:      temporarySandboxOff(workspaceConv),
+		BreakGlassCount: glassCount, BreakGlassUntil: glassUntil,
 	}
 
 	writes := renderWrites{
