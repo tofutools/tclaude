@@ -42,7 +42,7 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 			out.SandboxProfileDefault = p.Name
 		}
 	}
-	filterPeerFields(reflect.ValueOf(&out).Elem(), fields)
+	filterPeerFields(reflect.ValueOf(&out).Elem(), peerSnapshotGate(fields))
 	emptyPeerCollections(reflect.ValueOf(&out).Elem())
 	// The restricted projection always sends its (small) registry fields. Never
 	// accept a local static_version, or let cached blobs cross a peer switch or
@@ -107,6 +107,12 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 	agents := map[string]dashboardAgent{}
 	var shared *statusSnapshot
 	rules := peerViewRules()
+	// The settings a peer may change in a group reach it too, so its editors
+	// start from the real values (peerGroupGrants lists its grants once).
+	var settings map[string][]string
+	if v != nil {
+		settings = peerGroupGrants(v.peer.InstanceID, groups)
+	}
 	for _, g := range groups {
 		if g.IsArchived() || (v != nil && !fedPeerGroupVisible(v.peer.InstanceID, g.ID)) {
 			continue
@@ -190,6 +196,9 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		sort.Slice(row.Members, func(i, j int) bool { return row.Members[i].AgentID < row.Members[j].AgentID })
 		filterPeerFields(reflect.ValueOf(&row).Elem(), allPeerProjectionFields)
 		emptyPeerCollections(reflect.ValueOf(&row).Elem())
+		if held := settings[g.Name]; len(held) > 0 {
+			projectPeerGroupSettings(&row, g, v.peer.InstanceID, held)
+		}
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

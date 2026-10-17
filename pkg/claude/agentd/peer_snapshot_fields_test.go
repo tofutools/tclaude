@@ -15,7 +15,7 @@ func TestPeerSnapshotFieldClassification(t *testing.T) {
 				t.Errorf("%s.%s has no restricted peer classification (default denied)", typ.Name(), name)
 				continue
 			}
-			if policy != "denied" && !peerDefaultsProjectionFields[policy] {
+			if policy != "denied" && policy != peerGroupSettingsPolicy && !peerDefaultsProjectionFields[policy] {
 				t.Errorf("%s.%s has unknown policy %q", typ.Name(), name, policy)
 			}
 		}

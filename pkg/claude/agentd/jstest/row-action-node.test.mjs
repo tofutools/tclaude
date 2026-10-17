@@ -26,6 +26,10 @@ test("a fused group's ⚙ control names its node, and its requests and refreshes
     return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
   t.after(() => { globalThis.fetch = fetchBefore; });
+  // The fused view feeds the dialogs each node's snapshot; until forge's
+  // arrives its controls wait.
+  let forge = null;
+  t.after(nodeApi.setNodeSnapshotSource((node) => (node === 'inst_forge7' ? forge : null)));
   const changed = [];
   const off = nodeApi.onNodeChanged((node) => changed.push(node));
   t.after(off);
@@ -40,6 +44,9 @@ test("a fused group's ⚙ control names its node, and its requests and refreshes
   assert.equal(bell.fleetNode, 'inst_forge7');
   assert.equal(bell.fleetName, 'forge');
 
+  await handleRowAction(bell);
+  assert.deepEqual(requests, [], "never against the page's same-named group");
+  forge = { groups: [{ name: 'ops', notify_enabled: true }] };
   await handleRowAction(bell);
   assert.deepEqual(requests, [['/api/peer/inst_forge7/groups/ops', 'PATCH', { notify_enabled: false }]]);
   assert.deepEqual(changed, ['inst_forge7'], "the fused view re-reads the node it changed");

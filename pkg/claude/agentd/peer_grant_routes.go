@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Peer-granted dashboard routes: a trusted peer's operator changes this
@@ -237,6 +239,41 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		out[g.Name] = held
 	}
 	return out
+}
+
+// projectPeerGroupSettings fills a group row with the settings held (the
+// group's peerGroupGrants) lets the peer change, which the peer projection
+// otherwise withholds: an editor that started blank would overwrite values
+// the peer never saw. (Unrestricted trust reads the complete snapshot.)
+func projectPeerGroupSettings(row *dashboardGroup, g *db.AgentGroup, peer string, held []string) {
+	holds := func(slug string) bool { return slices.Contains(held, slug) }
+	if holds(PermGroupsSettingsEnvironment) {
+		row.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...)
+	}
+	if !holds(PermGroupsSettings) {
+		return
+	}
+	attachment := groupAttachmentViewFor(g)
+	row.AttachmentURL, row.AttachmentLabel, row.AttachmentLabelOverride = attachment.URL, attachment.Label, attachment.LabelOverride
+	row.DefaultContext, row.ReinjectAfterCompact = g.DefaultContext, g.EffectiveReinjectAfterCompact()
+	row.DefaultProfile = g.DefaultProfile
+	row.MaxMembers, row.NotifyEnabled = g.MaxMembers, g.NotifyEnabled
+	row.RemoteControlPolicy = remoteControlPolicyToWire(g.RemoteControl)
+	if holds(PermGroupsMembersSpawnCwd) {
+		row.DefaultCwd = g.DefaultCwd
+	}
+	if holds(PermGroupsMembersSpawnPrompts) {
+		row.DefaultPrompts = append([]string(nil), g.DefaultPrompts...)
+	}
+	if holds(PermGroupsMembersSpawnSandbox) {
+		row.SandboxProfile = g.SandboxProfile
+	}
+	// A parent the peer does not see stays unnamed.
+	if g.ParentGroupID != nil && fedPeerGroupVisible(peer, *g.ParentGroupID) {
+		if p, err := db.GetAgentGroupByID(*g.ParentGroupID); err == nil && p != nil && !p.IsArchived() {
+			row.Parent = p.Name
+		}
+	}
 }
 
 // addPeerGroupSettingsRules declares the group settings a peer may change

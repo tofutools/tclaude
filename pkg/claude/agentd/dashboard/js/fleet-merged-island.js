@@ -14,7 +14,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  GROUP_GRANT_ACTS, actOf, groupGrantHeld, groupGrantSelectors, peerAction, refusedActsRule, usableActSelectors,
+  GROUP_GRANT_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, groupGrantHeld, groupGrantSelectors, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -27,14 +27,12 @@ import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 
 const html = htm.bind(h);
 
-// VIEW_ONLY_ACTS open menus or show data already on screen. This node's own
-// groups (home) run every control as on its own Groups view. On a peer's rows
-// the controls the peer shares (peerAction: stop or wake, restart, sandbox
-// restart, retire, clone, spawn, message) open the peer action dialog against
-// that node's peer routes, as on its per-node view; what it does not share
-// stays out of reach, as there.
-// (The status dot is a power control — wake / shut down — so it is not here.)
-const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
+// VIEW_ONLY_ACTS (peer-view-limits.js) open menus or show data already on
+// screen. This node's own groups (home) run every control as on its own
+// Groups view. On a peer's rows the controls the peer shares (peerAction:
+// stop or wake, restart, sandbox restart, retire, clone, spawn, message) open
+// the peer action dialog against that node's peer routes, as on its per-node
+// view; what it does not share stays out of reach, as there.
 
 // TERMINAL_ACTS open an agent's terminal; on a peer's row they open the peer's
 // agent in the browser terminal (remote-terminal.js), as the peer shares it.

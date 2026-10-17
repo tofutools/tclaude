@@ -30,7 +30,7 @@ const SUBTAB_FEATURES = Object.freeze({
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
 // (The status dot is a power control — wake / shut down — so it is not here.)
-const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
+export const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
 // GROUP_GRANT_ACTS are group controls a peer serves through its peer-granted
 // routes (peer_grant_routes.go), with the peer grants they need in their

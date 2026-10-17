@@ -45,8 +45,8 @@ import {
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
-import { GROUP_GRANT_ACTS } from './peer-view-limits.js';
-import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
+import { GROUP_GRANT_ACTS, READ_ONLY_ACTS } from './peer-view-limits.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 
 export async function handleRowAction(action) {
   // A control on a group in the fused Groups view names it group@node: the
@@ -55,12 +55,20 @@ export async function handleRowAction(action) {
   const act = data.act;
   // node is the group's node in the fused view (blank: the page's). Only the
   // group controls of GROUP_GRANT_ACTS address it: their requests go through
-  // api and their dialogs take node. Any other control acts on the page's
-  // node only (the fused view stops it before here; this is the backstop).
+  // api and their dialogs take node, reading its snapshot (never the page's,
+  // whose same-named group is another one). Any other control that acts acts
+  // on the page's node only (the fused view stops it before here; this is
+  // the backstop); view-only ones show what is on screen.
   const node = isPageNode(action.fleetNode) ? '' : action.fleetNode;
-  if (node && !GROUP_GRANT_ACTS[act]) {
-    toast(`${action.fleetName || 'That node'}: act on its groups from its own dashboard`, true);
-    return;
+  if (node && !READ_ONLY_ACTS.has(act)) {
+    if (!GROUP_GRANT_ACTS[act]) {
+      toast(`${action.fleetName || 'That node'}: act on its groups from its own dashboard`, true);
+      return;
+    }
+    if (!nodeSnapshot(node)) {
+      toast(`${action.fleetName || 'That node'} is still loading — try again in a moment`, true);
+      return;
+    }
   }
   const api = nodeFetch(node);
   // changed re-reads what an operation changed: the page, and the fused

@@ -93,6 +93,18 @@ func TestPeerGroupSettingsThroughDashboardHandlers(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, map[string][]string{"visible": {agentd.PermGroupsSettings, agentd.PermGroupsMembersSpawnCwd}}, out.PeerView.Groups)
+	// ...and carries the values those grants let it change, so its editors
+	// start from them; the environment stays its own grant's.
+	var rows struct {
+		Groups []map[string]any `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &rows))
+	require.Len(t, rows.Groups, 1)
+	require.Equal(t, dir, rows.Groups[0]["default_cwd"])
+	require.Equal(t, float64(4), rows.Groups[0]["max_members"])
+	require.Equal(t, "https://example.com/board", rows.Groups[0]["attachment_url"])
+	require.Equal(t, true, rows.Groups[0]["notify_enabled"])
+	require.Nil(t, rows.Groups[0]["environment"])
 
 	// Grants follow the group, not its name.
 	code, body = call("POST", "/api/groups/visible/rename", map[string]any{"new_name": "renamed"})
