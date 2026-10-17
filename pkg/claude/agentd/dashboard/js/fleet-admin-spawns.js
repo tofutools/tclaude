@@ -38,11 +38,58 @@ function PlacementList({ placement }) {
   </tr>`)}</tbody></table>`;
 }
 
+const OVERRIDE_LABELS = [['cwd', 'directory'], ['harness', 'harness'], ['model', 'model'], ['effort', 'effort']];
+
+const NOT_ALLOWED = 'the peer may no longer choose it';
+const OTHER_HARNESS = 'chosen for another harness';
+
+// requestedSettings lists the launch settings a request asked for and what
+// an approval does with each, given the operator's own values (typed). It
+// mirrors fedSpawnOverridesApplied in federation_spawn_overrides.go: a
+// value the operator sets replaces the request's; one the peer may no
+// longer choose is dropped; and a requested model and effort go too when
+// the launch runs another harness than the one requested. Without the
+// server's overrides_allowed (an older daemon) it falls back to would_drop.
+export function requestedSettings(r, typed = {}) {
+  const asked = r.overrides || {};
+  const fields = OVERRIDE_LABELS.filter(([k]) => asked[k]);
+  if (!Array.isArray(r.overrides_allowed)) {
+    const drops = new Set(r.would_drop || []);
+    return fields.map(([k, label]) => ({ key: k, label, value: asked[k], dropped: drops.has(k), reason: drops.has(k) ? NOT_ALLOWED : '' }));
+  }
+  const allowed = new Set(r.overrides_allowed);
+  const own = (k) => String(typed[k] || '').trim();
+  const out = Object.fromEntries(fields.map(([k, label]) => {
+    if (own(k)) return [k, { key: k, label, value: asked[k], replaced: true }];
+    if (!allowed.has(k)) return [k, { key: k, label, value: asked[k], dropped: true, reason: NOT_ALLOWED }];
+    return [k, { key: k, label, value: asked[k] }];
+  }));
+  const otherHarness = own('harness') ? own('harness') !== (asked.harness || '') : !!asked.harness && !!out.harness?.dropped;
+  if (otherHarness) {
+    for (const k of ['model', 'effort']) {
+      if (out[k] && !out[k].replaced && !out[k].dropped) Object.assign(out[k], { dropped: true, reason: OTHER_HARNESS });
+    }
+  }
+  return fields.map(([k]) => out[k]);
+}
+
+function droppedNote(list) {
+  return list?.length ? ` — requested ${list.join(', ')} not applied (no longer the peer's to choose, or chosen for another harness)` : '';
+}
+
 // ApproveDialog launches a peer's requested worker here, optionally
 // overriding what the peer asked for. The override fields mirror
 // `tclaude federation requests approve`.
 function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
-  const [o, setO] = useState({ name: req.name || '', profile: req.profile || '', cwd: '', harness: '', model: '' });
+  const [o, setO] = useState({ name: req.name || '', profile: req.profile || '', cwd: '', harness: '', model: '', effort: '' });
+  const requested = requestedSettings(req, o);
+  const placeholder = (k) => {
+    if (k === 'name' || k === 'profile') return req[k] || 'default';
+    const base = k === 'cwd' ? 'group default' : 'profile default';
+    const asked = requested.find((x) => x.key === k);
+    if (!asked) return base;
+    return asked.dropped ? `${base} (requested ${asked.value} is dropped)` : `requested: ${asked.value}`;
+  };
   const set = (k) => (e) => setO({ ...o, [k]: e.currentTarget.value });
   const go = () => {
     const overrides = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.trim()]).filter(([k, v]) => v && v !== (req[k] || '')));
@@ -52,20 +99,23 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
       okLabel: 'Approve and start',
       busyLabel: 'Starting…',
       action: () => actions.approveSpawn(req.id, overrides),
-    }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}`, false); onDone(); } })
-      .catch((e) => toast(`Approve failed: ${errText(e)}`, true));
+    }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}${droppedNote(r.dropped_overrides)}`, false); onDone(); } })
+      .catch((e) => toast(`Approve failed: ${errText(e)}${droppedNote(e?.body?.dropped_overrides)}`, true));
   };
   return html`<${Overlay} id="fleet-spawn-approve" labelledby="fleet-spawn-approve-title" onClose=${onClose}>
     <h3 id="fleet-spawn-approve-title">Approve spawn request #${req.id}</h3>
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
-    ${['name', 'profile', 'cwd', 'harness', 'model'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
-      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${k === 'cwd' ? 'group default' : k === 'name' || k === 'profile' ? (req[k] || 'default') : 'profile default'} /></label>`)}
+    ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
+      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
+      ${requested.some((x) => x.key === 'cwd' && !x.dropped && !x.replaced) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
+    ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
+      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>
       <button type="button" onClick=${onClose}>Cancel</button>
       <button id="fleet-spawn-approve-go" type="button" class="primary" onClick=${go}>Approve…</button>
     </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …]</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …] [--effort …]</code></div>
   </${Overlay}>`;
 }
 
@@ -191,7 +241,8 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
         <td title=${r.instance}>${r.from}</td>
         <td>${r.group}</td>
         <td>${[r.name, r.role && `role ${r.role}`, r.profile && `profile ${r.profile}`].filter(Boolean).join(' · ') || html`<span class="muted">defaults</span>`}
-          ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}</td>
+          ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}
+          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
         <td class="fa-spawn-brief-cell" title=${r.brief}>${r.brief}</td>
         <td class=${r.status === 'denied' || r.status === 'expired' ? 'fa-danger' : r.status === 'launching' ? 'fa-warn' : ''} title=${r.reason || ''}>${r.status}${r.result_agent ? html` <code title=${r.result_agent}>${r.result_agent.slice(0, 14)}</code>` : ''}${r.reason ? html` <span class="muted">— ${r.reason}</span>` : ''}</td>
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>

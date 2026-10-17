@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -629,6 +630,29 @@ type FederationSpawnRequest struct {
 	Automatic        bool
 	NoticeSent       bool
 	ResultSent       bool
+	// Overrides are the launch settings the requester chose (peer-view spawn);
+	// the receiver checks them against the peer's grant on accept and launch.
+	Overrides FederationSpawnOverrides
+}
+
+// FederationSpawnOverrides are requester-chosen launch settings carried by a
+// remote spawn request. Empty fields leave the receiver's policy in charge.
+type FederationSpawnOverrides struct {
+	Cwd     string `json:"cwd,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+}
+
+// Empty reports whether no override is set.
+func (o FederationSpawnOverrides) Empty() bool { return o == FederationSpawnOverrides{} }
+
+func (o FederationSpawnOverrides) dbValue() string {
+	if o.Empty() {
+		return ""
+	}
+	raw, _ := json.Marshal(o)
+	return string(raw)
 }
 
 // Expired reports whether a pending request has passed its expiry.
@@ -669,10 +693,10 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 	}
 	now := time.Now()
 	res, err := tx.Exec(`INSERT INTO federation_spawn_requests
-		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile, launch_overrides)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
-		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile)
+		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile, r.Overrides.dbValue())
 	if err != nil {
 		return 0, err
 	}
@@ -684,14 +708,20 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
-	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent, placement_version, requirements, credentials, model_lease, requested_profile`
+	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent, placement_version, requirements, credentials, model_lease, requested_profile, launch_overrides`
 
 func scanFedSpawn(scan func(...any) error) (*FederationSpawnRequest, error) {
 	var r FederationSpawnRequest
 	var created, expires, decided, started dbTimestamp
+	var overrides string
 	if err := scan(&r.ID, &r.FromInstance, &r.EnvelopeID, &r.FromAgent, &r.FromName, &r.GroupID, &r.GroupName,
-		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent, &r.PlacementVersion, &r.Requirements, &r.Credentials, &r.ModelLease, &r.Profile); err != nil {
+		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent, &r.PlacementVersion, &r.Requirements, &r.Credentials, &r.ModelLease, &r.Profile, &overrides); err != nil {
 		return nil, err
+	}
+	if overrides != "" {
+		if err := json.Unmarshal([]byte(overrides), &r.Overrides); err != nil {
+			return nil, fmt.Errorf("spawn request %d launch overrides: %w", r.ID, err)
+		}
 	}
 	r.CreatedAt, r.ExpiresAt, r.DecidedAt = created.Time(), expires.Time(), decided.Time()
 	r.LaunchStartedAt = started.Time()

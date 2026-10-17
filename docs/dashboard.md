@@ -907,10 +907,19 @@ retire and clone controls open a peer action dialog instead of the local one.
 It lists only what the peer allows — Stop (optionally force kill), Retire
 (its session exits; its worktree is kept), Clone, **Move here** and **Teleport here** (always to
 a group on this node; groups that receive agents from that peer are listed
-first) — and confirms what will happen. A group's spawn button
-asks the peer to spawn an agent from your brief under the peer's own launch
-policy and shows the request until the peer decides. CLI:
+first) — and confirms what will happen. CLI:
 `tclaude federation action <action> --node PEER --agent ID`.
+
+A group's spawn button (and any other way of opening the spawn dialog on a
+peer view) opens the regular spawn dialog, aimed at the peer. Every control
+stays in place; the ones the peer decides are disabled with the reason on
+hover. You always set the name, role and initial message (the brief); a
+profile from the peer's selectable list; and the directory, harness, model and
+effort only where the peer allows it (an unrestricted peer, or a spawn grant
+listing them with `--allow-override`). Without a spawn grant the request waits
+for the peer's operator, who decides those settings when approving. The
+directory is typed as a path on the peer — the folder browser reads this
+machine. After submit, a toast follows the request until the peer decides.
 
 Terminals in a peer view are not opened in the browser: clicking a terminal control copies
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own
@@ -936,8 +945,9 @@ In a fused view, Groups lists every group on the ticked nodes, named
 `group@node` with the node's colour on the suffix. On a peer's rows, the
 controls that peer shares with you run through its peer routes, exactly as on
 its per-node view: the status dot (stop, or wake a stopped agent), restart,
-sandbox restart, retire, clone, the group's spawn button and its ✉ message
-button (one agent at a time). Everything else — and every control on this
+sandbox restart, retire, clone, the group's spawn button (the regular spawn
+dialog, aimed at that node, as above) and its ✉ message button (one agent at a
+time). Everything else — and every control on this
 node's own rows — stays an overview: click a group's `@node` suffix to act on
 it in that node's dashboard. An unreachable node keeps its last rows, marked
 stale; a node no longer trusted drops them. The old `/fleet` address opens this

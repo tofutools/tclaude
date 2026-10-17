@@ -1,13 +1,18 @@
 import { signal } from '@preact/signals';
+import { remoteSpawnContext } from './agent-spawn-remote.js';
 
 export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
   const dialog = signal(null);
   let generation = 0;
 
   function open(options = {}) {
-    const snapshot = getSnapshot() || {};
+    // A remote spawn (agent-spawn-remote.js) opens on the peer's own groups
+    // and harnesses, never this node's.
+    const remote = options?.remote || null;
+    const snapshot = (remote ? remoteSpawnContext(remote.snapshot, remote.options) : getSnapshot()) || {};
     const currentGeneration = ++generation;
     dialog.value = Object.freeze({
+      remote,
       key: `agent-spawn:${currentGeneration}`,
       generation: currentGeneration,
       options: Object.freeze({

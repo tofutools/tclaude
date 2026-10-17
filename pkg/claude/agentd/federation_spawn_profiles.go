@@ -26,7 +26,8 @@ func normalizeSelectableProfiles(slug string, policy *db.FederationSpawnPolicy) 
 	}
 	slices.Sort(policy.AllowedProfiles)
 	policy.AllowedProfiles = slices.Compact(policy.AllowedProfiles)
-	return nil
+	// The override allowlist is the other per-request spawn choice a grant opens.
+	return normalizeSpawnOverrideAllowlist(slug, policy)
 }
 
 func checkSelectableProfile(peer string, group int64, name string) error {

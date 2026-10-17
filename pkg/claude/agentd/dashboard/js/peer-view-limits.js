@@ -148,7 +148,9 @@ const PEER_ACTS = Object.freeze({
   'sandbox-restart': { action: 'sandbox-restart', feature: 'lifecycle.sandbox-restart' },
   'retire-agent': { action: 'retire', feature: 'lifecycle.retire' },
   clone: { action: 'clone', feature: 'lifecycle.clone' },
-  'spawn-agent': { action: 'spawn', feature: 'spawn' },
+  // Any visible group takes a spawn request (spawn.request; without a grant
+  // it waits for the peer's operator). An older peer only offers 'spawn'.
+  'spawn-agent': { action: 'spawn', feature: 'spawn.request', legacy: 'spawn' },
   'message-new': { action: 'message', feature: 'messaging' },
 });
 // PEER_ACTION_EVENT carries such a click to peer-action.js.
@@ -163,7 +165,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
   let spec = PEER_ACTS[act.dataset.act];
   // The status dot stops a running agent and wakes a stopped one.
   if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') spec = { action: 'resume', feature: 'lifecycle.resume' };
-  if (!spec || featureState(spec.feature, peerView) !== 'shared') return null;
+  if (!spec || (featureState(spec.feature, peerView) !== 'shared' && !(spec.legacy && featureState(spec.legacy, peerView) === 'shared'))) return null;
   if (spec.action === 'spawn' || spec.action === 'message') {
     let group = act.dataset.group || '';
     if (spec.action === 'message') {

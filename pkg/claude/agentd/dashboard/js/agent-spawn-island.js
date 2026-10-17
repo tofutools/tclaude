@@ -1,6 +1,6 @@
 import { SavedPromptChips } from './saved-prompts.js';
 import { h, render } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ManagementOverlay as Overlay,
@@ -56,6 +56,8 @@ import {
   setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
+import { createRemoteSpawnActions, remoteSpawnIntro, watchRemoteSpawnLocks } from './agent-spawn-remote.js';
+import { shellToast } from './shell-state.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
@@ -209,8 +211,17 @@ function roleHoverText(role) {
     .filter(Boolean).join('\n\n');
 }
 
-function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
+function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscard, notify = shellToast }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
+  // A spawn into a peer's group (agent-spawn-remote.js) keeps this dialog
+  // but sends a remote spawn request and never touches this node's state.
+  const remote = current.remote || null;
+  const actions = useMemo(() => (remote ? createRemoteSpawnActions(localActions, remote, { notify }) : localActions), [remote, localActions]);
+  // Disable what the remote request cannot carry, for as long as the dialog
+  // lives (see watchRemoteSpawnLocks): fail-closed for controls added later too.
+  useLayoutEffect(() => (remote
+    ? watchRemoteSpawnLocks(globalThis.document?.getElementById('agent-spawn-modal'), remote)
+    : undefined), [remote]);
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
@@ -293,6 +304,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // `touched`, which also guards derived changes against the initial async
   // profile load (for example a group change recalculating remote control).
   const profileOverrides = useRef(new Set());
+  // Launch settings the operator set by hand. A remote spawn sends only
+  // these as overrides: `touched` also covers values a harness, model or
+  // group change merely pre-fills, which must leave the peer's policy in
+  // charge.
+  const operatorSet = useRef(new Set());
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -520,6 +536,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
 
   const update = (key, value) => {
     touched.current.add(key);
+    operatorSet.current.add(key);
     if (PROFILE_OWNED_FIELDS.includes(key) && key !== 'profile') {
       profileOverrides.current.add(key);
     }
@@ -535,11 +552,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     touched.current.add('cwd');
     touched.current.add('wtRepo');
     touched.current.add('remoteControl');
+    // The new group's default directory replaces only a blank or
+    // group-filled one; a directory the operator typed stays theirs.
+    if (!draft.cwd.trim() || draft.cwdOrigin === 'group') operatorSet.current.delete('cwd');
     setDraft((before) => selectSpawnGroup(before, value, context));
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
     profileOverrides.current.add('harness');
+    // The new harness pre-fills its own model and effort.
+    operatorSet.current.add('harness');
+    operatorSet.current.delete('model');
+    operatorSet.current.delete('effort');
     const harnessFields = [
       'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
       'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
@@ -553,6 +577,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
   };
   const changeModel = (value) => {
+    operatorSet.current.add('model');
     if (value === MODEL_CUSTOM_VALUE) {
       touched.current.add('model');
       touched.current.add('customModel');
@@ -572,13 +597,19 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     profileOverrides.current.add('model');
     profileOverrides.current.add('customModel');
     profileOverrides.current.add('effort');
+    // A listed model pre-fills its remembered effort.
+    operatorSet.current.delete('effort');
     setDraft((before) => ({
       ...before, model: value, customModel: false, effort: rememberedEffort(value),
     }));
   };
   const changeProfile = (handle) => {
     if (!handle) {
-      for (const field of PROFILE_OWNED_FIELDS) touched.current.add(field);
+      for (const field of PROFILE_OWNED_FIELDS) {
+        touched.current.add(field);
+        // Clearing resets these to defaults: no longer the operator's values.
+        operatorSet.current.delete(field);
+      }
       profileOverrides.current.clear();
       setDraft((before) => clearSpawnProfileFields(before, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort,
@@ -715,6 +746,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         if (kind === 'cwd') setDraft((before) => setSpawnCwd(before, result.path));
         else setDraft((before) => setSpawnWorktreeRepo(before, result.path));
         touched.current.add(kind === 'cwd' ? 'cwd' : 'wtRepo');
+        if (kind === 'cwd') operatorSet.current.add('cwd');
         queueMicrotask(() => document.querySelector(
           kind === 'cwd' ? '#agent-spawn-cwd' : '#agent-spawn-wt-repo',
         )?.focus());
@@ -855,7 +887,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
       markTiming('request_sent_ms');
-      const payload = await actions.spawn(request);
+      // A remote request carries only the overrides the operator set here.
+      const payload = await actions.spawn(remote
+        ? { ...request, explicit: [...operatorSet.current] }
+        : request);
       markTiming('response_received_ms');
       if (queued) {
         // The agent exists now; a leftover queue row would offer to launch it
@@ -885,8 +920,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // Queue (fresh dialog) or Save (reopened queued spawn): store the draft
   // without launching. Only the name derivation a spawn would confirm runs
   // now; worktree creation, base fetch and everything else stays at launch.
+  // In remote mode the queue shortcut does nothing rather than fall through
+  // to Spawn: queueing never becomes a sent request.
+  const noQueueHotkey = () => {};
   const saveQueued = async () => {
-    if (submitLock.current) return;
+    // Queues are this node's; a remote spawn is sent as a request instead.
+    if (remote || submitLock.current) return;
     submitLock.current = true;
     const release = () => { submitLock.current = false; };
     let next = draft;
@@ -1010,7 +1049,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     labelledby="agent-spawn-title"
     onClose=${state.close}
     onSubmitHotkey=${queued ? saveQueued : submit}
-    onSubmitShiftHotkey=${saveQueued}
+    onSubmitShiftHotkey=${remote ? noQueueHotkey : saveQueued}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
@@ -1028,13 +1067,14 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   >
     <h3 id="agent-spawn-title">${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
-      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}</h3>
+      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : ''}</h3>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
     <div class="modal-meta" id="agent-spawn-meta" hidden=${!draft.fixedGroup}>
       ${draft.fixedGroup ? `joining group: ${draft.group}` : ''}
     </div>
+    ${remote && html`<div class="modal-meta agent-spawn-remote-intro" id="agent-spawn-remote-intro">${remoteSpawnIntro(remote, draft.group)}</div>`}
     <label class="cron-create-row" id="agent-spawn-load-profile-row"
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Pattern" /></span>
@@ -1198,6 +1238,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
             const value = event.currentTarget.value;
             touched.current.add('model'); touched.current.add('effort');
             profileOverrides.current.add('model'); profileOverrides.current.add('effort');
+            operatorSet.current.add('model'); operatorSet.current.delete('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: false, effort: rememberedEffort(value.trim()),
             }));
@@ -1249,6 +1290,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           const value = event.currentTarget.value;
           touched.current.add('model'); touched.current.add('effort');
           profileOverrides.current.add('model'); profileOverrides.current.add('effort');
+          operatorSet.current.add('model'); operatorSet.current.delete('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: true, effort: rememberedEffort(value.trim()),
             }));
@@ -1400,7 +1442,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
       <input id="agent-spawn-cwd" type="text" value=${draft.cwd} disabled=${busy}
-        onInput=${(event) => { touched.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
+        onInput=${(event) => { touched.current.add('cwd'); operatorSet.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
         placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
       <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
         title="Browse for a directory" onClick=${() => { void browse('cwd'); }}>
@@ -1574,7 +1616,7 @@ export function AgentSpawnApp(props) {
   const current = props.state.dialog.value;
   if (!current) return null;
   return html`<${AgentSpawnDialog} key=${current.key} current=${current}
-    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} />`;
+    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} ...${props.notify ? { notify: props.notify } : {}} />`;
 }
 
 export function mountAgentSpawnIsland({ host, state, actions, confirmDiscard, registerCleanup }) {

@@ -259,14 +259,14 @@ func decodePeerAction(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
+// servePeerSpawn takes a peer operator's spawn request into a visible group.
+// With a groups.members.spawn grant (or unrestricted trust) it launches
+// automatically under the grant's policy; without one it waits for this
+// node's operator, exactly like an agent's federation spawn-request.
 func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	g, err := db.GetAgentGroupByName(r.PathValue("name"))
-	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
+	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) || !v.allows(rule, g.ID) {
 		writeError(w, 404, "not_found", "object not found")
-		return
-	}
-	if !v.allows(rule, g.ID) {
-		writeError(w, 403, "permission", "requires "+rule.requires)
 		return
 	}
 	var body struct {
@@ -274,6 +274,10 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		Role    string `json:"role,omitempty"`
 		Brief   string `json:"brief"`
 		Profile string `json:"profile,omitempty"`
+		Cwd     string `json:"cwd,omitempty"`
+		Harness string `json:"harness,omitempty"`
+		Model   string `json:"model,omitempty"`
+		Effort  string `json:"effort,omitempty"`
 	}
 	if !decodePeerAction(w, r, &body) {
 		return
@@ -282,11 +286,28 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		writeError(w, 400, "invalid_arg", "invalid remote spawn fields")
 		return
 	}
+	overrides := db.FederationSpawnOverrides{Cwd: body.Cwd, Harness: body.Harness, Model: body.Model, Effort: body.Effort}
+	if err := validateFedSpawnOverrides(overrides); err != nil {
+		writeError(w, 400, "invalid_arg", err.Error())
+		return
+	}
+	if err := checkFedSpawnOverrides(v.peer.InstanceID, g.ID, overrides); err != nil {
+		writeError(w, 403, "override_not_allowed", err.Error())
+		return
+	}
 	if err := checkSelectableProfile(v.peer.InstanceID, g.ID, body.Profile); err != nil {
 		writeError(w, 403, "profile_not_allowed", err.Error())
 		return
 	}
-	req := &db.FederationSpawnRequest{FromInstance: v.peer.InstanceID, FromName: "operator", EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Name: proto.SafeName(body.Name, false), Role: proto.SafeName(body.Role, false), Brief: body.Brief, Profile: body.Profile, ExpiresAt: time.Now().Add(fedSpawnTTL)}
+	pinnedProfile := ""
+	if grant := fedPeerGroupGrant(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn); grant != nil {
+		pinnedProfile = grant.SpawnPolicy.Profile
+	}
+	if err := checkFedHarnessProfile(fedFirst(body.Profile, pinnedProfile), overrides.Harness); err != nil {
+		writeError(w, 409, "harness_profile_conflict", err.Error()+"; choose that harness or leave the harness blank")
+		return
+	}
+	req := &db.FederationSpawnRequest{FromInstance: v.peer.InstanceID, FromName: "operator", EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Name: proto.SafeName(body.Name, false), Role: proto.SafeName(body.Role, false), Brief: body.Brief, Profile: body.Profile, Overrides: overrides, ExpiresAt: time.Now().Add(fedSpawnTTL)}
 	id, err := insertFederationSpawnWithCapacity(req)
 	if err != nil {
 		writeError(w, 409, "spawn_capacity", "remote spawn request capacity unavailable")
@@ -296,9 +317,64 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	req.Status = db.FedSpawnPending
 	req.CreatedAt = time.Now().UTC()
 	v.groupName = g.Name
-	go autoApproveFederationSpawnWithPeerAction(req, v.peer, true)
+	if fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn) {
+		go autoApproveFederationSpawnWithPeerAction(req, v.peer, true)
+	} else {
+		notifyFederationSpawnRequest(v.peer, req, "operator")
+	}
 	writeJSON(w, 202, fedSpawnRequestView(req, time.Now()))
 }
+
+// peerSpawnOptions tells a peer's spawn dialog what it may choose for one
+// group. Receiver-owned values (the grant's pinned settings, group defaults)
+// are named only to an unrestricted peer, which can read them anyway.
+type peerSpawnOptions struct {
+	Group string `json:"group"`
+	// Approval is "automatic" (a spawn grant or unrestricted trust launches
+	// it) or "operator" (it waits for this node's operator).
+	Approval  string                      `json:"approval"`
+	Overrides map[string]bool             `json:"overrides"`
+	Profiles  []proto.CatalogSpawnProfile `json:"profiles"`
+	Harnesses []string                    `json:"harnesses,omitempty"`
+	Defaults  map[string]string           `json:"defaults,omitempty"`
+}
+
+func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	g, err := db.GetAgentGroupByName(r.PathValue("name"))
+	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) || !v.allows(rule, g.ID) {
+		writeError(w, 404, "not_found", "object not found")
+		return
+	}
+	out := peerSpawnOptions{Group: g.Name, Approval: "operator", Overrides: fedSpawnOverridesAllowed(v.peer.InstanceID, g.ID), Profiles: selectableSpawnProfiles(v.peer.InstanceID, g.ID)}
+	for _, field := range fedSpawnOverrideFields {
+		if _, ok := out.Overrides[field]; !ok {
+			out.Overrides[field] = false // every field is named, open or not
+		}
+	}
+	if out.Profiles == nil {
+		out.Profiles = []proto.CatalogSpawnProfile{}
+	}
+	grant := fedPeerGroupGrant(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn)
+	if grant != nil {
+		out.Approval = "automatic"
+	}
+	if out.Overrides[fedOverrideHarness] {
+		out.Harnesses = fedSpawnHarnesses()
+	}
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		out.Defaults = map[string]string{"cwd": g.DefaultCwd}
+		if grant != nil {
+			for k, val := range map[string]string{"cwd": grant.SpawnPolicy.Cwd, "harness": grant.SpawnPolicy.Harness, "model": grant.SpawnPolicy.Model, "profile": grant.SpawnPolicy.Profile} {
+				if val != "" {
+					out.Defaults[k] = val
+				}
+			}
+		}
+	}
+	v.groupName = g.Name
+	writeJSON(w, 200, out)
+}
+
 func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -311,7 +387,7 @@ func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	if !v.allows(rule, req.GroupID) {
-		writeError(w, 403, "permission", "requires "+rule.requires)
+		writeError(w, 404, "not_found", "spawn request not found")
 		return
 	}
 	writeJSON(w, 200, fedSpawnRequestView(req, time.Now()))
@@ -322,7 +398,7 @@ func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, r
 func auditPeerActionProxy(r *http.Request, peer, phase string, status int) {
 	mux := http.NewServeMux()
 	for pattern, rule := range peerViewRules() {
-		if rule.write == nil || rule.feature != "messaging" && rule.feature != "spawn" && rule.feature != "human.inbox.answer" && !strings.HasPrefix(rule.feature, "lifecycle.") {
+		if rule.write == nil || rule.feature != "messaging" && rule.feature != "spawn.request" && rule.feature != "human.inbox.answer" && !strings.HasPrefix(rule.feature, "lifecycle.") {
 			continue
 		}
 		mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
