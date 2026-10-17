@@ -209,7 +209,8 @@ export function refusedActsRule(scope, usable, target = '[data-act]') {
 const FUSED_ROOT = '#fleetview-fused-groups-root';
 
 // setLimitStyle keeps one generated <style> per id in the document head;
-// empty css removes it.
+// empty css removes it. installPeerViewLimits' disposer removes it.
+// dashboard-imperative-boundary: platform-layout
 export function setLimitStyle(doc, id, css) {
   let el = doc.getElementById(id);
   if (!css) { el?.remove(); return; }
