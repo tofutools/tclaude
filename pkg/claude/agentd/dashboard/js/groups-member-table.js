@@ -1051,7 +1051,7 @@ function PresenceBadge({ member }) {
 // showVisitingRow scrolls to the agent's live row elsewhere in a fused view
 // and flashes it; without one it opens the node where the agent runs.
 function showVisitingRow(member, at) {
-  const root = document.getElementById('fleet-fused-groups-root') || document;
+  const root = document.getElementById('fleetview-fused-groups-root') || document;
   const rows = [...root.querySelectorAll('tr[data-dnd-agent]')]
     .filter((row) => row.dataset.dndAgent === member.agent_id && !row.classList.contains('away-placeholder') && row.getClientRects().length);
   if (rows.length) {

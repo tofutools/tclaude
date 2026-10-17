@@ -19872,12 +19872,12 @@ nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 .node-pop-foot b { color: #c9d1d9; font-weight: 500; }
 
 /* Fused Groups replaces this node's roster in the Groups tab. */
-#fleet-fused-groups-root { display: none; }
-html.scope-fused #fleet-fused-groups-root { display: block; }
-html.scope-fused #tab-groups > :not(#fleet-fused-groups-root) { display: none !important; }
+#fleetview-fused-groups-root { display: none; }
+html.scope-fused #fleetview-fused-groups-root { display: block; }
+html.scope-fused #tab-groups > :not(#fleetview-fused-groups-root) { display: none !important; }
 /* Fused Messages likewise replaces this node's mail client. */
-#fleet-fused-messages-root { display: none; }
-html.scope-fused #fleet-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#fleetview-fused-messages-root { display: none; }
+html.scope-fused #fleetview-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 html.scope-fused #messages-root { display: none !important; }
 .fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
 .fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
@@ -20111,7 +20111,7 @@ body.wizard #launch-target .lt-carries { background: #140f28; }
 body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
-#fleet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+#fleetview-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }

@@ -580,7 +580,7 @@ const fleetDescriptor = createIslandDescriptor({
   name: 'fleet', label: 'Fleet nodes',
   // mapHost is listed first: a load failure renders into the first host, and it
   // belongs in the map section, never in the tab bar.
-  hosts: { mapHost: '#fleet-map-root', chipsHost: '#node-chips-root', barHost: '#fleet-toplevel-root', remoteHost: '#remote-node-root', bannerHost: '#fleet-scope-banner-root' },
+  hosts: { mapHost: '#fleetview-map-root', chipsHost: '#node-chips-root', barHost: '#fleetview-toplevel-root', remoteHost: '#remote-node-root', bannerHost: '#fleetview-scope-banner-root' },
   failureClass: 'fleet-error',
   load: async ({ hosts: { chipsHost, barHost, mapHost, remoteHost, bannerHost }, dependencies }) => {
     const islandModule = import('./fleet-island.js');
@@ -600,7 +600,7 @@ export function mountFleetFeature(dependencies = {}) {
 // and a failure there must not take the node chips down.
 const fleetMergedGroupsDescriptor = createIslandDescriptor({
   name: 'fleet-merged-groups', label: 'Groups on several nodes',
-  hosts: { host: '#fleet-fused-groups-root' },
+  hosts: { host: '#fleetview-fused-groups-root' },
   failureClass: 'fleet-error',
   load: async ({ hosts: { host } }) => {
     const islandModule = import('./fleet-merged-island.js');
@@ -617,7 +617,7 @@ export function mountFleetMergedGroupsFeature(dependencies = {}) {
 // Fused Messages: the ticked nodes' mail in the Messages layout.
 const fusedMessagesDescriptor = createIslandDescriptor({
   name: 'fused-messages', label: 'Messages on several nodes',
-  hosts: { host: '#fleet-fused-messages-root' },
+  hosts: { host: '#fleetview-fused-messages-root' },
   failureClass: 'fleet-error',
   load: async ({ hosts: { host } }) => {
     const islandModule = import('./fused-mail.js');

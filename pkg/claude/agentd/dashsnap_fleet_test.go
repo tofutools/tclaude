@@ -405,9 +405,9 @@ func fleetStates() []dashsnap.State {
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-  for (var i = 0; i < 80 && !document.querySelector('#fleet-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('#fleet-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]')) throw new Error('fleet: no forge groups in the fused view');
-  if (!document.querySelector('#fleet-fused-groups-root .fleet-node-suffix[data-fleet-open=""]')) throw new Error('fleet: no local groups in the fused view');
+  for (var i = 0; i < 80 && !document.querySelector('#fleetview-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleetview-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]')) throw new Error('fleet: no forge groups in the fused view');
+  if (!document.querySelector('#fleetview-fused-groups-root .fleet-node-suffix[data-fleet-open=""]')) throw new Error('fleet: no local groups in the fused view');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent === null) throw new Error('fleet: per-node tabs hidden in the fused view');
   if (new URLSearchParams(location.search).get('nodes') !== 'all') throw new Error('fleet: fused set not in the address: ' + location.search);
 })();`,

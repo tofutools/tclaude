@@ -183,8 +183,8 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
   assert.match(dialog.textContent, /Move builder-1 to…/);
   assert.match(dialog.textContent, /Opened by dragging builder-1 onto reviewers@forge/);
   assert.match(dialog.textContent, /from.*desk · builders.*to.*forge · reviewers/, 'node and group are pre-filled from the drop');
-  assert.equal(harness.document.activeElement?.id, 'fleet-move-drop-ok', 'Enter confirms the move');
-  await harness.act(() => harness.document.querySelector('#fleet-move-drop-cancel').click());
+  assert.equal(harness.document.activeElement?.id, 'fleetview-move-drop-ok', 'Enter confirms the move');
+  await harness.act(() => harness.document.querySelector('#fleetview-move-drop-cancel').click());
   await drag(row('agt_r1'), groupEl('qa@lab'));
   assert.match(toasts.at(-1), /Neither forge nor lab is this node: move reviewer-1 from forge's dashboard/);
   await drag(row('agt_b1'), groupEl('other@desk'));

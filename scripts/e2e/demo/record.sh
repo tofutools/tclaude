@@ -203,7 +203,7 @@ step_move() {
 	sleep 1
 	cap "Landed on b, in reviewers. a retires its copy"
 	sleep 1.5
-	d click '#fleet-move-drop-close'
+	d click '#fleetview-move-drop-close'
 	sleep 2
 	cap "a restricts b: b's agents may only be offered into builders, for a to accept"
 	CAP_HOLD=0.5 cap "Drag b's reviewer-2 onto a's builders"

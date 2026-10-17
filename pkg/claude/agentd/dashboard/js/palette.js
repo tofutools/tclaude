@@ -710,7 +710,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       peerView: 'view', icon: '⚙', label: 'Fleet administration',
       hint: 'set up federation, trust peers, compare fingerprints, hub connection',
-      keywords: 'fleet federation setup guide join invite peers trust untrust fingerprint hub disconnect fleet admin nodes',
+      keywords: 'fleet federation setup guide join invite peers trust untrust fingerprint hub disconnect admin nodes',
       run: () => fleetAdmin.click(),
     });
   }
