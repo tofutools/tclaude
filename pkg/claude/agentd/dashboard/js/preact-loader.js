@@ -539,8 +539,10 @@ const queuedSpawnsDescriptor = createIslandDescriptor({
   hosts: { host: '#queued-spawns-control' },
   failureClass: 'queued-spawns-error',
   load: async ({ hosts: { host } }) => {
+    const islandModule = import('./queued-spawns-island.js');
+    const stateModule = import('./snapshot-store.js');
     const [{ mountQueuedSpawnsIsland }, { dashboardState }] = await Promise.all([
-      import('./queued-spawns-island.js'), import('./snapshot-store.js'),
+      islandModule, stateModule,
     ]);
     return {
       state: dashboardState,
