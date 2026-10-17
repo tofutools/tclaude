@@ -102,7 +102,8 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	}
 	fedTerminalAudit("sessions.attach.open", "", peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" browser mode="+mode, 200)
 	defer fedTerminalAudit("sessions.attach.close", "", peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" browser", 200)
-	authorized := func() string {
+	// Frames rely on the cached verdict; the ticker below refreshes it.
+	gate := newFedAuthGate(func() string {
 		trusted, _ := db.GetFederationPeer(peer.InstanceID)
 		if trusted == nil {
 			return "untrusted"
@@ -128,7 +129,8 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			}
 		}
 		return "revoked"
-	}
+	})
+	authorized := gate.allowed
 	input := terminal.NewWindow()
 	defer input.Close()
 	var workers sync.WaitGroup
@@ -141,7 +143,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 		for {
 			frame, err := terminal.Read(conn)
 			if err != nil {
-				reason := authorized()
+				reason := gate.refresh()
 				if reason == "" {
 					reason = "offline"
 				}
@@ -283,7 +285,7 @@ loop:
 		case <-r.Context().Done():
 			break loop
 		case <-ticker.C:
-			reason = authorized()
+			reason = gate.refresh()
 			if reason != "" {
 				break loop
 			}

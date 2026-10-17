@@ -397,8 +397,8 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 	}
 	fedTerminalAudit("sessions.attach.open", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(readOnly), 200)
 	defer fedTerminalAudit("sessions.attach.close", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID, 200)
-	authorized := func() bool {
-		if v.ctx.Err() != nil || !rt.sessionPeerOnline(peer.InstanceID) {
+	check := func() bool {
+		if !rt.sessionPeerOnline(peer.InstanceID) {
 			return false
 		}
 		trusted, _ := db.GetFederationPeer(peer.InstanceID)
@@ -427,6 +427,9 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		}
 		return false
 	}
+	// Frames rely on the cached verdict; the ticker below refreshes it.
+	gate := newFedAuthGateBool(check)
+	authorized := func() bool { return v.ctx.Err() == nil && gate.allowed() == "" }
 	errors := make(chan error, 2)
 	go func() {
 		for {
@@ -492,7 +495,7 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if !authorized() {
+			if gate.refresh() != "" {
 				return
 			}
 		}
@@ -638,11 +641,17 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	recordFederationAudit("sessions.attach.open", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(p.ReadOnly), 200)
 	defer recordFederationAudit("sessions.attach.close", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID, 200)
 	rt.servePaneTerminal(v, conn, backend, func() bool {
-		return v.ctx.Err() == nil && pin.authorized(peer.InstanceID, p) && fedIndicatorPresent(pin.window)
+		return pin.authorized(peer.InstanceID, p) && fedIndicatorPresent(pin.window)
 	})
 }
-func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteCloser, backend *fedPaneTerminal, authorized func() bool) {
+
+// servePaneTerminal re-runs check (several tmux execs and database reads)
+// once a second; output chunks and keystrokes rely on the cached verdict.
+func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteCloser, backend *fedPaneTerminal, check func() bool) {
 	reason := "exit"
+	gate := newFedAuthGateBool(check)
+	authorized := func() bool { return v.ctx.Err() == nil && gate.allowed() == "" }
+	fresh := func() bool { return v.ctx.Err() == nil && gate.refresh() == "" }
 	window := terminal.NewWindow()
 	v.addCleanup(window.Close)
 	var writeMu sync.Mutex
@@ -769,7 +778,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 		select {
 		case err := <-errs:
 			switch {
-			case !authorized():
+			case !fresh():
 				reason = "revoked"
 			case rendererEnded.Load() && session.IsTmuxSessionAlive(backend.pin.tmux):
 				reason = fedTerminalTakenOver
@@ -836,7 +845,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 					v.cols, v.rows = cols, rows
 				}
 			}
-			if !authorized() {
+			if !fresh() {
 				reason = "revoked"
 				return
 			}

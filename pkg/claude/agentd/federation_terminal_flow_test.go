@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +44,13 @@ type terminalTmux struct {
 
 func terminalEcho(s string) *exec.Cmd { return exec.Command("printf", "%s", s) }
 func (m *terminalTmux) Command(args ...string) *exec.Cmd {
+	// A ";" argument chains tmux commands (batched send-keys): run each.
+	if i := slices.Index(args, ";"); i >= 0 {
+		if m.Command(args[:i]...).Run() != nil {
+			return exec.Command("false")
+		}
+		return m.Command(args[i+1:]...)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cmd := args[0]
@@ -442,14 +450,20 @@ func TestFederation_TerminalOutgoingScopeAndOrigin(t *testing.T) {
 	require.NoError(t, ws.WriteMessage(websocket.BinaryMessage, raw))
 	frame = terminalRead(t, conn)
 	require.Equal(t, terminal.Resize, frame.Kind)
-	// Local revocation blocks the very next output frame, without waiting for
-	// the idle ticker or exhausting the peer's outstanding output credit.
+	// Local revocation closes the stream by the next authorization refresh
+	// (frames rely on a verdict cached for at most ~1s), even while the peer
+	// keeps streaming output.
 	_, err = db.RevokeAgentPermission(caller, agentd.PermSessionsWatch)
 	require.NoError(t, err)
-	require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Output, Data: []byte("must not escape after revoke")}))
+	revoked := time.Now()
 	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, _, err = ws.ReadMessage()
-	require.Error(t, err)
+	for {
+		_ = terminal.Write(conn, terminal.Frame{Kind: terminal.Output, Data: []byte("still streaming")})
+		if _, _, err = ws.ReadMessage(); err != nil {
+			break
+		}
+	}
+	require.Less(t, time.Since(revoked), 4*time.Second)
 	entries, err := db.ListAuditLog(db.AuditLogFilter{Verb: "sessions.attach.open"})
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
