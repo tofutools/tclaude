@@ -8,35 +8,48 @@ import (
 )
 
 // Key is either literal application text, a name from our fixed tmux table,
-// or a mouse wheel event. User text never becomes a tmux key name, flag,
-// command or format string.
+// or a mouse event. User text never becomes a tmux key name, flag, command or
+// format string.
 type Key struct {
 	Literal string
 	Name    string
-	Wheel   *Wheel
+	Mouse   *Mouse
 }
 
-// Wheel is a parsed mouse wheel event in client coordinates (1-based). Only
-// these numbers survive parsing; the pane side re-encodes them for the target.
-type Wheel struct {
-	// Button is the xterm button code: 64 (up) or 65 (down) plus any
-	// shift/meta/ctrl modifier bits (4, 8, 16).
+// Mouse is a parsed mouse report in client coordinates (1-based). Only these
+// numbers survive parsing; the pane side re-encodes them for the target.
+type Mouse struct {
+	// Button is the xterm button code: 0-2 (left, middle, right) or 3 (no
+	// button, for motion and legacy releases), plus the shift/meta/ctrl
+	// modifier bits (4, 8, 16), motion (32) and wheel (64, with 0/1 for
+	// up/down).
 	Button int
 	X, Y   int
+	// Release marks an SGR button release ("m" final byte).
+	Release bool
 }
 
-// Up reports whether the wheel scrolled up (away from the newest output).
-func (w Wheel) Up() bool { return w.Button&3 == 0 }
+// Wheel reports whether the event is a vertical wheel step.
+func (m Mouse) Wheel() bool { return m.Button&64 != 0 }
 
-// parseWheel accepts an SGR mouse report body ("[<b;x;yM", without ESC) and
-// returns it when it is a vertical wheel press. Other mouse events are not
-// forwarded.
-func parseWheel(seq string) (*Wheel, bool) {
+// Up reports whether a wheel event scrolled up (away from the newest output).
+func (m Mouse) Up() bool { return m.Button&3 == 0 }
+
+// Motion reports whether the event is a drag or hover movement.
+func (m Mouse) Motion() bool { return m.Button&32 != 0 }
+
+// parseMouse accepts an SGR mouse report body ("[<b;x;yM" or "...m", without
+// ESC).
+func parseMouse(seq string) (*Mouse, bool) {
 	body, ok := strings.CutPrefix(seq, "[<")
 	if !ok {
 		return nil, false
 	}
+	release := strings.HasSuffix(body, "m")
 	body, ok = strings.CutSuffix(body, "M")
+	if release {
+		body, ok = strings.CutSuffix(body, "m")
+	}
 	if !ok {
 		return nil, false
 	}
@@ -52,13 +65,19 @@ func parseWheel(seq string) (*Wheel, bool) {
 		}
 		n[i] = v
 	}
-	return legacyWheel(n[0], n[1], n[2])
+	return newMouse(n[0], n[1], n[2], release)
 }
-func legacyWheel(b, x, y int) (*Wheel, bool) {
-	if b&^(4|8|16|1) != 64 || x < 1 || y < 1 {
+
+// newMouse validates a report. Horizontal wheel, wheel motion, wheel release
+// and the extra buttons 8-11 are not forwarded.
+func newMouse(b, x, y int, release bool) (*Mouse, bool) {
+	if b&^(1|2|4|8|16|32|64) != 0 || x < 1 || y < 1 {
 		return nil, false
 	}
-	return &Wheel{Button: b, X: x, Y: y}, true
+	if b&64 != 0 && (b&(2|32) != 0 || release) {
+		return nil, false
+	}
+	return &Mouse{Button: b, X: x, Y: y, Release: release}, true
 }
 
 type Keyboard struct {
@@ -205,15 +224,15 @@ func (k *Keyboard) parse(flush bool) (out []Key, dropped int) {
 				}
 				r := k.pending[:3]
 				k.pending = k.pending[3:]
-				if w, ok := legacyWheel(int(r[0])-32, int(r[1])-32, int(r[2])-32); ok {
-					out = append(out, Key{Wheel: w})
+				if m, ok := newMouse(int(r[0])-32, int(r[1])-32, int(r[2])-32, false); ok {
+					out = append(out, Key{Mouse: m})
 				} else {
 					dropped++
 				}
 				continue
 			}
-			if w, ok := parseWheel(seq); ok {
-				out = append(out, Key{Wheel: w})
+			if m, ok := parseMouse(seq); ok {
+				out = append(out, Key{Mouse: m})
 			} else if name, ok := escapeKeys[seq]; ok {
 				out = append(out, Key{Name: name})
 			} else {

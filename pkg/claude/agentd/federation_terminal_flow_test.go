@@ -263,16 +263,27 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	// An application with mouse reporting gets them at pane coordinates (the
 	// indicator border pushes the pane down one row).
 	mock.mu.Lock()
-	mock.keys, mock.mouse = nil, "0 0 1 1 0 off 0 1 120 39 off"
+	mock.keys, mock.mouse = nil, "0 0 1 1 0 off 0 1 120 39 off 1 1 0"
 	mock.mu.Unlock()
 	wheel := []byte("\x1b[<65;10;5M\x1b[<65;10;5M")
 	require.NoError(t, terminal.Write(c, terminal.Frame{Kind: terminal.Input, Data: wheel}))
 	require.Equal(t, terminal.Credit, terminalRead(t, c).Kind)
 	_, keys, _ = mock.snapshot()
 	require.Equal(t, "\x1b[<65;10;4M\x1b[<65;10;4M", string(keys))
+	// Clicks and drags reach the application too, limited to the motion its
+	// tracking mode asks for: button-event mode gets the held-button drag but
+	// not the bare hover, and a press on the indicator border is dropped.
+	mock.mu.Lock()
+	mock.keys = nil
+	mock.mu.Unlock()
+	click := []byte("\x1b[<0;10;5M\x1b[<35;11;5M\x1b[<32;12;5M\x1b[<0;12;5m\x1b[<0;10;1M")
+	require.NoError(t, terminal.Write(c, terminal.Frame{Kind: terminal.Input, Data: click}))
+	require.Equal(t, terminal.Credit, terminalRead(t, c).Kind)
+	_, keys, _ = mock.snapshot()
+	require.Equal(t, "\x1b[<0;10;4M\x1b[<32;12;4M\x1b[<0;12;4m", string(keys))
 	// Without application mouse mode, tmux mouse mode scrolls copy mode.
 	mock.mu.Lock()
-	mock.keys, mock.mouse = nil, "0 0 0 0 0 on 0 1 120 39 off"
+	mock.keys, mock.mouse = nil, "0 0 0 0 0 on 0 1 120 39 off 0 0 0"
 	mock.mu.Unlock()
 	wheel = []byte("\x1b[<64;10;5M\x1b[<64;10;5M")
 	require.NoError(t, terminal.Write(c, terminal.Frame{Kind: terminal.Input, Data: wheel}))

@@ -205,15 +205,32 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	}
 	for i := 0; i < len(keys); i++ {
 		key := keys[i]
-		if key.Wheel != nil {
+		if key.Mouse != nil && key.Mouse.Wheel() {
 			// A touchpad emits bursts: coalesce a run of identical wheel
 			// buttons into one pane query and one tmux action.
 			n := 1
-			for i+n < len(keys) && keys[i+n].Wheel != nil && keys[i+n].Wheel.Button == key.Wheel.Button {
+			for i+n < len(keys) && keys[i+n].Mouse != nil && keys[i+n].Mouse.Button == key.Mouse.Button {
 				n++
 			}
 			i += n - 1
-			if err := p.wheel(*key.Wheel, n); err != nil {
+			if err := p.wheel(*key.Mouse, n); err != nil {
+				return err
+			}
+			continue
+		}
+		if key.Mouse != nil {
+			// A drag is a stream of motion reports: forward a run of clicks
+			// and motion with one pane query and one send-keys.
+			n := 1
+			for i+n < len(keys) && keys[i+n].Mouse != nil && !keys[i+n].Mouse.Wheel() {
+				n++
+			}
+			run := make([]terminal.Mouse, n)
+			for j := range run {
+				run[j] = *keys[i+j].Mouse
+			}
+			i += n - 1
+			if err := p.mouse(run); err != nil {
 				return err
 			}
 			continue
@@ -233,27 +250,110 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	return nil
 }
 
+// fedPaneMouse is the pane state that decides where a viewer's mouse event
+// goes, as tmux would see it for a real client.
+type fedPaneMouse struct {
+	inMode, copyMode bool
+	// standard, button and all are the application's mouse tracking modes
+	// (1000, 1002, 1003); sgr and utf8 its requested report encoding.
+	standard, button, all, sgr, utf8 bool
+	// tmuxMouse is tmux's own mouse option.
+	tmuxMouse bool
+	// left/top/width/height locate the pane in client coordinates (0-based),
+	// with statusTop rows of status line above the window.
+	left, top, width, height, statusTop int
+}
+
+func (s fedPaneMouse) app() bool { return s.standard || s.button || s.all }
+
+func (p *fedPaneTerminal) paneMouse() (fedPaneMouse, error) {
+	var s fedPaneMouse
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane,
+		"#{pane_in_mode} #{==:#{pane_mode},copy-mode} #{mouse_any_flag} #{mouse_sgr_flag} #{mouse_utf8_flag} #{mouse} "+
+			"#{pane_left} #{pane_top} #{pane_width} #{pane_height} #{?#{==:#{status-position},top},#{status},off} "+
+			"#{?mouse_standard_flag,1,0} #{?mouse_button_flag,1,0} #{?mouse_all_flag,1,0}").Output()
+	if err != nil {
+		return s, err
+	}
+	f := strings.Fields(string(out))
+	if len(f) != 14 {
+		return s, errors.New("unexpected tmux pane mouse state")
+	}
+	on := func(s string) bool { return s == "1" || s == "on" }
+	s.inMode, s.copyMode, s.sgr, s.utf8, s.tmuxMouse = on(f[0]), on(f[1]), on(f[3]), on(f[4]), on(f[5])
+	s.standard, s.button, s.all = on(f[11]), on(f[12]), on(f[13])
+	for i, dst := range []*int{&s.left, &s.top, &s.width, &s.height} {
+		v, err := strconv.Atoi(f[6+i])
+		if err != nil {
+			return s, errors.New("unexpected tmux pane geometry")
+		}
+		*dst = v
+	}
+	switch f[10] {
+	case "off":
+	case "on":
+		s.statusTop = 1
+	default:
+		s.statusTop, _ = strconv.Atoi(f[10])
+	}
+	if !s.copyMode {
+		p.copyMode = false
+	}
+	return s, nil
+}
+
+// paneXY maps client coordinates to 1-based pane coordinates; inside is false
+// when the point falls outside the pane (a border or the status line).
+func (s fedPaneMouse) paneXY(x, y int) (px, py int, inside bool) {
+	px, py = x-s.left, y-s.top-s.statusTop
+	inside = px >= 1 && px <= s.width && py >= 1 && py <= s.height
+	return min(max(px, 1), s.width), min(max(py, 1), s.height), inside
+}
+
+// encode renders a report at pane coordinates in the encoding the
+// application asked for, or nil when it is not representable there.
+func (s fedPaneMouse) encode(m terminal.Mouse, x, y int) []byte {
+	if s.sgr {
+		final := byte('M')
+		if m.Release {
+			final = 'm'
+		}
+		return fmt.Appendf(nil, "\x1b[<%d;%d;%d%c", m.Button, x, y, final)
+	}
+	b := m.Button
+	if m.Release {
+		// Legacy encodings cannot name the released button.
+		b = b&^3 | 3
+	}
+	if s.utf8 && max(b, x, y)+32 > 127 || max(b, x, y)+32 > 255 {
+		return nil
+	}
+	return []byte{0x1b, '[', 'M', byte(b + 32), byte(x + 32), byte(y + 32)}
+}
+
+func (p *fedPaneTerminal) sendMouse(seqs [][]byte) error {
+	args := []string{"send-keys", "-t", p.pin.pane, "-H"}
+	for _, seq := range seqs {
+		for _, b := range seq {
+			args = append(args, fmt.Sprintf("%02x", b))
+		}
+	}
+	if len(args) == 4 {
+		return nil
+	}
+	return clcommon.TmuxCommand(args...).Run()
+}
+
 // wheel applies count wheel events the way tmux's default WheelUpPane and
 // WheelDownPane bindings would for a real client: the renderer PTY is
 // read-only, so tmux never sees the viewer's mouse. A pane in copy mode
 // scrolls its history; an application that requested mouse reporting (Claude
 // Code's fullscreen TUI) gets the event re-encoded at pane coordinates; with
 // tmux's mouse option on, wheel-up enters copy mode (Codex, shells).
-func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane,
-		"#{pane_in_mode} #{==:#{pane_mode},copy-mode} #{mouse_any_flag} #{mouse_sgr_flag} #{mouse_utf8_flag} #{mouse} "+
-			"#{pane_left} #{pane_top} #{pane_width} #{pane_height} #{?#{==:#{status-position},top},#{status},off}").Output()
+func (p *fedPaneTerminal) wheel(w terminal.Mouse, count int) error {
+	s, err := p.paneMouse()
 	if err != nil {
 		return err
-	}
-	f := strings.Fields(string(out))
-	if len(f) != 11 {
-		return errors.New("unexpected tmux pane mouse state")
-	}
-	on := func(s string) bool { return s == "1" || s == "on" }
-	inMode, copyMode, mouseApp, sgr, utf8Mouse, tmuxMouse := on(f[0]), on(f[1]), on(f[2]), on(f[3]), on(f[4]), on(f[5])
-	if !copyMode {
-		p.copyMode = false
 	}
 	dir := "scroll-down"
 	if w.Up() {
@@ -264,46 +364,22 @@ func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
 		return clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "-N", strconv.Itoa(5*count), dir).Run()
 	}
 	switch {
-	case copyMode:
+	case s.copyMode:
 		return scroll()
-	case inMode:
+	case s.inMode:
 		return nil
-	case mouseApp:
-		var left, top, width, height, statusTop int
-		for i, dst := range []*int{&left, &top, &width, &height} {
-			v, err := strconv.Atoi(f[6+i])
-			if err != nil {
-				return errors.New("unexpected tmux pane geometry")
-			}
-			*dst = v
-		}
-		switch f[10] {
-		case "off":
-		case "on":
-			statusTop = 1
-		default:
-			statusTop, _ = strconv.Atoi(f[10])
-		}
-		x := min(max(w.X-left, 1), width)
-		y := min(max(w.Y-top-statusTop, 1), height)
-		var seq []byte
-		switch {
-		case sgr:
-			seq = fmt.Appendf(nil, "\x1b[<%d;%d;%dM", w.Button, x, y)
-		case utf8Mouse && max(w.Button, x, y)+32 > 127, max(w.Button, x, y)+32 > 255:
-			// Not representable in the encoding the application asked for.
+	case s.app():
+		x, y, _ := s.paneXY(w.X, w.Y)
+		seq := s.encode(w, x, y)
+		if seq == nil {
 			return nil
-		default:
-			seq = []byte{0x1b, '[', 'M', byte(w.Button + 32), byte(x + 32), byte(y + 32)}
 		}
-		args := []string{"send-keys", "-t", p.pin.pane, "-H"}
-		for range count {
-			for _, b := range seq {
-				args = append(args, fmt.Sprintf("%02x", b))
-			}
+		seqs := make([][]byte, count)
+		for i := range seqs {
+			seqs[i] = seq
 		}
-		return clcommon.TmuxCommand(args...).Run()
-	case w.Up() && tmuxMouse:
+		return p.sendMouse(seqs)
+	case w.Up() && s.tmuxMouse:
 		if err := clcommon.TmuxCommand("copy-mode", "-e", "-t", p.pin.pane).Run(); err != nil {
 			return err
 		}
@@ -311,6 +387,39 @@ func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
 		return scroll()
 	}
 	return nil
+}
+
+// mouse forwards clicks, releases and drags to an application that requested
+// mouse reporting (Claude Code's clickable TUI elements), as tmux's default
+// MouseDown/Up/Drag bindings would pass them on with send-keys -M. Only the
+// motion the application's tracking mode asks for is sent, and a press or
+// hover outside the pane is dropped; a release or drag that leaves the pane is
+// clamped to its edge so the application sees the gesture end. tmux's own
+// mouse actions (selection into copy mode, pane selection) are not emulated:
+// with a single pane and xterm.js selection in the browser they add little.
+func (p *fedPaneTerminal) mouse(run []terminal.Mouse) error {
+	s, err := p.paneMouse()
+	if err != nil {
+		return err
+	}
+	if s.inMode || !s.app() {
+		return nil
+	}
+	var seqs [][]byte
+	for _, m := range run {
+		held := m.Button&3 != 3
+		if m.Motion() && !s.all && !(s.button && held) {
+			continue
+		}
+		x, y, inside := s.paneXY(m.X, m.Y)
+		if !inside && !m.Release && !(m.Motion() && held) {
+			continue
+		}
+		if seq := s.encode(m, x, y); seq != nil {
+			seqs = append(seqs, seq)
+		}
+	}
+	return p.sendMouse(seqs)
 }
 
 func (p *fedPaneTerminal) Close() error {
