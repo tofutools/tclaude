@@ -151,8 +151,10 @@ export function scoreCommand(q, label, hay) {
 
 // rankCommands filters + orders the command list for a query (empty → the
 // whole list in build order). Each command exposes { label, hint?,
-// keywords? }. Ties keep build order via a stable sort (modern engines).
-export function rankCommands(commands, query) {
+// keywords? }. Ties go to the more recently run command when recencyOf
+// (command → rank, lower is more recent, Infinity for never) is given, and
+// otherwise keep build order via a stable sort (modern engines).
+export function rankCommands(commands, query, recencyOf = null) {
   const q = (query || '').trim().toLowerCase();
   if (!q) return commands.slice();
   const scored = [];
@@ -160,8 +162,9 @@ export function rankCommands(commands, query) {
     const label = cmd.label.toLowerCase();
     const hay = (cmd.label + ' ' + (cmd.hint || '') + ' ' + (cmd.keywords || '')).toLowerCase();
     const score = scoreCommand(q, label, hay);
-    if (score > 0) scored.push({ cmd, score });
+    if (score > 0) scored.push({ cmd, score, recency: recencyOf ? recencyOf(cmd) : 0 });
   }
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score
+    || (a.recency === b.recency ? 0 : a.recency < b.recency ? -1 : 1));
   return scored.map(s => s.cmd);
 }

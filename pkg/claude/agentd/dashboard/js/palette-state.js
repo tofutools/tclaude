@@ -1,11 +1,18 @@
 import { batch, computed, signal } from '@preact/signals';
 import { rankCommands } from './palette-score.js';
+import {
+  commandKey, createMemoryRecentStore, rememberRecent, withRecentFirst,
+} from './palette-recent.js';
 
 // The palette's durable interaction model. Command construction is injected so
 // this state stays independent of the legacy action modules that the commands
 // delegate to; production passes buildCommands from palette.js together with
-// dashboardState.snapshot, while tests can use small command fixtures.
-export function createPaletteState({ snapshot, commandBuilder, onError = () => {} } = {}) {
+// dashboardState.snapshot, while tests can use small command fixtures. The
+// recent-command history is likewise an injected { load, save } store
+// (dashPrefs-backed in production, in-memory by default).
+export function createPaletteState({
+  snapshot, commandBuilder, onError = () => {}, recentStore = createMemoryRecentStore(),
+} = {}) {
   if (!snapshot || !('value' in snapshot)) throw new TypeError('palette state requires a snapshot signal');
   if (typeof commandBuilder !== 'function') throw new TypeError('palette state requires a command builder');
   if (typeof onError !== 'function') throw new TypeError('palette state requires an error handler');
@@ -14,7 +21,16 @@ export function createPaletteState({ snapshot, commandBuilder, onError = () => {
   const query = signal('');
   const selected = signal(0);
   const commands = signal([]);
-  const filtered = computed(() => rankCommands(commands.value, query.value));
+  const recent = signal(recentStore.load());
+  // An empty query leads with the recently run commands; once the operator
+  // types, matching decides and recency only breaks score ties.
+  const filtered = computed(() => {
+    const keys = recent.value;
+    if (!query.value.trim()) return withRecentFirst(commands.value, keys);
+    const rank = new Map(keys.map((key, index) => [key, index]));
+    return rankCommands(commands.value, query.value,
+      (command) => rank.get(commandKey(command)) ?? Infinity);
+  });
   const view = computed(() => ({
     open: open.value,
     query: query.value,
@@ -32,6 +48,7 @@ export function createPaletteState({ snapshot, commandBuilder, onError = () => {
   function show() {
     batch(() => {
       commands.value = commandBuilder(snapshot.value || {});
+      recent.value = recentStore.load();
       query.value = '';
       selected.value = 0;
       open.value = true;
@@ -91,6 +108,8 @@ export function createPaletteState({ snapshot, commandBuilder, onError = () => {
     const command = selectedCommand();
     if (!command) return false;
     if (command.enabled === false) return false;
+    recent.value = rememberRecent(recent.value, commandKey(command));
+    recentStore.save(recent.value);
     close();
     beforeRun();
     try {
@@ -106,6 +125,7 @@ export function createPaletteState({ snapshot, commandBuilder, onError = () => {
     query,
     selected,
     commands,
+    recent,
     filtered,
     view,
     show,

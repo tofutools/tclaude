@@ -5323,6 +5323,16 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .palette-item.selected { background: #1f6feb33; color: #fff; }
 .palette-item.selected .palette-ico,
 .palette-item.selected .palette-hint { color: #c9d1d9; }
+.palette-item .palette-recent-tag {
+  flex: 0 0 auto; color: #7d8590; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; border: 1px solid #30363d; border-radius: 4px; padding: 0 5px;
+}
+/* The last recently-run command closes the recent block above the full list. */
+.palette-item.recent-last { position: relative; margin-bottom: 9px; }
+.palette-item.recent-last::after {
+  content: ''; position: absolute; left: 8px; right: 8px; bottom: -5px;
+  border-bottom: 1px solid #2a3340; pointer-events: none;
+}
 .palette-item.disabled { cursor: not-allowed; opacity: .58; }
 .palette-item.disabled .palette-hint { color: #d29922; }
 .palette-item.disabled.selected { background: #30363d66; color: #8b949e; }
