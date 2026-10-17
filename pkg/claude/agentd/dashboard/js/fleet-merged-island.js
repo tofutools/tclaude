@@ -8,7 +8,7 @@ import { shellToast } from './shell-state.js';
 import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './fleet-merged-model.js';
-import { peerAction } from './peer-view-limits.js';
+import { peerAction, refusedActsRule, usableActSelectors } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -35,6 +35,26 @@ const TERMINAL_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
 const MOVE_MIME = 'application/x-tclaude-fleet-move';
+const ROOT = '#fleetview-fused-groups-root';
+const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
+
+// limitsCSS greys the controls a click here refuses, node by node, from the
+// same rules onClick applies: ⚙ "send elsewhere" and the view-only controls
+// everywhere; on a peer's groups its terminal and the actions it shares. The
+// home groups (this node's, on its own page) act as on its Groups view, so
+// nothing there is greyed; on a peer's page this node's groups are an
+// overview. A control outside any node's group is refused.
+export function limitsCSS(nodes, { self, home = '' }) {
+  const always = [...VIEW_ONLY_ACTS, 'send-elsewhere'];
+  const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(details[data-fleet-node] [data-act])')];
+  for (const { id, peerView } of nodes) {
+    if (!NODE_ID.test(id || '') || id === home) continue;
+    const scope = `${ROOT} details[data-fleet-node="${id}"]`;
+    const usable = id !== self ? usableActSelectors(peerView, ['send-elsewhere']) : always.map((a) => `[data-act="${a}"]`);
+    rules.push(refusedActsRule(scope, usable));
+  }
+  return rules.join('\n');
+}
 
 // dragSource reads a dragged member row in the merged view: the agent and the
 // node and group it is in. Only real group members can move.
@@ -364,10 +384,12 @@ export function MergedGroups({
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
   const merged = mergeSnapshots(nodes, t, snapshot.value);
+  const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
   // This node's standing-orders dialog renders with its Groups view, hidden
   // while fused: open it here for a home group.
   const standingOrders = groupsFeature()?.standingOrdersDialog?.value || null;
   return html`<div class="fleet-merged">
+    <style id="fleet-merged-limits">${limits}</style>
     <div class="fleet-merged-nodes" aria-label="Nodes in this view">
       ${merged.fleet_nodes.map((n) => html`<span key=${n.node.id} class=${`fleet-merged-node${n.stale ? ' stale' : ''}`} style=${`--nc:${n.node.color}`}
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>

@@ -183,8 +183,50 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
   return req;
 }
 
+// usableActSelectors lists the data-act controls a click on a peer's row
+// really runs: the view-only ones, the terminal attach, and the PEER_ACTS the
+// peer shares (the status dot per direction, as peerAction picks it). The
+// greying below is built from it, so it can never disagree with the guard.
+export function usableActSelectors(peerView, extra = []) {
+  const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
+  const shared = (feature) => featureState(feature, peerView) === 'shared';
+  for (const [act, spec] of Object.entries(PEER_ACTS)) {
+    if (act !== 'dot-toggle') { if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`); continue; }
+    if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');
+    if (shared('lifecycle.resume')) out.push('[data-act="dot-toggle"]:not([data-online="1"])');
+  }
+  return out;
+}
+
+// refusedActsRule greys every control matching target under scope that is
+// not in usable: dimmed, with the not-allowed cursor. Conditions on the
+// control itself belong in target, not scope (a scope :not() would be tested
+// on an ancestor).
+export function refusedActsRule(scope, usable, target = '[data-act]') {
+  return `${scope} ${target}:not(${usable.join(', ')}) { opacity: .45; cursor: not-allowed; }`;
+}
+
+// FUSED_ROOT is the all-nodes Groups view: its rows belong to several nodes,
+// so fleet-merged-island.js guards and greys them per node, not this module.
+const FUSED_ROOT = '#fleetview-fused-groups-root';
+
+// setLimitStyle keeps one generated <style> per id in the document head;
+// empty css removes it. installPeerViewLimits' disposer removes it.
+// dashboard-imperative-boundary: platform-layout
+export function setLimitStyle(doc, id, css) {
+  let el = doc.getElementById(id);
+  if (!css) { el?.remove(); return; }
+  if (!el) {
+    el = doc.createElement('style');
+    el.id = id;
+    (doc.head || doc.documentElement).appendChild(el);
+  }
+  if (el.textContent !== css) el.textContent = css;
+}
+
 // blockedControl returns the element a click must not reach, and why.
 export function blockedControl(target, peerView) {
+  if (target?.closest?.(FUSED_ROOT)) return null;
   const tab = target?.closest?.('nav [data-tab]');
   if (tab) {
     const state = tabState(tab.dataset.tab, peerView);
@@ -207,6 +249,7 @@ export function blockedControl(target, peerView) {
 
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
+const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 
 export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote } = {}) {
@@ -235,6 +278,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // (and so once the marker has named the node).
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
+    setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
@@ -284,6 +328,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   doc.addEventListener('dragstart', onDrag, true);
   return () => {
     stop();
+    setLimitStyle(doc, PEER_VIEW_STYLE_ID, '');
     doc.removeEventListener('click', refuse, true);
     doc.removeEventListener('keydown', onKey, true);
     doc.removeEventListener('pointerover', onOver, true);
