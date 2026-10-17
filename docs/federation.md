@@ -2515,6 +2515,10 @@ or pools. Only unrestricted trust implies them. Without a grant, a collection
 read succeeds with no rows and reports the omitted concept in metadata. An
 audit grant exposes the entire node's audit collection, including local actions.
 
+`GET /api/pr-checks` and `GET /api/pr-details` back the PR link, CI and review
+hover cards. PR links reach a peer only inside the complete snapshot, so these
+reads are held only through unrestricted trust; a restricted peer gets 403.
+
 `POST /api/operator-message` accepts `{to, subject, body}`, where `to` is a
 visible stable agent ID. It requires `message.direct` in a live group containing
 the recipient. A visible recipient without that grant yields 403 naming the
