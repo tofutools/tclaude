@@ -483,6 +483,10 @@ test('a saved chip\'s × opens the removal confirmation directly; keep backs out
   await click(root.querySelector('[data-saved-remove-chip="tmpl_nightly"]'));
   assert.deepEqual(api.calls.unpin, [], 'remove asks first');
   assert.match(root.querySelector('.gq-confirm').textContent, /stays in the template library/);
+  await click([...root.querySelectorAll('.gq-confirm .gq-link')].find((el) => el.textContent === 'keep'));
+  assert.equal(root.querySelector('.gq-confirm'), null, 'keep backs out');
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_nightly"]'));
+  assert.ok(root.querySelector('.gq-confirm'), '× asks again after keep');
   await click(root.querySelector('[data-saved-remove-confirm]'));
   assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_nightly' }]);
   await click(root.querySelector('[data-saved-remove-chip="tmpl_ship"]'));

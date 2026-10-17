@@ -33,7 +33,7 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, onKeep, onEdit, onClose }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
@@ -129,7 +129,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     ? html`<span class="gq-confirm" role="group" aria-label="Confirm removal">
         ${process.listed ? `Remove from ${group.name}? It stays in the template library.` : `Remove from ${group.name}? It is not in the template library, so publish it first to keep it.`}
         <button type="button" class="gq-btn" data-saved-remove-confirm disabled=${!!busy} onClick=${remove}>remove</button>
-        <button type="button" class="gq-link" onClick=${() => setConfirmRemove(false)}>keep</button></span>`
+        <button type="button" class="gq-link" onClick=${() => { setConfirmRemove(false); onKeep?.(); }}>keep</button></span>`
     : html`<button type="button" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => setConfirmRemove(true)}
       title=${`Remove ${process.name} from ${group.name}'s processes`}>remove</button>`}
     </span>
@@ -202,7 +202,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
       </span>`)}
     </div>
-    ${current && html`<${StartStrip} key=${`${current.templateId}:${removing}`} removing=${removing} editing=${editing} group=${group} process=${current} api=${api} source=${source}
+    ${current && html`<${StartStrip} key=${`${current.templateId}:${removing}`} removing=${removing} onKeep=${() => setRemoving(false)} editing=${editing} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;
