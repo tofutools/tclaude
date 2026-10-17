@@ -20152,7 +20152,7 @@ body.wizard #launch-target .lt-carries { background: #140f28; }
 body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
-#fleetview-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+#fleetview-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]):not(details[data-fleet-home] [data-act]) { opacity: .45; cursor: not-allowed; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }

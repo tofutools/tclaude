@@ -44,9 +44,12 @@ import {
 } from './dashboard-operations.js';
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refuseInPeerView } from './peer-view-guard.js';
+import { ownGroupData } from './fleet-merged-model.js';
 
 export async function handleRowAction(action) {
-  const data = action.data;
+  // A control on this node's own group in the fused Groups view names it
+  // group@node: the operations below take this node's plain group name.
+  const data = action.fleetHome ? Object.freeze(ownGroupData(action.data, action.fleetHome)) : action.data;
   const act = data.act;
   // Ctrl/Cmd-click on the Groups tab's terminal launchers keeps the current
   // dashboard tab visible while the pane opens (or becomes active) behind it.
