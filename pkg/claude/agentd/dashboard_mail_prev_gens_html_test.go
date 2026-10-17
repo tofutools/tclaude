@@ -18,8 +18,10 @@ import (
 // whole chain at `go test ./...` catches it.
 func TestDashboardAssets_MailPrevGensToggleWired(t *testing.T) {
 	for _, needle := range []string{
-		// HTML: the footer checkbox.
-		`id="mail-show-prev-gens"`,
+		// HTML: the footer checkbox (a shared Messages part, given this
+		// node's ID prefix).
+		"`${idPrefix}-show-prev-gens`",
+		`<${MailFooterToggles} idPrefix="mail"`,
 		// JS: the toggle handler exists, the roster fetch asks the server to
 		// hide predecessors while it is off, and the sidebar tags the ones
 		// shown from the server's prev_gen flag.

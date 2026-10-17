@@ -18,7 +18,7 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		// than leaving a blank gap (or, in the hover preview, calling it empty).
 		"bodiless copy":   {"js/human-attachments.js", "the attached file is the notification"},
 		"bodiless hover":  {"js/groups-member-table.js", "bodilessNotice(message)"},
-		"bodiless reader": {"js/mail-island.js", "bodilessNotice(message)"},
+		"bodiless reader": {"js/mail-parts.js", "bodilessNotice(message)"},
 		"bodiless drawer": {"js/groups-notification-reader.js", "bodilessNotice(message)"},
 		"bodiless style":  {"dashboard.css", ".notification-bodiless"},
 		"group bots":      {"js/groups-list.js", "human-notification-hint"},

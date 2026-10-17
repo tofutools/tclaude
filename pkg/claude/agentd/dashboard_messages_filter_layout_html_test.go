@@ -15,21 +15,30 @@ import (
 // recipient-filter → message-filter directly. The repo has no JS/DOM test
 // runner, so this asserts on the embedded source at `go test ./...`.
 func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
-	html := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	// The filters are a shared Messages part (mail-parts.js); the island
+	// places them in its mail client and names this node's IDs.
+	html := string(mustReadFS(dashboardAssetsFS, "js/mail-parts.js"))
 
-	// Both filters still exist, and the message filter now lives inside the
-	// mail client (its grid), not a standalone top .filter-bar.
-	mailClient := strings.Index(html, `class="mail-client"`)
+	// Both filters still exist, and the message filter lives inside the mail
+	// client (its grid), not a standalone top .filter-bar.
+	mailClient := strings.Index(island, `class="mail-client"`)
 	if mailClient < 0 {
 		t.Fatal("mail-island.js: .mail-client container not found")
 	}
-	boxIdx := strings.Index(html, `id="filter-mailboxes"`)
-	msgIdx := strings.Index(html, `id="filter-messages"`)
-	if boxIdx < 0 || msgIdx < 0 {
-		t.Fatal("mail-island.js: a Messages-tab filter input is missing")
+	use := strings.Index(island, "<${MailFilters}")
+	if use < mailClient {
+		t.Error("mail-island.js: the filters should sit inside .mail-client (above the list), not in a top filter bar")
 	}
-	if msgIdx < mailClient {
-		t.Error("mail-island.js: #filter-messages should sit inside .mail-client (above the list), not in a top filter bar")
+	for _, needle := range []string{`boxId="filter-mailboxes"`, `id="filter-messages"`, `clearId="filter-messages-clear"`} {
+		if !strings.Contains(island[use:], needle) {
+			t.Errorf("mail-island.js: the Messages-tab filters are missing %q", needle)
+		}
+	}
+	boxIdx := strings.Index(html, `<input id=${boxId}`)
+	msgIdx := strings.Index(html, `<input id=${id}`)
+	if boxIdx < 0 || msgIdx < 0 {
+		t.Fatal("mail-parts.js: a Messages-tab filter input is missing")
 	}
 
 	// Tab order = DOM order: the message filter must come AFTER the
@@ -39,17 +48,17 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 	// recipient input's tag to the start of the message input's tag (so
 	// neither input's own markup counts as "in between").
 	if msgIdx <= boxIdx {
-		t.Error("mail-island.js: #filter-messages must come after #filter-mailboxes in DOM (so Tab reaches the recipient filter first)")
+		t.Error("mail-parts.js: the message filter must come after the mailbox filter in DOM (so Tab reaches the recipient filter first)")
 	}
-	boxTagEnd := strings.IndexByte(html[boxIdx:], '>')
-	msgTagStart := strings.LastIndex(html[:msgIdx], "<input")
-	if boxTagEnd < 0 || msgTagStart < 0 {
-		t.Fatal("mail-island.js: could not bound the gap between the two filter inputs")
+	boxTagEnd := strings.Index(html[boxIdx:], "/>")
+	msgTagStart := msgIdx // the needle starts at the message input's tag
+	if boxTagEnd < 0 {
+		t.Fatal("mail-parts.js: could not bound the gap between the two filter inputs")
 	}
 	between := html[boxIdx+boxTagEnd : msgTagStart]
 	for _, focusable := range []string{"<input", "<button", "<select", "<textarea", "<a ", "tabindex"} {
 		if strings.Contains(between, focusable) {
-			t.Errorf("mail-island.js: a focusable %q sits between #filter-mailboxes and #filter-messages — they must be Tab-adjacent", focusable)
+			t.Errorf("mail-parts.js: a focusable %q sits between the mailbox and message filters — they must be Tab-adjacent", focusable)
 		}
 	}
 
@@ -57,27 +66,28 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 	// and clear button; the folder-wide actions moved into the bulk bar
 	// (.mail-folder-actions in MessageBulkBar) so they never squeeze the
 	// filter input.
+	if !strings.Contains(html, `<div class="mail-list-filter">`) {
+		t.Error("mail-parts.js missing the .mail-list-filter row")
+	}
 	for _, needle := range []string{
-		`<div class="mail-list-filter">`,
 		`'mail-folder-actions'`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
 		`>🗑 delete read</button>`,
-		`id="filter-messages-clear"`, // the Messages island wires the clear button
 	} {
-		if !strings.Contains(html, needle) {
-			t.Errorf("mail-island.js missing %q in the message-filter / bulk-bar rows", needle)
+		if !strings.Contains(island, needle) {
+			t.Errorf("mail-island.js missing %q in the bulk-bar row", needle)
 		}
 	}
 	filterStart := strings.Index(html, `<div class="mail-list-filter">`)
 	if filterStart < 0 {
-		t.Fatal("mail-island.js: .mail-list-filter row not found")
+		t.Fatal("mail-parts.js: .mail-list-filter row not found")
 	}
 	filterRow := html[filterStart:]
 	filterRow = filterRow[:strings.Index(filterRow, "</div>")]
 	for _, id := range []string{`id="mail-mark-all"`, `id="mail-peer-compose"`, `id="mail-clear-read"`, `id="mail-agent-mark-all"`} {
 		if strings.Contains(filterRow, id) {
-			t.Errorf("mail-island.js: %s must sit in the bulk bar, not the filter row", id)
+			t.Errorf("mail-parts.js: %s must sit in the bulk bar, not the filter row", id)
 		}
 	}
 
@@ -91,7 +101,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		".mail-list-filter { grid-column: 3; grid-row: 1; }",
 		".mail-list-col    { grid-column: 3; grid-row: 2; }",
 		".mail-reader      { grid-column: 5; grid-row: 1 / span 2; }",
-		".mail-list-filter {", // the relocated row is styled
+		".mail-list-filter {",    // the relocated row is styled
 		".mail-folder-actions {", // the folder-wide actions in the bulk bar are styled
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

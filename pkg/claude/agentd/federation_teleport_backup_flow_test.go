@@ -391,19 +391,23 @@ func TestFederation_TeleportBackupReturnWaitsForPersistedProcessAfterPaneLoss(t 
 	// probe only for this test-owned child, keeping every other PID inert.
 	restore := agentd.SetSoftExitEscalationProcessForTest(func(pid int) bool { return pid == child.Process.Pid && syscall.Kill(pid, 0) == nil }, nil)
 	t.Cleanup(func() { agentd.ResetFederationForTest(); restore() })
-	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
-	require.NoError(t, err)
-	l.State = "returning"
-	l.ReturnID = proto.NewEnvelopeID()
-	l.Findings = "Stopped after repair"
-	l.ShutdownPID = child.Process.Pid
-	l.ShutdownProcessStart = strings.TrimSpace(string(started))
-	l.ShutdownConv = a.CurrentConvID
-	won, err := db.TransitionFederationTeleportLease(*l, "")
-	require.NoError(t, err)
-	require.True(t, won)
+	// The lease is revision-checked and the daemon may still be updating it
+	// after the stop, so re-read and retry until this write lands.
+	fedEventually(t, "lease marked returning with the persisted PID", func() bool {
+		l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		require.NoError(t, err)
+		l.State = "returning"
+		l.ReturnID = proto.NewEnvelopeID()
+		l.Findings = "Stopped after repair"
+		l.ShutdownPID = child.Process.Pid
+		l.ShutdownProcessStart = strings.TrimSpace(string(started))
+		l.ShutdownConv = a.CurrentConvID
+		won, err := db.TransitionFederationTeleportLease(*l, "")
+		require.NoError(t, err)
+		return won
+	})
 	time.Sleep(2200 * time.Millisecond)
-	l, err = db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
 	require.NoError(t, err)
 	require.Equal(t, "returning", l.State, "missing pane is not proof of process exit")
 	for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {

@@ -4,20 +4,19 @@ import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
 import {
   enterFirstRow,
-  focusPaneRows,
   focusRow,
   leaveFirstRow,
+  movePaneFocus,
   moveRowSelection,
 } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
-import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
 import { hasShownOverlay } from './overlay-stack.js';
-import { ImageAttachmentPreview } from './image-preview-overlay.js';
-import { VideoAttachmentPreview } from './video-preview-overlay.js';
-import { MarkdownAttachment } from './markdown-attachment.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
-import { ROSTER_MAX } from './fused-mail-model.js';
+import {
+  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, MailFilters, MailFooterToggles, MailGutters,
+  MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
+} from './mail-parts.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './fleet-model.js';
@@ -41,48 +40,16 @@ const html = htm.bind(h);
 // row rather than restarting at the selection.
 const SIDEBAR_ROWS = { rowSelector: '.mailbox', wrapSelector: '.mailbox-row' };
 const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
-const MAIL_PANES = [
-  { selector: '#mail-sidebar', rows: SIDEBAR_ROWS },
-  { selector: '#mail-list', rows: LIST_ROWS },
-  { selector: '#mail-reader' },
-];
 
-// Bare ←/→ move between the three mail panes. Group expansion remains on the
-// dedicated caret button, which avoids overloading a folder row with two
-// meanings and keeps pane traversal consistent from every row in the sidebar.
-function movePaneFocus(event, controller) {
-  if (hasShownOverlay()) return false;
-  if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
-  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-  if (!direction) return false;
-  const source = MAIL_PANES.findIndex(({ selector }) => event.target?.closest?.(selector));
-  if (source < 0) return false;
-  const client = event.currentTarget;
-  for (let index = source + direction; index >= 0 && index < MAIL_PANES.length; index += direction) {
-    const pane = client.querySelector(MAIL_PANES[index].selector);
-    if (!pane) continue;
-    let moved;
-    if (MAIL_PANES[index].rows) {
-      const select = MAIL_PANES[index].selector === '#mail-list'
-        ? (row) => controller.selectMessage(row.dataset.id)
-        : undefined;
-      moved = focusPaneRows(pane, MAIL_PANES[index].rows.rowSelector, select);
-    } else {
-      pane.focus();
-      moved = true;
-    }
-    if (!moved) continue;
-    event.preventDefault();
-    return true;
-  }
-  return false;
+// Bare ←/→ move between the three mail panes (movePaneFocus).
+function mailPanes(controller) {
+  return [
+    { selector: '#mail-sidebar', rows: SIDEBAR_ROWS },
+    { selector: '#mail-list', rows: LIST_ROWS, select: (row) => controller.selectMessage(row.dataset.id) },
+    { selector: '#mail-reader' },
+  ];
 }
 
-function Progress({ progress }) {
-  const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
-  return html`<${Fragment}><span class="mail-progress-label">${progress.verb} ${progress.done} / ${progress.total}…</span>
-    <span class="mail-progress grow"><span class="mail-progress-fill" style=${`width:${pct}%`}></span></span></${Fragment}>`;
-}
 
 function MailboxIcon({ mailbox }) {
   if (mailbox.kind === 'all') return '🗂';
@@ -93,37 +60,29 @@ function MailboxIcon({ mailbox }) {
 }
 
 function MailboxRow({ mailbox, nested = false, prevGen = false, current, controller, expanded = false }) {
-  const active = mailbox.id === current.selected;
   const empty = mailbox.kind === 'agent' && !mailbox.total;
-  const cls = `mailbox-row${mailbox.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}${prevGen ? ' prev-gen' : ''}${nested ? ' nested' : ''}`;
   const countTitle = mailbox.kind === 'group'
     ? `${mailbox.members || 0} member${mailbox.members === 1 ? '' : 's'} · ${mailbox.total} message${mailbox.total === 1 ? '' : 's'}`
     : mailbox.kind === 'access-requests'
       ? `${mailbox.unread || 0} pending · ${mailbox.total} total access request${mailbox.total === 1 ? '' : 's'}`
       : `${mailbox.in} received · ${mailbox.out} sent`;
-  let lead = html`<span class="mail-box-check-spacer"></span>`;
+  let lead = null;
   if (mailbox.kind === 'agent' && !nested) {
     lead = html`<input type="checkbox" class="mail-box-check" data-conv=${mailbox.id}
       checked=${current.selectedBoxes.has(mailbox.id)} disabled=${current.busy} title="Select for bulk wipe"
       onChange=${(event) => controller.toggleBoxSelection(mailbox.id, event.currentTarget.checked)} />`;
   } else if (mailbox.kind === 'group') {
-    lead = html`<button type="button" class="mail-group-caret" data-group=${mailbox.title} aria-expanded=${String(expanded)}
-      disabled=${current.busy}
-      title=${expanded ? 'Collapse members' : 'Expand members'}
-      onClick=${() => controller.toggleGroupExpand(mailbox.title)}>${expanded ? '▾' : '▸'}</button>`;
+    lead = html`<${FolderCaret} expanded=${expanded} disabled=${current.busy} group=${mailbox.title}
+      onToggle=${() => controller.toggleGroupExpand(mailbox.title)} />`;
   }
-  return html`<div class=${cls}>${lead}<button
-    class=${`mailbox${active ? ' active' : ''}${mailbox.unread ? ' has-unread' : ''}`}
-    data-id=${mailbox.id} title=${controller.mailboxTitleAttr(mailbox)} disabled=${current.busy}
-    aria-current=${active ? 'true' : undefined}
-    onClick=${(event) => { focusRow(event.currentTarget); controller.selectMailbox(mailbox.id); }}>
-    <span class="mailbox-icon"><${MailboxIcon} mailbox=${mailbox} /></span>
-    <span class="mailbox-name">${controller.mailboxLabel(mailbox)}</span>
-    ${mailbox.retired && html`<span class="mailbox-tag" title="This agent has been retired">retired</span>`}
-    ${prevGen && html`<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>`}
-    <span class="mailbox-count" title=${countTitle}>${mailbox.total}</span>
-    ${mailbox.unread ? html`<span class="mailbox-unread">${mailbox.unread > 99 ? '99+' : mailbox.unread}</span>` : null}
-  </button></div>`;
+  return html`<${FolderRow} id=${mailbox.id} icon=${html`<${MailboxIcon} mailbox=${mailbox} />`}
+    label=${controller.mailboxLabel(mailbox)} title=${controller.mailboxTitleAttr(mailbox)}
+    className=${`${mailbox.retired ? 'retired' : ''}${empty ? ' empty-box' : ''}${prevGen ? ' prev-gen' : ''}`.trim()}
+    nested=${nested} lead=${lead} active=${mailbox.id === current.selected} unread=${mailbox.unread}
+    total=${mailbox.total} totalTitle=${countTitle} disabled=${current.busy}
+    tags=${html`${mailbox.retired && html`<span class="mailbox-tag" title="This agent has been retired">retired</span>`}
+      ${prevGen && html`<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>`}`}
+    onSelect=${() => controller.selectMailbox(mailbox.id)} />`;
 }
 
 function WipeBar({ current, controller }) {
@@ -177,12 +136,8 @@ function MailSidebar({ current, controller }) {
     </${Fragment}>`)}
     ${model.agentsTotal > 0 && (model.filtering
       ? html`<div class="mailbox-section">${wizard ? 'The Rookery' : 'All agent mailboxes'}</div>`
-      : html`<button type="button" class=${`mailbox-section mailbox-section-toggle${agentUnread ? ' has-unread' : ''}`}
-          aria-expanded=${String(model.agentsExpanded)}
-          title=${model.agentsExpanded ? 'Collapse the agent list' : 'Expand the agent list'}
-          onClick=${controller.toggleAgentsExpand}><span class="mailbox-section-caret">${model.agentsExpanded ? '▾' : '▸'}</span>
-          ${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})
-          ${agentUnread > 0 && html` <span class="mailbox-unread">${agentUnread > 99 ? '99+' : agentUnread}</span>`}</button>`)}
+      : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
+          label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
       <div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
@@ -193,16 +148,6 @@ function MailSidebar({ current, controller }) {
   </aside>`;
 }
 
-// LoadMore ends a server-paged folder list: "Show more" for the next page,
-// or — once the list holds the most one roster read returns — a hint to
-// narrow it with the filter instead.
-function LoadMore({ shown, total, busy, what, onMore, nested = false }) {
-  if (shown >= ROSTER_MAX) {
-    return html`<div class=${`mailbox-load-more capped${nested ? ' nested' : ''}`}>${shown} of ${total} shown · filter to narrow</div>`;
-  }
-  return html`<button type="button" class=${`mailbox-load-more${nested ? ' nested' : ''}`} disabled=${busy}
-    title=${`Load the next page of ${what}`} onClick=${onMore}>Show more · ${shown} of ${total}</button>`;
-}
 
 function AccessRow({ request, current, controller }) {
   const handled = !controller.accessIsPending(request);
@@ -225,77 +170,13 @@ function AccessRow({ request, current, controller }) {
   </div>`;
 }
 
-function MessageHead({ message, aggregate, controller }) {
-  if (aggregate) {
-    const sender = controller.senderLabel(message);
-    return html`<${Fragment}>
-      ${sender && html`<span class="mail-row-party" title=${message.from_conv ? idTooltip(message.from_agent, message.from_conv) : undefined}>${sender}</span>`}
-      <span class="mail-row-arrow">→</span>
-      <span class="mail-row-party" title=${message.to_conv ? idTooltip(message.to_agent, message.to_conv) : undefined}>${controller.allRecipientLabel(message)}</span>
-    </${Fragment}>`;
-  }
-  const outgoing = message.direction === 'out';
-  const party = controller.counterparty(message);
-  const conv = outgoing ? message.to_conv : message.from_conv;
-  const agent = outgoing ? message.to_agent : message.from_agent;
-  return html`<${Fragment}><span class=${`mail-dir ${outgoing ? 'out' : 'in'}`} title=${outgoing ? 'sent' : 'received'}>${outgoing ? '→' : '←'}</span>
-    ${party && html`<span class="mail-row-party" title=${conv ? idTooltip(agent, conv) : undefined}>${party}</span>`}</${Fragment}>`;
-}
-
-const ATTACHMENT_ICONS = {
-  file: html`<path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />`,
-  image: html`<rect x="3" y="3" width="18" height="18" rx="2" />
-    <circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 4-6 5 7" />`,
-  video: html`<rect x="3" y="5" width="13" height="14" rx="2" /><path d="m16 10 5-3v10l-5-3z" />`,
-};
-
-function MessageAttachmentIndicator({ attachments }) {
-  if (!attachments.length) return null;
-  const counts = { file: 0, image: 0, video: 0 };
-  for (const attachment of attachments) {
-    const mime = String(attachment.content_type || '').toLowerCase();
-    // Type counts include media the browser may not be able to preview.
-    const kind = attachment.video || mime.startsWith('video/') ? 'video'
-      : attachment.previewable || mime.startsWith('image/') ? 'image' : 'file';
-    counts[kind] += 1;
-  }
-  const kinds = Object.keys(counts).filter((kind) => counts[kind]);
-  const label = kinds.map((kind) => `${counts[kind]} ${kind}${counts[kind] === 1 ? '' : 's'}`).join(', ');
-  return html`<span class="mail-row-attachments" role="img" title=${label} aria-label=${label}>
-    ${kinds.map((kind) => html`<span key=${kind} class="mail-row-attachment-type" data-type=${kind} aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ATTACHMENT_ICONS[kind]}</svg>
-      <span class="mail-row-attachment-count">${counts[kind]}</span>
-    </span>`)}
-  </span>`;
-}
-
 function MessageRow({ message, current, aggregate, controller }) {
-  const active = message.id === current.selectedMsgId;
-  const unread = !message.read;
-  const attachments = messageAttachments(message);
-  return html`<div class="mail-row-wrap" data-key=${message.id} data-kind=${controller.msgKind(message)}>
-    <input type="checkbox" class="mail-msg-check" data-id=${message.id} checked=${current.selectedMsgs.has(message.id)}
-      disabled=${current.busy} title="Select message"
-      onChange=${(event) => controller.toggleMessageSelection(message.id, event.currentTarget.checked)} />
-    <button class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
-      data-id=${message.id} aria-current=${active ? 'true' : undefined}
-      onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(message.id); }}>
-      <span class="mail-row-top">
-        ${unread && html`<span class="mail-row-dot" title="unread">●</span>`}
-        <${MessageHead} message=${message} aggregate=${aggregate} controller=${controller} />
-        ${message.group && html`<span class="mail-row-group">${message.group}</span>`}
-        <span class="mail-row-time">${relTime(message.created_at)}</span>
-      </span>
-      <span class="mail-row-subject-line">
-        <span class="mail-row-subject">${controller.msgPreview(message)}</span>
-        <${MessageAttachmentIndicator} attachments=${attachments} />
-      </span>
-    </button>
-    <button class="mail-row-del" data-id=${message.id}
-      title="Delete this message" disabled=${current.busy}
-      onClick=${() => controller.deleteOneMessage(message.id)}>🗑</button>
-  </div>`;
+  return html`<${MailRow} id=${message.id} message=${message} kind=${controller.msgKind(message)} aggregate=${aggregate}
+    preview=${controller.msgPreview(message)} active=${message.id === current.selectedMsgId}
+    checked=${current.selectedMsgs.has(message.id)} busy=${current.busy}
+    onCheck=${(checked) => controller.toggleMessageSelection(message.id, checked)}
+    onSelect=${() => controller.selectMessage(message.id)}
+    onDelete=${() => controller.deleteOneMessage(message.id)} />`;
 }
 
 function MessageList({ current, controller, model }) {
@@ -396,8 +277,7 @@ function MessageBulkBar({ current, controller, model }) {
   const count = current.selectedMsgs.size;
   const allChecked = model.messages.every(message => current.selectedMsgs.has(message.id));
   return html`<div id="mail-bulk-bar" class="mail-bulk-bar">
-    <label title="Select / deselect every message on this page"><input type="checkbox" class="mail-select-all"
-      checked=${allChecked} onChange=${(event) => controller.togglePageSelection(event.currentTarget.checked)} /> all</label>
+    <${SelectAll} checked=${allChecked} onChange=${controller.togglePageSelection} />
     <span class="grow">${count ? `${count} selected` : ''}</span>
     ${current.selected !== 'human' && html`<${Fragment}><button disabled=${count === 0} title="Mark the selected messages read"
       onClick=${() => controller.setMessagesRead([...current.selectedMsgs], true)}>✓ read</button>
@@ -409,87 +289,12 @@ function MessageBulkBar({ current, controller, model }) {
   </div>`;
 }
 
-const PAGE_SIZES = [25, 50, 100, 200];
 function MessagePager({ current, controller, model }) {
-  if (model.access || !current.totalUnfiltered) return html`<div id="mail-pager" class="mail-pager" hidden></div>`;
-  const page = Math.min(current.page, model.pages);
-  const atStart = page <= 1;
-  const atEnd = page >= model.pages;
-  return html`<div id="mail-pager" class="mail-pager">
-    ${model.pages > 1 && html`<${Fragment}><button title="First page" disabled=${atStart} onClick=${() => controller.goToPage(1)}>«</button>
-      <button title="Previous page" disabled=${atStart} onClick=${() => controller.goToPage(page - 1)}>‹</button>
-      <span class="mail-pager-pos">Page ${page} / ${model.pages}</span>
-      <button title="Next page" disabled=${atEnd} onClick=${() => controller.goToPage(page + 1)}>›</button>
-      <button title="Last page" disabled=${atEnd} onClick=${() => controller.goToPage(model.pages)}>»</button></${Fragment}>`}
-    <span class="grow"></span><label class="mail-pager-size" title="Messages per page">
-      <select class="mail-page-size" value=${current.pageSize} onChange=${(event) => controller.setPageSize(Number(event.currentTarget.value))}>
-        ${PAGE_SIZES.map(size => html`<option value=${size}>${size}</option>`)}</select> / page</label>
-  </div>`;
+  return html`<${MailPager} id="mail-pager" hidden=${model.access || !current.totalUnfiltered}
+    page=${current.page} pages=${model.pages} pageSize=${current.pageSize}
+    onPage=${controller.goToPage} onPageSize=${controller.setPageSize} />`;
 }
 
-function LinkifiedBody({ text }) {
-  const source = String(text ?? '');
-  const urlRe = /https?:\/\/[^\s<>"']+/g;
-  const parts = [];
-  let last = 0;
-  let match;
-  while ((match = urlRe.exec(source)) !== null) {
-    if (match.index > last) parts.push(source.slice(last, match.index));
-    let url = match[0];
-    let trail = '';
-    for (;;) {
-      const ch = url[url.length - 1];
-      if (".,;:!?'\"".includes(ch)) { trail = ch + trail; url = url.slice(0, -1); continue; }
-      if (ch === ')' || ch === ']') {
-        const open = ch === ')' ? '(' : '[';
-        if (url.split(ch).length > url.split(open).length) { trail = ch + trail; url = url.slice(0, -1); continue; }
-      }
-      break;
-    }
-    if (url) parts.push(html`<a href=${url} target="_blank" rel="noopener noreferrer">${url}</a>`);
-    if (trail) parts.push(trail);
-    last = match.index + match[0].length;
-  }
-  if (last < source.length) parts.push(source.slice(last));
-  return html`<${Fragment}>${parts}</${Fragment}>`;
-}
-
-function attachmentSize(bytes) {
-  const size = Number(bytes || 0);
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
-}
-
-function HumanAttachment({ message }) {
-  const attachments = messageAttachments(message);
-  if (!attachments.length) return null;
-  return html`<${Fragment}>${attachments.map((attachment, index) => html`
-    <div class="mail-attachment" key=${attachment.id || index}>
-      <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <span class="mail-attachment-label">Agent file</span>
-      <a href=${attachmentHref(message, attachment)}
-        download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
-      <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
-      <${MarkdownAttachment} messageID=${message.id} attachment=${attachment}
-        siblings=${attachments} surface="messages" />
-    </div>`)}</${Fragment}>`;
-}
-
-function HeaderRow({ label, children }) {
-  if (children == null || children === '') return null;
-  return html`<div class="mail-hrow"><span class="mail-hlabel">${label}</span><span class="mail-hval">${children}</span></div>`;
-}
-
-function RecipientNames({ recipients }) {
-  if (!recipients?.length) return null;
-  return html`<${Fragment}>${recipients.map((recipient, index) => html`<${Fragment} key=${recipient.conv_id || index}>
-    ${index > 0 ? ', ' : ''}${recipient.title ? `${recipient.title} ` : ''}<span class="mail-cid"
-      title=${idTooltip(recipient.agent_id, recipient.conv_id)}>${recipient.agent_id
-        ? shortAgentId(recipient.agent_id, recipient.conv_id) : shortAgentId('', recipient.conv_id)}</span>
-  </${Fragment}>`)}</${Fragment}>`;
-}
 
 // GroupLinkReader is a peer's cross-node link request (tcl-2ksi0k): one exact
 // directed edge into one of this node's groups. Approving stores only that
@@ -650,15 +455,6 @@ async function defaultLinks() {
   return (await r.json())?.groups || [];
 }
 
-export function messageDeliveryState(message) {
-  if (message.forward_state === 'queued' || message.forward_state === 'handoff') return 'forwarded to ' + message.forwarded_to;
-  if (message.forward_state === 'refused') return 'forwarding refused';
-  if (message.forward_state === 'accepted') return 'delivered';
-  if (message.nudge_discarded_at) return 'discarded while offline';
-  if (message.delivered_at) return 'delivered';
-  if (message.direction === 'out') return 'undelivered';
-  return '';
-}
 
 function senderHarness(message) {
   const agent = message?.from_agent || '';
@@ -683,13 +479,6 @@ function MessageReader({ current, controller, model }) {
   if (!message) return html`<div class="mail-reader" id="mail-reader"
     role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
     ? 'Unfurl a scroll to read it.' : 'Select a message to read.'}</div></div>`;
-  const when = message.created_at ? new Date(message.created_at).toLocaleString() : '';
-  let to = message.to_recipients?.length ? html`<${RecipientNames} recipients=${message.to_recipients} />` : null;
-  if (!to && (message.to_title || message.to_conv)) to = html`<${Fragment}>${message.to_title ? `${message.to_title} ` : ''}${message.to_conv && html`<span class="mail-cid"
-    title=${idTooltip(message.to_agent, message.to_conv)}>${shortAgentId(message.to_agent, message.to_conv)}</span>`}</${Fragment}>`;
-  const deliveryState = messageDeliveryState(message);
-  const stateBits = html`<${Fragment}>${message.read ? 'read' : html`<span class="mail-state-unread">unread</span>`}${deliveryState
-    ? html`<${Fragment}> · <span class=${deliveryState === 'delivered' ? '' : 'mail-state-pending'}>${deliveryState}</span></${Fragment}>` : null}</${Fragment}>`;
   const human = current.selected === 'human';
   const peer = human && !remoteNodeID() ? peerOfMessage(message) : '';
   const ticket = peer ? awayTicket(message) : '';
@@ -697,21 +486,8 @@ function MessageReader({ current, controller, model }) {
   const senderLive = controller.senderOnline(message.from_agent, message.from_conv);
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
     role="region" aria-label="Message reader" tabindex="0">
-    <div class="mail-reader-head"><div class="mail-subject">${message.subject || '(no subject)'} <span class="mail-id">#${message.id}</span></div>
-      <div class="mail-headers">
-        ${message.operator_authored
-          ? html`<${HeaderRow} label="From">${controller.senderLabel(message)}</${HeaderRow}>`
-          : message.from_conv && html`<${HeaderRow} label="From">${message.from_title ? `${message.from_title} ` : ''}<span class="mail-cid"
-            title=${idTooltip(message.from_agent, message.from_conv)}>${shortAgentId(message.from_agent, message.from_conv)}</span></${HeaderRow}>`}
-        <${HeaderRow} label="To">${to}</${HeaderRow}>
-        ${message.cc_recipients?.length > 0 && html`<${HeaderRow} label="Cc"><${RecipientNames} recipients=${message.cc_recipients} /></${HeaderRow}>`}
-        <${HeaderRow} label="Group">${message.group || ''}</${HeaderRow}><${HeaderRow} label="Date">${when}</${HeaderRow}>
-        <${HeaderRow} label="Status">${stateBits}</${HeaderRow}>
-      </div>
-    </div>
-    <div class="mail-reader-body">${bodilessNotice(message)
-      ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
-      : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
+    <${MessageHeaders} message=${message} />
+    <${MessageBody} message=${message} />
     ${human && html`<${HumanAttachment} message=${message} />`}
     <div class="mail-reader-actions">
       ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
@@ -763,26 +539,14 @@ export function MailApp({ controller }) {
       select: (row) => controller.selectMessage(row.dataset.id),
     });
   };
-  return html`<div class="mail-client" onKeyDown=${(event) => movePaneFocus(event, controller)}>
+  return html`<div class="mail-client" onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, mailPanes(controller))}>
     <${PeerMailHost} toast=${shellToast} />
-    <input id="filter-mailboxes" type="text" class="mail-sidebar-filter"
-      placeholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
-      autocomplete="off" spellcheck=${false} value=${current.boxQuery}
-      onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)}
-      onKeyDown=${enterMailboxList} />
-    <div class="mail-list-filter">
-      <input id="filter-messages" type="text"
-        placeholder=${wizard ? 'Search the scrolls…' : 'Filter messages (sender / recipient / subject / body)'}
-        autocomplete="off" spellcheck=${false} value=${current.messageQuery}
-        onInput=${(event) => controller.setMessageQuery(event.currentTarget.value)}
-        onKeyDown=${enterMessageList} />
-      <span class="filter-count" id="filter-messages-count">${controller.messageCountText()}</span>
-      <button class="clear-filter" id="filter-messages-clear" title="Clear filter"
-        aria-label="Clear message filter" onClick=${() => {
-          controller.setMessageQuery('');
-          document.querySelector('#filter-messages')?.focus();
-        }}>×</button>
-    </div>
+    <${MailFilters} boxId="filter-mailboxes" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
+      boxValue=${current.boxQuery} onBoxInput=${controller.setBoxQuery} onBoxKeyDown=${enterMailboxList}
+      id="filter-messages" placeholder=${wizard ? 'Search the scrolls…' : 'Filter messages (sender / recipient / subject / body)'}
+      value=${current.messageQuery} onInput=${controller.setMessageQuery} onKeyDown=${enterMessageList}
+      countId="filter-messages-count" countText=${controller.messageCountText()} clearId="filter-messages-clear"
+      onClear=${() => controller.setMessageQuery('')} />
     <div class="mail-col mail-sidebar-col">
       <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
@@ -791,20 +555,9 @@ export function MailApp({ controller }) {
         <button type="button" onClick=${controller.reloadMail}>Retry</button>
       </div>`}
       <${MailSidebar} current=${current} controller=${controller} />
-      <label class="mail-sidebar-foot"
-        title="Show folders for retired agents, and include their messages in the “All agent messages” firehose">
-        <input type="checkbox" id="mail-show-retired" checked=${current.showRetired}
-          disabled=${current.busy} onChange=${(event) => controller.setShowRetired(event.currentTarget.checked)} /> show retired agents
-      </label>
-      <label class="mail-sidebar-foot" title="Show folders for agents that have never sent or received a message">
-        <input type="checkbox" id="mail-show-empty" checked=${current.showEmpty}
-          disabled=${current.busy} onChange=${(event) => controller.setShowEmpty(event.currentTarget.checked)} /> show agents without messages
-      </label>
-      <label class="mail-sidebar-foot"
-        title="Show folders for previous (superseded) generations of agents — past conversations left behind by a reincarnate / /clear. Only hides the folders in this list; no messages are hidden.">
-        <input type="checkbox" id="mail-show-prev-gens" checked=${current.showPrevGens}
-          disabled=${current.busy} onChange=${(event) => controller.setShowPrevGens(event.currentTarget.checked)} /> show previous generations
-      </label>
+      <${MailFooterToggles} idPrefix="mail" busy=${current.busy}
+        showRetired=${current.showRetired} showEmpty=${current.showEmpty} showPrevGens=${current.showPrevGens}
+        onRetired=${controller.setShowRetired} onEmpty=${controller.setShowEmpty} onPrevGens=${controller.setShowPrevGens} />
     </div>
     <div class="mail-col mail-list-col">
       <${MessageBulkBar} current=${current} controller=${controller} model=${messages} />
@@ -812,10 +565,7 @@ export function MailApp({ controller }) {
       <${MessagePager} current=${current} controller=${controller} model=${messages} />
     </div>
     <${MessageReader} current=${current} controller=${controller} model=${messages} />
-    <div class="mail-gutter" data-boundary="sidebar-list"
-      title="Drag to resize · double-click to reset"></div>
-    <div class="mail-gutter" data-boundary="list-reader"
-      title="Drag to resize · double-click to reset"></div>
+    <${MailGutters} />
   </div>`;
 }
 

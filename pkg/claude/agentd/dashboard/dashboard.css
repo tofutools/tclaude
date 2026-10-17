@@ -19956,14 +19956,25 @@ html.scope-fused #fleetview-fused-messages-root { display: flex; flex-direction:
 html.scope-fused #messages-root { display: none !important; }
 .fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
 .fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
-.fused-mail-nodes { display: flex; flex-direction: column; gap: 3px; padding: 2px 4px 8px; margin-bottom: 6px; border-bottom: 1px solid #21262d; font-size: 12px; }
-.fused-mail-section .mailbox-section { margin-top: 10px; text-transform: none; }
+/* The node chips over the sidebar narrow the view to one node (or all). */
+.fused-mail-scope { display: flex; flex-wrap: wrap; gap: 4px; }
+.fused-mail-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 6px; border-radius: 12px; border: 1px solid #2a3340; background: #0d1117; color: #8b949e; font-size: 11px; cursor: pointer; }
+.fused-mail-chip:hover { color: #d4d4d4; border-color: #58a6ff; }
+.fused-mail-chip.active { color: #f0f6fc; border-color: #1f6feb; background: #1f6feb22; }
+.fused-mail-chip.degraded .scope-pill { opacity: .6; }
+.fused-mail-chip-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fused-mail-chip .mailbox-unread { margin-left: 0; }
+/* Each node's folders sit under a foldable heading with its pill. */
+.fused-mail-section { margin-top: 8px; padding-top: 6px; border-top: 1px solid #21262d; }
+.fused-mail-section .mailbox-section { text-transform: none; }
+.fused-mail-node-head { display: flex; align-items: center; gap: 6px; width: 100%; }
+.fused-mail-node-head .muted { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fused-mail .mail-row-top .scope-pill { flex: none; }
-.fused-mail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; }
-.fused-mail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #2a3340; border-radius: 5px; padding: 6px 8px; font: inherit; }
+.fused-mail-reply:focus { outline: none; border-color: #1f6feb; }
+.fused-mail-actions { flex-wrap: wrap; align-items: center; }
 .fused-mail-actions .spacer { flex: 1; }
-.fused-mail-more { margin: 8px auto; display: block; }
+.mail-pager-note { font-size: 11px; white-space: nowrap; }
 /* A per-node tab in a fused view: a dot in the primary's colour on its label,
    and a one-line banner over its content. */
 html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="terminals"]):not([data-tab="messages"]):not(.node-chip):not(.fleet-anchor)::after {

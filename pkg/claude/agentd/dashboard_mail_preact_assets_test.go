@@ -6,7 +6,10 @@ import (
 )
 
 func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
-	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	// The island renders through the shared Messages parts (mail-parts.js),
+	// configured with this node's element IDs.
+	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js")) +
+		string(mustReadFS(dashboardAssetsFS, "js/mail-parts.js"))
 	controller := string(mustReadFS(dashboardAssetsFS, "js/mail.js"))
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 	html := string(dashboardIndexHTML)
@@ -22,15 +25,20 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`id="filter-mailboxes" type="text"`,
-		`id="filter-messages" type="text"`,
-		`id="mail-show-retired"`,
-		`id="mail-show-empty"`,
-		`id="mail-show-prev-gens"`,
+		`boxId="filter-mailboxes"`,
+		`id="filter-messages"`,
+		`id=${boxId} type="text"`,
+		`id=${id} type="text"`,
+		`<${MailFooterToggles} idPrefix="mail"`,
+		"`${idPrefix}-show-retired`",
+		"`${idPrefix}-show-empty`",
+		"`${idPrefix}-show-prev-gens`",
+		`<${MailGutters} />`,
 		`class="mail-gutter" data-boundary="sidebar-list"`,
 		`class="mail-gutter" data-boundary="list-reader"`,
 		`class="mail-attachment"`,
-		`data-kind=${controller.msgKind(message)}`,
+		`kind=${controller.msgKind(message)}`,
+		`data-kind=${kind}`,
 	} {
 		if !strings.Contains(island, want) {
 			t.Errorf("Messages island missing parity hook %q", want)

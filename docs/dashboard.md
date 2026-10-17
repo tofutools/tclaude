@@ -998,18 +998,27 @@ peer's single-node view, the ⚙ **clone** item asks the peer instead.
 
 ### Messages on several nodes
 
-In a fused view, Messages shows the ticked nodes' mail in the usual layout.
-**All agent messages**, **Human notifications** and **Access requests** span
-every ticked node, newest first (access requests oldest first), each row
-carrying its node's pill; under that, each node lists its own groups and
-agents. The filter searches every ticked node. A peer's mail is shown only if
-it grants you `node.messages.read`; otherwise the sidebar says "not shared"
-next to it. An unreachable node keeps its last page, marked with its age; a
-node no longer trusted drops it. Bodies are shown as text.
+In a fused view, Messages shows the ticked nodes' mail with the same panes and
+controls as one node's Messages: the folder and message filters, the bulk bar,
+the pager and page size, the reader's headers, the footer toggles (retired,
+empty and previous-generation agents) and the resizable panes. The node chips
+above the folders narrow everything to one node (**All nodes** shows them all
+again); a chip carries the node's unread notifications and its state when it
+is not answering. **All agent messages**, **Human notifications** and **Access
+requests** span the nodes in view, newest first (access requests oldest
+first), each row carrying its node's pill. Under them each node has a foldable
+section with its own folders: its all and human folders, its groups (expand
+one for its members) and its agent folders. A merged folder pages through the
+nodes' newest 500 messages each; pick one node to page further back. A peer's
+mail is shown only if it grants you `node.messages.read`; otherwise its chip
+and heading say "not shared". An unreachable node keeps its last page, marked
+with its age; a node no longer trusted drops it. Bodies are shown as text.
 
-Actions go to the node that owns the message. Mark read/unread on an agent
-message needs that node's `node.messages.manage`; a reply to an agent goes
-through its `operator-message` route (`message.direct`). Human notifications
+Actions go to the node that owns the message. Mark read/unread on agent
+messages (one, the selection, or an agent folder's mark all read) needs that
+node's `node.messages.manage`; only this node's messages can be deleted from
+here. A reply to an agent goes through its `operator-message` route
+(`message.direct`). Human notifications
 (mark read, reply) and access requests (approve once, deny) are answered here
 on this node and on peers that trust you unrestricted; approving says exactly
 what it lets through on that node. Anything a node does not allow from here
