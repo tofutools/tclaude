@@ -26,6 +26,7 @@ import {
   GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
 } from './groups-processes.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
+import { GroupQueuedBlock } from './queued-spawns.js';
 
 const html = htm.bind(h);
 
@@ -617,6 +618,8 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // actions, the task-force card, the member table) for the group's runs;
   // Both hands them to the runs body, which lays the two out as sections.
   const processes = useProcessesPerspective();
+  // Queued spawns are this node's own drafts, so a peer's group never has any.
+  const queuedBlock = fleet ? null : html`<${GroupQueuedBlock} group=${group.name} snapshot=${snapshot} />`;
   const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null;
   const members = !view.members.length && !view.away
     ? html`<div class="muted">(no members yet)</div>`
@@ -635,7 +638,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     // section; triggers follow both sections. Neither sits above a section
     // line, which would move its controls when the card folds.
     after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
-    agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
+    agents: html`<${ForceBlock} group=${group} />${pending}${queuedBlock}${members}`,
   } : null;
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
@@ -647,6 +650,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
       ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
         ${processes ? null : pending}
+        ${processes ? null : queuedBlock}
         ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
         <${ForceBlock} group=${group} />`}
         <${GroupTriggersSection} group=${group} triggers=${triggers} />

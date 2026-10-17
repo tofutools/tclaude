@@ -123,6 +123,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config-bundle/export", dashboardRolesRoute(handleConfigBundleExport))
 	mux.HandleFunc("POST /api/config-bundle/import", dashboardRolesRoute(handleConfigBundleImport))
 	registerDashboardSpawnAttachmentRoutes(mux)
+	registerDashboardQueuedSpawnRoutes(mux)
 	registerDashboardPluginRoutes(mux)
 	registerRemoteAccessAdminRoutes(mux)
 }

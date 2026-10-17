@@ -57,6 +57,7 @@ import { getDashDefaultProfile, loadProfiles } from './profiles.js';
 import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
+import { configureQueuedSpawns } from './queued-spawns.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
@@ -70,7 +71,7 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -261,6 +262,10 @@ async function settleInitialLayout() {
       refresh: dashboardActions.refresh,
       notify: toast,
     }),
+    () => {
+      configureQueuedSpawns({ confirm: confirmModal, notify: toast, refresh: dashboardActions.refresh });
+      return mountQueuedSpawnsFeature();
+    },
     () => mountGitRepositoriesFeature(),
     () => mountWorktreeCleanupFeature({
       refresh: dashboardActions.refresh,

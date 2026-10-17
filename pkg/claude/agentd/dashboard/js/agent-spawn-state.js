@@ -16,6 +16,14 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
         profileName: String(options?.profileName || ''),
         fastMode: options?.fastMode === true,
         role: String(options?.role || ''),
+        // A queued spawn reopened for edit (or launch, with autoSpawn): its id,
+        // stored draft and queue time. Null for an ordinary fresh dialog.
+        queued: options?.queued?.id ? Object.freeze({
+          id: options.queued.id,
+          draft: Object.freeze({ ...(options.queued.draft || {}) }),
+          createdAt: String(options.queued.created_at || ''),
+        }) : null,
+        autoSpawn: options?.autoSpawn === true && !!options?.queued?.id,
       }),
       groups: Object.freeze([...(snapshot.groups || [])]),
       harnesses: Object.freeze([...(snapshot.harnesses || [])]),

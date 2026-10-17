@@ -502,6 +502,7 @@ function applyDockOpen(open) {
 const DOCK_ACTION_SPECS = [
   { sel: '#group-create-open', dock: '#dock-actions-primary' },
   { sel: '.filter-bar-cog', dock: '#dock-actions-primary' },
+  { sel: '#queued-spawns-control', dock: '#dock-actions-primary' },
   { sel: '#dashboard-default-profile-control', dock: '#dock-actions-profile' },
   { sel: '#dashboard-default-sandbox-profile-control', dock: '#dock-actions-profile' },
 ];

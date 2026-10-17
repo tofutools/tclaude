@@ -1034,6 +1034,10 @@ type snapshotPayload struct {
 	// SavedPrompts is the saved-prompt library for the dock and the spawn
 	// dialog's prompt picker; same wire shape as /api/saved-prompts.
 	SavedPrompts []db.SavedPrompt `json:"saved_prompts"`
+	// QueuedSpawns are spawn-dialog drafts prepared but not launched yet, for
+	// the Groups toolbar's queue chip and the per-group queued rows. Same wire
+	// shape as /api/queued-spawns. Empty slice (not nil) so JS .map() is safe.
+	QueuedSpawns []queuedSpawnJSON `json:"queued_spawns"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -3827,6 +3831,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		defaultProfile   *db.SpawnProfile
 		roles            []roleJSON
 		savedPrompts     []db.SavedPrompt
+		queuedSpawns     []queuedSpawnJSON
 		messages         []dashboardHumanMessage
 		messagesUnread   int
 		plugins          []dashboardPlugin
@@ -3859,6 +3864,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				savedPrompts = []db.SavedPrompt{}
 			}
 		}},
+		snapshotNamedLoad{"queued_spawns", func() { queuedSpawns = collectQueuedSpawnsSnapshot() }},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
 	)
@@ -3923,6 +3929,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Roles = roles
 	out.SavedPrompts = savedPrompts
+	out.QueuedSpawns = queuedSpawns
 	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
 	// Only the actionable (pending) ones drive the blink/banner/badge — the

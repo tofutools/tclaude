@@ -533,6 +533,28 @@ const toolbarProfilePickerDescriptor = createIslandDescriptor({
   },
 });
 
+const queuedSpawnsDescriptor = createIslandDescriptor({
+  name: 'queued-spawns',
+  label: 'Queued spawns',
+  hosts: { host: '#queued-spawns-control' },
+  failureClass: 'queued-spawns-error',
+  load: async ({ hosts: { host } }) => {
+    const [{ mountQueuedSpawnsIsland }, { dashboardState }] = await Promise.all([
+      import('./queued-spawns-island.js'), import('./snapshot-store.js'),
+    ]);
+    return {
+      state: dashboardState,
+      mount: (registerCleanup) => mountQueuedSpawnsIsland({
+        host, snapshot: dashboardState.snapshot, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountQueuedSpawnsFeature(dependencies = {}) {
+  return mountIslandDescriptor(queuedSpawnsDescriptor, dependencies);
+}
+
 export function mountToolbarProfilePickerFeature(dependencies = {}) {
   return mountIslandDescriptor(toolbarProfilePickerDescriptor, dependencies);
 }

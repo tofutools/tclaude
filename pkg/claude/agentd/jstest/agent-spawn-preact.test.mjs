@@ -1927,3 +1927,104 @@ test('spawn saved prompts are chips sent as prompt_refs, separate from the typed
     await mounted.cleanup();
   }
 });
+
+function hotkey(harness, host, { shift = false } = {}) {
+  const modal = host.querySelector('#agent-spawn-modal .cron-create-modal');
+  const event = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.assign(event, { key: 'Enter', ctrlKey: true, shiftKey: shift });
+  modal.dispatchEvent(event);
+}
+
+function queueActions(log) {
+  return {
+    saveQueued: async (id, draft) => { log.push(['save', id, draft]); return { id: id || 7 }; },
+    deleteQueued: async (id) => { log.push(['delete', id]); },
+    queued: (draft, edited) => log.push(['queued', draft.name, edited]),
+    dequeued: (draft) => log.push(['dequeued', draft.name]),
+    confirmDiscardQueued: async () => true,
+    resolveWorktree: async () => { log.push(['worktree']); return { path: '', branch: '' }; },
+    uploadAttachments: async () => { log.push(['upload']); return []; },
+    spawn: async (request) => { log.push(['spawn', request.body.name]); return { conv_id: 'abcdef1234' }; },
+  };
+}
+
+test('Ctrl+Shift+Enter queues a fresh spawn without running any launch step', async (t) => {
+  const log = [];
+  const mounted = await mountSpawn(t, queueActions(log));
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+  await settleWorktrees(harness);
+  assert.equal(host.querySelector('#agent-spawn-queue').textContent.trim(), '⏸ Add to queue');
+  const name = host.querySelector('#agent-spawn-name');
+  setValue(name, 'later');
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  await harness.act(() => hotkey(harness, host, { shift: true }));
+  await flush(harness);
+  const saves = log.filter(([kind]) => kind === 'save');
+  assert.equal(saves.length, 1, JSON.stringify(log));
+  assert.equal(saves[0][1], 0, 'a fresh dialog creates a new queue row');
+  assert.equal(saves[0][2].name, 'later');
+  assert.equal(saves[0][2].group, 'alpha');
+  assert.deepEqual(log.filter(([kind]) => ['worktree', 'upload', 'spawn'].includes(kind)), [],
+    'queueing never creates worktrees, uploads, or spawns');
+  assert.equal(state.dialog.value, null);
+  mounted.cleanup();
+});
+
+test('a reopened queued spawn restores its draft, saves on Ctrl+Enter, and launches only from Spawn now', async (t) => {
+  const log = [];
+  const mounted = await mountSpawn(t, queueActions(log));
+  const { harness, host, state } = mounted;
+  const entry = {
+    id: 42, created_at: new Date().toISOString(),
+    draft: { group: 'beta', name: 'queued-worker', initialMessage: 'after the merge', profile: '' },
+  };
+  state.open({ queued: entry });
+  await flush(harness);
+  await settleWorktrees(harness);
+  assert.ok(host.querySelector('#agent-spawn-queued-banner'));
+  assert.equal(host.querySelector('#agent-spawn-name').value, 'queued-worker');
+  assert.equal(host.querySelector('#agent-spawn-submit').textContent.trim(), '▶ Spawn now');
+  assert.equal(host.querySelector('#agent-spawn-queue').textContent.trim(), 'Save');
+
+  await harness.act(() => hotkey(harness, host));
+  await flush(harness);
+  assert.equal(state.dialog.value, null, 'a save closes the dialog');
+  state.open({ queued: entry });
+  await flush(harness);
+  await settleWorktrees(harness);
+  await harness.act(() => hotkey(harness, host, { shift: true }));
+  await flush(harness);
+  const saves = log.filter(([kind]) => kind === 'save');
+  assert.equal(saves.length, 2, JSON.stringify(log));
+  assert.equal(saves[1][1], 42);
+  assert.equal(saves[0][1], 42, 'edit mode updates the existing row');
+  assert.equal(saves[0][2].group, 'beta');
+  assert.equal(log.filter(([kind]) => kind === 'spawn').length, 0, 'Ctrl+Enter in edit mode never spawns');
+
+  state.open({ queued: entry });
+  await flush(harness);
+  await settleWorktrees(harness);
+  log.length = 0;
+  host.querySelector('#agent-spawn-submit').click();
+  await flush(harness);
+  assert.deepEqual(log.map(([kind]) => kind).filter((kind) => kind !== 'upload'), ['worktree', 'spawn', 'delete']);
+  assert.equal(log.find(([kind]) => kind === 'delete')[1], 42);
+  assert.equal(state.dialog.value, null);
+  mounted.cleanup();
+});
+
+test('▶ on a queued spawn launches once its loads settle', async (t) => {
+  const log = [];
+  const mounted = await mountSpawn(t, queueActions(log));
+  const { harness, state } = mounted;
+  state.open({ queued: { id: 9, draft: { group: 'alpha', name: 'auto' } }, autoSpawn: true });
+  await flush(harness);
+  assert.equal(log.filter(([kind]) => kind === 'spawn').length, 0, 'waits for worktree metadata');
+  await settleWorktrees(harness);
+  await flush(harness);
+  assert.deepEqual(log.filter(([kind]) => kind === 'spawn'), [['spawn', 'auto']]);
+  assert.deepEqual(log.filter(([kind]) => kind === 'delete'), [['delete', 9]]);
+  mounted.cleanup();
+});
