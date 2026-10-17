@@ -159,6 +159,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/links",
 	"GET /api/federation/audit",
 	"POST /api/federation/config",
+	"POST /api/federation/join",
 	"GET /api/federation/enroll-tokens",
 	"POST /api/federation/enroll-tokens",
 	"POST /api/federation/enroll-tokens/{id}/revoke",

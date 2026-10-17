@@ -144,7 +144,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeHubAdmission: async (i) => { log.push(['revokeAdmission', i]); return { ok: true }; },
     setHubSpaces: async (i, sp) => { log.push(['spaces', i, sp]); return { ok: true }; },
     hubInvites: async () => [{ token_hash: 'abcdef0123456789', space: 'ops', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }],
-    createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
+    createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', join_code: 'tchj_CODE-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
     revokeHubInvite: async (hash) => { log.push(['revokeInvite', hash]); return { ok: true }; },
     hubAdmins: async () => [{ instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], added_at: '2026-10-01T00:00:00Z' }, { instance: 'inst_lab', name: 'lab', fingerprint: 'lab-fp', capabilities: ['hub.admissions.manage'] }],
     addHubAdmin: async (i, caps) => { log.push(['addAdmin', i, caps]); return { ok: true }; },
@@ -1523,6 +1523,8 @@ test('hub: admin sees health, admissions, invites, admins; admit checks ID and f
   assert.match(s.confirms.at(-1).body, /shown only once/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'invite'), ['invite', '', 86400]);
   assert.match(q('#fleet-hub-new-token').textContent, /hubinv-SECRET-1/);
+  assert.equal(q('#fleet-hub-join-code').textContent, 'tchj_CODE-1', 'the join code leads, for the node to paste');
+  assert.match(q('#fleet-hub-new-token').textContent, /Setup guide.*tclaude federation join/);
   assert.doesNotMatch(q('#fleet-hub-invites').textContent, /SECRET/, 'listings show only the hash');
   await s.click(q('#fleet-hub-invites [data-hub="revoke-invite"]'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeInvite'), ['revokeInvite', 'abcdef0123456789']);

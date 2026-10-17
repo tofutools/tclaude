@@ -103,6 +103,7 @@ func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/links", dashboardFederationRoute(handleFederationLinks))
 	mux.HandleFunc("GET /api/federation/audit", dashboardFederationRoute(handleFederationAudit))
 	mux.HandleFunc("POST /api/federation/config", dashboardFederationRoute(handleFederationConfig))
+	mux.HandleFunc("POST /api/federation/join", dashboardFederationRoute(handleFederationJoin))
 	mux.HandleFunc("GET /api/federation/enroll-tokens", dashboardFederationRoute(handleFederationEnrollmentTokens))
 	mux.HandleFunc("POST /api/federation/enroll-tokens", dashboardFederationRoute(handleFederationEnrollmentTokens))
 	mux.HandleFunc("POST /api/federation/enroll-tokens/{id}/revoke", dashboardFederationRoute(handleFederationEnrollmentTokens))

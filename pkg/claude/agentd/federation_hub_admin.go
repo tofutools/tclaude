@@ -132,6 +132,19 @@ func hubOperatorRoute(operation string) http.HandlerFunc {
 				status["hub_url"] = hubURL
 			}
 		}
+		// A new invite also comes as a join code holding this node's hub
+		// address and CA, for the admin to hand out as one string.
+		if operation == "invites.create" {
+			if created, ok := body.(map[string]any); ok {
+				token, _ := created["token"].(string)
+				space, _ := created["space"].(string)
+				raw, _ := created["expires_at"].(string)
+				expires, _ := time.Parse(time.RFC3339Nano, raw)
+				if code, err := hubJoinCode(token, space, expires.UTC().Truncate(time.Second)); err == nil && token != "" {
+					created["join_code"] = code
+				}
+			}
+		}
 		writeJSON(w, result.Status, body)
 	}
 }

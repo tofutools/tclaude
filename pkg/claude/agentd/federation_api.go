@@ -612,18 +612,26 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if req.AgentTransferMaxBytes != nil && (*req.AgentTransferMaxBytes < 0 || *req.AgentTransferMaxBytes > 1<<62-1) {
-		writeError(w, 400, "invalid_arg", "agent_transfer_max_bytes must be zero (default) or a positive byte limit below 2^62")
+	if err := applyFederationConfig(req); err != nil {
+		writeFedErr(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// applyFederationConfig validates and writes the federation config fields req
+// sets (an absent field keeps its value), then restarts the hub client. The
+// config route and joining with a join code share it.
+func applyFederationConfig(req fedConfigReq) error {
+	if req.AgentTransferMaxBytes != nil && (*req.AgentTransferMaxBytes < 0 || *req.AgentTransferMaxBytes > 1<<62-1) {
+		return newFedErr(400, "invalid_arg", "agent_transfer_max_bytes must be zero (default) or a positive byte limit below 2^62")
+	}
 	if req.AgentHistoryRecordMaxBytes != nil && *req.AgentHistoryRecordMaxBytes < 0 {
-		writeError(w, 400, "invalid_arg", "agent_history_record_max_bytes must be zero (default) or a positive byte limit")
-		return
+		return newFedErr(400, "invalid_arg", "agent_history_record_max_bytes must be zero (default) or a positive byte limit")
 	}
 	if req.HubURL != nil && *req.HubURL != "" {
 		if _, err := client.ValidateURL(*req.HubURL); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
+			return newFedErr(http.StatusBadRequest, "invalid_arg", "%s", err.Error())
 		}
 	}
 	_, err := config.Update(func(cfg *config.Config, loadErr error) error {
@@ -661,14 +669,12 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeFedErr(w, err)
-		return
+		return err
 	}
 	if err := reloadFederation(); err != nil {
-		writeError(w, http.StatusBadRequest, "federation", err.Error())
-		return
+		return newFedErr(http.StatusBadRequest, "federation", "%s", err.Error())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
 }
 
 type fedTrustReq struct {
@@ -1286,6 +1292,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/deny", handleFederationSpawnRequestDeny)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/abandon", handleFederationSpawnRequestAbandon)
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
+	mux.HandleFunc("POST /v1/federation/join", handleFederationJoin)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
 	mux.HandleFunc("/v1/federation/identity/rotate", handleFederationIdentityRotate)
