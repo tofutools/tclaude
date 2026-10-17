@@ -17705,6 +17705,12 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
 .dock-search-empty { padding: 4px 6px 10px; }
 .dock-section-tools { display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto; }
 .dock-section-tools .dock-card-menu { font-weight: 400; }
+/* Every heading is sticky at the same level, so a later one would paint over
+   an earlier heading's open ⋯ menu; lift the heading that owns the open menu. */
+.dock-section-head:has(.dock-card-menu.open) { z-index: 3; }
+/* Processes keeps the .pwf importer mounted for its review dialog; the ⋯
+   menu's Import… drives it, so its own button stays hidden. */
+.dock-process-import-hidden { display: none; }
 .dock-section.is-drop-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; border-radius: 6px; }
 .dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
 .dock-card-pin { font-size: 10px; margin-right: 3px; }
@@ -21124,8 +21130,6 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 .dock-process-toggle button { font: inherit; font-size: 10.5px; background: none; border: 0; color: #7d8590; padding: 1px 8px; cursor: pointer; }
 .dock-process-toggle button.on { background: #1f2a37; color: #d4d4d4; }
 .dock-process-tools .dpp-spacer { flex: 1; }
-.dock-process-import, .dock-process-new { font: inherit; font-size: 11px; background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #c9d1d9; padding: 1px 7px; cursor: pointer; }
-.dock-process-import:hover, .dock-process-new:hover { border-color: #58a6ff; }
 .dock-processes .pwf-inline-error { display: block; font-size: 11px; margin-top: 4px; }
 .dock-process-open { cursor: pointer; text-align: left; }
 .dock-process-open:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }
