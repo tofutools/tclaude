@@ -699,6 +699,7 @@ export function GroupsProcessesFocus({
       ${status === 'ready'
         ? html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`
         : html`<div class="gp-tree">${children}</div>`}
+      ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}
     </div>`;
   }
   return html`<div class="gp-focus" data-groups-processes>
