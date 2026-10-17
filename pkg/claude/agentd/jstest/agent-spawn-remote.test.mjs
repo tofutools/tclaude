@@ -65,9 +65,12 @@ test('remote spawn allowances, lock reasons and request mapping', async (t) => {
   assert.deepEqual(mod.remoteSpawnBody(listed, [], wide), { brief: 'go' }, 'pre-filled roles stay the peer\'s');
   assert.deepEqual(mod.remoteSpawnBody(listed, ['roleRefs', 'sandboxProfile'], granted), { brief: 'go' }, 'not without the grants');
   assert.deepEqual(mod.remoteSpawnBody({ body: { initial_message: 'go', sandbox_profile: '/omit-all-tclaude-sandbox-profiles' } }, ['sandboxProfile'], wide), { brief: 'go' });
-  assert.equal(mod.remoteFieldAllowed('roles', wide), true);
-  assert.equal(mod.remoteFieldAllowed('roles', granted), false);
+  assert.equal(mod.remoteFieldAllowed('roles', wide, { target: {} }), true);
+  assert.equal(mod.remoteFieldAllowed('roles', wide), false, 'the roles to pick come from the peer\'s catalogs');
+  assert.match(mod.remoteLockReason('roles', { node: 'forge', options: wide }), /does not share its list/);
+  assert.equal(mod.remoteFieldAllowed('roles', granted, { target: {} }), false);
   assert.match(mod.remoteLockReason('roles', { node: 'forge', options: granted }), /groups\.members\.spawn\.roles/);
+  assert.throws(() => mod.remoteSpawnBody({ body: { initial_message: 'go', role_refs: [] } }, ['roleRefs'], wide), /cannot remove every role/);
 });
 
 test('the spawn dialog opened on a peer keeps every control and disables what the peer decides', async (t) => {

@@ -10,7 +10,9 @@ import (
 // migrateV269toV270 turns a groups.members.spawn grant's allowed_overrides
 // list (the launch settings a peer may choose on a remote spawn) into
 // grants of their own: groups.members.spawn.cwd, .harness, .model and
-// .effort, with the spawn grant's scope and expiry, on a peer or a pool. The
+// .effort, with the spawn grant's scope, on a peer or a pool. They take no
+// expiry: a field grant counts only beside a spawn grant that is in force,
+// so the spawn grant's own expiry (and its renewals) still bound them. The
 // list is dropped from the stored policy.
 func migrateV269toV270(d *sql.DB) error {
 	tx, err := d.Begin()
@@ -70,8 +72,8 @@ func migrateV269toV270(d *sql.DB) error {
 	}
 	for _, r := range peers {
 		for _, f := range r.fields {
-			if _, err := tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at,expires_at) VALUES(?,?,?,'{}',?,?) ON CONFLICT(peer,slug,scope) DO NOTHING`,
-				r.owner, "groups.members.spawn."+f, r.scope, r.createdAt, r.expiresAt); err != nil {
+			if _, err := tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,?,?,'{}',?) ON CONFLICT(peer,slug,scope) DO NOTHING`,
+				r.owner, "groups.members.spawn."+f, r.scope, r.createdAt); err != nil {
 				return fmt.Errorf("migrate v269→v270 (peer field grant): %w", err)
 			}
 		}

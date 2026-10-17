@@ -14,6 +14,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
+// UnmarshalJSON expands a stored definition's replaced allowed_overrides
+// lists into their field grants, so a profile saved before them still
+// applies what it meant.
+func (s *FederationNodeProfileSpec) UnmarshalJSON(b []byte) error {
+	type plain FederationNodeProfileSpec
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	v.PeerGrants = ExpandLegacySpawnOverrides(v.PeerGrants)
+	*s = FederationNodeProfileSpec(v)
+	return nil
+}
+
 type FederationNodeProfileSpec struct {
 	RequesterPays     string                        `json:"requester_pays,omitempty"`
 	TeleportLanding   *FederationTeleportLanding    `json:"teleport_landing,omitempty"`

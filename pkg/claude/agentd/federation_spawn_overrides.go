@@ -72,10 +72,25 @@ var (
 const fedSpawnMaxRoles = 16
 
 // fedSpawnFieldGranted reports whether peer holds the grant for one field
-// in group, or the all-fields grant. Unrestricted trust is the caller's.
+// in group, or the all-fields grant, at least as specific as the spawn grant
+// in force there: a group-scoped spawn grant narrows what a broader field
+// grant opens, as its own policy narrows a broader spawn grant's.
+// Unrestricted trust is the caller's.
 func fedSpawnFieldGranted(peer string, groupID int64, field string) bool {
 	slug, ok := fedSpawnFieldSlugs[field]
-	return ok && (fedPeerExplicitGroupGrant(peer, groupID, slug) != nil || fedPeerExplicitGroupGrant(peer, groupID, PermGroupsMembersSpawnAll) != nil)
+	if !ok {
+		return false
+	}
+	spawn := fedPeerExplicitGroupGrant(peer, groupID, PermGroupsMembersSpawn)
+	if spawn == nil {
+		return false
+	}
+	for _, s := range []string{slug, PermGroupsMembersSpawnAll} {
+		if g := fedPeerExplicitGroupGrant(peer, groupID, s); g != nil && fedGrantRank(*g) >= fedGrantRank(*spawn) {
+			return true
+		}
+	}
+	return false
 }
 
 // fedSpawnOverridesAllowed reports which launch settings peer may choose for

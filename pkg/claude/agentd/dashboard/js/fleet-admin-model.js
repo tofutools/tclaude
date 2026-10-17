@@ -139,7 +139,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.spawn.harness', kind: 'group', what: 'choose the harness of a spawn (with groups.members.spawn)' },
   { slug: 'groups.members.spawn.model', kind: 'group', what: 'choose the model of a spawn (with groups.members.spawn)' },
   { slug: 'groups.members.spawn.effort', kind: 'group', what: 'choose the effort of a spawn (with groups.members.spawn)' },
-  { slug: 'groups.members.spawn.profile', kind: 'group', what: 'pick any enabled, non-operator-only spawn profile (with groups.members.spawn)' },
+  { slug: 'groups.members.spawn.profile', kind: 'group', sensitive: true, what: 'pick any enabled, non-operator-only spawn profile (with groups.members.spawn)', warning: 'A profile brings its own roles, sandbox and approval modes, environment and gateway: picking one can open what .roles or .sandbox would. Mark a profile operator-only to keep it out.' },
   { slug: 'groups.members.spawn.roles', kind: 'group', sensitive: true, what: 'choose the roles of a spawn from yours (with groups.members.spawn)', warning: 'Roles carry permissions on this node.' },
   { slug: 'groups.members.spawn.sandbox', kind: 'group', sensitive: true, what: 'add one of your sandbox profiles to a spawn (with groups.members.spawn)', warning: 'A sandbox profile can widen what the worker may reach.' },
   { slug: 'groups.members.spawn.all', kind: 'group', sensitive: true, what: 'every groups.members.spawn.* launch setting: directory, harness, model, effort, profile, roles, sandbox profile (with groups.members.spawn)', warning: 'Includes the directory, roles and sandbox profile.' },

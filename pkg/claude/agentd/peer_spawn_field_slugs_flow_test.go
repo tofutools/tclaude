@@ -90,3 +90,50 @@ func TestPeerSpawnAllAndProfileGrants(t *testing.T) {
 	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawnAll})
 	require.Equal(t, 200, rec.Code, "an unscoped field grant covers every group: %s", rec.Body.String())
 }
+
+// A group-scoped spawn grant narrows what a broader field grant opens, as
+// its own policy narrows a broader spawn grant's; a field grant alone shows
+// the peer nothing; and revoking a spawn grant takes its field grants along.
+func TestPeerSpawnFieldGrantsFollowTheSpawnGrant(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("open")
+	f.HaveGroup("secrets")
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+	grant := func(method, slug, scope string) {
+		t.Helper()
+		body := map[string]any{"peer": "bob", "slug": slug}
+		if scope != "" {
+			body["scope"] = scope
+		}
+		rec := fedHuman(t, f, method, "/v1/federation/grants", body)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+
+	grant("POST", agentd.PermGroupsMembersSpawnAll, "")
+	code, _ := peerSpawnOptions(t, bob.ID(), "open")
+	require.Equal(t, 404, code, "a field grant alone makes no group visible")
+
+	grant("POST", agentd.PermGroupsMembersSpawn, "")
+	grant("POST", agentd.PermGroupsMembersSpawn, "group=secrets")
+	code, opts := peerSpawnOptions(t, bob.ID(), "open")
+	require.Equal(t, 200, code)
+	require.True(t, opts.Overrides["cwd"])
+	code, opts = peerSpawnOptions(t, bob.ID(), "secrets")
+	require.Equal(t, 200, code)
+	require.False(t, opts.Overrides["cwd"], "the group's own spawn grant opens no field; the unscoped field grant does not reach past it")
+	grant("POST", agentd.PermGroupsMembersSpawnCwd, "group=secrets")
+	_, opts = peerSpawnOptions(t, bob.ID(), "secrets")
+	require.True(t, opts.Overrides["cwd"])
+	require.False(t, opts.Overrides["model"])
+
+	grant("DELETE", agentd.PermGroupsMembersSpawn, "group=secrets")
+	grants, err := db.ListEffectiveFederationPeerGrants(bob.ID())
+	require.NoError(t, err)
+	for _, g := range grants {
+		require.NotEqual(t, agentd.PermGroupsMembersSpawnCwd, g.Slug, "revoking the spawn grant revokes its field grants")
+	}
+	_, opts = peerSpawnOptions(t, bob.ID(), "secrets")
+	require.True(t, opts.Overrides["cwd"], "the unscoped grants apply again")
+}

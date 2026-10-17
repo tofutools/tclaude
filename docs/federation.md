@@ -659,8 +659,18 @@ tclaude federation grant alice groups.members.spawn.all --scope group=builders
   replace the profile and group roles, and must be roles on this node; a
   requested sandbox profile must exist here and adds an explicit tier (it
   cannot omit your global and group tiers).
+- A field grant extends the spawn grant in force for the group and counts
+  only when it is at least as specific (a group scope above an unscoped
+  grant, a direct grant above a pool's): a group-scoped spawn grant without
+  field grants of its own narrows broader ones, as its policy narrows a
+  broader spawn grant's. On its own a field grant shows the peer nothing, and
+  revoking a spawn grant revokes the field grants with its scope.
+- `groups.members.spawn.profile` lets the peer pick profiles that bring
+  their own roles, sandbox and approval modes and environment; mark a profile
+  operator-only to keep it out.
 - These grants replace the earlier `allowed_overrides` list on the spawn grant
-  (`--allow-override`); upgrading turns a stored list into the matching grants.
+  (`--allow-override`); upgrading turns a stored list, and one in a saved node
+  profile, into the matching grants.
 - Without a spawn grant the request waits for your approval and carries none;
   `tclaude federation requests approve ID --cwd … --harness … --model … --effort …`
   decides them. A request that failed its automatic launch and returned to you
@@ -725,7 +735,9 @@ node's (never a third node's), and a "Show from" filter narrows both pickers:
   locked. Any other prompt, the peer's or this node's, is written into the
   brief ahead of the initial message, within the 8 KiB remote brief limit.
 - Roles and sandbox profiles are the peer's; choosing them needs
-  `groups.members.spawn.roles` and `.sandbox`. Other controls (permissions,
+  `groups.members.spawn.roles` and `.sandbox`, plus `node.spawn.read` for
+  the lists to choose from. A remote spawn cannot remove every role (the
+  peer would apply its profile and group roles instead). Other controls (permissions,
   environment, ownership, worktree, …) are the peer's to apply.
 
 The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:

@@ -7,7 +7,8 @@ import (
 )
 
 // A spawn grant's allowed_overrides list becomes a grant per field, with the
-// spawn grant's scope and expiry, on peers and pools; the list is dropped.
+// spawn grant's scope (no expiry of their own), on peers and pools; the list
+// is dropped.
 func TestMigrateV270SpawnFieldGrants(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -33,8 +34,8 @@ func TestMigrateV270SpawnFieldGrants(t *testing.T) {
 	require.Equal(t, [][4]any{
 		{"groups.members.spawn", "group=1", `{"max_live":2}`, int64(99)},
 		{"groups.members.spawn", "group=2", `{"max_live":3}`, int64(0)},
-		{"groups.members.spawn.effort", "group=1", "{}", int64(99)},
-		{"groups.members.spawn.model", "group=1", "{}", int64(99)},
+		{"groups.members.spawn.effort", "group=1", "{}", int64(0)},
+		{"groups.members.spawn.model", "group=1", "{}", int64(0)},
 	}, got)
 	var pool string
 	require.NoError(t, d.QueryRow(`SELECT spawn_policy FROM federation_node_group_grants WHERE group_id='pool1' AND slug='groups.members.spawn'`).Scan(&pool))
