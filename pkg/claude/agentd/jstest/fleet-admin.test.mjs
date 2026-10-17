@@ -129,6 +129,16 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     createProfile: async (o) => { log.push(['createProfile', o]); return { id: 'prof_new', name: o.name, revision: 1, definition: o.definition }; },
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
+    joinPreview: async (code) => {
+      log.push(['joinPreview', code]);
+      if (code.includes('BAD')) { const e = new Error('invalid join code: it is cut short or altered'); e.code = 'invalid_join_code'; throw e; }
+      return {
+        hub_url: 'wss://hub.home:8470', space: 'home', invite: true, expires_at: '2026-10-18T12:00:00Z', expired: code.includes('OLD'),
+        ca: [{ subject: 'hub.home', sha256: 'AB:CD:EF', not_after: '2027-01-01T00:00:00Z', self_signed: true }],
+        current: code.includes('MOVE') ? { hub_url: 'wss://hub.example', enabled: true, name: 'desk' } : { enabled: false, name: 'desk' },
+      };
+    },
+    join: async (code, name) => { log.push(['join', code, name]); return { joined: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
     hubStatus: async () => {
       if (s_hubGenFails > 0) { s_hubGenFails -= 1; const e = new Error('admin generation changed; retry explicitly'); e.code = 'admin_generation'; e.status = 409; throw e; }
@@ -144,7 +154,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeHubAdmission: async (i) => { log.push(['revokeAdmission', i]); return { ok: true }; },
     setHubSpaces: async (i, sp) => { log.push(['spaces', i, sp]); return { ok: true }; },
     hubInvites: async () => [{ token_hash: 'abcdef0123456789', space: 'ops', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }],
-    createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
+    createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', join_code: 'tchj_CODE-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
     revokeHubInvite: async (hash) => { log.push(['revokeInvite', hash]); return { ok: true }; },
     hubAdmins: async () => [{ instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], added_at: '2026-10-01T00:00:00Z' }, { instance: 'inst_lab', name: 'lab', fingerprint: 'lab-fp', capabilities: ['hub.admissions.manage'] }],
     addHubAdmin: async (i, caps) => { log.push(['addAdmin', i, caps]); return { ok: true }; },
@@ -1523,6 +1533,8 @@ test('hub: admin sees health, admissions, invites, admins; admit checks ID and f
   assert.match(s.confirms.at(-1).body, /shown only once/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'invite'), ['invite', '', 86400]);
   assert.match(q('#fleet-hub-new-token').textContent, /hubinv-SECRET-1/);
+  assert.equal(q('#fleet-hub-join-code').textContent, 'tchj_CODE-1', 'the join code leads, for the node to paste');
+  assert.match(q('#fleet-hub-new-token').textContent, /Setup guide.*tclaude federation join/);
   assert.doesNotMatch(q('#fleet-hub-invites').textContent, /SECRET/, 'listings show only the hash');
   await s.click(q('#fleet-hub-invites [data-hub="revoke-invite"]'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeInvite'), ['revokeInvite', 'abcdef0123456789']);
@@ -2204,6 +2216,57 @@ test('a node never set up opens Fleet on the setup guide and joins a hub from it
   assert.match(s.confirms.at(-1).body, /single-use/);
   assert.deepEqual(s.log.find((l) => l[0] === 'hubConfig'), ['hubConfig', { hub_url: 'wss://hub.home:8470', invite: 'tchi_abc', enabled: true }]);
   assert.match(s.toasts.at(-1), /connecting/);
+});
+
+// The preview is debounced; give it its timer and the daemon's answer.
+const settle = (s) => s.harness.act(() => new Promise((r) => setTimeout(r, 200)));
+
+test('a pasted join code previews what the daemon would apply and joins in one confirmation', async (t) => {
+  const s = await setup(t, { statusFn: freshStatus });
+  await s.show();
+  assert.equal(s.q('#fleet-setup-code-join'), null, 'no join-code button before a code');
+  await typeInto(s, s.q('#fleet-setup-code'), 'tchj_BAD');
+  await settle(s);
+  assert.match(s.q('#fleet-setup-code-preview').textContent, /cut short or altered/);
+  assert.equal(s.q('#fleet-setup-code-join').disabled, true, 'a code the daemon refuses cannot be joined');
+  await typeInto(s, s.q('#fleet-setup-code'), 'tchj_OLD');
+  await settle(s);
+  assert.match(s.q('#fleet-setup-code-preview').textContent, /expired/);
+  assert.equal(s.q('#fleet-setup-code-join').disabled, true, 'an expired code cannot be joined');
+
+  await typeInto(s, s.q('#fleet-setup-code'), 'tchj_GOOD\nWRAPPED');
+  await typeInto(s, s.q('#fleet-setup-name'), 'laptop');
+  await settle(s);
+  const card = s.q('#fleet-setup-code-preview').textContent;
+  assert.match(card, /wss:\/\/hub\.home:8470.*home.*single-use.*self-signed hub\.home.*AB:CD:EF/);
+  assert.doesNotMatch(card, /Replaces/, 'a node with no hub replaces nothing');
+  assert.equal(s.q('#fleet-setup-join').className, '', 'the code, not the manual form, is the primary action');
+  await s.click(s.q('#fleet-setup-code-join'));
+  assert.equal(s.confirms.at(-1).title, 'Join the hub at wss://hub.home:8470?');
+  assert.match(s.confirms.at(-1).body, /as laptop, in space home.*single-use.*SHA-256 AB:CD:EF/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'join'), ['join', 'tchj_GOOD\nWRAPPED', 'laptop'], 'the daemon gets the code as pasted');
+  assert.equal(s.log.some((l) => l[0] === 'hubConfig'), false, 'a join code is one route, not a config write from the page');
+  assert.match(s.toasts.at(-1), /Joined/);
+});
+
+test('a bare invite pasted as a join code moves to the invite field', async (t) => {
+  const s = await setup(t, { statusFn: freshStatus });
+  await s.show();
+  await typeInto(s, s.q('#fleet-setup-code'), ' tchi_abc ');
+  assert.equal(s.q('#fleet-setup-code').value, '');
+  assert.equal(s.q('#fleet-setup-invite').getAttribute('value') ?? s.q('#fleet-setup-invite').value, 'tchi_abc');
+  assert.match(s.toasts.at(-1), /bare invite.*hub address/);
+});
+
+test('a refused node can rejoin with a new join code, which names the hub it replaces', async (t) => {
+  const s = await setup(t, { statusFn: () => ({ ...joinedStatus(), hub: { state: 'refused', last_error: 'invite already used' } }) });
+  await s.show();
+  await typeInto(s, s.q('#fleet-setup-reinvite'), 'tchj_MOVE');
+  await settle(s);
+  assert.match(s.q('#fleet-setup-code-preview').textContent, /Replaces.*wss:\/\/hub\.example.*connected now/);
+  await s.click([...s.mounted.container.querySelectorAll('.fs-actions button')].find((b) => /Join with this code/.test(b.textContent)));
+  assert.match(s.confirms.at(-1).body, /replaces the connection to wss:\/\/hub\.example, which drops now/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'join'), ['join', 'tchj_MOVE', '']);
 });
 
 test('a refused join explains why and retries with a new invite', async (t) => {

@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -130,6 +131,21 @@ func hubOperatorRoute(operation string) http.HandlerFunc {
 		if operation == "status" {
 			if status, ok := body.(map[string]any); ok {
 				status["hub_url"] = hubURL
+			}
+		}
+		// A new invite also comes as a join code holding this node's hub
+		// address and CA, for the admin to hand out as one string.
+		if operation == "invites.create" {
+			if created, ok := body.(map[string]any); ok {
+				token, _ := created["token"].(string)
+				space, _ := created["space"].(string)
+				raw, _ := created["expires_at"].(string)
+				expires, _ := time.Parse(time.RFC3339Nano, raw)
+				if code, err := hubJoinCode(token, space, expires.UTC().Truncate(time.Second)); err == nil && token != "" {
+					created["join_code"] = code
+				} else if errors.Is(err, errLoopbackHub) {
+					created["join_code_note"] = err.Error()
+				}
 			}
 		}
 		writeJSON(w, result.Status, body)

@@ -2270,3 +2270,8 @@ func SetProcessProgramLayerWrapForTest(fn func(cwd string, snapshot *sandboxpoli
 	processProgramLayerWrap = fn
 	return func() { processProgramLayerWrap = previous }
 }
+
+// JoinCodeForTest builds a join code as an admin node's invites.create does.
+func JoinCodeForTest(hubURL, caFile, invite, space string, expires time.Time) (string, error) {
+	return joinCodeFor(hubURL, caFile, invite, space, expires)
+}

@@ -12,7 +12,7 @@ You need three things:
 
 Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet →
 Setup guide** (the ⚙ Fleet chip at the right of the tab bar) joins the hub
-with the address and invite, trusts the other machine after you compare
+from a pasted join code (or the address and invite), trusts the other machine after you compare
 fingerprints, and shares a group. It shows the CLI command for every step,
 and step 4 of the guide lists what each peer shares and the agent grants
 that use it. The hub itself (steps 1 to 4) is set up on the command line.
@@ -67,20 +67,42 @@ keep it running, use the systemd unit in
 
 The hub admits nobody by default. Create one single-use invite per machine.
 Instances only see each other when they share a **space**, so put both in
-the same one:
+the same one. With `--url` (and `--ca-file` for a self-signed certificate)
+the hub prints a **join code** instead: one `tchj_…` string holding the hub
+address, the invite and the certificate to trust, so a machine needs nothing
+else to join:
 
 ```bash
-tclaude-hub invite --space home --ttl 24h   # prints tchi_…, once per machine
+tclaude-hub invite --space home --ttl 24h --url wss://myhub.example:8470 --ca-file hub.crt   # tchj_…, once per machine
+tclaude-hub invite --space home --ttl 24h   # or just the invite, tchi_…
 tclaude-hub ls                              # later: who is admitted, last seen
 ```
 
+A join code carries a bearer invite and decides which certificate the
+machine trusts for its hub: send it like a password, and only accept one from
+your hub admin. Once a node is a hub admin, its dashboard (**⚙ Fleet → Hub →
+Invites**) and `tclaude federation hub invites create` mint invites as join
+codes too, using the hub address and CA file that node connects with.
+
 ## 5. Connect each machine
 
-On each machine, with its own invite token:
+On each machine, with its own join code:
+
+```bash
+tclaude federation join --code-stdin --name laptop   # paste the tchj_… code, then Ctrl-D
+tclaude federation status
+```
+
+`join` first prints what the code holds (hub, space, invite expiry and the
+SHA-256 of any certificate it trusts; compare that with the hub admin), then
+stores the certificate under `~/.tclaude/data/federation/hub-ca/` and
+connects. `--preview` only prints. The code can also be the argument or come
+from `--code-file`. In the dashboard, paste it into **⚙ Fleet → Setup guide**.
+
+Or with a bare invite token:
 
 ```bash
 tclaude federation connect wss://myhub.example:8470 --invite tchi_… --name laptop --ca-file hub.crt
-tclaude federation status
 ```
 
 `--ca-file` is only needed for a self-signed certificate: copy `hub.crt` to

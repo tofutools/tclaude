@@ -4,6 +4,7 @@ package hubcmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/hubupdate"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const long = `tclaude-hub relays messages between federated tclaude agentd instances.
@@ -299,28 +301,76 @@ func spacesCmd() *cobra.Command {
 
 type inviteParams struct {
 	DBParam
-	Space string        `long:"space" default:"default" help:"Space the invitee joins"`
-	TTL   time.Duration `long:"ttl" default:"24h" help:"Invite validity"`
+	Space  string        `long:"space" default:"default" help:"Space the invitee joins"`
+	TTL    time.Duration `long:"ttl" default:"24h" help:"Invite validity"`
+	URL    string        `long:"url" optional:"true" help:"Hub address nodes dial (wss://host[:port]); prints a join code bundling it with the invite instead of the bare invite"`
+	CAFile string        `long:"ca-file" optional:"true" help:"With --url: PEM certificate(s) nodes should trust for the hub (for a private or self-signed certificate, e.g. the --tls-cert file)"`
 }
 
 func inviteCmd() *cobra.Command {
 	return boa.CmdT[inviteParams]{
-		Use:         "invite",
-		Short:       "Mint a single-use invite token",
+		Use:   "invite",
+		Short: "Mint a single-use invite token, or a join code with --url",
+		Long: `Mint a single-use invite token and print it once.
+
+With --url, print a join code instead: one string holding the hub address, the
+invite and (with --ca-file) the certificate to trust for the hub. A node joins
+by pasting it in its dashboard (⚙ Fleet → Setup guide) or with
+"tclaude federation join". Like the invite, it is a secret: deliver it
+privately.`,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inviteParams, _ *cobra.Command, _ []string) {
-			st, err := p.open()
-			if err != nil {
+			if err := runInvite(p, os.Stdout, os.Stderr); err != nil {
 				fail(err)
 			}
-			defer func() { _ = st.Close() }()
-			tok, err := st.CreateInvite(p.Space, p.TTL)
-			if err != nil {
-				fail(err)
-			}
-			fmt.Println(tok)
 		},
 	}.ToCobra()
+}
+
+// runInvite mints the invite and prints it, or the join code holding it.
+// The address and CA are checked before the invite exists, so a typo never
+// leaves an unused invite behind.
+func runInvite(p *inviteParams, stdout, stderr io.Writer) error {
+	if p.CAFile != "" && p.URL == "" {
+		return fmt.Errorf("--ca-file goes into a join code: also pass --url")
+	}
+	var ca string
+	if p.CAFile != "" {
+		raw, err := os.ReadFile(p.CAFile)
+		if err != nil {
+			return err
+		}
+		ca = string(raw)
+	}
+	if p.URL != "" {
+		if _, err := proto.EncodeJoinCode(proto.JoinCode{Hub: p.URL, CA: ca}); err != nil {
+			return err
+		}
+	}
+	st, err := p.open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	tok, err := st.CreateInvite(p.Space, p.TTL)
+	if err != nil {
+		return err
+	}
+	if p.URL == "" {
+		_, _ = fmt.Fprintln(stdout, tok)
+		return nil
+	}
+	space := p.Space
+	if space == "" {
+		space = hub.DefaultSpace
+	}
+	code, err := proto.EncodeJoinCode(proto.JoinCode{Hub: p.URL, Invite: tok, Space: space, Expires: time.Now().Add(p.TTL).UTC().Truncate(time.Second), CA: ca})
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stderr, "Join code for space %s, single use, expires in %s. Paste it in the node's dashboard (⚙ Fleet → Setup guide) or run: tclaude federation join --code-stdin\n", space, p.TTL)
+	_, _ = fmt.Fprintln(stdout, code)
+	return nil
 }
 
 func lsCmd() *cobra.Command {

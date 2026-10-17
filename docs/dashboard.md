@@ -1053,11 +1053,15 @@ first and says what will happen. Most pages name their CLI.
   trusts a peer and shares a group with it (the tab counts the steps done);
   afterwards it is one tab away, for linking more nodes. Each step shows its
   state, does the step in place and names its CLI:
-    1. **Join a hub**: the hub address, the single-use invite from the hub
-       admin and this node's name (a self-signed hub's CA file folds away),
-       with this node's instance ID and fingerprint to send an admin who
-       admits nodes directly. A refused or unreachable hub is explained, and a
-       refusal takes a new invite in place.
+    1. **Join a hub**: paste the join code from the hub admin; the guide
+       shows what the daemon read from it (hub, space, invite expiry, the
+       SHA-256 of a certificate it trusts, and the hub it replaces) before
+       one Join confirmation. A hub address and a bare invite work too (a
+       pasted `tchi_` invite moves to the invite field; a self-signed hub's
+       CA file folds away), and this node's instance ID and fingerprint are
+       there for an admin who admits nodes directly. A refused or
+       unreachable hub is explained, and a refusal takes a new invite or
+       join code in place.
     2. **Trust your peers**: the nodes waiting in your spaces with their full
        fingerprints, and the same Trust… dialog as Peers; your own fingerprint
        to read to the other operator.
