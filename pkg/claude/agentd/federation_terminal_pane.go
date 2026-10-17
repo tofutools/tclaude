@@ -273,7 +273,9 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	return flush()
 }
 
-// fedSendKeysBatch bounds how many keys one tmux exec carries.
+// fedSendKeysBatch bounds how many keys one tmux exec carries. tmux refuses a
+// client command over ~16KB; with input frames capped at 1KB (see
+// servePaneTerminal) a full batch stays near 3KB. Raise that cap with care.
 const fedSendKeysBatch = 64
 
 // fedPaneMouse is the pane state that decides where a viewer's mouse event
