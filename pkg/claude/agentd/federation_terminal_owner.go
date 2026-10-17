@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,13 +20,17 @@ import (
 // window size, so the pane fits the viewer instead of keeping whatever size a
 // detached session last had. With others attached it opens pinned to their
 // size, is told who they are, and may reopen with TakeOver to disconnect them.
+//
+// Ownership is decided once, at open: a pinned view is not promoted when the
+// others later leave (reopening it claims the size).
 
 // fedTerminalTakenOver closes a viewer displaced by another viewer, remote or
 // a terminal on this node.
 const fedTerminalTakenOver = "taken_over"
 
-// fedSizeClaimMu serialises size claims so two viewers opening at once cannot
-// both find the session empty and both own it.
+// fedSizeClaimMu serialises the count-and-mark step of size claims, so two
+// viewers opening at once cannot both find the session empty and both own it.
+// It covers only that step: displacement and its tmux commands run unlocked.
 var fedSizeClaimMu sync.Mutex
 
 // fedRenderers counts live federation renderer clients per tmux session (see
@@ -96,7 +101,7 @@ func (rt *fedRuntime) fedWindowViewers(pin *fedPanePin, self *fedTerminalView) [
 		v.mu.Lock()
 		other, stopped := v.pin, v.stopped
 		v.mu.Unlock()
-		if !stopped && other != nil && other.window == pin.window && other.serverSession == pin.serverSession {
+		if !stopped && other != nil && v.ctx.Err() == nil && other.window == pin.window && other.serverSession == pin.serverSession {
 			out = append(out, v)
 		}
 	}
@@ -137,40 +142,38 @@ func sanitizeFedOthers(in []string) []string {
 	return out
 }
 
-// claimFedSessionSize decides whether v owns its session's window size,
-// disconnecting the other clients first when takeOver asks for it. A failed
+// planFedSessionSize decides, without disconnecting anyone, whether v will own
+// its session's window size. Alone it owns it. With others attached it owns it
+// only when takeOver asks for it, and then reports true: the caller displaces
+// them (displaceFedClients) once the open can no longer fail on this side.
+// Otherwise v stays pinned and v.others says what else is attached. A failed
 // client listing leaves v pinned and reports nothing.
-func (rt *fedRuntime) claimFedSessionSize(pin *fedPanePin, v *fedTerminalView, takeOver bool) {
+func (rt *fedRuntime) planFedSessionSize(pin *fedPanePin, v *fedTerminalView, takeOver bool) (displace bool) {
 	fedSizeClaimMu.Lock()
 	defer fedSizeClaimMu.Unlock()
 	locals, err := fedLocalClients(pin.tmux)
 	if err != nil {
-		return
+		return false
 	}
 	viewers := rt.fedWindowViewers(pin, v)
-	if takeOver && len(locals)+len(viewers) > 0 {
-		// A displaced local web terminal tears down asynchronously, detaching
-		// its session's clients; count this viewer as a renderer from now on,
-		// so that teardown cannot drop the renderer it is about to attach.
-		fedRendererAdd(pin.tmux, 1)
-		v.addCleanup(func() { fedRendererAdd(pin.tmux, -1) })
-		rt.displaceFedClients(v, locals, viewers)
-		if locals, err = fedLocalClients(pin.tmux); err != nil {
-			return
-		}
-		viewers = rt.fedWindowViewers(pin, v)
-	}
+	alone := len(locals)+len(viewers) == 0
 	v.mu.Lock()
-	v.owner = len(locals)+len(viewers) == 0
-	v.others = fedOthersLabels(len(locals), len(viewers))
-	v.mu.Unlock()
+	defer v.mu.Unlock()
+	v.owner = alone || takeOver
+	if !v.owner {
+		v.others = fedOthersLabels(len(locals), len(viewers))
+	}
+	return !alone && takeOver
 }
 
-// displaceFedClients closes the other viewers (each told it was taken over)
-// and detaches the local clients, then waits, bounded, for the viewers to
-// release their renderers and indicator entries.
-func (rt *fedRuntime) displaceFedClients(self *fedTerminalView, locals []string, viewers []*fedTerminalView) {
-	for _, v := range viewers {
+// displaceFedClients carries out a take-over: it closes the window's other
+// viewers, each told it was taken over, and detaches the session's local
+// clients. It lists both afresh, so whatever attached since the plan goes too;
+// this viewer's own renderer is a federation renderer and is never listed.
+// It does not wait: the closed viewers release their renderers and indicator
+// entries on their own, and this viewer owns the size from here.
+func (rt *fedRuntime) displaceFedClients(pin *fedPanePin, self *fedTerminalView) {
+	for _, v := range rt.fedWindowViewers(pin, self) {
 		v.mu.Lock()
 		if v.reason == "" {
 			v.reason = fedTerminalTakenOver
@@ -179,20 +182,73 @@ func (rt *fedRuntime) displaceFedClients(self *fedTerminalView, locals []string,
 		v.cancel()
 		recordFederationAudit("sessions.attach.taken_over", v.Peer, "", v.Group, fmt.Sprintf("viewer=%s by=%s", v.ID, self.ID), 200)
 	}
-	for _, tty := range locals {
-		_ = clcommon.TmuxCommand("detach-client", "-t", tty).Run()
-	}
-	ctx, cancel := context.WithTimeout(self.ctx, 2*time.Second)
-	defer cancel()
-	for _, v := range viewers {
-		rt.waitKickedTerminal(ctx, v)
-	}
+	detachFedLocalClients(pin.tmux)
 }
 
 // fedResizeWindow sets window to exactly cols x rows. The window-size option
 // becomes manual, which the indicator already installed and restores.
 func fedResizeWindow(window string, cols, rows int) error {
 	return clcommon.TmuxCommand("resize-window", "-t", window, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)).Run()
+}
+
+// fedResizeSettle is how long an owner's window resizes are coalesced: a
+// browser drag sends a burst of sizes, and each would fork a tmux command.
+const fedResizeSettle = 75 * time.Millisecond
+
+// fedSizeCoalescer applies only the latest of a burst of sizes, settle after
+// the first one arrives, and never re-applies the size already applied.
+type fedSizeCoalescer struct {
+	mu         sync.Mutex
+	cols, rows int
+	applied    [2]int
+	kick       chan struct{}
+	settle     time.Duration
+	apply      func(cols, rows int) error
+}
+
+func newFedSizeCoalescer(settle time.Duration, apply func(cols, rows int) error) *fedSizeCoalescer {
+	return &fedSizeCoalescer{kick: make(chan struct{}, 1), settle: settle, apply: apply}
+}
+
+// set records the latest size; it never blocks.
+func (c *fedSizeCoalescer) set(cols, rows int) {
+	c.mu.Lock()
+	c.cols, c.rows = cols, rows
+	c.mu.Unlock()
+	select {
+	case c.kick <- struct{}{}:
+	default:
+	}
+}
+
+// run applies sizes until ctx ends. A failed apply is logged, not fatal: the
+// viewer keeps working at the window's previous size.
+func (c *fedSizeCoalescer) run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.kick:
+		}
+		timer := time.NewTimer(c.settle)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		c.mu.Lock()
+		size := [2]int{c.cols, c.rows}
+		c.mu.Unlock()
+		if size == c.applied {
+			continue
+		}
+		if err := c.apply(size[0], size[1]); err != nil {
+			slog.Debug("federation: sizing the target window failed", "error", err)
+			continue
+		}
+		c.applied = size
+	}
 }
 
 func (v *fedTerminalView) sizeOwner() bool {

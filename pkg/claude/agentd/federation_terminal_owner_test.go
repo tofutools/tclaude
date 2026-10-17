@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -77,48 +78,58 @@ func TestFedLocalClientsSkipsRenderers(t *testing.T) {
 	require.Equal(t, []string{"/dev/ttys001", "/dev/ttys003"}, ttys)
 }
 
-func TestClaimFedSessionSizeAloneOwnsIt(t *testing.T) {
+func TestPlanFedSessionSizeAloneOwnsIt(t *testing.T) {
 	// Only this viewer's own (or another session's) renderer is attached.
-	useOwnerTmux(t, "/dev/ttys002\tattached,ignore-size")
+	m := useOwnerTmux(t, "/dev/ttys002\tattached,ignore-size")
 	rt := &fedRuntime{ctx: context.Background()}
 	pin := &fedPanePin{tmux: "tclaude-x", window: "@1", serverSession: "$1"}
 	v := ownerView(t, rt, pin)
 	elsewhere := ownerView(t, rt, &fedPanePin{tmux: "tclaude-y", window: "@2", serverSession: "$2"})
-	rt.claimFedSessionSize(pin, v, false)
+	require.False(t, rt.planFedSessionSize(pin, v, true), "alone: nobody to displace, even when asked to")
 	require.True(t, v.sizeOwner())
 	require.Empty(t, v.others)
 	require.False(t, elsewhere.sizeOwner(), "a viewer of another window is not involved")
+	require.Empty(t, m.commands("detach-client"))
 }
 
-func TestClaimFedSessionSizeSharedStaysPinned(t *testing.T) {
+func TestPlanFedSessionSizeSharedStaysPinned(t *testing.T) {
 	m := useOwnerTmux(t, "/dev/ttys001\tattached,focused")
 	rt := &fedRuntime{ctx: context.Background()}
 	pin := &fedPanePin{tmux: "tclaude-x", window: "@1", serverSession: "$1"}
 	first := ownerView(t, rt, pin)
 	v := ownerView(t, rt, pin)
-	rt.claimFedSessionSize(pin, v, false)
+	require.False(t, rt.planFedSessionSize(pin, v, false))
 	require.False(t, v.sizeOwner())
 	require.Equal(t, []string{"a local terminal", "another remote viewer"}, v.others)
 	require.Empty(t, m.commands("detach-client"), "without a take-over nobody is disconnected")
 	require.NoError(t, first.ctx.Err())
 }
 
-func TestClaimFedSessionSizeTakeOverDisplacesOthers(t *testing.T) {
+// TestFedTakeOverPlansThenDisplaces: planning a take-over disconnects nobody
+// (the open may still fail); displacement then closes the other viewers and
+// detaches the local clients, including ones that attached since the plan,
+// without waiting for the closed viewers to finish.
+func TestFedTakeOverPlansThenDisplaces(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
 	cleanupAgentdTestDB(t)
-	m := useOwnerTmux(t, "/dev/ttys001\tattached,focused", "/dev/ttys004\tattached", "/dev/ttys002\tattached,ignore-size")
+	m := useOwnerTmux(t, "/dev/ttys001\tattached,focused", "/dev/ttys002\tattached,ignore-size")
 	rt := &fedRuntime{ctx: context.Background()}
 	pin := &fedPanePin{tmux: "tclaude-x", window: "@1", serverSession: "$1"}
 	other := ownerView(t, rt, pin)
-	// The other viewer's serve loop: it ends when cancelled.
-	go func() { <-other.ctx.Done(); other.close() }()
 	v := ownerView(t, rt, pin)
-	rt.claimFedSessionSize(pin, v, true)
-	require.True(t, v.sizeOwner())
+	require.True(t, rt.planFedSessionSize(pin, v, true))
+	require.True(t, v.sizeOwner(), "the take-over owns the size, as its answer says")
 	require.Empty(t, v.others)
+	require.Empty(t, m.commands("detach-client"), "planning disconnects nobody")
+	require.NoError(t, other.ctx.Err())
+
+	m.mu.Lock()
+	m.clients = append(m.clients, "/dev/ttys004\tattached")
+	m.mu.Unlock()
+	rt.displaceFedClients(pin, v)
 	require.ErrorIs(t, other.ctx.Err(), context.Canceled)
 	other.mu.Lock()
 	reason := other.reason
@@ -126,6 +137,34 @@ func TestClaimFedSessionSizeTakeOverDisplacesOthers(t *testing.T) {
 	require.Equal(t, fedTerminalTakenOver, reason, "the displaced viewer is told why")
 	require.Equal(t, [][]string{{"detach-client", "-t", "/dev/ttys001"}, {"detach-client", "-t", "/dev/ttys004"}}, m.commands("detach-client"),
 		"local clients are detached one by one; renderers are left to their viewers")
+	require.NoError(t, v.ctx.Err(), "the taker itself stays")
+	require.Empty(t, rt.fedWindowViewers(pin, v), "a displaced viewer no longer counts, even before its cleanup ran")
+}
+
+func TestFedSizeCoalescerAppliesOnlyTheLatest(t *testing.T) {
+	var mu sync.Mutex
+	var applied [][2]int
+	c := newFedSizeCoalescer(30*time.Millisecond, func(cols, rows int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		applied = append(applied, [2]int{cols, rows})
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { c.run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	for i := range 20 {
+		c.set(100+i, 40)
+	}
+	require.Eventually(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(applied) == 1 }, time.Second, 5*time.Millisecond)
+	c.set(119, 40)
+	time.Sleep(100 * time.Millisecond)
+	c.set(150, 50)
+	require.Eventually(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(applied) == 2 }, time.Second, 5*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, [][2]int{{119, 40}, {150, 50}}, applied, "a burst applies once, at its latest size; an unchanged size is not re-applied")
 }
 
 func TestDetachTmuxSessionSparesRemoteRenderers(t *testing.T) {

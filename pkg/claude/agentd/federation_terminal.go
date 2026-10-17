@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 	"github.com/tofutools/tclaude/pkg/federation/terminal"
@@ -532,9 +534,9 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	if root != nil {
 		v.addCleanup(func() { v.mu.Lock(); _ = root.Close(); v.fileRoot = nil; v.mu.Unlock() })
 	}
-	if p.DriveSize {
-		rt.claimFedSessionSize(pin, v, p.TakeOver)
-	}
+	// Decide ownership now (the answer reports it); a take-over's displacement
+	// waits until this open can no longer fail on this side.
+	displace := p.DriveSize && rt.planFedSessionSize(pin, v, p.TakeOver)
 	if p.FixedSize {
 		cols, rows, err := pin.size()
 		if err != nil {
@@ -555,14 +557,6 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		return
 	}
 	v.addCleanup(func() { _ = backend.Close() })
-	// A CLI owner reports its real size up front; a browser owner opens at the
-	// pinned size and sends its fitted grid once it knows it owns the window.
-	if !p.FixedSize && v.sizeOwner() {
-		if err := fedResizeWindow(pin.window, p.Cols, p.Rows); err != nil {
-			answer(false, nil, "could not size the target window")
-			return
-		}
-	}
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		answer(false, nil, "stream unavailable")
@@ -584,6 +578,17 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	if !pin.authorized(peer.InstanceID, p) || !fedIndicatorPresent(pin.window) {
 		return
 	}
+	// The viewer is live: only now displace the others for a take-over.
+	if displace {
+		rt.displaceFedClients(pin, v)
+	}
+	// A CLI owner reported its real size up front; a browser owner opened at
+	// the pinned size and sends its fitted grid once it knows it owns the window.
+	if !p.FixedSize && v.sizeOwner() {
+		if err := fedResizeWindow(pin.window, p.Cols, p.Rows); err != nil {
+			slog.Debug("federation: sizing the target window failed", "error", err)
+		}
+	}
 	recordFederationAudit("sessions.attach.open", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(p.ReadOnly), 200)
 	defer recordFederationAudit("sessions.attach.close", peerDisplay(peer), pin.conv, p.Group, "viewer="+v.ID, 200)
 	rt.servePaneTerminal(v, conn, backend, func() bool {
@@ -597,7 +602,11 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	var writeMu sync.Mutex
 	write := func(f terminal.Frame) error { writeMu.Lock(); defer writeMu.Unlock(); return terminal.Write(conn, f) }
 	var workers sync.WaitGroup
-	workers.Add(2)
+	workers.Add(3)
+	// An owner's window follows its latest size, coalesced; the renderer PTY
+	// is resized at once.
+	sizer := newFedSizeCoalescer(fedResizeSettle, func(c, r int) error { return fedResizeWindow(backend.pin.window, c, r) })
+	go func() { defer workers.Done(); sizer.run(v.ctx) }()
 	defer func() {
 		v.mu.Lock()
 		if v.reason != "" {
@@ -696,10 +705,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 					continue
 				}
 				if owner {
-					if err := fedResizeWindow(backend.pin.window, c, r); err != nil {
-						errs <- err
-						return
-					}
+					sizer.set(c, r)
 				}
 				if err := backend.Resize(c, r); err != nil {
 					errs <- err
@@ -726,8 +732,10 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 			switch {
 			case !authorized():
 				reason = "revoked"
-			case rendererEnded.Load():
+			case rendererEnded.Load() && session.IsTmuxSessionAlive(backend.pin.tmux):
 				reason = fedTerminalTakenOver
+			case rendererEnded.Load():
+				reason = "exit"
 			case err != io.EOF:
 				reason = "error"
 			}

@@ -804,10 +804,14 @@ at the target's current size and is told, without naming peers, what else is
 attached. `tclaude federation attach --take-over`, or **Take over** in the
 browser terminal, disconnects them first. Displaced remote viewers close with
 reason `taken_over`. A remote viewer displaced by a local web terminal closes
-the same way. The take-over right is part of the watch or attach grant;
-operators who do not want peers to displace local terminals should not share
-sessions they are actively using. An older peer ignores the request and keeps
-every viewer at its own size.
+the same way. Take-over rides the `sessions.watch` / `sessions.attach`
+permission and needs no grant of its own, so even a watch grant lets a peer
+disconnect this node's local terminals from a shared session — the same rule a
+local web terminal applies. Operators who do not want that should not share
+sessions they are actively using. Ownership is decided when a viewer opens: a
+pinned viewer is not promoted when the others leave, but reopening it claims
+the size. An older peer ignores the request and keeps every viewer at its own
+size.
 
 Interactive input is
 delivered separately to the resolved pane: special keys use a fixed tmux key
