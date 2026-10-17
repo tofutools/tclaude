@@ -19,7 +19,6 @@ export const FUSED_FOLDERS = Object.freeze([
 ]);
 
 export const PAGE_SIZE = 50;
-export const MAX_PAGE_SIZE = 200;
 
 // apiBase is where a node's dashboard API lives from this page: this node's
 // own routes, or a peer's through the proxy.
@@ -34,17 +33,46 @@ export const ROSTER_PAGE = 100;
 // maxRosterAgents); past it a list is narrowed with the filter, not paged.
 export const ROSTER_MAX = 2000;
 
-// rosterURL addresses one page of a node's sidebar roster. A node on an
-// older build ignores agents_limit and sends its whole roster.
-export function rosterURL(node, limit = ROSTER_PAGE) {
-  return `${apiBase(node)}mailboxes?${new URLSearchParams({ agents_limit: String(limit) })}`;
+// MAX_DEPTH is how far back a merged folder reaches on each node: page N
+// of a folder spanning several nodes needs each node's newest N pages, read
+// as one page of up to the server's largest page size (maxMailboxPageSize).
+export const MAX_DEPTH = 500;
+
+// rosterURL addresses one page of a node's sidebar roster: the filter, the
+// scope toggles, and which groups to embed members for (expand, with a
+// members_limit for a grown one). A node on an older build ignores what it
+// does not know and sends its whole roster.
+export function rosterURL(node, {
+  limit = ROSTER_PAGE, q = '', retired = false, empty = false, prevGens = false, expand = [], memberLimits = {},
+} = {}) {
+  const params = new URLSearchParams({ agents_limit: String(limit) });
+  if (q) params.set('q', q);
+  if (retired) params.set('include_retired', '1');
+  if (empty) params.set('include_empty', '1');
+  if (!prevGens) params.set('hide_prev_gens', '1');
+  for (const name of expand) {
+    params.append('expand', name);
+    if (memberLimits[name]) params.append('members_limit', `${memberLimits[name]}:${name}`);
+  }
+  return `${apiBase(node)}mailboxes?${params}`;
 }
 
 // folderURL addresses one node's page of a folder.
-export function folderURL(node, folder, { q = '', size = PAGE_SIZE } = {}) {
-  const params = new URLSearchParams({ id: folder, page: '1', page_size: String(Math.min(MAX_PAGE_SIZE, size)) });
+export function folderURL(node, folder, { q = '', page = 1, size = PAGE_SIZE, retired = false } = {}) {
+  const params = new URLSearchParams({ id: folder, page: String(page), page_size: String(Math.min(MAX_DEPTH, size)) });
   if (q) params.set('q', q);
+  if (retired) params.set('include_retired', '1');
   return `${apiBase(node)}mailbox?${params}`;
+}
+
+// mergedDepth is how many of each node's newest messages page `page` of a
+// merged folder needs, and mergedPages how many pages the merge can show:
+// the pages the totals add up to, but never deeper than MAX_DEPTH.
+export function mergedDepth(page, pageSize) {
+  return Math.min(MAX_DEPTH, page * pageSize);
+}
+export function mergedPages(total, pageSize) {
+  return Math.max(1, Math.min(Math.ceil(total / pageSize), Math.floor(MAX_DEPTH / pageSize)));
 }
 
 // ownerRoutes are a node's action routes. This node's human notifications
@@ -114,14 +142,24 @@ export function mergeRequests(lists) {
 }
 
 // nodeFolders splits a node's roster into the folders the fused sidebar lists
-// under that node: groups, then agents with messages, by recent activity.
+// under that node, in the node's own order: its pinned folders (all, human),
+// groups, then the page of agent folders.
 export function nodeFolders(mailboxes) {
-  const list = Array.isArray(mailboxes) ? mailboxes : [];
-  const recent = (a, b) => ts(b.last_at) - ts(a.last_at) || String(a.title).localeCompare(String(b.title));
+  const list = Array.isArray(mailboxes) ? mailboxes.filter(Boolean) : [];
   return {
-    groups: list.filter((m) => m?.kind === 'group').sort(recent),
-    agents: list.filter((m) => m?.kind === 'agent' && m.total > 0).sort(recent),
+    all: list.find((m) => m.kind === 'all') || null,
+    human: list.find((m) => m.kind === 'human') || null,
+    groups: list.filter((m) => m.kind === 'group'),
+    agents: list.filter((m) => m.kind === 'agent'),
   };
+}
+
+// folderMatches reports whether a pinned or group folder passes the sidebar
+// filter; agent folders are filtered by each node (the roster's q).
+export function folderMatches(mailbox, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return [mailbox?.title, mailbox?.id].some((s) => String(s || '').toLowerCase().includes(needle));
 }
 
 // replyTarget is the agent a reply to a message goes to: the sender, else

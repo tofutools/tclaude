@@ -158,3 +158,32 @@ export function focusPaneRows(container, rowSelector, select) {
   activateRow(target, selected ? undefined : select);
   return true;
 }
+
+// movePaneFocus moves focus between a mail client's panes on bare ←/→: into
+// a list pane on its selected row (select picks a row when none is), into
+// any other pane itself. panes lists them left to right by selector. Group
+// expansion stays on its own caret button, so a folder row never means two
+// things and traversal works the same from every row in the sidebar.
+export function movePaneFocus(event, panes) {
+  if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+  if (!direction) return false;
+  const source = panes.findIndex(({ selector }) => event.target?.closest?.(selector));
+  if (source < 0) return false;
+  const client = event.currentTarget;
+  for (let index = source + direction; index >= 0 && index < panes.length; index += direction) {
+    const pane = client.querySelector(panes[index].selector);
+    if (!pane) continue;
+    let moved;
+    if (panes[index].rows) {
+      moved = focusPaneRows(pane, panes[index].rows.rowSelector, panes[index].select);
+    } else {
+      pane.focus();
+      moved = true;
+    }
+    if (!moved) continue;
+    event.preventDefault();
+    return true;
+  }
+  return false;
+}

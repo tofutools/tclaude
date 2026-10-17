@@ -505,6 +505,25 @@ func fleetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "fleet-fused-messages",
+			Title:   "Messages · fused nodes",
+			Caption: "Messages with every node fused: the same panes, filters, bulk bar, pager and reader as one node's Messages. The node chips narrow the view to one node; the fused folders span the nodes in view, and each node lists its own folders under its heading. Rows carry their node's pill, and actions go to that node.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('#fused-mail-list .mail-row'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var row = document.querySelector('#fused-mail-list .mail-row');
+  if (!row) throw new Error('fleet: no rows in fused Messages');
+  if (!document.querySelector('.fused-mail-chip[data-node="inst_hn3cxq7a"]')) throw new Error('fleet: no forge chip in fused Messages');
+  row.click();
+  for (var j = 0; j < 30 && !document.querySelector('#fused-mail-reader .mail-headers'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "fleet-admin",
 			Title:   "Fleet administration",
 			Caption: "The top-level ⚙ Fleet view: this node's identity (fingerprint in full, copyable), the hub connection with Disconnect, and the peer tables — trusted peers with level, grants and pools, and hub-visible instances waiting to be trusted. Sub-pages not yet in the dashboard name their CLI.",

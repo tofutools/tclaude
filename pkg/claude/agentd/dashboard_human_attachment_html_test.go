@@ -6,7 +6,8 @@ import (
 )
 
 func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
-	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	// The reader's attachment card is a shared Messages part (mail-parts.js).
+	island := string(mustReadFS(dashboardAssetsFS, "js/mail-parts.js"))
 	shared := string(mustReadFS(dashboardAssetsFS, "js/human-attachments.js"))
 	preview := string(mustReadFS(dashboardAssetsFS, "js/image-preview-overlay.js"))
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))

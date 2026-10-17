@@ -107,7 +107,8 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 	// Naming the component is enough: the module graph test resolves the import
 	// it must come from, so pinning the import statement's exact spelling would
 	// only break on a reformat.
-	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-island.js"} {
+	// Messages renders attachments through its shared parts (mail-parts.js).
+	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-parts.js"} {
 		source := dashboardAssetFile(t, name)
 		if !strings.Contains(source, "MarkdownAttachment") {
 			t.Errorf("%s does not render published Markdown documents", name)

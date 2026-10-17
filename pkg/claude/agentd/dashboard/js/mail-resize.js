@@ -70,7 +70,9 @@ function persist() {
 // initMailResize restores the saved layout and wires each gutter's drag +
 // double-click-to-reset. Safe to call once at boot: the .mail-client markup
 // is static, and dashPrefs is already loaded (boot awaits initDashPrefs).
-function initMailResize(client = $('.mail-client')) {
+// client defaults to this node's mail client; the fused Messages view passes
+// its own, and both share the saved layout.
+function initMailResize(client = $('#messages-root .mail-client') || $('.mail-client')) {
   if (!client) return () => {};
   const controller = new AbortController();
   const { signal } = controller;
