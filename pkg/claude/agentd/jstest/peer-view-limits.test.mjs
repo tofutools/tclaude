@@ -162,3 +162,32 @@ test('the greying rule is generated from what the peer shares and removed on dis
   dispose();
   assert.equal(doc.getElementById('peer-view-limits-style'), null);
 });
+
+test('a peer sharing its full spawn dialog opens this page\'s spawn dialog, also from a ?spawn= link', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button id="spawn" data-act="spawn-agent" data-group="crew">+</button>';
+  const brief = { ...pv, included: [...pv.included, 'spawn'] };
+  const full = { ...pv, included: [...pv.included, 'spawn', 'spawn.full', 'spawn.catalog'] };
+  const spawnBtn = doc.getElementById('spawn');
+  assert.equal(mod.blockedControl(spawnBtn, brief).state, 'peer-action', 'the brief-only peer action without the full dialog');
+  assert.equal(mod.blockedControl(spawnBtn, full), null, 'the full dialog runs as on this node');
+  assert.ok(mod.usableActSelectors({ ...pv, included: [...pv.included, 'spawn.full'] }).includes('[data-act="spawn-agent"]'));
+  const opened = []; const replaced = []; const toasts = [];
+  const loc = { pathname: '/groups', search: '?node=inst_forge7&spawn=crew', hash: '' };
+  const history = { state: null, replaceState: (_s, _t, url) => replaced.push(url) };
+  const snapshot = harness.signals.signal(null);
+  const dispose = mod.installPeerViewLimits({ doc, snapshot, toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, loc, history, openSpawn: async (g) => { opened.push(g); } });
+  assert.deepEqual(opened, [], 'waits for the peer to answer');
+  snapshot.value = { peer_view: full, groups: [{ name: 'crew' }] };
+  assert.deepEqual(opened, ['crew']);
+  assert.deepEqual(replaced, ['/groups?node=inst_forge7'], 'the link is used once');
+  snapshot.value = { peer_view: full, groups: [{ name: 'crew' }, { name: 'more' }] };
+  assert.deepEqual(opened, ['crew']);
+  dispose();
+  const again = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: brief, groups: [{ name: 'crew' }] }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, loc: { ...loc }, history, openSpawn: async (g) => { opened.push(g); } });
+  assert.deepEqual(opened, ['crew'], 'no full dialog where it is not shared');
+  assert.match(toasts.at(-1), /does not share its full spawn dialog/);
+  again();
+});

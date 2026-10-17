@@ -265,17 +265,23 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		writeError(w, 404, "not_found", "object not found")
 		return
 	}
+	// The brief-only request is groups.members.spawn's; any other body is the
+	// spawn dialog's own (groups.members.spawn.full, peer_spawn_dialog.go).
+	raw, brief, ok := readPeerSpawnBody(w, r)
+	if !ok {
+		return
+	}
+	if brief == nil {
+		servePeerFullSpawn(w, r, v, g, raw)
+		return
+	}
 	if !v.allows(rule, g.ID) {
 		writeError(w, 403, "permission", "requires "+rule.requires)
 		return
 	}
-	var body struct {
-		Name    string `json:"name,omitempty"`
-		Role    string `json:"role,omitempty"`
-		Brief   string `json:"brief"`
-		Profile string `json:"profile,omitempty"`
-	}
-	if !decodePeerAction(w, r, &body) {
+	body := *brief
+	if len(raw) > 16<<10 {
+		writeError(w, 400, "invalid_arg", "invalid remote action body")
 		return
 	}
 	if strings.TrimSpace(body.Brief) == "" || len(body.Brief) > proto.MaxSpawnBrief || len(body.Name) > 128 || len(body.Role) > 128 || len(body.Profile) > 128 {

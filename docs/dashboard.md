@@ -909,8 +909,12 @@ It lists only what the peer allows — Stop (optionally force kill), Retire
 a group on this node; groups that receive agents from that peer are listed
 first) — and confirms what will happen. A group's spawn button
 asks the peer to spawn an agent from your brief under the peer's own launch
-policy and shows the request until the peer decides. CLI:
-`tclaude federation action <action> --node PEER --agent ID`.
+policy and shows the request until the peer decides. A peer that shares its
+full spawn dialog with you (unrestricted trust, or its
+`groups.members.spawn.full` and `node.spawn.read` grants) opens the usual spawn
+dialog instead, with its profiles, roles, saved prompts and sandbox profiles;
+in a fused view, that group's spawn button opens it on the peer's own view.
+CLI: `tclaude federation action <action> --node PEER --agent ID`.
 
 Terminals in a peer view are not opened in the browser: clicking a terminal control copies
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own

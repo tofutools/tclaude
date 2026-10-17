@@ -240,6 +240,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `message.direct` | mail to members; shares their names and ids so they are addressable |
 | `message.attachments` | attachments, together with `message.direct` on the same group |
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
+| `groups.members.spawn.full` | the full spawn dialog from the peer's dashboard, as this node's operator: any profile, cwd and worktree, harness, model, sandbox profile, environment and permissions; also the cwd pickers. Amounts to running code on this node; default off |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
@@ -248,6 +249,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model (unscoped only) |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
@@ -2429,6 +2431,32 @@ all-live broadcast is accepted. Mail is persisted with federation sender
 identity and the attempt is recorded in `federation audit` as the calling peer's
 operator.
 
+#### The full spawn dialog from a peer
+
+Two grants lend a peer this node's own spawn dialog; unrestricted trust holds
+both, and either can be granted to a restricted peer on its own:
+
+- `node.spawn.read` serves the dialog's catalogs: `GET` on
+  `/api/spawn-profiles`, `/api/spawn-profile-default`,
+  `/api/spawn-launch-defaults`, `/api/saved-prompts`, `/api/roles`,
+  `/api/sandbox-profiles`, `/api/sandbox-profile-default`,
+  `/api/groups/{group}/sandbox-profile`, `/api/spawn-harness-policy`,
+  `/api/groups/{name}/spawn-harness-policy`,
+  `/api/claude-settings/default-model` and `/api/spawn/effective-sandbox`, and
+  the sandbox-profile enforcement preview (`POST
+  /api/sandbox-profile-enforcement`, which writes nothing). Their writes stay
+  local-only.
+- `groups.members.spawn.full`, per group, runs the dialog's own
+  `POST /api/groups/{name}/spawn` body through this node's dashboard spawn
+  handler, as this node's operator would. Held in any group, it also serves
+  the cwd pickers: `POST /api/browse-directories`, `GET`/`POST /api/worktrees`
+  and `GET /api/worktrees/progress`. The spawn is audited as the peer's
+  operator (`POST /api/groups/{name}/spawn full`).
+
+A brief-only body (`{brief, name?, role?, profile?}`) stays the
+`groups.members.spawn` request above. Spawn attachments and queued spawns stay
+local: an upload does not fit the peer view's request body limit.
+
 Every dashboard route is classified in the peer mapping. Other routes and
 methods are local-only and return the default-deny 403, including for
 unrestricted peers. Local-only features cannot be enabled by a grant through
@@ -3104,7 +3132,8 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
   harness, model, permissions and launch overrides are refused. Returns a
   durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
-  that initiating peer's request while its grant remains valid.
+  that initiating peer's request while its grant remains valid. Any other
+  body is the full spawn dialog's (below).
 - `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
 - `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
   recreating a missing launch directory and switching a Codex drive stay

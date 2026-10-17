@@ -13,7 +13,7 @@ import { shellToast } from './shell-state.js';
 import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './fleet-merged-model.js';
-import { peerAction, refusedActsRule, usableActSelectors } from './peer-view-limits.js';
+import { SPAWN_LINK, fullSpawnShared, peerAction, refusedActsRule, usableActSelectors } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -111,9 +111,13 @@ export function homeActions(live, ownOf) {
 }
 
 // defaultSwitchNode shows one node's own Groups view: it leaves the fused
-// view, as picking a node alone does.
-function defaultSwitchNode(id) {
-  globalThis.location.assign(nodeHref(id, { pathname: '/groups', search: withFused(globalThis.location.search, null) }));
+// view, as picking a node alone does. With `spawn` it opens that node's spawn
+// dialog for the group there (a peer sharing its full spawn dialog).
+function defaultSwitchNode(id, { spawn = '' } = {}) {
+  const params = new URLSearchParams(withFused(globalThis.location.search, null));
+  if (spawn) params.set(SPAWN_LINK, spawn);
+  const q = params.toString();
+  globalThis.location.assign(nodeHref(id, { pathname: '/groups', search: q ? `?${q}` : '' }));
 }
 
 // MAX_IN_FLIGHT caps concurrent snapshot reads: the peer proxy allows 4
@@ -326,6 +330,13 @@ export function MergedGroups({
         return;
       }
       const name = group?.dataset.fleetNodeName || '';
+      // A peer sharing its full spawn dialog spawns there, with every field;
+      // the brief-only request is for peers that share only that.
+      if (act.dataset.act === 'spawn-agent' && instance && instance !== state.view.value.fleet?.self?.id
+        && fullSpawnShared(snapRef.current(instance)?.peer_view)) {
+        const own = ownGroup(act.dataset.group || '', name);
+        if (own) { switchNode(instance, { spawn: own }); return; }
+      }
       if (instance && instance !== state.view.value.fleet?.self?.id) {
         const req = peerAction(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }

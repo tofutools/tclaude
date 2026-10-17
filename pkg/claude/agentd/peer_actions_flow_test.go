@@ -60,7 +60,7 @@ func TestPeerActionsWholeFootprintAndBodyLimits(t *testing.T) {
 	require.Equal(t, 403, rec.Code)
 	grant(agentd.PermGroupsMembersSpawn, "one")
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/groups/one/spawn", map[string]any{"brief": "test task", "cwd": "/operator/private"}))
-	require.Equal(t, 400, rec.Code)
+	require.Equal(t, 403, rec.Code, "a body beyond the brief-only request needs groups.members.spawn.full")
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/groups/one/spawn", map[string]any{"brief": "test task", "profile": "unallowed"}))
 	require.Equal(t, 403, rec.Code)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/groups/one/spawn", map[string]any{"brief": "test task", "name": "peer-worker"}))

@@ -52,6 +52,7 @@ var federationPeerSlugs = map[string]string{
 	PermAgentsReceivePermissions: proto.CapAgentsReceivePermissions,
 	PermAgentsTeleportReceive:    proto.CapTeleportReceive,
 	PermGroupsMembersSpawn:       proto.CapSpawn,
+	PermGroupsMembersSpawnFull:   "spawn_full",
 	PermGroupsMembersStop:        "stop",
 	PermGroupsMembersResume:      "resume",
 	PermGroupsMembersRetire:      "retire",
@@ -242,7 +243,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage || in.Slug == PermSnapshotsReceive
+	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage || in.Slug == PermSnapshotsReceive || in.Slug == PermNodeSpawnRead
 	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return

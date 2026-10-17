@@ -151,6 +151,16 @@ const PEER_ACTS = Object.freeze({
   'spawn-agent': { action: 'spawn', feature: 'spawn' },
   'message-new': { action: 'message', feature: 'messaging' },
 });
+// FULL_SPAWN is the peer's full spawn dialog (groups.members.spawn.full, held
+// by unrestricted trust): its group spawn button opens this page's own spawn
+// dialog, whose requests remote-node.js sends to the peer, instead of the
+// brief-only peer action.
+export const FULL_SPAWN = 'spawn.full';
+export const fullSpawnShared = (peerView) => featureState(FULL_SPAWN, peerView) === 'shared';
+// SPAWN_LINK is the address parameter that opens a peer page's spawn dialog
+// for a group (the fused Groups view links a full-spawn peer's button there).
+export const SPAWN_LINK = 'spawn';
+
 // PEER_ACTION_EVENT carries such a click to peer-action.js.
 export const PEER_ACTION_EVENT = 'tclaude:peer-action';
 const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
@@ -193,6 +203,7 @@ export function usableActSelectors(peerView, extra = []) {
     if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');
     if (shared('lifecycle.resume')) out.push('[data-act="dot-toggle"]:not([data-online="1"])');
   }
+  if (shared(FULL_SPAWN) && !out.includes('[data-act="spawn-agent"]')) out.push('[data-act="spawn-agent"]');
   return out;
 }
 
@@ -237,6 +248,7 @@ export function blockedControl(target, peerView) {
   }
   const act = target?.closest?.('[data-act]');
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
+  if (act?.dataset.act === 'spawn-agent' && fullSpawnShared(peerView)) return null;
   const pa = act && peerAction(act, peerView);
   if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
@@ -250,8 +262,17 @@ export function blockedControl(target, peerView) {
 const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 
-export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote } = {}) {
+const openSpawnDialog = (groupName) => import('./agent-spawn-controller.js').then((m) => m.openAgentSpawnModal({ groupName }));
+
+export function installPeerViewLimits({
+  doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote,
+  loc = globalThis.location, history = globalThis.history, openSpawn = openSpawnDialog,
+} = {}) {
   if (!remote?.id) return () => {};
+  // A ?spawn=<group> address opens the spawn dialog for that group once the
+  // peer's snapshot names it and shares its full spawn, then leaves the
+  // address (a reload must not open it again).
+  let spawnLink = new URLSearchParams(loc?.search || '').get(SPAWN_LINK) || '';
   const root = doc.documentElement;
   let peerView = snapshot.value?.peer_view || null;
   const nodeName = () => root.dataset.remoteNodeName || remote.id.slice(0, 13);
@@ -276,6 +297,16 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // (and so once the marker has named the node).
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
+    if (spawnLink && peerView) {
+      const group = spawnLink;
+      spawnLink = '';
+      const params = new URLSearchParams(loc.search);
+      params.delete(SPAWN_LINK);
+      const q = params.toString();
+      history?.replaceState?.(history.state, '', `${loc.pathname}${q ? `?${q}` : ''}${loc.hash || ''}`);
+      if (!fullSpawnShared(peerView)) toast(limitHint('omitted', 'its full spawn dialog', nodeName()), true);
+      else if ((snapshot.value?.groups || []).some((g) => g.name === group)) void openSpawn(group);
+    }
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);

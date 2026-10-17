@@ -404,3 +404,28 @@ test('fused view lets this node\'s process drags through, the run focus\'s perfo
   const peer = add('<details data-fleet-node="inst_forge"><span draggable="true" data-saved-process-drag="tpl">p</span></details>').querySelector('span');
   assert.equal(harness.fireEvent(peer, 'dragstart').defaultPrevented, true, "a peer group's drags stay stopped");
 });
+
+test('a fused peer group\'s spawn button opens that peer\'s full spawn dialog when it shares one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  let shared = ['agents.status', 'spawn'];
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: shared } }) });
+  const timers = fakeTimers(); const switched = [];
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" switchNode=${(id, o) => switched.push([id, o])} />`);
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  const d = harness.document.createElement('div');
+  d.innerHTML = '<details data-fleet-node="inst_forge" data-fleet-node-name="forge"><button data-act="spawn-agent" data-group="build@forge">+</button></details>';
+  host.appendChild(d);
+  const btn = d.querySelector('button');
+  await harness.act(() => harness.fireEvent(btn, 'click'));
+  assert.deepEqual(switched, [], 'brief-only: the peer action dialog');
+  assert.ok(harness.document.querySelector('.peer-action-dialog, dialog, [role="dialog"]'), 'the brief-only dialog opens');
+  shared = ['agents.status', 'spawn', 'spawn.full'];
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  await harness.act(() => harness.fireEvent(btn, 'click'));
+  assert.deepEqual(switched, [['inst_forge', { spawn: 'build' }]], "the full dialog opens on forge's own view, for its own group");
+  await mounted.unmount(); state.dispose();
+});
