@@ -822,7 +822,6 @@ type SpawnParams struct {
 	RoleRef        string   `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
 	Descr          string   `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief for an interactive agent; with --non-interactive, the one-shot prompt or shell command"`
-	Prompts        []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
 	File           string   `long:"file" short:"f" optional:"true" help:"Read --initial-message from this file ('-' reads stdin). Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
@@ -836,11 +835,14 @@ type SpawnParams struct {
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
-	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
-	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
-	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
-	HarnessConfig             string `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
+	Profile string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
+	// Prompts sits after Profile so the short-flag enricher, which takes the
+	// first free letter in field order, never hands it Profile's pinned -p.
+	Prompts                   []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
+	SandboxProfile            string   `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
+	OmitSandboxProfiles       bool     `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
+	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
+	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
