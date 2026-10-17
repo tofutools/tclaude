@@ -393,3 +393,22 @@ test('Dock search filters cards and sections; the card menu carries the library 
   await harness.act(() => harness.fireEvent(getByRole(host, 'menuitem', { name: 'Export all' }), 'click'));
   assert.deepEqual(calls.slice(-2), [['new'], ['export-all']]);
 });
+
+test('Dock draws Processes after the snapshot sections and an afterProcesses section last', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  const state = createDockState();
+  state.publish({ processes_enabled: true, profiles: [] });
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
+  const last = { ...section([]), key: 'sandbox_profiles', afterProcesses: true };
+  await harness.mount(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[last, section([])]} prefs=${memoryPrefs()}
+      isSectionOpen=${() => false} setSectionOpen=${() => {}} />
+  `, host);
+  assert.deepEqual([...host.querySelectorAll('details.dock-section')].map((details) => details.dataset.key),
+    ['profiles', 'processes', 'sandbox_profiles']);
+});

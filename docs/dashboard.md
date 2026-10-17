@@ -1289,9 +1289,9 @@ version, refresh time, and the Open PRs popover.
 
 ### The library panel
 
-The right edge holds the library: spawn profiles, group templates, roles,
-saved prompts, sandbox profiles and (with Processes enabled) process
-templates. Profiles, roles and templates drag onto a group to spawn; a
+The right edge holds the library, top to bottom: spawn profiles, roles,
+saved prompts, group templates, (with Processes enabled) process templates,
+and sandbox profiles. Profiles, roles and templates drag onto a group to spawn; a
 process drags onto a group to pin it there.
 
 - **Search.** The field on top filters every section at once. Each word must

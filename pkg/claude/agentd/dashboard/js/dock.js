@@ -233,6 +233,8 @@ function summaryChips(summary, max = 4) {
 //   onCloneItem(item)   open the "clone under a new name" dialog (⚙ → Clone)
 //   onDeleteItem(item)  confirm + delete the item (⚙ → Delete), then refresh
 //   onManageAll()       jump to the whole-kind manager overlay
+//   afterProcesses      render after the Processes section, which the dock
+//                       draws itself between the snapshot sections
 //
 // `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
 // data-dock-kind): all three kinds drop onto a group — profiles + roles open
@@ -281,37 +283,6 @@ export const dockSections = Object.freeze([
     ...libraryOps('profiles'),
   },
   {
-    key: 'templates',
-    icon: () => wizWord('🧩', '🔮'),
-    // Spelled out like the profiles heading (operator follow-up to JOH-390
-    // item 5): these are the GROUP templates, and "Summoning circles" is
-    // already the full arcane name.
-    title: () => wizWord('Group templates', 'Summoning circles'),
-    empty: () => wizWord('no templates yet', 'no circles yet'),
-    items: (snap) => (snap && snap.templates) || [],
-    name: (t) => t.name,
-    chips: (t) => templateReadbackBadgeModels(t),
-    drag: true,
-    // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
-    // matching the profiles/roles cards — it used to fall back to the whole-kind
-    // manager, which ignored the item.
-    onManageItem: (t) => openTemplateEditor(t),
-    // Clone → templates reuse their OWN richer duplicate dialog (a template
-    // carries a whole roster, so its bespoke blurb is worth keeping) rather than
-    // the generic action-dialog name shell profiles/roles use. Both are name dialogs.
-    onCloneItem: (t) => openDuplicateModal(t.name),
-    // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
-    // so the dock calls it directly (no extra refresh needed here).
-    onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {
-      if (removed) dropPin(dashPrefs, 'templates', t.name);
-    }),
-    onManageAll: () => openTemplatesManageModal(),
-    onNew: () => openTemplateEditor(null),
-    searchWords: ['group templates', 'summoning circles'],
-    extraActions: [{ act: 'deploy-item', label: () => wizWord('Deploy…', 'Summon…'), run: (t) => managementController().openTemplateDeploy(t.name) }],
-    ...libraryOps('templates'),
-  },
-  {
     key: 'roles',
     icon: () => wizWord('🎭', '🎭'),
     title: () => wizWord('Roles', 'Classes'),
@@ -351,7 +322,40 @@ export const dockSections = Object.freeze([
     ...libraryOps('saved_prompts'),
   },
   {
+    key: 'templates',
+    icon: () => wizWord('🧩', '🔮'),
+    // Spelled out like the profiles heading (operator follow-up to JOH-390
+    // item 5): these are the GROUP templates, and "Summoning circles" is
+    // already the full arcane name.
+    title: () => wizWord('Group templates', 'Summoning circles'),
+    empty: () => wizWord('no templates yet', 'no circles yet'),
+    items: (snap) => (snap && snap.templates) || [],
+    name: (t) => t.name,
+    chips: (t) => templateReadbackBadgeModels(t),
+    drag: true,
+    // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
+    // matching the profiles/roles cards — it used to fall back to the whole-kind
+    // manager, which ignored the item.
+    onManageItem: (t) => openTemplateEditor(t),
+    // Clone → templates reuse their OWN richer duplicate dialog (a template
+    // carries a whole roster, so its bespoke blurb is worth keeping) rather than
+    // the generic action-dialog name shell profiles/roles use. Both are name dialogs.
+    onCloneItem: (t) => openDuplicateModal(t.name),
+    // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
+    // so the dock calls it directly (no extra refresh needed here).
+    onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {
+      if (removed) dropPin(dashPrefs, 'templates', t.name);
+    }),
+    onManageAll: () => openTemplatesManageModal(),
+    onNew: () => openTemplateEditor(null),
+    searchWords: ['group templates', 'summoning circles'],
+    extraActions: [{ act: 'deploy-item', label: () => wizWord('Deploy…', 'Summon…'), run: (t) => managementController().openTemplateDeploy(t.name) }],
+    ...libraryOps('templates'),
+  },
+  {
     key: 'sandbox_profiles',
+    // Sandbox profiles close the panel, after the Processes section.
+    afterProcesses: true,
     icon: () => wizWord('🛡', '🛡'),
     title: () => wizWord('Sandbox profiles', 'Wards'),
     empty: () => wizWord('no sandbox profiles yet', 'no wards yet'),

@@ -459,7 +459,24 @@ export function Dock({
     };
   }, [host]);
 
-  // The process library sits last, and only while Processes is enabled.
+  // The process library follows the snapshot sections (only while Processes
+  // is enabled); a section marked afterProcesses comes after it.
+  const renderSection = (section) => html`
+    <${DockSection}
+      key=${section.key}
+      section=${section}
+      snapshot=${snapshot}
+      openMenu=${openMenu}
+      setOpenMenu=${setOpenMenu}
+      clipHost=${host}
+      isSectionOpen=${isSectionOpen}
+      setSectionOpen=${setSectionOpen}
+      terms=${terms}
+      prefs=${prefs}
+      notify=${notify}
+      onMatches=${onMatches}
+    />
+  `;
   // Local groups only: pin and start go to this daemon's routes by name.
   const groups = (snapshot?.groups || []).filter((group) => !group.fleet_node).map((group) => group.name).filter(Boolean);
   const processes = !!snapshot?.processes_enabled;
@@ -478,25 +495,11 @@ export function Dock({
       />
     </div>`,
     nothing ? html`<div key="no-match" class="dock-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
-    ...sections.map((section) => html`
-      <${DockSection}
-        key=${section.key}
-        section=${section}
-        snapshot=${snapshot}
-        openMenu=${openMenu}
-        setOpenMenu=${setOpenMenu}
-        clipHost=${host}
-        isSectionOpen=${isSectionOpen}
-        setSectionOpen=${setSectionOpen}
-        terms=${terms}
-        prefs=${prefs}
-        notify=${notify}
-        onMatches=${onMatches}
-      />
-    `),
+    ...sections.filter((section) => !section.afterProcesses).map(renderSection),
     processes ? html`<${DockProcesses} key="processes" groups=${groups}
       isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} openMenu=${openMenu} setOpenMenu=${setOpenMenu} clipHost=${host}
       terms=${terms} prefs=${prefs} notify=${notify} onMatches=${onMatches} />` : null,
+    ...sections.filter((section) => section.afterProcesses).map(renderSection),
   ];
 }
 

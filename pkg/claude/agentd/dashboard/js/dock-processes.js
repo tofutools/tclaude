@@ -1,6 +1,6 @@
 // dock-processes.js -- the dock's Processes section (tcl-rzik1e): the process
-// template library at the bottom of the right panel, after Agent profiles,
-// Group templates and Roles. It reuses the dock's section and card markup, but
+// template library near the bottom of the right panel, after Group templates
+// and before Sandbox profiles. It reuses the dock's section and card markup, but
 // reads its own data: process templates are not on the dashboard snapshot.
 //
 // - A card shows the template's name, version count, a one-line summary and
