@@ -15,13 +15,14 @@ export function liveActionSource(event, selector = '[data-act]') {
 }
 
 export function actionDescriptor(source, event = null) {
+  // In the fused Groups view, this node's own groups read group@node; the
+  // handler maps their names back (fleet-merged-island.js).
+  const fleetHome = source.closest?.('details[data-fleet-home]')?.getAttribute('data-fleet-node-name') || '';
   return Object.freeze({
     producerId: source.id || '',
     openInBackground: Boolean(event?.ctrlKey || event?.metaKey),
     data: Object.freeze({ ...source.dataset }),
-    // In the fused Groups view, this node's own groups read group@node; the
-    // handler maps their names back (fleet-merged-island.js).
-    fleetHome: source.closest?.('details[data-fleet-home]')?.getAttribute('data-fleet-node-name') || '',
+    ...(fleetHome ? { fleetHome } : {}),
   });
 }
 
