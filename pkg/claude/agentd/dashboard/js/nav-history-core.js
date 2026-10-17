@@ -326,7 +326,7 @@ export function fromPath(pathname) {
     [tab, second, third] = ['processes', third, parts[3]];
   } else if (tab === 'automations') tab = 'jobs';
   // /fleet was the merged all-nodes view; it is now Groups with every node
-  // fused (skynet-state.js reads the path for that), healed in place.
+  // fused (fleet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();
   if (Object.hasOwn(LEGACY_TAB_LOCATIONS, tab)) return normalizeLocation({ tab });
   // On a tab-level-selection tab there is no subtab, so segment two IS the

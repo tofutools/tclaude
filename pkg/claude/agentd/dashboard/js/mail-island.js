@@ -20,7 +20,7 @@ import { MessageDownloadMenu } from './message-download-menu.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { remoteNodeID } from './skynet-model.js';
+import { remoteNodeID } from './fleet-model.js';
 import { ProposalReader } from './proposal-reader.js';
 import { proposalTurn } from './proposals-model.js';
 

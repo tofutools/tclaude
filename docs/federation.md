@@ -19,7 +19,7 @@ laptops behind NAT or a corporate network work as-is.
     interactive attach. Everything here is a CLI command; the dashboard shows
     and manages linked nodes too, and its **⚙ Fleet → Setup guide** joins a
     hub, trusts peers and shares groups without the CLI; see
-    [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
+    [Fleet UI](dashboard.md#fleet-ui-linked-nodes).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -943,7 +943,7 @@ is by inspecting the caller's process tree.
 - One hub per instance. Hub-to-hub federation is a later step.
 - Some capabilities are still CLI-only in the dashboard (away cover,
   sending operator mail, spawn requests, remote jobs, offers, moves); see
-  [Skynet UI](dashboard.md#skynet-ui-linked-nodes) for what it covers.
+  [Fleet UI](dashboard.md#fleet-ui-linked-nodes) for what it covers.
 
 ## Portable local setup bundles
 
@@ -2715,7 +2715,7 @@ peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
 nonzero.
 
 For a how-to tour of the dashboard side, see
-[Skynet UI](dashboard.md#skynet-ui-linked-nodes).
+[Fleet UI](dashboard.md#fleet-ui-linked-nodes).
 
 The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
 "Fleet administration" in the command palette before any peer is trusted)
@@ -2819,7 +2819,7 @@ runtime wait 10 minutes before checking again. A standalone daemon never starts
 these Fleet release checks; explicit local update and harness-install requests
 still fetch metadata on demand.
 
-In the dashboard, each Skynet map card shows the node's tclaude version and ↑
+In the dashboard, each fleet map card shows the node's tclaude version and ↑
 when a newer release is known; its update…/manage… link opens that node's
 update dialog (the Fleet page's identity bar opens it for this node). The
 dialog shows the version, install method, latest release, binaries and

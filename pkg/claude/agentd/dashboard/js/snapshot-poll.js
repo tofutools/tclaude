@@ -58,7 +58,7 @@ export function startSnapshotPoll(refresh, {
   bootUntil = undefined,
   stallMs = SNAPSHOT_STALL_MS,
   // quiet() true slows the cadence to the background one while a view that
-  // does not render this node's snapshot is shown (the Skynet map polls its
+  // does not render this node's snapshot is shown (the Fleet map polls its
   // own per-node summaries); subscribeQuiet(cb) calls cb
   // whenever quiet() flips and returns an unsubscribe. Leaving quiet refreshes
   // at once, like returning to a visible tab.

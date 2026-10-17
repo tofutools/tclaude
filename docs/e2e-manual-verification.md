@@ -1,6 +1,6 @@
 # Manual end-to-end verification
 
-This runbook sets up a small skynet on one host: a `tclaude-hub` plus two
+This runbook sets up a small fleet on one host: a `tclaude-hub` plus two
 isolated tclaude nodes, `a` and `b`, each running real Claude Code agents.
 You then drive both dashboards in a headless browser and both CLIs, and
 check that the cross-node features work the way an operator would use them.
@@ -199,7 +199,7 @@ for as long as it was actually on screen:
 ```bash
 export DRIVE_SHOW=1                            # outline each click/type target first
 $D record /tmp/rec/frames /tmp/rec/demo.mp4 & R=$!
-$D caption 'Node a: opening the skynet map'    # banner at the bottom; no args clears it
+$D caption 'Node a: opening the fleet map'    # banner at the bottom; no args clears it
 $D clicktext 'Fleet'
 ...
 kill -INT $R; wait $R

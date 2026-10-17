@@ -29,9 +29,9 @@ import (
 // Separate test processes isolate the daemon's singleton identity, database,
 // harness and tmux simulators. Neither endpoint scripts federation replies:
 // both run the real dashboard mux and federation dispatcher through the hub.
-func TestSkynetJourneyInstance(t *testing.T) {
-	if os.Getenv("TCLAUDE_SKYNET_JOURNEY_CHILD") != "1" {
-		t.Skip("fixture process for TestSkynetJourney")
+func TestFleetJourneyInstance(t *testing.T) {
+	if os.Getenv("TCLAUDE_FLEET_JOURNEY_CHILD") != "1" {
+		t.Skip("fixture process for TestFleetJourney")
 	}
 	f := newFlow(t)
 	agentd.ResetFederationForTest()
@@ -78,7 +78,7 @@ func TestSkynetJourneyInstance(t *testing.T) {
 	server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 	t.Cleanup(server.Close)
 	t.Cleanup(agentd.SetPopupBaseURLForTest(server.URL))
-	fmt.Println("SKYNET_JOURNEY_READY " + server.URL)
+	fmt.Println("FLEET_JOURNEY_READY " + server.URL)
 	// Parent closes stdin after completing the journey; normal return executes
 	// all fixture cleanup and reports failures to the parent's Wait.
 	_, err = io.Copy(io.Discard, os.Stdin)
@@ -104,10 +104,10 @@ type journeyNode struct {
 
 func startJourneyNode(t *testing.T) *journeyNode {
 	t.Helper()
-	return startSkynetFixtureNode(t, "TestSkynetJourneyInstance", "TCLAUDE_SKYNET_JOURNEY_CHILD=1")
+	return startFleetFixtureNode(t, "TestFleetJourneyInstance", "TCLAUDE_FLEET_JOURNEY_CHILD=1")
 }
 
-func startSkynetFixtureNode(t *testing.T, testName, childEnv string) *journeyNode {
+func startFleetFixtureNode(t *testing.T, testName, childEnv string) *journeyNode {
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
@@ -129,8 +129,8 @@ func startSkynetFixtureNode(t *testing.T, testName, childEnv string) *journeyNod
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "SKYNET_JOURNEY_READY ") {
-				ready <- strings.TrimPrefix(line, "SKYNET_JOURNEY_READY ")
+			if strings.HasPrefix(line, "FLEET_JOURNEY_READY ") {
+				ready <- strings.TrimPrefix(line, "FLEET_JOURNEY_READY ")
 			} else {
 				_, _ = fmt.Fprintln(log, line)
 			}
@@ -224,7 +224,7 @@ func journeyRows(t *testing.T, value any) []map[string]any {
 	return out
 }
 
-func TestSkynetJourney(t *testing.T) {
+func TestFleetJourney(t *testing.T) {
 	store, err := hub.OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
 	require.NoError(t, err)
 	h, err := hub.New(store, hub.Config{})

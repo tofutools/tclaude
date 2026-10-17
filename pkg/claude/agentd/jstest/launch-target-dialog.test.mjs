@@ -82,7 +82,7 @@ test('move from the ⚙ menu: pick a node, then a receiving group, then confirm'
   await s.change(s.q('#lt-group'), 'reviewers');
   assert.match(s.q('#launch-target').textContent, /to.*forge · reviewers/);
   assert.match(s.q('[data-lt-carries]').textContent, /What carries over to forge.*History/);
-  await s.click(s.q('#skynet-move-drop-ok'));
+  await s.click(s.q('#fleetview-move-drop-ok'));
   assert.deepEqual(sent, [{ agent: 'agt_b1', peer: 'inst_forge', group: 'reviewers', direct_if_allowed: true }]);
   assert.ok(s.q('[data-move-drop-state="waiting"]'));
 });
@@ -185,7 +185,7 @@ test('a peer agent opens on a mode it can use, and a sent move locks the target'
   assert.equal(s.q('[data-lt-mode="morph"]').disabled, true);
   await s.click(s.q('[data-lt-node="inst_a"]'));
   await s.change(s.q('#lt-group'), 'builders');
-  await s.click(s.q('#skynet-move-drop-ok'));
+  await s.click(s.q('#fleetview-move-drop-ok'));
   assert.equal(s.q('#lt-group').disabled, true, 'the group is frozen once the move is sent');
   assert.equal(s.q('[data-lt-node="inst_forge"]').disabled, true);
   assert.equal(s.q('[data-lt-mode="clone"]').disabled, true);

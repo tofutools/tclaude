@@ -5,12 +5,12 @@ import { GroupsNativeList } from './groups-list.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
-import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
-import { tickedNodes, withFused } from './skynet-scope.js';
-import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
+import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
+import { tickedNodes, withFused } from './fleet-scope.js';
+import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './fleet-merged-model.js';
 import { peerAction } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
-import { dropPlan } from './skynet-move-drop.js';
+import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
@@ -234,12 +234,12 @@ export function MergedGroups({
     let dragging = null;
     let marked = null;
     const mark = (el, ok) => {
-      if (marked && marked !== el) marked.classList.remove('skynet-drop-ok', 'skynet-drop-no');
+      if (marked && marked !== el) marked.classList.remove('fleet-drop-ok', 'fleet-drop-no');
       marked = el;
-      el?.classList.toggle('skynet-drop-ok', ok);
-      el?.classList.toggle('skynet-drop-no', !ok);
+      el?.classList.toggle('fleet-drop-ok', ok);
+      el?.classList.toggle('fleet-drop-no', !ok);
     };
-    const unmark = () => { marked?.classList.remove('skynet-drop-ok', 'skynet-drop-no'); marked = null; };
+    const unmark = () => { marked?.classList.remove('fleet-drop-ok', 'fleet-drop-no'); marked = null; };
     const self = () => state.view.value.fleet?.self?.id || '';
     const onDragStart = (event) => {
       if (!host.contains(event.target)) return;
@@ -308,13 +308,13 @@ export function MergedGroups({
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
   const merged = mergeSnapshots(nodes, t, snapshot.value);
-  return html`<div class="skynet-merged">
-    <div class="skynet-merged-nodes" aria-label="Nodes in this view">
-      ${merged.fleet_nodes.map((n) => html`<span key=${n.node.id} class=${`skynet-merged-node${n.stale ? ' stale' : ''}`} style=${`--nc:${n.node.color}`}
+  return html`<div class="fleet-merged">
+    <div class="fleet-merged-nodes" aria-label="Nodes in this view">
+      ${merged.fleet_nodes.map((n) => html`<span key=${n.node.id} class=${`fleet-merged-node${n.stale ? ' stale' : ''}`} style=${`--nc:${n.node.color}`}
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
         <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
       </span>`)}
-      <span class="skynet-merged-note">Overview: shared actions go to the peer; drag an agent onto another node's group to move it; open <b>@node</b> for the rest.</span>
+      <span class="fleet-merged-note">Overview: shared actions go to the peer; drag an agent onto another node's group to move it; open <b>@node</b> for the rest.</span>
     </div>
     <${GroupsInteractionProvider}>
       <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />

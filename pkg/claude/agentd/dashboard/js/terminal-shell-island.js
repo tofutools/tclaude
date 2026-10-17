@@ -26,8 +26,8 @@ import {
 import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
-import { paneScope } from './skynet-scope.js';
-import { nodeColor } from './skynet-model.js';
+import { paneScope } from './fleet-scope.js';
+import { nodeColor } from './fleet-model.js';
 import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
@@ -520,7 +520,7 @@ function TabGear({ gear, snapshot, menuKey }) {
 
 const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
 
-// NodePill names a pane's node in a fused view (skynet-scope.js), in that
+// NodePill names a pane's node in a fused view (fleet-scope.js), in that
 // node's colour.
 function NodePill({ node }) {
   if (!node) return null;
@@ -946,7 +946,7 @@ function TerminalTabs({
   solo = false, manageTitle = false, empty = false, snapshot = null, scope = null,
 }) {
   const current = state.view.value;
-  // A fused node scope (skynet-scope.js) shows the ticked nodes' panes, each
+  // A fused node scope (fleet-scope.js) shows the ticked nodes' panes, each
   // labelled with its node; the rest stay open, just out of sight.
   const scopeView = scope?.view.value;
   const scopeOf = (pane) => paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);

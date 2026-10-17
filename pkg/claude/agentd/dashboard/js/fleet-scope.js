@@ -1,4 +1,4 @@
-// skynet-scope.js — DOM-free model of the node scope (tcl-sb4grp): which nodes
+// fleet-scope.js — DOM-free model of the node scope (tcl-sb4grp): which nodes
 // the dashboard shows. One node is today's per-node view (this node, or a peer
 // through ?node=). Fusing ticks several nodes: Groups and Terminals show them
 // together, every other tab keeps showing one node, the primary (the page's

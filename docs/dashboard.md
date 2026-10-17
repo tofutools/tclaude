@@ -118,7 +118,7 @@ In order across the top:
 | Config | Visual editor for `~/.tclaude/config.json` |
 
 With trusted federation peers, node chips and the Map / Groups · all nodes /
-⚙ Fleet views join the tab bar; see [Skynet UI](#skynet-ui-linked-nodes).
+⚙ Fleet views join the tab bar; see [Fleet UI](#fleet-ui-linked-nodes).
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog.
@@ -795,7 +795,7 @@ and its includes, or **Off** to skip profiles. Existing ask threads take the
 current choice on every turn. See [Ask sandbox policy](ask.md#sandbox-policy)
 for directory ambiguity, supported harnesses, refusals, and cleanup behavior.
 
-## Skynet UI: linked nodes
+## Fleet UI: linked nodes
 
 Once this node trusts at least one federation peer (see
 [Federation](federation.md) and its [setup walkthrough](federation-setup.md)),

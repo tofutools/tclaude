@@ -14,8 +14,8 @@ const status = (peers) => ({
 async function load(t) {
   const harness = await createPreactHarness(t);
   const [model, stateMod, actionsMod, island] = await Promise.all([
-    harness.importDashboardModule('js/skynet-model.js'), harness.importDashboardModule('js/skynet-state.js'),
-    harness.importDashboardModule('js/skynet-actions.js'), harness.importDashboardModule('js/skynet-island.js'),
+    harness.importDashboardModule('js/fleet-model.js'), harness.importDashboardModule('js/fleet-state.js'),
+    harness.importDashboardModule('js/fleet-actions.js'), harness.importDashboardModule('js/fleet-island.js'),
   ]);
   return { harness, model, stateMod, actionsMod, island };
 }
@@ -75,11 +75,11 @@ test('card view distinguishes stale data, unreachable peers and absent summaries
 
 test('actions send If-None-Match and keep the body on 304; a missing status route hides the row', async (t) => {
   const { harness, stateMod, actionsMod } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), now: () => 5 });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), now: () => 5 });
   const calls = [];
   let reply = { status: 200, body: { shared_agents: 2 }, etag: '"a"' };
   const fetchImpl = async (url, init) => { calls.push({ url, init }); return { ok: reply.status < 400, status: reply.status, headers: { get: () => reply.etag }, json: async () => reply.body }; };
-  const actions = actionsMod.createSkynetActions({ state, fetchImpl });
+  const actions = actionsMod.createFleetActions({ state, fetchImpl });
   const node = { id: 'inst_forge', local: false };
   await actions.loadSummary(node);
   reply = { status: 304, body: null, etag: '' };
@@ -97,7 +97,7 @@ test('actions send If-None-Match and keep the body on 304; a missing status rout
 test('chip row is always there, greyed out until the hub connects; peer chips switch the whole UI to that node', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('access');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   const nav = []; const switched = [];
   const map = harness.document.createElement('nav'); map.innerHTML = '<a data-tab="map" class="node-chip map">map</a>'; harness.document.body.appendChild(map);
   const anchor = map.firstChild;
@@ -166,7 +166,7 @@ test('without a fleet ⚙ Fleet is always clickable, and a node never set up say
   const activeTab = harness.signals.signal('groups');
   const stored = new Map();
   const prefs = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, v); } };
-  const state = stateMod.createSkynetState({ activeTab, prefs });
+  const state = stateMod.createFleetState({ activeTab, prefs });
   const nav = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${() => {}} />`);
   const fleet = () => mounted.container.querySelector('[data-fleet-entry]');
@@ -193,7 +193,7 @@ test('without a fleet ⚙ Fleet is always clickable, and a node never set up say
   await harness.act(() => harness.fireEvent(fleet(), 'click'));
   assert.deepEqual(nav, ['fleet-admin'], 'no navigation while already there');
 
-  const fresh = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), prefs });
+  const fresh = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), prefs });
   fresh.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] });
   assert.equal(fresh.view.value.setupSeen, true, 'a reload keeps it retired');
   fresh.dispose();
@@ -207,7 +207,7 @@ test('without a fleet ⚙ Fleet is always clickable, and a node never set up say
 
 test('on a peer view without a local fleet ⌂ still goes home', async (t) => {
   const { harness, stateMod, island } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups') });
   state.clearFleet();
   const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
@@ -220,7 +220,7 @@ test('on a peer view without a local fleet ⌂ still goes home', async (t) => {
 
 test('on a peer view the peer chip is current and ⌂ switches back to this node', async (t) => {
   const { harness, stateMod, island } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups') });
   state.setStatus(status([]));
   const nav = []; const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
@@ -258,7 +258,7 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
   assert.equal(model.remoteHealthView({ ok: false, lastOK: null, failure: { code: 'peer_busy' } }).state, 'busy');
   assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] }).omitted, [{ feature: 'costs', requires: 'costs.read' }]);
   assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'terminals', requires: 'sessions.attach', transport: true }, { feature: 'costs', requires: 'costs.read', requestable: true }] }).omitted, [{ feature: 'costs', requires: 'costs.read', requestable: true }]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups') });
   state.setStatus(status([]));
   const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
   const switched = [];
@@ -281,11 +281,11 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
 test('map polls only while active, staggered, and stops on leave', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   state.setStatus(status([]));
   const timers = fakeTimers(); const loaded = [];
   const actions = { loadSummary: async (node) => { loaded.push(node.id); state.commitSummary(node.id, { shared_groups: 1, shared_agents: 2, online_agents: 2, waiting_for_input: 0 }, ''); } };
-  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${actions} timers=${timers} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${timers} />`);
   assert.equal(timers.queue.length, 0, 'inactive map schedules nothing');
   await harness.act(() => { activeTab.value = 'map'; });
   assert.deepEqual(timers.queue.map((q) => q.ms), [0, 1667, 3333], 'three nodes, staggered over one interval');
@@ -301,10 +301,10 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
 test('the map never strands the operator: no fleet or a cycle key returns to the last per-node tab', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('costs');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   state.setStatus(status([]));
   const nav = []; const timers = fakeTimers();
-  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
   await harness.act(() => { activeTab.value = 'map'; });
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:leave-map', { detail: { dir: 1 } })));
   assert.deepEqual(nav, ['costs'], 'cycling out of the map returns to the tab it was opened from');
@@ -318,11 +318,11 @@ test('the map never strands the operator: no fleet or a cycle key returns to the
 test('a connected node with no peers gets a map of itself; the top bar counts one node', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('map');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   state.setStatus({ ...status([]), peers: [], hub: { state: 'connected', hub_id: 'hub_123', spaces: ['space-a'], since: '2026-10-17T10:00:00Z' } });
   state.markStatusLoaded();
   const nav = []; const timers = fakeTimers();
-  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
   assert.deepEqual(nav, [], 'the map stays open');
   assert.ok(mounted.container.querySelector('[aria-label="desk node"]'), 'this node has its card');
   assert.match(mounted.container.textContent, /No linked nodes yet/);
@@ -333,7 +333,7 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   assert.match(hub.textContent, /space-a/);
   assert.equal(timers.queue.length, 1, 'only this node is polled');
   const bar = await harness.mount(harness.html`<${island.TopLevelBar} state=${state} navigate=${(tab) => nav.push(tab)} />`);
-  assert.match(bar.container.textContent, /Skynet · 1 node · hub connected/);
+  assert.match(bar.container.textContent, /Fleet · 1 node · hub connected/);
   await harness.act(() => { state.setStatus({ ...status([]), peers: [], hub: { state: 'disconnected' } }); });
   assert.deepEqual(nav, ['groups'], 'the hub dropping leaves the map');
   await bar.unmount(); await mounted.unmount(); state.dispose();
@@ -341,9 +341,9 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
 
 test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
   const { harness, stateMod, actionsMod } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('map') });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map') });
   let code = 200;
-  const actions = actionsMod.createSkynetActions({ state, fetchImpl: async () => ({ ok: code < 400, status: code, json: async () => status([]) }) });
+  const actions = actionsMod.createFleetActions({ state, fetchImpl: async () => ({ ok: code < 400, status: code, json: async () => status([]) }) });
   await actions.loadStatus(); assert.equal(state.fleet.value.peers.length, 2); assert.equal(state.statusLoaded.value, true);
   code = 502; await actions.loadStatus(); assert.ok(state.fleet.value, 'transient failure keeps the chips and map');
   code = 404; await actions.loadStatus(); assert.equal(state.fleet.value, null);
@@ -357,7 +357,7 @@ test('node self-update: the card shows the version and an available update; the 
   assert.equal(upd.updateBase({ id: 'inst_a/b' }), '/api/peer/inst_a%2Fb/node/update');
   assert.deepEqual(upd.versionView({ version: 'v1.2.0', latest_version: 'v1.3.0', update_available: null }), { current: 'v1.2.0', latest: 'v1.3.0', update: false });
   const activeTab = harness.signals.signal('map');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   state.setStatus(status([]));
   state.commitSummary('inst_self', { version: 'v1.2.0', latest_version: 'v1.3.0', update_available: true, shared_groups: 1, shared_agents: 2, online_agents: 2, waiting_for_input: 0 }, '');
   state.commitSummary('inst_forge', { version: 'v1.3.0', update_available: false, shared_groups: 1, shared_agents: 1, online_agents: 1, waiting_for_input: 0 }, '');
@@ -375,13 +375,13 @@ test('node self-update: the card shows the version and an available update; the 
     start: async (node, action, version) => { calls.push(['start', node.id, action, version]); job = { id: 'u1', action, version, state: 'running', phase: 'downloading' }; return job; },
   };
   const confirm = async (o) => { confirms.push(o); return true; };
-  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} confirm=${confirm} toast=${() => {}} updateActions=${updateActions} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} confirm=${confirm} toast=${() => {}} updateActions=${updateActions} />`);
   const q = (s) => mounted.container.ownerDocument.querySelector(s);
   const selfCard = mounted.container.querySelector('[aria-label="desk node"]');
   assert.match(selfCard.textContent, /v1\.2\.0 ↑ v1\.3\.0 update…/);
   assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 manage…/);
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
-  await harness.act(() => selfCard.querySelector('[data-skynet="node-update"]').click());
+  await harness.act(() => selfCard.querySelector('[data-fleet="node-update"]').click());
   await settle();
   assert.match(q('#fleet-node-update-modal').textContent, /Version\s*v1\.2\.0/);
   await harness.act(() => q('#fleet-node-update-apply').click());
@@ -397,7 +397,7 @@ test('node self-update: the card shows the version and an available update; the 
   assert.match(q('#fleet-node-update-job').textContent, /succeeded/);
   assert.ok(q('#fleet-node-update-rollback'), 'rollback is offered once a backup exists');
   await harness.act(() => [...q('#fleet-node-update-modal').querySelectorAll('button')].find((b) => b.textContent === 'Close').click());
-  await harness.act(() => mounted.container.querySelector('[aria-label="forge node"] [data-skynet="node-update"]').click());
+  await harness.act(() => mounted.container.querySelector('[aria-label="forge node"] [data-fleet="node-update"]').click());
   await settle();
   assert.match(q('#fleet-node-update-modal').textContent, /forge does not let you manage its updates \(needs node\.update\)/);
   await mounted.unmount(); state.dispose();

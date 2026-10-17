@@ -6,7 +6,7 @@
 //   state "here"  where it runs now. home_instance != current_instance means
 //                 it is visiting; equal means it came back home.
 // Pure, so the wording and the ten-minute "back home" window are unit-tested.
-import { nodeColor } from './skynet-model.js';
+import { nodeColor } from './fleet-model.js';
 
 // BACK_HOME_MS is how long the "back home" tag shows after the arrival.
 export const BACK_HOME_MS = 10 * 60 * 1000;

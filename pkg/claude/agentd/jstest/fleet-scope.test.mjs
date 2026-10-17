@@ -9,8 +9,8 @@ const eight = status(['forge', 'lab', 'ci', 'render', 'review', 'docs', 'qa'].ma
 async function load(t) {
   const harness = await createPreactHarness(t);
   const [scope, model, stateMod, island] = await Promise.all([
-    harness.importDashboardModule('js/skynet-scope.js'), harness.importDashboardModule('js/skynet-model.js'),
-    harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-island.js'),
+    harness.importDashboardModule('js/fleet-scope.js'), harness.importDashboardModule('js/fleet-model.js'),
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-island.js'),
   ]);
   return { harness, scope, model, stateMod, island };
 }
@@ -36,7 +36,7 @@ test('the fused set lives in ?nodes=: all, or the ticked IDs; one left is that n
 test('up to four nodes get a button each; the fused dropdown ticks nodes and one left shows that node alone', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('usage');
-  const state = stateMod.createSkynetState({ activeTab, search: '' });
+  const state = stateMod.createFleetState({ activeTab, search: '' });
   state.setStatus(three);
   const nav = []; const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
@@ -63,7 +63,7 @@ test('up to four nodes get a button each; the fused dropdown ticks nodes and one
 test('fusing from the map lands in Groups; picking the shown node leaves the fused view in place', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('map');
-  const state = stateMod.createSkynetState({ activeTab, search: '' });
+  const state = stateMod.createFleetState({ activeTab, search: '' });
   state.setStatus(three);
   const nav = []; const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => { nav.push(tab); activeTab.value = tab; }} remote="" switchNode=${(id) => switched.push(id)} />`);
@@ -79,7 +79,7 @@ test('fusing from the map lands in Groups; picking the shown node leaves the fus
 
 test('past four nodes one dropdown names the shown node, filters as you type and keeps this node pinned', async (t) => {
   const { harness, stateMod, island } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '' });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '' });
   state.setStatus(eight);
   const switched = [];
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="inst_review0000" switchNode=${(id) => switched.push(id)} />`);
@@ -102,7 +102,7 @@ test('past four nodes one dropdown names the shown node, filters as you type and
 test('a per-node tab in a fused view names its node, the primary, and can switch it', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('usage');
-  const state = stateMod.createSkynetState({ activeTab, search: '?nodes=inst_self,inst_forge' });
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=inst_self,inst_forge' });
   state.setStatus(three);
   const switched = [];
   const doc = harness.document;
@@ -132,7 +132,7 @@ test('the fused URL is written in place, keeping the page\'s other parameters', 
 
 test('a failed status read keeps the fused set; a fleet that is gone drops it; /fleet opens every node fused', async (t) => {
   const { harness, stateMod, island } = await load(t);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
   const sync = await harness.mount(harness.html`<${island.ScopeSync} state=${state} navigate=${() => {}} remote="" />`);
   await harness.act(() => { state.markStatusLoaded(); });
   assert.equal(state.fused.value, 'all', 'status not known yet (or failed): keep the selection');
@@ -141,7 +141,7 @@ test('a failed status read keeps the fused set; a fleet that is gone drops it; /
   await harness.act(() => { state.clearFleet(); });
   assert.equal(state.fused.value, null, 'no fleet any more: nothing left to fuse');
   await sync.unmount(); state.dispose();
-  const legacy = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '', pathname: '/fleet' });
+  const legacy = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '', pathname: '/fleet' });
   assert.equal(legacy.fused.value, 'all');
   legacy.dispose();
 });

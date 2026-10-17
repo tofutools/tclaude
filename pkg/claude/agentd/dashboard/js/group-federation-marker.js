@@ -6,9 +6,9 @@ import { relTime } from './helpers.js';
 const html = htm.bind(h);
 
 // openNodeView is loaded on demand so the Groups island never depends on the
-// separately mounted Skynet modules.
+// separately mounted Fleet modules.
 function openNodeView(id) {
-  void import('./skynet-island.js').then((m) => m.openNodeView(id)).catch(() => {});
+  void import('./fleet-island.js').then((m) => m.openNodeView(id)).catch(() => {});
 }
 
 // group-federation-marker.js — the Groups-tab marker for a group linked to

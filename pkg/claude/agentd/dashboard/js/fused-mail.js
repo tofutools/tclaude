@@ -3,7 +3,7 @@
 // and every action sent back to that node. Single-node Messages (mail.js) is
 // untouched; CSS shows this view instead of it while fused.
 //
-// Reads follow the fused polling budget (skynet-merged-island.js): only while
+// Reads follow the fused polling budget (fleet-merged-island.js): only while
 // the view is on screen and the page visible, staggered, one read in flight
 // per node and at most four overall. A failed read keeps what the node last
 // showed, marked with its age; a node that withdraws trust keeps nothing.
@@ -13,8 +13,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { fmtAge, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
-import { tickedNodes, withFused } from './skynet-scope.js';
+import { fmtAge, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
+import { tickedNodes, withFused } from './fleet-scope.js';
 import { approveConsequence } from './remote-inbox.js';
 import { replySubject } from './peer-mail.js';
 import {

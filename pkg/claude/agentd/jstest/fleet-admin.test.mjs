@@ -71,9 +71,9 @@ let s_viewers = [];
 let s_landing = null;
 async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null }, statusFn = status } = {}) {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab });
+  const state = stateMod.createFleetState({ activeTab });
   const log = []; const toasts = []; const confirms = [];
   const actions = {
     status: async () => { log.push(['status']); return statusFn(); },
@@ -373,8 +373,8 @@ test('Unrestrict and Untrust confirm with the consequence before acting', async 
 
 test('a peer view hands fleet administration back to this node', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('fleet-admin') });
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('fleet-admin') });
   const homes = []; const reads = [];
   const actions = { status: async () => { reads.push(1); return status(); }, pools: async () => [] };
   const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} remote="inst_forge" switchHome=${() => homes.push(1)} timers=${fakeTimers()} />`);
@@ -1377,7 +1377,7 @@ test('a conflicted key transition shows the recover-peer preview and, separately
 
 test('keyTransition shows only pending and conflict, and recoverCommands refuses odd IDs', async (t) => {
   const harness = await createPreactHarness(t);
-  const { keyTransition, recoverCommands, normalizeFleet } = await harness.importDashboardModule('js/skynet-model.js');
+  const { keyTransition, recoverCommands, normalizeFleet } = await harness.importDashboardModule('js/fleet-model.js');
   assert.equal(keyTransition({ identity_transition: { state: 'accepted' } }), null);
   assert.equal(keyTransition({}), null);
   const t1 = keyTransition({ identity_transition: { state: 'conflict', old_id: 'inst_a', new_id: 'inst_b', new_fingerprint: 'ab-cd' } });

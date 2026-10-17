@@ -39,9 +39,9 @@ const fail = (status, data) => ({ ok: false, status, json: async () => data });
 
 test('fused Messages lists every ticked node\'s mail, answers on the owning node, and falls back to opening the node', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
   const activeTab = harness.signals.signal('messages');
-  const state = stateMod.createSkynetState({ activeTab, search: '?nodes=all' });
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
     { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' },
     { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'restricted' },
@@ -115,8 +115,8 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
 
 test('switching folders never shows the old folder\'s rows; human actions use each node\'s own routes; lost trust drops a node', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
   const timers = fakeTimers(); const calls = [];
   let forgeTrusted = true;
@@ -156,8 +156,8 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
 
 test('each node\'s agent folders arrive one server page at a time, with Show more for the rest', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
   const timers = fakeTimers(); const calls = [];
   const agent = (i) => ({ id: `conv-${i}`, kind: 'agent', title: `agent-${i}`, total: 1, unread: 0, last_at: `2026-01-01T00:00:${String(59 - i).padStart(2, '0')}Z` });

@@ -11,7 +11,7 @@ import { shortCwd } from './helpers.js';
 import { LaunchTargetDialog } from './launch-target-dialog.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { createPeerActionActions } from './peer-action.js';
-import { skynetState } from './skynet-state.js';
+import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import {
@@ -594,7 +594,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
 // hands over to the clone dialog, which owns the worktree and first-message
 // choices.
 function LaunchTargetGate({ descriptor, actions, snapshot }) {
-  const fleet = skynetState.fleet.value;
+  const fleet = fleetState.fleet.value;
   const self = fleet?.self || { id: descriptor.agent.node || 'local', name: 'this node' };
   const fleetActions = useMemo(() => createFleetAdminActions(), []);
   const close = () => actions.close(descriptor);

@@ -1,15 +1,15 @@
-import { MAP_POLL_MS, PEER_POLL_HEADER, classifyFailure, summaryURL } from './skynet-model.js';
+import { MAP_POLL_MS, PEER_POLL_HEADER, classifyFailure, summaryURL } from './fleet-model.js';
 
 async function readJSON(response) {
   try { return await response.json(); } catch (_) { return null; }
 }
 
-// createSkynetActions loads the federation node list and per-node summaries.
+// createFleetActions loads the federation node list and per-node summaries.
 // Summary reads send the last ETag so an unchanged node answers with a bodyless
 // 304, per the node-summary caching contract.
-export function createSkynetActions({ state, fetchImpl = globalThis.fetch } = {}) {
-  if (!state?.setStatus) throw new TypeError('skynet actions require state');
-  if (typeof fetchImpl !== 'function') throw new TypeError('skynet actions require fetch');
+export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {}) {
+  if (!state?.setStatus) throw new TypeError('fleet actions require state');
+  if (typeof fetchImpl !== 'function') throw new TypeError('fleet actions require fetch');
 
   async function loadStatus() {
     try {

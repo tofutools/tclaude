@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { fmtAge } from './skynet-model.js';
+import { fmtAge } from './fleet-model.js';
 import { TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
