@@ -120,3 +120,47 @@ func TestPeerReach_OnAGroupKeepsItsOtherGrants(t *testing.T) {
 	code, _, body = peerReach(t, fh, map[string]any{"group": "missing", "slugs": []string{"message.direct"}, "peer": "bob"})
 	require.Equal(t, http.StatusNotFound, code, body)
 }
+
+func TestPeerReach_NamesMembersWhoseOwnGrantWinsOverTheGroups(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	const own = "019fe740-43a4-7023-b8ae-1ee64459f3a3"
+	const plain = "019fe740-43a4-7023-b8ae-1ee64459f3a4"
+	f.HaveGroup("ops")
+	f.HaveConvWithTitle(own, "own-reach")
+	f.HaveAliveSession(own, "own-reach", "own-reach-pane", f.TestCwd("own"))
+	f.HaveMember("ops", own)
+	f.HaveConvWithTitle(plain, "plain")
+	f.HaveAliveSession(plain, "plain", "plain-pane", f.TestCwd("plain"))
+	f.HaveMember("ops", plain)
+	code, _, body := peerReach(t, fh, map[string]any{"target": own, "slugs": []string{"message.direct"}, "peer": "bob/lab"})
+	require.Equal(t, http.StatusOK, code, body)
+
+	rec := fedHuman(t, f, http.MethodPost, "/v1/permissions/peer-reach", map[string]any{"group": "ops", "slugs": []string{"message.direct"}, "peer": "bob/builders"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		Warnings []string `json:"warnings"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.Len(t, resp.Warnings, 1, "only the member with its own peer grant")
+	require.Contains(t, resp.Warnings[0], "own-reach has its own grant of message.direct")
+}
+
+func TestPeerReach_RemovesAPeerGroupAfterThePeerIsUntrusted(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	bob := fh.peer.id.ID()
+	f.HaveGroup("ops")
+	code, _, body := peerReach(t, fh, map[string]any{"group": "ops", "slugs": []string{"message.direct"}, "peer": "bob/builders"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, _, body = peerReach(t, fh, map[string]any{"group": "ops", "slugs": []string{"message.direct"}, "peer": "bob/lab"})
+	require.Equal(t, http.StatusOK, code, body)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/peers/untrust", map[string]any{"instance": bob})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	code, rows, body := peerReach(t, fh, map[string]any{"group": "ops", "slugs": []string{"message.direct"}, "peer": bob + "/builders", "remove": true})
+	require.Equal(t, http.StatusOK, code, body)
+	require.Equal(t, []string{bob + "/lab"}, reachOf(rows, "group", "ops", "message.direct"), "the stored instance ID is removable without the peer resolving")
+	code, _, body = peerReach(t, fh, map[string]any{"group": "ops", "slugs": []string{"message.direct"}, "peer": bob + "/x"})
+	require.Equal(t, http.StatusBadRequest, code, body, "adding still needs a trusted peer")
+}

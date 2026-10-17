@@ -30,7 +30,8 @@ type peerReachRow struct {
 }
 
 type peerReachResp struct {
-	Rows []peerReachRow `json:"rows"`
+	Rows     []peerReachRow `json:"rows"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 func permissionsPeerReachCmd() *cobra.Command {
@@ -161,6 +162,9 @@ func runPeerReachEdit(p *peerReachEditParams, remove bool, stdout, stderr io.Wri
 	if err := DaemonRequest(http.MethodPost, "/v1/permissions/peer-reach", body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	for _, w := range resp.Warnings {
+		fmt.Fprintf(stderr, "Warning: %s\n", w)
 	}
 	return printPeerReach(resp, p.JSON, stdout)
 }

@@ -459,7 +459,12 @@ function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toas
     body: `${name(pick)} may use what ${peer.label} shares in its group ${g.name} (${what}): ${slugs.join(', ')}, scoped peer=${peer.label}/${g.name}. Its other grants are kept. ${peer.label} still decides what it shares; this only lets your agent${pick.startsWith('group:') ? 's' : ''} use it.`,
     okLabel: 'Give access', busyLabel: 'Saving…',
     action: () => actions.setPeerReach({ ...holderBody(pick), slugs, peer: `${peer.id}/${g.name}` }),
-  }).then((ok) => { if (ok) { toast(`${name(pick)} can use ${peer.label}/${g.name}`, false); setHolder(''); reload(); } })
+  }).then((r) => {
+    if (!r) return;
+    toast(`${name(pick)} can use ${peer.label}/${g.name}`, false);
+    for (const w of r.warnings || []) toast(`Not every member: ${w}`, true);
+    setHolder(''); reload();
+  })
     .catch((e) => toast(errText(e), true));
   const take = (h) => confirm({
     title: `Stop ${h.label} using ${peer.label}'s ${g.name}?`,

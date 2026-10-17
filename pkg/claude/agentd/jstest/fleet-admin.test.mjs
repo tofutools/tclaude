@@ -143,7 +143,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     setPeerReach: async (b) => {
       log.push(['peerReach', b]);
       if (b.target === 'agt_a1') { const e = new Error('ada holds message.direct everywhere on this node, and one grant of a slug holds either local or peer scope; give the peer reach to a group it is in instead'); e.code = 'peer_reach_conflict'; e.status = 409; throw e; }
-      return { rows: [] };
+      return { rows: [], warnings: b.group === 'build' ? ['ada has its own grant of message.direct, which takes precedence over group build\'s; give it this peer group directly'] : [] };
     },
     nodeLabels: async () => ['gpu', 'ci'],
     hubStatus: async () => {
@@ -2340,6 +2340,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   assert.equal(s.confirms.at(-1).title, "Let group build (every member) use forge's builders?");
   assert.match(s.confirms.at(-1).body, /message\.direct, scoped peer=forge\/builders\. Its other grants are kept\./);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'build', slugs: ['message.direct'], peer: 'inst_forge/builders' });
+  assert.match(s.toasts.at(-1), /Not every member: ada has its own grant/, 'a member whose own grant wins is named');
   await s.click(row.querySelector('[data-holder="group:ops"] button'));
   assert.equal(s.confirms.at(-1).title, "Stop group ops using forge's builders?");
   assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'ops', slugs: ['message.direct'], peer: 'inst_forge/builders', remove: true });

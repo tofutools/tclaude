@@ -43,6 +43,10 @@ type peerReachRow struct {
 
 type peerReachResp struct {
 	Rows []peerReachRow `json:"rows"`
+	// Warnings name members a group's new reach does not reach: an agent's
+	// own grant of a slug (peer-scoped, or a deny) takes precedence over its
+	// groups' grants of it.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // errPeerReachConflict marks a row that cannot take peer reach.
@@ -61,7 +65,9 @@ func handlePermissionsPeerReach(w http.ResponseWriter, r *http.Request) {
 
 // listPeerReach lists every peer-scoped grant, optionally only those naming
 // one peer (?peer=<label or instance ID>).
-func listPeerReach(w http.ResponseWriter, r *http.Request) {
+func listPeerReach(w http.ResponseWriter, r *http.Request) { listPeerReachWith(w, r, nil) }
+
+func listPeerReachWith(w http.ResponseWriter, r *http.Request, warnings []string) {
 	state, err := snapshotPermissions()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server", "permission state unavailable")
@@ -85,7 +91,7 @@ func listPeerReach(w http.ResponseWriter, r *http.Request) {
 		}
 		return out
 	}
-	resp := peerReachResp{Rows: []peerReachRow{}}
+	resp := peerReachResp{Rows: []peerReachRow{}, Warnings: warnings}
 	for conv, slugs := range state.Scopes {
 		for slug, scope := range slugs {
 			if state.Overrides[conv][slug] != db.PermEffectGrant {
@@ -153,6 +159,13 @@ func updatePeerReach(w http.ResponseWriter, r *http.Request) {
 		}
 		raw, _ := json.Marshal(map[string][]string{string(ScopeDimPeer): {req.Peer}})
 		canonical, err := canonicalPermissionScopeForSlug(slug, string(raw))
+		if err != nil && req.Remove && validatePermissionScopeForSlug(slug, PermissionScope{ScopeDimPeer: {req.Peer}}) == nil {
+			// A peer no longer trusted does not resolve, but the stored
+			// matcher names its instance ID: take that as written, so its
+			// reach can still be removed one peer group at a time.
+			matcher[slug] = req.Peer
+			continue
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_scope", fmt.Sprintf("%s: %v", slug, err))
 			return
@@ -168,12 +181,14 @@ func updatePeerReach(w http.ResponseWriter, r *http.Request) {
 		return mergePeerReach(holder, slug, cur, matcher[slug], req.Remove)
 	}
 	var err error
+	var groupID int64
 	if req.Group != "" {
 		g, gerr := db.GetAgentGroupByName(req.Group)
 		if gerr != nil || g == nil || g.IsArchived() {
 			writeError(w, http.StatusNotFound, "not_found", "no such group: "+req.Group)
 			return
 		}
+		groupID = g.ID
 		err = db.UpdateAgentGroupPermissionScopes(g.ID, slugs, "<human>", update)
 	} else {
 		target, terr := resolveTarget(req.Target)
@@ -208,11 +223,56 @@ func updatePeerReach(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "not_found", "no such holder")
 		return
+	case errors.Is(err, db.ErrHolderRetired):
+		writeError(w, http.StatusConflict, "holder_retired", holder+" is retired or archived and holds no grants")
+		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	listPeerReach(w, r)
+	var warnings []string
+	if groupID != 0 && !req.Remove {
+		warnings = shadowedGroupMembers(groupID, req.Group, slugs)
+	}
+	listPeerReachWith(w, r, warnings)
+}
+
+// shadowedGroupMembers names the group's members whose own grant of a slug
+// wins over the group's for remote actions: a peer-scoped grant of their
+// own (the resolver takes an agent's row before its groups' rows) or a deny.
+func shadowedGroupMembers(groupID int64, group string, slugs []string) []string {
+	members, err := db.ListAgentGroupMembers(groupID)
+	if err != nil {
+		return nil
+	}
+	state, err := snapshotPermissions()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range members {
+		var own []string
+		for _, slug := range slugs {
+			switch state.Overrides[m.ConvID][slug] {
+			case db.PermEffectDeny:
+				own = append(own, slug+" (denied)")
+			case db.PermEffectGrant:
+				if len(state.Scopes[m.ConvID][slug][ScopeDimPeer]) != 0 {
+					own = append(own, slug)
+				}
+			}
+		}
+		if len(own) == 0 {
+			continue
+		}
+		who := state.Titles[m.ConvID]
+		if who == "" {
+			who = m.ConvID
+		}
+		out = append(out, fmt.Sprintf("%s has its own grant of %s, which takes precedence over group %s's; give it this peer group directly", who, strings.Join(own, ", "), group))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // mergePeerReach is the row rule. A missing row gains a peer-only grant; a

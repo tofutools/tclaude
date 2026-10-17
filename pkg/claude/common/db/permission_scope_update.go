@@ -19,6 +19,10 @@ type PermissionRow struct {
 // delete it; an error aborts the whole update with nothing written.
 type ScopeUpdate func(slug string, cur PermissionRow) (scope string, keep, remove bool, err error)
 
+// ErrHolderRetired: the agent or group is retired or archived, so it can no
+// longer hold grants.
+var ErrHolderRetired = errors.New("retired or archived")
+
 // UpdateAgentPermissionScopes reads and rewrites agentID's grant rows for
 // slugs in one transaction, so a merge into a row cannot lose a concurrent
 // write and a refusal on one slug leaves the others unwritten. A row written
@@ -40,7 +44,7 @@ func UpdateAgentPermissionScopes(agentID string, slugs []string, grantedBy strin
 	case err != nil:
 		return err
 	case retired.valid:
-		return errors.New("agent " + agentID + " is retired")
+		return ErrHolderRetired
 	}
 	for _, slug := range slugs {
 		var cur PermissionRow
@@ -88,12 +92,14 @@ func UpdateAgentGroupPermissionScopes(groupID int64, slugs []string, grantedBy s
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var exists int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_groups WHERE id = ?`, groupID).Scan(&exists); err != nil {
-		return err
-	}
-	if exists == 0 {
+	var archived dbTimestamp
+	switch err := tx.QueryRow(`SELECT archived_at FROM agent_groups WHERE id = ?`, groupID).Scan(&archived); {
+	case errors.Is(err, sql.ErrNoRows):
 		return sql.ErrNoRows
+	case err != nil:
+		return err
+	case archived.valid:
+		return ErrHolderRetired
 	}
 	routes := false
 	for _, slug := range slugs {

@@ -369,7 +369,11 @@ tclaude agent permissions peer-reach ls [--peer bob]
 grant that holds the slug for local use, or a deny, is refused (409
 `peer_reach_conflict`, nothing written) instead of being replaced, and the
 usual way out is to give the reach to a group the agent is in. `remove`
-drops the grant when its last peer group goes. The route is
+drops the grant when its last peer group goes. An agent's own grant of a
+slug takes precedence over its groups' grants of it, so a member with its
+own peer reach (or a deny) for a slug does not get a group's: `add --group`
+names such members in its `warnings` (printed on stderr, and shown in the
+dashboard). The route is
 `GET|POST /v1/permissions/peer-reach` (`/api/federation/peer-reach` from the
 dashboard, local-only) with `{target|group, slugs, peer, remove?}`; both
 answer `{rows:[{kind, group|conv, agent_id, title, slug, peers}]}`.
