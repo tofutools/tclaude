@@ -108,6 +108,11 @@ func TestPeerSpawnRequestWithoutGrantWaitsForOperator(t *testing.T) {
 	require.True(t, found, "the operator is asked to decide")
 	rec := testharness.Serve(agentd.PeerViewHandler(bob.ID()), testharness.JSONRequest(t, "GET", fmt.Sprintf("/api/spawn-requests/%d", id), nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+
+	_, err = db.DeleteFederationPeerGrant(bob.ID(), agentd.PermGroupsVisibilityRead, db.FederationGroupScope(builders.ID))
+	require.NoError(t, err)
+	rec = testharness.Serve(agentd.PeerViewHandler(bob.ID()), testharness.JSONRequest(t, "GET", fmt.Sprintf("/api/spawn-requests/%d", id), nil))
+	require.Equal(t, 404, rec.Code, "a group that is no longer visible hides its requests like spawn-options does")
 }
 
 // A spawn grant opens only the overrides it lists; the request stores them
@@ -169,12 +174,16 @@ func TestPeerSpawnUnrestrictedOpensAllOverrides(t *testing.T) {
 	require.Equal(t, "automatic", opts.Approval)
 	require.Equal(t, map[string]bool{"cwd": true, "harness": true, "model": true, "effort": true}, opts.Overrides)
 	require.Contains(t, opts.Harnesses, "claude")
+	require.NotContains(t, opts.Harnesses, "shell", "a spawn request always carries a brief, which shell refuses")
 	require.Contains(t, opts.Defaults, "cwd")
 
 	for _, bad := range []map[string]any{
 		{"brief": "task", "cwd": "relative/dir"},
 		{"brief": "task", "cwd": "/srv/../etc"},
 		{"brief": "task", "harness": "no-such-harness"},
+		{"brief": "task", "harness": "shell"},
+		{"brief": "task", "model": "-x"},
+		{"brief": "task", "model": "--dangerously-skip-permissions"},
 		{"brief": "task", "effort": "HIGH!"},
 	} {
 		code, _, _ := peerSpawnPost(t, carol.ID(), "builders", bad)
@@ -187,5 +196,67 @@ func TestPeerSpawnUnrestrictedOpensAllOverrides(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dir, req.Overrides.Cwd)
 	require.Equal(t, "claude", req.Overrides.Harness)
+	waitSpawnSettled(t, id)
+}
+
+// An operator approval shows what the request asked for, applies only the
+// settings the peer may still choose (or the operator's own), and names the
+// dropped ones.
+func TestPeerSpawnApprovalDropsOverridesThePeerMayNoLongerChoose(t *testing.T) {
+	f := newFlow(t)
+	builders := f.HaveGroup("builders")
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: bob.ID(), Slug: agentd.PermGroupsVisibilityRead, Scope: db.FederationGroupScope(builders.ID)}))
+	dir := t.TempDir()
+	// As left behind by a grant that allowed these and has since been revoked.
+	id, err := db.InsertFederationSpawnRequest(&db.FederationSpawnRequest{
+		FromInstance: bob.ID(), EnvelopeID: "env-dropped", FromName: "bob", GroupID: builders.ID, GroupName: "builders",
+		Brief: "port the parser", Status: db.FedSpawnPending, ExpiresAt: time.Now().Add(time.Hour),
+		Overrides: db.FederationSpawnOverrides{Cwd: "/srv/peer-chosen", Model: "opus", Effort: "high"},
+	}, 10)
+	require.NoError(t, err)
+
+	rec := fedHuman(t, f, "GET", "/v1/federation/spawn-requests", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var rows []struct {
+		ID        int64                        `json:"id"`
+		Overrides *db.FederationSpawnOverrides `json:"overrides"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows))
+	require.Len(t, rows, 1)
+	require.Equal(t, &db.FederationSpawnOverrides{Cwd: "/srv/peer-chosen", Model: "opus", Effort: "high"}, rows[0].Overrides, "the operator sees what was asked for")
+
+	rec = fedHuman(t, f, "POST", fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{"cwd": dir})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var out struct {
+		Dropped []string `json:"dropped_overrides"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, []string{"model", "effort"}, out.Dropped, "the operator's own cwd wins; the rest is no longer the peer's to choose")
+	waitSpawnSettled(t, id)
+}
+
+// A harness override that contradicts the profile the launch runs (the
+// grant's pinned profile here) is refused instead of silently dropping that
+// profile's harness-specific settings.
+func TestPeerSpawnHarnessOverrideConflictsWithPinnedProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("builders")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "codexy", Harness: "codex", Model: "gpt-5.4"})
+	require.NoError(t, err)
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"profile": "codexy", "allowed_overrides": []string{"harness"}}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+
+	code, _, errCode := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "harness": "claude"})
+	require.Equal(t, 409, code)
+	require.Equal(t, "harness_profile_conflict", errCode)
+
+	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "harness": "codex"})
+	require.Equal(t, 202, code, "the profile's own harness is no conflict")
 	waitSpawnSettled(t, id)
 }

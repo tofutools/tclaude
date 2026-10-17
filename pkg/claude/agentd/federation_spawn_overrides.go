@@ -29,7 +29,9 @@ const (
 var fedSpawnOverrideFields = []string{fedOverrideCwd, fedOverrideHarness, fedOverrideModel, fedOverrideEffort}
 
 var (
-	fedSpawnModelRE  = regexp.MustCompile(`^[A-Za-z0-9._:/@\[\]+-]{1,128}$`)
+	// No leading '-': a model reaches harness command lines, where it must
+	// never read as a flag.
+	fedSpawnModelRE  = regexp.MustCompile(`^[A-Za-z0-9._:/@\[\]+][A-Za-z0-9._:/@\[\]+-]{0,127}$`)
 	fedSpawnEffortRE = regexp.MustCompile(`^[a-z]{1,32}$`)
 )
 
@@ -86,8 +88,8 @@ func validateFedSpawnOverrides(o db.FederationSpawnOverrides) error {
 		}
 	}
 	if o.Harness != "" {
-		if _, ok := harness.Get(o.Harness); !ok {
-			return fmt.Errorf("requested harness is unknown on this node")
+		if _, ok := harness.Get(o.Harness); !ok || !fedSpawnHarnessOffered(o.Harness) {
+			return fmt.Errorf("requested harness is unknown on this node or cannot take a spawn request")
 		}
 	}
 	if o.Model != "" && !fedSpawnModelRE.MatchString(o.Model) {
@@ -97,6 +99,89 @@ func validateFedSpawnOverrides(o db.FederationSpawnOverrides) error {
 		return fmt.Errorf("invalid requested effort")
 	}
 	return nil
+}
+
+// fedSpawnHarnessOffered reports whether a remote spawn may choose a harness:
+// a spawn request always starts with a brief, which the shell harness refuses.
+func fedSpawnHarnessOffered(name string) bool {
+	return name != harness.ShellName
+}
+
+// fedSpawnHarnesses lists the harnesses a peer may choose here.
+func fedSpawnHarnesses() []string {
+	var out []string
+	for _, name := range harness.Names() {
+		if fedSpawnHarnessOffered(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// checkFedHarnessProfile refuses a requested harness that conflicts with the
+// harness an explicitly chosen profile (the requested one, or the grant's
+// pinned --profile) runs: the launch would silently skip that profile's
+// harness-specific settings. Ambient group/global default profiles are not
+// consulted; the spawn path already lets an explicit harness skip them.
+func checkFedHarnessProfile(profileName, requested string) error {
+	if requested == "" || profileName == "" {
+		return nil
+	}
+	profile, err := db.ResolveSpawnProfile(profileName)
+	if err != nil || profile == nil || profile.Harness == "" {
+		return nil
+	}
+	if pinned := harnessOrDefault(profile.Harness); pinned != requested {
+		return fmt.Errorf("profile %q runs harness %q; choose that harness or leave the harness blank", profile.Name, pinned)
+	}
+	return nil
+}
+
+// fedSpawnOverridesStillAllowed is what an operator approval launches with:
+// a requested setting the operator did not set explicitly applies only while
+// the current grant or trust still lets the peer choose it (a revoked or
+// narrowed grant stops it). It returns the kept settings and the dropped
+// field names.
+func fedSpawnOverridesStillAllowed(peer string, groupID int64, o db.FederationSpawnOverrides, explicit fedSpawnApproveReq) (db.FederationSpawnOverrides, []string) {
+	allowed := fedSpawnOverridesAllowed(peer, groupID)
+	var dropped []string
+	keep := func(field, value, operator string) string {
+		if value == "" || operator != "" {
+			return value
+		}
+		if !allowed[field] {
+			dropped = append(dropped, field)
+			return ""
+		}
+		return value
+	}
+	return db.FederationSpawnOverrides{
+		Cwd:     keep(fedOverrideCwd, o.Cwd, explicit.Cwd),
+		Harness: keep(fedOverrideHarness, o.Harness, explicit.Harness),
+		Model:   keep(fedOverrideModel, o.Model, explicit.Model),
+		Effort:  keep(fedOverrideEffort, o.Effort, explicit.Effort),
+	}, dropped
+}
+
+// fedSpawnOverridesText lists requested launch settings for an operator
+// notice, one per line, or "" when there are none.
+func fedSpawnOverridesText(o db.FederationSpawnOverrides) string {
+	out := ""
+	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}} {
+		if kv[1] != "" {
+			out += fmt.Sprintf("\n  %s: %q", kv[0], kv[1])
+		}
+	}
+	return out
+}
+
+// fedSpawnApprovalSettingsText is the requested-settings paragraph of a
+// needs-approval notice, or "" when the request carries none.
+func fedSpawnApprovalSettingsText(o db.FederationSpawnOverrides) string {
+	if o.Empty() {
+		return ""
+	}
+	return "\nRequested launch settings (approve applies those the peer may still choose, unless you pass your own):" + fedSpawnOverridesText(o)
 }
 
 // checkFedSpawnOverrides refuses a request that sets a launch setting the

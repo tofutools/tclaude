@@ -274,14 +274,7 @@ func notifyFederationSpawnRequest(peer *db.FederationPeer, req *db.FederationSpa
 	if req.PlacementVersion != 0 {
 		body += "\nPlacement requirements (must match the chosen launch harness): " + req.Requirements
 	}
-	if o := req.Overrides; !o.Empty() {
-		body += "\nRequested launch settings (approve applies them unless you pass your own):"
-		for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}} {
-			if kv[1] != "" {
-				body += fmt.Sprintf("\n  %s: %q", kv[0], kv[1])
-			}
-		}
-	}
+	body += fedSpawnApprovalSettingsText(req.Overrides)
 	body += fmt.Sprintf(".\n\nBrief:\n%s\n\nDecide with `tclaude federation requests approve %d` (optionally --profile/--cwd/--harness/--model/--effort) or `tclaude federation requests deny %d`.",
 		req.Brief, req.ID, req.ID)
 	group := db.FederationHumanGroup(peer.InstanceID)
@@ -381,6 +374,8 @@ type fedSpawnRequestJSON struct {
 	Reason           string    `json:"reason,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
+	// Overrides are the launch settings the requester chose; nil when none.
+	Overrides *db.FederationSpawnOverrides `json:"overrides,omitempty"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -392,12 +387,17 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 	if req.Expired(now) {
 		status = "expired"
 	}
-	return fedSpawnRequestJSON{
+	out := fedSpawnRequestJSON{
 		Profile: req.Profile, Credentials: req.Credentials, ModelLease: req.ModelLease, Require: req.Requirements, PlacementVersion: req.PlacementVersion,
 		ID: req.ID, From: req.FromName + "@" + proto.SafeName(peer, true), Instance: req.FromInstance, Group: req.GroupName,
 		Name: req.Name, Role: req.Role, Brief: req.Brief, Status: status, ResultAgent: req.ResultAgent, Reason: req.Reason,
 		CreatedAt: req.CreatedAt, ExpiresAt: req.ExpiresAt,
 	}
+	if !req.Overrides.Empty() {
+		o := req.Overrides
+		out.Overrides = &o
+	}
+	return out
 }
 
 // handleFederationSpawnRequestList lists spawn requests peers sent here.
@@ -506,7 +506,9 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	}
 	// Requested launch settings are rechecked at launch: an automatic spawn
 	// needs the grant to still let this peer choose them. An operator's
-	// approval stands in for that grant, and its own flags win.
+	// approval applies only those the current grant or trust still allows
+	// (revoking or narrowing a grant stops them); its own flags always win.
+	var dropped []string
 	if automatic {
 		if err := checkFedSpawnOverrides(peer.InstanceID, g.ID, req.Overrides); err != nil {
 			writeError(w, 409, "override_not_allowed", err.Error())
@@ -515,6 +517,16 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	} else if err := validateFedSpawnOverrides(req.Overrides); err != nil {
 		writeError(w, 409, "override_not_allowed", err.Error())
 		return
+	} else {
+		req.Overrides, dropped = fedSpawnOverridesStillAllowed(peer.InstanceID, g.ID, req.Overrides, in)
+	}
+	// A requested harness must not silently discard the explicitly chosen
+	// profile's harness-specific settings. An operator's own --harness is theirs.
+	if h := req.Overrides.Harness; h != "" && (automatic || in.Harness == "") {
+		if err := checkFedHarnessProfile(fedFirst(in.Profile, req.Profile), h); err != nil {
+			writeError(w, 409, "harness_profile_conflict", err.Error())
+			return
+		}
 	}
 	in.Profile = fedFirst(in.Profile, req.Profile)
 	in.Cwd = fedFirst(in.Cwd, req.Overrides.Cwd)
@@ -620,7 +632,13 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	// exact reserved identity, membership and pane readiness prove completion.
 	reconcileFederationSpawns()
 	setAuditTargetLabel(r, fmt.Sprintf("#%d %s", req.ID, from))
-	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID, "group": g.Name, "agent_id": sr.AgentID, "conv_id": sr.ConvID, "label": sr.Label})
+	out := map[string]any{"id": req.ID, "group": g.Name, "agent_id": sr.AgentID, "conv_id": sr.ConvID, "label": sr.Label}
+	if len(dropped) > 0 {
+		// Requested settings the peer may no longer choose; the launch used
+		// this node's own policy for them.
+		out["dropped_overrides"] = dropped
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleFederationSpawnRequestDeny refuses a pending request.
@@ -733,6 +751,16 @@ func autoApproveFederationSpawnWithPeerAction(req *db.FederationSpawnRequest, p 
 			}
 		}
 	}
+	// Requested launch settings the grant no longer allows (or a harness that
+	// conflicts with the chosen profile) hand the request to the operator,
+	// with the reason, rather than leaving it silently pending.
+	if reason == "" {
+		if err := checkFedSpawnOverrides(p.InstanceID, g.ID, req.Overrides); err != nil {
+			reason = "requested launch settings are not allowed: " + err.Error()
+		} else if err := checkFedHarnessProfile(fedFirst(req.Profile, policy.Profile), req.Overrides.Harness); err != nil {
+			reason = err.Error()
+		}
+	}
 	attempted := false
 	if reason == "" {
 		attempted = true
@@ -750,6 +778,17 @@ func autoApproveFederationSpawnWithPeerAction(req *db.FederationSpawnRequest, p 
 		executeFederationSpawn(rec, r, req, p, g, fedSpawnApproveReq{Profile: fedFirst(req.Profile, policy.Profile), Cwd: fedFirst(req.Overrides.Cwd, policy.Cwd), Harness: fedFirst(req.Overrides.Harness, policy.Harness), Model: fedFirst(req.Overrides.Model, policy.Model), Effort: req.Overrides.Effort}, true)
 		if rec.Code != http.StatusOK {
 			reason = strings.TrimSpace(rec.Body.String())
+			// A refusal before the launch was claimed left the request pending
+			// with no reason: record it so the operator is told.
+			if current, err := db.GetFederationSpawnRequest(req.ID); err == nil && current != nil && current.Status == db.FedSpawnPending && current.Reason == "" {
+				attempted = false
+				var refusal struct {
+					Error string `json:"error"`
+				}
+				if json.Unmarshal(rec.Body.Bytes(), &refusal) == nil && refusal.Error != "" {
+					reason = refusal.Error
+				}
+			}
 		}
 	}
 	if reason != "" && !attempted {

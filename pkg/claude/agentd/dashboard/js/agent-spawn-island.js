@@ -286,6 +286,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // `touched`, which also guards derived changes against the initial async
   // profile load (for example a group change recalculating remote control).
   const profileOverrides = useRef(new Set());
+  // Launch settings the operator set by hand. A remote spawn sends only
+  // these as overrides: `touched` also covers values a harness, model or
+  // group change merely pre-fills, which must leave the peer's policy in
+  // charge.
+  const operatorSet = useRef(new Set());
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -510,6 +515,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
 
   const update = (key, value) => {
     touched.current.add(key);
+    operatorSet.current.add(key);
     if (PROFILE_OWNED_FIELDS.includes(key) && key !== 'profile') {
       profileOverrides.current.add(key);
     }
@@ -525,11 +531,16 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     touched.current.add('cwd');
     touched.current.add('wtRepo');
     touched.current.add('remoteControl');
+    operatorSet.current.delete('cwd');
     setDraft((before) => selectSpawnGroup(before, value, context));
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
     profileOverrides.current.add('harness');
+    // The new harness pre-fills its own model and effort.
+    operatorSet.current.add('harness');
+    operatorSet.current.delete('model');
+    operatorSet.current.delete('effort');
     const harnessFields = [
       'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
       'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
@@ -543,6 +554,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
   };
   const changeModel = (value) => {
+    // A model change pre-fills its remembered effort.
+    operatorSet.current.add('model');
+    operatorSet.current.delete('effort');
     if (value === MODEL_CUSTOM_VALUE) {
       touched.current.add('model');
       touched.current.add('customModel');
@@ -705,6 +719,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         if (kind === 'cwd') setDraft((before) => setSpawnCwd(before, result.path));
         else setDraft((before) => setSpawnWorktreeRepo(before, result.path));
         touched.current.add(kind === 'cwd' ? 'cwd' : 'wtRepo');
+        if (kind === 'cwd') operatorSet.current.add('cwd');
         queueMicrotask(() => document.querySelector(
           kind === 'cwd' ? '#agent-spawn-cwd' : '#agent-spawn-wt-repo',
         )?.focus());
@@ -847,7 +862,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('request_sent_ms');
       // A remote request carries only the overrides the operator set here.
       const payload = await actions.spawn(remote
-        ? { ...request, explicit: [...touched.current, ...profileOverrides.current] }
+        ? { ...request, explicit: [...operatorSet.current] }
         : request);
       markTiming('response_received_ms');
       if (!state.isCurrent(current.generation)) return;
@@ -1099,6 +1114,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             const value = event.currentTarget.value;
             touched.current.add('model'); touched.current.add('effort');
             profileOverrides.current.add('model'); profileOverrides.current.add('effort');
+            operatorSet.current.add('model'); operatorSet.current.delete('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: false, effort: rememberedEffort(value.trim()),
             }));
@@ -1150,6 +1166,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           const value = event.currentTarget.value;
           touched.current.add('model'); touched.current.add('effort');
           profileOverrides.current.add('model'); profileOverrides.current.add('effort');
+          operatorSet.current.add('model'); operatorSet.current.delete('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: true, effort: rememberedEffort(value.trim()),
             }));
@@ -1301,7 +1318,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
       <input id="agent-spawn-cwd" type="text" value=${draft.cwd} disabled=${busy}
-        onInput=${(event) => { touched.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
+        onInput=${(event) => { touched.current.add('cwd'); operatorSet.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
         placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
       <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
         title="Browse for a directory" onClick=${() => { void browse('cwd'); }}>

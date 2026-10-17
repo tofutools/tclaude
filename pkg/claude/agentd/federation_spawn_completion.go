@@ -102,7 +102,7 @@ func reconcileFederationSpawns() {
 				}
 			}
 		} else if req.Status == db.FedSpawnPending && req.Reason != "" && !req.NoticeSent {
-			if notifyFederationSpawn(req, p, fmt.Sprintf("remote spawn request #%d needs approval", req.ID), "Launch failed: "+req.Reason+". Request remains pending for human approval.") {
+			if notifyFederationSpawn(req, p, fmt.Sprintf("remote spawn request #%d needs approval", req.ID), "Launch failed: "+req.Reason+". Request remains pending for human approval."+fedSpawnApprovalSettingsText(req.Overrides)) {
 				_ = db.MarkFederationSpawnNoticeSent(req.ID)
 			}
 		}

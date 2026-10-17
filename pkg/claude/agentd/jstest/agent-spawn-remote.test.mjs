@@ -123,3 +123,75 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
   assert.match(notes[0], /Spawn request #9 sent to forge/);
   await mounted.unmount();
 });
+
+test('a remote spawn sends only the launch settings the operator set, not harness pre-fills', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ AgentSpawnApp }, { createAgentSpawnState }, remoteMod] = await Promise.all([
+    harness.importDashboardModule('js/agent-spawn-island.js'),
+    harness.importDashboardModule('js/agent-spawn-state.js'),
+    harness.importDashboardModule('js/agent-spawn-remote.js'),
+  ]);
+  const local = (name) => () => { throw new Error(`local ${name} must not run for a remote spawn`); };
+  const actions = {
+    autoFocusDefault: () => true, rememberedEffort: () => 'high', rememberLaunchPreferences: () => {},
+    dashboardDefaultProfile: () => '',
+    loadProfiles: local('profiles'), loadWorktrees: local('worktrees'), loadSandboxPolicy: local('sandbox'),
+    loadUnsandboxedAutonomy: local('autonomy'), loadLaunchDefaults: local('defaults'), resolveWorktree: local('worktree'),
+    uploadAttachments: local('upload'), spawn: local('spawn'), complete: local('complete'), pickDirectory: local('picker'),
+    openProfileEditor: () => {}, openPermissions: () => {}, confirmAutoName: async () => true,
+  };
+  const state = createAgentSpawnState({ getSnapshot: () => ({ groups: [], harnesses: [] }) });
+  const sent = [];
+  const api = {
+    spawn: async (group, body) => { sent.push([group, body]); return { id: 3, status: 'pending' }; },
+    status: async (id) => ({ id, status: 'approved', result_agent: 'agt_new' }),
+  };
+  const codex = { ...harnesses[0], name: 'codex', display_name: 'Codex', models: ['gpt-5'], effort_levels: ['low', 'high'] };
+  const options = remoteMod.normalizeRemoteSpawnOptions({ approval: 'automatic', overrides: { harness: true, model: true, effort: true }, profiles: [{ name: 'reviewer', harness: 'claude', model: 'opus' }], harnesses: ['claude', 'codex'] });
+  harness.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host);
+  state.open({ groupName: 'build', remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options, snapshot: { groups: [{ name: 'build' }], harnesses: [...harnesses, codex] } } });
+  await flush(harness);
+  await harness.act(() => new Promise((r) => setTimeout(r, 400)));
+  await flush(harness);
+
+  const q = (sel) => host.querySelector(sel);
+  const submit = async () => {
+    await harness.act(() => q('#agent-spawn-submit').click());
+    await harness.act(() => new Promise((r) => setTimeout(r, 50)));
+    await flush(harness);
+    assert.equal(q('#agent-spawn-error')?.textContent || '', '');
+  };
+  const pick = async (sel, value, event = 'change') => {
+    const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+  };
+  // Loading a profile and clearing it again pre-fills the harness defaults
+  // (harness claude): none of that is the operator's choice.
+  await pick('#agent-spawn-load-profile', 'reviewer');
+  await pick('#agent-spawn-load-profile', '');
+  await pick('#agent-spawn-init-msg', 'port the parser', 'input');
+  await submit();
+  assert.deepEqual(sent, [['build', { brief: 'port the parser', name: 'port-the-parser' }]], 'profile pre-fills are not overrides');
+  await mounted.unmount();
+
+  // An explicit model, then a harness change: the harness is the operator's,
+  // the model it replaced with the harness default is not.
+  sent.length = 0;
+  const host2 = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted2 = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host2);
+  state.open({ groupName: 'build', remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options, snapshot: { groups: [{ name: 'build' }], harnesses: [...harnesses, codex] } } });
+  await flush(harness);
+  await harness.act(() => new Promise((r) => setTimeout(r, 400)));
+  await flush(harness);
+  const q2 = (sel) => host2.querySelector(sel);
+  for (const [sel, value, event] of [['#agent-spawn-init-msg', 'port the parser', 'input'], ['#agent-spawn-model', 'opus', 'change'], ['#agent-spawn-harness', 'codex', 'change']]) {
+    const el = q2(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+  }
+  await harness.act(() => q2('#agent-spawn-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 50)));
+  await flush(harness);
+  assert.deepEqual(sent, [['build', { brief: 'port the parser', name: 'port-the-parser', harness: 'codex' }]],
+    'the model the harness change replaced is not an override');
+  await mounted2.unmount();
+});

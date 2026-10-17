@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 type peerActionKey struct{}
@@ -300,6 +299,14 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		writeError(w, 403, "profile_not_allowed", err.Error())
 		return
 	}
+	pinnedProfile := ""
+	if grant := fedPeerGroupGrant(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn); grant != nil {
+		pinnedProfile = grant.SpawnPolicy.Profile
+	}
+	if err := checkFedHarnessProfile(fedFirst(body.Profile, pinnedProfile), overrides.Harness); err != nil {
+		writeError(w, 409, "harness_profile_conflict", err.Error())
+		return
+	}
 	req := &db.FederationSpawnRequest{FromInstance: v.peer.InstanceID, FromName: "operator", EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Name: proto.SafeName(body.Name, false), Role: proto.SafeName(body.Role, false), Brief: body.Brief, Profile: body.Profile, Overrides: overrides, ExpiresAt: time.Now().Add(fedSpawnTTL)}
 	id, err := insertFederationSpawnWithCapacity(req)
 	if err != nil {
@@ -352,7 +359,7 @@ func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, 
 		out.Approval = "automatic"
 	}
 	if out.Overrides[fedOverrideHarness] {
-		out.Harnesses = harness.Names()
+		out.Harnesses = fedSpawnHarnesses()
 	}
 	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
 		out.Defaults = map[string]string{"cwd": g.DefaultCwd}
@@ -380,7 +387,7 @@ func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	if !v.allows(rule, req.GroupID) {
-		writeError(w, 403, "permission", "requires "+rule.requires)
+		writeError(w, 404, "not_found", "spawn request not found")
 		return
 	}
 	writeJSON(w, 200, fedSpawnRequestView(req, time.Now()))

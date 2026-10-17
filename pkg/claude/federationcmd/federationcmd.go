@@ -478,7 +478,7 @@ type peerGrant struct {
 type grantParams struct {
 	PermissionSlugs  []string `long:"permission-slug" optional:"true" help:"agents.receive.permissions only: allowed carried permission slug (repeatable); omitted allows ordinary slugs."`
 	AllowedProfiles  []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
-	AllowedOverrides []string `long:"allow-override" optional:"true" help:"Launch setting the peer may choose per request: cwd, harness, model or effort (repeatable); groups.members.spawn only"`
+	AllowedOverrides []string `long:"allow-override" optional:"true" help:"Launch setting the peer may choose per request: cwd, harness, model or effort (repeatable); groups.members.spawn only. WARNING cwd lets the peer start a worker in any existing directory on this machine (its sandbox usually grants that directory write access) and overrides a pinned --cwd"`
 	RequesterPays    string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
 	JobApproval      string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
 	Peer             string   `pos:"true" help:"Trusted peer label or instance id"`
@@ -835,21 +835,22 @@ func spawnRequestCmd() *cobra.Command {
 }
 
 type spawnRequestRow struct {
-	Profile          string    `json:"profile,omitempty"`
-	Credentials      string    `json:"credentials,omitempty"`
-	ModelLease       string    `json:"model_lease,omitempty"`
-	Require          string    `json:"require,omitempty"`
-	PlacementVersion int       `json:"placement_version,omitempty"`
-	ID               int64     `json:"id"`
-	From             string    `json:"from"`
-	Group            string    `json:"group"`
-	Name             string    `json:"name"`
-	Role             string    `json:"role"`
-	Brief            string    `json:"brief"`
-	Status           string    `json:"status"`
-	ResultAgent      string    `json:"result_agent"`
-	Reason           string    `json:"reason"`
-	CreatedAt        time.Time `json:"created_at"`
+	Profile          string                       `json:"profile,omitempty"`
+	Credentials      string                       `json:"credentials,omitempty"`
+	ModelLease       string                       `json:"model_lease,omitempty"`
+	Require          string                       `json:"require,omitempty"`
+	PlacementVersion int                          `json:"placement_version,omitempty"`
+	ID               int64                        `json:"id"`
+	From             string                       `json:"from"`
+	Group            string                       `json:"group"`
+	Name             string                       `json:"name"`
+	Role             string                       `json:"role"`
+	Brief            string                       `json:"brief"`
+	Status           string                       `json:"status"`
+	ResultAgent      string                       `json:"result_agent"`
+	Reason           string                       `json:"reason"`
+	CreatedAt        time.Time                    `json:"created_at"`
+	Overrides        *db.FederationSpawnOverrides `json:"overrides,omitempty"`
 }
 
 type requestsParams struct {
@@ -891,6 +892,13 @@ func requestsCmd() *cobra.Command {
 				if r.Profile != "" {
 					fmt.Printf("    requested profile: %s\n", r.Profile)
 				}
+				if o := r.Overrides; o != nil {
+					for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}} {
+						if kv[1] != "" {
+							fmt.Printf("    requested %s: %q\n", kv[0], kv[1])
+						}
+					}
+				}
 				if r.Credentials != "" {
 					fmt.Printf("    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)
 				}
@@ -928,15 +936,19 @@ func approveCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *approveParams, _ *cobra.Command, _ []string) {
 			var out struct {
-				Group   string `json:"group"`
-				AgentID string `json:"agent_id"`
-				Label   string `json:"label"`
+				Group   string   `json:"group"`
+				AgentID string   `json:"agent_id"`
+				Label   string   `json:"label"`
+				Dropped []string `json:"dropped_overrides"`
 			}
 			body := map[string]any{"name": p.Name, "profile": p.Profile, "cwd": p.Cwd, "harness": p.Harness, "model": p.Model, "effort": p.Effort}
 			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("launch started for %s (%s) into %s; the requester is told after enrollment\n", out.Label, out.AgentID, out.Group)
+			if len(out.Dropped) > 0 {
+				fmt.Printf("requested settings dropped (the peer may no longer choose them): %s\n", strings.Join(out.Dropped, ", "))
+			}
 		},
 	}.ToCobra()
 }

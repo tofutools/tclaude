@@ -628,11 +628,28 @@ tclaude federation grant alice groups.members.spawn --scope group=builders --all
 - Without a spawn grant the request waits for your approval and carries none;
   `tclaude federation requests approve ID --cwd … --harness … --model … --effort …`
   decides them. A request that failed its automatic launch and returned to you
-  lists what it asked for, and approve applies those unless you pass your own.
+  lists what it asked for (in `tclaude federation requests`, the request JSON's
+  `overrides`, and the needs-approval notice). Approve applies only those the
+  peer may still choose under the current grant or trust, unless you pass your
+  own; revoking or narrowing the grant stops the rest, and the approve response
+  names them in `dropped_overrides`.
 
-The directory must be a clean absolute path on this node; the harness must be
-known here. The grant is checked when the request arrives and again at an
-automatic launch, and the ordinary group spawn path applies every launch
+**Allowing `cwd` is broad.** The peer may then start a worker in any existing
+directory on this machine, and the worker's sandbox usually grants its launch
+directory write access. A requested directory also overrides the grant's pinned
+`--cwd`. Allow it only to peers you would let work anywhere on this node.
+(Constraining it to a root or prefix is a possible follow-up, not implemented.)
+
+The directory must be a clean absolute path on this node. The harness must be
+known here and able to take a brief, so `shell` is never offered. A model may
+not start with `-`. A requested harness that conflicts with the harness of the
+requested profile, or of the grant's pinned `--profile`, is refused
+(`harness_profile_conflict`) rather than silently skipping that profile's
+harness-specific settings; ambient group or global default profiles are not
+consulted, matching how an explicit harness already skips them on a local
+spawn. The grant is checked when the request arrives and again at an automatic
+launch; a request that fails that recheck stays pending with the reason and
+notifies you, and the ordinary group spawn path applies every launch
 guardrail to the result. Peers learn what they may set per group from the
 peer view (`GET /api/spawn-options/{group}`), which names your grant's pinned
 settings and the group's default directory only to an unrestricted peer.
@@ -641,7 +658,7 @@ The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`
 GET returns the incoming request array; POST queues an outgoing request with the
 same `{peer, group, brief, name?, role?, profile?, credentials?, node?, require?,
 prefer?}` body as `/v1/federation/spawn-requests`. POST `/{id}/approve` accepts
-optional name, profile, cwd, harness and model overrides; POST `/{id}/deny`
+optional name, profile, cwd, harness, model and effort overrides; POST `/{id}/deny`
 accepts an optional reason. POST `/{id}/abandon` requires
 `{"acknowledge_late_worker":true}` before returning an unconfirmed incoming
 launch to pending. A late worker may still appear.
