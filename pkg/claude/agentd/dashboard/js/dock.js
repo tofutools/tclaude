@@ -269,7 +269,10 @@ export const dockSections = Object.freeze([
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
-    onDeleteItem: (p) => removeProfile(p.name).then(() => { dropPin(dashPrefs, 'profiles', p.name); return refresh(); }),
+    onDeleteItem: (p) => removeProfile(p.name).then((removed) => {
+      if (removed) dropPin(dashPrefs, 'profiles', p.name);
+      return refresh();
+    }),
     onManageAll: () => openProfilesManageModal(),
     onNew: () => openProfileEditor(),
     searchWords: ['agent profiles', 'familiar patterns', 'spawn profiles'],
@@ -299,8 +302,8 @@ export const dockSections = Object.freeze([
     onCloneItem: (t) => openDuplicateModal(t.name),
     // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
-    onDeleteItem: (t) => Promise.resolve(deleteTemplate(t.name)).then(() => {
-      if (!(lastSnapshot?.templates || []).some((other) => other.name === t.name)) dropPin(dashPrefs, 'templates', t.name);
+    onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {
+      if (removed) dropPin(dashPrefs, 'templates', t.name);
     }),
     onManageAll: () => openTemplatesManageModal(),
     onNew: () => openTemplateEditor(null),
