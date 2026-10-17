@@ -116,24 +116,31 @@ func TestPeerViewScopedReadsWritesAndRevocation(t *testing.T) {
 func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	fh := newFedHarness(t)
 	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/usage-history", nil))
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), agentd.PermCostsRead)
 	for _, slug := range []string{agentd.PermCostsRead, agentd.PermFederationAuditRead} {
 		rec := fedHuman(t, fh.f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=anything"})
 		require.Equal(t, 400, rec.Code, rec.Body.String())
 		rec = fedHuman(t, fh.f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug})
 		require.Equal(t, 200, rec.Code, rec.Body.String())
 	}
-	for _, path := range []string{"/api/costs", "/api/audit"} {
+	for _, path := range []string{"/api/costs", "/api/audit", "/api/usage-history"} {
 		rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", path, nil))
 		require.Equal(t, 200, rec.Code, rec.Body.String())
 		var obj map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &obj))
 		meta := obj["peer_view"].(map[string]any)
-		require.Contains(t, meta["included"], map[string]string{"/api/costs": "costs", "/api/audit": "audit"}[path])
+		require.Contains(t, meta["included"], map[string]string{"/api/costs": "costs", "/api/audit": "audit", "/api/usage-history": "costs"}[path])
 		require.Equal(t, "restricted", meta["level"])
 	}
+	// Excluding a quota point mutates this node's own history: never a peer's.
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/usage-history/point", map[string]any{}))
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "peer_view_local_only")
 	fh.f.HaveGroup("private-group")
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
-	rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "private-group")
 	require.Contains(t, rec.Body.String(), `"peer_view"`)

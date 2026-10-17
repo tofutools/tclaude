@@ -14,8 +14,8 @@ import { shellToast } from './shell-state.js';
 // them. Groups is the snapshot itself; the map is this operator's own fleet
 // view, and Terminals holds this browser's own terminals (a peer's agent
 // opens there through this node's federation bridge). A tab absent here has
-// no peer route at all. Usage is gated on costs: its Costs view is the only
-// half a peer serves (the quota history is this node's own accounts).
+// no peer route at all. Usage is gated on costs: the peer serves both its
+// Costs view and its Quota history under that one grant.
 // Messages is the peer's mail, read under node.messages.read; what the
 // reader may do there follows the peer's further grants (mail-island.js).
 const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
