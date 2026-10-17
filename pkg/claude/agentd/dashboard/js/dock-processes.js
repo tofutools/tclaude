@@ -32,7 +32,7 @@ import { processTemplateDeleteConfirmation } from './process-template-delete.js'
 import { managementController } from './management-controller.js';
 import { exportWorkflow } from './process-workflow-share.js';
 import {
-  LIBRARY_EVENT, cloneProcess, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
+  LIBRARY_EVENT, menuPlacement, cloneProcess, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
   renameItem, togglePin,
 } from './dock-library.js';
 
@@ -203,18 +203,18 @@ function ProcessCard({
   const menuOpen = openMenu === menuKey;
   const menuRef = useRef(null);
   const cogRef = useRef(null);
-  const [opensUp, setOpensUp] = useState(false);
+  const [placement, setPlacement] = useState({ up: false, maxHeight: null });
   // This is the dock's last section, so a bottom card's menu would open below
   // the scroll area; flip it up like the other sections' cards do.
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !cogRef.current) {
-      setOpensUp(false);
+      setPlacement({ up: false, maxHeight: null });
       return;
     }
     const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const cogTop = cogRef.current.getBoundingClientRect().top;
-    setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
+    const cog = cogRef.current.getBoundingClientRect();
+    const height = menuRef.current.scrollHeight || menuRef.current.getBoundingClientRect().height;
+    setPlacement(menuPlacement({ clipTop: clip.top, clipBottom: clip.bottom, cogTop: cog.top, cogBottom: cog.bottom, height }));
   }, [menuOpen, clipHost]);
   const act = (event, action) => {
     event.preventDefault();
@@ -240,7 +240,8 @@ function ProcessCard({
       <button ref=${cogRef} type="button" class="dock-card-manage" data-dock-act="card-menu" data-dock-kind="processes" data-dock-name=${row.id}
         aria-haspopup="menu" aria-expanded=${menuOpen ? 'true' : 'false'} title="More actions" aria-label=${`Actions for ${name}`}
         onClick=${(event) => { event.preventDefault(); setOpenMenu(menuOpen ? null : menuKey); }}>⚙</button>
-      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${opensUp ? ' opens-up' : ''}`} role="menu" aria-label=${name}>
+      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
+          style=${placement.maxHeight != null ? `max-height:${placement.maxHeight}px;overflow-y:auto` : null} role="menu" aria-label=${name}>
         <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" data-dock-kind="processes" data-dock-name=${row.id}
           onClick=${(event) => act(event, () => handOffProcessDraft({ id: row.id, name }))}>Edit</button>
         ${[

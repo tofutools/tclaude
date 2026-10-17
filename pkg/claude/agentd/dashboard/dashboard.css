@@ -17657,6 +17657,9 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
   list-style: none;
 }
 .dock-section-head::-webkit-details-marker { display: none; }
+/* The chevron in the title is the only disclosure glyph: drop the global
+   details > summary::before arrow, which otherwise became a third flex item. */
+#agent-dock .dock-section > .dock-section-head::before { content: none; }
 .dock-section-head:hover .dock-section-title { color: #c9d1d9; }
 .dock-section-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: #adbac7; min-width: 0; }
 /* The disclosure chevron points down when the section is open, right when

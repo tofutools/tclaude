@@ -3642,6 +3642,50 @@ return (async function(){
 			SettleMS: 500,
 		},
 		{
+			// The library's shared card menu: every kind offers the same rows,
+			// a profile adds Set as default. Self-checking: throws when a row is
+			// missing.
+			Key:     "dock-library-menu",
+			Title:   "Palette dock — a profile card's ⚙ menu",
+			Caption: "Every library kind shares one card menu: Edit, Clone, Rename…, Set as default (profiles and sandbox profiles), Pin to top, Copy name, Export, Delete.",
+			JS: showGroups + collapseGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var deadline=Date.now()+4000, card;
+  while(!(card=document.querySelector('.dock-section[data-key="profiles"] .dock-card')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!card) throw new Error('no profile card in the dock');
+  card.querySelector('.dock-card-manage').click();
+  await new Promise(function(r){ setTimeout(r,80); });
+  var rows=[].map.call(card.querySelectorAll('.dock-card-menu.open [role="menuitem"]'), function(b){ return b.textContent; }).join('|');
+  ['Rename…','Pin to top','Copy name','Export'].forEach(function(want){ if(rows.indexOf(want)<0) throw new Error('menu lacks '+want+': '+rows); });
+})();`,
+			SettleMS: 300,
+		},
+		{
+			// The library search over every section, with the sandbox profiles
+			// section seeded so a path search finds it. Self-checking: throws
+			// when the sandbox profile does not surface.
+			Key:     "dock-library-search",
+			Title:   "Palette dock — searching the library",
+			Caption: "The search field filters every section at once (names and any value, here a sandbox path); sections without a match hide and counts read matches/total.",
+			JS: showGroups + collapseGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var seed={name:'dashsnap-web-dev',filesystem:[{path:'/opt/dashsnap-cache',access:'write'}],environment:[],includes:[],agent_directories:[],network:{baseline:'deny',packs:[],deny_packs:[],allow:[],deny:[]},unix_sockets:{mode:'closed'}};
+  var existing=await fetch('/api/sandbox-profiles',{credentials:'same-origin'}).then(function(r){ return r.json(); });
+  if(!existing.some(function(p){ return p.name===seed.name; })){
+    var created=await fetch('/api/sandbox-profiles',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(seed)});
+    if(!created.ok) throw new Error('dock-library-search: seed failed: '+await created.text());
+  }
+  var deadline=Date.now()+6000, input;
+  while(!(input=document.querySelector('.dock-search-input')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!input) throw new Error('no library search field');
+  input.value='dashsnap-cache';
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+  while(!document.querySelector('.dock-section[data-key="sandbox_profiles"] .dock-card[data-dock-name="dashsnap-web-dev"]') && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!document.querySelector('.dock-card[data-dock-name="dashsnap-web-dev"]')) throw new Error('search did not surface the sandbox profile');
+})();`,
+			SettleMS: 400,
+		},
+		{
 			// JOH-388 req 5: each category folds on its own. Collapse Templates
 			// to its header (chevron flips); Profiles + Roles stay expanded. The
 			// fold is set on the live keyed <details>; Preact preserves it across

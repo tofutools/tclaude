@@ -7,7 +7,7 @@ import { wizWord } from './slop.js';
 import { DockProcesses } from './dock-processes.js';
 import { dashPrefs } from './prefs.js';
 import {
-  LIBRARY_EVENT, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
+  LIBRARY_EVENT, menuPlacement, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
 } from './dock-library.js';
 
 const html = htm.bind(h);
@@ -75,7 +75,7 @@ function DockCard({
   const cardRef = useRef(null);
   const detailsRef = useRef(null);
   const hoveringRef = useRef(false);
-  const [opensUp, setOpensUp] = useState(false);
+  const [placement, setPlacement] = useState({ up: false, maxHeight: null });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState(null);
@@ -88,13 +88,13 @@ function DockCard({
 
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !cogRef.current) {
-      setOpensUp(false);
+      setPlacement({ up: false, maxHeight: null });
       return;
     }
     const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const cogTop = cogRef.current.getBoundingClientRect().top;
-    setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
+    const cog = cogRef.current.getBoundingClientRect();
+    const height = menuRef.current.scrollHeight || menuRef.current.getBoundingClientRect().height;
+    setPlacement(menuPlacement({ clipTop: clip.top, clipBottom: clip.bottom, cogTop: cog.top, cogBottom: cog.bottom, height }));
   }, [menuOpen, clipHost, layoutVersion]);
 
   const positionDetails = useCallback(() => {
@@ -234,7 +234,8 @@ function DockCard({
         >⚙</button>
         <div
           ref=${menuRef}
-          class=${`dock-card-menu${menuOpen ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
+          class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
+          style=${placement.maxHeight != null ? `max-height:${placement.maxHeight}px;overflow-y:auto` : null}
           role="menu"
           aria-label=${name}
         >

@@ -225,3 +225,14 @@ export function freeName(name, taken) {
     if (!names.has(candidate)) return candidate;
   }
 }
+
+// menuPlacement opens a card menu below its cog, or above when it does not
+// fit below and there is more room above; when neither side holds the whole
+// menu it is capped to the roomier side and scrolls.
+export function menuPlacement({ clipTop, clipBottom, cogTop, cogBottom, height }) {
+  const below = clipBottom - cogBottom - 4;
+  const above = cogTop - clipTop - 4;
+  const up = height > below && above > below;
+  const room = Math.max(0, up ? above : below);
+  return { up, maxHeight: height > room ? room : null };
+}
