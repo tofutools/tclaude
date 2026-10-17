@@ -10,6 +10,10 @@ import {
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
 
+// On a peer's page the picker sets the peer's defaults (a peer grant), but
+// profiles are created only on their own node: no "new profile" entry.
+const remotePage = () => Boolean(globalThis.__tclaudeRemoteNode?.id);
+
 // GLOBAL_DEFAULT_PROFILE_NAME is the accessible name AND the tooltip's opening
 // words. They were allowed to differ once — the tooltip said "Global", the
 // aria-label said "Dashboard" — which gave one control two names depending on
@@ -136,7 +140,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
         queueMicrotask(() => selectRef.current?.focus());
       }
     }}>
-    <option value=${NEW_PROFILE}>${copy.create}</option>
+    ${remotePage() ? null : html`<option value=${NEW_PROFILE}>${copy.create}</option>`}
     <option value="">${copy.none}</option>
     ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
     ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}

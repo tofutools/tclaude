@@ -171,3 +171,27 @@ test('the spawn button stays usable for a spawn request or an older peer\'s spaw
   assert.ok(usable(['spawn']).includes('[data-act="spawn-agent"]'), 'an older peer only offers spawn');
   assert.ok(!usable([]).includes('[data-act="spawn-agent"]'));
 });
+
+test('on a peer view, the Groups toolbar controls follow the peer\'s management grants', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = `<button id="prof" data-act="set-dash-profile">🧠</button><button id="sbx" data-act="set-dash-sandbox-profile">🛡</button>
+    <button id="group-create-open">+ new group</button>`;
+  const snapshot = harness.signals.signal({ peer_view: pv });
+  const toasts = [];
+  doc.documentElement.dataset.remoteNodeName = 'forge';
+  const dispose = mod.installPeerViewLimits({ doc, snapshot, toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' } });
+  const clicks = () => Object.fromEntries(['prof', 'sbx', 'group-create-open'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
+  assert.deepEqual(clicks(), { prof: true, sbx: true, 'group-create-open': true });
+  assert.equal(toasts[0], 'forge does not share its global spawn defaults with you');
+  assert.match(doc.getElementById('peer-view-managed-style').textContent, /#group-create-open/);
+  snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'spawn.defaults', 'groups.create'] } };
+  assert.deepEqual(clicks(), { prof: true, sbx: true, 'group-create-open': false }, 'the pickers also need the peer\'s profile lists');
+  snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'spawn.defaults', 'spawn.catalog', 'groups.create'] } };
+  assert.deepEqual(clicks(), { prof: false, sbx: false, 'group-create-open': false }, 'shared grants run the regular dialogs');
+  assert.equal(doc.getElementById('peer-view-managed-style'), null, 'nothing left to grey');
+  assert.match(doc.getElementById('peer-view-limits-style').textContent, /\[data-act="set-dash-profile"\]/);
+  assert.ok(mod.usableActSelectors(snapshot.value.peer_view).includes('[data-act="set-dash-sandbox-profile"]'));
+  dispose();
+});

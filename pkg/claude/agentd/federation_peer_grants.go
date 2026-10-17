@@ -70,6 +70,16 @@ var federationPeerSlugs = map[string]string{
 	PermJobsRun:                   proto.CapJobs,
 }
 
+// fedInstancePeerSlugs are the unscoped, instance-wide peer grants.
+var fedInstancePeerSlugs = map[string]bool{
+	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermNodeHarnessesRead: true,
+	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
+	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
+	PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeGroupsCreate: true,
+}
+
+func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }
+
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
 	if slug == PermGroupsRosterRead {
 		if grant := fedPeerGroupGrant(peer, groupID, PermGroupsVisibilityRead); grant != nil && grant.SpawnPolicy.IncludeMembers {
@@ -260,7 +270,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage || in.Slug == PermSnapshotsReceive || in.Slug == PermNodeSpawnRead
+	instanceSlug := fedInstancePeerSlug(in.Slug)
 	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return

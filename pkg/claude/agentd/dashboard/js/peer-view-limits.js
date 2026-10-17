@@ -40,6 +40,41 @@ const GATED_CONTROLS = [
   '#sandbox-profiles-manage-open', '#spawn-harness-policy-open',
 ];
 
+// MANAGED_CONTROLS are the node-configuration controls a peer serves under a
+// grant (node.spawn.defaults.manage, node.groups.create; unrestricted trust
+// holds both): they run their regular local dialogs, routed to the peer. The
+// default pickers also list the peer's profiles, so they need its catalogs
+// (node.spawn.read) too.
+const MANAGED_CONTROLS = Object.freeze({
+  '[data-act="set-dash-profile"]': ['spawn.defaults', 'spawn.catalog'],
+  '[data-act="set-dash-sandbox-profile"]': ['spawn.defaults', 'spawn.catalog'],
+  '#group-create-open': ['groups.create'],
+});
+
+// managedState is 'shared' when the peer shares every feature, else the
+// first missing one's state.
+function managedState(features, peerView) {
+  for (const feature of features) {
+    const state = featureState(feature, peerView);
+    if (state !== 'shared') return state;
+  }
+  return 'shared';
+}
+
+function managedControl(target, peerView) {
+  for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) {
+    const el = target?.closest?.(sel);
+    if (el) return { el, state: managedState(features, peerView), what: features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults' };
+  }
+  return null;
+}
+
+// managedControlsRule greys the managed controls the peer does not share.
+export function managedControlsRule(peerView) {
+  const off = Object.entries(MANAGED_CONTROLS).filter(([, f]) => managedState(f, peerView) !== 'shared').map(([sel]) => `html.remote-node ${sel}`);
+  return off.length ? `${off.join(', ')} { opacity: .45; cursor: not-allowed; }` : '';
+}
+
 // featureState reports whether the peer shares a feature: 'shared', 'omitted'
 // (the peer could share it with a grant), or 'local' (not offered to any peer).
 export function featureState(feature, peerView) {
@@ -192,6 +227,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 export function usableActSelectors(peerView, extra = []) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   const shared = (feature) => featureState(feature, peerView) === 'shared';
+  for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
     if (act !== 'dot-toggle') { if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`); continue; }
     if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');
@@ -239,6 +275,8 @@ export function blockedControl(target, peerView) {
     const state = subtabState('activity', sub.dataset.subtab, peerView);
     return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab) };
   }
+  const managed = managedControl(target, peerView);
+  if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what };
   const act = target?.closest?.('[data-act]');
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   const pa = act && peerAction(act, peerView);
@@ -252,6 +290,7 @@ export function blockedControl(target, peerView) {
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
 const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
+const PEER_VIEW_MANAGED_STYLE_ID = 'peer-view-managed-style';
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 
 export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote } = {}) {
@@ -281,6 +320,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
+    setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, managedControlsRule(peerView));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
@@ -331,6 +371,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   return () => {
     stop();
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, '');
+    setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, '');
     doc.removeEventListener('click', refuse, true);
     doc.removeEventListener('keydown', onKey, true);
     doc.removeEventListener('pointerover', onOver, true);

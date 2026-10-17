@@ -32,7 +32,17 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	}
 	// Normal dashboard clients expect arrays/maps, even for withheld concepts.
 	// Initialize only empty collections; this introduces no values or names.
-	filterPeerFields(reflect.ValueOf(&out).Elem(), allPeerProjectionFields)
+	fields := allPeerProjectionFields
+	if peerSpawnCatalogReadable(v) || v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
+		fields = peerDefaultsProjectionFields
+		if p := globalDefaultProfile(); p != nil {
+			out.SpawnProfileDefault = p.Name
+		}
+		if p, _ := db.GetGlobalSandboxProfile(); p != nil {
+			out.SandboxProfileDefault = p.Name
+		}
+	}
+	filterPeerFields(reflect.ValueOf(&out).Elem(), fields)
 	emptyPeerCollections(reflect.ValueOf(&out).Elem())
 	// The restricted projection always sends its (small) registry fields. Never
 	// accept a local static_version, or let cached blobs cross a peer switch or

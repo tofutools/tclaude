@@ -935,6 +935,12 @@ approving. The
 directory is typed as a path on the peer — the folder browser reads this
 machine. After submit, a toast follows the request until the peer decides.
 
+The Groups toolbar's global default spawn profile, global sandbox profile and
+**+ new group** controls work on a peer view the peer shares them in
+(`node.spawn.defaults.manage`, `node.groups.create`; unrestricted trust holds
+both), and are greyed with the reason otherwise. See docs/federation.md,
+"Managing a peer's node".
+
 Terminals in a peer view are not opened in the browser: clicking a terminal control copies
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own
 terminal.
