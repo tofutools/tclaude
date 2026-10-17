@@ -288,7 +288,7 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
         onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
         <${HumanAttachment} message=${item} />
-        <${HumanActions} message=${item} senderLive=${senderOnline(item.from_agent, item.from_conv, snapshot.value)}
+        <${HumanActions} message=${item} senderLive=${peer ? undefined : senderOnline(item.from_agent, item.from_conv, snapshot.value)}
           harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;
     }

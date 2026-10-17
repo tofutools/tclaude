@@ -176,6 +176,7 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   await harness.act(() => harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'));
   assert.equal(replies.length, 1);
   assert.equal(replies[0].nodeName, 'forge');
+  assert.equal(replies[0].online, undefined, 'this node\'s snapshot does not know forge\'s agents: forge decides');
   await harness.act(async () => { await replies[0].send('on it'); });
   assert.ok(calls.includes('POST /api/peer/inst_forge/human-inbox/reply {"id":5,"body":"on it"}'));
   forgeTrusted = false;

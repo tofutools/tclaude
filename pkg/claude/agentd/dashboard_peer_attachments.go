@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -369,13 +368,15 @@ func handleDashboardPeerMessageExport(w http.ResponseWriter, r *http.Request) {
 	if err := writeZipEntry(zw, "message.md", modified, strings.NewReader(parts.ZipMarkdown)); err != nil {
 		return
 	}
+	// The peer named the files, but the archive is unpacked elsewhere: the
+	// names are made plain and unique again here, as the local export does.
+	named := make([]*db.HumanMessageAttachment, len(parts.Files))
 	for i, f := range parts.Files {
-		// The peer named the files; the archive is unpacked elsewhere, so
-		// only a plain name is kept.
-		name := path.Base(strings.ReplaceAll(f.Name, "\\", "/"))
-		if name == "." || name == "/" || name == ".." || name == "" {
-			name = fmt.Sprintf("attachment-%d", i+1)
-		}
+		named[i] = &db.HumanMessageAttachment{Filename: f.Name}
+	}
+	names := humanMessageExportNames(named)
+	for i := range parts.Files {
+		name := names[i]
 		if err := writeZipEntry(zw, "attachments/"+name, modified, readers[i]); err != nil {
 			slog.Warn("dashboard: peer message export failed", "peer", peer.InstanceID, "message", messageID, "error", err)
 			return

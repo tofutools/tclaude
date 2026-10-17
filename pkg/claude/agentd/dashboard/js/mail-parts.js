@@ -392,11 +392,15 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
   const mark = () => {
     setBusy(true);
     const read = !message.read;
-    peer.mark(message.id, read).then(() => {
+    peer.mark(message.id, read).then((res) => {
+      // A node on an older build ignores read:false and marks it read.
+      if (res && typeof res.read === 'boolean' && res.read !== read) {
+        throw Object.assign(new Error(`${name} runs an older build that cannot mark notifications unread`), { status: 409 });
+      }
       setBusy(false);
       toast(`Marked ${read ? 'read' : 'unread'} on ${name}`, false);
       onDone?.();
-    }, (e) => {
+    }).catch((e) => {
       setBusy(false);
       const reason = e?.message || String(e);
       toast(e?.status === 403 ? `${markLabel}: ${name} does not allow it from here (${reason}).` : `${markLabel} failed: ${reason}`, true);
@@ -404,7 +408,9 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
   };
   const reply = () => openReply({
     id: message.id, agent: message.from_agent || '', conv: message.from_conv || '', label, subject: message.subject || '',
-    nodeName: name, online: !!senderLive,
+    // senderLive is known only where the page shows the owning node's own
+    // view; otherwise the node itself refuses an offline sender.
+    nodeName: name, online: typeof senderLive === 'boolean' ? senderLive : undefined,
     send: (body) => peer.reply(message.id, body).then(() => { toast(`Replied on ${name}`, false); onDone?.(); }),
   });
   return html`<div class="mail-reader-actions">
