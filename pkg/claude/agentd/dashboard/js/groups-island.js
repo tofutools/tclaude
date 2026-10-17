@@ -19,7 +19,7 @@ const html = htm.bind(h);
 // switch through CSS, but placeholder/title/aria attributes are single-valued
 // and the native list chooses them at render time, so both bounded
 // components subscribe to the wizard edge and repaint immediately.
-function useWizardTheme() {
+export function useWizardTheme() {
   const [wizard, setWizard] = useState(isWizardActive());
   useEffect(() => {
     const onWizard = (event) => setWizard(
@@ -62,7 +62,10 @@ export function GroupsControls({ state, actions }) {
   const refreshTimer = useRef(null);
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
-  const current = state.view.value;
+  // While the fused Groups view is on screen these controls drive it, and
+  // count what it lists.
+  const listed = state.listed.value;
+  const current = listed ? { ...state.view.value, ...listed } : state.view.value;
   const badge = state.deviationCount.value;
   const columns = state.columnOptions.value;
   const wizard = useWizardTheme();
@@ -163,7 +166,7 @@ export function GroupsControls({ state, actions }) {
         class=${`view-menu${state.viewOpen.value ? ' open' : ''}`}
         role="menu"
       >
-        ${GROUP_VIEW_OPTIONS.map((option) => html`
+        ${GROUP_VIEW_OPTIONS.filter((option) => !listed || !option.nodeOnly).map((option) => html`
           <${ViewOption}
             key=${option.key}
             option=${option}
@@ -201,32 +204,11 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-export function GroupsList({ host, state, actions, processSource = undefined }) {
-  const wizard = useWizardTheme();
-  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
-  const focus = effectiveGroupsFocus(state);
-  const [triggers, setTriggers] = useState([]);
-  const current = state.view.value;
-  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
-
+// useGroupsTableControls wires the member tables' sort headers and the
+// virtual groups' pagers under `host`.
+export function useGroupsTableControls(host, state, actions) {
   useEffect(() => {
-    syncBotAnimations();
-    syncWizardOrbit();
-  });
-
-  useEffect(() => {
-    if (!triggersEnabled) {
-      setTriggers([]);
-      return undefined;
-    }
-    if (typeof actions.loadTriggers !== 'function') return undefined;
-    let active = true;
-    actions.loadTriggers().then((rows) => { if (active) setTriggers(rows); })
-      .catch((error) => actions.reportError(error));
-    return () => { active = false; };
-  }, [triggersEnabled]);
-
-  useEffect(() => {
+    if (!host) return undefined;
     const onClick = (event) => {
       const sortHeader = event.target.closest('th[data-sort-table]');
       if (sortHeader && host.contains(sortHeader)) {
@@ -251,12 +233,17 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
       host.removeEventListener('change', onChange);
     };
   }, [host]);
+}
 
-  // Hover is local Groups presentation state. Delegate from the stable island
-  // host so keyed group nodes can move across polls without acquiring their
-  // own listeners. relatedTarget suppresses churn while the pointer moves
-  // between descendants of the same summary.
+// useGroupsHover is the group header the pointer is over, under `host`.
+// Hover is local Groups presentation state. Delegate from the stable island
+// host so keyed group nodes can move across polls without acquiring their
+// own listeners. relatedTarget suppresses churn while the pointer moves
+// between descendants of the same summary.
+export function useGroupsHover(host, groups) {
+  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   useEffect(() => {
+    if (!host) return undefined;
     const summaryFor = (node) => node?.closest?.('details[data-group-key] > summary') || null;
     const onMouseOver = (event) => {
       const summary = summaryFor(event.target);
@@ -274,10 +261,59 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
 
   useEffect(() => {
     if (!hoveredGroupKey) return;
-    const present = current.groups.some((group) =>
+    const present = groups.some((group) =>
       (group.key || group.name) === hoveredGroupKey);
     if (!present) setHoveredGroupKey(null);
-  }, [current.groups, hoveredGroupKey]);
+  }, [groups, hoveredGroupKey]);
+  return hoveredGroupKey;
+}
+
+// GroupsLensList is the Groups listing through the chosen lens: the one
+// groups tree, framed by the Processes or Both lens when one is chosen. One
+// node's Groups view and the fused Groups view both render it, from their
+// own groups, snapshot and actions; `rosters` are the groups as the run
+// context names them (see groups-process-scope.js).
+export function GroupsLensList({
+  state, groups, rosters, snapshot, actions, triggers = [], hoveredGroupKey = null, processSource = undefined, wizard,
+}) {
+  const focus = effectiveGroupsFocus(state);
+  // Every lens renders the same groups tree; Processes frames it and swaps
+  // each group's member details for its runs, Both frames it and shows the
+  // two as sections of each group.
+  const tree = html`<${GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${actions}
+    triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
+  if (focus === 'agents') return tree;
+  return html`<${GroupsProcessesFocus} groups=${groups} allGroups=${rosters} wizard=${wizard}
+    filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
+    focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`;
+}
+
+export function GroupsList({ host, state, actions, processSource = undefined }) {
+  const wizard = useWizardTheme();
+  const focus = effectiveGroupsFocus(state);
+  const [triggers, setTriggers] = useState([]);
+  const current = state.view.value;
+  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
+
+  useEffect(() => {
+    syncBotAnimations();
+    syncWizardOrbit();
+  });
+
+  useEffect(() => {
+    if (!triggersEnabled) {
+      setTriggers([]);
+      return undefined;
+    }
+    if (typeof actions.loadTriggers !== 'function') return undefined;
+    let active = true;
+    actions.loadTriggers().then((rows) => { if (active) setTriggers(rows); })
+      .catch((error) => actions.reportError(error));
+    return () => { active = false; };
+  }, [triggersEnabled]);
+
+  useGroupsTableControls(host, state, actions);
+  const hoveredGroupKey = useGroupsHover(host, current.groups);
 
   // Both lenses read the process context: Processes for its cards, Agents for
   // the G1 header chips and row badges. One fetch per snapshot poll.
@@ -306,20 +342,12 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     return () => document.body.classList.remove('groups-focus-processes');
   }, [focus]);
 
-  // Every lens renders the same groups tree; Processes frames it and swaps
-  // each group's member details for its runs, Both frames it and shows the
-  // two as sections of each group.
-  const tree = html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
-    triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
   // While fused this list is hidden and the fused Groups view
   // (fleet-merged-island.js) shows the standing-orders dialog: one copy only.
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
-    ${focus === 'agents'
-    ? tree
-    : html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
-      filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
-      focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`}
+    <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
+      actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
     ${state.standingOrdersDialog.value && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
