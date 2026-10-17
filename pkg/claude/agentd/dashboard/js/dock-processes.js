@@ -9,7 +9,8 @@
 // - Clicking a card opens a preview: the graph as a not-yet-started run, then
 //   Start in <group>, Edit, Pin to group, unpin (× on a pinned group) and
 //   share (.pwf).
-// - ⤒ and dropping a .pwf on the section import through the existing review.
+// - The header's ⋯ (Import .pwf…) and dropping a .pwf on the section import
+//   through the existing review; ⋯ Export all downloads a config bundle.
 // - ⧉ opens Automations › Processes, where templates are managed and deleted.
 // - The card ⚙ menu carries the library's shared rows (dock-library.js):
 //   rename and clone (both through a name dialog), pin to top, copy the id,
@@ -31,8 +32,9 @@ import { shellConfirm, shellToast } from './shell-state.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { managementController } from './management-controller.js';
 import { exportWorkflow } from './process-workflow-share.js';
+import { downloadBlob } from './paf-model.js';
 import {
-  LIBRARY_EVENT, menuPlacement, cloneProcess, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
+  LIBRARY_EVENT, menuPlacement, cloneProcess, exportBundle, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
   renameItem, togglePin,
 } from './dock-library.js';
 
@@ -352,9 +354,26 @@ export function DockProcesses({
     }
   };
   const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  // The header's ⋯ menu: Import .pwf… drives the mounted importer (its review
+  // dialog renders inside the section, so the section opens first), and
+  // Export all downloads every template as one config bundle.
+  const sectionRef = useRef(null);
+  const sectionMenuOpen = openMenu === 'section:processes';
+  const importPwf = () => {
+    if (!open) { setOpen(true); setSectionOpen('processes', true); }
+    sectionRef.current?.querySelector('[data-pwf-file]')?.click();
+  };
+  const exportAll = async () => {
+    try {
+      const download = (fileName, value) => downloadBlob(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' }), fileName);
+      if (await exportBundle({ section: 'processes', fetchImpl, confirm, download })) notify?.(`exported every ${wizWord('process', 'rite')}`);
+    } catch (cause) {
+      notify?.(`export failed: ${cause.message}`, true);
+    }
+  };
   const current = preview && rows?.find((row) => row.id === preview.row.id);
   if (searching && rows !== null && !shown.length) return null;
-  return html`<details class="dock-section dock-processes" data-key="processes" open=${open || searching}
+  return html`<details ref=${sectionRef} class="dock-section dock-processes" data-key="processes" open=${open || searching}
       onToggle=${(event) => { if (searching) return; const next = event.currentTarget.hasAttribute('open'); setOpen(next); setSectionOpen('processes', next); }}
       onDragOver=${(event) => { if (!fileDrag(event)) return; event.preventDefault(); setDropOver(true); }}
       onDragLeave=${(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropOver(false); }}
@@ -372,9 +391,25 @@ export function DockProcesses({
         ${wizWord('Processes', 'Rites')}
         <span class="dock-section-count">${rows ? (searching && shown.length !== rows.length ? `${shown.length}/${rows.length}` : rows.length) : ''}</span>
       </span>
-      <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
-        title="Open Automations › Processes"
-        onClick=${(event) => { event.preventDefault(); document.querySelector('nav [data-tab="processes"]')?.click(); }}>⧉</button>
+      <span class="dock-section-tools">
+        <button type="button" class="dock-section-manage" data-dock-act="new-item" data-dock-kind="processes"
+          title="New process template" aria-label=${`New in ${wizWord('Processes', 'Rites')}`}
+          onClick=${(event) => { event.preventDefault(); handOffProcessDraft({ create: true }); }}>＋</button>
+        <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
+          title="Open Automations › Processes"
+          onClick=${(event) => { event.preventDefault(); document.querySelector('nav [data-tab="processes"]')?.click(); }}>⧉</button>
+        <span class="dock-card-actions">
+          <button type="button" class="dock-section-manage" data-dock-act="section-menu" data-dock-kind="processes"
+            aria-haspopup="menu" aria-expanded=${sectionMenuOpen ? 'true' : 'false'}
+            aria-label=${`More for ${wizWord('Processes', 'Rites')}`} title="Import or export"
+            onClick=${(event) => { event.preventDefault(); setOpenMenu(sectionMenuOpen ? null : 'section:processes'); }}>⋯</button>
+          <div class=${`dock-card-menu${sectionMenuOpen ? ' open' : ''}`} role="menu" aria-label=${`${wizWord('Processes', 'Rites')} actions`}>
+            ${[['import', 'Import .pwf…', importPwf], ['export-all', 'Export all', exportAll]].map(([act, label, run]) => html`<button
+              key=${act} type="button" role="menuitem" class="dock-card-menu-item" data-dock-act=${act} data-dock-kind="processes"
+              onClick=${(event) => { event.preventDefault(); setOpenMenu(null); run(); }}>${label}</button>`)}
+          </div>
+        </span>
+      </span>
     </summary>
     <div class="dock-section-items">
       <div class="dock-process-tools">
@@ -382,9 +417,7 @@ export function DockProcesses({
           <button type="button" class=${all ? '' : 'on'} aria-pressed=${all ? 'false' : 'true'} onClick=${() => setAll(false)}>library</button>
           <button type="button" class=${all ? 'on' : ''} aria-pressed=${all ? 'true' : 'false'} data-dock-process-all onClick=${() => setAll(true)}>all</button>
         </span>
-        <span class="dpp-spacer"></span>
-        <${WorkflowImportButton} id="" className="dock-process-import" label="⤒ import" dropped=${dropped} onImported=${load} />
-        <button type="button" class="dock-process-new" title="New process template" onClick=${() => handOffProcessDraft({ create: true })}>＋</button>
+        <${WorkflowImportButton} id="" className="dock-process-import-hidden" label="⤒ import" dropped=${dropped} onImported=${load} />
       </div>
       ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
       ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}

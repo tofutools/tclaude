@@ -3661,6 +3661,32 @@ return (async function(){
 			SettleMS: 300,
 		},
 		{
+			// A section heading's ⋯ menu opens over the sections below it. The
+			// headings are sticky, so each one must not paint over an open
+			// menu. Self-checking: throws unless every menu row is the topmost
+			// element at its own centre.
+			Key:     "dock-section-menu",
+			Title:   "Palette dock — a section's ⋯ menu",
+			Caption: "A section heading's ⋯ opens Import… and Export all above the headings and cards below it.",
+			JS: showGroups + collapseGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var deadline=Date.now()+4000, btn;
+  while(!(btn=document.querySelector('.dock-section[data-key="profiles"] [data-dock-act="section-menu"]')) && Date.now()<deadline) await new Promise(function(r){ setTimeout(r,50); });
+  if(!btn) throw new Error('no section ⋯ button');
+  var sec=btn.closest('details'); sec.open=false;
+  await new Promise(function(r){ setTimeout(r,80); });
+  btn.click();
+  await new Promise(function(r){ setTimeout(r,120); });
+  var rows=sec.querySelectorAll('.dock-card-menu.open [role="menuitem"]');
+  if(rows.length<2) throw new Error('section menu did not open');
+  [].forEach.call(rows, function(row){
+    var b=row.getBoundingClientRect(), hit=document.elementFromPoint(b.left+b.width/2, b.top+b.height/2);
+    if(!hit || !row.contains(hit)) throw new Error('menu row "'+row.textContent+'" is covered by '+(hit&&hit.className));
+  });
+})();`,
+			SettleMS: 300,
+		},
+		{
 			// The library search over every section, with the sandbox profiles
 			// section seeded so a path search finds it. Self-checking: throws
 			// when the sandbox profile does not surface.

@@ -108,3 +108,21 @@ test('deleteFromLibrary reports a refused delete', async (t) => {
     fetchImpl: async () => ({ ok: false, status: 403, statusText: 'Forbidden', json: async () => ({ message: 'not allowed' }) }),
   }), /not allowed/);
 });
+
+test('the Processes heading carries the same ＋ ⧉ ⋯ tools as the other sections', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { DockProcesses } = await harness.importDashboardModule('js/dock-processes.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  let openMenu = null;
+  const setOpenMenu = (value) => { openMenu = value; };
+  await harness.mount(harness.html`<${DockProcesses} isSectionOpen=${() => false} setSectionOpen=${() => {}}
+    openMenu=${'section:processes'} setOpenMenu=${setOpenMenu} />`, host);
+  const head = host.querySelector('summary.dock-section-head');
+  assert.deepEqual([...head.querySelectorAll('.dock-section-tools > .dock-section-manage, .dock-section-tools .dock-card-actions > .dock-section-manage')]
+    .map((button) => button.dataset.dockAct), ['new-item', 'manage-all', 'section-menu']);
+  assert.deepEqual([...head.querySelectorAll('.dock-card-menu.open [role="menuitem"]')].map((item) => item.textContent),
+    ['Import .pwf…', 'Export all']);
+  assert.ok(host.querySelector('[data-pwf-file]'), 'the .pwf importer stays mounted for the menu to drive');
+  await harness.act(() => harness.fireEvent(head.querySelector('[data-dock-act="section-menu"]'), 'click'));
+  assert.equal(openMenu, null, 'a second click closes the open menu');
+});
