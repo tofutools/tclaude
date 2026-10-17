@@ -248,6 +248,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
@@ -618,7 +619,9 @@ before launch, including manual approval after a failed automatic launch.
 Without `--profile`, the existing receiver/group default applies. A grant's
 `--profile` pins that default; `--allow-profile` permits named alternatives.
 Pinned grant harness/model overrides still apply to those alternatives.
-Even unrestricted peers need an explicit selectable-profile allowlist.
+An unrestricted peer may also select any enabled profile that is not
+operator-only, without an allowlist; operator-only profiles still need
+`--allow-profile`.
 `--credentials local|proxy:<name>@self` overrides the chosen profile's gateway,
 as it does for the receiving teleport landing profile. Placement considers
 only groups advertising the selected profile.
@@ -675,7 +678,36 @@ launch; a request that fails that recheck stays pending with the reason and
 notifies you, and the ordinary group spawn path applies every launch
 guardrail to the result. Peers learn what they may set per group from the
 peer view (`GET /api/spawn-options/{group}`), which names your grant's pinned
-settings and the group's default directory only to an unrestricted peer.
+settings and the group's default directory only to a peer holding
+`node.spawn.read` (unrestricted trust holds it).
+
+#### The remote spawn dialog
+
+Spawning into a peer's group (from its per-node page or the fused Groups view)
+opens the regular spawn dialog with every control in place. Controls the
+request cannot carry are disabled, and hovering one says why; the spawn still
+works, the peer applying its own value there.
+
+With `node.spawn.read` on the peer (unrestricted trust holds it), the dialog
+reads the peer's catalogs and pre-fills what the peer would apply: its default
+or pinned profile, the grant's pinned directory, harness and model, its
+sandbox and launch defaults, its roles, and its profile and group saved
+prompts. Disabled controls show those values. Without it the dialog cannot
+show them and says so; the peer's defaults apply all the same.
+
+Profiles and saved prompts come from two libraries, the peer's and this
+node's (never a third node's), and a "Show from" filter narrows both pickers:
+
+- A peer profile rides by name when you may select it (see above); one you
+  may not select is listed but cannot be picked. A pre-filled default is not
+  sent: the peer applies it itself.
+- A local profile fills only what the request carries: the overrides the
+  grant opens, the name, display role and initial message, and its saved
+  prompts.
+- Saved prompts the peer applies itself (its profile and group defaults) are
+  locked. Any other prompt, the peer's or this node's, is written into the
+  brief ahead of the initial message, within the 8 KiB remote brief limit.
+- Roles are the peer's; adding one is not carried yet.
 
 The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
 GET returns the incoming request array; POST queues an outgoing request with the
@@ -3174,8 +3206,24 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   request while the group stays visible to it.
 - `GET /api/spawn-options/{name}`: what the peer may set for a spawn into a
   visible group: `{group, approval: "automatic"|"operator", overrides:
-  {cwd, harness, model, effort}, profiles, harnesses?, defaults?}`. The
-  dashboard's spawn dialog reads it to disable what the peer may not set.
+  {cwd, harness, model, effort}, profiles, harnesses?, defaults?, catalog}`.
+  The dashboard's spawn dialog reads it to disable what the peer may not set;
+  `catalog` says the peer holds `node.spawn.read`, and only then are
+  `defaults` named.
+- `node.spawn.read`, read-only (other methods on these paths stay
+  local-only): `GET /api/spawn-profiles`, `/api/spawn-profile-default`,
+  `/api/spawn-launch-defaults`, `/api/saved-prompts`, `/api/roles`,
+  `/api/sandbox-profiles`, `/api/sandbox-profile-default`,
+  `/api/spawn-harness-policy`, `/api/claude-settings/default-model`,
+  `/api/spawn/effective-sandbox`, `POST /api/sandbox-profile-enforcement` (a
+  preview that writes nothing), and, for a visible group,
+  `GET /api/groups/{group}/sandbox-profile` and
+  `/api/groups/{name}/spawn-harness-policy`. A group named in a query or
+  body must be visible too; the enforcement preview treats the draft as a new
+  profile; and `effective-sandbox`'s `dir` (a project-settings walk) is
+  limited for a restricted peer to a visible group's default or pinned
+  directory. With `catalog`, spawn-options also names the group's default
+  profile (`defaults.group_profile`) and `default_prompts`.
 - `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
 - `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
   recreating a missing launch directory and switching a Codex drive stay

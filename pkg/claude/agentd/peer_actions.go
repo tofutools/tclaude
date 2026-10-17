@@ -327,7 +327,8 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 
 // peerSpawnOptions tells a peer's spawn dialog what it may choose for one
 // group. Receiver-owned values (the grant's pinned settings, group defaults)
-// are named only to an unrestricted peer, which can read them anyway.
+// are named only to a peer holding node.spawn.read (unrestricted trust holds
+// it), which can read them from the catalogs anyway.
 type peerSpawnOptions struct {
 	Group string `json:"group"`
 	// Approval is "automatic" (a spawn grant or unrestricted trust launches
@@ -337,6 +338,13 @@ type peerSpawnOptions struct {
 	Profiles  []proto.CatalogSpawnProfile `json:"profiles"`
 	Harnesses []string                    `json:"harnesses,omitempty"`
 	Defaults  map[string]string           `json:"defaults,omitempty"`
+	// Catalog reports node.spawn.read: the requester may read this node's
+	// spawn dialog catalogs and pre-fill the dialog with what it would apply.
+	Catalog bool `json:"catalog"`
+	// DefaultPrompts are the group's own saved prompts (with the group's
+	// default profile in Defaults["group_profile"]): named with Catalog, so
+	// the dialog pre-fills them whatever the peer-view snapshot shares.
+	DefaultPrompts []string `json:"default_prompts,omitempty"`
 }
 
 func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
@@ -361,8 +369,10 @@ func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, 
 	if out.Overrides[fedOverrideHarness] {
 		out.Harnesses = fedSpawnHarnesses()
 	}
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
-		out.Defaults = map[string]string{"cwd": g.DefaultCwd}
+	out.Catalog = peerSpawnCatalogReadable(v)
+	if out.Catalog {
+		out.Defaults = map[string]string{"cwd": g.DefaultCwd, "group_profile": g.DefaultProfile}
+		out.DefaultPrompts = g.DefaultPrompts
 		if grant != nil {
 			for k, val := range map[string]string{"cwd": grant.SpawnPolicy.Cwd, "harness": grant.SpawnPolicy.Harness, "model": grant.SpawnPolicy.Model, "profile": grant.SpawnPolicy.Profile} {
 				if val != "" {

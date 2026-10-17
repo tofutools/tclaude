@@ -163,6 +163,7 @@ func peerViewRules() map[string]peerViewRule {
 	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"resume", PermGroupsMembersResume}, {"restart", PermGroupsMembersResume}, {"sandbox-restart", PermGroupsMembersResume}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
+	addPeerSpawnCatalogRules(rules)
 	addPeerHumanInboxRules(rules)
 	addPeerMailboxRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}

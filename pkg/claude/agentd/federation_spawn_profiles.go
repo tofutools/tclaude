@@ -37,32 +37,44 @@ func checkSelectableProfile(peer string, group int64, name string) error {
 	if len(name) > 128 || validateGroupName(name) != nil || proto.StripControls(name) != name {
 		return fmt.Errorf("invalid requested profile")
 	}
-	// Even unrestricted peers need an explicit profile allowlist. A broad trust
-	// level must not expose the operator's entire local profile registry.
-	grant := fedPeerExplicitGroupGrant(peer, group, PermGroupsMembersSpawn)
-	if grant == nil || !slices.Contains(grant.SpawnPolicy.AllowedProfiles, name) {
+	// One answer for a missing, disabled or unlisted profile, so a peer
+	// cannot probe which profile names exist here.
+	if !slices.ContainsFunc(selectableSpawnProfiles(peer, group), func(p proto.CatalogSpawnProfile) bool { return p.Name == name }) {
 		return fmt.Errorf("requested profile is not in this peer's spawn allowlist")
-	}
-	profile, err := db.GetSpawnProfile(name)
-	if err != nil || profile == nil || profile.Disabled {
-		return fmt.Errorf("requested profile is unavailable")
 	}
 	return nil
 }
 
 func selectableSpawnProfiles(peer string, group int64) []proto.CatalogSpawnProfile {
-	grant := fedPeerExplicitGroupGrant(peer, group, PermGroupsMembersSpawn)
-	if grant == nil {
-		return nil
-	}
 	launchGrant := fedPeerGroupGrant(peer, group, PermGroupsMembersSpawn)
 	if launchGrant == nil {
 		return nil
 	}
+	// An explicit grant names its selectable profiles. Unrestricted trust,
+	// which already reads the whole registry over node.spawn.read, may also
+	// pick any enabled profile that is not operator-only (a spawn request may
+	// come from the peer's agents, not only its operator).
+	var profiles []*db.SpawnProfile
+	allowed := map[string]bool{}
+	if grant := fedPeerExplicitGroupGrant(peer, group, PermGroupsMembersSpawn); grant != nil {
+		for _, name := range grant.SpawnPolicy.AllowedProfiles {
+			if profile, err := db.GetSpawnProfile(name); err == nil && profile != nil {
+				allowed[profile.Name] = true
+				profiles = append(profiles, profile)
+			}
+		}
+	}
+	if db.FederationPeerUnrestricted(peer) {
+		all, _ := db.ListSpawnProfiles()
+		for _, profile := range all {
+			if profile != nil && !profile.OperatorOnly && !allowed[profile.Name] {
+				profiles = append(profiles, profile)
+			}
+		}
+	}
 	var out []proto.CatalogSpawnProfile
-	for _, name := range grant.SpawnPolicy.AllowedProfiles {
-		profile, err := db.GetSpawnProfile(name)
-		if err != nil || profile == nil || profile.Disabled {
+	for _, profile := range profiles {
+		if profile == nil || profile.Disabled {
 			continue
 		}
 		out = append(out, proto.CatalogSpawnProfile{

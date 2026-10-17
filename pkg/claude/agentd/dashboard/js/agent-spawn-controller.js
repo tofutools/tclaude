@@ -44,7 +44,9 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
     toast(`Could not ask ${node || 'the peer'} what a spawn may set: ${error?.message || error}`, true);
     return null;
   }
-  return requireController().open({ groupName, remote });
+  // The grant's pinned profile is the peer's default for this requester: it
+  // outranks the group's default profile, as on the peer.
+  return requireController().open({ groupName, remote, profileName: remote.options?.defaults?.profile || '' });
 }
 
 export function refreshAgentSpawnSandboxPolicy() {

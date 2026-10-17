@@ -665,6 +665,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
 	{Slug: PermNodeExec, Description: nodeExecWarning},
 	{Slug: PermNodeMessagesRead, Description: "Read private human notifications and agent message bodies across this node. Default off; instance-wide peer grant. No reply or approval authority."},
+	{Slug: PermNodeSpawnRead, Description: "Read the spawn dialog's catalogs on this node, so a peer's remote spawn dialog shows what this node would apply and offers its profiles and prompts: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model. Read-only; spawn and sandbox profiles carry their environment values (often tokens) and paths. Default off; instance-wide peer grant."},
 	{Slug: PermNodeMessagesManage, Description: "Explicitly change agent mailbox read state across this node. Default off; no delete, reply or approval authority."},
 	{Slug: PermNodeCredentialsReceive, Description: "Receive operator harness credentials; high trust, agents can act as the sender"},
 	{Slug: PermSnapshotsReceive, Description: "Keep a peer's encrypted resilience snapshots of its agents, so they can be recovered if that peer's host is lost. Instance-wide peer grant; nothing is imported or run."},

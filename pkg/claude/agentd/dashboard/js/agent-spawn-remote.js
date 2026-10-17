@@ -13,12 +13,28 @@
 // GET spawn-options/{g} says what the peer allows; a peer without that route
 // (an older tclaude) gets the request it understood before: brief, name and
 // role.
+//
+// When the peer lends its catalogs (node.spawn.read; unrestricted trust holds
+// it), the dialog reads them through the peer view and pre-fills exactly what
+// the peer's own dialog would: its default profile, roles, prompts, sandbox
+// and launch defaults, and the grant's pinned settings. Locked controls show
+// those values. Profiles and saved prompts come from both libraries — the
+// peer's and this node's, never a third node's — under one source filter. A
+// peer profile rides by name when the grant lets this operator pick it; a
+// local profile fills only the fields the request carries. Saved prompts the
+// peer applies itself (its profile and group defaults) stay locked; any
+// other prompt is written into the brief.
+
+import { createAgentSpawnActions } from './agent-spawn-actions.js';
 
 const SPAWN_POLL_MS = 2000;
 const SPAWN_POLL_LIMIT_MS = 30 * 60 * 1000;
 export const REMOTE_BRIEF_MAX = 8 * 1024;
 const SAFE_NODE = /^inst_[a-z0-9]{4,64}$/;
 const OVERRIDES = Object.freeze(['cwd', 'harness', 'model', 'effort']);
+// A ref or profile handle with this prefix names this node's library item
+// rather than the target's.
+export const LOCAL_REF = 'local:';
 
 // FIELD_CONTROLS maps the dialog's control ids to the request field they
 // feed. Controls of fields that are always carried stay live; the override
@@ -37,9 +53,28 @@ const FIELD_CONTROLS = Object.freeze({
   'agent-spawn-model-codex': 'model',
   'agent-spawn-model-custom': 'model',
   'agent-spawn-effort': 'effort',
+  'agent-spawn-role-add': 'roles',
 });
 
 function text(value) { return typeof value === 'string' ? value : ''; }
+function list(value) { return Array.isArray(value) ? value : []; }
+
+export function isLocalRef(value) { return text(value).startsWith(LOCAL_REF); }
+
+// localFetchImpl reaches this node's own API, also from a peer's page.
+function localFetchImpl() {
+  const local = globalThis.__tclaudeRemoteNode?.localFetch;
+  return typeof local === 'function' ? local : (...a) => globalThis.fetch(...a);
+}
+
+// peerFetchFor addresses the target's /api/ the way remoteSpawnApi does:
+// through /api/peer/{node}/, or on a per-node peer view (nodeId '') through
+// the page's own rerouting.
+export function peerFetchFor(nodeId, fetchImpl = (...a) => globalThis.fetch(...a)) {
+  if (!nodeId) return fetchImpl;
+  const prefix = `/api/peer/${encodeURIComponent(nodeId)}/`;
+  return (path, init) => fetchImpl(String(path).replace(/^\/api\//, prefix), init);
+}
 
 // remoteSpawnApi addresses one peer's spawn routes. nodeId '' is the per-node
 // peer view, whose /api/* the page already reroutes to the peer.
@@ -85,6 +120,8 @@ export function normalizeRemoteSpawnOptions(raw) {
     profiles: Object.freeze(profiles),
     harnesses: Object.freeze((Array.isArray(raw?.harnesses) ? raw.harnesses : []).filter((h) => typeof h === 'string' && h)),
     defaults: Object.freeze({ ...(raw?.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}) }),
+    catalog: raw?.catalog === true,
+    defaultPrompts: Object.freeze(list(raw?.default_prompts).filter((p) => typeof p === 'string' && p)),
   });
 }
 
@@ -100,11 +137,104 @@ export async function loadRemoteSpawnOptions(api, group) {
   }
 }
 
+async function readJSON(fetchImpl, path) {
+  const res = await fetchImpl(path, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+const settle = (promise, fallback) => promise.then((value) => value, () => fallback);
+
+// loadRemoteSpawnCatalogs reads the two libraries the dialog offers: the
+// target's (only when it lends them) and this node's. A library that fails to
+// load is empty rather than fatal: the spawn request itself needs neither.
+export async function loadRemoteSpawnCatalogs({ options, peerFetch, localFetch = localFetchImpl() }) {
+  const local = Promise.all([
+    settle(readJSON(localFetch, '/api/spawn-profiles').then(list), []),
+    settle(readJSON(localFetch, '/api/saved-prompts').then(list), []),
+  ]);
+  const target = options?.catalog ? Promise.all([
+    settle(readJSON(peerFetch, '/api/spawn-profiles').then(list), []),
+    settle(readJSON(peerFetch, '/api/spawn-profile-default').then((v) => text(v?.name)), ''),
+    settle(readJSON(peerFetch, '/api/saved-prompts').then(list), []),
+    settle(readJSON(peerFetch, '/api/roles').then(list), []),
+    settle(readJSON(peerFetch, '/api/sandbox-profiles').then(list), []),
+    settle(readJSON(peerFetch, '/api/claude-settings/default-model').then((v) => text(v?.model)), ''),
+  ]) : Promise.resolve(null);
+  const [[localProfiles, localPrompts], peer] = await Promise.all([local, target]);
+  return Object.freeze({
+    target: peer ? Object.freeze({
+      profiles: peer[0], defaultProfile: peer[1], prompts: peer[2], roles: peer[3], sandboxProfiles: peer[4], defaultModel: peer[5],
+    }) : null,
+    local: Object.freeze({ profiles: localProfiles.filter((p) => p?.name && !p.disabled), prompts: localPrompts }),
+  });
+}
+
+// remoteSpawnProfiles is the profile picker's list: the target's profiles
+// (full, so pre-fill shows what the peer applies; only the grant's selectable
+// ones may be picked), then this node's under local: handles.
+export function remoteSpawnProfiles(remote) {
+  const selectable = new Set((remote?.options?.profiles || []).map((p) => p.name));
+  const target = remote?.catalogs?.target
+    ? remote.catalogs.target.profiles
+    : remote?.options?.profiles || [];
+  const out = target.filter((p) => p?.name).map((p) => ({
+    ...p, remoteSource: 'target', remoteSelectable: selectable.has(p.name),
+  }));
+  for (const p of remote?.catalogs?.local?.profiles || []) {
+    out.push({ ...p, name: LOCAL_REF + p.name, aliases: [], localName: p.name, remoteSource: 'local', remoteSelectable: true });
+  }
+  return out;
+}
+
+// remoteSpawnPrompts lists both prompt libraries, the local one under
+// local: refs.
+export function remoteSpawnPrompts(remote) {
+  const target = (remote?.catalogs?.target?.prompts || []).filter((p) => p?.name)
+    .map((p) => ({ ...p, source: 'target' }));
+  const local = (remote?.catalogs?.local?.prompts || []).filter((p) => p?.name)
+    .map((p) => ({ ...p, name: LOCAL_REF + p.name, label: p.name, source: 'local' }));
+  return [...target, ...local];
+}
+
+// remotePromptBodies is the text of the prompts the brief carries: every
+// selected prompt the peer does not already apply itself.
+export function remotePromptBodies(refs, peerApplied, remote) {
+  const applied = new Set(peerApplied || []);
+  const byName = new Map(remoteSpawnPrompts(remote).map((p) => [p.name, p]));
+  const out = [];
+  for (const ref of refs || []) {
+    if (applied.has(ref)) continue;
+    const prompt = byName.get(ref);
+    if (!prompt) throw new Error(`saved prompt ${ref} is not in a library this dialog can read`);
+    if (text(prompt.body).trim()) out.push(text(prompt.body).trim());
+  }
+  return out;
+}
+
 // remoteFieldAllowed says whether a control's field can ride on the request.
-export function remoteFieldAllowed(field, options) {
-  if (field === 'always') return true;
-  if (field === 'profile') return (options?.profiles?.length || 0) > 0;
+// The profile picker is open when a peer profile can be picked, or a local
+// profile can fill some field the request carries.
+export function remoteFieldAllowed(field, options, catalogs = null) {
+  if (field === 'always' || field === 'prompts') return true;
+  if (field === 'roles') return false;
+  if (field === 'profile') {
+    return (options?.profiles?.length || 0) > 0
+      || ((catalogs?.local?.profiles?.length || 0) > 0 && OVERRIDES.some((f) => options?.overrides?.[f] === true));
+  }
   return OVERRIDES.includes(field) && options?.overrides?.[field] === true;
+}
+
+// remoteSpawnPins lays the grant's pinned settings (the peer's defaults for
+// this requester) over a pre-filled draft, for the fields the operator has
+// not set: what the peer launches unless the request overrides it.
+export function remoteSpawnPins(draft, options, operatorSet = new Set()) {
+  const pins = options?.defaults || {};
+  const next = { ...draft };
+  if (text(pins.cwd) && !operatorSet.has('cwd') && !text(draft.cwd).trim()) next.cwd = pins.cwd;
+  if (text(pins.harness) && !operatorSet.has('harness')) next.harness = pins.harness;
+  if (text(pins.model) && !operatorSet.has('model')) { next.model = pins.model; next.customModel = false; }
+  return next;
 }
 
 const FIELD_WORDS = Object.freeze({ cwd: 'directory', harness: 'harness', model: 'model', effort: 'effort' });
@@ -118,6 +248,7 @@ export function remoteLockReason(field, remote) {
       ? `${node} lists no spawn profiles you may pick for this group — its own default profile applies`
       : `${node} runs an older tclaude that does not say which profiles you may pick — its own default profile applies`;
   }
+  if (field === 'roles') return `A remote spawn does not add roles yet — ${node} applies its profile and group roles`;
   if (OVERRIDES.includes(field)) {
     const word = FIELD_WORDS[field];
     const fixed = text(options?.defaults?.[field]);
@@ -129,13 +260,15 @@ export function remoteLockReason(field, remote) {
   }
   if (field === 'queue') return `Queued spawns wait on this node; a spawn on ${node} is sent as a request now`;
   if (field === 'browse') return `Browsing reads this machine's folders, not ${node}'s — type a path on ${node} instead`;
-  return `${node} applies its own setting here (its group and profile defaults) — a remote spawn request does not carry it`;
+  return options?.catalog
+    ? `${node} applies this setting itself (shown: what it will use) — a remote spawn request does not carry it`
+    : `${node} applies its own setting here (its group and profile defaults) — a remote spawn request does not carry it`;
 }
 
 function controlField(el) {
   if (el.id === 'agent-spawn-cwd-browse' || el.id === 'agent-spawn-wt-repo-browse') return 'browse';
   if (el.id === 'agent-spawn-queue') return 'queue';
-  return FIELD_CONTROLS[el.id] || '';
+  return FIELD_CONTROLS[el.id] || el.dataset?.remoteSpawnField || '';
 }
 
 // watchRemoteSpawnLocks keeps the lock on while the dialog lives: Preact
@@ -158,7 +291,7 @@ export function applyRemoteSpawnLocks(root, remote) {
   for (const el of root.querySelectorAll('input, select, textarea, button')) {
     if (el.classList.contains('spawn-field-help-trigger') || el.closest('.help-disclosure, [data-remote-spawn-free]')) continue;
     const field = controlField(el);
-    if (field && field !== 'browse' && remoteFieldAllowed(field, remote.options)) continue;
+    if (field && field !== 'browse' && remoteFieldAllowed(field, remote.options, remote.catalogs)) continue;
     if (!el.disabled) el.disabled = true;
     const reason = remoteLockReason(field, remote);
     if (el.title !== reason) el.title = reason;
@@ -169,17 +302,21 @@ export function applyRemoteSpawnLocks(root, remote) {
 // remoteSpawnBody maps the dialog's regular request onto a remote spawn
 // request. An allowed override is sent only when the operator set it in this
 // dialog (explicit), so an untouched prefill leaves the peer's policy in
-// charge; a field the peer does not allow is never sent.
-export function remoteSpawnBody(request, explicit, options) {
+// charge; a field the peer does not allow is never sent. The same holds for
+// the profile: a pre-filled default is the peer's to apply, and only a peer
+// profile the operator picked and may pick is named. Prompts (bodies) open
+// the brief, as saved prompts do in a local spawn.
+export function remoteSpawnBody(request, explicit, options, prompts = []) {
   const body = request?.body || {};
-  const brief = text(body.initial_message).trim();
+  const said = new Set(explicit || []);
+  const brief = [...prompts, text(body.initial_message).trim()].filter(Boolean).join('\n\n');
   if (!brief) throw new Error('write a brief in the initial message — the peer starts the agent with it');
   if (new TextEncoder().encode(brief).length > REMOTE_BRIEF_MAX) throw new Error(`the brief is over ${REMOTE_BRIEF_MAX} bytes, the remote spawn limit`);
   const out = { brief };
   if (text(body.name).trim()) out.name = text(body.name).trim();
   if (text(body.role).trim()) out.role = text(body.role).trim();
-  if (text(body.profile) && remoteFieldAllowed('profile', options)) out.profile = body.profile;
-  const said = new Set(explicit || []);
+  const profile = text(body.profile);
+  if (profile && !isLocalRef(profile) && said.has('profile') && (options?.profiles || []).some((p) => p.name === profile)) out.profile = profile;
   for (const field of OVERRIDES) {
     const value = text(body[field]).trim();
     if (value && said.has(field) && remoteFieldAllowed(field, options)) out[field] = value;
@@ -196,17 +333,25 @@ export function remoteSpawnIntro(remote, group) {
 }
 
 // remoteSpawnContext is the launch context the dialog opens with: the peer's
-// own groups and harnesses, never this node's.
-export function remoteSpawnContext(snapshot, options) {
+// own groups, harnesses and (when it lends its catalogs) roles, sandbox
+// profiles and default model, never this node's.
+export function remoteSpawnContext(snapshot, options, catalogs = null, group = '') {
+  const target = catalogs?.target || null;
+  // The peer-view snapshot may withhold a group's defaults from a restricted
+  // peer; spawn-options names them to a catalog holder, so the pre-fill
+  // starts from the profile and prompts the peer really applies.
+  const withDefaults = (g) => (options?.catalog && g?.name === group
+    ? { ...g, default_profile: text(options.defaults?.group_profile), default_prompts: [...(options.defaultPrompts || [])] }
+    : g);
   let harnesses = Array.isArray(snapshot?.harnesses) ? snapshot.harnesses : [];
   if (!harnesses.length && options?.harnesses?.length) harnesses = options.harnesses.map((name) => ({ name }));
   return {
-    groups: Array.isArray(snapshot?.groups) ? snapshot.groups : [],
+    groups: Array.isArray(snapshot?.groups) ? snapshot.groups.map(withDefaults) : [],
     harnesses,
-    roles: [],
+    roles: target ? target.roles : [],
     sandbox_impl: {},
-    sandbox_profiles: [],
-    user_default_model: '',
+    sandbox_profiles: target ? target.sandboxProfiles : [],
+    user_default_model: target ? target.defaultModel : '',
     default_terminal: 'native',
     spawn_name_normalize: snapshot?.spawn_name_normalize !== false,
   };
@@ -217,11 +362,14 @@ function finalStatus(status) {
 }
 
 // createRemoteSpawnActions wraps the dialog's local actions for a remote
-// spawn: nothing reads or writes this node's state (worktrees, sandbox
-// previews, uploads, directory picker), and submit sends the remote request.
-export function createRemoteSpawnActions(base, remote, { notify = () => {}, timers = globalThis, now = () => Date.now() } = {}) {
+// spawn: nothing reads or writes this node's state (worktrees, uploads,
+// directory picker, queues), previews read the peer's own when it lends its
+// catalogs, and submit sends the remote request.
+export function createRemoteSpawnActions(base, remote, { notify = () => {}, timers = globalThis, now = () => Date.now(), peerFetch = remote.peerFetch || peerFetchFor(remote.nodeId) } = {}) {
   const node = remote.node || 'the peer';
   const api = remote.api;
+  const target = remote.catalogs?.target || null;
+  const peer = target ? createAgentSpawnActions({ fetchImpl: peerFetch, loadSandboxProfiles: async () => target.sandboxProfiles }) : null;
   const watch = (request, startedAt) => {
     timers.setTimeout(() => {
       api.status(request.id).then((next) => {
@@ -244,15 +392,21 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
     autoFocusDefault: () => false,
     rememberedEffort: () => '',
     rememberLaunchPreferences() {},
-    dashboardDefaultProfile: () => '',
-    async loadProfiles() { return [...remote.options.profiles]; },
+    dashboardDefaultProfile: () => target?.defaultProfile || '',
+    async loadProfiles() { return remoteSpawnProfiles(remote); },
     async loadWorktrees(repo) {
       return { repo: text(repo).trim(), isRepo: false, empty: true, hasCommits: true, repoRoot: '', worktrees: [], branches: [], defaultBranch: '', subRepos: [] };
     },
     async resolveWorktree() { return { path: '', branch: '' }; },
-    async loadLaunchDefaults() { return {}; },
-    async loadSandboxPolicy() { return { profiles: [], selected: '', preview: `${node} applies its own sandbox policy.` }; },
-    async loadUnsandboxedAutonomy() { return { info: [], warnings: [], sandboxState: '', sandboxSource: '' }; },
+    async loadLaunchDefaults(...args) { return peer ? peer.loadLaunchDefaults(...args) : {}; },
+    async loadSandboxPolicy(...args) {
+      if (!peer) return { profiles: [], selected: '', preview: `${node} applies its own sandbox policy.` };
+      const policy = await peer.loadSandboxPolicy(...args);
+      return { ...policy, preview: `${node} applies: ${policy.preview}` };
+    },
+    async loadUnsandboxedAutonomy(input) {
+      return peer ? peer.loadUnsandboxedAutonomy(input) : { info: [], warnings: [], sandboxState: '', sandboxSource: '' };
+    },
     async uploadAttachments(attachments) {
       if (attachments?.length) throw new Error(`attachments cannot be sent to ${node} with a spawn request`);
       return [];
@@ -260,7 +414,7 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
     async reportTiming() {},
     async pickDirectory() { return {}; },
     async spawn(request) {
-      return api.spawn(remote.group, remoteSpawnBody(request, request.explicit, remote.options));
+      return api.spawn(remote.group, remoteSpawnBody(request, request.explicit, remote.options, request.prompts));
     },
     async complete(payload) {
       const id = payload?.id;
@@ -273,10 +427,13 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
 }
 
 // prepareRemoteSpawn gathers what the dialog needs to open against a peer's
-// group: the peer's answer about allowances and its snapshot.
-export async function prepareRemoteSpawn({ nodeId = '', node = '', group, snapshot = null, fetchImpl } = {}) {
+// group: the peer's answer about allowances, its snapshot, and the libraries
+// the dialog offers.
+export async function prepareRemoteSpawn({ nodeId = '', node = '', group, snapshot = null, fetchImpl, localFetch } = {}) {
   if (nodeId && !SAFE_NODE.test(nodeId)) throw new Error('unknown node');
   const api = remoteSpawnApi(nodeId, fetchImpl ? { fetchImpl } : {});
   const options = await loadRemoteSpawnOptions(api, group);
-  return Object.freeze({ nodeId, node: node || (nodeId ? nodeId.slice(0, 13) : 'the peer'), group, api, options, snapshot });
+  const peerFetch = peerFetchFor(nodeId, ...(fetchImpl ? [fetchImpl] : []));
+  const catalogs = await loadRemoteSpawnCatalogs({ options, peerFetch, ...(localFetch ? { localFetch } : {}) });
+  return Object.freeze({ nodeId, node: node || (nodeId ? nodeId.slice(0, 13) : 'the peer'), group, api, peerFetch, options, catalogs, snapshot });
 }
