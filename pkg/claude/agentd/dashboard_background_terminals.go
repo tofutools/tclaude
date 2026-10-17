@@ -119,7 +119,7 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 			s.created, _ = strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64)
 		}
 		if len(fields) > 4 {
-			s.cwd = strings.TrimSpace(fields[4])
+			s.cwd = fields[4]
 		}
 		sessions = append(sessions, s)
 	}
@@ -142,23 +142,29 @@ func classifyBackgroundTerminals(sessions []backgroundTmuxSession) []backgroundT
 			others = append(others, s)
 		}
 	}
+	// Killable fails closed: when an ownership lookup errors, a live agent's
+	// session would read as unrecognised, so nothing in that batch is offered
+	// for a kill except what is positively known to be safe to end.
 	if len(others) > 0 {
 		names := make([]string, len(others))
 		for i, s := range others {
 			names[i] = s.name
 		}
-		rows, _ := db.FindLatestSessionsByTmux(names)
+		rows, err := db.FindLatestSessionsByTmux(names)
 		for _, s := range others {
-			out = append(out, classifySessionRow(s, rows[s.name]))
+			t := classifySessionRow(s, rows[s.name])
+			t.Killable = t.Superseded || (err == nil && t.Kind == "other")
+			out = append(out, t)
 		}
 	}
 	if len(shells)+len(groupShells) > 0 {
-		convs, _ := db.ListAgentConvIDs()
-		groupNames, _ := listAgentGroupNames()
-		out = append(out, classifyShells(shells, groupShells, convs, groupNames)...)
-	}
-	for i := range out {
-		out[i].Killable = out[i].Superseded || (out[i].Kind != "agent" && out[i].Kind != "session")
+		convs, convErr := db.ListAgentConvIDs()
+		groupNames, groupErr := listAgentGroupNames()
+		known := convErr == nil && groupErr == nil
+		for _, t := range classifyShells(shells, groupShells, convs, groupNames) {
+			t.Killable = t.Kind != "other" || known
+			out = append(out, t)
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a, b := backgroundKindRank(out[i].Kind), backgroundKindRank(out[j].Kind); a != b {
