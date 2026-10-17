@@ -260,7 +260,7 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
   const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', level: 'unrestricted', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
   const switched = [];
   const mounted = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="inst_forge" snapshot=${snapshot} switchNode=${(id) => switched.push(id)} />`);
-  assert.match(mounted.container.textContent, /forge/);
+  assert.match(mounted.container.textContent, /^\s*@\s*forge/, 'the marker follows the tclaude title as "@ forge"');
   await harness.act(() => harness.window.dispatchEvent(new harness.window.CustomEvent('tclaude:remote-health', { detail: { ok: false, lastOK: Date.now() - 120000, failure: { code: 'peer_unreachable', reason: 'peer_offline' } } })));
   const pill = getByRole(mounted.container, 'button', { name: /peer view/ });
   assert.match(pill.textContent, /offline · data 2 min old/);
