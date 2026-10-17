@@ -381,8 +381,9 @@ type fedSpawnRequestJSON struct {
 	WouldDrop []string `json:"would_drop,omitempty"`
 	// OverridesAllowed lists the settings the peer may choose now (pending
 	// requests with overrides only), so the approve dialog can preview what
-	// the operator's own values change.
-	OverridesAllowed []string `json:"overrides_allowed,omitempty"`
+	// the operator's own values change. A pointer so "nothing allowed" ([])
+	// stays distinct from an older daemon that sends no field.
+	OverridesAllowed *[]string `json:"overrides_allowed,omitempty"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -405,7 +406,8 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 		out.Overrides = &o
 		if status == db.FedSpawnPending {
 			_, out.WouldDrop = fedSpawnOverridesStillAllowed(req.FromInstance, req.GroupID, o, fedSpawnApproveReq{})
-			out.OverridesAllowed = fedSpawnOverridesAllowedList(req.FromInstance, req.GroupID)
+			allowed := fedSpawnOverridesAllowedList(req.FromInstance, req.GroupID)
+			out.OverridesAllowed = &allowed
 		}
 	}
 	return out

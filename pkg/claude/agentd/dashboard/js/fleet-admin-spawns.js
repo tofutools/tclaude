@@ -50,7 +50,7 @@ const OTHER_HARNESS = 'chosen for another harness';
 // longer choose is dropped; and a requested model and effort go too when
 // the launch runs another harness than the one requested. Without the
 // server's overrides_allowed (an older daemon) it falls back to would_drop.
-function requestedSettings(r, typed = {}) {
+export function requestedSettings(r, typed = {}) {
   const asked = r.overrides || {};
   const fields = OVERRIDE_LABELS.filter(([k]) => asked[k]);
   if (!Array.isArray(r.overrides_allowed)) {

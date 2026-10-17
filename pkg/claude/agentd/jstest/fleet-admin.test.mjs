@@ -2413,3 +2413,13 @@ test('a set-up node whose hub drops keeps Peers on screen', async (t) => {
   assert.match(settled.q('.fa-identity').textContent, /disconnected/, 'the status read saw the drop');
   assert.ok(settled.q('#fleet-trusted'), 'Peers stays while the hub is down');
 });
+
+test('a request whose grant lets the peer choose nothing previews typed values as replacing it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { requestedSettings } = await harness.importDashboardModule('js/fleet-admin-spawns.js');
+  const r = { overrides: { harness: 'codex', model: 'gpt-5' }, would_drop: ['harness', 'model'], overrides_allowed: [] };
+  assert.deepEqual(requestedSettings(r).map((s) => [s.key, !!s.dropped]), [['harness', true], ['model', true]]);
+  assert.deepEqual(requestedSettings(r, { harness: 'claude' }).map((s) => [s.key, !!s.replaced, !!s.dropped]), [['harness', true, false], ['model', false, true]]);
+  const old = { overrides: { harness: 'codex' }, would_drop: ['harness'] };
+  assert.equal(requestedSettings(old, { harness: 'claude' })[0].dropped, true, 'an older daemon without overrides_allowed falls back to would_drop');
+});

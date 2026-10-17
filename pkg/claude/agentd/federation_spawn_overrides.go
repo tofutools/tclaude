@@ -189,9 +189,10 @@ func fedSpawnOverridesApplied(o db.FederationSpawnOverrides, allowed map[string]
 	return out, dropped
 }
 
-// fedSpawnOverridesAllowedList is fedSpawnOverridesAllowed as a sorted list.
+// fedSpawnOverridesAllowedList is fedSpawnOverridesAllowed as a sorted list,
+// empty (not nil) when the peer may choose nothing.
 func fedSpawnOverridesAllowedList(peer string, groupID int64) []string {
-	var out []string
+	out := []string{}
 	for field, ok := range fedSpawnOverridesAllowed(peer, groupID) {
 		if ok {
 			out = append(out, field)
