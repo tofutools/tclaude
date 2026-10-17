@@ -20,6 +20,20 @@ var breakGlassGrantMu sync.Mutex
 
 var liveBreakGlassGrants = db.ListHostBreakGlassGrants
 
+func liveBreakGlassGrantsForAgent(agentID string) ([]*db.SudoGrant, error) {
+	rows, err := db.ListActiveSudoGrantsByAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
+	out := []*db.SudoGrant{}
+	for _, row := range rows {
+		if row.Slug == PermHostBreakGlass && row.GrantedBy == breakGlassGrantOrigin {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
 func handleBreakGlassStatus(w http.ResponseWriter, r *http.Request) {
 	if peerActionFromRequest(r) != nil {
 		writeError(w, http.StatusForbidden, "local_only", "break-glass is local only")
@@ -84,7 +98,7 @@ func handleBreakGlassGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	breakGlassGrantMu.Lock()
 	defer breakGlassGrantMu.Unlock()
-	existing, err := liveBreakGlassGrants(res.ConvID)
+	existing, err := liveBreakGlassGrantsForAgent(agentID)
 	if err != nil {
 		writeError(w, 500, "io", err.Error())
 		return
@@ -126,7 +140,7 @@ func handleBreakGlassRevoke(w http.ResponseWriter, r *http.Request) {
 	breakGlassGrantMu.Lock()
 	defer breakGlassGrantMu.Unlock()
 	target := strings.TrimSpace(body.Target)
-	var targetConv string
+	var targetConv, targetAgent string
 	if target != "all" {
 		res, _, err := agent.ResolveSelector(target)
 		if err != nil {
@@ -134,8 +148,22 @@ func handleBreakGlassRevoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		targetConv = res.ConvID
+		targetAgent = res.AgentID
+		if targetAgent == "" {
+			targetAgent, _, err = db.EnsureAgentForConv(targetConv, "grant")
+			if err != nil || targetAgent == "" {
+				writeError(w, 400, "invalid_arg", "target must resolve to an agent")
+				return
+			}
+		}
 	}
-	rows, err := liveBreakGlassGrants(targetConv)
+	var rows []*db.SudoGrant
+	var err error
+	if target == "all" {
+		rows, err = liveBreakGlassGrants("")
+	} else {
+		rows, err = liveBreakGlassGrantsForAgent(targetAgent)
+	}
 	if err != nil {
 		writeError(w, 500, "io", err.Error())
 		return

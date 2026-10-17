@@ -339,7 +339,8 @@ undo changes or catch a command that deliberately starts a new session. This
 runs as the daemon UID, not automatically as root; any sudo policy remains the
 host operator's configuration.
 
-Runs inherit agentd's environment and working directory unless overridden.
+Runs inherit agentd's environment. The CLI defaults to its own current working
+directory; direct API requests without `cwd` use agentd's working directory.
 A systemd or launchd service often has a different PATH and cwd from an
 interactive shell; use absolute executable paths and `--cwd` when needed.
 Shell strings use `/bin/sh -c`. `--env` overrides are passed to the command.
@@ -349,8 +350,18 @@ cwd, reason, exit code, duration and a log filename to the audit trail. Output
 and command metadata are stored as private JSONL logs under
 `~/.tclaude/data/break-glass/` (directory 0700, files 0600). The dashboard's
 **view runs** lists the latest 200 files and opens their decoded text. Logs may
-contain secrets printed by commands; retention is operator-managed. This is a
+contain secrets printed by commands. Output logging stops after 64 MiB per run
+(with a truncation marker); live streaming and final result recording continue.
+Retention is operator-managed. This is a
 deliberate exception to the usual symbolic-only command audit.
 
 `tclaude setup --install-agent-skills` installs the `break-glass` skill. It
 explains existing-grant use and explicitly forbids agents asking for a grant.
+
+The local `POST /v1/break-glass/exec` API accepts a JSON execution specification
+(`args` or `shell`, `cwd`, `env`, `timeout`, `reason`, `stdin`) and streams NDJSON
+frames with `stream`, base64 `data`, and a final `exit_code`. Request input is
+bounded to 1 MiB. With `stdin: true`, additional JSON frames carry base64 stdin
+and an `eof` frame closes input. The CLI uses the WebSocket form for streaming
+stdin without the POST body limit. Execution streams reject generic idempotency
+replay keys; they must not be replayed as ordinary JSON mutations.

@@ -60,6 +60,9 @@ func standingCarryRows(rows []agentbundle.Permission) []agentbundle.Permission {
 	}
 	var result []agentbundle.Permission
 	for _, row := range rows {
+		if row.Slug == PermHostBreakGlass {
+			continue
+		}
 		if tier := carrySourceTier(row.Source); tier >= 0 && tier == tiers[row.Slug] {
 			result = append(result, row)
 		}
@@ -82,6 +85,8 @@ func planCarriedPermissions(rows []agentbundle.Permission, p permissionCarryPoli
 	for _, row := range rows {
 		d := carriedPermissionDecision{Slug: row.Slug, Effect: row.Effect, SourceScope: row.Scope, Decision: "drop"}
 		switch {
+		case row.Slug == PermHostBreakGlass:
+			d.Reason = "break-glass authority never travels"
 		case !p.Enabled:
 			d.Reason = "permission carry was not requested"
 		case !IsKnownPermSlug(row.Slug):

@@ -1305,6 +1305,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/break-glass/grant", handleBreakGlassGrant)
 	mux.HandleFunc("POST /v1/break-glass/revoke", handleBreakGlassRevoke)
 	mux.HandleFunc("GET /v1/break-glass/exec", handleBreakGlassExec)
+	mux.HandleFunc("POST /v1/break-glass/exec", handleBreakGlassExec)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)

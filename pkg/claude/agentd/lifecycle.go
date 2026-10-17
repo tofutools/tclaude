@@ -3268,6 +3268,12 @@ func normalizeSpawnPermissionOverrides(in map[string]db.PermissionOverride) (map
 		if scope != "" && effect == db.PermEffectDeny {
 			return nil, fmt.Sprintf("permission override for %q is a deny and cannot carry a scope", slug)
 		}
+		// Unscoped denies only remove authority. In particular, exclusive
+		// scribes deny every registered slug, including operator-only ones.
+		if effect == db.PermEffectDeny {
+			out[slug] = db.Deny()
+			continue
+		}
 		canonical, err := canonicalPermissionScopeForSlug(slug, scope)
 		if err != nil {
 			return nil, fmt.Sprintf("permission override for %q: %v", slug, err)

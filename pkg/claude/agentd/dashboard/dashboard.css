@@ -21152,11 +21152,12 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 .break-glass-banner button:not(.break-glass-pill) { border-color:#e74b4b; }
 .break-glass-row { box-shadow:inset 3px 0 #f64c4c; background:linear-gradient(90deg,#57232a66,transparent 60%); }
 .break-glass-menu { color:#ff9d94; background:#35191d; }
-.break-glass-modal { border:1px solid #ff4949; max-width:640px; }
+.break-glass-modal { border:1px solid #ff4949; width:min(640px, calc(100vw - 32px)); min-width:0; max-width:640px; max-height:calc(100vh - 48px); overflow:auto; }
 .break-glass-warning { padding:10px; background:#3d1418; color:#ffdad4; border:1px solid #9e3333; border-radius:5px; }
 .break-glass-warning ul { margin:5px 0 0; padding-left:18px; }
 .break-glass-presets { display:flex; flex-wrap:wrap; gap:6px; }
+.break-glass-presets button, .break-glass-banner button:not(.break-glass-pill) { background:#21262d; color:#c9d1d9; border:1px solid #a34242; border-radius:6px; padding:4px 8px; font:inherit; cursor:pointer; }
 .break-glass-presets button { border-radius:12px; }
 .break-glass-presets .selected { border-color:#ff4949; background:#4e2020; }
 .break-glass-presets input { width:100px; }
-.break-glass-confirm { background:#b82025; color:#fff; border:1px solid #ff4949; }
+.break-glass-modal .modal-buttons .break-glass-confirm { background:#b82025; color:#fff; border:1px solid #ff4949; }

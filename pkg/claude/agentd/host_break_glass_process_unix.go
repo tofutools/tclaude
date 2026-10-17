@@ -16,7 +16,7 @@ import (
 // the group. A plain Cmd.Wait reaps the leader before draining inherited pipes;
 // a background child could otherwise survive it, or a late kill could target a
 // reused PID. Command arguments are passed as argv, never interpolated here.
-const breakGlassSupervisor = `"$@"
+const breakGlassSupervisor = `"$@" 3>&- 4<&-
 result=$?
 printf '%s\n' "$result" >&3
 IFS= read -r release <&4
@@ -62,7 +62,7 @@ func newBreakGlassProcess(ctx context.Context, args []string) (*exec.Cmd, func()
 		select {
 		case out = <-done:
 		case <-ctx.Done():
-			out.err = ctx.Err()
+			out.err = context.Cause(ctx)
 		}
 		// Wait has not run: even a dead supervisor still owns its unreaped PID.
 		killErr := killProxyGroup(cmd)

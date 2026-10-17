@@ -76,6 +76,12 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
+		// Host execution streams cannot be captured or replayed as ordinary JSON
+		// mutations. The CLI uses the non-replaying WebSocket path.
+		if key != "" && r.URL.Path == "/v1/break-glass/exec" {
+			writeError(w, 400, "not_replayable", "break-glass execution streams do not accept idempotency replay keys")
+			return
+		}
 		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") || strings.HasPrefix(r.URL.Path, "/v1/models/") {
 			h.ServeHTTP(w, r)
 			return

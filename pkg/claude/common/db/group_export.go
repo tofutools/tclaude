@@ -474,6 +474,10 @@ func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, er
 			&s.GrantedBy, &s.Reason, &revokedAt); err != nil {
 			return nil, fmt.Errorf("scan sudo grant: %w", err)
 		}
+		// Host execution authority never leaves its deliberate local grant.
+		if s.Slug == HostBreakGlassSlug {
+			continue
+		}
 		s.GrantedAt = exportTimestamp(grantedAt)
 		s.ExpiresAt = exportTimestamp(expiresAt)
 		s.RevokedAt = exportTimestamp(revokedAt)
@@ -620,7 +624,7 @@ type GroupImportPlan struct {
 	// import minted and indexed for this import, so their conv_index rows
 	// are this import's, not a collision.
 	InstalledConversations map[string]bool
-	ByConv                   string            // caller conv-id for the audit log ("" = human)
+	ByConv                 string // caller conv-id for the audit log ("" = human)
 	// CanonicalizePermissionScope is supplied by the daemon, which owns the
 	// permission registry. ImportGroup requires it for every non-empty archived
 	// scope so direct DB callers cannot bypass registry and selector validation.
@@ -1158,6 +1162,9 @@ func (c *importCtx) workdirs() error {
 
 func (c *importCtx) sudoGrants() error {
 	for _, s := range c.exp.SudoGrants {
+		if s.Slug == HostBreakGlassSlug {
+			continue
+		}
 		scopeJSON, err := c.permissionScope(s.Slug, s.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s scope: %w", s.ConvID, s.Slug, err)

@@ -92,12 +92,20 @@ func runBreakGlass(ctx context.Context, p *breakGlassParams, stdin io.Reader, st
 		fmt.Fprintln(stderr, "provide a command after -- or a shell string with -c")
 		return 2
 	}
+	if p.Cwd == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		p.Cwd = cwd
+	}
 	conn, err := DialDaemonWebSocket(ctx, "/v1/break-glass/exec")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	request := map[string]any{"args": p.Args, "shell": p.Shell, "cwd": p.Cwd, "timeout": p.Timeout, "env": p.Env, "stdin": p.Stdin, "reason": p.Reason}
 	if err = conn.WriteJSON(request); err != nil {
 		fmt.Fprintln(stderr, err)

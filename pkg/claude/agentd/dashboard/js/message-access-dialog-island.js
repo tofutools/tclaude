@@ -487,6 +487,7 @@ function BreakGlassDialog({ descriptor, state, actions, snapshot }) {
  const [duration,setDuration] = useState('30m');
  const [reason,setReason] = useState('');
  const [busy,setBusy] = useState(false);
+ const busyRef = useRef(false);
  const [error,setError] = useState('');
  const [runs,setRuns] = useState([]);
  const holder = (snapshot?.break_glass || []).find(row => row.agent_id === descriptor.agentID);
@@ -499,26 +500,27 @@ function BreakGlassDialog({ descriptor, state, actions, snapshot }) {
   return () => { active = false; };
  }, [descriptor.mode]);
  const mutate = async (revoke = false) => {
-  if (busy) return;
+  if (busyRef.current) return;
+  busyRef.current = true;
   setBusy(true); setError('');
   try { await actions.breakGlass({ target:descriptor.agentID,duration,reason,revoke }); state.close(); }
-  catch (err) { setError(err.message); setBusy(false); }
+  catch (err) { setError(err.message); setBusy(false); busyRef.current = false; }
  };
- if (descriptor.mode === 'runs') return html`<${Overlay} id="break-glass-modal" dialogClass="break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
+ if (descriptor.mode === 'runs') return html`<${Overlay} id="break-glass-modal" dialogClass="sudo-grant-modal break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
   <h3 id="break-glass-title">🚨 Break-glass runs</h3>
   <p>Commands and output recorded on this host. Run logs may contain sensitive data.</p>
   <ul>${runs.map(run => html`<li key=${run.name}><a href=${`/api/break-glass/runs/${encodeURIComponent(run.name)}`} target="_blank" rel="noopener">${run.name}</a> — ${run.command || ''}</li>`)}</ul>
   <${ErrorLine} value=${error}/><div class="modal-buttons"><button onClick=${() => { void requestClose(); }}>Close</button></div>
  </${Overlay}>`;
- return html`<${Overlay} id="break-glass-modal" dialogClass="break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
+ return html`<${Overlay} id="break-glass-modal" dialogClass="sudo-grant-modal break-glass-modal" labelledby="break-glass-title" blocked=${busy} onClose=${() => state.close()} registerClose=${registerClose}>
   <h3 id="break-glass-title">🚨 ${holder ? 'Extend / revoke break-glass' : 'Break the glass'} for ${label}</h3>
   <div class="break-glass-warning">While live, this agent can run <strong>any shell command as you</strong> through agentd — outside its sandbox, harness command filters and tclaude's permission model.
    <ul><li>It can read/write ~/.tclaude/data, credentials, SSH keys…</li><li>It could grant itself permanent access: the timer is a guardrail for a cooperative agent, not a wall.</li><li>Agents can never request this — only you can enable it.</li></ul>
   </div>
   ${holder && html`<p>Currently enabled until ${new Date(holder.expires_at).toLocaleString()}.</p>`}
-  <label class="sudo-grant-row"><span class="sudo-grant-label">Duration</span><div class="break-glass-presets">${['15m','30m','1h','4h','8h','24h'].map(value => html`<button key=${value} type="button" class=${duration === value ? 'selected' : ''} onClick=${() => setDuration(value)}>${value}</button>`)}<input aria-label="Custom break-glass duration" value=${duration} onInput=${event => setDuration(event.currentTarget.value)} /></div></label>
+  <label class="sudo-grant-row"><span class="sudo-grant-label">Duration</span><div class="break-glass-presets">${['15m','30m','1h','4h','8h','24h'].map(value => html`<button key=${value} type="button" class=${duration === value ? 'selected' : ''} onClick=${() => setDuration(value)}>${value}</button>`)}<input type="text" aria-label="Custom break-glass duration" value=${duration} onInput=${event => setDuration(event.currentTarget.value)} /></div></label>
   <p>No upper limit — you choose. A new grant replaces the existing window.</p>
-  <label class="sudo-grant-row"><span class="sudo-grant-label">Reason (recorded in audit)</span><input value=${reason} onInput=${event => setReason(event.currentTarget.value)} /></label>
+  <label class="sudo-grant-row"><span class="sudo-grant-label">Reason</span><input type="text" placeholder="Recorded in audit" value=${reason} onInput=${event => setReason(event.currentTarget.value)} /></label>
   <${ErrorLine} value=${error}/><div class="modal-buttons">
    <button disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
    ${holder && html`<button disabled=${busy} class="danger" onClick=${() => mutate(true)}>Revoke</button>`}
