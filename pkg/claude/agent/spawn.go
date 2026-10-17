@@ -1368,8 +1368,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		return nil, rcInvalidArg
 	}
 	if p.NonInteractive {
-		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" {
-			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message or --file")
+		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" && len(p.Prompts) == 0 {
+			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message, --file or --prompt")
 			return nil, rcInvalidArg
 		}
 		if invalid := nonInteractiveUnsupportedOption(p); invalid != "" {

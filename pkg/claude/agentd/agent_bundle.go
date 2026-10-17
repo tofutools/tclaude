@@ -274,6 +274,9 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	seed.AgentName = ""
 	seed.RoleRef = ""
 	seed.RoleRefs = nil
+	// Saved prompts name entries in the source's library; never resolve them
+	// against the receiver's.
+	seed.PromptRefs = nil
 	seed.IsOwner = nil
 	seed.PermissionOverrides = nil
 	seed.StartupContext = ""
@@ -572,6 +575,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	profile.Harness = d.Harness
 	profile.RoleRef = ""
 	profile.RoleRefs = nil
+	profile.PromptRefs = nil
 	profile.IsOwner = nil
 	profile.PermissionOverrides = nil
 	profile.StartupContext = ""
@@ -875,7 +879,7 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, err
 	}
-	for _, key := range []string{"name", "aliases", "disabled", "disabled_reason", "operator_only", "agent_name", "role_ref", "role_refs", "startup_context", "created_at", "updated_at", "sync_worktree", "fetch_latest_worktree"} {
+	for _, key := range []string{"name", "aliases", "disabled", "disabled_reason", "operator_only", "agent_name", "role_ref", "role_refs", "prompt_refs", "startup_context", "created_at", "updated_at", "sync_worktree", "fetch_latest_worktree"} {
 		delete(wire, key)
 	}
 	wire["name"] = d.Name

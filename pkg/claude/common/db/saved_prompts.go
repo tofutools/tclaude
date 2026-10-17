@@ -123,7 +123,7 @@ func SavedPromptReferences(name string) (profiles, groups []string, err error) {
 		return nil, nil, err
 	}
 	if groups, err = query(`SELECT name FROM agent_groups
-		WHERE archived_at IS NULL AND EXISTS (SELECT 1 FROM json_each(default_prompts) WHERE value = ?) ORDER BY name`); err != nil {
+		WHERE EXISTS (SELECT 1 FROM json_each(default_prompts) WHERE value = ?) ORDER BY name`); err != nil {
 		return nil, nil, err
 	}
 	return profiles, groups, nil

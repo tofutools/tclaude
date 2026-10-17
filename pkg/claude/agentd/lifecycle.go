@@ -4273,6 +4273,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.NonInteractive && !body.PromptRefsSpecified() {
 		promptRefs = nil
 	}
+	// An interactive shell takes no brief at all, so a group or profile's
+	// prompts (which the dashboard pre-fills explicitly) must not refuse it.
+	if h.Name == harness.ShellName && !body.NonInteractive {
+		promptRefs = nil
+	}
 	if len(promptRefs) > 0 {
 		composed, fail := composeSavedPrompts(promptRefs, body.InitialMessage)
 		if fail != nil {

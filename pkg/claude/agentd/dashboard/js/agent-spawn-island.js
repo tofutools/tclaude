@@ -21,6 +21,8 @@ import {
   deriveSpawnNameFromMessage,
   findSpawnProfile,
   formatAttachmentSize,
+  groupDefaultProfileName,
+  groupDefaultPrompts,
   groupHasContext,
   modelSelectValue,
   nativeCodexRegistryWarningFor,
@@ -360,6 +362,14 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           rememberedEffort, worktreesRef.current.isRepo,
         )
         : initial;
+      // Only a named or group profile outranks the group's own default
+      // prompts; the dashboard-wide default profile ranks below them, as it
+      // does on the daemon.
+      const groupPrompts = groupDefaultPrompts(context.groups, initial.group);
+      if (profile && groupPrompts.length && !String(current.options.profileName || '').trim()
+        && !groupDefaultProfileName(context.groups, initial.group)) {
+        nextBaseline = { ...nextBaseline, promptRefs: groupPrompts };
+      }
       // Apply the palette's explicit speed choice after the saved profile.
       if (profile && current.options.fastMode && spawnCapabilityView(nextBaseline, context).showFastMode) {
         nextBaseline = { ...nextBaseline, fastMode: '1' };

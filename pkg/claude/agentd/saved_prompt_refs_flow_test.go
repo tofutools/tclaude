@@ -89,3 +89,41 @@ func TestSavedPromptRefs_RenameAndDeleteGuard(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "kit")
 	assert.Contains(t, rec.Body.String(), "alpha")
 }
+
+// Ambient tiers resolve group default profile > group default_prompts >
+// global default profile, each set winning whole.
+func TestSpawnPromptRefs_AmbientTierOrder(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	haveSavedPrompts(t, f, map[string]string{"g-profile": "From group profile.", "g-own": "From group setting.", "global": "From global profile."})
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "global-kit", "prompt_refs": []string{"global"}}).Code)
+	require.Equal(t, http.StatusOK, profileReq(t, f, http.MethodPut, "/v1/spawn-profile-default", map[string]any{"name": "global-kit"}).Code)
+
+	brief := func(name string) string {
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": name})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		return soleInboxMessage(t, spawn.ConvID).Body
+	}
+	assert.Contains(t, brief("only-global"), "From global profile.")
+
+	require.Equal(t, http.StatusOK, humanReq(t, f, http.MethodPatch, "/v1/groups/alpha", map[string]any{"default_prompts": []string{"g-own"}}).Code)
+	body := brief("group-setting")
+	assert.Contains(t, body, "From group setting.")
+	assert.NotContains(t, body, "From global profile.")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "group-kit", "prompt_refs": []string{"g-profile"}}).Code)
+	require.Equal(t, http.StatusOK, humanReq(t, f, http.MethodPatch, "/v1/groups/alpha", map[string]any{"default_profile": "group-kit"}).Code)
+	body = brief("group-profile")
+	assert.Contains(t, body, "From group profile.")
+	assert.NotContains(t, body, "From group setting.")
+}
+
+// An interactive shell takes no brief, so group prompts must not refuse it.
+func TestSpawnPromptRefs_InteractiveShellIgnoresPrompts(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	haveSavedPrompts(t, f, map[string]string{"rules": "The rules."})
+	require.Equal(t, http.StatusOK, humanReq(t, f, http.MethodPatch, "/v1/groups/alpha", map[string]any{"default_prompts": []string{"rules"}}).Code)
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "sh", "harness": "shell", "prompt_refs": []string{"rules"}})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+}
