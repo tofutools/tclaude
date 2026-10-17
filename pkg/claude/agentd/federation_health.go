@@ -85,9 +85,9 @@ func offlineNoticeDelay(n int) time.Duration {
 func offlineFor(d time.Duration) string {
 	switch {
 	case d < 2*time.Hour:
-		return fmt.Sprintf("%d minutes", int(d/time.Minute))
+		return fmt.Sprintf("%d minutes", int(d.Round(time.Minute)/time.Minute))
 	case d < 48*time.Hour:
-		return fmt.Sprintf("%d hours", int(d/time.Hour))
+		return fmt.Sprintf("%.1f hours", d.Hours())
 	}
 	return fmt.Sprintf("%d days", int(d/(24*time.Hour)))
 }
@@ -107,7 +107,7 @@ func remindOffline(peer string, signal *fleetSignal, now time.Time) {
 	if err != nil || p == nil {
 		return
 	}
-	next := offlineNoticeDelay(signal.notices) - offlineNoticeDelay(signal.notices-1)
+	next := signal.offlineSince.Add(offlineNoticeDelay(signal.notices)).Sub(now)
 	message := fmt.Sprintf("Node has been offline for %s (since %s). Next reminder in %s unless it reconnects. Silence this disconnection from the node's card in the Fleet map, or with `tclaude federation nodes health --peer <name> --silence`.",
 		offlineFor(now.Sub(signal.offlineSince)), signal.offlineSince.Local().Format(time.RFC1123), offlineFor(next))
 	notifyFleetHuman(peer, proto.SafeName(peerDisplay(p), true), "offline", message)
