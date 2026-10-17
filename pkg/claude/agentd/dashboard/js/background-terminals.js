@@ -18,6 +18,7 @@ import { terminalTabStatus } from './terminal-tab-status.js';
 const html = htm.bind(h);
 
 export const BACKGROUND_TERMINALS_PATH = '/api/background-terminals';
+export const BACKGROUND_TERMINAL_KILL_PATH = '/api/background-terminals/kill';
 const POLL_MS = 5000;
 // An attach takes a moment to show up as a tmux client; re-read after it so
 // the row does not linger (the open pane key already hides it meanwhile).
@@ -130,6 +131,52 @@ export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, ac
   if (!opened) return null;
   setTimeout(refreshBackgroundTerminals, SETTLE_MS);
   return opened;
+}
+
+// killBackgroundTerminal ends a killable row's tmux session (a shell, a
+// superseded generation, an unrecognised session) and re-reads the listing.
+// Resolves to '' on success or the server's error text.
+export async function killBackgroundTerminal(row, { fetchImpl = (...args) => fetch(...args) } = {}) {
+  try {
+    const response = await fetchImpl(BACKGROUND_TERMINAL_KILL_PATH, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tmux_session: row.tmux_session }),
+    });
+    if (response.ok) return '';
+    const body = await response.json().catch(() => null);
+    return body?.error || `kill failed (${response.status})`;
+  } catch (error) {
+    return String(error?.message || error);
+  } finally {
+    refreshBackgroundTerminals();
+  }
+}
+
+// KillButton asks for a second click before killing: whatever runs in the
+// session stops, and the popover is too small for a modal.
+function KillButton({ row, label }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!armed) return undefined;
+    const timer = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+  const onClick = async () => {
+    if (!armed) { setArmed(true); setError(''); return; }
+    setBusy(true);
+    const failure = await killBackgroundTerminal(row);
+    setBusy(false);
+    setArmed(false);
+    setError(failure);
+  };
+  return html`<button type="button" class=${`mux-btn mux-bg-kill${armed ? ' armed' : ''}`} disabled=${busy}
+    onClick=${onClick} aria-label=${`Kill ${label}`}
+    title=${error || (armed ? 'Click again to end this tmux session and whatever runs in it' : `End tmux session ${row.tmux_session}`)}>
+    ${busy ? 'Killing…' : armed ? 'Kill?' : error ? 'Failed' : 'Kill'}</button>`;
 }
 
 let attachAllRunning = false;
@@ -249,6 +296,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                         ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
                             aria-label=${`Attach ${view.label}`}>Attach</button>`
                         : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
+                      ${row.killable ? html`<${KillButton} row=${row} label=${view.label} />` : null}
                     </div>`;
                 })}
               </div>`;

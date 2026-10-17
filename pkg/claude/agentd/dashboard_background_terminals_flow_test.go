@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,7 @@ type backgroundTerminalRow struct {
 	ConvID      string `json:"conv_id"`
 	Which       string `json:"which"`
 	Superseded  bool   `json:"superseded"`
+	Killable    bool   `json:"killable"`
 }
 
 func fetchBackgroundTerminals(t *testing.T, mux http.Handler) []backgroundTerminalRow {
@@ -123,4 +126,90 @@ func TestBackgroundTerminals_ListsUnattachedSessions(t *testing.T) {
 	assert.Empty(t, byTmux[staleShell].Key, "no dashboard attach would reach the listed shell")
 
 	assert.Equal(t, "agent", rows[0].Kind, "agents sort first")
+	assert.True(t, byTmux[shell].Killable)
+	assert.True(t, byTmux[staleShell].Killable)
+	assert.True(t, byTmux["someone-elses-session"].Killable)
+	assert.False(t, byTmux["tmux-bgta"].Killable, "a live agent is shut down, not killed")
+	assert.False(t, byTmux["tmux-bgtb"].Killable, "a live session is shut down, not killed")
+}
+
+func killBackgroundTerminal(t *testing.T, mux http.Handler, name string) int {
+	t.Helper()
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/background-terminals/kill",
+		map[string]string{"tmux_session": name}))
+	return rec.Code
+}
+
+func agentShellName(conv, which string) string {
+	sum := sha256.Sum256([]byte(conv))
+	return fmt.Sprintf("tclaude-term-%x-%s", sum[:8], which)
+}
+
+// Scenario: the operator kills a forgotten web shell from the background
+// popover. A live agent is refused (it has shutdown), and so is a shell that
+// somebody attached to after the popover was drawn.
+func TestBackgroundTerminals_KillEndsShellButNotLiveAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "bgtk-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "spwn-bgtk", "tmux-bgtk", f.TestCwd("bgtk"))
+	f.HaveEnrolledAgent(conv)
+	shell := agentShellName(conv, "worktree")
+	f.World.Tmux.MarkAlive(shell)
+	watched := agentShellName(conv, "start")
+	f.World.Tmux.MarkAlive(watched)
+	f.World.Tmux.AttachClient("/dev/pts/7", watched)
+
+	assert.Equal(t, http.StatusConflict, killBackgroundTerminal(t, mux, "tmux-bgtk"))
+	assert.True(t, f.World.Tmux.IsAlive("tmux-bgtk"))
+	assert.Equal(t, http.StatusNotFound, killBackgroundTerminal(t, mux, watched))
+	assert.True(t, f.World.Tmux.IsAlive(watched))
+
+	assert.Equal(t, http.StatusOK, killBackgroundTerminal(t, mux, shell))
+	assert.False(t, f.World.Tmux.IsAlive(shell))
+	for _, row := range fetchBackgroundTerminals(t, mux) {
+		assert.NotEqual(t, shell, row.TmuxSession)
+	}
+}
+
+// Scenario: an agent's web shell outlives its use — the agent is deleted, or
+// the worktree the shell was opened in is removed. The reaper kills those
+// shells; a shell whose owner and directory still exist stays, and so does an
+// orphan somebody is attached to.
+func TestBackgroundTerminals_ReaperKillsOrphanedShells(t *testing.T) {
+	f := newFlow(t)
+
+	const kept = "bgtr-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(kept, "kept")
+	f.HaveEnrolledAgent(kept)
+	keptDir := f.TestCwd("bgtr-kept")
+	require.NoError(t, os.MkdirAll(keptDir, 0o755))
+	keptShell := agentShellName(kept, "current")
+	f.World.Tmux.MarkAliveIn(keptShell, keptDir)
+
+	// The worktree the shell was opened in has been removed.
+	goneShell := agentShellName(kept, "worktree")
+	f.World.Tmux.MarkAliveIn(goneShell, f.TestCwd("bgtr-removed-worktree"))
+
+	// The agent the shell belonged to was deleted.
+	const deleted = "bgts-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(deleted, "deleted")
+	f.HaveEnrolledAgent(deleted)
+	_, err := db.DeleteAgentByConvID(deleted)
+	require.NoError(t, err)
+	ownerlessShell := agentShellName(deleted, "current")
+	f.World.Tmux.MarkAliveIn(ownerlessShell, keptDir)
+	watchedShell := agentShellName(deleted, "start")
+	f.World.Tmux.MarkAliveIn(watchedShell, keptDir)
+	f.World.Tmux.AttachClient("/dev/pts/8", watchedShell)
+
+	agentd.RunReaperTickForTest(time.Now())
+
+	assert.True(t, f.World.Tmux.IsAlive(keptShell), "owner and directory still exist")
+	assert.False(t, f.World.Tmux.IsAlive(goneShell), "its directory was removed")
+	assert.False(t, f.World.Tmux.IsAlive(ownerlessShell), "its agent was deleted")
+	assert.True(t, f.World.Tmux.IsAlive(watchedShell), "somebody is attached to it")
 }

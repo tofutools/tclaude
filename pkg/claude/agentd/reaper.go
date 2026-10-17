@@ -391,6 +391,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	releaseExpiredNudgeClaims(now)
 	cancelUnavailableNudgeTargets(now)
 	warnStaleNudgeQueues(now)
+	reapOrphanedTerminalShells()
 	states, err := session.ListSessionStates()
 	if err != nil {
 		slog.Warn("reaper: list sessions failed", "error", err)
