@@ -249,7 +249,11 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 	}
 }
 func decodePeerAction(w http.ResponseWriter, r *http.Request, out any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	return decodePeerActionLimit(w, r, out, 16<<10)
+}
+
+func decodePeerActionLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if dec.Decode(out) != nil || dec.Decode(new(any)) != io.EOF {
@@ -281,15 +285,18 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		// Roles and SandboxProfile need their groups.members.spawn.* grants.
 		Roles          []string `json:"roles,omitempty"`
 		SandboxProfile string   `json:"sandbox_profile,omitempty"`
+		// Launch carries further spawn request settings by wire key
+		// (fedSpawnLaunchKeys), each under its groups.members.spawn.* grant.
+		Launch map[string]json.RawMessage `json:"launch,omitempty"`
 	}
-	if !decodePeerAction(w, r, &body) {
+	if !decodePeerActionLimit(w, r, &body, 64<<10) {
 		return
 	}
 	if strings.TrimSpace(body.Brief) == "" || len(body.Brief) > proto.MaxSpawnBrief || len(body.Name) > 128 || len(body.Role) > 128 || len(body.Profile) > 128 {
 		writeError(w, 400, "invalid_arg", "invalid remote spawn fields")
 		return
 	}
-	overrides := db.FederationSpawnOverrides{Cwd: body.Cwd, Harness: body.Harness, Model: body.Model, Effort: body.Effort, Roles: body.Roles, SandboxProfile: body.SandboxProfile}
+	overrides := db.FederationSpawnOverrides{Cwd: body.Cwd, Harness: body.Harness, Model: body.Model, Effort: body.Effort, Roles: body.Roles, SandboxProfile: body.SandboxProfile, Launch: body.Launch}
 	if err := validateFedSpawnOverrides(overrides); err != nil {
 		writeError(w, 400, "invalid_arg", err.Error())
 		return

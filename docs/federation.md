@@ -244,6 +244,12 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
 | `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
 | `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.permissions` | choose the approval, tool and harness sandbox modes, the auto-reviewer, question timeout, trust-folder answer and per-slug permissions, and launching with unenforceable sandbox rules or no sandbox profiles, with `groups.members.spawn` |
+| `groups.members.spawn.environment` | set environment overrides on the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.owner` | make the spawn a group owner at birth, with `groups.members.spawn` |
+| `groups.members.spawn.features` | choose the harness features (remote control, auto memory, peer messaging, fast mode, app server, SSH workaround, group context), startup context, window settings, description and task link, with `groups.members.spawn` |
+| `groups.members.spawn.prompts` | choose the spawn's saved prompts from this node's, replacing the profile and group defaults, with `groups.members.spawn` |
+| `groups.members.spawn.worktree` | launch the spawn in a git worktree: list and create worktrees in any repository on this node, with `groups.members.spawn` and `.cwd` |
 | `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
@@ -253,7 +259,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
-| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |
+| `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |
 | `node.spawn.defaults.manage` | set or clear the global default spawn profile and global sandbox profile from the peer page's Groups toolbar, choosing among existing profiles (`node.spawn.read` lists them; unscoped only) |
 | `node.groups.create` | create plain groups from the peer page's **+ new group**: name, parent (a visible group), description, context, attachment, member cap; launch settings, templates and clones take unrestricted trust (unscoped only; see "Managing a peer's node") |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
@@ -652,15 +658,33 @@ tclaude federation grant alice groups.members.spawn.effort --scope group=builder
 tclaude federation grant alice groups.members.spawn.all --scope group=builders
 ```
 
-- An unrestricted peer may choose all of them.
+- An unrestricted peer may choose all of them: its remote spawn dialog works
+  like a local one.
 - `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort`, `.profile`,
-  `.roles` and `.sandbox` each open one; `groups.members.spawn.all` opens them
-  all. A setting the peer may not choose is refused (`override_not_allowed`),
+  `.roles`, `.sandbox`, `.permissions`, `.environment`, `.owner`,
+  `.features`, `.prompts` and `.worktree` each open one;
+  `groups.members.spawn.all` opens them all. A setting the peer may not choose is refused (`override_not_allowed`),
   not silently dropped. A requested value wins over the grant's pinned
   `--cwd/--harness/--model`; leaving it blank keeps them. Requested roles
   replace the profile and group roles, and must be roles on this node; a
   requested sandbox profile must exist here and adds an explicit tier (it
-  cannot omit your global and group tiers).
+  cannot omit your global and group tiers; omitting them is
+  `.permissions`).
+- The last six ride on the request as `launch`: keys of the ordinary spawn
+  request (`approval`, `tools`, `auto_review`, `ask_user_question_timeout`,
+  `trust_dir`, `permission_overrides`, `sandbox`, `sandbox_implementation`,
+  `allow_unenforced_sandbox`, `omit_sandbox_profiles`; `environment`;
+  `is_owner`; `include_group_context`, `context_features`, `remote_control`,
+  `auto_memory`, `peer_messaging`, `copilot_api`, `codex_app_server`,
+  `fast_mode`, `ssh_workaround`, `auto_compact_window`, `context_window_max`,
+  `descr`, `task_ref_url`; `prompt_refs`; `worktree_path`,
+  `worktree_branch`). They are laid over the launch this node builds, so the
+  group spawn path validates them exactly as a local spawn's; any other key
+  is refused. A requested description goes ahead of this node's own
+  "spawned for" line. Attachments, focus and the break-glass acknowledgement
+  are never carried. An approval that launches another harness than the
+  requested one drops the harness-specific keys too (the modes, harness
+  features and context settings), as it drops the model and effort.
 - A field grant extends the spawn grant in force for the group and counts
   only when it is at least as specific (a group scope above an unscoped
   grant, a direct grant above a pool's): a group-scoped spawn grant without
@@ -756,11 +780,23 @@ node's (never a third node's), and a "Show from" filter narrows both pickers:
 - Saved prompts the peer applies itself (its profile and group defaults) are
   locked. Any other prompt, the peer's or this node's, is written into the
   brief ahead of the initial message, within the 8 KiB remote brief limit.
+- With `groups.members.spawn.prompts` the peer's prompts ride by name
+  instead, so its own defaults can be dropped like any other; this node's
+  prompts are still written into the brief.
 - Roles and sandbox profiles are the peer's; choosing them needs
   `groups.members.spawn.roles` and `.sandbox`, plus `node.spawn.read` for
   the lists to choose from. A remote spawn cannot remove every role (the
-  peer would apply its profile and group roles instead). Other controls (permissions,
-  environment, ownership, worktree, …) are the peer's to apply.
+  peer would apply its profile and group roles instead).
+- The permission and sandbox modes, environment, ownership, harness
+  features, context and description unlock under their grants. The harness
+  controls show the peer's harnesses, models and modes (from
+  `GET /api/spawn-launch-catalog`), not this node's.
+- With `groups.members.spawn.worktree` (and `.cwd`) the worktree controls
+  list the peer's repository worktrees and branches, and a new worktree is
+  created on the peer just before the request is sent, as a local spawn
+  creates one. The folder browser reads this machine, so paths are typed.
+- Focus, attachments and queueing only mean something on this node and stay
+  disabled.
 
 The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
 GET returns the incoming request array; POST queues an outgoing request with the
@@ -3253,17 +3289,23 @@ source agent's own grants. Whole-agent stop/retire/clone/move actions need their
 peer grant on every affected active group; clone/retire/move also cover owned groups.
 
 - `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?, cwd?,
-  harness?, model?, effort?, roles?, sandbox_profile?}` into any visible group (`spawn.request`). With
+  harness?, model?, effort?, roles?, sandbox_profile?, launch?}` into any visible group (`spawn.request`). With
   `groups.members.spawn` it launches automatically under receiver-owned launch
-  policy; without it the request waits for the operator. `cwd`, `harness`,
-  `model` and `effort` are accepted only where the peer may choose them (see
-  "Launch settings a peer may choose"); any other field, and permissions or
-  other launch overrides, are refused. Returns a durable spawn-request row
+  policy; without it the request waits for the operator. Every launch
+  setting, `launch`'s keys included, is accepted only where the peer may
+  choose it (see "Launch settings a peer may choose"); any other field or
+  launch key is refused. With `groups.members.spawn.worktree`,
+  `GET`/`POST /api/worktrees` and `GET /api/worktrees/progress` serve the
+  dialog's worktree list and creation (also needing `.cwd`); listing a
+  directory shows its repositories, worktrees and branches, and a new
+  worktree goes to this node's default location (a peer cannot name a
+  `path`). Other worktree routes stay local-only. Returns a durable spawn-request row
   (202); `GET /api/spawn-requests/{id}` reads only that initiating peer's
   request while the group stays visible to it.
 - `GET /api/spawn-options/{name}`: what the peer may set for a spawn into a
   visible group: `{group, approval: "automatic"|"operator", overrides:
-  {cwd, harness, model, effort, profile, roles, sandbox}, profiles, harnesses?,
+  {cwd, harness, model, effort, profile, roles, sandbox, permissions,
+  environment, owner, features, prompts, worktree}, profiles, harnesses?,
   defaults?, catalog}`.
   The dashboard's spawn dialog reads it to disable what the peer may not set;
   `catalog` says the peer holds `node.spawn.read`, and only then are
@@ -3273,7 +3315,8 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   `/api/spawn-launch-defaults`, `/api/saved-prompts`, `/api/roles`,
   `/api/sandbox-profiles`, `/api/sandbox-profile-default`,
   `/api/spawn-harness-policy`, `/api/claude-settings/default-model`,
-  `/api/spawn/effective-sandbox`, `POST /api/sandbox-profile-enforcement` (a
+  `/api/spawn/effective-sandbox`, `/api/spawn-launch-catalog` (the harness
+  and sandbox implementation catalogs), `POST /api/sandbox-profile-enforcement` (a
   preview that writes nothing), and, for a visible group,
   `GET /api/groups/{group}/sandbox-profile` and
   `/api/groups/{name}/spawn-harness-policy`. A group named in a query or

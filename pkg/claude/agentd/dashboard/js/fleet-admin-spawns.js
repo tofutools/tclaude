@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { remoteLaunchFields } from './agent-spawn-remote.js';
 
 const html = htm.bind(h);
 
@@ -58,7 +59,8 @@ export function requestedSettings(r, typed = {}) {
   const fields = OVERRIDE_LABELS.filter(([k]) => (Array.isArray(asked[k]) ? asked[k].length : asked[k]));
   if (!Array.isArray(r.overrides_allowed)) {
     const drops = new Set(r.would_drop || []);
-    return fields.map(([k, label, field = k]) => ({ key: k, label, value: shown(asked[k]), dropped: drops.has(field), reason: drops.has(field) ? NOT_ALLOWED : '' }));
+    return [...fields.map(([k, label, field = k]) => ({ key: k, label, value: shown(asked[k]), dropped: drops.has(field), reason: drops.has(field) ? NOT_ALLOWED : '' })),
+      ...launchSettings(asked, (field) => drops.has(field))];
   }
   const allowed = new Set(r.overrides_allowed);
   const own = (k) => String(typed[k] || '').trim();
@@ -74,7 +76,31 @@ export function requestedSettings(r, typed = {}) {
       if (out[k] && !out[k].replaced && !out[k].dropped) Object.assign(out[k], { dropped: true, reason: OTHER_HARNESS });
     }
   }
-  return fields.map(([k]) => out[k]);
+  return [...fields.map(([k]) => out[k]), ...launchSettings(asked, (field) => !allowed.has(field), otherHarness)];
+}
+
+// HARNESS_LAUNCH_KEYS mirror fedSpawnHarnessLaunchKeys: chosen for the
+// requested harness, dropped when the launch runs another.
+const HARNESS_LAUNCH_KEYS = new Set(['approval', 'tools', 'auto_review', 'ask_user_question_timeout', 'sandbox',
+  'remote_control', 'auto_memory', 'peer_messaging', 'copilot_api', 'codex_app_server', 'fast_mode', 'ssh_workaround',
+  'context_features', 'auto_compact_window', 'context_window_max']);
+const launchValue = (value) => {
+  const shown = JSON.stringify(value);
+  return shown && shown.length > 80 ? `${shown.slice(0, 77)}...` : shown;
+};
+
+// launchSettings lists a request's further launch settings with their
+// values, one row per field that opens them; the operator's approval has no
+// values of its own for them, so each applies while the peer may still
+// choose it (and, for a harness-specific one, while the requested harness
+// launches).
+function launchSettings(asked, dropped, otherHarness = false) {
+  return remoteLaunchFields(asked.launch).map(({ field, label, keys }) => {
+    const value = keys.map((k) => `${k} ${launchValue(asked.launch[k])}${otherHarness && HARNESS_LAUNCH_KEYS.has(k) ? ` (${OTHER_HARNESS}, dropped)` : ''}`).join(', ');
+    if (dropped(field)) return { key: `launch:${field}`, label, value, dropped: true, reason: NOT_ALLOWED };
+    if (otherHarness && keys.every((k) => HARNESS_LAUNCH_KEYS.has(k))) return { key: `launch:${field}`, label, value, dropped: true, reason: OTHER_HARNESS };
+    return { key: `launch:${field}`, label, value };
+  });
 }
 
 function droppedNote(list) {

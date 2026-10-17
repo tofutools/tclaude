@@ -924,9 +924,11 @@ A group's spawn button (and any other way of opening the spawn dialog on a
 peer view) opens the regular spawn dialog, aimed at the peer. Every control
 stays in place; the ones the peer decides are disabled with the reason on
 hover. You always set the name, display role and initial message (the brief);
-a profile from the peer's selectable list; and the directory, harness, model,
-effort, roles and sandbox profile only where the peer allows it (an
-unrestricted peer, or its `groups.members.spawn.*` grants). With
+a profile from the peer's selectable list; and every other launch setting
+(directory, harness, model, effort, roles, sandbox profile, permission and
+sandbox modes, environment, ownership, harness features, saved prompts,
+worktree) only where the peer allows it (an unrestricted peer, which gets the
+dialog as a local spawn, or its `groups.members.spawn.*` grants). With
 `node.spawn.read` the dialog pre-fills and shows what the peer applies, and
 offers the peer's and this node's profiles and saved prompts (see
 docs/federation.md, "The remote spawn dialog"). Without a spawn grant the

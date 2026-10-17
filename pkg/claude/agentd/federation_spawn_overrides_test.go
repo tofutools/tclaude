@@ -1,10 +1,12 @@
 package agentd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -58,4 +60,40 @@ func TestFedSpawnOverridesAppliedRolesAndSandbox(t *testing.T) {
 	got, dropped = fedSpawnOverridesApplied(asked, map[string]bool{}, fedSpawnApproveReq{})
 	require.True(t, got.Empty())
 	require.ElementsMatch(t, []string{"roles", "sandbox"}, dropped)
+}
+
+func TestFedSpawnLaunchSettingsApplyPerField(t *testing.T) {
+	asked := db.FederationSpawnOverrides{Launch: map[string]json.RawMessage{
+		"is_owner": json.RawMessage(`true`), "approval": json.RawMessage(`"plan"`), "prompt_refs": json.RawMessage(`[]`),
+	}}
+	got, dropped := fedSpawnOverridesApplied(asked, map[string]bool{"owner": true, "prompts": true}, fedSpawnApproveReq{})
+	require.Equal(t, []string{"permissions"}, dropped)
+	require.Equal(t, map[string]json.RawMessage{"is_owner": json.RawMessage(`true`), "prompt_refs": json.RawMessage(`[]`)}, got.Launch)
+	require.ErrorContains(t, validateFedSpawnLaunch(map[string]json.RawMessage{"attachments": json.RawMessage(`[]`)}), "cannot set")
+	require.Error(t, validateFedSpawnLaunch(map[string]json.RawMessage{"is_owner": json.RawMessage(`"yes"`)}))
+
+	// An explicit empty survives into the launch body: the profile tiers
+	// must not refill a prompt set or permission map sent empty.
+	raw, err := fedSpawnLaunchBody(agent.SpawnRequest{Name: "w", Descr: "spawned for x"}, got.Launch)
+	require.NoError(t, err)
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.JSONEq(t, `[]`, string(body["prompt_refs"]))
+	require.JSONEq(t, `true`, string(body["is_owner"]))
+	require.JSONEq(t, `"spawned for x"`, string(body["descr"]))
+}
+
+// An approval that launches another harness drops the harness-specific
+// launch settings, as it drops the requested model and effort.
+func TestFedSpawnLaunchSettingsDropOnOtherHarness(t *testing.T) {
+	asked := db.FederationSpawnOverrides{Harness: "codex", Launch: map[string]json.RawMessage{
+		"approval": json.RawMessage(`"never"`), "is_owner": json.RawMessage(`true`),
+	}}
+	all := map[string]bool{"harness": true, "permissions": true, "owner": true}
+	got, dropped := fedSpawnOverridesApplied(asked, all, fedSpawnApproveReq{Harness: "claude"})
+	require.Equal(t, map[string]json.RawMessage{"is_owner": json.RawMessage(`true`)}, got.Launch)
+	require.Contains(t, dropped, "approval")
+	got, _ = fedSpawnOverridesApplied(asked, all, fedSpawnApproveReq{})
+	require.Len(t, got.Launch, 2, "the requested harness keeps them")
+	require.Contains(t, fedSpawnOverridesText(asked), `approval: "never"`, "the notice shows values")
 }
