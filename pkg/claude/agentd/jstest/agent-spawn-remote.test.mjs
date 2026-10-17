@@ -44,6 +44,8 @@ test('remote spawn allowances, lock reasons and request mapping', async (t) => {
   assert.equal(mod.remoteFieldAllowed('profile', granted), true);
   assert.deepEqual(granted.profiles.map((p) => p.name), ['reviewer']);
   assert.match(mod.remoteLockReason('cwd', { node: 'forge', options: granted }), /forge's grant does not let you choose the directory — it uses \/srv\/forge/);
+  assert.equal(mod.remoteFieldAllowed('queue', granted), false, 'queueing is this node\'s, never a remote request');
+  assert.match(mod.remoteLockReason('queue', { node: 'forge', options: granted }), /Queued spawns wait on this node/);
   assert.match(mod.remoteLockReason('sandbox', { node: 'forge', options: granted }), /forge applies its own setting/);
 
   const request = { body: { initial_message: ' fix it ', name: 'w', role: 'r', profile: 'reviewer', cwd: '/local/dir', harness: 'claude', model: 'opus', effort: 'high', sandbox: 'on' } };

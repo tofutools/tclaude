@@ -1921,3 +1921,11 @@ CREATE TABLE process_group_pins (
 ) STRICT;
 
 CREATE INDEX idx_process_group_pins_template ON process_group_pins(template_id);
+
+CREATE TABLE queued_spawns (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_name TEXT NOT NULL,
+	draft      TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+) STRICT;

@@ -6097,6 +6097,78 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .group-pending-title-wizard { display: none; }
 body.wizard .group-pending-title-regular { display: none; }
 body.wizard .group-pending-title-wizard { display: inline; }
+/* ── Queued spawns (queued-spawns.js) ─────────────────────────────────────
+   Prepared-but-not-started agents. Amber + ⏸ reads as "paused", distinct
+   from the blue primary and the outlined amber cog. The toolbar chip is
+   empty (and takes no space) until something is queued. */
+.queued-spawns-control { position: relative; display: inline-flex; align-items: center; }
+.queued-spawns-control:empty { display: none; }
+.queued-spawns-chip-wrap { position: relative; display: inline-flex; }
+.queued-spawns-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #2b2111; border: 1px solid #9e6a03; border-radius: 4px;
+  color: #e3b341; font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 4px 10px; cursor: pointer; white-space: nowrap;
+}
+.queued-spawns-chip:hover, .queued-spawns-chip.open { border-color: #e3b341; color: #f2cc60; }
+.queued-spawns-count {
+  background: #9e6a03; color: #0d1117; border-radius: 9px;
+  padding: 0 6px; font-size: 11px; line-height: 16px;
+}
+.queued-spawns-popover {
+  position: fixed; z-index: 60;
+  width: min(380px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
+  padding: 6px; background: #0d1117; border: 1px solid #9e6a03; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.9);
+}
+.queued-spawns-popover-head {
+  display: flex; justify-content: space-between; gap: 8px; margin: 2px 4px 6px;
+  color: #e3b341; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.queued-spawns-popover-hint { color: #7d8590; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.queued-spawn-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px;
+  border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+}
+.queued-spawn-row:hover { background: #161b22; border-color: #30363d; }
+.queued-spawn-play {
+  flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%;
+  background: #238636; border: 1px solid #2ea043; color: #fff;
+  font-size: 10px; line-height: 1; cursor: pointer;
+}
+.queued-spawn-play:hover { background: #2ea043; }
+.queued-spawn-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.queued-spawn-name { color: #e6edf3; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queued-spawn-detail { color: #7d8590; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queued-spawn-age { flex: none; color: #7d8590; font-size: 11px; }
+.queued-spawn-discard {
+  flex: none; background: none; border: none; color: #6e7681;
+  padding: 2px 4px; cursor: pointer; font-family: inherit;
+}
+.queued-spawn-discard:hover { color: #f85149; }
+/* Per-group block: the "Pending spawns" slot, striped to read as not-yet-real. */
+.group-queued-block {
+  margin: 2px 0 10px 0; padding: 6px 8px;
+  border: 1px dashed #9e6a03; border-radius: 6px;
+  background: repeating-linear-gradient(135deg, rgba(158, 106, 3, 0.05) 0 8px, rgba(158, 106, 3, 0.10) 8px 16px);
+}
+.group-queued-title {
+  margin: 0 0 4px 2px; color: #e3b341; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.group-queued-block .queued-spawn-name { font-style: italic; }
+/* Spawn dialog: the queue action sits beside Spawn; a reopened queued spawn
+   gets a banner and a green launch button instead of the blue primary. */
+#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn { background: #2b2111; border-color: #9e6a03; color: #e3b341; font-weight: 600; }
+#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn:hover:not(:disabled) { border-color: #e3b341; color: #f2cc60; }
+#agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn { background: #238636; border-color: #2ea043; color: #fff; }
+#agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn:hover:not(:disabled) { background: #2ea043; }
+#agent-spawn-modal .modal-buttons button.confirm-danger { background: #4d1d1d; border-color: #f85149; color: #f85149; }
+#agent-spawn-modal .modal-buttons button.confirm-danger:hover:not(:disabled) { background: #f85149; color: #fff; }
+.agent-spawn-queued-banner {
+  margin: 0 0 8px; padding: 5px 10px; border: 1px solid #9e6a03; border-radius: 4px;
+  background: #2b2111; color: #e3b341; font-size: 12px;
+}
 /* Tab-wide drag & drop hint — sits at the bottom of the groups tab,
    below every real and virtual group. Replaces the per-virtual-group
    one-liners that previously repeated on each virtual summary; the

@@ -298,6 +298,50 @@ export function createAgentSpawnActions({
       } catch (_) {}
     },
 
+    // Queued spawns store the dialog draft only. Nothing a launch does —
+    // worktree creation, base-branch fetch, attachment upload, the spawn
+    // itself — runs until the queued draft is launched through submit.
+    async saveQueued(id, draft) {
+      const response = await fetchImpl(id ? `/api/queued-spawns/${encodeURIComponent(id)}` : '/api/queued-spawns', {
+        method: id ? 'PUT' : 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft }),
+      });
+      if (!response.ok) throw await responseError(response);
+      return response.json().catch(() => ({}));
+    },
+
+    async deleteQueued(id) {
+      const response = await fetchImpl(`/api/queued-spawns/${encodeURIComponent(id)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      // Already gone (launched or discarded elsewhere) is the wanted end state.
+      if (!response.ok && response.status !== 404) throw await responseError(response);
+    },
+
+    confirmDiscardQueued(label) {
+      return confirm({
+        title: 'Discard this queued agent?',
+        body: 'The prepared spawn is removed from the queue. Nothing was launched, so there is nothing else to clean up.',
+        meta: label,
+        okLabel: 'Discard',
+      });
+    },
+
+    queued(draft, edited) {
+      notify(`${edited ? 'saved queued' : 'queued'} ${draft.name || draft.descr || 'agent'} → ${draft.group} — launch it from ⏸ queued`);
+      refresh();
+    },
+
+    dequeued(draft) {
+      notify(`discarded queued ${draft.name || draft.descr || 'agent'}`);
+      refresh();
+    },
+
+    notifyError(message) {
+      notify(message, true);
+    },
+
     async spawn(request) {
       const response = await fetchImpl(request.url, {
         method: 'POST', credentials: 'same-origin',

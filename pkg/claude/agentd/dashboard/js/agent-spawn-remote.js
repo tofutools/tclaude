@@ -127,12 +127,14 @@ export function remoteLockReason(field, remote) {
       ? `${node}'s grant does not let you choose the ${word} — it uses ${fixed}`
       : `${node} does not let you choose the ${word} — its grant or group default applies`;
   }
+  if (field === 'queue') return `Queued spawns wait on this node; a spawn on ${node} is sent as a request now`;
   if (field === 'browse') return `Browsing reads this machine's folders, not ${node}'s — type a path on ${node} instead`;
   return `${node} applies its own setting here (its group and profile defaults) — a remote spawn request does not carry it`;
 }
 
 function controlField(el) {
   if (el.id === 'agent-spawn-cwd-browse' || el.id === 'agent-spawn-wt-repo-browse') return 'browse';
+  if (el.id === 'agent-spawn-queue') return 'queue';
   return FIELD_CONTROLS[el.id] || '';
 }
 
