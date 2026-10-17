@@ -415,12 +415,18 @@ function GroupLinkChips({ group, snapshot }) {
   return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
 }
 
+// fleetOwnName is a merged-view group's name as its own node names it.
+function fleetOwnName(group) {
+  const at = `@${group.fleet_node?.name}`;
+  return group.fleet_node && group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
+}
+
 // FleetGroupName renders a merged-view (fleet-merged-island.js) group as
 // group@node: the suffix in the node's own colour opens that node's view.
 function FleetGroupName({ group }) {
   const node = group.fleet_node;
   const at = `@${node.name}`;
-  const base = group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
+  const base = fleetOwnName(group);
   return html`${base}<span class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
     title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>${at}</span>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
 }
@@ -446,7 +452,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
   const maxValue = group.max_members || 0;
   return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title="Drag this header to reorder or nest the group · Ctrl/Cmd-drag to clone">
     ${interactions.editorKey === renameKey ? html`<${InlineEditor}
-      editorKey=${renameKey} value=${group.name} className="group-rename-input"
+      editorKey=${renameKey} value=${fleetOwnName(group)} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
     >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? html`<${FleetGroupName} group=${group} />` : group.name}</strong>`}

@@ -311,6 +311,8 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   // two as sections of each group.
   const tree = html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
     triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
+  // While fused this list is hidden and the fused Groups view
+  // (fleet-merged-island.js) shows the standing-orders dialog: one copy only.
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     ${focus === 'agents'
@@ -318,7 +320,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     : html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
       filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
       focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`}
-    ${state.standingOrdersDialog.value && html`
+    ${state.standingOrdersDialog.value && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
         descriptor=${state.standingOrdersDialog.value}
