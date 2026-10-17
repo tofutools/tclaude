@@ -160,7 +160,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
   </div>`;
 }
 
-function useSavedPrompts() {
+function useSavedPrompts(enabled = true) {
   const [prompts, setPrompts] = useState([]);
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -171,6 +171,7 @@ function useSavedPrompts() {
   };
   useEffect(() => {
     live.current = true;
+    if (!enabled) return () => { live.current = false; };
     void reload().catch((cause) => { if (live.current) setError(cause.message); })
       .finally(() => { if (live.current) setLoaded(true); });
     return () => { live.current = false; };
@@ -191,41 +192,66 @@ export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
 
 // SavedPromptChips selects an ordered set of saved prompts with the same chip
 // + "Add…" control the role pickers use. value/onChange carry prompt names.
-export function SavedPromptChips({ id, value = [], onChange, disabled = false, confirmDiscard = shellConfirmDiscard, hint = '' }) {
-  const { prompts, error, setError, reload } = useSavedPrompts();
+//
+// library replaces this node's own library with a given list (a remote
+// spawn's two libraries, agent-spawn-remote.js): each prompt may carry a
+// label and a source, sources groups the Add list ({source, label}, in order),
+// and visible limits it to some of them. locked names chips that cannot be
+// removed, with lockedReason as their hover text.
+export function SavedPromptChips({
+  id, value = [], onChange, disabled = false, confirmDiscard = shellConfirmDiscard, hint = '',
+  library = null, sources = [], visible = null, locked = [], lockedReason = '',
+}) {
+  const own = useSavedPrompts(!library);
+  const { error, setError, reload } = own;
+  const prompts = library || own.prompts;
   const [inspected, setInspected] = useState('');
   const [managing, setManaging] = useState(false);
-  const selected = value.map((name) => prompts.find((prompt) => prompt.name === name) || { name, missing: prompts.length > 0 });
+  const fixed = new Set(locked);
+  const selected = value.map((name) => prompts.find((prompt) => prompt.name === name)
+    || { name, missing: !fixed.has(name) && prompts.length > 0, unknown: fixed.has(name) });
   const shown = selected.find((prompt) => prompt.name === inspected);
-  const available = prompts.filter((prompt) => !value.includes(prompt.name));
+  const available = prompts.filter((prompt) => !value.includes(prompt.name)
+    && (!visible || visible.includes(prompt.source)));
+  const groups = library && sources.length
+    ? sources.map((group) => ({ ...group, prompts: available.filter((prompt) => prompt.source === group.source) })).filter((group) => group.prompts.length)
+    : null;
+  const option = (prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.label || prompt.name}</option>`;
+  const chipLabel = (prompt) => {
+    const source = sources.find((group) => group.source === prompt.source);
+    return library && source?.chip ? `${prompt.label || prompt.name} · ${source.chip}` : prompt.label || prompt.name;
+  };
   return html`<div class="agent-spawn-role-picker saved-prompt-picker">
     <div class="agent-spawn-role-chips" id=${id}>
-      ${selected.map((prompt) => html`<span key=${prompt.name} class=${`agent-spawn-role-chip${prompt.missing ? ' missing' : ''}`}>
-        <button type="button" class="role-chip-inspect" disabled=${disabled}
-          title=${prompt.missing ? 'This prompt is missing from the library' : prompt.body}
+      ${selected.map((prompt) => html`<span key=${prompt.name} class=${`agent-spawn-role-chip${prompt.missing ? ' missing' : ''}${fixed.has(prompt.name) ? ' locked' : ''}`}>
+        <button type="button" class="role-chip-inspect" disabled=${disabled} data-remote-spawn-free=""
+          title=${prompt.missing ? 'This prompt is missing from the library' : prompt.unknown ? lockedReason : prompt.body}
           aria-expanded=${inspected === prompt.name ? 'true' : 'false'}
-          onClick=${() => setInspected(inspected === prompt.name ? '' : prompt.name)}>${prompt.name}</button>
-        <button type="button" class="role-chip-remove" disabled=${disabled} title=${`Remove ${prompt.name}`}
+          onClick=${() => setInspected(inspected === prompt.name ? '' : prompt.name)}>${chipLabel(prompt)}</button>
+        <button type="button" class="role-chip-remove" disabled=${disabled || fixed.has(prompt.name)} data-remote-spawn-field="prompts"
+          title=${fixed.has(prompt.name) ? lockedReason : `Remove ${prompt.name}`}
           aria-label=${`Remove prompt ${prompt.name}`} onClick=${() => {
             setInspected((current) => current === prompt.name ? '' : current);
             onChange(value.filter((name) => name !== prompt.name));
           }}>×</button>
       </span>`)}
-      <select class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length}
+      <select class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length} data-remote-spawn-field="prompts"
         aria-label="Add saved prompt" onChange=${(event) => {
           const next = event.currentTarget.value;
           event.currentTarget.value = '';
           if (next) onChange([...value, next]);
         }}>
         <option value="">${prompts.length ? '＋ Add prompt…' : 'No saved prompts'}</option>
-        ${available.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
+        ${groups
+          ? groups.map((group) => html`<optgroup key=${group.source} label=${group.label}>${group.prompts.map(option)}</optgroup>`)
+          : available.map(option)}
       </select>
-      <button type="button" class="tool saved-prompt-chip-manage" disabled=${disabled}
-        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…</button>
+      ${library ? null : html`<button type="button" class="tool saved-prompt-chip-manage" disabled=${disabled}
+        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…</button>`}
     </div>
     ${hint ? html`<div class="spawn-field-hint">${hint}</div>` : null}
     ${shown && html`<div class=${`agent-spawn-role-inspect${shown.missing ? ' missing' : ''}`}>
-      ${shown.missing ? '⚠ This prompt is no longer in the library.' : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
+      ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}
     ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}

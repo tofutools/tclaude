@@ -8092,6 +8092,15 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   border-radius: 999px; background: #17345a; color: #dbeaff;
 }
 .agent-spawn-role-chip.missing { border-color: #9e6a03; background: rgba(187, 128, 9, .16); }
+.agent-spawn-role-chip.locked { border-style: dashed; }
+.agent-spawn-role-chip.locked .role-chip-remove { cursor: not-allowed; opacity: .45; }
+#agent-spawn-modal .agent-spawn-source-filter .cron-create-target { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 16px; }
+#agent-spawn-modal label.agent-spawn-source-toggle { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
+#agent-spawn-modal .agent-spawn-source-toggle input { width: auto; margin: 0; }
+.agent-spawn-role-chip .role-chip-remove:disabled { cursor: not-allowed; opacity: .45; }
+/* A remote spawn's locked controls (agent-spawn-remote.js): still showing
+   what the peer applies, visibly not editable. */
+#agent-spawn-modal .remote-spawn-locked :is(input, select, textarea):disabled { opacity: .62; cursor: not-allowed; border-style: dashed; }
 .agent-spawn-role-chip button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .agent-spawn-role-chip .role-chip-inspect { padding: 3px 3px 3px 9px; }
 .agent-spawn-role-chip .role-chip-remove { padding: 3px 8px 3px 4px; color: #9fc6ef; }

@@ -9,7 +9,7 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
     // A remote spawn (agent-spawn-remote.js) opens on the peer's own groups
     // and harnesses, never this node's.
     const remote = options?.remote || null;
-    const snapshot = (remote ? remoteSpawnContext(remote.snapshot, remote.options) : getSnapshot()) || {};
+    const snapshot = (remote ? remoteSpawnContext(remote.snapshot, remote.options, remote.catalogs) : getSnapshot()) || {};
     const currentGeneration = ++generation;
     dialog.value = Object.freeze({
       remote,

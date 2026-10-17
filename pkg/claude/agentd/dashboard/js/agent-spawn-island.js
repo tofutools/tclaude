@@ -56,7 +56,10 @@ import {
   setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
-import { createRemoteSpawnActions, remoteSpawnIntro, watchRemoteSpawnLocks } from './agent-spawn-remote.js';
+import {
+  createRemoteSpawnActions, isLocalRef, remotePromptBodies, remoteSpawnIntro, remoteSpawnPins,
+  remoteSpawnPrompts, watchRemoteSpawnLocks,
+} from './agent-spawn-remote.js';
 import { shellToast } from './shell-state.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
@@ -211,6 +214,42 @@ function roleHoverText(role) {
     .filter(Boolean).join('\n\n');
 }
 
+// RemoteProfileOptions lists a remote spawn's profiles by library: the
+// target's (a profile the grant does not let this operator pick shows, but
+// cannot be chosen) and this node's. The selected one always shows.
+function RemoteProfileOptions({ profiles, remote, showFrom, selected }) {
+  const shown = (source) => profiles.filter((profile) => profile.remoteSource === source
+    && (showFrom.includes(source) || profile.name === selected));
+  const label = (profile) => `${profile.localName || profile.name}${profile.disabled ? ' [🚫 disabled]' : ''}`;
+  const locked = (profile) => (profile.name === selected ? ` (${remote.node}'s default)` : ' (not in your grant)');
+  const target = shown('target');
+  const local = shown('local');
+  return html`
+    ${target.length ? html`<optgroup label=${`${remote.node}'s profiles`}>${target.map((profile) => html`<option key=${profile.name} value=${profile.name}
+      disabled=${!profile.remoteSelectable}
+      title=${profile.remoteSelectable ? '' : `${remote.node}'s grant does not let you pick this profile${profile.name === selected ? `; ${remote.node} applies it by default` : ''}`}>${label(profile)}${profile.remoteSelectable ? '' : locked(profile)}</option>`)}</optgroup>` : null}
+    ${local.length ? html`<optgroup label="This node's profiles (fills what the request carries)">${local.map((profile) => html`<option key=${profile.name} value=${profile.name}>${label(profile)}</option>`)}</optgroup>` : null}`;
+}
+
+// RemoteSourceFilter picks which libraries a remote spawn's profile and
+// prompt pickers list: the target's, this node's, or both.
+function RemoteSourceFilter({ remote, showFrom, setShowFrom }) {
+  const hasTarget = !!remote.catalogs?.target || (remote.options?.profiles?.length || 0) > 0;
+  const toggle = (source) => setShowFrom((value) => (value.includes(source)
+    ? (value.length > 1 ? value.filter((entry) => entry !== source) : value)
+    : [...value, source]));
+  const box = (source, text, title) => html`<label class="agent-spawn-source-toggle" title=${title}>
+    <input type="checkbox" id=${`agent-spawn-source-${source}`} checked=${showFrom.includes(source)} onChange=${() => toggle(source)} /> ${text}</label>`;
+  return html`<div class="cron-create-row agent-spawn-source-filter" id="agent-spawn-source-filter" data-remote-spawn-free="">
+    <span class="cron-create-label">Show from</span>
+    <div class="cron-create-target">
+      ${box('target', remote.node, hasTarget ? `List ${remote.node}'s profiles and prompts` : `${remote.node} does not share its profiles and prompts with you (node.spawn.read)`)}
+      ${box('local', 'this node', "List this node's own profiles and prompts")}
+      ${remote.catalogs?.target ? null : html`<span class="muted" title=${`${remote.node} has not granted you node.spawn.read: its own defaults still apply, but this dialog cannot show them or offer its profiles and prompts`}>${remote.node} does not share its libraries with you</span>`}
+    </div>
+  </div>`;
+}
+
 function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscard, notify = shellToast }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   // A spawn into a peer's group (agent-spawn-remote.js) keeps this dialog
@@ -309,6 +348,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // group change merely pre-fills, which must leave the peer's policy in
   // charge.
   const operatorSet = useRef(new Set());
+  // Remote spawn: the saved prompts the peer applies itself (its profile and
+  // group defaults, pre-filled and locked), the pre-fill's set to return to
+  // on Clear, and which libraries the profile and prompt pickers list.
+  const [peerPrompts, setPeerPrompts] = useState([]);
+  const basePeerPrompts = useRef([]);
+  const [showFrom, setShowFrom] = useState(['target', 'local']);
+  const remotePrompts = useMemo(() => (remote ? remoteSpawnPrompts(remote) : null), [remote]);
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -413,6 +459,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       }
       if (current.options.role) {
         nextBaseline = { ...nextBaseline, role: current.options.role };
+      }
+      if (remote) {
+        nextBaseline = remoteSpawnPins(nextBaseline, remote.options);
+        basePeerPrompts.current = [...(nextBaseline.promptRefs || [])];
+        setPeerPrompts(basePeerPrompts.current);
       }
       setBaseline(nextBaseline);
       setDraft((existing) => {
@@ -603,7 +654,54 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       ...before, model: value, customModel: false, effort: rememberedEffort(value),
     }));
   };
-  const changeProfile = (handle) => {
+  const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // A remote spawn's profile pick. Clear returns to what the peer applies.
+  // A peer profile replaces the pre-fill as it does locally (it rides by
+  // name, so the peer applies all of it). A local profile fills only what
+  // the request carries: the overrides the grant opens, name, description,
+  // brief and display role, and its prompts as local ones written into the
+  // brief.
+  const changeRemoteProfile = (handle) => {
+    if (!handle) {
+      operatorSet.current.clear();
+      profileOverrides.current.clear();
+      setPeerPrompts(basePeerPrompts.current);
+      setDraft((before) => ({ ...baseline, group: before.group }));
+      return;
+    }
+    const profile = findSpawnProfile(profiles, handle);
+    if (!profile) return;
+    touched.current.add('profile');
+    if (!isLocalRef(handle)) {
+      operatorSet.current.add('profile');
+      const next = replaceSpawnProfile(draftRef.current, profile, context, {
+        autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
+        preservedFields: new Set(profileOverrides.current),
+      });
+      setPeerPrompts([...(next.promptRefs || [])]);
+      setDraft({ ...remoteSpawnPins(next, remote.options, operatorSet.current), profile: handle });
+      return;
+    }
+    const filled = replaceSpawnProfile(draftRef.current, { ...profile, name: profile.localName }, context, {
+      autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
+    });
+    setDraft((before) => {
+      const next = { ...before, profile: handle };
+      for (const field of ['name', 'descr', 'initialMessage', 'role']) {
+        if (String(filled[field] || '').trim() && !profileOverrides.current.has(field)) next[field] = filled[field];
+      }
+      const overrides = { harness: ['harness'], model: ['model', 'customModel'], effort: ['effort'] };
+      for (const [field, keys] of Object.entries(overrides)) {
+        if (!remote.options.overrides[field] || !String(filled[field] || '').trim()) continue;
+        for (const key of keys) next[key] = filled[key];
+        operatorSet.current.add(field);
+      }
+      const local = (profile.prompt_refs || []).map((ref) => `local:${ref}`);
+      next.promptRefs = [...new Set([...(before.promptRefs || []), ...local])];
+      return next;
+    });
+  };
+  const changeLocalProfile = (handle) => {
     if (!handle) {
       for (const field of PROFILE_OWNED_FIELDS) {
         touched.current.add(field);
@@ -889,7 +987,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('request_sent_ms');
       // A remote request carries only the overrides the operator set here.
       const payload = await actions.spawn(remote
-        ? { ...request, explicit: [...operatorSet.current] }
+        ? { ...request, explicit: [...operatorSet.current], prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
         : request);
       markTiming('response_received_ms');
       if (queued) {
@@ -1075,14 +1173,17 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       ${draft.fixedGroup ? `joining group: ${draft.group}` : ''}
     </div>
     ${remote && html`<div class="modal-meta agent-spawn-remote-intro" id="agent-spawn-remote-intro">${remoteSpawnIntro(remote, draft.group)}</div>`}
+    ${remote && html`<${RemoteSourceFilter} remote=${remote} showFrom=${showFrom} setShowFrom=${setShowFrom} />`}
     <label class="cron-create-row" id="agent-spawn-load-profile-row"
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Pattern" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
         <select id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
           onChange=${(event) => changeProfile(event.currentTarget.value)}>
-          <option value="">— none (blank form) —</option>
-          ${spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
+          <option value="">${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'}</option>
+          ${remote
+            ? html`<${RemoteProfileOptions} profiles=${profiles} remote=${remote} showFrom=${showFrom} selected=${draft.profile} />`
+            : spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
         </select>
         <button id="agent-spawn-clear" type="button" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
@@ -1119,8 +1220,15 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <div class="cron-create-row agent-spawn-prompts-row"
       title="Saved prompts open the task brief, in order, ahead of the initial message. Pre-filled from the profile, else the group's default prompts.">
       <span class="cron-create-label">Saved prompts</span>
-      <${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
-        onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}/>
+      ${remote
+        ? html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
+          onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}
+          library=${remotePrompts} visible=${showFrom} locked=${peerPrompts}
+          lockedReason=${`${remote.node} applies this prompt itself (its profile or group default) — a remote spawn cannot drop it`}
+          sources=${[{ source: 'target', label: `${remote.node}'s prompts` }, { source: 'local', label: "This node's prompts", chip: 'this node' }]}
+          hint=${`Prompts ${remote.node} does not apply itself are written into the brief.`}/>`
+        : html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
+          onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}/>`}
     </div>
     <div class="cron-create-row" id="agent-spawn-attachments-row"
       title="Attach files or screenshots to hand to the new agent. They're uploaded to a temp dir and listed in the agent's startup briefing.">
@@ -1141,9 +1249,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="agent-spawn-role-picker">
         <div class="agent-spawn-role-chips" id="agent-spawn-role-refs">
           ${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
-            <button type="button" class="role-chip-inspect" disabled=${busy} title=${role.missing ? 'This role is missing from the library' : roleHoverText(role)}
+            <button type="button" class="role-chip-inspect" disabled=${busy} data-remote-spawn-free="" title=${role.missing ? 'This role is missing from the library' : roleHoverText(role)}
               aria-expanded=${inspectedRole === role.name ? 'true' : 'false'} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
-            <button type="button" class="role-chip-remove" disabled=${busy} title=${`Remove ${role.name}`}
+            <button type="button" class="role-chip-remove" disabled=${busy} data-remote-spawn-field="roles" title=${`Remove ${role.name}`}
               aria-label=${`Remove role ${role.name}`} onClick=${() => {
                 setInspectedRole((currentRole) => currentRole === role.name ? '' : currentRole);
                 update('roleRefs', (draft.roleRefs || []).filter((name) => name !== role.name));

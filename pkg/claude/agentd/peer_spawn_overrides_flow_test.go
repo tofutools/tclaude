@@ -16,7 +16,11 @@ import (
 )
 
 type peerSpawnOptionsView struct {
-	Group     string            `json:"group"`
+	Group    string `json:"group"`
+	Catalog  bool   `json:"catalog"`
+	Profiles []struct {
+		Name string `json:"name"`
+	} `json:"profiles"`
 	Approval  string            `json:"approval"`
 	Overrides map[string]bool   `json:"overrides"`
 	Harnesses []string          `json:"harnesses"`
