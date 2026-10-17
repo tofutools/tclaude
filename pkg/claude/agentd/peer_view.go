@@ -163,6 +163,10 @@ func peerViewRules() map[string]peerViewRule {
 	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"resume", PermGroupsMembersResume}, {"restart", PermGroupsMembersResume}, {"sandbox-restart", PermGroupsMembersResume}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
+	// PR links only reach a peer inside the complete (unrestricted) snapshot,
+	// so the hover cards behind them are held the same way.
+	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}
+	rules["GET /api/pr-details"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRDetails)}
 	addPeerSpawnCatalogRules(rules)
 	addPeerHumanInboxRules(rules)
 	addPeerMailboxRules(rules)
@@ -317,6 +321,17 @@ func servePeerGlobalRead(next http.HandlerFunc) func(http.ResponseWriter, *http.
 		}
 		r = r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
 		next(w, r)
+	}
+}
+// servePeerUnrestrictedRead runs a local dashboard read for a peer whose
+// rule only unrestricted trust holds; anyone else gets the 403 naming it.
+func servePeerUnrestrictedRead(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
+	return func(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+		if !v.allows(rule, 0) {
+			writeError(w, 403, "permission", "requires unrestricted trust ("+rule.requires+")")
+			return
+		}
+		next(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 	}
 }
 func servePeerNode(w http.ResponseWriter, _ *http.Request, v *peerView, rule peerViewRule) {
