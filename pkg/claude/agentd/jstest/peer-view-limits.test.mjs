@@ -135,3 +135,30 @@ test('a peer agent\'s terminal action opens it in the browser terminal', async (
   assert.equal(harness.fireEvent(doc.getElementById('tt'), 'click').defaultPrevented, false, 'the Terminals tab, where the peer\'s agent opened, can be shown');
   dispose();
 });
+
+test('the greying rule is generated from what the peer shares and removed on dispose', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  const snapshot = harness.signals.signal({ peer_view: { included: ['agents.status', 'lifecycle.resume', 'messaging'] } });
+  const dispose = mod.installPeerViewLimits({ doc, snapshot, toast: () => {}, remote: { id: 'inst_forge7' } });
+  const rule = () => doc.getElementById('peer-view-limits-style')?.textContent || '';
+  assert.match(rule(), /^html\.remote-node \[data-act\]:not\(/);
+  for (const usable of ['[data-act="jump"]', '[data-act="web-open-window"]', '[data-act="terminal-chooser"]', '[data-act="message-new"]', '[data-act="dot-toggle"]:not([data-online="1"])', '[data-act="row-menu"]']) {
+    assert.ok(rule().includes(usable), `${usable} stays usable`);
+  }
+  assert.ok(!rule().includes('[data-act="restart"]') && !rule().includes('[data-act="spawn-agent"]'));
+  await harness.act(() => { snapshot.value = { peer_view: { included: ['agents.status', 'spawn'] } }; });
+  assert.ok(rule().includes('[data-act="spawn-agent"]') && !rule().includes('[data-act="message-new"]'), 'recomputed with the snapshot');
+  doc.body.innerHTML = `<b id="spawn" data-act="spawn-agent"></b><b id="restart" data-act="restart"></b><b id="jump" data-act="jump"></b>
+    <div id="fleetview-fused-groups-root"><b id="fused-restart" data-act="restart"></b></div>`;
+  doc.documentElement.classList.add('remote-node');
+  const sel = rule().replace(/ \{[^}]*\}$/, '');
+  assert.equal(doc.getElementById('spawn').matches(sel), false);
+  assert.equal(doc.getElementById('jump').matches(sel), false);
+  assert.equal(doc.getElementById('restart').matches(sel), true);
+  assert.equal(doc.getElementById('fused-restart').matches(sel), false, 'the all-nodes view greys its rows per node itself');
+  assert.equal(mod.blockedControl(doc.getElementById('fused-restart'), null), null, 'and guards them per node');
+  dispose();
+  assert.equal(doc.getElementById('peer-view-limits-style'), null);
+});

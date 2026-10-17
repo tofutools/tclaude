@@ -151,7 +151,52 @@ test('a peer row runs what the peer shares through its peer routes; this node\'s
   assert.equal(doc.querySelector('#peer-action-modal'), null);
   assert.equal(toasts.length, before + 1);
   assert.equal(calls.length, 0);
+  // The greying is generated from the same rules, per node.
+  const css = doc.querySelector('#fleet-merged-limits').textContent;
+  const forgeRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_forge"]'));
+  assert.match(forgeRule, /\[data-act="dot-toggle"\]:not\(\[data-online="1"\]\)/, 'wake is shared');
+  assert.match(forgeRule, /\[data-act="spawn-agent"\]/);
+  assert.match(forgeRule, /\[data-act="jump"\]/, 'its terminal opens here');
+  assert.doesNotMatch(forgeRule, /\[data-online="1"\],|\[data-act="restart"\]/, 'stop and restart are not shared');
+  assert.ok(!css.includes('details[data-fleet-node="inst_self"]'), 'this node\'s own groups act directly here: nothing greyed');
   await mounted.unmount(); state.dispose();
+});
+
+test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused and skips odd node IDs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/fleet-merged-island.js');
+  const css = island.limitsCSS([
+    { id: 'inst_self', peerView: null },
+    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.stop', 'lifecycle.restart'] } },
+    { id: 'inst_x"]{}*{', peerView: null },
+  ], { self: 'inst_self', home: '' });
+  const lines = css.split('\n');
+  assert.equal(lines.length, 3, 'outside-any-group, this node, forge; the odd ID gets no rule');
+  assert.match(lines[0], /\[data-act\]:not\(details\[data-fleet-node\] \[data-act\]\):not\(.*\[data-act="send-elsewhere"\]/);
+  assert.doesNotMatch(lines[1], /"jump"/, 'on a peer page this node\'s terminal is not opened from here');
+  assert.match(lines[2], /\[data-act="dot-toggle"\]\[data-online="1"\]/);
+  assert.match(lines[2], /\[data-act="restart"\]/);
+  for (const l of lines) assert.match(l, /\{ opacity: \.45; cursor: not-allowed; \}$/);
+});
+
+test('limitsCSS greys exactly the controls a click refuses', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/fleet-merged-island.js');
+  const css = island.limitsCSS([
+    { id: 'inst_self', peerView: null },
+    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.resume', 'spawn'] } },
+  ], { self: 'inst_self', home: 'inst_self' });
+  const doc = harness.document;
+  doc.body.innerHTML = `<div id="fleetview-fused-groups-root"><div class="fleet-merged">
+    <details data-fleet-node="inst_self"><summary><b id="s-jump" data-act="jump"></b><b id="s-spawn" data-act="spawn-agent"></b><b id="s-menu" data-act="group-menu"></b></summary>
+      <details data-fleet-node="inst_self"><summary><b id="s-sub-jump" data-act="web-open-window"></b></summary></details></details>
+    <details data-fleet-node="inst_forge"><summary><b id="f-jump" data-act="jump"></b><b id="f-spawn" data-act="spawn-agent"></b><b id="f-wake" data-act="dot-toggle" data-online="0"></b>
+      <b id="f-stop" data-act="dot-toggle" data-online="1"></b><b id="f-restart" data-act="restart"></b><b id="f-send" data-act="send-elsewhere"></b></summary></details>
+    <b id="loose" data-act="jump"></b><b id="loose-send" data-act="send-elsewhere"></b></div></div>`;
+  const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
+  const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));
+  for (const id of ['s-jump', 's-spawn', 's-menu', 's-sub-jump', 'f-jump', 'f-spawn', 'f-wake', 'f-send', 'loose-send']) assert.equal(greyed(id), false, `${id} is usable`);
+  for (const id of ['f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
 });
 
 test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {
