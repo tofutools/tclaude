@@ -135,3 +135,21 @@ test('a peer agent\'s terminal action opens it in the browser terminal', async (
   assert.equal(harness.fireEvent(doc.getElementById('tt'), 'click').defaultPrevented, false, 'the Terminals tab, where the peer\'s agent opened, can be shown');
   dispose();
 });
+
+test('the greying rule is generated from what the peer shares and removed on dispose', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  const snapshot = harness.signals.signal({ peer_view: { included: ['agents.status', 'lifecycle.resume', 'messaging'] } });
+  const dispose = mod.installPeerViewLimits({ doc, snapshot, toast: () => {}, remote: { id: 'inst_forge7' } });
+  const rule = () => doc.getElementById('peer-view-limits-style')?.textContent || '';
+  assert.match(rule(), /^html\.remote-node \[data-act\]:not\(/);
+  for (const usable of ['[data-act="jump"]', '[data-act="web-open-window"]', '[data-act="terminal-chooser"]', '[data-act="message-new"]', '[data-act="dot-toggle"]:not([data-online="1"])', '[data-act="row-menu"]']) {
+    assert.ok(rule().includes(usable), `${usable} stays usable`);
+  }
+  assert.ok(!rule().includes('[data-act="restart"]') && !rule().includes('[data-act="spawn-agent"]'));
+  await harness.act(() => { snapshot.value = { peer_view: { included: ['agents.status', 'spawn'] } }; });
+  assert.ok(rule().includes('[data-act="spawn-agent"]') && !rule().includes('[data-act="message-new"]'), 'recomputed with the snapshot');
+  dispose();
+  assert.equal(doc.getElementById('peer-view-limits-style'), null);
+});

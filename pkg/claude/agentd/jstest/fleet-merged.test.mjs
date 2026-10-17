@@ -148,7 +148,39 @@ test('a peer row runs what the peer shares through its peer routes; this node an
   assert.equal(doc.querySelector('#peer-action-modal'), null);
   assert.equal(toasts.length, before + 2);
   assert.equal(calls.length, 0);
+  // On this node's own page its own agents' terminals open as anywhere else:
+  // the click passes on to the ordinary row-action routing.
+  const ownJump = inGroup('inst_self', 'desk', '<button data-act="jump" data-agent="agt_me1">◉</button>');
+  assert.equal(harness.fireEvent(ownJump, 'click').defaultPrevented, false);
+  assert.equal(toasts.length, before + 2);
+  // The greying is generated from the same rules, per node.
+  const css = doc.querySelector('#fleet-merged-limits').textContent;
+  const forgeRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_forge"]'));
+  assert.match(forgeRule, /\[data-act="dot-toggle"\]:not\(\[data-online="1"\]\)/, 'wake is shared');
+  assert.match(forgeRule, /\[data-act="spawn-agent"\]/);
+  assert.match(forgeRule, /\[data-act="jump"\]/, 'its terminal opens here');
+  assert.doesNotMatch(forgeRule, /\[data-online="1"\],|\[data-act="restart"\]/, 'stop and restart are not shared');
+  const selfRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_self"]'));
+  assert.match(selfRule, /\[data-act="jump"\]/);
+  assert.doesNotMatch(selfRule, /spawn-agent|dot-toggle/);
   await mounted.unmount(); state.dispose();
+});
+
+test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused and skips odd node IDs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/fleet-merged-island.js');
+  const css = island.limitsCSS([
+    { id: 'inst_self', peerView: null },
+    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.stop', 'lifecycle.restart'] } },
+    { id: 'inst_x"]{}*{', peerView: null },
+  ], { self: 'inst_self', remote: 'inst_forge' });
+  const lines = css.split('\n');
+  assert.equal(lines.length, 3, 'outside-any-group, this node, forge; the odd ID gets no rule');
+  assert.match(lines[0], /:not\(details\[data-fleet-node\] \*\) \[data-act\]:not\(.*\[data-act="send-elsewhere"\]/);
+  assert.doesNotMatch(lines[1], /"jump"/, 'on a peer page this node\'s terminal is not opened from here');
+  assert.match(lines[2], /\[data-act="dot-toggle"\]\[data-online="1"\]/);
+  assert.match(lines[2], /\[data-act="restart"\]/);
+  for (const l of lines) assert.match(l, /\{ opacity: \.45; cursor: not-allowed; \}$/);
 });
 
 test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {

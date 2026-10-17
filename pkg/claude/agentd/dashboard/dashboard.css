@@ -20029,9 +20029,10 @@ html.remote-node body::before {
 .access-peer-consequence { font-size: 12px; color: #c9d1d9; }
 .access-peer-ttl, .access-peer-group { font-size: 12px; }
 /* Peer view limits (js/peer-view-limits.js): what the peer does not offer
-   stays in place, greyed, with the reason on hover and on click. */
+   stays in place, greyed, with the reason on hover and on click. Refused
+   data-act controls are greyed by a rule generated from the peer's peer_view,
+   so a control the peer shares (terminal, shared lifecycle actions) is not. */
 html.remote-node nav [data-tab].pv-off { opacity: .4; }
-html.remote-node [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]),
 html.remote-node :is(#group-create-open, #group-import-open, #cleanup-all-open, #delete-retired-open, #profiles-manage-open, #templates-manage-open, #roles-manage-open, #sandbox-profiles-manage-open, #spawn-harness-policy-open) {
   opacity: .45; cursor: not-allowed;
 }
@@ -20118,7 +20119,8 @@ body.wizard #launch-target .lt-carries { background: #140f28; }
 body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
-#fleetview-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+/* Its refused data-act controls are greyed by a generated rule
+   (fleet-merged-island.js), per node from what that node shares. */
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }
