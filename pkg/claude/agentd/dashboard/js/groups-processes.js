@@ -35,6 +35,7 @@ import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
 import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
+import { useProcessScope } from './groups-process-scope.js';
 
 const html = htm.bind(h);
 
@@ -562,12 +563,34 @@ export function useProcessesPerspective() {
 // perspective: its own scope's runs only (subgroups render theirs nested).
 // In Both it is the whole group body instead; `fused` carries the agent half
 // (see GroupRuns).
+// A group the run context does not cover (see groups-process-scope.js) gets
+// UnsharedRuns instead; the runs body otherwise sees the group as the context
+// names it, so its starts, edits and pauses reach that group.
 export function GroupProcessBody({ group, fused = null }) {
   const perspective = useProcessesPerspective();
+  const own = useProcessScope()(group);
   if (!perspective) return null;
-  return html`<${GroupRuns} group=${group} roster=${perspective.rosters.get(group.name)} context=${perspective.context}
+  if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} />`;
+  return html`<${GroupRuns} group=${own} roster=${perspective.rosters.get(own.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
     onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} />`;
+}
+
+// UnsharedRuns stands in for the runs of a group on a node whose run context
+// is not read here (a peer's group in the fused view). In Both the Agents
+// section stays as it is.
+function UnsharedRuns({ group, wizard, fused }) {
+  const node = group.fleet_node?.name || 'this node';
+  // This node's own groups on a peer's page: their runs show on its own page.
+  const text = group.fleet_node?.local
+    ? (wizard ? 'The rites of this realm show on its own page.' : "This node's process runs show on its own page.")
+    : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
+  const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
+  if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
+  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
+      actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
+    ${note}
+    ${fused.after}`;
 }
 
 // ungroupedRuns are the agent-scoped runs of Ungrouped's agents, the only
@@ -617,10 +640,12 @@ function countText(counts, wizard) {
 // while the group is open (its subgroups then show their own rows).
 export function SubgroupRunTotal({ node }) {
   const perspective = useProcessesPerspective();
+  const scope = useProcessScope();
   if (!perspective || !node.children?.length) return null;
   const total = { running: 0, needsYou: 0, planned: 0 };
   const add = (child) => {
-    const counts = groupProcessCounts(groupContextEntry(perspective.context, child.group));
+    const own = scope(child.group);
+    const counts = groupProcessCounts(own ? groupContextEntry(perspective.context, own) : null);
     total.running += counts.running;
     total.needsYou += counts.needsYou;
     total.planned += counts.planned;

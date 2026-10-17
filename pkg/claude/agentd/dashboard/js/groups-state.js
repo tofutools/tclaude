@@ -25,6 +25,8 @@ const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.kinds';
 
 const FILTER_KEY = 'tclaude.dash.filter.groups';
 
+// A nodeOnly option adds one of this node's virtual groups, which the fused
+// Groups view (several nodes) does not list.
 export const GROUP_VIEW_OPTIONS = Object.freeze([
   {
     key: 'offline', defaultValue: true, pref: 'tclaude.dash.offline.groups',
@@ -34,28 +36,28 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
     wizardTitle: 'Show slumbering familiars. This is the tab-wide default — each party banner has a per-party override.',
   },
   {
-    key: 'ungrouped', defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
+    key: 'ungrouped', nodeOnly: true, defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
     label: 'show ungrouped',
     wizardLabel: 'show unbound',
     title: `Show the virtual "Ungrouped" group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.`,
     wizardTitle: `Show the ethereal "Unbound" party at the bottom — familiars not bound to any party. Drag them onto a party to bind them; drag party familiars back onto it to release them.`,
   },
   {
-    key: 'retired', defaultValue: false, pref: 'tclaude.dash.retired.groups',
+    key: 'retired', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.retired.groups',
     label: 'show retired',
     wizardLabel: 'show banished',
     title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Click reinstate to bring one back.',
     wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Restore one to bring it back.',
   },
   {
-    key: 'conversations', defaultValue: false, pref: 'tclaude.dash.conversations.groups',
+    key: 'conversations', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.conversations.groups',
     label: 'show conversations',
     wizardLabel: 'show plain scrolls',
     title: `Show the virtual "Conversations" group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.`,
     wizardTitle: `Show the ethereal "Plain scrolls" party — recent scrolls without familiars. Drag one onto a party (or click awaken) to awaken it as a familiar.`,
   },
   {
-    key: 'replaced', defaultValue: false, pref: 'tclaude.dash.replaced.groups',
+    key: 'replaced', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.replaced.groups',
     label: 'show replaced generations',
     wizardLabel: 'show past incarnations',
     title: 'Show the virtual "Replaced generations" group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.',
@@ -192,6 +194,10 @@ export function createGroupsState({
   // Processes lens, else null. Session-only: a reload lands on the cards.
   const focusedRun = signal(null);
   const renderRevision = signal(0);
+  // listed is the view another list shows with these controls -- the fused
+  // Groups view's {groups, total, shownReal} while it is on screen, else null
+  // -- so the toolbar counts what is listed.
+  const listed = signal(null);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
   let nextAddMemberLaunchID = 0;
@@ -387,7 +393,7 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, focus, processFilter, focusedRun, renderRevision,
+    standingOrdersDialog, subview, routeSelection, focus, processFilter, focusedRun, renderRevision, listed,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,
