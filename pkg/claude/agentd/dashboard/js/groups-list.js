@@ -212,13 +212,14 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
   `;
 }
 
-function SortHead({ table, columns }) {
+// SortHead's `lead` fills the untitled control column's header cell.
+function SortHead({ table, columns, lead = null }) {
   const active = tableSortState(table, columns);
   return html`<thead><tr>${columns.map((column) => {
     const label = column.wizardLabel
       ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
       : (column.label || '');
-    if (!column.col) return html`<th key=${column.key || column.label || 'blank'}>${label}</th>`;
+    if (!column.col) return html`<th key=${column.key || column.label || 'blank'}>${lead && column.key === 'ctl' ? lead : label}</th>`;
     const selected = active?.col === column.col;
     return html`<th
       key=${column.key || column.col}
@@ -511,16 +512,22 @@ function isForce(group) {
   return !!(group.source_template || group.mission || group.process?.phases?.length || group.waves);
 }
 
-function GroupActions({ group, actions }) {
+// GroupActions is a group's agent controls (spawn agent, create subgroup,
+// power on, shutdown) and its task force card toggle. Both splits them:
+// `controls` off leaves only the toggle on the section line, `fold` off
+// leaves only the controls for the member table's first header cell.
+function GroupActions({ group, actions, controls = true, fold = true }) {
   const folded = dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1';
   const shared = { 'data-group': group.name, 'data-label': group.name };
+  const toggle = fold && isForce(group);
+  if (!controls && !toggle) return null;
   return html`
-    <button class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>
-    <button class="spawn-btn subgroup-btn" ...${shared} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>
+    ${controls && html`<button class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>
+    <button class="spawn-btn subgroup-btn" ...${shared} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>`}
     <span class="group-actions">
-      <button ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
-      <button class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>
-      ${isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
+      ${controls && html`<button ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
+      <button class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>`}
+      ${toggle ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
     </span>`;
 }
 
@@ -609,9 +616,15 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     ? html`<div class="muted">(no members yet)</div>`
     : !view.visible.length
       ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
-      : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
+      : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead}
+        lead=${processes?.fused ? html`<span class="group-header-actions gf-table-actions"><${GroupActions} group=${group} actions=${actions} fold=${false} /></span>` : null} />`;
+  // In Both the agent controls head the member table's first column, which
+  // has no title of its own; the section line keeps them only while it is
+  // folded (or there is no table), so they never go out of reach.
+  const table = !!view.visible.length;
   const fused = processes?.fused ? {
-    actions: html`<${GroupActions} group=${group} actions=${actions} />`,
+    actions: html`<${GroupActions} group=${group} actions=${actions} controls=${!table} />`,
+    closedActions: table ? html`<${GroupActions} group=${group} actions=${actions} fold=${false} />` : null,
     // The task force card belongs to the roster, so it heads the Agents
     // section; triggers follow both sections. Neither sits above a section
     // line, which would move its controls when the card folds.

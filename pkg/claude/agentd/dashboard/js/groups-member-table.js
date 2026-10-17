@@ -1230,9 +1230,9 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
   >${columns.map((column) => html`<${MemberCell} key=${column.key} column=${column} member=${member} group=${group} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} grants=${grants} menuKey=${menuKey} editorKey=${editorKey} />`)}</tr>`;
 }
 
-export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead }) {
+export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead, lead = null }) {
   const columns = visibleMemberCols();
   const activeSort = tableSortState('members', columns);
-  return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySortState(members, MEMBER_ACCESSORS, activeSort).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
+  return html`<table><${SortHead} table="members" columns=${columns} lead=${lead} /><tbody>${applySortState(members, MEMBER_ACCESSORS, activeSort).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
 }
 // dashboard-imperative-boundary: media-effects

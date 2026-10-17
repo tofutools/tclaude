@@ -20573,6 +20573,12 @@ details[open] > summary .gp-subtree-total { display: none; }
 .gf-section-toggle:disabled { cursor: default; }
 .gf-section-toggle:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .group-header-actions.gf-section-actions { margin: 0; }
+/* Open, the controls leave the line for the content's first column: the
+   member table's untitled header cell, and the runs' slim title row,
+   padded like that cell so both rows of controls share one left edge. */
+.group-header-actions.gf-table-actions { display: inline-flex; margin: 0; }
+.group-header-actions.gf-title-row { display: flex; align-items: center; gap: 4px; padding: 0 12px 6px; margin: 0 0 6px; border-bottom: 1px solid #21262d; }
+body.wizard .group-header-actions.gf-title-row { border-bottom-color: rgba(122, 93, 176, 0.35); }
 .gf-section-fill { flex: 1; align-self: stretch; min-width: 12px; cursor: pointer; }
 .gf-section.forced .gf-section-fill { cursor: default; }
 .gf-section:not(.open) > .gf-section-head { margin-bottom: 0; }

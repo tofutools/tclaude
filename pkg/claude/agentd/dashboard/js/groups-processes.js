@@ -497,12 +497,16 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
   if (fused) {
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0;
+    // The run controls head the open section's content on their own title
+    // row, where the Agents half has its table header; folded, they ride
+    // the section line.
     return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
-        actions=${fused.actions}>${fused.agents}<//>
+        actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-        actions=${html`${controls(true)}${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}`}
+        actions=${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+        closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
-        <div class="gp-group" data-process-group=${group.name}>${body}</div>
+        <div class="gp-group" data-process-group=${group.name}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
       <//>
       ${fused.after}`;
   }
@@ -520,13 +524,14 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // FusedSection is one of Both's two sections in a group: a thin labelled
 // divider row, not a box, so the content keeps the exact left edge it has
 // in Agents and Processes -- Both adds a line, never a nesting level. The
-// line carries the section's own controls (`actions`), so they stay in reach
-// while the section is folded; it has no counts, which the group's header
+// line carries the section's own controls (`actions`, plus `closedActions`
+// while folded, which the open content otherwise heads), so they stay in
+// reach while the section is folded; it has no counts, which the group's header
 // row already shows (its member bots and process graphs). The label, and the empty
 // rest of the line, fold the section; the choice is remembered per group
 // (see groups-fused-sections.js), and `force` holds it open while a start
 // or edit form inside needs it.
-export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, children }) {
+export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, closedActions = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
   const toggle = () => { if (!force) { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); } };
@@ -537,7 +542,7 @@ export function FusedSection({ group, section, label, auto = true, force = false
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
       </button>
-      ${actions && html`<span class="group-header-actions gf-section-actions">${actions}</span>`}
+      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions">${!open && closedActions}${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
     </div>
     ${open && children}
