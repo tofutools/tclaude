@@ -61,9 +61,27 @@ prompts wins as a whole (nothing merges):
 
 The spawn dialog pre-fills its chips in that same order, so what it shows is
 what the agent gets; removing every chip spawns with no saved prompts. A
-non-interactive spawn uses only prompts it names explicitly. Renaming a
-prompt updates every profile and group that uses it; deleting one is refused
-while any still do.
+non-interactive spawn uses only prompts it names explicitly, and an
+interactive shell spawn takes none. Renaming a prompt updates every profile
+and group that uses it; deleting one is refused while any still do.
+
+Agents started without the dialog follow the same defaults:
+
+- **Template deploys** use the agent's referenced profile's prompts, else the
+  group's default profile's, else the group's own, else the global default
+  profile's, ahead of the template agent's initial message.
+- **Cron jobs, triggers and process workers** use their profile's prompts,
+  else the group's own default prompts, ahead of the rendered instruction.
+
+Saved prompts travel with the bundles that reference them. Spawn-profile and
+template exports embed every prompt their profiles name, and a group export
+embeds the group's default prompts. Import creates the prompts that are
+missing here and never overwrites a local prompt of the same name: it keeps
+the local text and says so. A group default naming a prompt that is neither
+in the archive nor here is dropped. A config bundle carries the whole library
+as its own `saved-prompts` section, and a profile item is refused unless the
+prompts it names exist here or are selected from that section. Agent bundles
+(`.paf`) leave saved prompts out.
 
 The right-side palette has a **Saved prompts** section: **⧉** opens the
 manager, and each card's ⚙ menu edits, clones or deletes that prompt. The

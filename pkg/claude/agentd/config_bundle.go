@@ -52,6 +52,15 @@ func collectConfigBundle(r *http.Request) (*configbundle.Bundle, error) {
 			return nil, err
 		}
 	}
+	prompts, err := db.ListSavedPrompts()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range prompts {
+		if err := bundleAdd(b, "saved-prompts", p.Name, p); err != nil {
+			return nil, err
+		}
+	}
 	sandboxes, err := db.ListSandboxProfiles()
 	if err != nil {
 		return nil, err
@@ -363,10 +372,38 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			_, err = db.CreateRole(p)
 			return err
 		}, nil
+	case "saved-prompts":
+		var v db.SavedPrompt
+		if err := json.Unmarshal(item.Value, &v); err != nil {
+			return nil, err
+		}
+		if v.Name != item.Name {
+			return nil, errors.New("item name differs from saved prompt name")
+		}
+		p, err := normalizeSavedPrompt(v)
+		if err != nil {
+			return nil, err
+		}
+		return func() error {
+			old, err := db.GetSavedPrompt(p.Name)
+			if err != nil {
+				return err
+			}
+			if old != nil {
+				if !replace {
+					return errors.New("saved prompt already exists")
+				}
+				return db.SaveSavedPrompt(old.Name, p)
+			}
+			return db.SaveSavedPrompt("", p)
+		}, nil
 	case "profiles":
 		var env profileExportEnvelope
 		if err := json.Unmarshal(item.Value, &env); err != nil {
 			return nil, err
+		}
+		if len(env.SavedPrompts) > 0 {
+			return nil, errors.New("bundle dependencies must use the separate saved-prompts section")
 		}
 		if fail := validateProfileEnvelope(env); fail != nil {
 			return nil, bundleFailure(fail)
@@ -388,8 +425,18 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 				return nil, fmt.Errorf("missing role %q; include its roles item", ref)
 			}
 		}
+		for _, ref := range cleanRoleRefs(check.PromptRefs) {
+			old, err := db.GetSavedPrompt(ref)
+			if err != nil {
+				return nil, err
+			}
+			if old == nil && !slices.ContainsFunc(selected.Sections["saved-prompts"], func(i configbundle.Item) bool { return i.Name == ref }) {
+				return nil, fmt.Errorf("missing saved prompt %q; include its saved-prompts item", ref)
+			}
+		}
 		check.RoleRef = ""
 		check.RoleRefs = nil
+		check.PromptRefs = nil
 		if _, fail := buildProfileFromJSON(check); fail != nil {
 			return nil, bundleFailure(fail)
 		}
@@ -468,8 +515,8 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		if env.Template.Name != item.Name {
 			return nil, errors.New("item name differs from template name")
 		}
-		if len(env.Roles) > 0 || len(env.Profiles) > 0 {
-			return nil, errors.New("bundle dependencies must use separate roles/profiles sections")
+		if len(env.Roles) > 0 || len(env.Profiles) > 0 || len(env.SavedPrompts) > 0 {
+			return nil, errors.New("bundle dependencies must use separate roles/profiles/saved-prompts sections")
 		}
 		check := env.Template
 		check.Agents = append([]templateAgentJSON{}, env.Template.Agents...)

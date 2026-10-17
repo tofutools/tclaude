@@ -753,6 +753,19 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			overrides[grant.Slug] = candidate
 		}
 	}
+	// Saved prompts open the worker's brief the way they do a direct spawn's:
+	// the profile's set, else the group's own default prompts.
+	promptRefs := cleanRoleRefs(profile.PromptRefs)
+	if len(promptRefs) == 0 {
+		promptRefs = cleanRoleRefs(g.DefaultPrompts)
+	}
+	if len(promptRefs) > 0 && harnessOrDefault(profile.Harness) != harness.ShellName {
+		composed, fail := composeSavedPrompts(promptRefs, initialMessage)
+		if fail != nil {
+			return nil, fail.Kind, fail.Msg
+		}
+		initialMessage = composed
+	}
 	if ownerConv != "" && len(overrides) > 0 {
 		if resolvePermission(ownerConv, PermPermissionsGrant) != permAllow {
 			return nil, "permission_denied", "spawn profile/roles confer permissions but owner lacks " + PermPermissionsGrant

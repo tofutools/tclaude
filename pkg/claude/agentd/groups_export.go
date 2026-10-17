@@ -314,6 +314,9 @@ type importResponse struct {
 	Retitled       map[string]string `json:"retitled,omitempty"`
 	SkippedAliases []string          `json:"skipped_head_aliases,omitempty"`
 	FileWarnings   []string          `json:"file_warnings,omitempty"`
+	// PromptWarnings reports what happened to the group's saved-prompt
+	// defaults: prompts created here, local versions kept, names dropped.
+	PromptWarnings []string `json:"prompt_warnings,omitempty"`
 	// Landings says where each conversation landed.
 	Landings []*groupMemberLanding `json:"landings,omitempty"`
 }
@@ -1000,6 +1003,20 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		claimedConversationPaths[finalID] = dst
 	}
 
+	// Embedded saved prompts face the library's own name/body rules; one that
+	// fails them is left out, so its reference drops instead of storing it.
+	promptWarnings := []string{}
+	validPrompts := exp.SavedPrompts[:0]
+	for _, raw := range exp.SavedPrompts {
+		p, err := normalizeSavedPrompt(db.SavedPrompt{Name: raw.Name, Body: raw.Body})
+		if err != nil {
+			promptWarnings = append(promptWarnings, fmt.Sprintf("embedded saved prompt %q is invalid here (%s) — skipped", raw.Name, err))
+			continue
+		}
+		validPrompts = append(validPrompts, groupexport.SavedPrompt{Name: p.Name, Body: p.Body})
+	}
+	exp.SavedPrompts = validPrompts
+
 	// --- the transactional DB write ---
 	result, err := db.ImportGroup(db.GroupImportPlan{
 		Export:                      exp,
@@ -1056,8 +1073,23 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		Retitled:       retitled,
 		SkippedAliases: result.HeadAliasesSkipped,
 		FileWarnings:   append(fileWarnings, landingWarnings(landings)...),
+		PromptWarnings: append(promptWarnings, groupImportPromptWarnings(result)...),
 		Landings:       landings,
 	}, http.StatusOK, nil
+}
+
+func groupImportPromptWarnings(result *db.GroupImportResult) []string {
+	out := []string{}
+	for _, name := range result.PromptsImported {
+		out = append(out, fmt.Sprintf("imported saved prompt %q", name))
+	}
+	for _, name := range result.PromptsKeptLocal {
+		out = append(out, fmt.Sprintf("saved prompt %q already exists here with different text — kept the local version", name))
+	}
+	for _, name := range result.PromptsDropped {
+		out = append(out, fmt.Sprintf("default prompt %q is neither in the archive nor here — dropped", name))
+	}
+	return out
 }
 
 func validateImportedConvIDs(exp *groupexport.Export) error {

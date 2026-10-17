@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -239,12 +240,24 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			copy.ResolutionGroupID = g.ID
 			spawnSandbox = &copy
 		}
+		initialMessage := a.InitialMessage
+		if len(launch.PromptRefs) > 0 && launch.Harness != harness.ShellName {
+			composed, pfail := composeSavedPrompts(launch.PromptRefs, initialMessage)
+			if pfail != nil {
+				cleanupCwdProof()
+				res.ErrorKind = pfail.Kind
+				res.Error = pfail.Msg
+				wr.failMember(res)
+				continue
+			}
+			initialMessage = composed
+		}
 		outcome, fail := executeSpawn(g, spawnParams{
 			EffectiveSandbox:            spawnSandbox,
 			Name:                        finalName,
 			Role:                        a.Role,
 			Descr:                       a.Descr,
-			InitialMessage:              a.InitialMessage,
+			InitialMessage:              initialMessage,
 			ProfileContext:              launch.StartupContext,
 			Cwd:                         agentCwd,
 			WorktreePath:                agentWorktreePath,

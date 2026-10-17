@@ -1,4 +1,4 @@
-import { h, render } from 'preact';
+import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
@@ -7,6 +7,7 @@ import {
   savedPromptsExportBlob, parseSavedPromptsImport,
 } from './saved-prompts-actions.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
+import { downloadBlob } from './paf-model.js';
 
 const html = htm.bind(h);
 const blank = () => ({ name: '', body: '' });
@@ -17,17 +18,6 @@ function cloneName(name, prompts) {
   let candidate = `${name}-copy`;
   for (let n = 2; taken.has(candidate); n += 1) candidate = `${name}-copy-${n}`;
   return candidate;
-}
-
-function downloadPrompts(prompts) {
-  const url = URL.createObjectURL(savedPromptsExportBlob(prompts));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'tclaude-saved-prompts.json';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 // SavedPromptImport previews a parsed import file: which names are new, which
@@ -130,7 +120,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
         <button type="button" class="tool" id="saved-prompts-export" disabled=${busy || !prompts.length}
-          title="Download every saved prompt as a JSON file" onClick=${() => downloadPrompts(prompts)}>⇪ export</button>
+          title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export</button>
         <button type="button" class="tool" id="saved-prompts-import-open" disabled=${busy}
           title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import</button>
         <input ref=${fileRef} type="file" accept="application/json,.json" hidden
@@ -170,26 +160,10 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
   </div>`;
 }
 
-// openSavedPromptsManager opens the manager outside any composer — the dock's
-// entry point. initial preselects a prompt; clone starts a copy of it.
-export async function openSavedPromptsManager({ initial = '', clone = false, onChanged = () => {} } = {}) {
-  let prompts;
-  try { prompts = await loadSavedPrompts(); } catch (cause) { shellToast(cause.message, true); return; }
-  const host = document.createElement('div');
-  document.body.appendChild(host);
-  const close = () => { render(null, host); host.remove(); };
-  const Root = () => {
-    const [list, setList] = useState(prompts);
-    return html`<${SavedPromptManager} prompts=${list} initial=${initial} clone=${clone}
-      onClose=${close} confirmDiscard=${shellConfirmDiscard}
-      onChanged=${async () => { setList(await loadSavedPrompts()); await onChanged(); }}/>`;
-  };
-  render(html`<${Root}/>`, host);
-}
-
 function useSavedPrompts() {
   const [prompts, setPrompts] = useState([]);
   const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false);
   const live = useRef(true);
   const reload = async () => {
     const list = await loadSavedPrompts();
@@ -197,10 +171,22 @@ function useSavedPrompts() {
   };
   useEffect(() => {
     live.current = true;
-    void reload().catch((cause) => { if (live.current) setError(cause.message); });
+    void reload().catch((cause) => { if (live.current) setError(cause.message); })
+      .finally(() => { if (live.current) setLoaded(true); });
     return () => { live.current = false; };
   }, []);
-  return { prompts, error, setError, reload };
+  return { prompts, error, setError, reload, loaded };
+}
+
+// SavedPromptsDialog is the manager opened on its own — from the dock's
+// Saved prompts section — rather than from a composer. initial preselects a
+// prompt; clone starts a copy of it. The dock refreshes off the snapshot poll.
+export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
+  const { prompts, error, reload, loaded } = useSavedPrompts();
+  useEffect(() => { if (error) shellToast(error, true); }, [error]);
+  if (!loaded) return null;
+  return html`<${SavedPromptManager} prompts=${prompts} initial=${descriptor?.initial || ''} clone=${!!descriptor?.clone}
+    onClose=${onClose} onChanged=${reload} confirmDiscard=${confirmDiscard}/>`;
 }
 
 // SavedPromptChips selects an ordered set of saved prompts with the same chip

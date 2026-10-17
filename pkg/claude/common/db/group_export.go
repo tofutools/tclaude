@@ -76,13 +76,13 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	// default_model is intentionally NOT selected: the vestigial column was
 	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
 	// stays "" and is left out of the manifest (omitempty).
-	var environmentJSON string
+	var environmentJSON, defaultPrompts string
 	if err := d.QueryRow(`
-		SELECT descr, default_context, environment_json, attachment_url, attachment_label,
+		SELECT descr, default_context, environment_json, default_prompts, attachment_url, attachment_label,
 		       max_members, created_at, archived_at
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
-		&environmentJSON,
+		&environmentJSON, &defaultPrompts,
 		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
 		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
@@ -90,6 +90,16 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	exp.Group.Environment, err = unmarshalEnvironmentColumn(environmentJSON)
 	if err != nil {
 		return nil, fmt.Errorf("collect group environment: %w", err)
+	}
+	exp.Group.DefaultPrompts = UnmarshalPromptRefs(defaultPrompts)
+	for _, name := range exp.Group.DefaultPrompts {
+		p, err := GetSavedPrompt(name)
+		if err != nil {
+			return nil, fmt.Errorf("collect saved prompt %q: %w", name, err)
+		}
+		if p != nil {
+			exp.SavedPrompts = append(exp.SavedPrompts, groupexport.SavedPrompt{Name: p.Name, Body: p.Body})
+		}
 	}
 	exp.Group.CreatedAt = exportTimestamp(groupCreatedAt)
 	exp.Group.ArchivedAt = exportTimestamp(groupArchivedAt)
@@ -624,6 +634,9 @@ type GroupImportResult struct {
 	AgentCount         int
 	MessageCount       int
 	HeadAliasesSkipped []string // handles skipped because they already existed locally
+	PromptsImported    []string // embedded saved prompts created here
+	PromptsKeptLocal   []string // embedded saved prompts whose local same-named version differs and was kept
+	PromptsDropped     []string // default-prompt names neither embedded nor present here
 }
 
 // ImportGroup applies a GroupImportPlan in a single transaction: it
@@ -673,6 +686,9 @@ func ImportGroup(plan GroupImportPlan) (*GroupImportResult, error) {
 		AgentCount:         len(plan.Export.Members),
 		MessageCount:       len(plan.Export.Messages),
 		HeadAliasesSkipped: c.skippedAliases,
+		PromptsImported:    c.promptsImported,
+		PromptsKeptLocal:   c.promptsKept,
+		PromptsDropped:     c.promptsDropped,
 	}, nil
 }
 
@@ -684,6 +700,8 @@ type importCtx struct {
 	exp            *groupexport.Export
 	newGroupID     int64
 	skippedAliases []string
+	// Saved-prompt outcomes of defaultPrompts, reported to the operator.
+	promptsImported, promptsKept, promptsDropped []string
 	// createdActors tracks the actor ids freshly minted by THIS import, so the
 	// enrollment metadata replay only restores archived facts (created_at,
 	// pending_name, retire triple) onto rows this import created — never onto a
@@ -907,7 +925,51 @@ func (c *importCtx) group() error {
 			return fmt.Errorf("import: group permission %q: %w", permission.Slug, err)
 		}
 	}
+	if err := c.defaultPrompts(); err != nil {
+		return err
+	}
 	return c.legacyDefaultModelProfile()
+}
+
+// defaultPrompts restores the group's saved-prompt defaults: embedded prompts
+// missing here are created, a local prompt of the same name is kept as is, and
+// a reference that resolves to neither is dropped.
+func (c *importCtx) defaultPrompts() error {
+	bodies := map[string]string{}
+	for _, p := range c.exp.SavedPrompts {
+		bodies[p.Name] = p.Body
+	}
+	kept := []string{}
+	for _, name := range normalizeProfileRoleRefs(c.exp.Group.DefaultPrompts, "") {
+		var local string
+		err := c.tx.QueryRow(`SELECT body FROM saved_prompts WHERE name = ?`, name).Scan(&local)
+		switch {
+		case err == nil:
+			if body, ok := bodies[name]; ok && body != local {
+				c.promptsKept = append(c.promptsKept, name)
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			body, ok := bodies[name]
+			if !ok {
+				c.promptsDropped = append(c.promptsDropped, name)
+				continue
+			}
+			if _, err := c.tx.Exec(`INSERT INTO saved_prompts (name, body) VALUES (?, ?)`, name, body); err != nil {
+				return fmt.Errorf("import: saved prompt %q: %w", name, err)
+			}
+			c.promptsImported = append(c.promptsImported, name)
+		default:
+			return fmt.Errorf("import: saved prompt %q: %w", name, err)
+		}
+		kept = append(kept, name)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	if _, err := c.tx.Exec(`UPDATE agent_groups SET default_prompts = ? WHERE id = ?`, MarshalPromptRefs(kept), c.newGroupID); err != nil {
+		return fmt.Errorf("import: group default prompts: %w", err)
+	}
+	return nil
 }
 
 func requiredImportDBTime(value string) any {

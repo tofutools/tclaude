@@ -33,14 +33,9 @@ func savePrompt(w http.ResponseWriter, r *http.Request, previousName string) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	p.Name = strings.TrimSpace(p.Name)
-	if err := validateGroupName(p.Name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "prompt name: "+err.Error())
-		return
-	}
-	p.Body = strings.ReplaceAll(p.Body, "\r\n", "\n")
-	if strings.TrimSpace(p.Body) == "" || !isValidInitialMessage(p.Body) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "prompt body must contain 1–16384 UTF-8 bytes, without control characters except tabs and newlines")
+	var err error
+	if p, err = normalizeSavedPrompt(p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
 	if err := db.SaveSavedPrompt(previousName, p); err != nil {
@@ -115,6 +110,79 @@ func handleSavedPromptByName(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PATCH or DELETE")
 	}
+}
+
+// normalizeSavedPrompt applies the library's name and body rules — the ones
+// every write path, including bundle imports, holds a prompt to.
+func normalizeSavedPrompt(p db.SavedPrompt) (db.SavedPrompt, error) {
+	p.Name = strings.TrimSpace(p.Name)
+	if err := validateGroupName(p.Name); err != nil {
+		return p, fmt.Errorf("prompt name: %w", err)
+	}
+	p.Body = strings.ReplaceAll(p.Body, "\r\n", "\n")
+	if strings.TrimSpace(p.Body) == "" || !isValidInitialMessage(p.Body) {
+		return p, errors.New("prompt body must contain 1–16384 UTF-8 bytes, without control characters except tabs and newlines")
+	}
+	return p, nil
+}
+
+// collectReferencedSavedPrompts returns the library entries the given
+// reference sets name, each once, in first-reference order. A dangling name is
+// skipped: import degrades it anyway.
+func collectReferencedSavedPrompts(refSets ...[]string) ([]db.SavedPrompt, error) {
+	seen := map[string]bool{}
+	out := []db.SavedPrompt{}
+	for _, refs := range refSets {
+		for _, ref := range cleanRoleRefs(refs) {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			p, err := db.GetSavedPrompt(ref)
+			if err != nil {
+				return nil, err
+			}
+			if p != nil {
+				out = append(out, *p)
+			}
+		}
+	}
+	return out, nil
+}
+
+// recreateMissingSavedPrompts creates the embedded prompts a bundle carries
+// that this library lacks. Like roles, an existing prompt is never
+// overwritten: a differing local version is kept and reported. Prompts are
+// shared task text with no authority of their own, so a bundle import does
+// not additionally require prompts.manage.
+func recreateMissingSavedPrompts(prompts []db.SavedPrompt) ([]string, *spawnFailure) {
+	warnings := []string{}
+	for _, raw := range prompts {
+		p, err := normalizeSavedPrompt(raw)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("embedded saved prompt %q is invalid here (%s) — skipped", raw.Name, err))
+			continue
+		}
+		existing, err := db.GetSavedPrompt(p.Name)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if existing != nil {
+			if existing.Body != p.Body {
+				warnings = append(warnings, fmt.Sprintf(
+					"saved prompt %q already exists here with different text — kept the local version", p.Name))
+			}
+			continue
+		}
+		if err := db.SaveSavedPrompt("", p); errors.Is(err, db.ErrPromptNameTaken) {
+			warnings = append(warnings, fmt.Sprintf("saved prompt %q already exists here — kept the local version", p.Name))
+		} else if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		} else {
+			warnings = append(warnings, fmt.Sprintf("imported saved prompt %q", p.Name))
+		}
+	}
+	return warnings, nil
 }
 
 // resolveSavedPromptRefs validates an ordered saved-prompt reference set and

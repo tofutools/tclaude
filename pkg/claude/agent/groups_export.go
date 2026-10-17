@@ -226,6 +226,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		Retitled       map[string]string `json:"retitled"`
 		SkippedAliases []string          `json:"skipped_head_aliases"`
 		FileWarnings   []string          `json:"file_warnings"`
+		PromptWarnings []string          `json:"prompt_warnings"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -255,6 +256,9 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 	}
 	for _, w := range resp.FileWarnings {
 		fmt.Fprintf(stdout, "  warning: %s\n", w)
+	}
+	for _, w := range resp.PromptWarnings {
+		fmt.Fprintf(stdout, "  note: %s\n", w)
 	}
 	return rcOK
 }

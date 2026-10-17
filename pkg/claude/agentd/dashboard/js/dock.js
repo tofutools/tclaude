@@ -47,6 +47,7 @@ import { syncChromeTopInset } from './chrome-inset.js';
 // it's single-file only).
 import { refresh, confirmModal, toast } from './refresh.js';
 import { deleteSavedPrompt } from './saved-prompts-actions.js';
+import { openSavedPromptsManager as openSavedPrompts } from './modal-saved-prompts.js';
 import { profileSummary, profileDetailChips, createProfile } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
@@ -56,13 +57,6 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
-
-// The saved-prompt manager is a Preact overlay; load it only when opened so
-// the dock's own module graph stays free of the Preact runtime.
-function openSavedPrompts(options = {}) {
-  return import('./saved-prompts.js')
-    .then(({ openSavedPromptsManager }) => openSavedPromptsManager({ ...options, onChanged: () => refresh() }));
-}
 
 async function removeSavedPrompt(name) {
   const ok = await confirmModal({

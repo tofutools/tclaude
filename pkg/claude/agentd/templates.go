@@ -719,7 +719,11 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
-	ModelProxy           string
+	ModelProxy string
+	// PromptRefs is the saved-prompt set the agent's brief opens with: the
+	// referenced profile's, else the group default profile's, else the
+	// group's own default prompts, else the global default profile's.
+	PromptRefs           []string
 	SpawnProfile         string
 	Environment          []sandboxpolicy.EnvironmentEntry
 	EnvironmentOverrides []sandboxpolicy.EnvironmentEntry
@@ -1536,6 +1540,8 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		Notes:                       notes,
 		Info:                        info,
 		Warnings:                    warnings,
+		PromptRefs: resolvePromptRefsLaunchField(agent.SpawnRequest{}, g,
+			append(append([]launchProfileTier(nil), tiers...), defaultTiers...)),
 	}, nil
 }
 
@@ -1909,6 +1915,9 @@ type templateExportEnvelope struct {
 	// reader would treat any remembered reason as disabled, so version-3 exports
 	// must be rejected by that older reader.
 	Profiles []spawnProfileJSON `json:"profiles,omitempty"`
+	// SavedPrompts embeds the saved prompts those profiles reference; import
+	// creates the missing ones before the profiles, never overwriting.
+	SavedPrompts []db.SavedPrompt `json:"saved_prompts,omitempty"`
 }
 
 // collectReferencedRoles gathers every role referenced directly by a template
@@ -2038,6 +2047,11 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	prompts, err := collectReferencedSavedPrompts(profilesPromptRefs(profiles)...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, templateExportEnvelope{
 		Format:        templateExportFormat,
 		FormatVersion: templateExportVersion,
@@ -2045,6 +2059,7 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
 		Template:      inner,
 		Roles:         roles,
 		Profiles:      profiles,
+		SavedPrompts:  prompts,
 	})
 }
 
@@ -2372,6 +2387,12 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 	if rfail != nil {
 		return templateImportResult{}, false, rfail
 	}
+	// Saved prompts likewise precede the profiles that reference them.
+	promptWarnings, prfail := recreateMissingSavedPrompts(env.SavedPrompts)
+	if prfail != nil {
+		return templateImportResult{}, false, prfail
+	}
+	roleWarnings = append(roleWarnings, promptWarnings...)
 	// Re-create any embedded spawn profile that is missing locally before the
 	// sanitize pass checks agent profile references. Existing profiles are never
 	// overwritten (sacred edits).

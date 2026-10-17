@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -797,6 +798,36 @@ type profileExportEnvelope struct {
 	FormatVersion int                `json:"format_version"`
 	ExportedAt    string             `json:"exported_at,omitempty"`
 	Profiles      []spawnProfileJSON `json:"profiles"`
+	// SavedPrompts embeds every saved prompt the profiles reference, so their
+	// prompt_refs resolve on the importing machine. Import creates the missing
+	// ones and never overwrites a local prompt of the same name.
+	SavedPrompts []db.SavedPrompt `json:"saved_prompts,omitempty"`
+}
+
+// profilesPromptRefs lists each profile's saved-prompt reference set.
+func profilesPromptRefs(profiles []spawnProfileJSON) [][]string {
+	out := make([][]string, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, p.PromptRefs)
+	}
+	return out
+}
+
+// withoutEmbeddedPrompts drops the references a bundle's own embedded prompts
+// satisfy, so validation before import only checks the remaining ones
+// against this library.
+func withoutEmbeddedPrompts(p spawnProfileJSON, embedded []db.SavedPrompt) spawnProfileJSON {
+	if len(p.PromptRefs) == 0 || len(embedded) == 0 {
+		return p
+	}
+	refs := []string{}
+	for _, ref := range p.PromptRefs {
+		if !slices.ContainsFunc(embedded, func(e db.SavedPrompt) bool { return e.Name == strings.TrimSpace(ref) }) {
+			refs = append(refs, ref)
+		}
+	}
+	p.PromptRefs = refs
+	return p
 }
 
 type profileImportInspectResult struct {
@@ -827,6 +858,7 @@ type profileImportRequest struct {
 	FormatVersion int                     `json:"format_version"`
 	ExportedAt    string                  `json:"exported_at,omitempty"`
 	Profiles      []spawnProfileJSON      `json:"profiles"`
+	SavedPrompts  []db.SavedPrompt        `json:"saved_prompts,omitempty"`
 	Decisions     []profileImportDecision `json:"decisions,omitempty"`
 }
 
@@ -848,6 +880,7 @@ func profileImportRequestEnvelope(req profileImportRequest) profileExportEnvelop
 		FormatVersion: req.FormatVersion,
 		ExportedAt:    req.ExportedAt,
 		Profiles:      req.Profiles,
+		SavedPrompts:  req.SavedPrompts,
 	}
 }
 
@@ -975,11 +1008,17 @@ func handleSpawnProfilesExport(w http.ResponseWriter, r *http.Request) {
 			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
 		}
 	}
+	prompts, err := collectReferencedSavedPrompts(profilesPromptRefs(out)...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, profileExportEnvelope{
 		Format:        profileExportFormat,
 		FormatVersion: profileExportVersion,
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
 		Profiles:      out,
+		SavedPrompts:  prompts,
 	})
 }
 
@@ -1038,7 +1077,7 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 		if existing != nil {
 			allowedID = existing.ID
 		}
-		built, fail := buildProfileFromJSON(pj)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, env.SavedPrompts))
 		if fail != nil {
 			prev.Valid = false
 			prev.Error = fail.Msg
@@ -1134,6 +1173,35 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		profile spawnProfileJSON
 	}
 	plans := []importPlan{}
+
+	// Embedded saved prompts go in first, so the profiles below can resolve
+	// them; only those an included profile references are created.
+	included := []spawnProfileJSON{}
+	for _, d := range decisions {
+		action := strings.ToLower(strings.TrimSpace(d.Action))
+		if pj, ok := byName[strings.TrimSpace(d.Name)]; ok && includeDecision(d) && action != "skip" {
+			included = append(included, pj)
+		}
+	}
+	if len(env.SavedPrompts) > 0 && len(included) > 0 {
+		wanted := map[string]bool{}
+		for _, refs := range profilesPromptRefs(included) {
+			for _, ref := range cleanRoleRefs(refs) {
+				wanted[ref] = true
+			}
+		}
+		embedded := []db.SavedPrompt{}
+		for _, p := range env.SavedPrompts {
+			if wanted[strings.TrimSpace(p.Name)] {
+				embedded = append(embedded, p)
+			}
+		}
+		promptWarnings, fail := recreateMissingSavedPrompts(embedded)
+		if fail != nil {
+			return profileImportResult{}, fail
+		}
+		result.Warnings = append(result.Warnings, promptWarnings...)
+	}
 
 	for _, d := range decisions {
 		source := strings.TrimSpace(d.Name)

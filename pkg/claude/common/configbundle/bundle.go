@@ -14,7 +14,7 @@ import (
 
 const Format = "tclaude-config-bundle"
 
-var Sections = []string{"roles", "sandbox-profiles", "profiles", "templates", "process-templates", "default-permissions", "config"}
+var Sections = []string{"roles", "saved-prompts", "sandbox-profiles", "profiles", "templates", "process-templates", "default-permissions", "config"}
 
 type Item struct {
 	Name  string          `json:"name"`

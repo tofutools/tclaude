@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
-import { SavedPromptChips } from './saved-prompts.js';
+import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { grantListToOverrides, grantOverridesToList } from './permission-grant-list.js';
@@ -2255,6 +2255,8 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':
       return html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'saved-prompts':
+      return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${state.sandboxProfiles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
@@ -2305,6 +2307,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
   const controller = {
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
+    openSavedPrompts: ({ initial = '', clone = false } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openTemplatesManageModal: actions.openTemplateManager, openTemplateEditor: actions.openTemplateEditor,
     updateTemplates: actions.updateTemplates, removeTemplate: actions.removeTemplate,
