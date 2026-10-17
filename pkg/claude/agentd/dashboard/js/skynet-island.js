@@ -155,7 +155,8 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
 
 // FusedDropdown is the fused-view control: a checkbox per node, defaulting to
 // all. Ticking two or more shows them together in Groups and Terminals;
-// clicking a node's name (or its "only") shows that node alone.
+// clicking a node's name (or its "only") shows that node alone. A connected
+// node with no peers yet still opens it, to list itself and say how to link.
 function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const rootRef = useRef(null);
   const [open, setOpen, popStyle] = usePopover(rootRef);
@@ -163,38 +164,41 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const nodes = fleetNodes(fleet);
   const ticked = fused ? tickedNodes(fleet, fused) : nodes;
   const list = selectorKind(fleet) === 'dropdown' ? filterNodes(fleet, query) : nodes;
+  const alone = nodes.length < 2;
   const toggle = (id) => {
+    if (alone) return;
     const next = toggleNode(fleet, fused || 'all', id);
     if (next.only !== undefined) { setOpen(false); onPick(next.only); } else onFuse(next);
   };
   const onButton = () => {
-    if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
+    if (alone) setOpen(!open);
+    else if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
   };
   const primary = nodes.find((n) => n.id === pageNode) || fleet.self;
   return html`<span class="node-pick" ref=${rootRef}>
     <button type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${fused ? `Fused view of ${ticked.length} of ${nodes.length} nodes. Change the nodes` : 'Show several nodes together'}
-      title=${fused ? `Groups and Terminals show ${ticked.length} of ${nodes.length} nodes` : 'Show several nodes together in Groups and Terminals'} onClick=${onButton}>
+      title=${fused ? `Groups and Terminals show ${ticked.length} of ${nodes.length} nodes` : alone ? NO_PEERS : 'Show several nodes together in Groups and Terminals'} onClick=${onButton}>
       <span class="node-fuse-stack" aria-hidden="true">${nodes.slice(0, 4).map((n) => html`<b key=${n.id} class=${isTicked(fused || 'all', n.id) ? '' : 'off'} style=${`--c:${n.color}`}></b>`)}</span>
       <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
     ${open && html`<div class="node-pop node-fuse-pop" role="dialog" aria-label="Fuse nodes" style=${popStyle}>
-      <div class="node-pop-head"><span>Fuse nodes</span>${fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
+      <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
       ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
-        <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
+        <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
         <span class="node-pop-swatch" aria-hidden="true"></span>
         <button type="button" class="node-pop-name" title=${`Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
         <button type="button" class="node-pop-only" tabindex="-1" onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
         <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}${node.id === primary.id ? ' · primary' : ''}</span>
       </div>`)}
-      <div class="node-pop-foot"><b>Groups</b> and <b>Terminals</b> show the ticked nodes together. Other tabs show one node, the primary: <b>${primary.local ? '⌂ ' : ''}${primary.name}</b>.</div>
+      ${alone ? html`<div class="node-pop-foot">${NO_PEERS}</div>` : html`<div class="node-pop-foot"><b>Groups</b> and <b>Terminals</b> show the ticked nodes together. Other tabs show one node, the primary: <b>${primary.local ? '⌂ ' : ''}${primary.name}</b>.</div>`}
     </div>`}
   </span>`;
 }
 
-// NO_PEERS says why the fused view is greyed out on a connected node that has
-// no linked nodes yet.
+// NO_PEERS says why there is nothing to fuse on a connected node that has no
+// linked nodes yet.
 const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet';
 
 // FleetChip opens Fleet administration while there is no fleet to reach it
@@ -238,7 +242,8 @@ function MapGate({ reason, doc = globalThis.document }) {
 }
 
 // IdleChips is the chip row before there is a fleet to pick from: this node's
-// ⌂ and a greyed-out fused button. ⌂ is usable once the hub is connected, and
+// ⌂ and the fused dropdown, greyed out until the hub is connected and then
+// listing this node alone. ⌂ is usable once the hub is connected, and
 // always where it leads somewhere: home from a peer's view, or back from the
 // map or Fleet administration.
 function IdleChips({ state, node, off, remote, onPick, navigate }) {
@@ -253,9 +258,10 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span>
     </button>
     <span class="node-chips-sep" aria-hidden="true"></span>
-    <button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
+    ${current.mapFleet && !off ? html`<${FusedDropdown} state=${state} fleet=${current.mapFleet} fused=${null} pageNode=${remote || self.id} onPick=${onPick} onFuse=${() => {}} />`
+    : html`<button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
       <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
-    </button>
+    </button>`}
     ${!remote && html`<${FleetChip} state=${state} node=${node} off=${off} navigate=${navigate} />`}
   </span>`;
 }

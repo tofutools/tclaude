@@ -120,7 +120,17 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
 
   await harness.act(() => { state.setStatus({ ...status([]), peers: [] }); });
   assert.equal(home().disabled, false, 'connected without peers: ⌂ usable');
-  assert.equal(fuse().disabled, true, 'nothing to fuse yet');
+  assert.equal(fuse().disabled, false, 'connected without peers: the nodes dropdown opens');
+  assert.match(fuse().title, /No linked nodes yet/);
+  await harness.act(() => harness.fireEvent(fuse(), 'click'));
+  const pop = mounted.container.querySelector('.node-fuse-pop');
+  assert.ok(pop, 'the dropdown lists this node alone');
+  assert.deepEqual([...pop.querySelectorAll('.node-pop-name')].map((b) => b.textContent), ['⌂ desk']);
+  assert.equal(pop.querySelector('input[type="checkbox"]').disabled, true, 'nothing to fuse yet');
+  assert.equal(pop.querySelector('[data-fuse="all"]'), null);
+  assert.match(pop.textContent, /No linked nodes yet/);
+  assert.equal(state.fused.value, null, 'opening it turns on no fused view');
+  await harness.act(() => harness.fireEvent(fuse(), 'click'));
   assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected without peers: the map opens, showing this node alone');
   await harness.act(() => { activeTab.value = 'fleet-admin'; });
   await harness.act(() => harness.fireEvent(home(), 'click'));
