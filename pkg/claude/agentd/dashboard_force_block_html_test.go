@@ -84,7 +84,8 @@ func TestDashboardAssets_ForceFoldWired(t *testing.T) {
 		"`tclaude.dash.forcefold.${group.name}`",
 		"if (!isForce(group) || dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1') return null;",
 		"actions.toggleForceFold(group)",
-		"isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`}",
+		"const toggle = fold && isForce(group);",
+		"toggle ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`}",
 		// groups-actions.js — the native toggle handler flips the same pref.
 		"toggleForceFold(group)",
 	} {
