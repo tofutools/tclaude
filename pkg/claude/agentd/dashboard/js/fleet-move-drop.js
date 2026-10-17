@@ -1,4 +1,4 @@
-// skynet-move-drop.js — dragging an agent onto a group on another node in
+// fleet-move-drop.js — dragging an agent onto a group on another node in
 // "Groups · all nodes" (tcl-u4yodp). A drop confirms, then moves the agent
 // with direct_if_allowed: the receiver alone decides whether it lands at once
 // or waits for acceptance as an offer. Progress is read from the move record,
@@ -60,8 +60,8 @@ function errText(e) { return e?.message || String(e); }
 export function MoveDropDialog(props) {
   const okRef = useRef(null);
   const { drop: { agent, target }, onClose } = props;
-  return html`<${Overlay} id="skynet-move-drop" labelledby="skynet-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
-    <h3 id="skynet-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
+  return html`<${Overlay} id="fleet-move-drop" labelledby="fleet-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
+    <h3 id="fleet-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
     <${MovePanel} ...${props} okRef=${okRef} />
   </${Overlay}>`;
 }
@@ -162,13 +162,13 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
       <div class="fa-of-row"><span class="fa-k">to</span> ${target.name} · ${target.group}</div>
       <div class="fa-of-row"><span class="fa-k">starts in</span> <span class="muted">${push ? target.name : 'this node'} picks it by its landing policy (a matching repo, the agent's own path, or the group's default directory)</span></div>` : ''}
     ${findings && phase !== 'progress' && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
-      <label class="fa-of-check"><input id="skynet-move-drop-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}
+      <label class="fa-of-check"><input id="fleet-move-drop-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     ${status}
     <div class="modal-buttons"><span class="spacer"></span>
       ${phase === 'progress'
-        ? html`<button type="button" ref=${okRef} id="skynet-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
-        : html`<button type="button" id="skynet-move-drop-cancel" onClick=${onClose}>Cancel</button>
-          <button type="button" ref=${okRef} class="confirm-danger" id="skynet-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
+        ? html`<button type="button" ref=${okRef} id="fleet-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
+        : html`<button type="button" id="fleet-move-drop-cancel" onClick=${onClose}>Cancel</button>
+          <button type="button" ref=${okRef} class="confirm-danger" id="fleet-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
     </div>`;
 }

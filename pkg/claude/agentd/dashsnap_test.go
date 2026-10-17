@@ -3862,7 +3862,7 @@ if (!document.querySelector('#retire-ok[aria-busy="true"]')) throw new Error('re
 			SettleMS: 300,
 		},
 	}
-	states = append(states, skynetStates()...)
+	states = append(states, fleetStates()...)
 	states = append(states, savedPromptAndSpendStates(showGroups, expandGroups)...)
 	return append(states, processGraphStates()...)
 }

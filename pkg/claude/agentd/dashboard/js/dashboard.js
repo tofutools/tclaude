@@ -70,12 +70,12 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
-import { onSkynetOverviewChange, skynetOverviewShown } from './snapshot-store.js';
+import { onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -192,8 +192,8 @@ async function settleInitialLayout() {
     () => mountLogsFeature(),
     () => mountMessagesFeature(),
     () => mountAuditFeature(),
-    () => mountSkynetFeature(),
-    () => mountSkynetFleetFeature(),
+    () => mountFleetFeature(),
+    () => mountFleetMergedGroupsFeature(),
     () => mountFusedMessagesFeature(),
     () => mountFleetAdminFeature(),
     () => mountDebugFeature(),
@@ -455,8 +455,8 @@ async function settleInitialLayout() {
     immediate: true,
     bootOptions: { includeLists: false },
     bootUntil: bootFinished,
-    quiet: skynetOverviewShown,
-    subscribeQuiet: onSkynetOverviewChange,
+    quiet: fleetOverviewShown,
+    subscribeQuiet: onFleetOverviewChange,
   }));
   // Independent of the snapshot cadence on purpose — see browser-notify.js.
   // Self-gating: it costs one no-op function call per tick until the human

@@ -1,4 +1,4 @@
-import { keyTransition } from './skynet-model.js';
+import { keyTransition } from './fleet-model.js';
 
 // fleet-admin-model.js — DOM-free view helpers for Fleet administration: which
 // nodes this node trusts and what they may do. The data is this node's own

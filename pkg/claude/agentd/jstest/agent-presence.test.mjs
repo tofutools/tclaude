@@ -44,14 +44,14 @@ test('a group keeps an away placeholder row but counts it apart from members', a
     const values = new Map();
     export const dashPrefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
   `);
-  const [{ GroupsNativeList }, { GroupsInteractionProvider }, { dashPrefs }, { skynetState }, vm] = await Promise.all([
+  const [{ GroupsNativeList }, { GroupsInteractionProvider }, { dashPrefs }, { fleetState }, vm] = await Promise.all([
     harness.importDashboardModule('js/groups-list.js'),
     harness.importDashboardModule('js/groups-interactions.js'),
     harness.importDashboardModule('js/prefs.js'),
-    harness.importDashboardModule('js/skynet-state.js'),
+    harness.importDashboardModule('js/fleet-state.js'),
     harness.importDashboardModule('js/groups-view-model.js'),
   ]);
-  skynetState.fleet.value = fleet;
+  fleetState.fleet.value = fleet;
   const now = new Date().toISOString();
   const members = [
     { conv_id: 'c1', agent_id: 'agt_1', title: 'builder-2', online: true, state: { status: 'idle' } },

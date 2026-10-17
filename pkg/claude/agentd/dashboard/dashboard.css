@@ -19787,7 +19787,7 @@ body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc
 .cost-factor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; border-top: 1px solid #293440; font-size: 11px; }
 .cfg-cost-factors { max-width: 440px; }
 
-/* Skynet node row (js/skynet-island.js). The chips sit right-aligned in the
+/* Fleet node row (js/fleet-island.js). The chips sit right-aligned in the
    existing tab bar and are shorter than the tabs, so the bar keeps its height.
    The host is empty when federation is off or has no trusted peers; the static
    map anchor hides with it, leaving today's tab bar untouched. */
@@ -19872,12 +19872,12 @@ nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 .node-pop-foot b { color: #c9d1d9; font-weight: 500; }
 
 /* Fused Groups replaces this node's roster in the Groups tab. */
-#skynet-fused-groups-root { display: none; }
-html.scope-fused #skynet-fused-groups-root { display: block; }
-html.scope-fused #tab-groups > :not(#skynet-fused-groups-root) { display: none !important; }
+#fleet-fused-groups-root { display: none; }
+html.scope-fused #fleet-fused-groups-root { display: block; }
+html.scope-fused #tab-groups > :not(#fleet-fused-groups-root) { display: none !important; }
 /* Fused Messages likewise replaces this node's mail client. */
-#skynet-fused-messages-root { display: none; }
-html.scope-fused #skynet-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#fleet-fused-messages-root { display: none; }
+html.scope-fused #fleet-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 html.scope-fused #messages-root { display: none !important; }
 .fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
 .fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
@@ -19903,70 +19903,70 @@ html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="t
 
 /* Top-level mode: the map replaces the per-node tab strip with its own view
    switch in the same row, so nothing below moves. */
-.skynet-toplevel { display: inline-flex; align-items: center; }
-.skynet-toplevel:empty { display: none; }
+.fleet-toplevel { display: inline-flex; align-items: center; }
+.fleet-toplevel:empty { display: none; }
 /* Keyed on a chip row with a map (.has-fleet, or .has-map on a connected node
    with no peers yet): if the hub drops while the map is open, the per-node
    tabs come back rather than leaving an empty bar. */
 nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
-.skynet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
-.skynet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-.skynet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
-.skynet-seg-btn.on { background: #1f6feb33; color: #f0f6fc; }
-.skynet-toplevel-note { color: #7d8590; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fleet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
+.fleet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.fleet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
+.fleet-seg-btn.on { background: #1f6feb33; color: #f0f6fc; }
+.fleet-toplevel-note { color: #7d8590; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Skynet map: node cards with measured link edges. */
+/* Fleet map: node cards with measured link edges. */
 #tab-map.active { margin: -16px -24px; }
-.skynet-map {
+.fleet-map {
   position: relative; min-height: calc(100vh - 99px - var(--footer-h)); box-sizing: border-box; padding: 32px 40px 56px;
   display: grid; grid-template-columns: minmax(280px, 340px) minmax(120px, 1fr) auto; align-items: center; column-gap: 0;
   background: radial-gradient(circle at 1px 1px, #21262d 1px, transparent 1.2px) 0 0 / 22px 22px, #0d1117;
 }
-.skynet-map-local { grid-column: 1; z-index: 1; }
+.fleet-map-local { grid-column: 1; z-index: 1; }
 /* The hub sits between this node and its peers, narrower than a node card,
    and shrinks with the middle column rather than widening the map. */
-.skynet-map-hub { grid-column: 2; justify-self: center; width: min(240px, 100% - 16px); min-width: 0; z-index: 1; }
-.skynet-card.hub { --nc: #8b949e; }
-.skynet-card.hub .skynet-card-body { grid-template-columns: 56px minmax(0, 1fr); }
-.skynet-hub-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.skynet-map-peers { grid-column: 3; display: grid; grid-template-columns: minmax(300px, 340px); gap: 28px; z-index: 1; justify-content: end; }
-.skynet-map-peers.wide { grid-template-columns: repeat(2, minmax(300px, 340px)); }
-.skynet-map-alone { align-self: center; padding: 14px 16px; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; font-size: 13px; }
-.skynet-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.skynet-edge { fill: none; stroke-width: 2; }
-.skynet-edge.live { stroke: #3fb950; }
-.skynet-edge.stale { stroke: #6e7681; stroke-dasharray: 6 5; }
-.skynet-edge-label { position: absolute; transform: translate(-50%, -50%); background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 1px 8px; font-size: 11px; color: #c9d1d9; white-space: nowrap; z-index: 1; }
-.skynet-card { box-sizing: border-box; background: #161b22; border: 1px solid #2a3340; border-top: 3px solid var(--nc); border-radius: 8px; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
-.skynet-card.stale { border-style: dashed; border-top-style: solid; opacity: .85; }
-.skynet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
-.skynet-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px; border-bottom: 1px solid #21262d; }
-.skynet-card-name { font-size: 15px; font-weight: 600; color: #f0f6fc; }
-.skynet-card-kind { color: #7d8590; font-size: 11px; border: 1px solid #30363d; border-radius: 9px; padding: 0 7px; white-space: nowrap; }
-.skynet-card-kind.unrestricted { color: #e3b341; border-color: #9e6a03; }
-.skynet-card-presence { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; color: #8b949e; }
-.skynet-card-presence i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
-.skynet-card-presence.online { color: #3fb950; }
-.skynet-card-presence.error { color: #f85149; }
-.skynet-card-body { margin: 0; padding: 8px 12px 10px; display: grid; grid-template-columns: 80px 1fr; row-gap: 5px; column-gap: 8px; align-items: center; }
-.skynet-card-body dt { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-.skynet-card-body dd { margin: 0; }
-.skynet-card-empty { padding: 10px 12px; color: #8b949e; font-style: italic; }
-.skynet-attn { color: #d29922; }
-.skynet-health.stale, .skynet-health.warming { color: #d29922; }
-.skynet-health.current { color: #3fb950; }
-.skynet-meter { display: inline-flex; align-items: center; gap: 3px; margin-right: 10px; white-space: nowrap; }
-.skynet-meter-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
-.skynet-meter-bar b { display: block; height: 100%; background: var(--nc, #58a6ff); }
-.skynet-card-foot { display: flex; gap: 6px; padding: 0 12px 10px; }
-.skynet-card-key { padding: 0 12px 8px; font-size: 12px; }
-.skynet-card-key.pending { color: #e3b341; }
-.skynet-card-key.conflict { color: #f85149; }
-.skynet-legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 16px; align-items: center; color: #7d8590; font-size: 11px; }
-.skynet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
-.skynet-legend i.stale { border-top: 2px dashed #6e7681; }
-.skynet-card-foot button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
-.skynet-card-foot button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.fleet-map-hub { grid-column: 2; justify-self: center; width: min(240px, 100% - 16px); min-width: 0; z-index: 1; }
+.fleet-card.hub { --nc: #8b949e; }
+.fleet-card.hub .fleet-card-body { grid-template-columns: 56px minmax(0, 1fr); }
+.fleet-card-hub-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.fleet-map-peers { grid-column: 3; display: grid; grid-template-columns: minmax(300px, 340px); gap: 28px; z-index: 1; justify-content: end; }
+.fleet-map-peers.wide { grid-template-columns: repeat(2, minmax(300px, 340px)); }
+.fleet-map-alone { align-self: center; padding: 14px 16px; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; font-size: 13px; }
+.fleet-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.fleet-edge { fill: none; stroke-width: 2; }
+.fleet-edge.live { stroke: #3fb950; }
+.fleet-edge.stale { stroke: #6e7681; stroke-dasharray: 6 5; }
+.fleet-edge-label { position: absolute; transform: translate(-50%, -50%); background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 1px 8px; font-size: 11px; color: #c9d1d9; white-space: nowrap; z-index: 1; }
+.fleet-card { box-sizing: border-box; background: #161b22; border: 1px solid #2a3340; border-top: 3px solid var(--nc); border-radius: 8px; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.fleet-card.stale { border-style: dashed; border-top-style: solid; opacity: .85; }
+.fleet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
+.fleet-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px; border-bottom: 1px solid #21262d; }
+.fleet-card-name { font-size: 15px; font-weight: 600; color: #f0f6fc; }
+.fleet-card-kind { color: #7d8590; font-size: 11px; border: 1px solid #30363d; border-radius: 9px; padding: 0 7px; white-space: nowrap; }
+.fleet-card-kind.unrestricted { color: #e3b341; border-color: #9e6a03; }
+.fleet-card-presence { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; color: #8b949e; }
+.fleet-card-presence i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+.fleet-card-presence.online { color: #3fb950; }
+.fleet-card-presence.error { color: #f85149; }
+.fleet-card-body { margin: 0; padding: 8px 12px 10px; display: grid; grid-template-columns: 80px 1fr; row-gap: 5px; column-gap: 8px; align-items: center; }
+.fleet-card-body dt { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.fleet-card-body dd { margin: 0; }
+.fleet-card-empty { padding: 10px 12px; color: #8b949e; font-style: italic; }
+.fleet-attn { color: #d29922; }
+.fleet-card-health.stale, .fleet-card-health.warming { color: #d29922; }
+.fleet-card-health.current { color: #3fb950; }
+.fleet-meter { display: inline-flex; align-items: center; gap: 3px; margin-right: 10px; white-space: nowrap; }
+.fleet-meter-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
+.fleet-meter-bar b { display: block; height: 100%; background: var(--nc, #58a6ff); }
+.fleet-card-foot { display: flex; gap: 6px; padding: 0 12px 10px; }
+.fleet-card-key { padding: 0 12px 8px; font-size: 12px; }
+.fleet-card-key.pending { color: #e3b341; }
+.fleet-card-key.conflict { color: #f85149; }
+.fleet-legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 16px; align-items: center; color: #7d8590; font-size: 11px; }
+.fleet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
+.fleet-legend i.stale { border-top: 2px dashed #6e7681; }
+.fleet-card-foot button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
+.fleet-card-foot button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 /* The wizard skin's longer tab names fill the bar at ~1280 px. While the node
    row is shown, trim only the tabs' side padding there so the row fits without
    wrapping a tab label (the bar's height never changes). */
@@ -20029,25 +20029,25 @@ html.remote-node :is(#group-create-open, #group-import-open, #cleanup-all-open, 
   opacity: .45; cursor: not-allowed;
 }
 html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
-/* Merged "Groups · all nodes" view (js/skynet-merged-island.js): a top-level
+/* Merged "Groups · all nodes" view (js/fleet-merged-island.js): a top-level
    view like the map, so the per-node tabs give way to the view switch. Its
    anchor exists for routing only. Groups are named group@node, the suffix in
    the node's own colour; an unreachable node's groups read as stale. */
 nav [data-tab="fleet-admin"] { display: none; }
 nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
-.skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
-.skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
-.skynet-seg-btn.on { cursor: default; }
-.skynet-merged-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; font-size: 12px; color: #c9d1d9; }
-.skynet-merged-node { display: inline-flex; align-items: center; gap: 6px; }
-.skynet-merged-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); }
-.skynet-merged-node.stale { color: #7d8590; }
-.skynet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
-.skynet-merged-note { color: #6e7681; margin-left: auto; }
-/* Drag an agent onto another node's group (skynet-move-drop.js): the group
+.fleet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
+.fleet-seg-btn + .fleet-seg-btn { border-left: 1px solid #30363d; }
+.fleet-seg-btn.on { cursor: default; }
+.fleet-merged-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; font-size: 12px; color: #c9d1d9; }
+.fleet-merged-node { display: inline-flex; align-items: center; gap: 6px; }
+.fleet-merged-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); }
+.fleet-merged-node.stale { color: #7d8590; }
+.fleet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
+.fleet-merged-note { color: #6e7681; margin-left: auto; }
+/* Drag an agent onto another node's group (fleet-move-drop.js): the group
    under the pointer says whether the drop can move it from here. */
-.skynet-merged details.skynet-drop-ok > summary { outline: 2px dashed #3fb950; outline-offset: -2px; background: rgba(63, 185, 80, 0.08); }
-.skynet-merged details.skynet-drop-no > summary { outline: 2px dashed #f85149; outline-offset: -2px; }
+.fleet-merged details.fleet-drop-ok > summary { outline: 2px dashed #3fb950; outline-offset: -2px; background: rgba(63, 185, 80, 0.08); }
+.fleet-merged details.fleet-drop-no > summary { outline: 2px dashed #f85149; outline-offset: -2px; }
 .fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
@@ -20111,7 +20111,7 @@ body.wizard #launch-target .lt-carries { background: #140f28; }
 body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
-#skynet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+#fleet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }
@@ -20271,9 +20271,9 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cell.broken { border-color: #f8514966; color: #ffa198; }
 .fa-up { color: #e3b341; font-weight: 600; }
 /* Node self-update (js/node-update.js): the map card's version row. */
-.skynet-update { color: #d29922; }
-.skynet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
-.skynet-link:hover { text-decoration: underline; }
+.fleet-update { color: #d29922; }
+.fleet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
+.fleet-link:hover { text-decoration: underline; }
 #fleet-node-update-job { margin: 8px 0; }
 /* Fleet → Run scripts (js/fleet-admin-run.js). */
 .fa-run-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
@@ -20321,7 +20321,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-kt-cmd code { word-break: break-all; }
 .fa-kt-cmd button { margin-left: 6px; }
 
-/* Phone widths. The skynet dialogs use the shared .cron-create-modal, whose
+/* Phone widths. The fleet dialogs use the shared .cron-create-modal, whose
    520px min-width clips them on a phone; let them shrink to the viewport and
    wrap long CLI lines. The map stacks its cards instead of laying peers out to
    the right of this node, and drops the edges (each card already names its
@@ -20339,11 +20339,11 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
   #fleet-profile-grants code { overflow-wrap: normal; }
 }
 @media (max-width: 720px) {
-  .skynet-map { grid-template-columns: minmax(0, 1fr); row-gap: 20px; padding: 16px 12px 56px; align-items: start; }
-  .skynet-map-local, .skynet-map-hub, .skynet-map-peers, .skynet-map-peers.wide { grid-column: 1; }
-  .skynet-map-hub { justify-self: stretch; width: auto; }
-  .skynet-map-peers, .skynet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
-  .skynet-edges, .skynet-edge-label { display: none; }
+  .fleet-map { grid-template-columns: minmax(0, 1fr); row-gap: 20px; padding: 16px 12px 56px; align-items: start; }
+  .fleet-map-local, .fleet-map-hub, .fleet-map-peers, .fleet-map-peers.wide { grid-column: 1; }
+  .fleet-map-hub { justify-self: stretch; width: auto; }
+  .fleet-map-peers, .fleet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
+  .fleet-edges, .fleet-edge-label { display: none; }
 }
 
 
@@ -20459,7 +20459,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .term-remote-badge.watch { border-color: #3d444d; color: #c9d1d9; }
 .remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
 .remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
-.skynet-card-terms { margin-left: 6px; }
+.fleet-card-terms { margin-left: 6px; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
 #remote-sessions button[data-open]:hover { border-color: #58a6ff; }
 #remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }

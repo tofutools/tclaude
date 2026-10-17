@@ -1,9 +1,9 @@
-// skynet-merged-model.js — DOM-free merge of several nodes' dashboard
+// fleet-merged-model.js — DOM-free merge of several nodes' dashboard
 // snapshots into one Groups listing for the top-level "Groups · all nodes"
 // view. Every node keeps its own snapshot schema (a restricted peer's is the
 // peer-view projection), so the existing Groups renderer draws the result.
 
-import { fmtAge } from './skynet-model.js';
+import { fmtAge } from './fleet-model.js';
 
 // MERGED_POLL_MS paces each peer's snapshot read while the merged view is on
 // screen: slower than a per-node view (2 s), faster than the map's summaries.

@@ -3,8 +3,8 @@ import { useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { remoteNodeID } from './skynet-model.js';
-import { skynetState } from './skynet-state.js';
+import { remoteNodeID } from './fleet-model.js';
+import { fleetState } from './fleet-state.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -30,14 +30,14 @@ export function resetRemoteInboxForTest() {
 
 // inboxPeers are the nodes worth asking: online and trusted unrestricted
 // (anything less is refused by the peer anyway).
-export function inboxPeers(fleet = skynetState.fleet.value) {
+export function inboxPeers(fleet = fleetState.fleet.value) {
   return (fleet?.peers || []).filter((p) => p.level === 'unrestricted' && p.online);
 }
 
 // claimRemoteInboxRead returns the nodes this tick should read, claiming the
 // slot, or [] — only on this node's own dashboard, at most every minute while
 // visible and every five while hidden. Nodes that dropped out are forgotten.
-export function claimRemoteInboxRead(now = Date.now(), { remote = remoteNodeID(), fleet = skynetState.fleet.value, hidden = !!globalThis.document?.hidden } = {}) {
+export function claimRemoteInboxRead(now = Date.now(), { remote = remoteNodeID(), fleet = fleetState.fleet.value, hidden = !!globalThis.document?.hidden } = {}) {
   if (remote) return [];
   const peers = inboxPeers(fleet);
   const keep = new Set(peers.map((p) => p.id));

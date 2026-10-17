@@ -1,4 +1,4 @@
-// skynet-model.js — DOM-free helpers for the Skynet node chip row and map view.
+// fleet-model.js — DOM-free helpers for the Fleet node chip row and map view.
 //
 // Data comes from two local dashboard endpoints:
 //   GET /api/federation/status?summary=1 — this node plus its federation peers.

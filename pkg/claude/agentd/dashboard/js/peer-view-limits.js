@@ -157,7 +157,7 @@ const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
 
 // peerAction maps a clicked control to the peer action request it stands for,
 // or null when the peer does not share it. The merged all-nodes view
-// (skynet-merged-island.js) uses it for a peer's rows too, with groupOf
+// (fleet-merged-island.js) uses it for a peer's rows too, with groupOf
 // turning its group@node names back into the peer's own.
 export function peerAction(act, peerView, groupOf = (g) => g) {
   let spec = PEER_ACTS[act.dataset.act];

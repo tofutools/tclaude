@@ -22,7 +22,7 @@ import {
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
-import { skynetState } from './skynet-state.js';
+import { fleetState } from './fleet-state.js';
 import {
   openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
@@ -653,7 +653,7 @@ export async function handleRowAction(action) {
       case 'send-elsewhere': {
         // The ⚙ "Send elsewhere" items: one launch-target dialog per mode.
         // data-node names another node's agent (a Terminals tab's ⚙).
-        const fleet = skynetState.fleet.value;
+        const fleet = fleetState.fleet.value;
         const node = data.node ? { id: data.node, name: data.nodeName || data.node.slice(0, 13) } : fleet?.self || { id: 'local', name: 'this node' };
         openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, node) });
         return;

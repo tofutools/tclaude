@@ -11,13 +11,13 @@ const fleet = {
 async function mountTabs(t, nodeFleet = fleet) {
   const harness = await createPreactHarness(t);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const [{ createTerminalShellState }, { createTerminalShellActions }, { TerminalTabs }, { skynetState }] = await Promise.all([
+  const [{ createTerminalShellState }, { createTerminalShellActions }, { TerminalTabs }, { fleetState }] = await Promise.all([
     harness.importDashboardModule('js/terminal-shell-state.js'),
     harness.importDashboardModule('js/terminal-shell-actions.js'),
     harness.importDashboardModule('js/terminal-shell-island.js'),
-    harness.importDashboardModule('js/skynet-state.js'),
+    harness.importDashboardModule('js/fleet-state.js'),
   ]);
-  skynetState.fleet.value = nodeFleet;
+  fleetState.fleet.value = nodeFleet;
   const state = createTerminalShellState({ persistPresentation: false });
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }), windowRef: harness.window, documentRef: harness.document,
@@ -34,7 +34,7 @@ async function mountTabs(t, nodeFleet = fleet) {
     actions.openPane({ ws: '/shell', key: 'shell', label: 'shell' });
     await Promise.resolve();
   });
-  t.after(async () => { await mounted.unmount(); actions.dispose(); skynetState.fleet.value = null; });
+  t.after(async () => { await mounted.unmount(); actions.dispose(); fleetState.fleet.value = null; });
   return { harness, host, state, snapshot, tab: (key) => host.querySelector(`[data-pane-key="${key}"]`) };
 }
 

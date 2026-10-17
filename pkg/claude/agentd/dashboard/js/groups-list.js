@@ -415,7 +415,7 @@ function GroupLinkChips({ group, snapshot }) {
   return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
 }
 
-// FleetGroupName renders a merged-view (skynet-merged-island.js) group as
+// FleetGroupName renders a merged-view (fleet-merged-island.js) group as
 // group@node: the suffix in the node's own colour opens that node's view.
 function FleetGroupName({ group }) {
   const node = group.fleet_node;

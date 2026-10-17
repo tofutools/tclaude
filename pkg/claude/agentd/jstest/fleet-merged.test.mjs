@@ -8,7 +8,7 @@ const group = (name, extra = {}) => ({ name, members: [], online: 0, ...extra })
 
 test('merge names groups group@node, keeps parents per node, and marks stale peers', async (t) => {
   const harness = await createPreactHarness(t);
-  const m = await harness.importDashboardModule('js/skynet-merged-model.js');
+  const m = await harness.importDashboardModule('js/fleet-merged-model.js');
   const merged = m.mergeSnapshots([
     { node: self, entry: { snapshot: { group_attachments_mode: 'fixed', groups: [group('ops'), group('ops-sub', { parent: 'ops' })], agents: [{ agent_id: 'agt_1' }] }, receivedAt: 1000 } },
     { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], peer_view: { included: [] } }, receivedAt: 1000 } },
@@ -32,7 +32,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
 
 test('node names that collide (self-reported or containing @) never merge two nodes\' groups', async (t) => {
   const harness = await createPreactHarness(t);
-  const m = await harness.importDashboardModule('js/skynet-merged-model.js');
+  const m = await harness.importDashboardModule('js/fleet-merged-model.js');
   const fakeDesk = { id: 'inst_imposter9', name: 'desk', color: '#f00', local: false };
   const ab = { id: 'inst_abnode77', name: 'a@b', color: '#0f0', local: false };
   const merged = m.mergeSnapshots([
@@ -53,9 +53,9 @@ function fakeTimers() {
 
 test('the merged view polls peers only while shown, renders group@node, and stays read-only', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab, search: '' });
+  const state = stateMod.createFleetState({ activeTab, search: '' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const calls = []; const toasts = []; const switched = []; const opened = [];
@@ -99,9 +99,9 @@ test('the merged view polls peers only while shown, renders group@node, and stay
 
 test('a peer row runs what the peer shares through its peer routes; this node and unshared controls stay an overview', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab, search: '?nodes=all' });
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const toasts = []; const calls = []; const confirms = [];
@@ -153,9 +153,9 @@ test('a peer row runs what the peer shares through its peer routes; this node an
 
 test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab, search: '?nodes=all' });
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('builders', { members: [{ agent_id: 'agt_b1', conv_id: 'conv_b1', title: 'builder-1' }] }), group('other')], agents: [] });
   const peerSnap = { forge: { groups: [group('reviewers', { members: [{ agent_id: 'agt_r1', conv_id: 'conv_r1', title: 'reviewer-1' }] })], agents: [] }, lab: { groups: [group('qa')], agents: [] } };
@@ -183,8 +183,8 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
   assert.match(dialog.textContent, /Move builder-1 to…/);
   assert.match(dialog.textContent, /Opened by dragging builder-1 onto reviewers@forge/);
   assert.match(dialog.textContent, /from.*desk · builders.*to.*forge · reviewers/, 'node and group are pre-filled from the drop');
-  assert.equal(harness.document.activeElement?.id, 'skynet-move-drop-ok', 'Enter confirms the move');
-  await harness.act(() => harness.document.querySelector('#skynet-move-drop-cancel').click());
+  assert.equal(harness.document.activeElement?.id, 'fleet-move-drop-ok', 'Enter confirms the move');
+  await harness.act(() => harness.document.querySelector('#fleet-move-drop-cancel').click());
   await drag(row('agt_r1'), groupEl('qa@lab'));
   assert.match(toasts.at(-1), /Neither forge nor lab is this node: move reviewer-1 from forge's dashboard/);
   await drag(row('agt_b1'), groupEl('other@desk'));
@@ -195,9 +195,9 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
 
 test('fused Groups shows only the ticked nodes; on a peer\'s page that peer is the page snapshot and this node is read directly', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
-  const state = stateMod.createSkynetState({ activeTab, search: '?node=inst_forge&nodes=inst_self,inst_forge' });
+  const state = stateMod.createFleetState({ activeTab, search: '?node=inst_forge&nodes=inst_self,inst_forge' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
   // The page shows forge (?node=): its snapshot is the page's.
   const snapshot = harness.signals.signal({ groups: [group('build')], agents: [] });
@@ -216,8 +216,8 @@ test('fused Groups shows only the ticked nodes; on a peer\'s page that peer is t
 
 test('a fused peer keeps its last groups on a failed read, and loses them with trust', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const timers = fakeTimers();
   let reply = { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [] }) };
@@ -239,8 +239,8 @@ test('a fused peer keeps its last groups on a failed read, and loses them with t
 
 test('a wide fused view keeps at most four snapshot reads in flight', async (t) => {
   const harness = await createPreactHarness(t);
-  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
-  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
   const ids = ['a', 'b', 'c', 'd', 'e', 'f'].map((x) => `inst_${x}0000`);
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: ids.map((id) => ({ instance_id: id, label: id.slice(5, 6), trusted: true, online: true })) });
   const timers = fakeTimers(); let open = 0; let peak = 0; const release = [];

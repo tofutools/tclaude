@@ -74,8 +74,8 @@ func TestClassifyUserText(t *testing.T) {
 	for text, want := range map[string][2]string{
 		"fix the build": {"human", ""},
 		"[system: new agent message #122 from the human operator; delivery: inline; subject: x] do it":                      {"human", ""},
-		"[system: new agent message #18482 from skynet (agt_24d1048d) for you. fetch with: tclaude agent inbox read 18482]": {"peer", "skynet"},
-		"[system: new agent message #18415 from skynet (agt_24d1048d); delivery: inline; subject: health] check":            {"peer", "skynet"},
+		"[system: new agent message #18482 from fleet (agt_24d1048d) for you. fetch with: tclaude agent inbox read 18482]": {"peer", "fleet"},
+		"[system: new agent message #18415 from fleet (agt_24d1048d); delivery: inline; subject: health] check":            {"peer", "fleet"},
 		"[system: new agent message #18409; delivery: inline; subject: Startup context] ...":                                {"system", ""},
 		"[system: context compacted]": {"system", ""},
 	} {

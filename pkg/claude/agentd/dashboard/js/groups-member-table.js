@@ -23,9 +23,9 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { PRReviewBadge } from './pr-review-badge.js';
 import { PRLinkHover } from './pr-link-hover.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
-import { skynetState } from './skynet-state.js';
+import { fleetState } from './fleet-state.js';
 import { presenceView } from './agent-presence.js';
-import { hubOffReason } from './skynet-model.js';
+import { hubOffReason } from './fleet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 
 const html = htm.bind(h);
@@ -879,7 +879,7 @@ export function sendElsewhereOffReason(node) {
 
 function SendElsewhereItems({ member, group, snapshot }) {
   if (snapshot?.peer_view || !member.agent_id) return null;
-  const fleet = skynetState.fleet.value;
+  const fleet = fleetState.fleet.value;
   // Another node's row in a fused view can only be pulled here by a move;
   // without a fleet there is nowhere to move or clone to but here.
   const peerRow = !!group?.fleet_node && !group.fleet_node.local;
@@ -896,7 +896,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
   const item = (mode, regular, wizard, title, disabled = false) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} disabled=${disabled} />`;
   // Without a fleet (no hub connection, or no linked node yet) move and
   // teleport stay in the menu, greyed out with the reason, as the node chips do.
-  const off = fleet ? '' : sendElsewhereOffReason(skynetState.node.value);
+  const off = fleet ? '' : sendElsewhereOffReason(fleetState.node.value);
   return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
     ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
     ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
@@ -1043,7 +1043,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
 // PresenceBadge marks a visiting agent with its home, and a returned one with
 // a short-lived "back home" tag, both in the home node's colour (tcl-hocp2h).
 function PresenceBadge({ member }) {
-  const view = presenceView(member, skynetState.fleet.value);
+  const view = presenceView(member, fleetState.fleet.value);
   if (!view || view.kind === 'away') return null;
   return html`<span class=${`presence-badge presence-${view.kind}`} style=${view.home.color ? `--nc:${view.home.color}` : undefined} title=${view.title} data-presence=${view.kind}>⌂ ${view.label}</span>`;
 }
@@ -1051,7 +1051,7 @@ function PresenceBadge({ member }) {
 // showVisitingRow scrolls to the agent's live row elsewhere in a fused view
 // and flashes it; without one it opens the node where the agent runs.
 function showVisitingRow(member, at) {
-  const root = document.getElementById('skynet-fused-groups-root') || document;
+  const root = document.getElementById('fleet-fused-groups-root') || document;
   const rows = [...root.querySelectorAll('tr[data-dnd-agent]')]
     .filter((row) => row.dataset.dndAgent === member.agent_id && !row.classList.contains('away-placeholder') && row.getClientRects().length);
   if (rows.length) {
@@ -1061,7 +1061,7 @@ function showVisitingRow(member, at) {
     rows[0].classList.add('presence-flash');
     return;
   }
-  if (at.id) void import('./skynet-island.js').then((m) => m.openNodeView(at.local ? '' : at.id)).catch(() => {});
+  if (at.id) void import('./fleet-island.js').then((m) => m.openNodeView(at.local ? '' : at.id)).catch(() => {});
 }
 
 // AwayRow is the dimmed placeholder an away agent leaves in its home groups:
@@ -1219,7 +1219,7 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
   const menuKey = `member:${tableKey}:${memberKey}:menu`;
   const editorKey = `member:${tableKey}:${memberKey}:name`;
   const grants = (snapshot?.sudo || []).filter((grant) => grant.conv_id === member.conv_id);
-  const presence = presenceView(member, skynetState.fleet.value);
+  const presence = presenceView(member, fleetState.fleet.value);
   if (presence?.kind === 'away') return html`<${AwayRow} member=${member} view=${presence} columns=${columns} group=${group} />`;
   return html`<tr
     class=${`dnd-draggable${presence ? ` presence-row-${presence.kind}` : ''}`} draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}

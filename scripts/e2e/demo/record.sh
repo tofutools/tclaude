@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Record the skynet demo clips and a titled reel from a fresh e2e environment.
+# Record the fleet demo clips and a titled reel from a fresh e2e environment.
 # See "Recording demos" in docs/e2e-manual-verification.md.
 #
 #   scripts/e2e/demo/record.sh all          # setup + every clip + reel
@@ -140,7 +140,7 @@ step_map() {
 	sleep 2
 	rec_start 02-map
 	cap "Node a's dashboard: its own group, builders"
-	CAP_HOLD=1 cap "Open the skynet map"
+	CAP_HOLD=1 cap "Open the fleet map"
 	map_button
 	sleep 5
 	cap "Both nodes, linked through the hub. b is an unrestricted peer (my own machine)"
@@ -203,7 +203,7 @@ step_move() {
 	sleep 1
 	cap "Landed on b, in reviewers. a retires its copy"
 	sleep 1.5
-	d click '#skynet-move-drop-close'
+	d click '#fleet-move-drop-close'
 	sleep 2
 	cap "a restricts b: b's agents may only be offered into builders, for a to accept"
 	CAP_HOLD=0.5 cap "Drag b's reviewer-2 onto a's builders"
@@ -345,9 +345,9 @@ step_reel() {
 		ffmpeg -loglevel error -y -loop 1 -t "${5:-3}" -i "$OUT/$1.png" -vf "fps=25,scale=1280:800,format=yuvj420p" \
 			-c:v libx264 -preset veryfast -crf 23 "$OUT/$1.mp4"
 	}
-	card t00 "tclaude skynet" "Two nodes, one hub" "A hub plus two isolated tclaude nodes on one machine, real Claude Code agents against a mock model. Recorded from the E2E runbook." 4
+	card t00 "tclaude fleet" "Two nodes, one hub" "A hub plus two isolated tclaude nodes on one machine, real Claude Code agents against a mock model. Recorded from the E2E runbook." 4
 	card t01 "1 / 7 · CLI" "Pairing" "Hub invites, connect, compare fingerprints, trust"
-	card t02 "2 / 7 · Dashboard" "The skynet map" "Both nodes and their groups in one view"
+	card t02 "2 / 7 · Dashboard" "The fleet map" "Both nodes and their groups in one view"
 	card t03 "3 / 7 · Dashboard" "Remote terminal" "Type into an agent on another node, from the Terminals tab"
 	card t04 "4 / 7 · Dashboard" "Move an agent" "Drag it to another node: it lands at once, or waits as an offer"
 	card t05 "5 / 7 · Dashboard" "Boards" "Share config through the hub, without peer access"
@@ -361,8 +361,8 @@ step_reel() {
 			echo "file '$c.mp4'"
 		done
 	} >"$OUT/reel.txt"
-	(cd "$OUT" && ffmpeg -loglevel error -y -f concat -safe 0 -i reel.txt -c copy skynet-demo-reel.mp4)
-	echo "wrote $OUT/skynet-demo-reel.mp4"
+	(cd "$OUT" && ffmpeg -loglevel error -y -f concat -safe 0 -i reel.txt -c copy fleet-demo-reel.mp4)
+	echo "wrote $OUT/fleet-demo-reel.mp4"
 }
 
 [[ $# -gt 0 ]] || set -- all

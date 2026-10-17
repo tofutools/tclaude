@@ -8,7 +8,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './skynet-move-drop.js';
+import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);

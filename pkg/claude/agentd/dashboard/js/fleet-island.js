@@ -6,10 +6,10 @@ import { RequestAccessDialog } from './peer-access.js';
 import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './skynet-model.js';
-import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind, tickedNodes, toggleNode, withFused } from './skynet-scope.js';
+import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './fleet-model.js';
+import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind, tickedNodes, toggleNode, withFused } from './fleet-scope.js';
 import { dashboardState } from './snapshot-store.js';
-import { TOP_LEVEL_TABS } from './skynet-state.js';
+import { TOP_LEVEL_TABS } from './fleet-state.js';
 
 const html = htm.bind(h);
 
@@ -235,7 +235,7 @@ function MapGate({ reason, doc = globalThis.document }) {
     } else {
       anchor.removeAttribute('aria-disabled');
       anchor.removeAttribute('tabindex');
-      anchor.title = 'Skynet map: every linked node';
+      anchor.title = 'Fleet map: every linked node';
     }
   }, [reason]);
   return null;
@@ -371,15 +371,15 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
     if (tab !== 'groups-fused') { navigate(tab); return; }
     state.setFused('all'); writeScopeURL('all'); navigate('groups');
   };
-  const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
-  return html`<span class="skynet-toplevel-bar">
-    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('groups-fused', false, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
-    <span class="skynet-toplevel-note">Skynet · ${n} node${n === 1 ? '' : 's'} · hub ${hub} · pick ⌂ ${fleet.self.name} to return to its dashboard</span>
+  const seg = (tab, on, label) => html`<button type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
+  return html`<span class="fleet-toplevel-bar">
+    <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('groups-fused', false, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
+    <span class="fleet-toplevel-note">Fleet · ${n} node${n === 1 ? '' : 's'} · hub ${hub} · pick ⌂ ${fleet.self.name} to return to its dashboard</span>
   </span>`;
 }
 
 function Meter({ label, value }) {
-  return html`<span class="skynet-meter" title=${`${label} ${value}%`}>${label}<span class="skynet-meter-bar"><b style=${`width:${value}%`}></b></span>${value}%</span>`;
+  return html`<span class="fleet-meter" title=${`${label} ${value}%`}>${label}<span class="fleet-meter-bar"><b style=${`width:${value}%`}></b></span>${value}%</span>`;
 }
 
 function CardRows({ card, node, onUpdate }) {
@@ -390,15 +390,15 @@ function CardRows({ card, node, onUpdate }) {
     else if (f?.kind === 'not_trusted') text = 'Not trusted any more.';
     else if (f?.kind === 'offline' || f?.kind === 'timeout' || card.presence === 'offline') text = card.lastSeen ? `Unreachable. Last seen ${new Date(card.lastSeen).toLocaleString()}.` : 'Unreachable.';
     else if (f) text = `Summary failed: ${f.message || f.kind}`;
-    return html`<div class="skynet-card-empty">${text}</div>`;
+    return html`<div class="fleet-card-empty">${text}</div>`;
   }
   const r = card.resources;
-  return html`<dl class="skynet-card-body">
+  return html`<dl class="fleet-card-body">
     <dt>Agents</dt><dd>${card.onlineAgents ?? '?'} of ${card.sharedAgents} online · ${card.sharedGroups} group${card.sharedGroups === 1 ? '' : 's'}${node.local ? '' : html` <span class="muted">shared</span>`}</dd>
-    <dt>Attention</dt><dd>${card.waiting ? html`<span class="skynet-attn">❓ ${card.waiting} waiting for input</span>` : html`<span class="muted">none</span>`}</dd>
+    <dt>Attention</dt><dd>${card.waiting ? html`<span class="fleet-attn">❓ ${card.waiting} waiting for input</span>` : html`<span class="muted">none</span>`}</dd>
     <dt>Resources</dt><dd>${r ? html`${r.cpu != null && html`<${Meter} label="cpu" value=${r.cpu} />`}${r.mem != null && html`<${Meter} label="mem" value=${r.mem} />`}${r.disk != null && html`<${Meter} label="disk" value=${r.disk} />`}` : html`<span class="muted">not shared</span>`}</dd>
-    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.updateAvailable ? html` <span class="skynet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="skynet-link" data-skynet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
-    ${card.health && html`<dt>Health</dt><dd class=${`skynet-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
+    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
+    ${card.health && html`<dt>Health</dt><dd class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
     ${card.omitted.length > 0 && html`<dt>Not shared</dt><dd class="muted">${card.omitted.join(', ')}</dd>`}
   </dl>`;
 }
@@ -406,14 +406,14 @@ function CardRows({ card, node, onUpdate }) {
 function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef, shown }) {
   const kind = node.local ? 'this node' : node.level === 'unrestricted' ? '⚠ unrestricted peer' : 'restricted peer';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
-  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`skynet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
+  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
-    <div class="skynet-card-head"><span class="skynet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
-      <span class=${`skynet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
-      <span class=${`skynet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
+    <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
+      <span class=${`fleet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
+      <span class=${`fleet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
-    ${node.keyTransition && html`<div class=${`skynet-card-key ${node.keyTransition.state}`} title="See Fleet → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
-    ${onOpen && html`<div class="skynet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="skynet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
+    ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
+    ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
 }
 
@@ -422,11 +422,11 @@ function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef,
 function HubCard({ hub, now }) {
   const connected = hub.state === 'connected';
   const shortID = hub.id.length > 16 ? `${hub.id.slice(0, 16)}…` : hub.id;
-  return html`<article class=${`skynet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
-    <div class="skynet-card-head"><span class="skynet-card-name">hub</span><span class="skynet-card-kind">relay</span>
-      <span class=${`skynet-card-presence ${connected ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${hub.state}</span></div>
-    <dl class="skynet-card-body">
-      ${hub.url && html`<dt>Address</dt><dd class="skynet-hub-url" title=${hub.url}>${hub.url}</dd>`}
+  return html`<article class=${`fleet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
+    <div class="fleet-card-head"><span class="fleet-card-name">hub</span><span class="fleet-card-kind">relay</span>
+      <span class=${`fleet-card-presence ${connected ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${hub.state}</span></div>
+    <dl class="fleet-card-body">
+      ${hub.url && html`<dt>Address</dt><dd class="fleet-card-hub-url" title=${hub.url}>${hub.url}</dd>`}
       ${hub.id && html`<dt>Hub ID</dt><dd title=${hub.id}>${shortID}</dd>`}
       ${hub.spaces?.length > 0 && html`<dt>Spaces</dt><dd>${hub.spaces.join(', ')}</dd>`}
       ${hub.since != null && html`<dt>${connected ? 'Up' : 'Since'}</dt><dd>${fmtAge(Math.max(0, now - hub.since))}</dd>`}
@@ -445,17 +445,17 @@ function edgePath(a, b) {
 export function measureEdges(mapEl) {
   if (!mapEl) return [];
   const box = mapEl.getBoundingClientRect();
-  const local = mapEl.querySelector('.skynet-card.local');
+  const local = mapEl.querySelector('.fleet-card.local');
   if (!local) return [];
   const side = (el, right) => { const r = el.getBoundingClientRect(); return { x: (right ? r.right : r.left) - box.left, y: r.top - box.top + r.height / 2 }; };
   const edge = (id, from, to) => ({ id, d: edgePath(from, to), mid: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } });
-  const hub = mapEl.querySelector('.skynet-card.hub');
+  const hub = mapEl.querySelector('.fleet-card.hub');
   const from = hub ? side(hub, true) : side(local, true);
-  const peers = [...mapEl.querySelectorAll('.skynet-card:not(.local):not(.hub)')].map((el) => edge(el.dataset.nodeId, from, side(el, false)));
+  const peers = [...mapEl.querySelectorAll('.fleet-card:not(.local):not(.hub)')].map((el) => edge(el.dataset.nodeId, from, side(el, false)));
   return hub ? [edge(':hub', side(local, true), side(hub, false)), ...peers] : peers;
 }
 
-export function SkynetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions }) {
+export function FleetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions }) {
   const current = state.view.value;
   const fleet = current.mapFleet;
   const mapRef = useRef(null);
@@ -521,18 +521,18 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   // Each card opens its node's per-node view; the node already shown returns
   // to the tab the operator left for the map.
   const open = (node) => () => pickNode(state, node.id, { navigate: () => navigate(state.lastLocalTab()), remote, switchNode });
-  return html`<div class="skynet-map" ref=${mapRef}>
-    <svg class="skynet-edges" aria-hidden="true">
-      ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`skynet-edge${live ? ' live' : ' stale'}`} />`; })}
+  return html`<div class="fleet-map" ref=${mapRef}>
+    <svg class="fleet-edges" aria-hidden="true">
+      ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`fleet-edge${live ? ' live' : ' stale'}`} />`; })}
     </svg>
-    ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="skynet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
-    <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
-    <div class="skynet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="skynet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
+    ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="fleet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
+    <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
+    <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="fleet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
     ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
-    <div class="skynet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you.</span></div>
+    <div class="fleet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you.</span></div>
   </div>`;
 }
 
@@ -648,13 +648,13 @@ function StatusPoller({ state, actions, timers = globalThis }) {
   return null;
 }
 
-export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state, actions, registerCleanup, navigate, timers }) {
+export function mountFleetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state, actions, registerCleanup, navigate, timers }) {
   render(html`<${Fragment}><${StatusPoller} state=${state} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${ScopeSync} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
   if (bannerHost) render(html`<${ScopeBanner} state=${state} />`, bannerHost);
   // A peer view also hosts the peer action dialog (stop/retire/clone/move/
   // teleport/spawn through the peer's action routes).
   if (remoteHost) render(html`<${RemoteMarker} state=${state} /><${PeerActionHost} snapshot=${dashboardState.snapshot} />`, remoteHost);
   render(html`<${TopLevelBar} state=${state} navigate=${navigate} />`, barHost);
-  render(html`<${SkynetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
+  render(html`<${FleetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
   registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); if (bannerHost) render(null, bannerHost); });
 }

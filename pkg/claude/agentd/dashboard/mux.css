@@ -492,7 +492,7 @@ body.wizard .mux-pane-xterm {
   box-shadow: inset 0 0 0 1px rgba(122, 93, 176, 0.24);
 }
 
-/* Node scope (skynet-scope.js): a fused view labels each pane with its node
+/* Node scope (fleet-scope.js): a fused view labels each pane with its node
    and keeps the unticked nodes' panes open but out of sight. */
 .mux-tab.scope-hidden, .mux-pane.scope-hidden { display: none !important; }
 .mux-node-pill {

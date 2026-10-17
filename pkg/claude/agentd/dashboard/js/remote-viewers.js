@@ -1,9 +1,9 @@
 import { h } from 'preact';
 import { signal } from '@preact/signals';
 import htm from 'htm';
-import { remoteNodeID } from './skynet-model.js';
+import { remoteNodeID } from './fleet-model.js';
 import { dashboardState } from './snapshot-store.js';
-import { skynetState } from './skynet-state.js';
+import { fleetState } from './fleet-state.js';
 
 const html = htm.bind(h);
 
@@ -37,7 +37,7 @@ let lastRead = -Infinity;
 // badges. The map shows no agent rows and Fleet → Peers polls its own viewers
 // panel, so those two skip the read; the merged Groups view renders this
 // node's rows and keeps reading.
-export function claimViewersRead(now = Date.now(), { remote = remoteNodeID(), fleet = skynetState.fleet.value, tab = dashboardState.activeTab.value } = {}) {
+export function claimViewersRead(now = Date.now(), { remote = remoteNodeID(), fleet = fleetState.fleet.value, tab = dashboardState.activeTab.value } = {}) {
   if (remote || !fleet) {
     if (remoteViewers.value.length) remoteViewers.value = [];
     return false;
@@ -84,7 +84,7 @@ export function viewersOf(rows, agentId, session = '') {
 
 // peerLabel names a viewing peer as the chip row does; an unknown peer shows
 // its instance ID.
-export function peerLabel(id, fleet = skynetState.fleet.value) {
+export function peerLabel(id, fleet = fleetState.fleet.value) {
   return fleet?.peers?.find((p) => p.id === id)?.name || id;
 }
 

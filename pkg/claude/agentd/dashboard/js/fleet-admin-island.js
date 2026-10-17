@@ -22,13 +22,13 @@ import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
-import { FLEET_PAGE_EVENT, takeFleetPage } from './skynet-move-drop.js';
+import { FLEET_PAGE_EVENT, takeFleetPage } from './fleet-move-drop.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
 import { openProposalComposer } from './links-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
+import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './fleet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
 
 const html = htm.bind(h);

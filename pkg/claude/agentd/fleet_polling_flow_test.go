@@ -29,8 +29,8 @@ import (
 
 // Isolate receiver CPU from the hub and scripted peers in the parent process.
 // No metrics endpoint or instrumentation is compiled into production binaries.
-func TestSkynetPollingInstance(t *testing.T) {
-	if os.Getenv("TCLAUDE_SKYNET_POLLING_CHILD") != "1" {
+func TestFleetPollingInstance(t *testing.T) {
+	if os.Getenv("TCLAUDE_FLEET_POLLING_CHILD") != "1" {
 		t.Skip("polling fixture child")
 	}
 	f := newFlow(t)
@@ -82,20 +82,20 @@ func TestSkynetPollingInstance(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	t.Cleanup(agentd.SetPopupBaseURLForTest(server.URL))
-	fmt.Println("SKYNET_JOURNEY_READY " + server.URL)
+	fmt.Println("FLEET_JOURNEY_READY " + server.URL)
 	_, err = io.Copy(io.Discard, os.Stdin)
 	require.NoError(t, err)
 }
 
-//	TCLAUDE_SKYNET_POLLING=1 scripts/test.sh ./pkg/claude/agentd/ \
-//	  -run '^TestSkynetPollingEfficiency$' -v -count=1 -timeout=180s
+//	TCLAUDE_FLEET_POLLING=1 scripts/test.sh ./pkg/claude/agentd/ \
+//	  -run '^TestFleetPollingEfficiency$' -v -count=1 -timeout=180s
 //
 // Real cadence takes roughly one minute; normal CI only sees a skipped test.
-func TestSkynetPollingEfficiency(t *testing.T) {
-	if os.Getenv("TCLAUDE_SKYNET_POLLING") != "1" {
-		t.Skip("set TCLAUDE_SKYNET_POLLING=1 to measure the receiver")
+func TestFleetPollingEfficiency(t *testing.T) {
+	if os.Getenv("TCLAUDE_FLEET_POLLING") != "1" {
+		t.Skip("set TCLAUDE_FLEET_POLLING=1 to measure the receiver")
 	}
-	receiver := startSkynetFixtureNode(t, "TestSkynetPollingInstance", "TCLAUDE_SKYNET_POLLING_CHILD=1")
+	receiver := startFleetFixtureNode(t, "TestFleetPollingInstance", "TCLAUDE_FLEET_POLLING_CHILD=1")
 	store, err := hub.OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
 	require.NoError(t, err)
 	// Exclude startup catalog fan-out and hub control-plane quotas from the

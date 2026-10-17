@@ -485,7 +485,7 @@ export function isCyclingTabs() { return cyclingTabs; }
 function cycleTab(dir) {
   const tabs = visibleTabButtons();
   if (!tabs.length) return null;
-  // The Skynet map is a top-level view that hides the per-node tabs, so it is
+  // The Fleet map is a top-level view that hides the per-node tabs, so it is
   // the only visible tab while open. Cycling hands off to its island, which
   // returns to the per-node tab the operator left for the map.
   // Fleet administration is top-level too; its anchor is never visible.

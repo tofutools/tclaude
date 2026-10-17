@@ -132,7 +132,7 @@ function pendingTerminalAttach(loc) {
   return loc.tab === 'terminals' && !!loc.selection;
 }
 
-// pendingMapLoad is the Skynet map's equivalent: its nav anchor stays hidden
+// pendingMapLoad is the Fleet map's equivalent: its nav anchor stays hidden
 // until the island's first federation status read shows linked nodes, which
 // usually lands after this router boots. The island leaves the map for the
 // last per-node tab once that read settles without a fleet, so a /map deep
@@ -320,7 +320,7 @@ function preservedQuery() {
   // A peer's per-node view (remote-node.js) is a property of the page, not of
   // a history entry: every location on it stays on that node.
   if (globalThis.__tclaudeRemoteNode?.id) out.set('node', globalThis.__tclaudeRemoteNode.id);
-  // So is a fused view's node set (skynet-island.js mirrors it here).
+  // So is a fused view's node set (fleet-island.js mirrors it here).
   const nodes = document.documentElement.dataset.scopeNodes;
   if (nodes) out.set('nodes', nodes);
   const s = out.toString();

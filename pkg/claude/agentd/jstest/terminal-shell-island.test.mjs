@@ -766,8 +766,8 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   const fake = fakeWidgetFactory(harness);
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
-  const { skynetState } = await harness.importDashboardModule('js/skynet-state.js');
-  skynetState.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+  const { fleetState } = await harness.importDashboardModule('js/fleet-state.js');
+  fleetState.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
     { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true },
     { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true },
   ] });
@@ -780,7 +780,7 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   });
   const tabs = () => [...host.querySelectorAll('.mux-tab')];
   assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
-  await harness.act(() => { skynetState.setFused(['inst_self', 'inst_forge']); });
+  await harness.act(() => { fleetState.setFused(['inst_self', 'inst_forge']); });
   const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
   assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill').textContent), ['⌂ desk', 'forge']);
   assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
@@ -796,14 +796,14 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   // on the tab the operator is on.
   harness.document.querySelector('nav [data-tab="groups"]').click();
   const activeLabel = host.querySelector('.mux-pane.active .mux-pane-title').textContent;
-  await harness.act(() => { skynetState.setFused(activeLabel.includes('forge') ? ['inst_self', 'inst_lab'] : ['inst_lab', 'inst_forge']); });
+  await harness.act(() => { fleetState.setFused(activeLabel.includes('forge') ? ['inst_self', 'inst_lab'] : ['inst_lab', 'inst_forge']); });
   assert.equal(host.querySelector('.mux-pane.active').classList.contains('scope-hidden'), false,
     'an active pane leaving the scope hands over to one in it');
   assert.equal(harness.document.getElementById('tab-terminals').classList.contains('active'), false, 'without switching to Terminals');
-  await harness.act(() => { skynetState.setFused(null); });
+  await harness.act(() => { fleetState.setFused(null); });
   assert.equal(host.querySelectorAll('.scope-hidden').length, 0);
   cleanup();
-  skynetState.clearFleet();
+  fleetState.clearFleet();
 });
 
 test('a widget disconnect asking to close the tab closes only that pane, without a detach', async (t) => {
