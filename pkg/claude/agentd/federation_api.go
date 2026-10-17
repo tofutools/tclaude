@@ -463,6 +463,10 @@ type fedPeerJSON struct {
 	LastSeen           time.Time              `json:"last_seen,omitempty"`
 	Version            string                 `json:"version,omitempty"`
 	TrustedAt          time.Time              `json:"trusted_at,omitempty"`
+	// TrustRequest is a request to be trusted received from this untrusted
+	// instance; TrustRequestedAt is when this node last asked it.
+	TrustRequest     *fedTrustRequest `json:"trust_request,omitempty"`
+	TrustRequestedAt *time.Time       `json:"trust_requested_at,omitempty"`
 }
 
 // fedRemoteSystem is what one trusted peer exports to us (discovery).
@@ -497,7 +501,10 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	rt := currentFederation()
 	dir := map[string]proto.DirectoryEntry{}
+	var asksIn map[string]fedTrustRequest
+	var asksOut map[string]time.Time
 	if rt != nil {
+		asksIn, asksOut = rt.trustRequestView()
 		st := rt.cl.Status()
 		resp.Hub = &fedHubStatus{State: string(st.State), HubID: st.HubID, Spaces: st.Spaces, LastError: st.LastError, Since: st.Since}
 		for _, e := range rt.cl.Directory() {
@@ -542,13 +549,22 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 	// Fleet map's "show untrusted" view; the full read always lists them.
 	strangers := !summary || r.URL.Query().Get("untrusted") == "1"
 	for _, e := range dir {
-		if !strangers || seen[e.InstanceID] {
+		// An instance that asked to be trusted is always listed, so the map
+		// can show the request without "show untrusted".
+		if _, asked := asksIn[e.InstanceID]; (!strangers && !asked) || seen[e.InstanceID] {
 			continue
 		}
-		resp.Peers = append(resp.Peers, fedPeerJSON{
+		row := fedPeerJSON{
 			InstanceID: e.InstanceID, Fingerprint: proto.Fingerprint(e.PubKey), Name: e.Name,
 			Online: e.Online, LastSeen: e.LastSeen, Version: e.Version,
-		})
+		}
+		if ask, ok := asksIn[e.InstanceID]; ok {
+			row.TrustRequest = &ask
+		}
+		if at, ok := asksOut[e.InstanceID]; ok {
+			row.TrustRequestedAt = &at
+		}
+		resp.Peers = append(resp.Peers, row)
 	}
 	sort.Slice(resp.Peers, func(i, j int) bool {
 		if resp.Peers[i].Trusted != resp.Peers[j].Trusted {
@@ -826,6 +842,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
 	if rt != nil {
+		rt.forgetTrustRequest(entry.InstanceID)
 		// Catalog construction reads shared daemon state, including tmux.
 		// Let flow cleanup drain this work before restoring its globals.
 		goBackground(func() {
@@ -1298,6 +1315,8 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/join", handleFederationJoin)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
+	mux.HandleFunc("POST /v1/federation/peers/trust-request", handleFederationTrustRequest)
+	mux.HandleFunc("POST /v1/federation/peers/trust-request/dismiss", handleFederationTrustRequest)
 	mux.HandleFunc("/v1/federation/identity/rotate", handleFederationIdentityRotate)
 	mux.HandleFunc("/v1/federation/identity/rotations", handleFederationIdentityRotations)
 	mux.HandleFunc("/v1/federation/identity/recover", handleFederationIdentityRecover)

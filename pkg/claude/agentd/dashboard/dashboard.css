@@ -19972,6 +19972,18 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-map-strangers { grid-column: 1 / -1; margin-top: 36px; padding: 10px 14px 14px; border: 1px dotted #484f58; border-radius: 10px; background: rgba(13, 17, 23, .6); }
 .fleet-map-strangers h4 { margin: 0 0 10px; color: #8b949e; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 .fleet-map-strangers-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.fleet-card.untrusted.asks { border-color: #9e6a03; border-top-color: #d29922; }
+.fleet-card-ask { margin: 0 12px 10px; padding: 7px 9px; border-radius: 6px; background: rgba(210, 153, 34, .12); color: #e3b341; font-size: 12px; }
+.fleet-card-ask-note { margin-top: 4px; color: #c9d1d9; font-style: italic; overflow-wrap: anywhere; }
+.fleet-card-ask-form { display: flex; gap: 6px; padding: 0 12px 10px; }
+.fleet-card-ask-form input { flex: 1; min-width: 0; background: #0d1117; border: 1px solid #30363d; border-radius: 5px; color: #c9d1d9; padding: 3px 8px; font: 12px system-ui, sans-serif; }
+.fleet-card-ask-form button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
+.fleet-card-ask-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.fleet-card-foot button:disabled, .fleet-card-ask-form button:disabled { opacity: .55; cursor: default; }
+.fleet-card-asked { align-self: center; font-size: 11px; white-space: nowrap; }
+.fleet-card.untrusted .fleet-card-foot { flex-wrap: wrap; align-items: center; }
+.fleet-card.untrusted .fleet-card-foot button { white-space: nowrap; }
+.fleet-map-asking { color: #e3b341; text-transform: none; letter-spacing: 0; }
 .fleet-card.untrusted .fleet-card-name { font-weight: 400; color: #c9d1d9; }
 .fleet-card.untrusted code { font-size: 11px; }
 .fleet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
@@ -20192,6 +20204,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #484f58; }
 .fa-dot.on { background: #3fb950; }
 .fa-level.unrestricted { color: #f0883e; font-weight: 600; }
+.fa-asks { color: #e3b341; font-size: 11px; white-space: nowrap; }
 .fa-danger { color: #f85149; }
 .fa-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; margin: 6px 0 10px; }
 /* Long IDs, fingerprints and paths break anywhere; prose still wraps at spaces. */

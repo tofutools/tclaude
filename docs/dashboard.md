@@ -874,6 +874,13 @@ this node has not trusted, as dotted cards with their self-reported name,
 instance ID and fingerprint. **Trust…** opens the same dialog as ⚙ Fleet
 config → Peers: compare the full fingerprint with that node's operator, pick a
 label and a trust level, and confirm. The box is remembered per browser.
+Trusting an instance from the map also asks it to trust this node back.
+
+An instance that asked to be trusted shows on the map even with the box off,
+as an amber card first in the untrusted section with its note (its own words)
+and whether it already trusts this node; the top bar counts the requests.
+**Dismiss** forgets a request. **Ask to be trusted…** on any other untrusted
+card sends this node's own request, with an optional note.
 
 To update a node: click **update…** (or **manage…**) on its card, check the
 version and warnings, then **Update to vX…** and confirm. The node replaces its

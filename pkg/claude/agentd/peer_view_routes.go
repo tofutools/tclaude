@@ -173,6 +173,8 @@ var peerViewLocalRoutes = []string{
 	"POST /api/federation/enroll",
 	"POST /api/federation/peers/trust",
 	"POST /api/federation/peers/untrust",
+	"POST /api/federation/peers/trust-request",
+	"POST /api/federation/peers/trust-request/dismiss",
 	"GET /api/federation/grants",
 	"POST /api/federation/grants",
 	"DELETE /api/federation/grants",

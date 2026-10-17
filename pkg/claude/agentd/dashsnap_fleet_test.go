@@ -27,6 +27,10 @@ const fleetFederationStubJS = `(function(){
     status.remote = [{ peer: 'inst_hn3cxq7a', label: 'forge', online: true, groups: [{ name: 'builders', caps: ['mail', 'roster', 'presence', 'spawn'] }, { name: 'infra', caps: ['agents.status.read', 'sessions'] }] }];
   }
   if (window.__dashsnapKeyConflict) status.peers[1].identity_transition = { state: 'conflict', old_id: 'inst_2p6ym4ke', new_id: 'inst_8r3kq0vd', new_fingerprint: '8r3k-q0vd-n6wz-2hc4-pm7y-e1xa', received_at: '2026-10-10T08:41:00Z', accept_after: '2026-10-10T08:51:00Z', reason: 'competing signed successors' };
+  if (window.__dashsnapTrustAsk) {
+    status.peers.push({ instance_id: 'inst_d8vk2mqa', name: 'dave-rig', fingerprint: 'd8vk-2mqa-x7rp-0kc3-fe9w-4ny1', trusted: false, online: true, trust_request: { note: "Dave here, the new build box in the lab. Fingerprint read out on Slack.", trusts_you: true, received_at: new Date(Date.now() - 6 * 60e3).toISOString() } });
+    status.peers[2].trust_requested_at = new Date(Date.now() - 3 * 60e3).toISOString();
+  }
   if (window.__dashsnapKeyPending) status.peers[0].identity_transition = { state: 'pending', old_id: 'inst_hn3cxq7a', new_id: 'inst_c7m2x9tf', new_fingerprint: 'c7m2-x9tf-4kp1-wq8e-zn3d-6hv0', received_at: '2026-10-10T09:02:00Z', accept_after: '2026-10-10T09:12:00Z' };
   var res = { status: 'current', cpu: { logical_cores: 8, load_average: [2.7, 2, 1] }, ram: { total_bytes: 32e9, available_bytes: 12e9, available_estimated: false }, data_disk: { total_bytes: 500e9, available_bytes: 210e9 } };
   window.fetch = function(input, init) {
@@ -431,6 +435,23 @@ func fleetStates() []dashsnap.State {
   document.querySelector('.fleet-card.untrusted [data-fleet="trust"]').click();
   for (var k = 0; k < 50 && !document.querySelector('#fleet-trust-modal #fleet-trust-submit'); k++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-trust-modal')) throw new Error('fleet: trust dialog did not open from the map');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-map-trust-request",
+			Title:   "Fleet map: trust requests",
+			Caption: "An instance that asked to be trusted is shown on the map even with Show untrusted off: an amber card first in the untrusted section with its note (its own words) and whether it already trusts this node, Trust… and Dismiss; the top bar counts the requests. A stranger this node asked shows when.",
+			InitJS:  "window.__dashsnapTrustAsk = true;" + fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('[data-fleet="show-untrusted"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var box = document.querySelector('[data-fleet="show-untrusted"]');
+  if (!box.checked) box.click();
+  for (var j = 0; j < 50 && document.querySelectorAll('.fleet-card.untrusted').length < 2; j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.fleet-card.untrusted.asks [data-fleet="dismiss"]')) throw new Error('fleet: no trust request card');
+  if (!document.querySelector('.fleet-card-asked')) throw new Error('fleet: no asked-at note');
 })();`,
 			SettleMS: 400,
 		},

@@ -44,7 +44,8 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   // summaries maps instance ID -> { summary, etag, receivedAt, failure, failures }.
   const summaries = signal({});
   // strangers are the hub-visible instances not trusted here; the status read
-  // asks for them only while the map's "show untrusted" box is ticked.
+  // asks for them all only while the map's "show untrusted" box is ticked,
+  // and always returns the ones that asked to be trusted.
   const strangers = signal([]);
   // showUntrusted is this page's choice; null defers to the pref, read
   // lazily for the same reason as lastFleet below.
@@ -87,7 +88,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
     noFleet: noFleet.value,
     setupSeen: setupSeen.value || readSetupSeen(prefs),
     showUntrusted: untrustedShown(),
-    strangers: untrustedShown() ? strangers.value : [],
+    strangers: untrustedShown() ? strangers.value : strangers.value.filter((s) => s.request),
   }));
   function untrustedShown() {
     if (showUntrusted.value != null) return showUntrusted.value;
@@ -95,14 +96,14 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   }
   function setShowUntrusted(on) {
     showUntrusted.value = !!on;
-    if (!on) strangers.value = [];
+    if (!on) strangers.value = strangers.value.filter((s) => s.request);
     try { prefs.setItem(SHOW_UNTRUSTED_PREF, on ? '1' : ''); } catch { /* best effort */ }
   }
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
     node.value = normalizeNode(status);
     fleet.value = normalizeFleet(status);
-    strangers.value = untrustedShown() ? normalizeStrangers(status) : [];
+    strangers.value = normalizeStrangers(status);
     noFleet.value = !fleet.value;
     return fleet.value;
   }
