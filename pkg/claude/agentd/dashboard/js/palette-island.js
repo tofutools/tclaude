@@ -169,7 +169,7 @@ export function PaletteOverlay({
         <div id="palette-list" ref=${listRef} class="palette-list" role="listbox" aria-label="Commands">
           ${current.commands.length ? current.commands.map((command, index) => html`
             <div key=${`${command.label}\u0000${index}`}
-              class=${`palette-item${index === current.selected ? ' selected' : ''}${command.enabled === false ? ' disabled' : ''}`}
+              class=${`palette-item${index === current.selected ? ' selected' : ''}${command.enabled === false ? ' disabled' : ''}${command.recent ? ' recent' : ''}${command.recentLast ? ' recent-last' : ''}`}
               data-idx=${index} id=${`palette-opt-${index}`} role="option"
               aria-selected=${index === current.selected ? 'true' : 'false'}
               aria-disabled=${command.enabled === false ? 'true' : 'false'}
@@ -177,6 +177,7 @@ export function PaletteOverlay({
               onClick=${() => { state.setSelected(index); runSelected(); }}>
               <span class="palette-ico">${command.icon || '•'}</span>
               <span class="palette-label">${command.label}</span>
+              ${command.recent ? html`<span class="palette-recent-tag" title="Recently run">recent</span>` : null}
               ${command.enabled === false || command.hint ? html`<span class="palette-hint">${command.enabled === false ? command.disabledReason || 'Unavailable' : command.hint}</span>` : null}
             </div>
           `) : html`<div class="palette-empty">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}

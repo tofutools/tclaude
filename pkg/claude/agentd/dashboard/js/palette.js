@@ -820,6 +820,7 @@ export function buildCommands(snapshot) {
     // pre-identity row); the server resolves it via agent.ResolveSelector.
     const sel = a.agent_id || a.conv_id;
     cmds.push({
+      id: `agent-focus:${sel}`,
       icon: wiz('◎', '👁'), label: wiz(`Focus window: ${label}`, `Reveal familiar: ${label}`),
       hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
@@ -827,6 +828,7 @@ export function buildCommands(snapshot) {
       run: () => jumpAgent(sel, label, snap.default_terminal === 'web', a.state?.harness || ''),
     });
     cmds.push({
+      id: `agent-hide:${sel}`,
       icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),
       hint: wiz("detach this agent's terminal", "draw the veil over this familiar's scrying portal"),
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || '')
@@ -847,6 +849,7 @@ export function buildCommands(snapshot) {
     const sel = a.agent_id || a.conv_id;
     if (a.online) {
       cmds.push({
+        id: `agent-stop:${sel}`,
         icon: wiz('⏻', '🌙'), label: wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`),
         hint: wiz('soft-exit, then force-kill if it does not exit (resumable)',
           'lull into slumber: a gentle /exit, then a firmer hand if it lingers (rousable)'),
@@ -856,6 +859,7 @@ export function buildCommands(snapshot) {
       });
     } else {
       cmds.push({
+        id: `agent-resume:${sel}`,
         icon: wiz('⏼', '✨'), label: wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`),
         hint: wiz('restart in a fresh tmux session, resumed onto its conversation',
           'rouse into a fresh tmux session, resumed onto its scroll'),
@@ -976,6 +980,7 @@ export function buildCommands(snapshot) {
     const label = a.title || (a.conv_id || '').slice(0, 8);
     const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
     cmds.push({
+      id: `agent-retire:${a.conv_id}`,
       icon: wiz('♻', '🪄'), label: wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`),
       hint: wiz(`demote to a plain conversation (${status})`, `banish back to a plain scroll (${status})`),
       keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status

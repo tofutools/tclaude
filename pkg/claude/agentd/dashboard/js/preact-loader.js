@@ -36,16 +36,20 @@ const shellDescriptor = createIslandDescriptor({
     const paletteIslandModule = import('./palette-island.js');
     const paletteStateModule = import('./palette-state.js');
     const paletteCommandsModule = import('./palette.js');
+    const paletteRecentModule = import('./palette-recent.js');
+    const prefsModule = import('./prefs.js');
     const [
       { mountShellIsland }, { dashboardState }, { groupsState }, { shellState },
       { mountNotifyIsland }, { notifyState }, { createNotifyActions },
       { mountCreditsIsland }, { creditsState },
       { mountPaletteIsland }, { createPaletteState }, { buildCommands },
+      { createPrefsRecentStore }, { dashPrefs },
     ] = await Promise.all([
       islandModule, dashboardStateModule, groupsStateModule, shellStateModule,
       notifyIslandModule, notifyStateModule, notifyActionsModule,
       creditsIslandModule, creditsStateModule,
       paletteIslandModule, paletteStateModule, paletteCommandsModule,
+      paletteRecentModule, prefsModule,
     ]);
     const notifyActions = createNotifyActions({
       state: notifyState,
@@ -55,6 +59,7 @@ const shellDescriptor = createIslandDescriptor({
       snapshot: dashboardState.snapshot,
       commandBuilder: buildCommands,
       onError: dependencies.notify,
+      recentStore: createPrefsRecentStore(dashPrefs),
     });
     return {
       state: dashboardState,
