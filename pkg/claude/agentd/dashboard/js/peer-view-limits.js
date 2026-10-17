@@ -189,7 +189,7 @@ export function usableActSelectors(peerView, extra = []) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   const shared = (feature) => featureState(feature, peerView) === 'shared';
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
-    if (act !== 'dot-toggle') { if (shared(spec.feature)) out.push(`[data-act="${act}"]`); continue; }
+    if (act !== 'dot-toggle') { if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`); continue; }
     if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');
     if (shared('lifecycle.resume')) out.push('[data-act="dot-toggle"]:not([data-online="1"])');
   }
