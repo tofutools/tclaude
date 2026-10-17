@@ -13,6 +13,9 @@ func addPeerMailboxRules(rules map[string]peerViewRule) {
 		rules[pattern] = peerViewRule{feature: "node.messages", requires: PermNodeMessagesRead, serve: servePeerMailbox}
 	}
 	rules["POST /api/mailbox/mark-read"] = peerViewRule{feature: "node.messages.manage", requires: PermNodeMessagesManage, write: servePeerMailbox}
+	// A human notification's files, read in chunks, under the grant that
+	// already shows the notification (dashboard_peer_attachments.go).
+	rules["GET /api/human-attachment-chunk"] = peerViewRule{feature: "node.messages", requires: PermNodeMessagesRead, serve: servePeerMailbox}
 }
 
 func servePeerMailbox(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
@@ -31,5 +34,7 @@ func servePeerMailbox(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 		handleDashboardMailbox(w, r)
 	case "/api/mailbox/mark-read":
 		handleDashboardMailboxMarkRead(w, r)
+	case "/api/human-attachment-chunk":
+		handleDashboardHumanAttachmentChunk(w, r)
 	}
 }

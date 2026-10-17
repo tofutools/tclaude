@@ -16,7 +16,9 @@ import { shellToast } from './shell-state.js';
 // opens there through this node's federation bridge). A tab absent here has
 // no peer route at all. Usage is gated on costs: its Costs view is the only
 // half a peer serves (the quota history is this node's own accounts).
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+// Messages is the peer's mail, read under node.messages.read; what the
+// reader may do there follows the peer's further grants (mail-island.js).
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
@@ -106,7 +108,7 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
 function tabLabel(tab) {
-  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'activity' ? 'its audit log' : `the ${tab} tab`;
+  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'activity' ? 'its audit log' : tab === 'messages' ? 'its mail' : `the ${tab} tab`;
 }
 
 function subtabLabel(subtab) {

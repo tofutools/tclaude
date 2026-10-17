@@ -561,3 +561,44 @@ test('attachment preview arrows stay inside the modal instead of moving Messages
   assertSameNode(harness.document.activeElement, close, 'pane traversal must not pull focus out of the preview');
   await mounted.unmount();
 });
+
+test('on a peer\'s page, Messages answers notifications through the peer and leaves deleting to its operator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const previousRemote = globalThis.__tclaudeRemoteNode;
+  const previousFetch = globalThis.fetch;
+  const posts = [];
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  globalThis.fetch = async (url, init = {}) => { posts.push(`${init.method || 'GET'} ${url} ${init.body || ''}`); return { ok: true, status: 200, json: async () => ({}) }; };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previousRemote; globalThis.fetch = previousFetch; dashboardState.publishLocalEdit(null); });
+  dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['human.inbox.answer', 'node.messages'], omitted: [] } });
+  const state = harness.signals.signal(populated());
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controllerFor(state)} />`);
+  const c = mounted.container;
+
+  // A notification: the peer's own routes answer it; this node's (data-act)
+  // buttons, which would act on this node's mail, are not offered.
+  for (const act of ['msg-reply', 'msg-focus', 'msg-mark-read', 'msg-delete', 'msg-clear', 'msg-mark-all-read']) assertAbsent(c.querySelector(`[data-act="${act}"]`), act);
+  assert.equal(c.querySelector('#mail-bulk-bar').hidden, true, 'no bulk delete of the peer\'s notifications');
+  assert.equal(c.querySelector('.mail-row-del').disabled, true);
+  const box = c.querySelector('.mail-reply-text');
+  await harness.act(() => { box.value = 'ack'; harness.fireEvent(box, 'input'); });
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="reply"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(posts.includes('POST /api/human-inbox/reply {"id":1,"body":"ack"}'), posts.join('\n'));
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="read"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(posts.includes('POST /api/human-inbox/read {"id":1}'));
+
+  // Without the peer's answer grant the notification is read-only here.
+  await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } }); });
+  assertAbsent(c.querySelector('.mail-reply-text'), 'reply box');
+  assert.match(c.querySelector('#mail-reader').textContent, /answer them on its own dashboard/);
+
+  // Agent mail: read state goes to the peer; deleting stays its operator's.
+  await harness.act(() => { state.value = { ...state.value, selected: 'conv-a' }; });
+  const reader = c.querySelector('#mail-reader');
+  assert.ok([...reader.querySelectorAll('button')].some((b) => b.textContent === 'mark read' && !b.dataset.act));
+  assert.ok(![...reader.querySelectorAll('button')].some((b) => b.textContent === 'delete'));
+  assert.ok(![...c.querySelectorAll('#mail-bulk-bar button')].some((b) => /delete selected/.test(b.textContent)));
+  await mounted.unmount();
+});

@@ -216,6 +216,8 @@ var peerViewLocalRoutes = []string{
 	"/api/pending/delete/",
 	"/api/pending/focus/",
 	"GET /api/peer/{node}/{tail...}",
+	// Reads a peer's attachment for this node's own dashboard.
+	"GET /api/peer-attachments/{node}/{message}/{attachment}",
 	"POST /api/peer/{node}/{tail...}",
 	"/api/perf",
 	"/api/perf/reset",

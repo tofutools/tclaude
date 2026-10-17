@@ -19979,10 +19979,12 @@ html.scope-fused #messages-root { display: none !important; }
 .fused-mail-node-head { display: flex; align-items: center; gap: 6px; width: 100%; }
 .fused-mail-node-head .muted { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fused-mail .mail-row-top .scope-pill { flex: none; }
-.fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #2a3340; border-radius: 5px; padding: 6px 8px; font: inherit; }
-.fused-mail-reply:focus { outline: none; border-color: #1f6feb; }
-.fused-mail-actions { flex-wrap: wrap; align-items: center; }
-.fused-mail-actions .spacer { flex: 1; }
+.mail-reply-text { width: 100%; box-sizing: border-box; margin-top: 10px; background: #0d1117; color: #c9d1d9; border: 1px solid #2a3340; border-radius: 5px; padding: 6px 8px; font: inherit; }
+.mail-reply-text:focus { outline: none; border-color: #1f6feb; }
+/* The reader's actions may carry a reply note or an Open on NODE button
+   pushed to the right (fused view, a peer's notification). */
+.mail-reader-actions { flex-wrap: wrap; align-items: center; }
+.mail-reader-actions .spacer { flex: 1; }
 .mail-pager-note { font-size: 11px; white-space: nowrap; }
 /* A per-node tab in a fused view: a dot in the primary's colour on its label,
    and a one-line banner over its content. */

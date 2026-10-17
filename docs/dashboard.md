@@ -896,6 +896,13 @@ daemon's peer proxy (the URL carries `?node=inst_…`). The peer's name replaces
 the title, a thin line in its colour runs along the top, its chip is current,
 and a peer-view pill lists what it shares.
 
+Messages shows the peer's mail when it grants you `node.messages.read`, in
+the same client as this node's: folders, filters, pager, reader and attached
+files. Read state on agent mail needs its `node.messages.manage`. Its human
+notifications are answered with a reply box and **mark read** when it trusts
+you unrestricted. Deleting and wiping stay with the peer's own operator, and
+its access requests are answered in the fused Messages view.
+
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
 They stay in place so the layout does not jump; hover or click one to see why.
 The peer-view pill names both directions of trust and lists what is hidden
@@ -1018,10 +1025,14 @@ Actions go to the node that owns the message. Mark read/unread on agent
 messages (one, the selection, or an agent folder's mark all read) needs that
 node's `node.messages.manage`; only this node's messages can be deleted from
 here. A reply to an agent goes through its `operator-message` route
-(`message.direct`). Human notifications
-(mark read, reply) and access requests (approve once, deny) are answered here
-on this node and on peers that trust you unrestricted; approving says exactly
-what it lets through on that node. Anything a node does not allow from here
+(`message.direct`). This node's human notifications have the same buttons as
+in its own Messages (reply, focus, mark read/unread, download, delete). A
+peer's are answered with the reply box and **mark read** when the peer trusts
+you unrestricted, and are read-only otherwise. Their files preview, play and
+download as usual, read from the peer under the same `node.messages.read`.
+Access requests (approve once, deny) are answered here on this node and on
+peers that trust you unrestricted; approving says exactly what it lets
+through on that node. Anything a node does not allow from here
 says so, and **Open on NODE** shows that node's own Messages. CLI:
 `tclaude federation human-inbox PEER` (with `reply` and `decide`) and
 `tclaude federation action message --node NODE --agent ID --body TEXT`.
