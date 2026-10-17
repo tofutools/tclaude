@@ -161,8 +161,13 @@ what it offers and grant the local agent `lead` permission to mail its
 
 ```bash
 tclaude federation remote
-tclaude agent permissions grant lead message.direct --scope peer=desktop/builders
+tclaude agent permissions peer-reach add lead --peer desktop/builders --slug message.direct
 ```
+
+`peer-reach add` keeps any other peer groups `lead` can already mail. Use
+`--group <group>` instead of `lead` to give every member of a local group
+the reach. In the dashboard, step 4 of **⚙ Fleet → Setup guide** does the
+same in place.
 
 The agent can then discover the shared members:
 

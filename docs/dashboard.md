@@ -1071,8 +1071,12 @@ first and says what will happen. Most pages name their CLI.
        `sessions.watch`; Spawn workers: `groups.members.spawn`, cap 2), with
        what the peer already holds there left out. Peer grants has the rest.
     4. **Let agents use peers** (optional): what each trusted peer shares with
-       this node, per group, and the agent grant (`peer=<peer>/<group>`) that
-       uses it.
+       this node, per group, which of your groups and agents already use it,
+       and **Give access…** for another group (every member) or agent. That
+       merges `peer=<peer>/<group>` into their grants of the slugs that use
+       it (`tclaude agent permissions peer-reach add`), keeping the rest; ✕
+       removes it again. A grant held for local use is refused with the way
+       out rather than replaced.
 - **Peers** — while a peer views an agent terminal here, a panel on top shows
   who watches or drives which agent; **Disconnect…** closes that view (the peer
   can reopen it while any sessions.watch/attach grant covers that group, or at

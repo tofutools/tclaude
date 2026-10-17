@@ -1449,6 +1449,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/grant", handlePermissionsGrant)
 	mux.HandleFunc("/v1/permissions/deny", handlePermissionsDeny)
 	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
+	mux.HandleFunc("/v1/permissions/peer-reach", handlePermissionsPeerReach)
 	mux.HandleFunc("/v1/cron", handleCron)
 	mux.HandleFunc("/v1/cron/", handleCronByID)
 	mux.HandleFunc("/v1/triggers", triggerRoute(handleTriggers))

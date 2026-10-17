@@ -43,6 +43,7 @@ func permissionsCmd() *cobra.Command {
 			permissionsGrantCmd(),
 			permissionsDenyCmd(),
 			permissionsRevokeCmd(),
+			permissionsPeerReachCmd(),
 			permissionsSlugsCmd(),
 		},
 	}.ToCobra()

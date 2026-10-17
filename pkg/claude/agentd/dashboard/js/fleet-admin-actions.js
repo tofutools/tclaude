@@ -112,6 +112,11 @@ const settingRows = (v) => {
     // what joining replaces; a join points this node at its hub and connects.
     joinPreview: (code) => call('POST', 'join', { code, preview: true }),
     join: (code, name = '') => call('POST', 'join', name ? { code, name } : { code }),
+    // Peer reach (tclaude agent permissions peer-reach): which local agents
+    // and groups may use what peers share; a change merges one peer group
+    // into or out of their grants.
+    peerReach: () => call('GET', 'peer-reach'),
+    setPeerReach: (body) => call('POST', 'peer-reach', body),
     nodeLabels: async () => (await call('GET', 'node-labels'))?.labels || [],
     // Fleet health notice policy: the defaults ('' peer) or one peer's (the
     // effective policy, built-in defaults filled in); a save replaces it.

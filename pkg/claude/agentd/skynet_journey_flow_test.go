@@ -156,6 +156,23 @@ func startSkynetFixtureNode(t *testing.T, testName, childEnv string) *journeyNod
 	}
 }
 
+// status sends a request and returns its status code, for awaiting one.
+func (n *journeyNode) status(t *testing.T, method, path string, body any) int {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(method, n.url+path, bytes.NewReader(raw))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := n.client.Do(req)
+	if err != nil {
+		return 0
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
+	return res.StatusCode
+}
+
 func (n *journeyNode) call(t *testing.T, method, path string, body any, status int) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(body)
@@ -360,6 +377,11 @@ func TestSkynetJourney(t *testing.T) {
 			}
 		}
 		return true
+	})
+	// The teleport can briefly churn bob's hub link; wait until alice
+	// reaches bob again before asserting bob's own answers.
+	journeyAwait(t, "bob reachable after teleport", func() bool {
+		return alice.status(t, "POST", remote+"/agents/"+secretID+"/stop", map[string]any{"group": "receiver"}) != http.StatusBadGateway
 	})
 	for _, action := range []string{"stop", "retire", "clone", "teleport"} {
 		alice.call(t, "POST", remote+"/agents/"+secretID+"/"+action, map[string]any{"group": "receiver"}, 404)
