@@ -495,6 +495,17 @@ test('a saved chip\'s × opens the removal confirmation directly; keep backs out
   assert.ok(root.querySelector('[data-saved-strip="tmpl_ship"]'));
 });
 
+test('× then keep on an open start form keeps what was typed', async (t) => {
+  const { root, api, click, setValue } = await mount(t, { context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await setValue(root.querySelector('[data-start-param="issue"]'), 'JOH-1');
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_ship"]'));
+  assert.ok(root.querySelector('.gq-confirm'));
+  await click([...root.querySelectorAll('.gq-confirm .gq-link')].find((el) => el.textContent === 'keep'));
+  assert.equal(root.querySelector('[data-start-param="issue"]').value, 'JOH-1');
+  assert.deepEqual(api.calls.unpin, []);
+});
+
 test('dragging a saved chip onto the bin removes it from the group', async (t) => {
   const { harness, root, api, notes, settle } = await mount(t, { context: SAVED_CONTEXT });
   const doc = harness.window.document;
