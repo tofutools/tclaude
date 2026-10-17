@@ -58,5 +58,14 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
   const requestTrust = (instance, note = '') => postTrustRequest('trust-request', note ? { instance, note } : { instance });
   const dismissTrustRequest = (instance) => postTrustRequest('trust-request/dismiss', { instance });
 
-  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest });
+  // silenceOffline stops the offline reminders for a peer's current
+  // disconnection; its next disconnection notifies again.
+  const silenceOffline = async (instance) => {
+    const response = await fetchImpl(`/api/federation/nodes/health/silence?peer=${encodeURIComponent(instance)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const out = await readJSON(response);
+    if (!response.ok) throw Object.assign(new Error(out?.error || `HTTP ${response.status}`), { code: out?.code || '' });
+    return out;
+  };
+
+  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest, silenceOffline });
 }

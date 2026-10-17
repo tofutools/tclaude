@@ -193,8 +193,9 @@ func watchNodes(p *nodesParams, stdout, stderr io.Writer) int {
 }
 
 type nodeHealthParams struct {
-	Peer string `long:"peer" optional:"true" help:"Trusted peer label or instance ID; omit for defaults"`
-	Set  string `long:"set" optional:"true" help:"Replace this policy with a JSON object (operator only)"`
+	Peer    string `long:"peer" optional:"true" help:"Trusted peer label or instance ID; omit for defaults"`
+	Set     string `long:"set" optional:"true" help:"Replace this policy with a JSON object (operator only)"`
+	Silence bool   `long:"silence" optional:"true" help:"Stop offline reminders for --peer's current disconnection (operator only)"`
 }
 
 func nodeHealthCmd() *cobra.Command {
@@ -204,7 +205,14 @@ func nodeHealthCmd() *cobra.Command {
 		}
 		path := "/v1/federation/nodes/health?peer=" + url.QueryEscape(p.Peer)
 		var result any
-		if p.Set != "" {
+		if p.Silence {
+			if p.Peer == "" || p.Set != "" {
+				os.Exit(fail(os.Stderr, fmt.Errorf("--silence requires --peer and cannot be combined with --set")))
+			}
+			if err := agent.DaemonPost("/v1/federation/nodes/health/silence?peer="+url.QueryEscape(p.Peer), map[string]any{}, &result); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+		} else if p.Set != "" {
 			var policy map[string]any
 			if err := json.Unmarshal([]byte(p.Set), &policy); err != nil {
 				os.Exit(fail(os.Stderr, err))

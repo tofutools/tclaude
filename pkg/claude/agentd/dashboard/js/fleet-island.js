@@ -406,7 +406,16 @@ function TrustRows({ node, card, selfName }) {
   </dl>`;
 }
 
-function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, cardRef, shown }) {
+// OfflineNoticeRow is an offline peer's operator-notice state: when the next
+// Messages notice is due, with a button to silence this disconnection.
+function OfflineNoticeRow({ notice, now, onSilence }) {
+  if (notice.silenced) return html`<div class="fleet-card-notice silenced" title="Notices resume if it disconnects again after reconnecting">🔕 Offline notices silenced until it reconnects</div>`;
+  const next = notice.nextAt != null ? `next notice in ${fmtAge(Math.max(0, notice.nextAt - now))}` : '';
+  const sent = notice.notices > 0 ? `${notice.notices} notice${notice.notices === 1 ? '' : 's'} sent` : 'no notice sent yet';
+  return html`<div class="fleet-card-notice" title="Offline notices go to Messages after 5 min, 30 min, 4 h, then daily">🔔 ${sent}${next && ` · ${next}`}${onSilence && html` <button type="button" class="fleet-link" data-fleet="silence-offline" onClick=${onSilence}>silence</button>`}</div>`;
+}
+
+function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, onSilence, now, cardRef, shown }) {
   const kind = node.local ? 'this node' : 'peer';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
   return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
@@ -416,6 +425,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals
       <span class=${`fleet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
     ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} />`}
+    ${!node.local && node.offlineNotice && !node.online && html`<${OfflineNoticeRow} notice=${node.offlineNotice} now=${now ?? Date.now()} onSilence=${onSilence} />`}
     ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
     ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
@@ -647,6 +657,10 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const dismiss = (row) => async () => {
     try { await actions.dismissTrustRequest(row.id); actions.loadStatus?.(); return true; } catch (e) { toast(`Dismiss: ${e?.message || e}`, true); return false; }
   };
+  // Silencing is this node's own notice state; a peer view never silences.
+  const silence = (peer) => (remote || !actions.silenceOffline ? undefined : async () => {
+    try { await actions.silenceOffline(peer.id); toast(`Offline notices for ${peer.name} silenced until it reconnects`, false); actions.loadStatus?.(); } catch (e) { toast(`Silence ${peer.name}: ${e?.message || e}`, true); }
+  });
   const asking = strangers.filter((s) => s.request).length;
   return html`<div class="fleet-map" ref=${mapRef}>
     <svg class="fleet-edges" aria-hidden="true">
@@ -656,7 +670,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
       onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${() => { setLinkOpen(''); navigate('fleet-admin'); }} />`; })}
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
     <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} onSilence=${silence(peer)} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
       <h4>On the hub, not trusted <span class="muted">${strangers.length}</span>${asking > 0 && html` <span class="fleet-map-asking">· ${asking} asking to be trusted</span>`}</h4>
       <div class="fleet-map-strangers-cards">${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} onAsk=${ask(row)} onDismiss=${dismiss(row)} />`)}</div>
     </div>`}</div>

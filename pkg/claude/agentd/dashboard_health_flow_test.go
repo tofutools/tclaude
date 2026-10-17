@@ -50,4 +50,11 @@ func TestDashboardFederationHealthPolicy(t *testing.T) {
 		rec := testharness.Serve(agentd.PeerViewHandler(peer.InstanceID), testharness.JSONRequest(t, method, "/api/federation/nodes/health?peer=", map[string]any{}))
 		require.Equal(t, 403, rec.Code, rec.Body.String())
 	}
+
+	// An online peer has no disconnection to silence; a peer view never silences.
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/silence?peer=bob", map[string]any{}))
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "not_offline")
+	rec = testharness.Serve(agentd.PeerViewHandler(peer.InstanceID), testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/silence?peer=bob", map[string]any{}))
+	require.Equal(t, 403, rec.Code, rec.Body.String())
 }

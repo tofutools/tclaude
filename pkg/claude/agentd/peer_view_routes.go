@@ -138,6 +138,7 @@ var peerViewLocalRoutes = []string{
 	"POST /api/federation/node-labels",
 	"GET /api/federation/nodes/health",
 	"POST /api/federation/nodes/health",
+	"POST /api/federation/nodes/health/silence",
 	"POST /api/federation/jobs",
 	"GET /api/federation/jobs",
 	"GET /api/federation/jobs/{id}",

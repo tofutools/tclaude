@@ -90,7 +90,7 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
     ${form?.error ? html`<div class="fa-danger">${form.error}</div>` : !form ? html`<div class="muted">Loading…</div>` : html`
       <div class="fa-ns-check fa-hp-signals">${HEALTH_SIGNALS.map((s) => html`<label key=${s.key}><input type="checkbox" data-signal=${s.key} checked=${form[s.key]} onChange=${set(s.key)} /> ${s.label}</label>`)}</div>
       <div class="fa-hp-rows">
-        <div>offline / back after ${num('debounce_seconds')} s steady</div>
+        <div>offline / back after ${num('debounce_seconds')} s steady <span class="muted">(Messages: offline 5 min, 30 min, 4 h, then daily)</span></div>
         <div>disk free under ${num('disk_free_percent')} %, RAM free under ${num('ram_free_percent')} % for ${num('memory_seconds')} s</div>
         <div>${num('failure_count')} failures within ${num('failure_window_seconds')} s, then at most one notice per ${num('cooldown_seconds')} s</div>
       </div>

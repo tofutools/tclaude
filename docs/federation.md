@@ -2358,6 +2358,7 @@ tclaude federation nodes --watch --json
 tclaude federation nodes health
 tclaude federation nodes health --peer bob --set '{"resources":true,"failures":true}'
 tclaude federation nodes health --peer bob --set '{"presence":false}'
+tclaude federation nodes health --peer bob --silence
 ```
 
 These commands are operator-only. `--watch` prints the current node list, then
@@ -2369,9 +2370,18 @@ job and spawn outcomes feed failure counters. The existing federation tick
 flushes debounces. A hub connection outage alone is not proof that every peer
 went offline. The initial directory establishes a baseline without notices.
 
-Trusted-peer offline/back notices are enabled by default, with a 15-second
-debounce that suppresses short flaps. Resource and repeated-failure signals are
-off by default. Enabled notices use the same operator Messages inbox and desktop
+Trusted-peer offline/back notices are enabled by default. Watch reports the
+transition after a 15-second debounce that suppresses short flaps, but the
+operator inbox escalates instead: the first offline notice arrives after the
+node has been offline for 5 minutes, then at 30 minutes and 4 hours, then once a
+day. Restarts shorter than 5 minutes, such as upgrades, therefore never reach
+Messages. "Back online" reaches Messages only when an offline notice went out.
+Reminders stop when the node reconnects, when its trust is removed, or when the
+operator silences the current disconnection with `nodes health --peer <name>
+--silence` or the silence button on the node's Fleet map card. A silenced
+disconnection ends without a back-online notice, and the next disconnection
+notifies again. Offline nodes' cards show the notices sent and when the next is
+due. Resource and repeated-failure signals are off by default. Enabled notices use the same operator Messages inbox and desktop
 notification channel as `agent notify-human`. Identity rotation observations and
 acceptances, teleport lease loss requiring recovery, and successful backup
 resumption also appear in watch. Identity notices retain their existing inbox
@@ -2392,7 +2402,7 @@ Available settings (durations are seconds; zero selects the built-in default):
 | `presence` | true | Offline/back notices |
 | `resources` | false | Low disk and sustained high memory |
 | `failures` | false | Repeated confirmed job/spawn failures |
-| `debounce_seconds` | 15 | Delay before a stable transition is emitted |
+| `debounce_seconds` | 15 | Delay before a stable transition is emitted (offline inbox notices follow the fixed schedule above) |
 | `disk_free_percent` | 10 | Minimum data/work disk free percentage |
 | `ram_free_percent` | 10 | Minimum available RAM percentage |
 | `memory_seconds` | 120 | Continuous fresh high-memory observations required |

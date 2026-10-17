@@ -20084,6 +20084,8 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-key { padding: 0 12px 8px; font-size: 12px; }
 .fleet-card-key.pending { color: #e3b341; }
 .fleet-card-key.conflict { color: #f85149; }
+.fleet-card-notice { padding: 0 12px 8px; font-size: 12px; color: #d29922; }
+.fleet-card-notice.silenced { color: #8b949e; }
 .fleet-legend { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: #7d8590; font-size: 11px; }
 .fleet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
 .fleet-legend i.stale { border-top: 2px dashed #6e7681; }

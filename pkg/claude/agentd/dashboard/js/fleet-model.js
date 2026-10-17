@@ -53,6 +53,15 @@ export function peerName(peer) {
 // status row: present only while pending (a signed successor key waits out
 // this node's detection window) or conflict (competing successors; only an
 // explicit operator recovery resolves it).
+// offlineNotice reads a peer's open offline episode: the daemon's escalating
+// operator notices (5 min, 30 min, 4 h, then daily) and whether this
+// disconnection was silenced. null while the node is online.
+export function offlineNotice(peer) {
+  const n = peer?.offline_notice;
+  if (!n) return null;
+  return { since: Date.parse(n.since || '') || null, notices: n.notices || 0, nextAt: Date.parse(n.next_at || '') || null, silenced: !!n.silenced };
+}
+
 export function keyTransition(peer) {
   const t = peer?.identity_transition;
   if (!t || (t.state !== 'pending' && t.state !== 'conflict')) return null;
@@ -90,6 +99,7 @@ export function normalizeFleet(status) {
       online: !!p.online,
       lastSeen: p.last_seen || null,
       keyTransition: keyTransition(p),
+      offlineNotice: offlineNotice(p),
       color: nodeColor(p.instance_id),
       local: false,
     }))

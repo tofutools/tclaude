@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,12 +53,109 @@ func publishFleetEvent(peer, kind, message string, notify bool) {
 	}
 	fleetBus.Unlock()
 	if notify {
-		group := db.FederationHumanGroup(peer)
-		subject := "Fleet health: " + event.Peer + " " + kind
-		if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: "Fleet health", GroupName: group, Subject: subject, Body: message}); err == nil {
-			dispatchHumanMessageNotification("", "Fleet health", group, subject, message)
-		}
+		notifyFleetHuman(peer, event.Peer, kind, message)
 	}
+}
+
+// notifyFleetHuman puts a fleet notice in the operator inbox without a watch event.
+func notifyFleetHuman(peer, display, kind, message string) {
+	group := db.FederationHumanGroup(peer)
+	subject := "Fleet health: " + display + " " + kind
+	if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: "Fleet health", GroupName: group, Subject: subject, Body: message}); err == nil {
+		dispatchHumanMessageNotification("", "Fleet health", group, subject, message)
+	}
+}
+
+// Offline notices escalate instead of firing on the debounced transition, so a
+// short restart (such as an upgrade) never reaches the operator inbox. After
+// the listed delays a reminder repeats daily until the node returns, its trust
+// is removed, or the operator silences this disconnection.
+var offlineNoticeDelays = []time.Duration{5 * time.Minute, 30 * time.Minute, 4 * time.Hour}
+
+const offlineNoticeRepeat = 24 * time.Hour
+
+// offlineNoticeDelay is how long after going offline notice n (0-based) is due.
+func offlineNoticeDelay(n int) time.Duration {
+	if n < len(offlineNoticeDelays) {
+		return offlineNoticeDelays[n]
+	}
+	return offlineNoticeDelays[len(offlineNoticeDelays)-1] + time.Duration(n-len(offlineNoticeDelays)+1)*offlineNoticeRepeat
+}
+
+func offlineFor(d time.Duration) string {
+	switch {
+	case d < 2*time.Hour:
+		return fmt.Sprintf("%d minutes", int(d/time.Minute))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d hours", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%d days", int(d/(24*time.Hour)))
+}
+
+// remindOffline sends the next due offline notice for an emitted offline
+// episode. A delayed flush (suspend, busy daemon) sends one catch-up notice.
+func remindOffline(peer string, signal *fleetSignal, now time.Time) {
+	if signal.offlineSince.IsZero() {
+		signal.offlineSince = signal.since
+	}
+	if signal.silenced || now.Before(signal.offlineSince.Add(offlineNoticeDelay(signal.notices))) {
+		return
+	}
+	for signal.notices++; !now.Before(signal.offlineSince.Add(offlineNoticeDelay(signal.notices))); signal.notices++ {
+	}
+	p, err := db.GetFederationPeer(peer)
+	if err != nil || p == nil {
+		return
+	}
+	next := offlineNoticeDelay(signal.notices) - offlineNoticeDelay(signal.notices-1)
+	message := fmt.Sprintf("Node has been offline for %s (since %s). Next reminder in %s unless it reconnects. Silence this disconnection from the node's card in the Fleet map, or with `tclaude federation nodes health --peer <name> --silence`.",
+		offlineFor(now.Sub(signal.offlineSince)), signal.offlineSince.Local().Format(time.RFC1123), offlineFor(next))
+	notifyFleetHuman(peer, proto.SafeName(peerDisplay(p), true), "offline", message)
+}
+
+// fleetOfflineNotice is one peer's current offline episode, for the Fleet map.
+type fleetOfflineNotice struct {
+	Since    time.Time  `json:"since"`
+	Notices  int        `json:"notices"`
+	NextAt   *time.Time `json:"next_at,omitempty"`
+	Silenced bool       `json:"silenced"`
+}
+
+// offlineNotices reports the offline episodes that are emitted and still open.
+func (rt *fedRuntime) offlineNotices() map[string]fleetOfflineNotice {
+	rt.healthMu.Lock()
+	defer rt.healthMu.Unlock()
+	out := map[string]fleetOfflineNotice{}
+	for key, signal := range rt.fleetState().signals {
+		peer, ok := strings.CutSuffix(key, "/presence")
+		if !ok || !signal.value || !signal.emitted {
+			continue
+		}
+		since := signal.offlineSince
+		if since.IsZero() {
+			since = signal.since
+		}
+		n := fleetOfflineNotice{Since: since, Notices: signal.notices, Silenced: signal.silenced}
+		if !signal.silenced {
+			next := since.Add(offlineNoticeDelay(signal.notices))
+			n.NextAt = &next
+		}
+		out[peer] = n
+	}
+	return out
+}
+
+// silenceOffline stops reminders for the peer's current offline episode; the
+// next disconnection notifies again. It reports false when none is open.
+func (rt *fedRuntime) silenceOffline(peer string) bool {
+	rt.healthMu.Lock()
+	defer rt.healthMu.Unlock()
+	signal := rt.fleetState().signals[peer+"/presence"]
+	if signal == nil || !signal.value || !signal.emitted {
+		return false
+	}
+	signal.silenced = true
+	return true
 }
 
 func handleFleetWatch(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +223,11 @@ type fleetSignal struct {
 	value, emitted bool
 	since          time.Time
 	message        string
+	// Presence only: the emitted offline episode's start, the operator
+	// notices sent for it, and whether the operator silenced it.
+	offlineSince time.Time
+	notices      int
+	silenced     bool
 }
 type fleetFailure struct {
 	id string
@@ -384,20 +487,33 @@ func (rt *fedRuntime) flushFleetHealth(now time.Time) {
 			s.unknownResources(peer)
 			continue
 		}
+		if kind == "presence" && signal.value && signal.emitted {
+			remindOffline(peer, signal, now)
+		}
 		if signal.value == signal.emitted || now.Sub(signal.since) < time.Duration(p.DebounceSeconds)*time.Second {
 			continue
 		}
 		signal.emitted = signal.value
 		eventKind := kind
+		notify := true
 		if kind == "presence" {
+			// The transition itself is only a watch event: offline notices
+			// follow the escalation schedule, and "back online" reaches the
+			// inbox only when an unsilenced offline notice went out.
 			eventKind = "offline"
+			notify = false
 			if !signal.value {
 				eventKind = "online"
+				notify = signal.notices > 0 && !signal.silenced
+			}
+			signal.offlineSince, signal.notices, signal.silenced = time.Time{}, 0, false
+			if signal.value {
+				signal.offlineSince = signal.since
 			}
 		} else if !signal.value {
 			eventKind += "_recovered"
 		}
-		publishFleetEvent(peer, eventKind, signal.message, true)
+		publishFleetEvent(peer, eventKind, signal.message, notify)
 		if kind == "failures" {
 			delete(s.signals, key)
 		}
@@ -461,6 +577,25 @@ func handleFleetHealthConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, p)
+}
+
+// handleFleetOfflineSilence silences reminders for one peer's current
+// disconnection. A later disconnection notifies again.
+func handleFleetOfflineSilence(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "silence fleet offline notices") {
+		return
+	}
+	p, err := resolveFederationPeer(r.URL.Query().Get("peer"))
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	rt := currentFederation()
+	if rt == nil || !rt.silenceOffline(p.InstanceID) {
+		writeError(w, http.StatusConflict, "not_offline", "no offline notice is pending for this peer")
+		return
+	}
+	writeJSON(w, 200, rt.offlineNotices()[p.InstanceID])
 }
 
 // Optional progress frame: older peers ignore it. It never settles a spawn
