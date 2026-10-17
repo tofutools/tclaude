@@ -40,15 +40,41 @@ function PlacementList({ placement }) {
 
 const OVERRIDE_LABELS = [['cwd', 'directory'], ['harness', 'harness'], ['model', 'model'], ['effort', 'effort']];
 
-// requestedSettings lists the launch settings a request asked for, with
-// whether an approval would drop each (the peer may no longer choose it).
-function requestedSettings(r) {
-  const drops = new Set(r.would_drop || []);
-  return OVERRIDE_LABELS.filter(([k]) => r.overrides?.[k]).map(([k, label]) => ({ key: k, label, value: r.overrides[k], dropped: drops.has(k) }));
+const NOT_ALLOWED = 'the peer may no longer choose it';
+const OTHER_HARNESS = 'chosen for another harness';
+
+// requestedSettings lists the launch settings a request asked for and what
+// an approval does with each, given the operator's own values (typed). It
+// mirrors fedSpawnOverridesApplied in federation_spawn_overrides.go: a
+// value the operator sets replaces the request's; one the peer may no
+// longer choose is dropped; and a requested model and effort go too when
+// the launch runs another harness than the one requested. Without the
+// server's overrides_allowed (an older daemon) it falls back to would_drop.
+function requestedSettings(r, typed = {}) {
+  const asked = r.overrides || {};
+  const fields = OVERRIDE_LABELS.filter(([k]) => asked[k]);
+  if (!Array.isArray(r.overrides_allowed)) {
+    const drops = new Set(r.would_drop || []);
+    return fields.map(([k, label]) => ({ key: k, label, value: asked[k], dropped: drops.has(k), reason: drops.has(k) ? NOT_ALLOWED : '' }));
+  }
+  const allowed = new Set(r.overrides_allowed);
+  const own = (k) => String(typed[k] || '').trim();
+  const out = Object.fromEntries(fields.map(([k, label]) => {
+    if (own(k)) return [k, { key: k, label, value: asked[k], replaced: true }];
+    if (!allowed.has(k)) return [k, { key: k, label, value: asked[k], dropped: true, reason: NOT_ALLOWED }];
+    return [k, { key: k, label, value: asked[k] }];
+  }));
+  const otherHarness = own('harness') ? own('harness') !== (asked.harness || '') : !!asked.harness && !!out.harness?.dropped;
+  if (otherHarness) {
+    for (const k of ['model', 'effort']) {
+      if (out[k] && !out[k].replaced && !out[k].dropped) Object.assign(out[k], { dropped: true, reason: OTHER_HARNESS });
+    }
+  }
+  return fields.map(([k]) => out[k]);
 }
 
 function droppedNote(list) {
-  return list?.length ? ` — requested ${list.join(', ')} dropped: the peer may no longer choose ${list.length > 1 ? 'them' : 'it'}` : '';
+  return list?.length ? ` — requested ${list.join(', ')} not applied (no longer the peer's to choose, or chosen for another harness)` : '';
 }
 
 // ApproveDialog launches a peer's requested worker here, optionally
@@ -56,7 +82,7 @@ function droppedNote(list) {
 // `tclaude federation requests approve`.
 function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
   const [o, setO] = useState({ name: req.name || '', profile: req.profile || '', cwd: '', harness: '', model: '', effort: '' });
-  const requested = requestedSettings(req);
+  const requested = requestedSettings(req, o);
   const placeholder = (k) => {
     if (k === 'name' || k === 'profile') return req[k] || 'default';
     const base = k === 'cwd' ? 'group default' : 'profile default';
@@ -81,8 +107,8 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
     ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
-      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ' — dropped on approval: the peer may no longer choose it' : ''}</li>`)}</ul>
-      ${requested.some((x) => x.key === 'cwd' && !x.dropped) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
+      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
+      ${requested.some((x) => x.key === 'cwd' && !x.dropped && !x.replaced) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
     ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
       <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>

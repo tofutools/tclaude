@@ -141,10 +141,15 @@ func checkFedHarnessProfile(profileName, requested string) error {
 // a requested setting the operator did not set explicitly applies only while
 // the current grant or trust still lets the peer choose it (a revoked or
 // narrowed grant stops it). It returns the requested settings still to apply
-// (blank where the operator passed their own) and the dropped
-// field names.
+// (blank where the operator passed their own) and the dropped field names.
 func fedSpawnOverridesStillAllowed(peer string, groupID int64, o db.FederationSpawnOverrides, explicit fedSpawnApproveReq) (db.FederationSpawnOverrides, []string) {
-	allowed := fedSpawnOverridesAllowed(peer, groupID)
+	return fedSpawnOverridesApplied(o, fedSpawnOverridesAllowed(peer, groupID), explicit)
+}
+
+// fedSpawnOverridesApplied is fedSpawnOverridesStillAllowed for a given set
+// of fields the peer may choose. The dashboard's approve dialog mirrors it
+// (fleet-admin-spawns.js) to preview what an approval drops.
+func fedSpawnOverridesApplied(o db.FederationSpawnOverrides, allowed map[string]bool, explicit fedSpawnApproveReq) (db.FederationSpawnOverrides, []string) {
 	var dropped []string
 	keep := func(field, value, operator string) string {
 		if operator != "" {
@@ -165,19 +170,35 @@ func fedSpawnOverridesStillAllowed(peer string, groupID int64, o db.FederationSp
 		Model:   keep(fedOverrideModel, o.Model, explicit.Model),
 		Effort:  keep(fedOverrideEffort, o.Effort, explicit.Effort),
 	}
-	// A model and effort were chosen for the requested harness: when that
-	// harness is dropped (and the operator named none), they go with it.
-	if o.Harness != "" && out.Harness == "" && explicit.Harness == "" {
-		if out.Model != "" && explicit.Model == "" {
+	// The peer chose its model and effort for the harness it requested: when
+	// the launch runs another one (the operator named a different harness,
+	// or the requested harness is dropped), they go too unless the operator
+	// set them.
+	otherHarness := explicit.Harness != "" && explicit.Harness != o.Harness ||
+		explicit.Harness == "" && o.Harness != "" && out.Harness == ""
+	if otherHarness {
+		if out.Model != "" {
 			out.Model = ""
 			dropped = append(dropped, fedOverrideModel)
 		}
-		if out.Effort != "" && explicit.Effort == "" {
+		if out.Effort != "" {
 			out.Effort = ""
 			dropped = append(dropped, fedOverrideEffort)
 		}
 	}
 	return out, dropped
+}
+
+// fedSpawnOverridesAllowedList is fedSpawnOverridesAllowed as a sorted list.
+func fedSpawnOverridesAllowedList(peer string, groupID int64) []string {
+	var out []string
+	for field, ok := range fedSpawnOverridesAllowed(peer, groupID) {
+		if ok {
+			out = append(out, field)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // fedSpawnOverridesText lists requested launch settings for an operator

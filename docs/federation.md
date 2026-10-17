@@ -631,10 +631,13 @@ tclaude federation grant alice groups.members.spawn --scope group=builders --all
   lists what it asked for (in `tclaude federation requests`, the request JSON's
   `overrides`, and the needs-approval notice). Approve applies only those the
   peer may still choose under the current grant or trust, unless you pass your
-  own; revoking or narrowing the grant stops the rest. A dropped harness also
-  drops the requested model and effort, which were chosen for it. The listing
-  previews this as `would_drop`, and the approve response (success or
-  failure) names them in `dropped_overrides`. Only the values that will
+  own; revoking or narrowing the grant stops the rest. The requested model and
+  effort were chosen for the requested harness, so they are dropped too when
+  the launch runs another one (you pass a different `--harness`, or the
+  requested harness is dropped) unless you pass your own. The listing
+  previews drops as `would_drop` (without your values; `overrides_allowed`
+  lets the dashboard's approve dialog recompute as you type), and the approve
+  response (success or failure) names them in `dropped_overrides`. Only the values that will
   actually launch are validated, so a stale stored value you replace or that
   gets dropped does not block the approval.
 

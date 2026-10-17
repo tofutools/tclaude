@@ -379,6 +379,10 @@ type fedSpawnRequestJSON struct {
 	// WouldDrop names the requested settings an approval without the
 	// operator's own values would drop now (pending requests only).
 	WouldDrop []string `json:"would_drop,omitempty"`
+	// OverridesAllowed lists the settings the peer may choose now (pending
+	// requests with overrides only), so the approve dialog can preview what
+	// the operator's own values change.
+	OverridesAllowed []string `json:"overrides_allowed,omitempty"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -401,6 +405,7 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 		out.Overrides = &o
 		if status == db.FedSpawnPending {
 			_, out.WouldDrop = fedSpawnOverridesStillAllowed(req.FromInstance, req.GroupID, o, fedSpawnApproveReq{})
+			out.OverridesAllowed = fedSpawnOverridesAllowedList(req.FromInstance, req.GroupID)
 		}
 	}
 	return out
@@ -515,12 +520,33 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	// approval applies only those the current grant or trust still allows
 	// (revoking or narrowing a grant stops them); its own flags always win.
 	var dropped []string
-	fail := func(status int, code, msg string) {
-		out := map[string]any{"error": msg, "code": code}
-		if len(dropped) > 0 {
-			out["dropped_overrides"] = dropped
+	// emit relays a recorded error response, adding the requested settings
+	// an approval dropped so the operator learns them on failure too.
+	emit := func(rec *httptest.ResponseRecorder) {
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
 		}
-		writeJSON(w, status, out)
+		if len(dropped) > 0 {
+			var body map[string]any
+			if json.Unmarshal(rec.Body.Bytes(), &body) == nil && body != nil {
+				body["dropped_overrides"] = dropped
+				w.Header().Del("Content-Length")
+				writeJSON(w, rec.Code, body)
+				return
+			}
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}
+	fail := func(status int, code, msg string) {
+		rec := httptest.NewRecorder()
+		writeError(rec, status, code, msg)
+		emit(rec)
+	}
+	failErr := func(err error) {
+		rec := httptest.NewRecorder()
+		writeFedErr(rec, err)
+		emit(rec)
 	}
 	if automatic {
 		if err := checkFedSpawnOverrides(peer.InstanceID, g.ID, req.Overrides); err != nil {
@@ -573,12 +599,12 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	workerDefaults, err := db.ResolveFederationWorkerDefaults(peer.InstanceID)
 	if err != nil {
 		release()
-		writeFedErr(w, err)
+		failErr(err)
 		return
 	}
 	if err = db.RecordFederationWorkerDefaults(reservedID, workerDefaults); err != nil {
 		release()
-		writeFedErr(w, err)
+		failErr(err)
 		return
 	}
 	modelProxy := ""
@@ -587,7 +613,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		modelProxy, err = teleportModelReference(req.Credentials, "")
 		if err != nil {
 			release()
-			writeError(w, 409, "requester_pays", err.Error())
+			fail(409, "requester_pays", err.Error())
 			return
 		}
 	}
@@ -595,7 +621,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		proxy := strings.Split(strings.TrimPrefix(req.Credentials, "proxy:"), "@")[0]
 		if err := db.RecordModelProxyWorkerLease(db.ModelProxyWorkerLease{Worker: reservedID, Gateway: peer.InstanceID, Lease: req.ModelLease, Request: req.EnvelopeID, Kind: "spawn", Proxy: proxy}); err != nil {
 			release()
-			writeFedErr(w, err)
+			failErr(err)
 			return
 		}
 	}
@@ -613,7 +639,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	raw, err := json.Marshal(spawn)
 	if err != nil {
 		release()
-		writeFedErr(w, err)
+		failErr(err)
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
@@ -640,19 +666,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 			}
 		}
 		reconcileFederationSpawns()
-		if len(dropped) > 0 {
-			var body map[string]any
-			if json.Unmarshal(rec.Body.Bytes(), &body) == nil && body != nil {
-				body["dropped_overrides"] = dropped
-				writeJSON(w, rec.Code, body)
-				return
-			}
-		}
-		for k, v := range rec.Header() {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
+		emit(rec)
 		return
 	}
 	var sr agent.SpawnResponse

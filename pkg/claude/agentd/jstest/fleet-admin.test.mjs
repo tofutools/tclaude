@@ -116,7 +116,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
     spawnRequests: async () => { log.push(['spawnRequests']); return [
-      { id: 7, from: 'ada@forge', instance: 'inst_forge', group: 'ops', name: 'fixer', role: 'dev', brief: 'Fix the flaky deploy test', status: 'pending', credentials: 'proxy:claude@inst_forge', model_lease: 'lease_1', overrides: { harness: 'codex', model: 'gpt-5' }, would_drop: ['model'], created_at: '2026-10-10T09:00:00Z', expires_at: '2099-01-01T00:00:00Z' },
+      { id: 7, from: 'ada@forge', instance: 'inst_forge', group: 'ops', name: 'fixer', role: 'dev', brief: 'Fix the flaky deploy test', status: 'pending', credentials: 'proxy:claude@inst_forge', model_lease: 'lease_1', overrides: { harness: 'codex', model: 'gpt-5', effort: 'high' }, would_drop: ['model'], overrides_allowed: ['effort', 'harness'], created_at: '2026-10-10T09:00:00Z', expires_at: '2099-01-01T00:00:00Z' },
       { id: 6, from: 'ada@forge', instance: 'inst_forge', group: 'ops', brief: 'Bench run', status: 'launching', result_agent: 'agt_late1', created_at: '2026-10-10T08:00:00Z', expires_at: '2099-01-01T00:00:00Z' },
       { id: 5, from: 'bob@lab', instance: 'inst_lab', group: 'ops', brief: 'Old', status: 'denied', reason: 'busy', created_at: '2026-10-09T08:00:00Z', expires_at: '2026-10-12T08:00:00Z' },
     ]; },
@@ -810,20 +810,31 @@ test('spawn requests: approve with overrides, deny with a reason, abandon an unc
   assert.deepEqual([...s.mounted.container.querySelectorAll('#fleet-spawn-requests tbody tr')].map((r) => r.dataset.spawn), ['7', '6'], 'decided requests are hidden by default');
   assert.match(s.q('[data-spawn="7"]').textContent, /requester-paid/);
   assert.match(s.q('#fleet-outbox').textContent, /failed.*peer offline/s);
-  assert.match(s.q('[data-spawn="7"] [data-requested]').textContent, /harness codex · model gpt-5 \(dropped\)/, 'the listing shows the requested launch settings');
+  assert.match(s.q('[data-spawn="7"] [data-requested]').textContent, /harness codex · model gpt-5 \(dropped\) · effort high$/, 'the listing shows the requested launch settings');
   await s.click(s.q('[data-spawn="7"] [data-fa="approve"]'));
-  assert.match(doc.querySelector('#fleet-spawn-requested [data-setting="harness"]').textContent, /harness codex$/);
-  assert.match(doc.querySelector('#fleet-spawn-requested [data-setting="model"]').textContent, /gpt-5 — dropped on approval/);
+  const setting = (k) => doc.querySelector(`#fleet-spawn-requested [data-setting="${k}"]`).textContent;
+  assert.match(setting('harness'), /harness codex$/);
+  assert.match(setting('model'), /gpt-5 — dropped on approval: the peer may no longer choose it/);
+  assert.match(setting('effort'), /effort high$/);
   assert.equal(doc.querySelector('#fleet-spawn-harness').placeholder, 'requested: codex', 'the placeholder names what will actually apply');
   assert.equal(doc.querySelector('#fleet-spawn-model').placeholder, 'profile default (requested gpt-5 is dropped)');
+  assert.equal(doc.querySelector('#fleet-spawn-effort').placeholder, 'requested: high');
   assert.equal(doc.querySelector('#fleet-spawn-cwd').placeholder, 'group default');
-  assert.ok(doc.querySelector('#fleet-spawn-effort'), 'effort can be set on approval');
+  // Naming another harness drops the effort the peer chose for codex.
+  await fill('#fleet-spawn-harness', 'claude');
+  assert.match(setting('harness'), /codex — replaced by your value/);
+  assert.match(setting('effort'), /high — dropped on approval: chosen for another harness/);
+  assert.equal(doc.querySelector('#fleet-spawn-effort').placeholder, 'profile default (requested high is dropped)');
+  await fill('#fleet-spawn-harness', 'codex');
+  assert.match(setting('effort'), /effort high$/, 'the requested harness by hand keeps the effort chosen for it');
+  await fill('#fleet-spawn-harness', 'claude');
   await fill('#fleet-spawn-cwd', '/srv/ops');
-  await fill('#fleet-spawn-effort', 'high');
+  await fill('#fleet-spawn-effort', 'low');
+  assert.match(setting('effort'), /high — replaced by your value/);
   await s.click(doc.querySelector('#fleet-spawn-approve-go'));
   assert.match(s.confirms.at(-1).body, /starts in your group ops on this node, as you.*ada@forge's model gateway \(requester-paid.*worker permissions in the node profile/);
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'approveSpawn'), ['approveSpawn', 7, { cwd: '/srv/ops', effort: 'high' }], 'unchanged requested fields are not sent as overrides');
-  assert.match(s.toasts.at(-1), /Started fixer in ops — requested model dropped: the peer may no longer choose it/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'approveSpawn'), ['approveSpawn', 7, { cwd: '/srv/ops', harness: 'claude', effort: 'low' }], 'unchanged requested fields are not sent as overrides');
+  assert.match(s.toasts.at(-1), /Started fixer in ops — requested model not applied/);
   await s.click(s.q('[data-spawn="7"] [data-fa="deny"]'));
   await fill('#fleet-spawn-deny-reason', ' no capacity ');
   await s.click(doc.querySelector('#fleet-spawn-deny-go'));

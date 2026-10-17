@@ -1,0 +1,49 @@
+package agentd
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// What an operator approval launches with, given the fields the peer may
+// still choose and the operator's own values.
+func TestFedSpawnOverridesApplied(t *testing.T) {
+	all := map[string]bool{"cwd": true, "harness": true, "model": true, "effort": true}
+	asked := db.FederationSpawnOverrides{Cwd: "/srv/peer", Harness: "codex", Model: "gpt-5", Effort: "high"}
+	for _, tc := range []struct {
+		name     string
+		allowed  map[string]bool
+		operator fedSpawnApproveReq
+		want     db.FederationSpawnOverrides
+		dropped  []string
+	}{
+		{name: "everything still allowed", allowed: all, want: asked},
+		{name: "operator values replace the request's", allowed: all, operator: fedSpawnApproveReq{Cwd: "/srv/mine", Model: "gpt-5-mini"},
+			want: db.FederationSpawnOverrides{Harness: "codex", Effort: "high"}},
+		{name: "the requested harness by hand keeps its model", allowed: all, operator: fedSpawnApproveReq{Harness: "codex"},
+			want: db.FederationSpawnOverrides{Cwd: "/srv/peer", Model: "gpt-5", Effort: "high"}},
+		{name: "another harness drops the model and effort chosen for codex", allowed: all, operator: fedSpawnApproveReq{Harness: "claude"},
+			want: db.FederationSpawnOverrides{Cwd: "/srv/peer"}, dropped: []string{"model", "effort"}},
+		{name: "another harness keeps a model the operator set", allowed: all, operator: fedSpawnApproveReq{Harness: "claude", Model: "opus"},
+			want: db.FederationSpawnOverrides{Cwd: "/srv/peer"}, dropped: []string{"effort"}},
+		{name: "a dropped harness takes model and effort along", allowed: map[string]bool{"model": true, "effort": true},
+			want: db.FederationSpawnOverrides{}, dropped: []string{"cwd", "harness", "model", "effort"}},
+		{name: "no grant left drops everything", allowed: map[string]bool{},
+			want: db.FederationSpawnOverrides{}, dropped: []string{"cwd", "harness", "model", "effort"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, dropped := fedSpawnOverridesApplied(asked, tc.allowed, tc.operator)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.dropped, dropped)
+		})
+	}
+
+	// A request that named no harness: the operator choosing one means the
+	// peer's model was not chosen for it.
+	got, dropped := fedSpawnOverridesApplied(db.FederationSpawnOverrides{Model: "opus"}, all, fedSpawnApproveReq{Harness: "codex"})
+	require.Equal(t, db.FederationSpawnOverrides{}, got)
+	require.Equal(t, []string{"model"}, dropped)
+}
