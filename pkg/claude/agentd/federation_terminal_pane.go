@@ -134,8 +134,11 @@ type fedPaneTerminal struct {
 	resize   func(int, int) error
 	inputAt  time.Time
 	// copyMode records that a remote wheel put the pane into copy mode, so
-	// Close can leave it as it found it.
+	// Close can leave it as it found it. Cleared once the pane is seen out of
+	// copy mode: a later copy mode belongs to someone else.
 	copyMode bool
+	// closed stops input that races Close from touching the pane again.
+	closed bool
 }
 
 func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, error) {
@@ -175,6 +178,9 @@ func (p *fedPaneTerminal) Resize(cols, rows int) error {
 func (p *fedPaneTerminal) Input(b []byte) error {
 	p.inputMu.Lock()
 	defer p.inputMu.Unlock()
+	if p.closed {
+		return nil
+	}
 	p.inputAt = time.Now()
 	keys, dropped := p.keyboard.Feed(b)
 	return p.sendKeys(keys, dropped)
@@ -187,7 +193,7 @@ func (p *fedPaneTerminal) InputPending() bool {
 func (p *fedPaneTerminal) FlushInput() error {
 	p.inputMu.Lock()
 	defer p.inputMu.Unlock()
-	if time.Since(p.inputAt) < 30*time.Millisecond {
+	if p.closed || time.Since(p.inputAt) < 30*time.Millisecond {
 		return nil
 	}
 	keys, dropped := p.keyboard.Flush()
@@ -246,6 +252,9 @@ func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
 	}
 	on := func(s string) bool { return s == "1" || s == "on" }
 	inMode, copyMode, mouseApp, sgr, utf8Mouse, tmuxMouse := on(f[0]), on(f[1]), on(f[2]), on(f[3]), on(f[4]), on(f[5])
+	if !copyMode {
+		p.copyMode = false
+	}
 	dir := "scroll-down"
 	if w.Up() {
 		dir = "scroll-up"
@@ -307,13 +316,18 @@ func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
 func (p *fedPaneTerminal) Close() error {
 	p.once.Do(func() {
 		p.inputMu.Lock()
+		p.closed = true
 		entered := p.copyMode
 		p.inputMu.Unlock()
 		if entered {
 			// Copy mode belongs to the pane: left active it would swallow the
-			// local operator's keys and automated send-keys. tmux errors
-			// harmlessly when the pane already left it.
-			_ = clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "cancel").Run()
+			// local operator's keys and automated send-keys. Re-check first so
+			// a copy mode entered by someone since is left alone as far as we
+			// can tell.
+			out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane, "#{==:#{pane_mode},copy-mode}").Output()
+			if err == nil && strings.TrimSpace(string(out)) == "1" {
+				_ = clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "cancel").Run()
+			}
 		}
 		_ = p.f.Close()
 		hangupProcessGroup(p.cmd.Process)
