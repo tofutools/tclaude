@@ -384,7 +384,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-map-untrusted",
 			Title:   "Fleet map: show untrusted",
-			Caption: "Show untrusted adds the hub-visible instances this node has not trusted to the map: dotted, uncoloured cards with their self-reported name, instance ID and fingerprint, on dotted links from the hub, each with Trust….",
+			Caption: "Show untrusted adds the hub-visible instances this node has not trusted to the map, set apart below the peers in one dotted section with a single dotted link from the hub: uncoloured cards with their self-reported name, instance ID and fingerprint, each with Trust….",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });

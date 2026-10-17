@@ -456,6 +456,7 @@ function edgePath(a, b) {
 
 // measureEdges routes the links as they run: this node to the hub, and the
 // hub to each peer. Without a hub card every peer links to this node directly.
+// Untrusted instances share one link to the section that encloses them.
 export function measureEdges(mapEl) {
   if (!mapEl) return [];
   const box = mapEl.getBoundingClientRect();
@@ -465,7 +466,9 @@ export function measureEdges(mapEl) {
   const edge = (id, from, to) => ({ id, d: edgePath(from, to), mid: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } });
   const hub = mapEl.querySelector('.fleet-card.hub');
   const from = hub ? side(hub, true) : side(local, true);
-  const peers = [...mapEl.querySelectorAll('.fleet-card:not(.local):not(.hub)')].map((el) => edge(el.dataset.nodeId, from, side(el, false)));
+  const peers = [...mapEl.querySelectorAll('.fleet-card:not(.local):not(.hub):not(.untrusted)')].map((el) => edge(el.dataset.nodeId, from, side(el, false)));
+  const strangers = mapEl.querySelector('.fleet-map-strangers');
+  if (strangers) peers.push(edge(':strangers', from, side(strangers, false)));
   return hub ? [edge(':hub', side(local, true), side(hub, false)), ...peers] : peers;
 }
 
@@ -551,7 +554,10 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="fleet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
     <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`fleet-map-peers${fleet.peers.length + strangers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} />`)}</div>
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
+      <h4>On the hub, not trusted <span class="muted">${strangers.length}</span></h4>
+      <div class="fleet-map-strangers-cards">${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} />`)}</div>
+    </div>`}</div>
     ${trusting && html`<${trusting.TrustDialog} row=${trusting.row} actions=${trusting.actions} onClose=${() => setTrusting(null)} onDone=${trusted} />`}
     ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}

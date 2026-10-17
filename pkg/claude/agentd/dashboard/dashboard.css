@@ -19950,6 +19950,10 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 /* An untrusted instance on the hub: no node colour, a dotted outline, and its
    self-reported name in plain weight. */
 .fleet-card.untrusted { --nc: #484f58; background: #0d1117; border-style: dotted; border-top-style: solid; box-shadow: none; }
+/* Untrusted instances sit apart from the peers, in one dotted section. */
+.fleet-map-strangers { grid-column: 1 / -1; margin-top: 36px; padding: 10px 14px 14px; border: 1px dotted #484f58; border-radius: 10px; background: rgba(13, 17, 23, .6); }
+.fleet-map-strangers h4 { margin: 0 0 10px; color: #8b949e; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+.fleet-map-strangers-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .fleet-card.untrusted .fleet-card-name { font-weight: 400; color: #c9d1d9; }
 .fleet-card.untrusted code { font-size: 11px; }
 .fleet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
