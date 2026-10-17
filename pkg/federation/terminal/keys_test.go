@@ -54,3 +54,22 @@ func TestKeyboardPasteIsLiteralAndBoundedAcrossFrames(t *testing.T) {
 	}
 	require.LessOrEqual(t, len(k.pending), 5)
 }
+
+func TestKeyboardWheelReportsAreParsedNotForwarded(t *testing.T) {
+	var k Keyboard
+	keys, dropped := k.Feed([]byte("\x1b[<64;3;4M\x1b[<81;1;2M\x1b[<0;3;4M\x1b[<66;3;4M\x1b[<64;3;4m"))
+	require.Equal(t, []Key{{Wheel: &Wheel{Button: 64, X: 3, Y: 4}}, {Wheel: &Wheel{Button: 81, X: 1, Y: 2}}}, keys)
+	require.Equal(t, 3, dropped, "clicks, horizontal wheel and releases are not forwarded")
+	require.True(t, keys[0].Wheel.Up())
+	require.False(t, keys[1].Wheel.Up())
+	// A legacy X10 report's raw coordinate bytes never leak as literal text.
+	keys, dropped = k.Feed([]byte("\x1b[M`!"))
+	require.Empty(t, keys)
+	require.Zero(t, dropped)
+	keys, dropped = k.Feed([]byte("\"x"))
+	require.Zero(t, dropped)
+	require.Equal(t, []Key{{Wheel: &Wheel{Button: 64, X: 1, Y: 2}}, {Literal: "x"}}, keys)
+	keys, dropped = k.Feed([]byte("\x1b[M \x21\x21"))
+	require.Empty(t, keys)
+	require.Equal(t, 1, dropped)
+}

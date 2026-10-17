@@ -2,16 +2,65 @@ package terminal
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-// Key is either literal application text or a name from our fixed tmux table.
-// User text never becomes a tmux key name, flag, command or format string.
+// Key is either literal application text, a name from our fixed tmux table,
+// or a mouse wheel event. User text never becomes a tmux key name, flag,
+// command or format string.
 type Key struct {
 	Literal string
 	Name    string
+	Wheel   *Wheel
 }
+
+// Wheel is a parsed mouse wheel event in client coordinates (1-based). Only
+// these numbers survive parsing; the pane side re-encodes them for the target.
+type Wheel struct {
+	// Button is the xterm button code: 64 (up) or 65 (down) plus any
+	// shift/meta/ctrl modifier bits (4, 8, 16).
+	Button int
+	X, Y   int
+}
+
+// Up reports whether the wheel scrolled up (away from the newest output).
+func (w Wheel) Up() bool { return w.Button&3 == 0 }
+
+// parseWheel accepts an SGR mouse report body ("[<b;x;yM", without ESC) and
+// returns it when it is a vertical wheel press. Other mouse events are not
+// forwarded.
+func parseWheel(seq string) (*Wheel, bool) {
+	body, ok := strings.CutPrefix(seq, "[<")
+	if !ok {
+		return nil, false
+	}
+	body, ok = strings.CutSuffix(body, "M")
+	if !ok {
+		return nil, false
+	}
+	parts := strings.Split(body, ";")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	var n [3]int
+	for i, s := range parts {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 || v > 9999 {
+			return nil, false
+		}
+		n[i] = v
+	}
+	return legacyWheel(n[0], n[1], n[2])
+}
+func legacyWheel(b, x, y int) (*Wheel, bool) {
+	if b&^(4|8|16|1) != 64 || x < 1 || y < 1 {
+		return nil, false
+	}
+	return &Wheel{Button: b, X: x, Y: y}, true
+}
+
 type Keyboard struct {
 	pending []byte
 	paste   bool
@@ -142,7 +191,30 @@ func (k *Keyboard) parse(flush bool) (out []Key, dropped int) {
 				k.paste = true
 				continue
 			}
-			if name, ok := escapeKeys[seq]; ok {
+			if seq == "[M" {
+				// Legacy X10 mouse report: three raw bytes follow the CSI.
+				// Consume them so they never leak out as literal text.
+				if len(k.pending) < 3 {
+					if flush {
+						dropped++
+						k.pending = nil
+					} else {
+						k.pending = p
+					}
+					break
+				}
+				r := k.pending[:3]
+				k.pending = k.pending[3:]
+				if w, ok := legacyWheel(int(r[0])-32, int(r[1])-32, int(r[2])-32); ok {
+					out = append(out, Key{Wheel: w})
+				} else {
+					dropped++
+				}
+				continue
+			}
+			if w, ok := parseWheel(seq); ok {
+				out = append(out, Key{Wheel: w})
+			} else if name, ok := escapeKeys[seq]; ok {
 				out = append(out, Key{Name: name})
 			} else {
 				dropped++

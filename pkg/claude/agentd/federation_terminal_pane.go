@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,12 @@ type fedPaneTerminal struct {
 	keyboard terminal.Keyboard
 	resize   func(int, int) error
 	inputAt  time.Time
+	// copyMode records that a remote wheel put the pane into copy mode, so
+	// Close can leave it as it found it. Cleared once the pane is seen out of
+	// copy mode: a later copy mode belongs to someone else.
+	copyMode bool
+	// closed stops input that races Close from touching the pane again.
+	closed bool
 }
 
 func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, error) {
@@ -143,7 +150,9 @@ func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, err
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(version)), "tmux %d.%d", &major, &minor); err != nil || major < 3 || major == 3 && minor < 2 {
 		return nil, errors.New("remote attach requires tmux 3.2 or newer (ignore-size client support)")
 	}
-	cmd := clcommon.TmuxCommand("attach-session", "-f", "ignore-size", "-t", clcommon.ExactTarget(pin.tmux))
+	// The renderer's output crosses the hub in arbitrary chunks, so ask tmux
+	// for synchronized redraws (xterm.js honors DEC 2026).
+	cmd := clcommon.TmuxCommand("-T", clcommon.TmuxSyncFeature, "attach-session", "-f", "ignore-size", "-t", clcommon.ExactTarget(pin.tmux))
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	// Nested clients must not inherit TMUX: attach to the server explicitly.
 	env := cmd.Env[:0]
@@ -169,6 +178,9 @@ func (p *fedPaneTerminal) Resize(cols, rows int) error {
 func (p *fedPaneTerminal) Input(b []byte) error {
 	p.inputMu.Lock()
 	defer p.inputMu.Unlock()
+	if p.closed {
+		return nil
+	}
 	p.inputAt = time.Now()
 	keys, dropped := p.keyboard.Feed(b)
 	return p.sendKeys(keys, dropped)
@@ -181,7 +193,7 @@ func (p *fedPaneTerminal) InputPending() bool {
 func (p *fedPaneTerminal) FlushInput() error {
 	p.inputMu.Lock()
 	defer p.inputMu.Unlock()
-	if time.Since(p.inputAt) < 30*time.Millisecond {
+	if p.closed || time.Since(p.inputAt) < 30*time.Millisecond {
 		return nil
 	}
 	keys, dropped := p.keyboard.Flush()
@@ -191,7 +203,21 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	if dropped > 0 {
 		slog.Debug("federation: discarded unknown keyboard sequences", "count", dropped)
 	}
-	for _, key := range keys {
+	for i := 0; i < len(keys); i++ {
+		key := keys[i]
+		if key.Wheel != nil {
+			// A touchpad emits bursts: coalesce a run of identical wheel
+			// buttons into one pane query and one tmux action.
+			n := 1
+			for i+n < len(keys) && keys[i+n].Wheel != nil && keys[i+n].Wheel.Button == key.Wheel.Button {
+				n++
+			}
+			i += n - 1
+			if err := p.wheel(*key.Wheel, n); err != nil {
+				return err
+			}
+			continue
+		}
 		args := []string{"send-keys", "-t", p.pin.pane}
 		if key.Name != "" {
 			args = append(args, key.Name)
@@ -206,8 +232,103 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	}
 	return nil
 }
+
+// wheel applies count wheel events the way tmux's default WheelUpPane and
+// WheelDownPane bindings would for a real client: the renderer PTY is
+// read-only, so tmux never sees the viewer's mouse. A pane in copy mode
+// scrolls its history; an application that requested mouse reporting (Claude
+// Code's fullscreen TUI) gets the event re-encoded at pane coordinates; with
+// tmux's mouse option on, wheel-up enters copy mode (Codex, shells).
+func (p *fedPaneTerminal) wheel(w terminal.Wheel, count int) error {
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane,
+		"#{pane_in_mode} #{==:#{pane_mode},copy-mode} #{mouse_any_flag} #{mouse_sgr_flag} #{mouse_utf8_flag} #{mouse} "+
+			"#{pane_left} #{pane_top} #{pane_width} #{pane_height} #{?#{==:#{status-position},top},#{status},off}").Output()
+	if err != nil {
+		return err
+	}
+	f := strings.Fields(string(out))
+	if len(f) != 11 {
+		return errors.New("unexpected tmux pane mouse state")
+	}
+	on := func(s string) bool { return s == "1" || s == "on" }
+	inMode, copyMode, mouseApp, sgr, utf8Mouse, tmuxMouse := on(f[0]), on(f[1]), on(f[2]), on(f[3]), on(f[4]), on(f[5])
+	if !copyMode {
+		p.copyMode = false
+	}
+	dir := "scroll-down"
+	if w.Up() {
+		dir = "scroll-up"
+	}
+	// tmux's copy-mode wheel binding scrolls five lines per event.
+	scroll := func() error {
+		return clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "-N", strconv.Itoa(5*count), dir).Run()
+	}
+	switch {
+	case copyMode:
+		return scroll()
+	case inMode:
+		return nil
+	case mouseApp:
+		var left, top, width, height, statusTop int
+		for i, dst := range []*int{&left, &top, &width, &height} {
+			v, err := strconv.Atoi(f[6+i])
+			if err != nil {
+				return errors.New("unexpected tmux pane geometry")
+			}
+			*dst = v
+		}
+		switch f[10] {
+		case "off":
+		case "on":
+			statusTop = 1
+		default:
+			statusTop, _ = strconv.Atoi(f[10])
+		}
+		x := min(max(w.X-left, 1), width)
+		y := min(max(w.Y-top-statusTop, 1), height)
+		var seq []byte
+		switch {
+		case sgr:
+			seq = fmt.Appendf(nil, "\x1b[<%d;%d;%dM", w.Button, x, y)
+		case utf8Mouse && max(w.Button, x, y)+32 > 127, max(w.Button, x, y)+32 > 255:
+			// Not representable in the encoding the application asked for.
+			return nil
+		default:
+			seq = []byte{0x1b, '[', 'M', byte(w.Button + 32), byte(x + 32), byte(y + 32)}
+		}
+		args := []string{"send-keys", "-t", p.pin.pane, "-H"}
+		for range count {
+			for _, b := range seq {
+				args = append(args, fmt.Sprintf("%02x", b))
+			}
+		}
+		return clcommon.TmuxCommand(args...).Run()
+	case w.Up() && tmuxMouse:
+		if err := clcommon.TmuxCommand("copy-mode", "-e", "-t", p.pin.pane).Run(); err != nil {
+			return err
+		}
+		p.copyMode = true
+		return scroll()
+	}
+	return nil
+}
+
 func (p *fedPaneTerminal) Close() error {
 	p.once.Do(func() {
+		p.inputMu.Lock()
+		p.closed = true
+		entered := p.copyMode
+		p.inputMu.Unlock()
+		if entered {
+			// Copy mode belongs to the pane: left active it would swallow the
+			// local operator's keys and automated send-keys. Re-check first so
+			// a copy mode entered by someone since is left alone as far as we
+			// can tell.
+			out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane, "#{==:#{pane_mode},copy-mode}").Output()
+			if err == nil && strings.TrimSpace(string(out)) == "1" {
+				_ = clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "cancel").Run()
+			}
+		}
 		_ = p.f.Close()
 		hangupProcessGroup(p.cmd.Process)
 		_ = p.cmd.Wait()
