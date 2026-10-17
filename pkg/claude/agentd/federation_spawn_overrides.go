@@ -132,7 +132,7 @@ func checkFedHarnessProfile(profileName, requested string) error {
 		return nil
 	}
 	if pinned := harnessOrDefault(profile.Harness); pinned != requested {
-		return fmt.Errorf("profile %q runs harness %q; choose that harness or leave the harness blank", profile.Name, pinned)
+		return fmt.Errorf("profile %q runs harness %q, not the requested %q", profile.Name, pinned, requested)
 	}
 	return nil
 }
@@ -140,14 +140,18 @@ func checkFedHarnessProfile(profileName, requested string) error {
 // fedSpawnOverridesStillAllowed is what an operator approval launches with:
 // a requested setting the operator did not set explicitly applies only while
 // the current grant or trust still lets the peer choose it (a revoked or
-// narrowed grant stops it). It returns the kept settings and the dropped
+// narrowed grant stops it). It returns the requested settings still to apply
+// (blank where the operator passed their own) and the dropped
 // field names.
 func fedSpawnOverridesStillAllowed(peer string, groupID int64, o db.FederationSpawnOverrides, explicit fedSpawnApproveReq) (db.FederationSpawnOverrides, []string) {
 	allowed := fedSpawnOverridesAllowed(peer, groupID)
 	var dropped []string
 	keep := func(field, value, operator string) string {
-		if value == "" || operator != "" {
-			return value
+		if operator != "" {
+			return "" // the operator's own value applies instead
+		}
+		if value == "" {
+			return ""
 		}
 		if !allowed[field] {
 			dropped = append(dropped, field)
@@ -155,12 +159,25 @@ func fedSpawnOverridesStillAllowed(peer string, groupID int64, o db.FederationSp
 		}
 		return value
 	}
-	return db.FederationSpawnOverrides{
+	out := db.FederationSpawnOverrides{
 		Cwd:     keep(fedOverrideCwd, o.Cwd, explicit.Cwd),
 		Harness: keep(fedOverrideHarness, o.Harness, explicit.Harness),
 		Model:   keep(fedOverrideModel, o.Model, explicit.Model),
 		Effort:  keep(fedOverrideEffort, o.Effort, explicit.Effort),
-	}, dropped
+	}
+	// A model and effort were chosen for the requested harness: when that
+	// harness is dropped (and the operator named none), they go with it.
+	if o.Harness != "" && out.Harness == "" && explicit.Harness == "" {
+		if out.Model != "" && explicit.Model == "" {
+			out.Model = ""
+			dropped = append(dropped, fedOverrideModel)
+		}
+		if out.Effort != "" && explicit.Effort == "" {
+			out.Effort = ""
+			dropped = append(dropped, fedOverrideEffort)
+		}
+	}
+	return out, dropped
 }
 
 // fedSpawnOverridesText lists requested launch settings for an operator

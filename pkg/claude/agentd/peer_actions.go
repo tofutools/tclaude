@@ -304,7 +304,7 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		pinnedProfile = grant.SpawnPolicy.Profile
 	}
 	if err := checkFedHarnessProfile(fedFirst(body.Profile, pinnedProfile), overrides.Harness); err != nil {
-		writeError(w, 409, "harness_profile_conflict", err.Error())
+		writeError(w, 409, "harness_profile_conflict", err.Error()+"; choose that harness or leave the harness blank")
 		return
 	}
 	req := &db.FederationSpawnRequest{FromInstance: v.peer.InstanceID, FromName: "operator", EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Name: proto.SafeName(body.Name, false), Role: proto.SafeName(body.Role, false), Brief: body.Brief, Profile: body.Profile, Overrides: overrides, ExpiresAt: time.Now().Add(fedSpawnTTL)}

@@ -531,7 +531,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     touched.current.add('cwd');
     touched.current.add('wtRepo');
     touched.current.add('remoteControl');
-    operatorSet.current.delete('cwd');
+    // The new group's default directory replaces only a blank or
+    // group-filled one; a directory the operator typed stays theirs.
+    if (!draft.cwd.trim() || draft.cwdOrigin === 'group') operatorSet.current.delete('cwd');
     setDraft((before) => selectSpawnGroup(before, value, context));
   };
   const changeHarness = (value) => {
@@ -554,9 +556,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
   };
   const changeModel = (value) => {
-    // A model change pre-fills its remembered effort.
     operatorSet.current.add('model');
-    operatorSet.current.delete('effort');
     if (value === MODEL_CUSTOM_VALUE) {
       touched.current.add('model');
       touched.current.add('customModel');
@@ -576,13 +576,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     profileOverrides.current.add('model');
     profileOverrides.current.add('customModel');
     profileOverrides.current.add('effort');
+    // A listed model pre-fills its remembered effort.
+    operatorSet.current.delete('effort');
     setDraft((before) => ({
       ...before, model: value, customModel: false, effort: rememberedEffort(value),
     }));
   };
   const changeProfile = (handle) => {
     if (!handle) {
-      for (const field of PROFILE_OWNED_FIELDS) touched.current.add(field);
+      for (const field of PROFILE_OWNED_FIELDS) {
+        touched.current.add(field);
+        // Clearing resets these to defaults: no longer the operator's values.
+        operatorSet.current.delete(field);
+      }
       profileOverrides.current.clear();
       setDraft((before) => clearSpawnProfileFields(before, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort,

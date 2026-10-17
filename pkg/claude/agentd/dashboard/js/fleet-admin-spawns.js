@@ -38,11 +38,32 @@ function PlacementList({ placement }) {
   </tr>`)}</tbody></table>`;
 }
 
+const OVERRIDE_LABELS = [['cwd', 'directory'], ['harness', 'harness'], ['model', 'model'], ['effort', 'effort']];
+
+// requestedSettings lists the launch settings a request asked for, with
+// whether an approval would drop each (the peer may no longer choose it).
+function requestedSettings(r) {
+  const drops = new Set(r.would_drop || []);
+  return OVERRIDE_LABELS.filter(([k]) => r.overrides?.[k]).map(([k, label]) => ({ key: k, label, value: r.overrides[k], dropped: drops.has(k) }));
+}
+
+function droppedNote(list) {
+  return list?.length ? ` — requested ${list.join(', ')} dropped: the peer may no longer choose ${list.length > 1 ? 'them' : 'it'}` : '';
+}
+
 // ApproveDialog launches a peer's requested worker here, optionally
 // overriding what the peer asked for. The override fields mirror
 // `tclaude federation requests approve`.
 function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
-  const [o, setO] = useState({ name: req.name || '', profile: req.profile || '', cwd: '', harness: '', model: '' });
+  const [o, setO] = useState({ name: req.name || '', profile: req.profile || '', cwd: '', harness: '', model: '', effort: '' });
+  const requested = requestedSettings(req);
+  const placeholder = (k) => {
+    if (k === 'name' || k === 'profile') return req[k] || 'default';
+    const base = k === 'cwd' ? 'group default' : 'profile default';
+    const asked = requested.find((x) => x.key === k);
+    if (!asked) return base;
+    return asked.dropped ? `${base} (requested ${asked.value} is dropped)` : `requested: ${asked.value}`;
+  };
   const set = (k) => (e) => setO({ ...o, [k]: e.currentTarget.value });
   const go = () => {
     const overrides = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.trim()]).filter(([k, v]) => v && v !== (req[k] || '')));
@@ -52,20 +73,23 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
       okLabel: 'Approve and start',
       busyLabel: 'Starting…',
       action: () => actions.approveSpawn(req.id, overrides),
-    }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}`, false); onDone(); } })
-      .catch((e) => toast(`Approve failed: ${errText(e)}`, true));
+    }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}${droppedNote(r.dropped_overrides)}`, false); onDone(); } })
+      .catch((e) => toast(`Approve failed: ${errText(e)}${droppedNote(e?.body?.dropped_overrides)}`, true));
   };
   return html`<${Overlay} id="fleet-spawn-approve" labelledby="fleet-spawn-approve-title" onClose=${onClose}>
     <h3 id="fleet-spawn-approve-title">Approve spawn request #${req.id}</h3>
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
-    ${['name', 'profile', 'cwd', 'harness', 'model'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
-      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${k === 'cwd' ? 'group default' : k === 'name' || k === 'profile' ? (req[k] || 'default') : 'profile default'} /></label>`)}
+    ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
+      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ' — dropped on approval: the peer may no longer choose it' : ''}</li>`)}</ul>
+      ${requested.some((x) => x.key === 'cwd' && !x.dropped) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
+    ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
+      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>
       <button type="button" onClick=${onClose}>Cancel</button>
       <button id="fleet-spawn-approve-go" type="button" class="primary" onClick=${go}>Approve…</button>
     </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …]</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …] [--effort …]</code></div>
   </${Overlay}>`;
 }
 
@@ -191,7 +215,8 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
         <td title=${r.instance}>${r.from}</td>
         <td>${r.group}</td>
         <td>${[r.name, r.role && `role ${r.role}`, r.profile && `profile ${r.profile}`].filter(Boolean).join(' · ') || html`<span class="muted">defaults</span>`}
-          ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}</td>
+          ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}
+          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
         <td class="fa-spawn-brief-cell" title=${r.brief}>${r.brief}</td>
         <td class=${r.status === 'denied' || r.status === 'expired' ? 'fa-danger' : r.status === 'launching' ? 'fa-warn' : ''} title=${r.reason || ''}>${r.status}${r.result_agent ? html` <code title=${r.result_agent}>${r.result_agent.slice(0, 14)}</code>` : ''}${r.reason ? html` <span class="muted">— ${r.reason}</span>` : ''}</td>
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>

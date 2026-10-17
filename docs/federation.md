@@ -631,8 +631,12 @@ tclaude federation grant alice groups.members.spawn --scope group=builders --all
   lists what it asked for (in `tclaude federation requests`, the request JSON's
   `overrides`, and the needs-approval notice). Approve applies only those the
   peer may still choose under the current grant or trust, unless you pass your
-  own; revoking or narrowing the grant stops the rest, and the approve response
-  names them in `dropped_overrides`.
+  own; revoking or narrowing the grant stops the rest. A dropped harness also
+  drops the requested model and effort, which were chosen for it. The listing
+  previews this as `would_drop`, and the approve response (success or
+  failure) names them in `dropped_overrides`. Only the values that will
+  actually launch are validated, so a stale stored value you replace or that
+  gets dropped does not block the approval.
 
 **Allowing `cwd` is broad.** The peer may then start a worker in any existing
 directory on this machine, and the worker's sandbox usually grants its launch

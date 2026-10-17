@@ -376,6 +376,9 @@ type fedSpawnRequestJSON struct {
 	ExpiresAt        time.Time `json:"expires_at"`
 	// Overrides are the launch settings the requester chose; nil when none.
 	Overrides *db.FederationSpawnOverrides `json:"overrides,omitempty"`
+	// WouldDrop names the requested settings an approval without the
+	// operator's own values would drop now (pending requests only).
+	WouldDrop []string `json:"would_drop,omitempty"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -396,6 +399,9 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 	if !req.Overrides.Empty() {
 		o := req.Overrides
 		out.Overrides = &o
+		if status == db.FedSpawnPending {
+			_, out.WouldDrop = fedSpawnOverridesStillAllowed(req.FromInstance, req.GroupID, o, fedSpawnApproveReq{})
+		}
 	}
 	return out
 }
@@ -509,23 +515,38 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	// approval applies only those the current grant or trust still allows
 	// (revoking or narrowing a grant stops them); its own flags always win.
 	var dropped []string
+	fail := func(status int, code, msg string) {
+		out := map[string]any{"error": msg, "code": code}
+		if len(dropped) > 0 {
+			out["dropped_overrides"] = dropped
+		}
+		writeJSON(w, status, out)
+	}
 	if automatic {
 		if err := checkFedSpawnOverrides(peer.InstanceID, g.ID, req.Overrides); err != nil {
 			writeError(w, 409, "override_not_allowed", err.Error())
 			return
 		}
-	} else if err := validateFedSpawnOverrides(req.Overrides); err != nil {
-		writeError(w, 409, "override_not_allowed", err.Error())
-		return
-	} else {
-		req.Overrides, dropped = fedSpawnOverridesStillAllowed(peer.InstanceID, g.ID, req.Overrides, in)
-	}
-	// A requested harness must not silently discard the explicitly chosen
-	// profile's harness-specific settings. An operator's own --harness is theirs.
-	if h := req.Overrides.Harness; h != "" && (automatic || in.Harness == "") {
-		if err := checkFedHarnessProfile(fedFirst(in.Profile, req.Profile), h); err != nil {
+		if err := checkFedHarnessProfile(fedFirst(in.Profile, req.Profile), req.Overrides.Harness); err != nil {
 			writeError(w, 409, "harness_profile_conflict", err.Error())
 			return
+		}
+	} else {
+		// Validate what will actually launch: a stored value the operator
+		// replaced or the current grant drops cannot block the approval.
+		req.Overrides, dropped = fedSpawnOverridesStillAllowed(peer.InstanceID, g.ID, req.Overrides, in)
+		if err := validateFedSpawnOverrides(req.Overrides); err != nil {
+			fail(409, "override_not_allowed", err.Error())
+			return
+		}
+		// A requested harness must not silently discard the explicitly
+		// chosen profile's harness-specific settings. An operator's own
+		// --harness is theirs.
+		if in.Harness == "" {
+			if err := checkFedHarnessProfile(fedFirst(in.Profile, req.Profile), req.Overrides.Harness); err != nil {
+				fail(409, "harness_profile_conflict", err.Error()+"; approve with --harness, or with --profile naming another profile")
+				return
+			}
 		}
 	}
 	in.Profile = fedFirst(in.Profile, req.Profile)
@@ -537,7 +558,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	// sees it as taken.
 	reservedID := db.NewAgentID()
 	if won, err := db.BeginFederationSpawnRequest(req.ID, reservedID, automatic); err != nil || !won {
-		writeError(w, http.StatusConflict, "decided", fmt.Sprintf("spawn request #%d is being decided by another call", req.ID))
+		fail(http.StatusConflict, "decided", fmt.Sprintf("spawn request #%d is being decided by another call", req.ID))
 		return
 	}
 	released := false
@@ -619,6 +640,14 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 			}
 		}
 		reconcileFederationSpawns()
+		if len(dropped) > 0 {
+			var body map[string]any
+			if json.Unmarshal(rec.Body.Bytes(), &body) == nil && body != nil {
+				body["dropped_overrides"] = dropped
+				writeJSON(w, rec.Code, body)
+				return
+			}
+		}
 		for k, v := range rec.Header() {
 			w.Header()[k] = v
 		}

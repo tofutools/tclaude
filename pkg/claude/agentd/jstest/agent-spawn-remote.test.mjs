@@ -166,8 +166,9 @@ test('a remote spawn sends only the launch settings the operator set, not harnes
   const pick = async (sel, value, event = 'change') => {
     const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
   };
-  // Loading a profile and clearing it again pre-fills the harness defaults
-  // (harness claude): none of that is the operator's choice.
+  // Loading a profile and clearing it again resets the harness to its
+  // default (claude), even one the operator picked: none of that is sent.
+  await pick('#agent-spawn-harness', 'codex');
   await pick('#agent-spawn-load-profile', 'reviewer');
   await pick('#agent-spawn-load-profile', '');
   await pick('#agent-spawn-init-msg', 'port the parser', 'input');
@@ -185,13 +186,14 @@ test('a remote spawn sends only the launch settings the operator set, not harnes
   await harness.act(() => new Promise((r) => setTimeout(r, 400)));
   await flush(harness);
   const q2 = (sel) => host2.querySelector(sel);
-  for (const [sel, value, event] of [['#agent-spawn-init-msg', 'port the parser', 'input'], ['#agent-spawn-model', 'opus', 'change'], ['#agent-spawn-harness', 'codex', 'change']]) {
+  for (const [sel, value, event] of [['#agent-spawn-init-msg', 'port the parser', 'input'], ['#agent-spawn-model', 'opus', 'change'], ['#agent-spawn-harness', 'codex', 'change'],
+    ['#agent-spawn-effort', 'low', 'change'], ['#agent-spawn-model', '__custom__', 'change']]) {
     const el = q2(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
   }
   await harness.act(() => q2('#agent-spawn-submit').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 50)));
   await flush(harness);
-  assert.deepEqual(sent, [['build', { brief: 'port the parser', name: 'port-the-parser', harness: 'codex' }]],
-    'the model the harness change replaced is not an override');
+  assert.deepEqual(sent, [['build', { brief: 'port the parser', name: 'port-the-parser', harness: 'codex', effort: 'low' }]],
+    'the model the harness change replaced is not an override; switching to a custom model keeps the chosen effort');
   await mounted2.unmount();
 });

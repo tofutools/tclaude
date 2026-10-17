@@ -236,6 +236,33 @@ func TestPeerSpawnApprovalDropsOverridesThePeerMayNoLongerChoose(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	require.Equal(t, []string{"model", "effort"}, out.Dropped, "the operator's own cwd wins; the rest is no longer the peer's to choose")
 	waitSpawnSettled(t, id)
+
+	// A dropped harness takes the model chosen for it along, and a stored
+	// value the operator replaces (an old malformed directory) does not block
+	// the approval.
+	id, err = db.InsertFederationSpawnRequest(&db.FederationSpawnRequest{
+		FromInstance: bob.ID(), EnvelopeID: "env-dropped-harness", FromName: "bob", GroupID: builders.ID, GroupName: "builders",
+		Brief: "port the lexer", Status: db.FedSpawnPending, ExpiresAt: time.Now().Add(time.Hour),
+		Overrides: db.FederationSpawnOverrides{Cwd: "not/absolute", Harness: "codex", Model: "gpt-5"},
+	}, 10)
+	require.NoError(t, err)
+	rec = fedHuman(t, f, "GET", "/v1/federation/spawn-requests", nil)
+	var listed []struct {
+		ID        int64    `json:"id"`
+		WouldDrop []string `json:"would_drop"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
+	for _, r := range listed {
+		if r.ID == id {
+			require.Equal(t, []string{"cwd", "harness", "model"}, r.WouldDrop, "the listing says what an approval would drop")
+		}
+	}
+	rec = fedHuman(t, f, "POST", fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{"cwd": dir})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	out.Dropped = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, []string{"harness", "model"}, out.Dropped)
+	waitSpawnSettled(t, id)
 }
 
 // A harness override that contradicts the profile the launch runs (the
@@ -243,7 +270,7 @@ func TestPeerSpawnApprovalDropsOverridesThePeerMayNoLongerChoose(t *testing.T) {
 // profile's harness-specific settings.
 func TestPeerSpawnHarnessOverrideConflictsWithPinnedProfile(t *testing.T) {
 	f := newFlow(t)
-	f.HaveGroup("builders")
+	builders := f.HaveGroup("builders")
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "codexy", Harness: "codex", Model: "gpt-5.4"})
 	require.NoError(t, err)
 	bob, err := proto.NewIdentity()
@@ -259,4 +286,19 @@ func TestPeerSpawnHarnessOverrideConflictsWithPinnedProfile(t *testing.T) {
 	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "harness": "codex"})
 	require.Equal(t, 202, code, "the profile's own harness is no conflict")
 	waitSpawnSettled(t, id)
+
+	// On an operator approval the advice is the operator's options.
+	carol, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: carol.ID(), PubKey: carol.Pub, Label: "carol", TrustLevel: db.FederationTrustUnrestricted}))
+	id, err = db.InsertFederationSpawnRequest(&db.FederationSpawnRequest{
+		FromInstance: carol.ID(), EnvelopeID: "env-conflict", FromName: "carol", GroupID: builders.ID, GroupName: "builders",
+		Brief: "task", Status: db.FedSpawnPending, ExpiresAt: time.Now().Add(time.Hour),
+		Overrides: db.FederationSpawnOverrides{Harness: "claude"},
+	}, 10)
+	require.NoError(t, err)
+	rec = fedHuman(t, f, "POST", fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{"profile": "codexy"})
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "harness_profile_conflict")
+	require.Contains(t, rec.Body.String(), "approve with --harness")
 }

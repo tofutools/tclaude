@@ -851,6 +851,7 @@ type spawnRequestRow struct {
 	Reason           string                       `json:"reason"`
 	CreatedAt        time.Time                    `json:"created_at"`
 	Overrides        *db.FederationSpawnOverrides `json:"overrides,omitempty"`
+	WouldDrop        []string                     `json:"would_drop,omitempty"`
 }
 
 type requestsParams struct {
@@ -897,6 +898,9 @@ func requestsCmd() *cobra.Command {
 						if kv[1] != "" {
 							fmt.Printf("    requested %s: %q\n", kv[0], kv[1])
 						}
+					}
+					if len(r.WouldDrop) > 0 {
+						fmt.Printf("    approve drops (no longer the peer's to choose): %s\n", strings.Join(r.WouldDrop, ", "))
 					}
 				}
 				if r.Credentials != "" {
