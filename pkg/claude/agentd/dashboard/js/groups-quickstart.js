@@ -23,6 +23,7 @@ import {
   LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
 } from './process-loops.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
+import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { dashPrefs } from './prefs.js';
 
 const html = htm.bind(h);
@@ -53,6 +54,63 @@ export async function openInGraphEditor(api, view, name) {
   return id;
 }
 
+// The operator's description is bounded so that, with the group context
+// scribeDraftRequest appends, the request fits the scribe's prompt limit.
+export const DRAFT_DESCRIPTION_MAX = 1200;
+const DRAFT_NAME_MAX = 60;
+
+// scribeDraftName names the draft template after the description's first
+// line, so it is recognisable in the group and the editor.
+export function scribeDraftName(text) {
+  const line = String(text || '').split('\n')[0].replace(/\s+/g, ' ').trim();
+  if (!line) return 'untitled process';
+  return line.length <= DRAFT_NAME_MAX ? line : `${line.slice(0, DRAFT_NAME_MAX - 1).trimEnd()}…`;
+}
+
+// scribeDraftRequest is what the scribe is asked: the operator's words, then
+// the group the process is for and who is in it, so the steps it drafts use
+// this group's agents and roles. Members past the prompt limit are counted,
+// not listed.
+export function scribeDraftRequest(text, groupName, roster = []) {
+  const request = String(text || '').trim().slice(0, DRAFT_DESCRIPTION_MAX);
+  const head = `${request}\n\nThis process is for the agent group "${groupName}". Draft its steps for this group's agents, using a role rather than a name wherever a role fits, and steps for me (the human) or commands where the description asks for them. Leave it as a saved draft: do not start it.`;
+  const members = roster.map((member) => `- ${member.name}${member.role ? ` (role: ${member.role})` : ''}`);
+  if (!members.length) return `${head}\nThe group has no members yet.`;
+  let body = `${head}\nIts members:`;
+  let listed = 0;
+  for (const line of members) {
+    const rest = members.length - listed - 1;
+    const tail = rest > 0 ? `\n…and ${rest} more` : '';
+    if (body.length + 1 + line.length + tail.length > PROCESS_SCRIBE_PROMPT_MAX) break;
+    body += `\n${line}`;
+    listed += 1;
+  }
+  return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
+}
+
+// draftWithScribe stores a near-empty template named after the description
+// and saved to the group (pinned, not listed in the library), then opens it
+// in the graph editor with a process scribe requested on it. The scribe is
+// scoped to a stored template, which is why the draft is stored first; the
+// editor still shows the request and asks for the scribe's permissions
+// before anything is sent, and nothing runs.
+export async function draftWithScribe(api, { group, text, roster = [] }) {
+  const name = scribeDraftName(text);
+  // Loaded on demand, as the Processes tab does: the graph model is not part
+  // of the Groups tab's startup.
+  const { blankEditView } = await import('./process-edit-model.js');
+  const view = blankEditView(name);
+  const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
+  const id = String(body?.id || '');
+  if (!id) throw new Error('the template was not created');
+  markQuickStart();
+  handOffProcessDraft({
+    id, name, view: createdEditView(view, id, body),
+    scribe: { prompt: scribeDraftRequest(text, group.name, roster) },
+  });
+  return id;
+}
+
 // QUICKSTART_PREF remembers that the operator is past the first run: 'used'
 // once they created or started a process here, 'dismissed' once they closed
 // the Get started panel. Either folds an empty group's panel to one line.
@@ -78,8 +136,9 @@ function stepKind(step) {
 }
 
 // GetStarted is the first-run panel of a group without processes.
-export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onReuse, onDismiss }) {
+export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onDraft = null, onReuse, onDismiss }) {
   const [templates, setTemplates] = useState(null);
+  const [description, setDescription] = useState('');
   // pending holds the panel while a starter is stored for the graph editor,
   // so a double click creates one template, not two.
   const [pending, setPending] = useState(false);
@@ -95,6 +154,13 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
     setPending(true);
     void Promise.resolve(onOpenGraph(built.view, starter.key)).finally(() => setPending(false));
   };
+  const draft = (event) => {
+    event?.preventDefault?.();
+    const text = description.trim();
+    if (!text || pending || !onDraft) return;
+    setPending(true);
+    void Promise.resolve(onDraft(text)).finally(() => setPending(false));
+  };
   const shown = (templates || []).slice(0, 3);
   return html`<section class="gq-start" aria-label=${wizard ? 'Begin a first rite' : 'Get started with processes'} data-quickstart=${group.name}>
     <div class="gq-start-head">
@@ -102,11 +168,16 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
       ${onDismiss && html`<button type="button" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now</button>`}
     </div>
     <p class="gq-sub">A process is a set of steps. Each step is done by an agent of this group, by you, or by a command. Steps run in order, and your answers can branch them.</p>
-    <div class="gq-ask">
-      <input type="text" class="gq-ask-in" disabled aria-label="Describe the process in plain words"
+    <form class="gq-ask" data-quickstart-draft onSubmit=${draft}>
+      <input type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX}
+        disabled=${!onDraft || pending} value=${description} onInput=${(event) => setDescription(event.currentTarget.value)}
         placeholder="Describe the flow in plain words, e.g. implement the issue, have the reviewer check it, I approve, then merge" />
-      <button type="button" class="gq-btn primary" disabled title="Coming soon: a background scribe drafts the steps from your words">✨ Draft steps</button>
-    </div>
+      <button type="submit" class="gq-btn primary" disabled=${!onDraft || pending || !description.trim()}
+        title=${wizard
+          ? 'Open the rite in the graph editor and ask a process scribe to set down its steps from your words. You see what it is asked, and grant its access, first. Nothing is performed.'
+          : 'Opens the process in the graph editor and asks a process scribe to draft its steps from your words. You see the request and approve the scribe\'s access first; nothing runs.'}
+      >✨ Draft steps</button>
+    </form>
     <div class="gq-sec">Or start from</div>
     <div class="gq-starters">
       ${STARTERS.map((starter) => {

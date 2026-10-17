@@ -2569,7 +2569,9 @@ export class ProcessTemplateEditor {
     }
   }
 
-  async requestScribe(kind = 'template') {
+  // `prompt` prefills the request preview (the operator still edits and
+  // confirms it); without one the preview offers the kind's default ask.
+  async requestScribe(kind = 'template', { prompt: initialPrompt = '' } = {}) {
     if (this.destroyed || !this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
     const originalBlank = this.blank;
     if (this.dirty) {
@@ -2692,7 +2694,7 @@ export class ProcessTemplateEditor {
       return false;
     };
     const prompt = await this.scribePreviewModal({
-      kind, prompt: processScribePrompt(kind), context: processScribeContextPreview(context),
+      kind, prompt: initialPrompt || processScribePrompt(kind), context: processScribeContextPreview(context),
       truncated: !!context.truncation,
     });
     if (prompt == null || this.abort?.signal.aborted) {
