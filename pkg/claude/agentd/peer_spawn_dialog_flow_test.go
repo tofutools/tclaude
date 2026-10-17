@@ -40,7 +40,9 @@ func TestPeerSpawnCatalogIsAGrantableReadOnlyPeerView(t *testing.T) {
 	for _, path := range catalog {
 		require.Equal(t, 403, get(path), "%s needs a grant", path)
 	}
-	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeSpawnRead, "scope": "group=one"})
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsRosterRead, "scope": "group=one"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeSpawnRead, "scope": "group=one"})
 	require.Equal(t, 400, rec.Code, "node.spawn.read is node-wide")
 	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeSpawnRead})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -48,6 +50,11 @@ func TestPeerSpawnCatalogIsAGrantableReadOnlyPeerView(t *testing.T) {
 		require.Equal(t, 200, get(path), path)
 	}
 	require.Contains(t, peerViewIncludes(t, h, "/api/snapshot"), "spawn.catalog")
+	// One group's settings only for a group the peer can see.
+	f.HaveGroup("hidden")
+	require.Equal(t, 403, get("/api/groups/hidden/sandbox-profile"))
+	require.Equal(t, 403, get("/api/groups/hidden/spawn-harness-policy"))
+	require.Equal(t, 403, get("/api/groups/missing/sandbox-profile"))
 	// Read-only: the catalogs' writes stay local-only.
 	for _, path := range []string{"/api/spawn-profiles", "/api/roles", "/api/saved-prompts", "/api/sandbox-profile-default"} {
 		rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", path, map[string]any{"name": "x"}))
@@ -106,6 +113,9 @@ func TestPeerFullSpawnRunsTheDialogsSpawnUnderItsGrant(t *testing.T) {
 
 	grant(agentd.PermGroupsRosterRead, "two")
 	require.Equal(t, 403, spawn("two", full).Code, "the grant is group-scoped")
+	grant(agentd.PermGroupsMembersSpawnFull, "two")
+	rec = spawn("two", map[string]any{"brief": "a brief-only body", "name": "brief-worker"})
+	require.Equal(t, 202, rec.Code, "the full grant covers the brief-only request: %s", rec.Body.String())
 }
 
 func TestUnrestrictedPeerHoldsTheFullSpawnDialog(t *testing.T) {

@@ -2451,7 +2451,14 @@ both, and either can be granted to a restricted peer on its own:
   handler, as this node's operator would. Held in any group, it also serves
   the cwd pickers: `POST /api/browse-directories`, `GET`/`POST /api/worktrees`
   and `GET /api/worktrees/progress`. The spawn is audited as the peer's
-  operator (`POST /api/groups/{name}/spawn full`).
+  operator (`POST /api/groups/{name}/spawn full`), naming the spawned agent.
+  As for this node's operator, no federation profile allowlist, live cap or
+  approval applies, and the spawn may carry any permissions and ownership, so
+  the grant is effectively node-wide; it also covers the brief-only request.
+
+The group routes among the catalogs answer only for a group the peer can see.
+Spawn and sandbox profiles carry their environment values (often tokens) and
+paths, so `node.spawn.read` shares those too.
 
 A brief-only body (`{brief, name?, role?, profile?}`) stays the
 `groups.members.spawn` request above. Spawn attachments and queued spawns stay

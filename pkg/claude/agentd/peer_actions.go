@@ -275,7 +275,8 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		servePeerFullSpawn(w, r, v, g, raw)
 		return
 	}
-	if !v.allows(rule, g.ID) {
+	// The full spawn covers the brief-only request too.
+	if !v.allows(rule, g.ID) && !fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawnFull) {
 		writeError(w, 403, "permission", "requires "+rule.requires)
 		return
 	}

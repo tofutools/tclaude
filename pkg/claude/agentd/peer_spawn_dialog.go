@@ -57,10 +57,26 @@ var peerSpawnPickerRoutes = map[string]http.HandlerFunc{
 	"GET /api/worktrees/progress":  dashboardWorktreeProgressAPI,
 }
 
+// peerSpawnGroupParam names the path's group on the catalog routes that read
+// one group's settings: a peer reads them only for a group it can see.
+var peerSpawnGroupParam = map[string]string{
+	"GET /api/groups/{group}/sandbox-profile":     "group",
+	"GET /api/groups/{name}/spawn-harness-policy": "name",
+}
+
 func addPeerSpawnDialogRules(rules map[string]peerViewRule) {
 	for pattern, next := range peerSpawnCatalogRoutes {
 		rule := peerViewRule{feature: "spawn.catalog", requires: PermNodeSpawnRead}
-		serve := servePeerSpawnDialog(next, func(v *peerView, rule peerViewRule) bool { return v.allows(rule, 0) })
+		param := peerSpawnGroupParam[pattern]
+		serve := servePeerSpawnDialog(next, func(v *peerView, rule peerViewRule, r *http.Request) bool {
+			if param != "" {
+				g, err := db.GetAgentGroupByName(r.PathValue(param))
+				if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
+					return false
+				}
+			}
+			return v.allows(rule, 0)
+		})
 		if pattern[:4] == "GET " {
 			rule.serve = serve
 		} else {
@@ -70,7 +86,9 @@ func addPeerSpawnDialogRules(rules map[string]peerViewRule) {
 	}
 	for pattern, next := range peerSpawnPickerRoutes {
 		rule := peerViewRule{feature: "spawn.full", requires: PermGroupsMembersSpawnFull, group: true}
-		serve := servePeerSpawnDialog(next, func(v *peerView, _ peerViewRule) bool { return peerSpawnFullAnywhere(v.peer.InstanceID) })
+		serve := servePeerSpawnDialog(next, func(v *peerView, _ peerViewRule, _ *http.Request) bool {
+			return peerSpawnFullAnywhere(v.peer.InstanceID)
+		})
 		if pattern[:4] == "GET " {
 			rule.serve = serve
 		} else {
@@ -82,9 +100,9 @@ func addPeerSpawnDialogRules(rules map[string]peerViewRule) {
 
 // servePeerSpawnDialog runs this node's own dashboard handler for a peer the
 // grant check admits, as the dashboard operator.
-func servePeerSpawnDialog(next http.HandlerFunc, allowed func(*peerView, peerViewRule) bool) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
+func servePeerSpawnDialog(next http.HandlerFunc, allowed func(*peerView, peerViewRule, *http.Request) bool) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
 	return func(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
-		if !allowed(v, rule) {
+		if !allowed(v, rule, r) {
 			writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 			return
 		}
@@ -134,7 +152,9 @@ func readPeerSpawnBody(w http.ResponseWriter, r *http.Request) (raw []byte, brie
 }
 
 // servePeerFullSpawn runs the spawn dialog's request through this node's
-// dashboard spawn handler, as this node's operator would.
+// dashboard spawn handler, as this node's operator would: the federation
+// spawn guardrails (profile allowlist, live cap, approval) do not apply, as
+// they do not to the operator. The audit row names the spawned agent.
 func servePeerFullSpawn(w http.ResponseWriter, r *http.Request, v *peerView, g *db.AgentGroup, raw []byte) {
 	if !fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawnFull) {
 		writeError(w, 403, "permission", "requires "+PermGroupsMembersSpawnFull)
@@ -146,4 +166,12 @@ func servePeerFullSpawn(w http.ResponseWriter, r *http.Request, v *peerView, g *
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
 	groupRoute(dashboardSpawnInGroup)(w, r)
+	if out, ok := w.(*peerViewResponse); ok && out.statusCode() == http.StatusOK {
+		var launched struct {
+			ConvID string `json:"conv_id"`
+		}
+		if json.Unmarshal(out.body.Bytes(), &launched) == nil {
+			v.targetConv = launched.ConvID
+		}
+	}
 }
