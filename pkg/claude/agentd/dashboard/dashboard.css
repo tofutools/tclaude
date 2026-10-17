@@ -3463,9 +3463,13 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .profile-section { margin-bottom: 18px; }
 .profile-notice { margin: 4px 0 8px; font-size: 12px; }
 .profile-table { width: 100%; }
-.profile-table td { vertical-align: top; }
+/* Centered so the one-line cells and the share/delete buttons sit level with
+   the two-line Started/Label cells. */
+.profile-table td { vertical-align: middle; }
 .profile-id { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .profile-error { font-size: 11px; max-width: 280px; overflow-wrap: anywhere; }
+/* Flex lives on an inner div, never on the <td>: a flex <td> stops being a
+   table cell, so its bottom border is drawn at its own height, not the row's. */
 .profile-links { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .profile-links a { color: #58a6ff; text-decoration: none; }
 .profile-links a.muted { color: #8b949e; }

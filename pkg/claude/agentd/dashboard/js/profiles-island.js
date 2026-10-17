@@ -80,7 +80,7 @@ function CaptureRow({ capture, actions, deleting, now }) {
     <td title="agentd's own CPU over the window, as top shows it (100% = one core)">${headline?.cpu_available ? fmtPct(headline.self_cpu_percent) : '—'}</td>
     <td title="CPU of child processes (tmux, git, …) that exited during the window — top shows these under their own names, not agentd">${headline?.cpu_available ? fmtPct(headline.child_cpu_percent) : '—'}</td>
     <td title="Instrumented subprocess starts (tmux) per second — see summary for the per-command breakdown">${headline ? fmtRate(headline.subprocesses_per_sec) : '—'}</td>
-    <td class="profile-links">
+    <td><div class="profile-links">
       ${hasFile(capture, 'summary.txt') && html`<a href=${`${base}/files/summary.txt`} target="_blank" rel="noopener"
         title="Counters over the capture window: CPU split, GC rate, subprocess table">summary</a>`}
       ${VIEWERS.filter((viewer) => hasKind(capture, viewer.kind)).map((viewer) => html`<a key=${viewer.kind}
@@ -89,7 +89,7 @@ function CaptureRow({ capture, actions, deleting, now }) {
         href=${`${base}/files/${file.name}?download=1`} title=${`${file.title} — download`}>${file.label} ⤓</a>`)}
       ${shareable && html`<a class="muted" href=${`${base}/archive`}
         title="Every file of this capture as one zip — to keep or hand to someone">zip ⤓</a>`}
-    </td>
+    </div></td>
     <td class="profile-actions">
       ${shareable && html`<button type="button" class="tool" title="Send this capture's files to an agent as message attachments"
         aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…</button>`}
