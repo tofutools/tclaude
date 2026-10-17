@@ -20483,6 +20483,7 @@ details[open] > summary .gp-subtree-total { display: none; }
 .gf-section-toggle:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .group-header-actions.gf-section-actions { margin: 0; }
 .gf-section-fill { flex: 1; align-self: stretch; min-width: 12px; cursor: pointer; }
+.gf-section.forced .gf-section-fill { cursor: default; }
 .gf-section:not(.open) > .gf-section-head { margin-bottom: 0; }
 .gf-tri { width: 10px; color: #6e7681; }
 .gf-label { color: #c9d1d9; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 10.5px; }

@@ -612,8 +612,11 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} />`;
   const fused = processes?.fused ? {
     actions: html`<${GroupActions} group=${group} actions=${actions} />`,
-    between: html`<${ForceBlock} group=${group} /><${GroupTriggersSection} group=${group} triggers=${triggers} />`,
-    agents: html`${pending}${members}`,
+    // The task force card belongs to the roster, so it heads the Agents
+    // section; triggers follow both sections. Neither sits above a section
+    // line, which would move its controls when the card folds.
+    after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
+    agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
     agentsSummary: membersSummary(group, view),
   } : null;
   return html`<details
