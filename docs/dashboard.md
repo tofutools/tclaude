@@ -141,7 +141,7 @@ row with the agent controls and the process controls captioned apart, then an
 line, and the choice is remembered per group; with no choice made, a group
 with nothing running shows its Processes section as a single line. In Both,
 clicking a group header's run counts opens that group's Processes section
-instead of switching lenses. Hovering links the two halves with dashed
+instead of switching lenses. In a real group, hovering links the two halves with dashed
 lines: an agent row to every step it performs, a step to its performers, and
 anywhere else on a run card to all of that run's agents. Lines start at the
 agent's state pill, stay within the hovered group, and an end that is off

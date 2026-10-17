@@ -513,13 +513,18 @@ test('Both links an agent to its steps, a step to its performers, and a run card
   assert.ok(release.querySelector('[data-process-node="checkout"]').classList.contains('gf-link-hot'));
   assert.ok(release.querySelector('[data-process-node="plan"]').classList.contains('gf-link-dim'), 'the rest of the card dims');
 
+  // jsdom lays nothing out, so every end reads as off screen and gets a tag;
+  // with a tag showing, moving on to another link waits a short dwell.
+  assert.ok(root.querySelector('.gf-link-tag'), 'an off-screen end becomes a tag');
   await hover(release.querySelector('.gp-card-head'));
-  await wait(20);
+  await wait(40);
+  assert.equal(lines(), 2, 'with a tag showing, a passing hover does not switch at once');
+  await wait(300);
   assert.equal(lines(), 3, 'a run card links each agent-performed step: plan, checkout, charts');
   assert.equal(forms.classList.contains('gf-link-dim'), false);
 
   await hover(release.querySelector('[data-process-node="charts"]'));
-  await wait(20);
+  await wait(340);
   assert.equal(lines(), 1, 'a step links only its performer');
   assert.ok(fe.querySelector('tr[data-dnd-agent="agt_fe_charts"]').classList.contains('gf-link-hot'));
   assert.equal(forms.classList.contains('gf-link-hot'), false, 'the previous highlights clear');

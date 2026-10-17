@@ -23,10 +23,21 @@ const html = htm.bind(h);
 
 // Idle → hovering waits a moment, so sweeping the pointer across the table
 // does not flash lines; leaving waits too, so the pointer can reach a tag.
+// While a tag shows, moving on to another row or card waits as well: the
+// way to a tag at the viewport edge crosses other rows and cards.
 const ENTER_DELAY_MS = 120;
+const SWITCH_DWELL_MS = 280;
 const LEAVE_DELAY_MS = 220;
-// An off-screen end is pinned this far inside the viewport edge.
-const EDGE_INSET = 26;
+// An off-screen end is pinned this far inside the visible edge (the centre
+// of a ~20px tag, plus a margin).
+const EDGE_INSET = 16;
+
+// visibleBottom is the viewport bottom above the dashboard's fixed footer.
+function visibleBottom() {
+  const footer = document.querySelector('body > footer');
+  const top = footer ? rectOf(footer).top : 0;
+  return top > 0 && top < window.innerHeight ? top : window.innerHeight;
+}
 
 const GROUP = 'details[data-group-key]';
 
@@ -109,14 +120,14 @@ function label(el, fallback) {
 
 // measure turns pairs into overlay coordinates relative to the frame, with an
 // off-screen end pinned to the viewport edge as a tag.
-function measure(frame, pairs, viewportHeight) {
+function measure(frame, pairs, bottom) {
   const base = rectOf(frame);
   const lines = [];
   const tags = new Map();
   const pin = (rect, y, el, text) => {
-    if (rect.top > viewportHeight - EDGE_INSET) {
-      tags.set(el, { x: rect.left + rect.width / 2 - base.left, y: viewportHeight - EDGE_INSET - base.top, dir: '↓', text, el });
-      return viewportHeight - EDGE_INSET - base.top;
+    if (rect.top > bottom - EDGE_INSET) {
+      tags.set(el, { x: rect.left + rect.width / 2 - base.left, y: bottom - EDGE_INSET - base.top, dir: '↓', text, el });
+      return bottom - EDGE_INSET - base.top;
     }
     if (rect.bottom < EDGE_INSET) {
       tags.set(el, { x: rect.left + rect.width / 2 - base.left, y: EDGE_INSET - base.top, dir: '↑', text, el });
@@ -172,7 +183,9 @@ export function FusedLinks({ frame }) {
       el.classList.add(cls);
       marked.current.push([el, cls]);
     };
+    let tagsShown = false;
     const publish = (next) => {
+      tagsShown = !!next?.tags.length;
       const key = next ? JSON.stringify([next.lines, next.tags.map((tag) => [tag.x, tag.y, tag.dir, tag.text])]) : '';
       if (key === shown.current) return;
       shown.current = key;
@@ -198,7 +211,7 @@ export function FusedLinks({ frame }) {
       for (const card of cards) {
         for (const node of card?.querySelectorAll('[data-process-node]') || []) if (!hot.has(node)) mark(node, 'gf-link-dim');
       }
-      const next = measure(root, pairs, window.innerHeight);
+      const next = measure(root, pairs, visibleBottom());
       publish({ ...next, width: root.scrollWidth, height: root.scrollHeight });
     };
     const schedule = () => {
@@ -212,16 +225,17 @@ export function FusedLinks({ frame }) {
       leaveTimer = setTimeout(() => { hover.current = null; draw(); }, LEAVE_DELAY_MS);
     };
     const onOver = (event) => {
-      if (event.target.closest?.('.gf-link-tag')) { clearTimeout(leaveTimer); return; }
+      if (event.target.closest?.('.gf-link-tag')) { clearTimeout(leaveTimer); clearTimeout(enterTimer); return; }
       const next = resolveHover(event.target);
       if (!next) { if (hover.current) leave(); else clearTimeout(enterTimer); return; }
       clearTimeout(leaveTimer);
       if (sameHover(next, hover.current)) return;
       clearTimeout(enterTimer);
       const apply = () => { hover.current = next; draw(); };
-      // Moving from one link to the next is immediate; only the first waits.
-      if (hover.current) apply();
-      else enterTimer = setTimeout(apply, ENTER_DELAY_MS);
+      // Moving from one link to the next is immediate, unless a tag is showing;
+      // the first hover always waits.
+      if (hover.current && !tagsShown) apply();
+      else enterTimer = setTimeout(apply, hover.current ? SWITCH_DWELL_MS : ENTER_DELAY_MS);
     };
     root.addEventListener('pointerover', onOver);
     root.addEventListener('focusin', onOver);
@@ -249,8 +263,8 @@ export function FusedLinks({ frame }) {
   useEffect(() => { redraw.current(); });
 
   if (!drawn) return null;
-  return html`<div class="gf-links" aria-hidden="true">
-    <svg class="gf-links-svg" width=${drawn.width} height=${drawn.height}>
+  return html`<div class="gf-links">
+    <svg class="gf-links-svg" width=${drawn.width} height=${drawn.height} aria-hidden="true">
       ${drawn.lines.map((line) => html`<g key=${line.key}>
         <path class="gf-link" d=${curve(line)} />
         <circle class="gf-link-end" cx=${line.x1} cy=${line.y1} r="2.5" />
@@ -258,6 +272,7 @@ export function FusedLinks({ frame }) {
       </g>`)}
     </svg>
     ${drawn.tags.map((tag) => html`<button type="button" key=${`${tag.dir}${tag.text}${tag.x}`} class="gf-link-tag" tabindex="-1"
+      aria-label=${`Scroll to ${tag.text}`}
       style=${`left:${tag.x}px;top:${tag.y}px`} onClick=${() => tag.el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })}
     >${tag.dir} ${tag.text}</button>`)}
   </div>`;
