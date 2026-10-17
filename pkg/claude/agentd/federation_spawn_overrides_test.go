@@ -82,3 +82,18 @@ func TestFedSpawnLaunchSettingsApplyPerField(t *testing.T) {
 	require.JSONEq(t, `true`, string(body["is_owner"]))
 	require.JSONEq(t, `"spawned for x"`, string(body["descr"]))
 }
+
+// An approval that launches another harness drops the harness-specific
+// launch settings, as it drops the requested model and effort.
+func TestFedSpawnLaunchSettingsDropOnOtherHarness(t *testing.T) {
+	asked := db.FederationSpawnOverrides{Harness: "codex", Launch: map[string]json.RawMessage{
+		"approval": json.RawMessage(`"never"`), "is_owner": json.RawMessage(`true`),
+	}}
+	all := map[string]bool{"harness": true, "permissions": true, "owner": true}
+	got, dropped := fedSpawnOverridesApplied(asked, all, fedSpawnApproveReq{Harness: "claude"})
+	require.Equal(t, map[string]json.RawMessage{"is_owner": json.RawMessage(`true`)}, got.Launch)
+	require.Contains(t, dropped, "approval")
+	got, _ = fedSpawnOverridesApplied(asked, all, fedSpawnApproveReq{})
+	require.Len(t, got.Launch, 2, "the requested harness keeps them")
+	require.Contains(t, fedSpawnOverridesText(asked), `approval: "never"`, "the notice shows values")
+}

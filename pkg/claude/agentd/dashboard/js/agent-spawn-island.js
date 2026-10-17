@@ -57,7 +57,7 @@ import {
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import {
-  createRemoteSpawnActions, isLocalRef, remotePromptBodies, remoteSpawnIntro, remoteSpawnPins,
+  createRemoteSpawnActions, isLocalRef, remotePromptBodies, remotePromptSetOpen, remoteSpawnIntro, remoteSpawnPins,
   remoteSpawnPrompts, watchRemoteSpawnLocks,
 } from './agent-spawn-remote.js';
 import { shellToast } from './shell-state.js';
@@ -357,7 +357,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const remotePrompts = useMemo(() => (remote ? remoteSpawnPrompts(remote) : null), [remote]);
   // With groups.members.spawn.prompts the prompt set rides by name, so the
   // peer's own prompts can be dropped like any other.
-  const remotePromptsOpen = remote?.options?.overrides?.prompts === true;
+  const remotePromptsOpen = remotePromptSetOpen(remote);
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -1005,7 +1005,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('request_sent_ms');
       // A remote request carries only the overrides the operator set here.
       const payload = await actions.spawn(remote
-        ? { ...request, explicit: remoteExplicit(next), promptRefs: [...(next.promptRefs || [])], prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
+        ? { ...request, explicit: remoteExplicit(next), promptRefs: [...(next.promptRefs || [])], prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote), worktree: worktreeSelection }
         : request);
       markTiming('response_received_ms');
       if (queued) {

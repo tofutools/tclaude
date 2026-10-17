@@ -223,9 +223,34 @@ func TestPeerSpawnWorktreeRoutesUnderTheirGrant(t *testing.T) {
 	require.Equal(t, 403, list(), "worktrees need groups.members.spawn.worktree")
 	grantSpawnFields(t, f, "bob", "builders", nil, "worktree")
 	require.Equal(t, 200, list())
+	carol, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: carol.ID(), PubKey: carol.Pub, Label: "carol"}))
+	grantSpawnFields(t, f, "carol", "builders", nil, "worktree")
+	require.Equal(t, 403, testharness.Serve(agentd.PeerViewHandler(carol.ID()), testharness.JSONRequest(t, "GET", "/api/worktrees?repo="+repo, nil)).Code,
+		"a worktree is a directory too: it needs groups.members.spawn.cwd")
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/worktrees", map[string]any{"repo": repo, "branch": "b", "path": "/tmp/elsewhere"}))
+	require.Equal(t, 403, rec.Code, "the peer does not choose where a worktree goes: %s", rec.Body.String())
 	require.NotEqual(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/worktrees/progress?id=x", nil)).Code, "progress reaches the route")
 	for _, path := range []string{"/api/worktrees/cleanup", "/api/browse-directories"} {
 		require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "POST", path, map[string]any{})).Code, path)
 	}
 	require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "DELETE", "/api/worktrees", nil)).Code)
+}
+
+// The sandbox-weakening launch settings, which a local spawn takes only from
+// the human operator, launch under the peer operator's .permissions grant.
+func TestPeerSpawnPermissionsLaunchMayOmitSandboxProfiles(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("builders")
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+	grantSpawnFields(t, f, "bob", "builders", nil, "permissions")
+	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "launch": map[string]any{"omit_sandbox_profiles": true}})
+	require.Equal(t, 202, code)
+	waitSpawnSettled(t, id)
+	req, err := db.GetFederationSpawnRequest(id)
+	require.NoError(t, err)
+	require.Equal(t, db.FedSpawnApproved, req.Status, req.Reason)
 }

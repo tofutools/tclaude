@@ -3630,7 +3630,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	if body.AllowUnenforcedSandbox && !isDashboardSpawnPeer(r) {
+	if body.AllowUnenforcedSandbox && !isDashboardSpawnPeer(r) && !fedSpawnSandboxAuthorized(r) {
 		writeError(w, http.StatusForbidden, "unenforced_sandbox_override_restricted",
 			"only the human operator may allow an unenforced sandbox through the dashboard spawn dialog")
 		return
@@ -3645,7 +3645,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			"sandbox_profile and omit_sandbox_profiles are mutually exclusive")
 		return
 	}
-	if body.OmitSandboxProfiles && classify(peerFromContext(r.Context())) != classHuman {
+	if body.OmitSandboxProfiles && classify(peerFromContext(r.Context())) != classHuman && !fedSpawnSandboxAuthorized(r) {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
 			"only the human operator may omit inherited sandbox profiles")
 		return

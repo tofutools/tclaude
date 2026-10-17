@@ -277,6 +277,14 @@ export function remoteSpawnPrompts(remote) {
   return [...target, ...local];
 }
 
+// remotePromptSetOpen says whether the request may name the whole prompt set
+// (groups.members.spawn.prompts). It also needs the peer's prompt library:
+// without it the dialog cannot show the peer's own defaults, and sending a
+// set would silently drop them.
+export function remotePromptSetOpen(remote) {
+  return remote?.options?.overrides?.prompts === true && !!remote?.catalogs?.target;
+}
+
 // remotePromptBodies is the text of the prompts the brief carries: every
 // selected prompt the peer does not already apply itself.
 export function remotePromptBodies(refs, peerApplied, remote) {
@@ -520,7 +528,6 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
   // Worktrees are listed and created on the peer, as its own dialog does,
   // when the grant opens them.
   const worktrees = remoteFieldAllowed('worktree', remote.options) ? createAgentSpawnActions({ fetchImpl: peerFetch }) : null;
-  let worktree = null;
   const watch = (request, startedAt) => {
     timers.setTimeout(() => {
       api.status(request.id).then((next) => {
@@ -550,8 +557,7 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
       return { repo: text(repo).trim(), isRepo: false, empty: true, hasCommits: true, repoRoot: '', worktrees: [], branches: [], defaultBranch: '', subRepos: [] };
     },
     async resolveWorktree(...args) {
-      worktree = worktrees ? await worktrees.resolveWorktree(...args) : { path: '', branch: '' };
-      return worktree;
+      return worktrees ? worktrees.resolveWorktree(...args) : { path: '', branch: '' };
     },
     async loadLaunchDefaults(...args) { return peer ? peer.loadLaunchDefaults(...args) : {}; },
     async loadSandboxPolicy(...args) {
@@ -569,11 +575,11 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
     async reportTiming() {},
     async pickDirectory() { return {}; },
     async spawn(request) {
-      const used = worktree;
-      worktree = null;
+      // The worktree the dialog resolved for this submit (a retry reuses it).
+      const used = request.worktree || null;
       // With the prompt set open, the peer's prompts ride by name and only
       // this node's are written into the brief.
-      if (remote.options?.overrides?.prompts === true && Array.isArray(request.promptRefs)) {
+      if (remotePromptSetOpen(remote) && Array.isArray(request.promptRefs)) {
         const refs = request.promptRefs;
         const prompts = remotePromptBodies(refs.filter(isLocalRef), [], remote);
         return api.spawn(remote.group, remoteSpawnBody(request, request.explicit, remote.options, prompts, { promptRefs: refs.filter((r) => !isLocalRef(r)), worktree: used }));

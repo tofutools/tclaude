@@ -682,7 +682,9 @@ tclaude federation grant alice groups.members.spawn.all --scope group=builders
   group spawn path validates them exactly as a local spawn's; any other key
   is refused. A requested description goes ahead of this node's own
   "spawned for" line. Attachments, focus and the break-glass acknowledgement
-  are never carried.
+  are never carried. An approval that launches another harness than the
+  requested one drops the harness-specific keys too (the modes, harness
+  features and context settings), as it drops the model and effort.
 - A field grant extends the spawn grant in force for the group and counts
   only when it is at least as specific (a group scope above an unscoped
   grant, a direct grant above a pool's): a group-scoped spawn grant without
@@ -3294,7 +3296,10 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   choose it (see "Launch settings a peer may choose"); any other field or
   launch key is refused. With `groups.members.spawn.worktree`,
   `GET`/`POST /api/worktrees` and `GET /api/worktrees/progress` serve the
-  dialog's worktree list and creation; other worktree routes stay local-only. Returns a durable spawn-request row
+  dialog's worktree list and creation (also needing `.cwd`); listing a
+  directory shows its repositories, worktrees and branches, and a new
+  worktree goes to this node's default location (a peer cannot name a
+  `path`). Other worktree routes stay local-only. Returns a durable spawn-request row
   (202); `GET /api/spawn-requests/{id}` reads only that initiating peer's
   request while the group stays visible to it.
 - `GET /api/spawn-options/{name}`: what the peer may set for a spawn into a

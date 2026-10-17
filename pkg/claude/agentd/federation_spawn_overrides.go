@@ -136,6 +136,25 @@ var fedSpawnLaunchKeys = map[string]string{
 	"worktree_branch":           fedOverrideWorktree,
 }
 
+// fedSpawnHarnessLaunchKeys are the launch keys chosen for one harness's
+// modes and features: an approval that launches another harness drops them,
+// as it does the requested model and effort.
+var fedSpawnHarnessLaunchKeys = []string{"approval", "tools", "auto_review", "ask_user_question_timeout", "sandbox",
+	"remote_control", "auto_memory", "peer_messaging", "copilot_api", "codex_app_server", "fast_mode", "ssh_workaround",
+	"context_features", "auto_compact_window", "context_window_max"}
+
+// fedSpawnLaunchSandboxed reports whether launch settings weaken the sandbox
+// in a way the group spawn path otherwise takes only from the local operator.
+func fedSpawnLaunchSandboxed(launch map[string]json.RawMessage) bool {
+	for _, key := range []string{"allow_unenforced_sandbox", "omit_sandbox_profiles"} {
+		var on bool
+		if raw, ok := launch[key]; ok && json.Unmarshal(raw, &on) == nil && on {
+			return true
+		}
+	}
+	return false
+}
+
 // fedSpawnMaxLaunch bounds a request's launch settings as stored JSON.
 const fedSpawnMaxLaunch = 32 << 10
 
@@ -400,6 +419,15 @@ func fedSpawnOverridesApplied(o db.FederationSpawnOverrides, allowed map[string]
 	otherHarness := explicit.Harness != "" && explicit.Harness != o.Harness ||
 		explicit.Harness == "" && o.Harness != "" && out.Harness == ""
 	if otherHarness {
+		for _, key := range fedSpawnHarnessLaunchKeys {
+			if _, ok := out.Launch[key]; ok {
+				delete(out.Launch, key)
+				dropped = append(dropped, key)
+			}
+		}
+		if len(out.Launch) == 0 {
+			out.Launch = nil
+		}
 		if out.Model != "" {
 			out.Model = ""
 			dropped = append(dropped, fedOverrideModel)
@@ -429,17 +457,22 @@ func fedSpawnOverridesAllowedList(peer string, groupID int64) []string {
 // notice, one per line, or "" when there are none.
 func fedSpawnOverridesText(o db.FederationSpawnOverrides) string {
 	out := ""
-	var launch []string
-	for key := range o.Launch {
-		launch = append(launch, key)
-	}
-	slices.Sort(launch)
-	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}, {"roles", strings.Join(o.Roles, ", ")}, {"sandbox profile", o.SandboxProfile}, {"launch settings", strings.Join(launch, ", ")}} {
+	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}, {"roles", strings.Join(o.Roles, ", ")}, {"sandbox profile", o.SandboxProfile}} {
 		if kv[1] != "" {
 			out += fmt.Sprintf("\n  %s: %q", kv[0], kv[1])
 		}
 	}
-	return out
+	// Launch settings show their JSON values, which approving applies.
+	var launch []string
+	for key, value := range o.Launch {
+		shown := proto.StripControls(string(value))
+		if len(shown) > 120 {
+			shown = shown[:117] + "..."
+		}
+		launch = append(launch, fmt.Sprintf("\n  %s: %s", key, shown))
+	}
+	slices.Sort(launch)
+	return out + strings.Join(launch, "")
 }
 
 // fedSpawnApprovalSettingsText is the requested-settings paragraph of a

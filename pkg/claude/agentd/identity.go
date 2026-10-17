@@ -218,6 +218,18 @@ func asDashboardSpawnPeer(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), dashboardSpawnOriginKey{}, true))
 }
 
+// fedSpawnSandboxAuthorityKey marks an in-process federation launch whose
+// unenforced-sandbox or omitted-sandbox-profiles setting came from a peer
+// operator under its groups.members.spawn.permissions grant, or this node's
+// operator approving it (executeFederationSpawn). It stands in for the
+// dashboard-human origin those two settings otherwise need, and nothing else.
+type fedSpawnSandboxAuthorityKey struct{}
+
+func fedSpawnSandboxAuthorized(r *http.Request) bool {
+	allowed, _ := r.Context().Value(fedSpawnSandboxAuthorityKey{}).(bool)
+	return allowed
+}
+
 func isDashboardSpawnPeer(r *http.Request) bool {
 	allowed, _ := r.Context().Value(dashboardSpawnOriginKey{}).(bool)
 	return allowed && classify(peerFromContext(r.Context())) == classHuman

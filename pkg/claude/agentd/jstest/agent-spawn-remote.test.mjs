@@ -462,3 +462,31 @@ test('an unrestricted peer opens the dialog like a local spawn', async (t) => {
   });
   await mounted.unmount();
 });
+
+test('a remote spawn takes its worktree from the submit and names the prompt set only with the peer\'s library', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/agent-spawn-remote.js');
+  const all = Object.fromEntries(['cwd', 'prompts', 'worktree'].map((f) => [f, true]));
+  const options = mod.normalizeRemoteSpawnOptions({ approval: 'automatic', overrides: all });
+  const sent = [];
+  const api = { spawn: async (group, body) => { sent.push(body); return { id: 1, status: 'pending' }; } };
+  const target = { prompts: [{ name: 'house', body: 'Rules.' }], profiles: [], roles: [], sandboxProfiles: [] };
+  const remote = { node: 'forge', group: 'build', api, options, catalogs: { target, local: { prompts: [{ name: 'mine', body: 'Mine.' }], profiles: [] } } };
+  const actions = mod.createRemoteSpawnActions({}, remote, { peerFetch: async () => { throw new Error('no fetch'); } });
+  const request = { body: { initial_message: 'go', cwd: '/srv/repo-wt', worktree_path: '/srv/repo-wt', worktree_branch: 'feat' }, explicit: ['promptRefs'] };
+  const worktree = { path: '/srv/repo-wt', branch: 'feat' };
+  // A retry reuses the dialog's resolved worktree; the request must still name it.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await actions.spawn({ ...request, worktree, promptRefs: ['house', 'local:mine'] });
+    assert.deepEqual(sent.pop(), {
+      brief: 'Mine.\n\ngo', cwd: '/srv/repo-wt',
+      launch: { prompt_refs: ['house'], worktree_path: '/srv/repo-wt', worktree_branch: 'feat' },
+    }, `attempt ${attempt + 1}`);
+  }
+  assert.equal(mod.remotePromptSetOpen(remote), true);
+  const blind = { ...remote, catalogs: { target: null, local: remote.catalogs.local } };
+  assert.equal(mod.remotePromptSetOpen(blind), false, 'without the peer\'s library its defaults are not visible, so the set is not named');
+  await mod.createRemoteSpawnActions({}, blind, { peerFetch: async () => { throw new Error('no fetch'); } })
+    .spawn({ body: { initial_message: 'go' }, explicit: ['promptRefs'], promptRefs: ['local:mine'], prompts: ['Mine.'] });
+  assert.deepEqual(sent.pop(), { brief: 'Mine.\n\ngo' }, 'the peer keeps applying its own defaults');
+});

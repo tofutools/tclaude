@@ -646,6 +646,11 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
+	if fedSpawnLaunchSandboxed(req.Overrides.Launch) {
+		// The unenforced-sandbox and omitted-profiles settings passed the
+		// .permissions grant check above (or the operator is approving them).
+		inner = inner.WithContext(context.WithValue(inner.Context(), fedSpawnSandboxAuthorityKey{}, true))
+	}
 	if req.PlacementVersion != 0 {
 		inner = inner.WithContext(context.WithValue(inner.Context(), federationPlacementConstraintsKey{}, req.Requirements))
 	}
