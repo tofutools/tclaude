@@ -250,7 +250,7 @@ func SetBranchHistoryPREnrichmentForTest(enabled bool) func() {
 // Drain time is bounded by reincarnateAliveTimeout — flow_setup_test.go
 // shrinks both timing knobs via SetWaitTimingsForTest so the bound is
 // milliseconds, not minutes.
-func WaitForBackgroundForTest() { bgWG.Wait() }
+func WaitForBackgroundForTest() { waitBackground() }
 
 // ResetDeliveryDebounceForTest clears the process-local delivery throttle.
 // Flow scenarios reuse stable fixture conv IDs across -count iterations, while

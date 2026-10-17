@@ -98,8 +98,8 @@ func TestSessionReaper_IntentionalCodexAppServerStopStaysStopped(t *testing.T) {
 	// singleton DB under $HOME/.tclaude. Drain it before t.TempDir's
 	// RemoveAll runs (this Cleanup is registered after TempDir's, so LIFO
 	// runs it first) so no orphaned goroutine races the teardown — the
-	// ENOTEMPTY that bgWG exists to prevent (see background.go).
-	t.Cleanup(bgWG.Wait)
+	// ENOTEMPTY that the background drain exists to prevent (see background.go).
+	t.Cleanup(waitBackground)
 
 	const sessionID = "agent-codex-reap"
 	const convID = "019ec004-4250-79b1-9ade-ebaea4159777"
@@ -205,7 +205,7 @@ func TestSessionReaperExitedCodexPredecessorDoesNotStopLiveSuccessorRuntime(t *t
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
-	t.Cleanup(bgWG.Wait)
+	t.Cleanup(waitBackground)
 
 	const convID = "019fe772-6b93-75a2-8702-7774c6dfb327"
 	oldCreated := time.Now().Add(-time.Minute)
@@ -250,7 +250,7 @@ func TestSessionReaper_FirstTickRecordsReconciliation(t *testing.T) {
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
-	t.Cleanup(bgWG.Wait)
+	t.Cleanup(waitBackground)
 	require.NoError(t, session.SaveSessionState(&session.SessionState{
 		ID: "dead-before-start", ConvID: "dead-conv-12345678",
 		Status: session.StatusWorking, PID: 0,
