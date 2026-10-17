@@ -407,12 +407,10 @@ func (p *fedPaneTerminal) mouse(run []terminal.Mouse) error {
 	}
 	var seqs [][]byte
 	for _, m := range run {
-		held := m.Button&3 != 3
-		if m.Motion() && !s.all && !(s.button && held) {
-			continue
-		}
+		drag := m.Motion() && m.Button&3 != 3
+		wanted := !m.Motion() || s.all || s.button && drag
 		x, y, inside := s.paneXY(m.X, m.Y)
-		if !inside && !m.Release && !(m.Motion() && held) {
+		if !wanted || !inside && !m.Release && !drag {
 			continue
 		}
 		if seq := s.encode(m, x, y); seq != nil {
