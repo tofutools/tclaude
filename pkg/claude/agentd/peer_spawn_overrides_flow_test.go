@@ -81,7 +81,7 @@ func TestPeerSpawnRequestWithoutGrantWaitsForOperator(t *testing.T) {
 	code, opts := peerSpawnOptions(t, bob.ID(), "builders")
 	require.Equal(t, 200, code)
 	require.Equal(t, "operator", opts.Approval)
-	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": false, "effort": false}, opts.Overrides)
+	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": false, "effort": false, "profile": false, "roles": false, "sandbox": false}, opts.Overrides)
 	require.Empty(t, opts.Defaults, "a restricted peer learns no local paths")
 	require.Contains(t, opts.PeerView.Included, "spawn.request")
 	require.NotContains(t, opts.PeerView.Included, "spawn")
@@ -120,8 +120,20 @@ func TestPeerSpawnRequestWithoutGrantWaitsForOperator(t *testing.T) {
 	require.Equal(t, 404, rec.Code, "a group that is no longer visible hides its requests like spawn-options does")
 }
 
-// A spawn grant opens only the overrides it lists; the request stores them
-// for the launch.
+// grantSpawnFields grants peer an automatic spawn into group and the
+// groups.members.spawn.<field> grants named.
+func grantSpawnFields(t *testing.T, f *testharness.Flow, peer, group string, policy map[string]any, fields ...string) {
+	t.Helper()
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": peer, "slug": agentd.PermGroupsMembersSpawn, "scope": "group=" + group, "spawn_policy": policy})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	for _, field := range fields {
+		rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": peer, "slug": agentd.PermGroupsMembersSpawn + "." + field, "scope": "group=" + group})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+}
+
+// Each launch setting a peer may choose is its own grant; the request
+// stores them for the launch.
 func TestPeerSpawnGrantOpensListedOverrides(t *testing.T) {
 	f := newFlow(t)
 	builders := f.HaveGroup("builders")
@@ -129,26 +141,25 @@ func TestPeerSpawnGrantOpensListedOverrides(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
 
-	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"bogus"}}})
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"model"}}})
 	require.Equal(t, 400, rec.Code, rec.Body.String())
-	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermMessageDirect, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"model"}}})
-	require.Equal(t, 400, rec.Code, "allowed_overrides belongs to groups.members.spawn")
-	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"model", "effort", "model"}}})
+	require.Contains(t, rec.Body.String(), "groups.members.spawn.model", "the replaced list is refused with the grant to use instead")
+	// A field grant alone opens nothing: an operator-approved request
+	// carries no launch settings.
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawnModel, "scope": "group=builders"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	grant, err := db.ListEffectiveFederationPeerGrants(bob.ID())
-	require.NoError(t, err)
-	var stored []string
-	for _, g := range grant {
-		if g.Slug == agentd.PermGroupsMembersSpawn && g.Scope == db.FederationGroupScope(builders.ID) {
-			stored = g.SpawnPolicy.AllowedOverrides
-		}
-	}
-	require.Equal(t, []string{"effort", "model"}, stored)
-
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsVisibilityRead, "scope": "group=builders"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	code, opts := peerSpawnOptions(t, bob.ID(), "builders")
 	require.Equal(t, 200, code)
+	require.False(t, opts.Overrides["model"])
+	grantSpawnFields(t, f, "bob", "builders", nil, "effort")
+	_ = builders
+
+	code, opts = peerSpawnOptions(t, bob.ID(), "builders")
+	require.Equal(t, 200, code)
 	require.Equal(t, "automatic", opts.Approval)
-	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": true, "effort": true}, opts.Overrides)
+	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": true, "effort": true, "profile": false, "roles": false, "sandbox": false}, opts.Overrides)
 	require.Contains(t, opts.PeerView.Included, "spawn")
 
 	code, _, errCode := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "cwd": "/srv/work"})
@@ -177,7 +188,7 @@ func TestPeerSpawnUnrestrictedOpensAllOverrides(t *testing.T) {
 	code, opts := peerSpawnOptions(t, carol.ID(), "builders")
 	require.Equal(t, 200, code)
 	require.Equal(t, "automatic", opts.Approval)
-	require.Equal(t, map[string]bool{"cwd": true, "harness": true, "model": true, "effort": true}, opts.Overrides)
+	require.Equal(t, map[string]bool{"cwd": true, "harness": true, "model": true, "effort": true, "profile": true, "roles": true, "sandbox": true}, opts.Overrides)
 	require.Contains(t, opts.Harnesses, "claude")
 	require.NotContains(t, opts.Harnesses, "shell", "a spawn request always carries a brief, which shell refuses")
 	require.Contains(t, opts.Defaults, "cwd")
@@ -281,8 +292,7 @@ func TestPeerSpawnHarnessOverrideConflictsWithPinnedProfile(t *testing.T) {
 	bob, err := proto.NewIdentity()
 	require.NoError(t, err)
 	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
-	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"profile": "codexy", "allowed_overrides": []string{"harness"}}})
-	require.Equal(t, 200, rec.Code, rec.Body.String())
+	grantSpawnFields(t, f, "bob", "builders", map[string]any{"profile": "codexy"}, "harness")
 
 	code, _, errCode := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "harness": "claude"})
 	require.Equal(t, 409, code)
@@ -302,7 +312,7 @@ func TestPeerSpawnHarnessOverrideConflictsWithPinnedProfile(t *testing.T) {
 		Overrides: db.FederationSpawnOverrides{Harness: "claude"},
 	}, 10)
 	require.NoError(t, err)
-	rec = fedHuman(t, f, "POST", fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{"profile": "codexy"})
+	rec := fedHuman(t, f, "POST", fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{"profile": "codexy"})
 	require.Equal(t, 409, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "harness_profile_conflict")
 	require.Contains(t, rec.Body.String(), "approve with --harness")

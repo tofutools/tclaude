@@ -38,7 +38,10 @@ function PlacementList({ placement }) {
   </tr>`)}</tbody></table>`;
 }
 
-const OVERRIDE_LABELS = [['cwd', 'directory'], ['harness', 'harness'], ['model', 'model'], ['effort', 'effort']];
+// [request key, label, grant field when it differs from the key].
+const OVERRIDE_LABELS = [['cwd', 'directory'], ['harness', 'harness'], ['model', 'model'], ['effort', 'effort'],
+  ['roles', 'roles'], ['sandbox_profile', 'sandbox profile', 'sandbox']];
+const shown = (value) => (Array.isArray(value) ? value.join(', ') : value);
 
 const NOT_ALLOWED = 'the peer may no longer choose it';
 const OTHER_HARNESS = 'chosen for another harness';
@@ -52,17 +55,18 @@ const OTHER_HARNESS = 'chosen for another harness';
 // server's overrides_allowed (an older daemon) it falls back to would_drop.
 export function requestedSettings(r, typed = {}) {
   const asked = r.overrides || {};
-  const fields = OVERRIDE_LABELS.filter(([k]) => asked[k]);
+  const fields = OVERRIDE_LABELS.filter(([k]) => (Array.isArray(asked[k]) ? asked[k].length : asked[k]));
   if (!Array.isArray(r.overrides_allowed)) {
     const drops = new Set(r.would_drop || []);
-    return fields.map(([k, label]) => ({ key: k, label, value: asked[k], dropped: drops.has(k), reason: drops.has(k) ? NOT_ALLOWED : '' }));
+    return fields.map(([k, label, field = k]) => ({ key: k, label, value: shown(asked[k]), dropped: drops.has(field), reason: drops.has(field) ? NOT_ALLOWED : '' }));
   }
   const allowed = new Set(r.overrides_allowed);
   const own = (k) => String(typed[k] || '').trim();
-  const out = Object.fromEntries(fields.map(([k, label]) => {
-    if (own(k)) return [k, { key: k, label, value: asked[k], replaced: true }];
-    if (!allowed.has(k)) return [k, { key: k, label, value: asked[k], dropped: true, reason: NOT_ALLOWED }];
-    return [k, { key: k, label, value: asked[k] }];
+  const out = Object.fromEntries(fields.map(([k, label, field = k]) => {
+    const value = shown(asked[k]);
+    if (own(k)) return [k, { key: k, label, value, replaced: true }];
+    if (!allowed.has(field)) return [k, { key: k, label, value, dropped: true, reason: NOT_ALLOWED }];
+    return [k, { key: k, label, value }];
   }));
   const otherHarness = own('harness') ? own('harness') !== (asked.harness || '') : !!asked.harness && !!out.harness?.dropped;
   if (otherHarness) {

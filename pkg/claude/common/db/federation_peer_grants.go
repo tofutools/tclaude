@@ -17,23 +17,23 @@ type FederationSpawnPolicy struct {
 	// PermissionSlugs is the optional receiver allowlist for agents.receive.permissions.
 	PermissionSlugs []string `json:"permission_slugs,omitempty"`
 	AllowedProfiles []string `json:"allowed_profiles,omitempty"`
-	// AllowedOverrides lists the launch settings (cwd, harness, model, effort)
-	// the peer may choose per spawn request; groups.members.spawn only. Unset
-	// keeps them receiver-owned: the fields below, then the group defaults.
-	AllowedOverrides []string `json:"allowed_overrides,omitempty"`
-	RequesterPays    string   `json:"requester_pays,omitempty"`
-	JobApproval      string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
-	Profile          string   `json:"profile,omitempty"`
-	Cwd              string   `json:"cwd,omitempty"`
-	Harness          string   `json:"harness,omitempty"`
-	Model            string   `json:"model,omitempty"`
-	MaxLive          int      `json:"max_live,omitempty"`
+	// The launch settings a peer may choose per spawn request are their own
+	// grants (groups.members.spawn.cwd, .harness, …); see migrateV269toV270.
+	// LegacyAllowedOverrides only decodes the list those grants replaced, so
+	// a caller still sending it is refused rather than silently ignored.
+	LegacyAllowedOverrides []string `json:"allowed_overrides,omitempty"`
+	RequesterPays          string   `json:"requester_pays,omitempty"`
+	JobApproval            string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
+	Profile                string   `json:"profile,omitempty"`
+	Cwd                    string   `json:"cwd,omitempty"`
+	Harness                string   `json:"harness,omitempty"`
+	Model                  string   `json:"model,omitempty"`
+	MaxLive                int      `json:"max_live,omitempty"`
 }
 
 // Equal includes selectable profiles in inherited-policy conflict checks.
 func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
 	return p.IncludeMembers == other.IncludeMembers && slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
-		slices.Equal(p.AllowedOverrides, other.AllowedOverrides) &&
 		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
 		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
 		p.Model == other.Model && p.MaxLive == other.MaxLive

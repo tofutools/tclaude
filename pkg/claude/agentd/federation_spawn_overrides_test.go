@@ -47,3 +47,15 @@ func TestFedSpawnOverridesApplied(t *testing.T) {
 	require.Equal(t, db.FederationSpawnOverrides{}, got)
 	require.Equal(t, []string{"model"}, dropped)
 }
+
+// Roles and a sandbox profile follow the same rule on an approval: applied
+// while the peer may still choose them, dropped otherwise.
+func TestFedSpawnOverridesAppliedRolesAndSandbox(t *testing.T) {
+	asked := db.FederationSpawnOverrides{Roles: []string{"builder"}, SandboxProfile: "tight"}
+	got, dropped := fedSpawnOverridesApplied(asked, map[string]bool{"roles": true, "sandbox": true}, fedSpawnApproveReq{})
+	require.Equal(t, asked, got)
+	require.Empty(t, dropped)
+	got, dropped = fedSpawnOverridesApplied(asked, map[string]bool{}, fedSpawnApproveReq{})
+	require.True(t, got.Empty())
+	require.ElementsMatch(t, []string{"roles", "sandbox"}, dropped)
+}

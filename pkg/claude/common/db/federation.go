@@ -642,10 +642,16 @@ type FederationSpawnOverrides struct {
 	Harness string `json:"harness,omitempty"`
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
+	// Roles replaces the launch's role set (profile and group defaults).
+	Roles []string `json:"roles,omitempty"`
+	// SandboxProfile adds an explicit sandbox profile tier.
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
 }
 
 // Empty reports whether no override is set.
-func (o FederationSpawnOverrides) Empty() bool { return o == FederationSpawnOverrides{} }
+func (o FederationSpawnOverrides) Empty() bool {
+	return o.Cwd == "" && o.Harness == "" && o.Model == "" && o.Effort == "" && len(o.Roles) == 0 && o.SandboxProfile == ""
+}
 
 func (o FederationSpawnOverrides) dbValue() string {
 	if o.Empty() {

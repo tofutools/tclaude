@@ -240,6 +240,11 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `message.direct` | mail to members; shares their names and ids so they are addressable |
 | `message.attachments` | attachments, together with `message.direct` on the same group |
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
+| `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort` | choose that launch setting per spawn request, with `groups.members.spawn` (see "Launch settings a peer may choose") |
+| `groups.members.spawn.profile` | select any enabled spawn profile that is not operator-only, with `groups.members.spawn` |
+| `groups.members.spawn.roles` | choose the spawn's roles from this node's roles (roles carry permissions here), with `groups.members.spawn` |
+| `groups.members.spawn.sandbox` | add one of this node's sandbox profiles to the spawn, with `groups.members.spawn` |
+| `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
@@ -619,9 +624,9 @@ before launch, including manual approval after a failed automatic launch.
 Without `--profile`, the existing receiver/group default applies. A grant's
 `--profile` pins that default; `--allow-profile` permits named alternatives.
 Pinned grant harness/model overrides still apply to those alternatives.
-An unrestricted peer may also select any enabled profile that is not
-operator-only, without an allowlist; operator-only profiles still need
-`--allow-profile`.
+An unrestricted peer, or one granted `groups.members.spawn.profile` (or
+`.all`), may also select any enabled profile that is not operator-only,
+without an allowlist; operator-only profiles still need `--allow-profile`.
 `--credentials local|proxy:<name>@self` overrides the chosen profile's gateway,
 as it does for the receiving teleport landing profile. Placement considers
 only groups advertising the selected profile.
@@ -631,19 +636,31 @@ A visible group without a spawn grant queues the request for human approval.
 #### Launch settings a peer may choose
 
 A peer operator spawning from the dashboard (the regular spawn dialog aimed at
-your group) may also choose the directory, harness, model and effort — but only
-where you allow it. Each is closed by default:
+your group) may also choose the directory, harness, model, effort, profile,
+roles and sandbox profile — but only where you allow it. Each is its own
+group-scoped grant, closed by default, and applies together with an automatic
+spawn grant:
 
 ```bash
 # Bob: let Alice pick the model and effort for workers in builders
-tclaude federation grant alice groups.members.spawn --scope group=builders --allow-override model --allow-override effort
+tclaude federation grant alice groups.members.spawn --scope group=builders
+tclaude federation grant alice groups.members.spawn.model --scope group=builders
+tclaude federation grant alice groups.members.spawn.effort --scope group=builders
+# or every launch setting at once
+tclaude federation grant alice groups.members.spawn.all --scope group=builders
 ```
 
-- An unrestricted peer may choose all four.
-- A `groups.members.spawn` grant opens the ones it lists (`cwd`, `harness`,
-  `model`, `effort`); an unlisted one is refused (`override_not_allowed`), not
-  silently dropped. A requested value wins over the grant's pinned
-  `--cwd/--harness/--model`; leaving it blank keeps them.
+- An unrestricted peer may choose all of them.
+- `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort`, `.profile`,
+  `.roles` and `.sandbox` each open one; `groups.members.spawn.all` opens them
+  all. A setting the peer may not choose is refused (`override_not_allowed`),
+  not silently dropped. A requested value wins over the grant's pinned
+  `--cwd/--harness/--model`; leaving it blank keeps them. Requested roles
+  replace the profile and group roles, and must be roles on this node; a
+  requested sandbox profile must exist here and adds an explicit tier (it
+  cannot omit your global and group tiers).
+- These grants replace the earlier `allowed_overrides` list on the spawn grant
+  (`--allow-override`); upgrading turns a stored list into the matching grants.
 - Without a spawn grant the request waits for your approval and carries none;
   `tclaude federation requests approve ID --cwd … --harness … --model … --effort …`
   decides them. A request that failed its automatic launch and returned to you
@@ -707,7 +724,9 @@ node's (never a third node's), and a "Show from" filter narrows both pickers:
 - Saved prompts the peer applies itself (its profile and group defaults) are
   locked. Any other prompt, the peer's or this node's, is written into the
   brief ahead of the initial message, within the 8 KiB remote brief limit.
-- Roles are the peer's; adding one is not carried yet.
+- Roles and sandbox profiles are the peer's; choosing them needs
+  `groups.members.spawn.roles` and `.sandbox`. Other controls (permissions,
+  environment, ownership, worktree, …) are the peer's to apply.
 
 The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
 GET returns the incoming request array; POST queues an outgoing request with the
@@ -3196,7 +3215,7 @@ source agent's own grants. Whole-agent stop/retire/clone/move actions need their
 peer grant on every affected active group; clone/retire/move also cover owned groups.
 
 - `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?, cwd?,
-  harness?, model?, effort?}` into any visible group (`spawn.request`). With
+  harness?, model?, effort?, roles?, sandbox_profile?}` into any visible group (`spawn.request`). With
   `groups.members.spawn` it launches automatically under receiver-owned launch
   policy; without it the request waits for the operator. `cwd`, `harness`,
   `model` and `effort` are accepted only where the peer may choose them (see
@@ -3206,7 +3225,8 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   request while the group stays visible to it.
 - `GET /api/spawn-options/{name}`: what the peer may set for a spawn into a
   visible group: `{group, approval: "automatic"|"operator", overrides:
-  {cwd, harness, model, effort}, profiles, harnesses?, defaults?, catalog}`.
+  {cwd, harness, model, effort, profile, roles, sandbox}, profiles, harnesses?,
+  defaults?, catalog}`.
   The dashboard's spawn dialog reads it to disable what the peer may not set;
   `catalog` says the peer holds `node.spawn.read`, and only then are
   `defaults` named.
