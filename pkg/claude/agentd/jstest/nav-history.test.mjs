@@ -484,3 +484,27 @@ test('focus switches push entries and Back returns to the Both focus', async (t)
   assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Processes is an explicit restore');
   assert.equal(groupsFocus.value, 'both');
 });
+
+test('the Agents lens keeps its URL across tabs, and Back onto bare Groups returns to Both', async (t) => {
+  const { harness, browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/');
+  browsing.calls.length = 0;
+  groupsFocus.value = 'agents';
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'groups', subtab: 'agents' } },
+  }));
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/groups/agents' }]);
+
+  const nav = (tab) => {
+    for (const b of harness.document.querySelectorAll('nav [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
+    harness.document.querySelector(`nav [data-tab="${tab}"]`).click();
+  };
+  nav('jobs');
+  nav('groups');
+  assert.equal(browsing.at(), '/groups/agents', 're-entering Groups names the Agents lens');
+
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
+  restores.length = 0;
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Agents is an explicit restore');
+  assert.equal(groupsFocus.value, 'both');
+});

@@ -499,6 +499,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         <span class="gf-cap">${wizard ? 'familiars' : 'agents'}</span>${fused.actions}
         <span class="gf-divider" aria-hidden="true"></span>
         <span class="gf-cap">${wizard ? 'rites' : 'processes'}</span>${controls(true)}
+        ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
       </div>
       ${fused.between}
       <${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} summary=${fused.agentsSummary}>${fused.agents}<//>

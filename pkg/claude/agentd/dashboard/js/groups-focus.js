@@ -83,7 +83,9 @@ export function revealRunsLens(state, { doc = document } = {}) {
 
 // showRunsLens switches to `lens` only from Agents: Both already shows every
 // group's runs, so a request to see them never takes the operator out of it.
+// It leaves the Route map either way, which would otherwise hide the runs.
 export function showRunsLens(state, lens = 'processes') {
+  if (state.subview?.value === 'routes') state.setSubview('members', '');
   if (normalizeGroupsFocus(state.focus.value) === 'both') return;
   state.setFocus(lens);
 }

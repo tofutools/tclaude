@@ -154,8 +154,8 @@ function activeLocationFromDOM() {
     if (island?.subview?.value === 'routes') {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
-    } else if (island?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
-      loc.subtab = 'processes';
+    } else if ((island?.focus?.value === 'processes' || island?.focus?.value === 'agents') && groupsProcessesFocusAvailable()) {
+      loc.subtab = island.focus.value;
     }
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
@@ -270,12 +270,13 @@ function activate(loc, { traversal = false } = {}) {
       // example /terminals with no panes), which would look like a user
       // navigation to observers. A bare Groups pop from Route map still has
       // to return the island to Members; explicit route locations always do.
-      // The same holds for a Back/Forward onto bare Groups from the
-      // Processes focus — but only a traversal: a boot or stale fallback must
-      // not turn the remembered lens into Agents.
+      // The same holds for a Back/Forward onto bare Groups (Both) from the
+      // Agents or Processes focus — but only a traversal: a boot or stale
+      // fallback must not turn the remembered lens into Both.
       const groups = featureState('groups');
+      const singleLens = groups?.focus?.value === 'processes' || groups?.focus?.value === 'agents';
       if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
-        || (traversal && groups?.focus?.value === 'processes' && groupsProcessesFocusAvailable())) {
+        || (traversal && singleLens && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
