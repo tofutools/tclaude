@@ -19845,10 +19845,10 @@ html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="t
    switch in the same row, so nothing below moves. */
 .skynet-toplevel { display: inline-flex; align-items: center; }
 .skynet-toplevel:empty { display: none; }
-/* Keyed on a fleet's chip row (the idle row has no .has-fleet): if the fleet
-   disappears while the map is open, the per-node tabs come back rather than
-   leaving an empty bar. */
-nav:has(#node-chips-root .has-fleet):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+/* Keyed on a chip row with a map (.has-fleet, or .has-map on a connected node
+   with no peers yet): if the hub drops while the map is open, the per-node
+   tabs come back rather than leaving an empty bar. */
+nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .skynet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
 .skynet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .skynet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
@@ -19865,6 +19865,7 @@ nav:has(#node-chips-root .has-fleet):has([data-tab="map"].active) .nav-inner > [
 .skynet-map-local { grid-column: 1; z-index: 1; }
 .skynet-map-peers { grid-column: 3; display: grid; grid-template-columns: minmax(300px, 340px); gap: 28px; z-index: 1; justify-content: end; }
 .skynet-map-peers.wide { grid-template-columns: repeat(2, minmax(300px, 340px)); }
+.skynet-map-alone { align-self: center; padding: 14px 16px; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; font-size: 13px; }
 .skynet-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .skynet-edge { fill: none; stroke-width: 2; }
 .skynet-edge.live { stroke: #3fb950; }
@@ -19967,7 +19968,7 @@ html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
    anchor exists for routing only. Groups are named group@node, the suffix in
    the node's own colour; an unreachable node's groups read as stale. */
 nav [data-tab="fleet-admin"] { display: none; }
-nav:has(#node-chips-root .has-fleet):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
 .skynet-seg-btn.on { cursor: default; }

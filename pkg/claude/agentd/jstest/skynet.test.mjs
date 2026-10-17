@@ -121,7 +121,7 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   await harness.act(() => { state.setStatus({ ...status([]), peers: [] }); });
   assert.equal(home().disabled, false, 'connected without peers: ⌂ usable');
   assert.equal(fuse().disabled, true, 'nothing to fuse yet');
-  assert.match(anchor.title, /No linked nodes yet/);
+  assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected without peers: the map opens, showing this node alone');
   await harness.act(() => { activeTab.value = 'fleet-admin'; });
   await harness.act(() => harness.fireEvent(home(), 'click'));
   assert.deepEqual(nav, ['access'], 'with no peers ⌂ still leaves Fleet administration');
@@ -303,6 +303,25 @@ test('the map never strands the operator: no fleet or a cycle key returns to the
   await harness.act(() => { state.markStatusLoaded(); });
   assert.deepEqual(nav, ['costs', 'costs'], 'no linked nodes after loading: leave the map');
   await mounted.unmount(); state.dispose();
+});
+
+test('a connected node with no peers gets a map of itself; the top bar counts one node', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('map');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus({ ...status([]), peers: [] });
+  state.markStatusLoaded();
+  const nav = []; const timers = fakeTimers();
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  assert.deepEqual(nav, [], 'the map stays open');
+  assert.ok(mounted.container.querySelector('[aria-label="desk node"]'), 'this node has its card');
+  assert.match(mounted.container.textContent, /No linked nodes yet/);
+  assert.equal(timers.queue.length, 1, 'only this node is polled');
+  const bar = await harness.mount(harness.html`<${island.TopLevelBar} state=${state} navigate=${(tab) => nav.push(tab)} />`);
+  assert.match(bar.container.textContent, /Skynet · 1 node · hub connected/);
+  await harness.act(() => { state.setStatus({ ...status([]), peers: [], hub: { state: 'disconnected' } }); });
+  assert.deepEqual(nav, ['groups'], 'the hub dropping leaves the map');
+  await bar.unmount(); await mounted.unmount(); state.dispose();
 });
 
 test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
