@@ -293,3 +293,103 @@ test('Dock renders structured badge metadata natively with stable badge keys', a
   await mounted.unmount();
   host.remove();
 });
+
+function memoryPrefs() {
+  const values = new Map();
+  return {
+    getItem: (key) => (values.has(key) ? values.get(key) : null),
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+}
+
+test('Dock search filters cards and sections; the card menu carries the library rows and pins', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  const state = createDockState();
+  const calls = [];
+  const profiles = {
+    ...section(calls),
+    isDefault: (item, snap) => snap?.spawn_profile_default === item.name,
+    onToggleDefault: (item, isDefault) => calls.push(['default', item.name, isDefault]),
+    onRenameItem: (item) => calls.push(['rename', item.name]),
+    onExportItem: (item) => calls.push(['export', item.name]),
+    onExportAll: () => calls.push(['export-all']),
+    onImportFile: (file) => calls.push(['import', file.name]),
+    onNew: () => calls.push(['new']),
+  };
+  const sandbox = {
+    key: 'sandbox_profiles',
+    icon: () => '🛡',
+    title: () => 'Sandbox profiles',
+    empty: () => 'none',
+    load: { fetch: async () => { calls.push(['fetch']); return [{ name: 'base', filesystem: [{ path: '/opt/data', access: 'read' }] }]; }, version: (snap) => snap?.sandbox_profiles_rev },
+    name: (item) => item.name,
+    drag: false,
+    onManageItem: () => {}, onCloneItem: () => {}, onDeleteItem: () => {}, onManageAll: () => {},
+  };
+  state.publish({
+    profiles: [{ name: 'alpha', model: 'sonnet' }, { name: 'beta', model: 'opus' }, { name: 'gamma', model: 'opus' }],
+    spawn_profile_default: 'beta',
+    sandbox_profiles_rev: 'r1',
+  });
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
+  await harness.mount(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[profiles, sandbox]} prefs=${memoryPrefs()}
+      isSectionOpen=${(key) => key === 'profiles'} setSectionOpen=${() => {}} />
+  `, host);
+  const names = (key) => [...host.querySelectorAll(`details[data-key="${key}"] .dock-card`)].map((card) => card.dataset.dockName);
+  assert.deepEqual(names('profiles'), ['alpha', 'beta', 'gamma']);
+  assert.deepEqual(calls, [], 'a closed self-loading section does not fetch');
+  assert.equal(host.querySelector('[data-dock-name="beta"] .dock-chip-default')?.textContent, 'default');
+
+  // Pin gamma: it leads the section.
+  const menuFor = (name) => host.querySelector(`.dock-card[data-dock-name="${name}"] .dock-card-menu`);
+  const choose = async (name, label) => {
+    await harness.act(() => harness.fireEvent(host.querySelector(`.dock-card[data-dock-name="${name}"] .dock-card-manage`), 'click'));
+    await harness.act(() => harness.fireEvent(getByRole(menuFor(name), 'menuitem', { name: label }), 'click'));
+  };
+  assert.deepEqual([...menuFor('alpha').querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
+    ['Edit', 'Clone', 'Rename…', 'Set as default', 'Pin to top', 'Copy name', 'Export', 'Delete']);
+  await choose('gamma', 'Pin to top');
+  assert.deepEqual(names('profiles'), ['gamma', 'alpha', 'beta']);
+  assert.ok(host.querySelector('[data-dock-name="gamma"] .dock-card-pin'));
+  await choose('beta', 'Clear default');
+  await choose('alpha', 'Rename…');
+  await choose('alpha', 'Export');
+  assert.deepEqual(calls, [['default', 'beta', true], ['rename', 'alpha'], ['export', 'alpha']]);
+
+  // A search opens and loads the sandbox section, and hides what does not match.
+  const search = host.querySelector('input[aria-label="Filter the library"]');
+  search.value = 'opus';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(names('profiles'), ['gamma', 'beta']);
+  assert.equal(host.querySelector('details[data-key="profiles"] .dock-section-count').textContent, '2/3');
+  assert.equal(host.querySelector('details[data-key="sandbox_profiles"]'), null, 'no match hides the section');
+  assert.deepEqual(calls.at(-1), ['fetch']);
+
+  search.value = '/opt/data';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  assert.deepEqual(names('sandbox_profiles'), ['base'], 'a sandbox profile matches on a path');
+  assert.equal(host.querySelector('details[data-key="profiles"]'), null);
+
+  search.value = 'sandbox';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  assert.deepEqual(names('sandbox_profiles'), ['base'], 'the section title keeps the whole section');
+
+  search.value = 'nothing-here';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  assert.match(host.querySelector('.dock-search-empty').textContent, /No matches/);
+
+  search.value = '';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="new-item"]'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="section-menu"]'), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(host, 'menuitem', { name: 'Export all' }), 'click'));
+  assert.deepEqual(calls.slice(-2), [['new'], ['export-all']]);
+});

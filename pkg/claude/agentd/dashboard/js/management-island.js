@@ -28,6 +28,7 @@ import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { AgentExportDialog, GroupExportDialog } from './paf-dialogs.js';
+import { LibraryBundleImportDialog, LibraryNameDialog } from './library-dialogs.js';
 import { SnapshotsDialog } from './snapshots-dialog.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
@@ -2034,9 +2035,9 @@ function ProfileImportRow({ row, decision, update }) {
   return html`<div class="profile-transfer-row"><input type="checkbox" disabled=${!row.valid} checked=${decision?.include} onChange=${(event) => update({ include: event.currentTarget.checked })}/><span>${row.name}${row.error && ` — ${row.error}`}</span>${row.exists && row.valid && html`<span class="profile-import-conflict"><${Select} value=${decision?.action} onChange=${(value) => update({ action: value })} options=${[['rename', renameLabel], ['overwrite', 'Overwrite']]} />${decision?.action === 'rename' && html`<input value=${decision?.as} onInput=${(event) => update({ as: event.currentTarget.value })}/>`}</span>`}</div>`;
 }
 
-function ProfileImport({ state, actions, confirmDiscard }) {
+function ProfileImport({ initialRaw = '', state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [raw, setRaw] = useState(''); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [decisions, setDecisions] = useState({}); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
+  const [raw, setRaw] = useState(initialRaw); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [decisions, setDecisions] = useState({}); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
   const inspect = async () => { setError(''); setBusy('inspect'); try { const parsed = JSON.parse(raw); const found = await actions.inspectProfiles(parsed); setEnvelope(parsed); setPreview(found); const initial = {}; for (const row of found.profiles || []) initial[row.name] = { include: !!row.valid, action: row.exists ? 'rename' : 'create', as: row.default_name || `${row.name}-copy` }; setDecisions(initial); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
   const update = (name, patch) => setDecisions((value) => ({ ...value, [name]: { ...value[name], ...patch } }));
   const submit = async () => { if (!preview) { setError('preview the import first'); return; } setBusy('import'); try { const rows = Object.entries(decisions).map(([name, value]) => ({ name, ...value })); await actions.importProfileBundle(envelope, rows); state.closeDialog(); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
@@ -2113,9 +2114,9 @@ function SandboxImportProfile({ profile, exists, warnings, expanded }) {
   </details>`;
 }
 
-function SandboxImport({ current, state, actions, confirmDiscard }) {
+function SandboxImport({ initialRaw = '', current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [raw, setRaw] = useState(''); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [conflict, setConflict] = useState('skip'); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
+  const [raw, setRaw] = useState(initialRaw); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [conflict, setConflict] = useState('skip'); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
   const inspect = async () => {
     setError(''); setBusy('inspect');
     try {
@@ -2254,7 +2255,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'profile-export':
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':
-      return html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${ProfileImport} initialRaw=${descriptor.raw || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
@@ -2262,11 +2263,15 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'sandbox-export':
       return html`<${SandboxExport} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-import':
-      return html`<${SandboxImport} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${SandboxImport} initialRaw=${descriptor.raw || ''} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-duplicate':
       return html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-import':
-      return html`<${TemplateImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${TemplateImportDialog} initialRaw=${descriptor.raw || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'library-name':
+      return html`<${LibraryNameDialog} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
+    case 'library-bundle-import':
+      return html`<${LibraryBundleImportDialog} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'template-from-group':
       return html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${{ templates: state.templates.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-starters':
@@ -2309,6 +2314,12 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
     openSavedPrompts: ({ initial = '', clone = false } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
+    openSandboxProfileClone: actions.openSandboxClone,
+    // The right panel library: a kind's own importer opened on a file the
+    // panel already read, a name prompt, and the config-bundle review.
+    openLibraryImport: (kind, raw = '') => state.openDialog({ kind, raw }),
+    openLibraryName: (descriptor) => state.openDialog({ ...descriptor, kind: 'library-name' }),
+    openLibraryBundleImport: (descriptor) => state.openDialog({ ...descriptor, kind: 'library-bundle-import' }),
     openTemplatesManageModal: actions.openTemplateManager, openTemplateEditor: actions.openTemplateEditor,
     updateTemplates: actions.updateTemplates, removeTemplate: actions.removeTemplate,
     exportTemplate: actions.exportTemplate,

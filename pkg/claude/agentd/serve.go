@@ -1441,6 +1441,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/saved-prompts/{name}", handleSavedPromptByName)
 	mux.HandleFunc("/v1/roles", handleRoles)
 	mux.HandleFunc("/v1/roles/{name}", handleRoleByName)
+	mux.HandleFunc("POST /v1/library/rename", handleLibraryRename)
 	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)

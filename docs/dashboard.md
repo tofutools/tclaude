@@ -1284,8 +1284,37 @@ seconds rather than nagging.
 Browser notifications ride a separate 3-second poll with server-decided
 delivery; the header bell is the master toggle with per-type switches, and
 groups have 🔔/🔕 mutes with per-agent overrides. The footer shows the daemon
-version, refresh time, and the Open PRs popover; the right edge holds a dock
-for dragging profiles, templates, and roles.
+version, refresh time, and the Open PRs popover.
+
+### The library panel
+
+The right edge holds the library: spawn profiles, group templates, roles,
+saved prompts, sandbox profiles and (with Processes enabled) process
+templates. Profiles, roles and templates drag onto a group to spawn; a
+process drags onto a group to pin it there.
+
+- **Search.** The field on top filters every section at once. Each word must
+  match an item's name or any of its values (a model, a path, a prompt
+  line); a word naming a section ("roles", "sandbox") keeps the whole
+  section. Sections without a match hide while you search.
+- **Card ⚙ menu.** Every kind offers Edit, Clone, Rename…, Pin to top, Copy
+  name, Export and Delete. Templates add Deploy…; spawn and sandbox profiles
+  add Set as default. Rename changes only the name: profiles, templates,
+  groups and sandbox includes that use the item follow it. A process rename
+  is saved as its next version.
+- **Section header.** ＋ creates a new item, ⧉ opens the kind's manager, and ⋯
+  imports a file or exports the whole section. Dropping a file on a section
+  imports it too.
+- **Export and import.** Exports are config bundles, the same format as
+  `tclaude config export`: paths are written home-relative, and suspected
+  credentials stop the export until you confirm. Importing a bundle opens a
+  review of every item (new, replaces existing, unchanged) where you can
+  leave items out, allow replacing, and say where the bundle's paths are on
+  this machine. A kind's older export file (spawn profiles, sandbox profiles,
+  a group template) opens that kind's own importer. Processes also share as
+  `.pwf`.
+- **Pins** are saved with this daemon's dashboard preferences; a pinned item
+  leads its section.
 
 ## The TUI dashboard
 

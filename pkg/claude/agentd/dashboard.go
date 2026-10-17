@@ -941,9 +941,13 @@ type snapshotPayload struct {
 	// Names and assignments only: environment values remain behind the
 	// sandbox-profile management API. Keeping these in the regular snapshot
 	// lets global/group quick selectors repaint without extra polling requests.
-	SandboxProfiles       []string         `json:"sandbox_profiles"`
-	SandboxProfileDefault string           `json:"sandbox_profile_default"`
-	Agents                []dashboardAgent `json:"agents"`
+	SandboxProfiles       []string `json:"sandbox_profiles"`
+	SandboxProfileDefault string   `json:"sandbox_profile_default"`
+	// SandboxProfilesRev changes whenever any sandbox profile is created,
+	// edited, renamed or deleted, so the dock's sandbox section refetches the
+	// full profiles from the management API only when they changed.
+	SandboxProfilesRev string           `json:"sandbox_profiles_rev"`
+	Agents             []dashboardAgent `json:"agents"`
 	// AgentRosterAuthoritative is false when the active-actor query failed and
 	// Agents may therefore be only the partial set recovered from group/grant
 	// rows. Clients that react to roster departures must ignore such a snapshot
@@ -3435,9 +3439,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// which would crash on null.
 	out.Groups = []dashboardGroup{}
 	out.SandboxProfiles = []string{}
+	sandboxRev := sha256.New()
 	for _, profile := range sandboxProfiles {
 		out.SandboxProfiles = append(out.SandboxProfiles, profile.Name)
+		fmt.Fprintf(sandboxRev, "%s\x00%s\x00", profile.Name, profile.UpdatedAt.Format(time.RFC3339Nano))
 	}
+	out.SandboxProfilesRev = hex.EncodeToString(sandboxRev.Sum(nil))[:16]
 	if globalSandboxProfile != nil {
 		out.SandboxProfileDefault = globalSandboxProfile.Name
 	}

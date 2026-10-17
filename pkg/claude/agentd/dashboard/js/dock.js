@@ -57,6 +57,120 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
+import { managementController } from './management-controller.js';
+import { loadSandboxProfiles, sandboxProfileSummary } from './sandbox-profiles-data.js';
+import { downloadBlob } from './paf-model.js';
+import {
+  LIBRARY_EVENT, detectImport, dropPin, exportBundle, renameItem, renamePin,
+} from './dock-library.js';
+
+// dockNotify is the island's toast, for the card menu's own feedback.
+export const dockNotify = (text, error = false) => toast(text, error);
+
+// libraryChanged asks the dock's self-loading sections (sandbox profiles,
+// processes) to reload after a rename or an import changed what they list.
+function libraryChanged() {
+  document.dispatchEvent(new CustomEvent(LIBRARY_EVENT));
+}
+
+// The kinds' singular names, for dialog titles and toasts.
+const KIND_NAMES = Object.freeze({
+  profiles: () => wizWord('spawn profile', 'familiar pattern'),
+  templates: () => wizWord('group template', 'summoning circle'),
+  roles: () => wizWord('role', 'class'),
+  saved_prompts: () => wizWord('saved prompt', 'incantation'),
+  sandbox_profiles: () => wizWord('sandbox profile', 'ward'),
+  processes: () => wizWord('process', 'rite'),
+});
+
+// openRename asks for the new name, renames through the daemon, and carries
+// a pin along. A refusal (name taken) stays in the dialog.
+export function openRename(section, name, { label = name } = {}) {
+  managementController().openLibraryName({
+    title: `Rename ${KIND_NAMES[section]()}: ${label}`,
+    blurb: section === 'processes'
+      ? 'Saved as a new version; the history and the groups it is pinned to stay.'
+      : 'Everything that uses it (profiles, templates, groups, includes) follows the new name.',
+    initial: label,
+    okLabel: 'Rename',
+    submit: async (to) => {
+      if (to === label) return;
+      await renameItem({ section, name, to });
+      if (section !== 'processes') renamePin(dashPrefs, section, name, to);
+      toast(`renamed ${label} → ${to}`);
+      libraryChanged();
+      await refresh();
+    },
+  });
+}
+
+function downloadJSON(fileName, value) {
+  downloadBlob(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' }), fileName);
+}
+
+// exportItems downloads a config bundle of one item (name) or the section.
+export async function exportItems(section, name = '', label = name) {
+  try {
+    const done = await exportBundle({ section, name, confirm: confirmModal, download: downloadJSON });
+    if (done) toast(name ? `exported ${label}` : `exported every ${KIND_NAMES[section]()}`);
+  } catch (error) {
+    toast(`export failed: ${error.message || String(error)}`, true);
+  }
+}
+
+// importLibraryFile reads a dropped or picked file: a config bundle opens
+// the bundle review; a kind's own export opens that kind's importer.
+export async function importLibraryFile(file) {
+  const found = detectImport(await file.text());
+  const controller = managementController();
+  if (found.kind === 'bundle') {
+    controller.openLibraryBundleImport({
+      bundle: found.value, fileName: file.name, notify: toast,
+      onImported: () => { libraryChanged(); void refresh(); },
+    });
+    return;
+  }
+  const dialog = { profiles: 'profile-import', sandbox_profiles: 'sandbox-import', templates: 'template-import' }[found.kind];
+  if (dialog) {
+    controller.openLibraryImport(dialog, found.raw);
+    return;
+  }
+  toast(`${file.name} is not a tclaude export (${found.reason})`, true);
+}
+
+// setDefault goes through the 🧠/🛡 toolbar pickers' own commit, loaded on
+// first use like the pickers themselves.
+let defaultActions = null;
+async function setDefault(kind, name) {
+  try {
+    if (!defaultActions) {
+      const { createToolbarProfilePickerActions } = await import('./toolbar-profile-picker-actions.js');
+      defaultActions = createToolbarProfilePickerActions({ notify: toast, refresh });
+    }
+    await defaultActions.commit(kind, name);
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
+async function removeSandboxProfile(p) {
+  if (await managementController().removeSandboxProfile(p.name)) {
+    dropPin(dashPrefs, 'sandbox_profiles', p.name);
+    libraryChanged();
+    await refresh();
+  }
+}
+
+// libraryOps are the hooks every snapshot section shares: rename, export
+// one or all, import a file, copy the name.
+function libraryOps(key) {
+  return {
+    onRenameItem: (item) => openRename(key, item.name),
+    onExportItem: (item) => exportItems(key, item.name),
+    onExportAll: () => exportItems(key),
+    onImportFile: (file) => importLibraryFile(file),
+  };
+}
 
 async function removeSavedPrompt(name) {
   const ok = await confirmModal({
@@ -155,8 +269,13 @@ export const dockSections = Object.freeze([
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
-    onDeleteItem: (p) => removeProfile(p.name).then(() => refresh()),
+    onDeleteItem: (p) => removeProfile(p.name).then(() => { dropPin(dashPrefs, 'profiles', p.name); return refresh(); }),
     onManageAll: () => openProfilesManageModal(),
+    onNew: () => openProfileEditor(),
+    searchWords: ['agent profiles', 'familiar patterns', 'spawn profiles'],
+    isDefault: (p, snap) => !!snap?.spawn_profile_default && snap.spawn_profile_default === p.name,
+    onToggleDefault: (p, isDefault) => setDefault('profile', isDefault ? '' : p.name),
+    ...libraryOps('profiles'),
   },
   {
     key: 'templates',
@@ -180,8 +299,14 @@ export const dockSections = Object.freeze([
     onCloneItem: (t) => openDuplicateModal(t.name),
     // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
-    onDeleteItem: (t) => deleteTemplate(t.name),
+    onDeleteItem: (t) => Promise.resolve(deleteTemplate(t.name)).then(() => {
+      if (!(lastSnapshot?.templates || []).some((other) => other.name === t.name)) dropPin(dashPrefs, 'templates', t.name);
+    }),
     onManageAll: () => openTemplatesManageModal(),
+    onNew: () => openTemplateEditor(null),
+    searchWords: ['group templates', 'summoning circles'],
+    extraActions: [{ act: 'deploy-item', label: () => wizWord('Deploy…', 'Summon…'), run: (t) => managementController().openTemplateDeploy(t.name) }],
+    ...libraryOps('templates'),
   },
   {
     key: 'roles',
@@ -199,6 +324,9 @@ export const dockSections = Object.freeze([
     // surfacing), then a dashboard refresh so the dock card leaves at once.
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
     onManageAll: () => openRolesManageModal(),
+    onNew: () => openRoleEditor(),
+    searchWords: ['roles', 'classes'],
+    ...libraryOps('roles'),
   },
   {
     key: 'saved_prompts',
@@ -215,6 +343,36 @@ export const dockSections = Object.freeze([
     onCloneItem: (p) => openSavedPrompts({ initial: p.name, clone: true }),
     onDeleteItem: (p) => removeSavedPrompt(p.name),
     onManageAll: () => openSavedPrompts(),
+    onNew: () => openSavedPrompts(),
+    searchWords: ['saved prompts', 'incantations'],
+    ...libraryOps('saved_prompts'),
+  },
+  {
+    key: 'sandbox_profiles',
+    icon: () => wizWord('🛡', '🛡'),
+    title: () => wizWord('Sandbox profiles', 'Wards'),
+    empty: () => wizWord('no sandbox profiles yet', 'no wards yet'),
+    // The snapshot carries only the names (environment values stay behind
+    // the management API), so the section loads the profiles itself, again
+    // whenever the snapshot's revision says one changed.
+    load: {
+      fetch: () => loadSandboxProfiles(),
+      version: (snap) => snap?.sandbox_profiles_rev ?? (snap?.sandbox_profiles || []).join('\n'),
+    },
+    name: (p) => p.name,
+    chips: (p) => summaryChips(sandboxProfileSummary(p)),
+    fullChips: (p) => summaryChips(sandboxProfileSummary(p), 99).map((chip) => ({ ...chip, more: false })),
+    // A sandbox profile is assigned through the 🛡 pickers, not dropped.
+    drag: false,
+    onManageItem: (p) => managementController().openSandboxProfileEditor(p),
+    onCloneItem: (p) => managementController().openSandboxProfileClone(p),
+    onDeleteItem: (p) => removeSandboxProfile(p),
+    onManageAll: () => managementController().openSandboxProfilesManageModal(),
+    onNew: () => managementController().openSandboxProfileEditor(),
+    searchWords: ['sandbox profiles', 'wards'],
+    isDefault: (p, snap) => !!snap?.sandbox_profile_default && snap.sandbox_profile_default === p.name,
+    onToggleDefault: (p, isDefault) => setDefault('sandbox', isDefault ? '' : p.name),
+    ...libraryOps('sandbox_profiles'),
   },
 ]);
 
