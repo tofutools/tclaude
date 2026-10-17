@@ -88,13 +88,14 @@ export function normalizeRemoteSpawnOptions(raw) {
   });
 }
 
-// loadRemoteSpawnOptions reads what the peer lets this operator choose. A
-// 404 is an older peer; any other failure is reported.
+// loadRemoteSpawnOptions reads what the peer lets this operator choose. An
+// older peer has no such route and answers it as a local-only path; any other
+// failure (including this group being invisible: 404) is reported.
 export async function loadRemoteSpawnOptions(api, group) {
   try {
     return normalizeRemoteSpawnOptions(await api.options(group));
   } catch (error) {
-    if (error?.status === 404) return normalizeRemoteSpawnOptions(null);
+    if (error?.status === 403 && error?.code === 'peer_view_local_only') return normalizeRemoteSpawnOptions(null);
     throw error;
   }
 }

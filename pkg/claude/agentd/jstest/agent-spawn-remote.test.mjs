@@ -25,6 +25,10 @@ function setValue(element, value) {
 test('remote spawn allowances, lock reasons and request mapping', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/agent-spawn-remote.js');
+  const refuse = (status, code) => ({ options: async () => { const e = new Error('x'); e.status = status; e.code = code; throw e; } });
+  assert.equal((await mod.loadRemoteSpawnOptions(refuse(403, 'peer_view_local_only'), 'g')).known, false, 'an older peer has no spawn-options route');
+  await assert.rejects(() => mod.loadRemoteSpawnOptions(refuse(404, 'not_found'), 'g'), /x/, 'an invisible group is an error');
+  await assert.rejects(() => mod.loadRemoteSpawnOptions(refuse(502, 'peer_unreachable'), 'g'), /x/);
   const legacy = mod.normalizeRemoteSpawnOptions(null);
   assert.equal(legacy.known, false);
   for (const field of ['profile', 'cwd', 'harness', 'model', 'effort']) assert.equal(mod.remoteFieldAllowed(field, legacy), false, field);
