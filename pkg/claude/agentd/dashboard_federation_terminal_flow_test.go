@@ -40,15 +40,17 @@ func dashboardTerminalOpen(t *testing.T, fh *fedHarness, mode string) (*websocke
 type dashboardTerminalHello struct {
 	Type, Mode, Peer, Agent string
 	Cols, Rows              int
-	SizeOwner               bool `json:"size_owner"`
+	Shared                  bool
 	Others                  []string
+	TakeOver                bool `json:"take_over"`
 }
 
-// dashboardTerminalOpenWith opens a browser terminal with extraQuery appended
-// and the peer answering with answer's size-ownership fields.
-func dashboardTerminalOpenWith(t *testing.T, fh *fedHarness, mode, extraQuery string, answerWith proto.SessionAnswerPayload) (*websocket.Conn, *stream.Conn, proto.SessionOpenPayload, dashboardTerminalHello) {
+// dashboardTerminalOpenWith opens a browser terminal with extraQuery appended,
+// the peer's catalog granting extraCaps beyond watch and attach, and the peer
+// answering with answer's sharing fields.
+func dashboardTerminalOpenWith(t *testing.T, fh *fedHarness, mode, extraQuery string, answerWith proto.SessionAnswerPayload, extraCaps ...string) (*websocket.Conn, *stream.Conn, proto.SessionOpenPayload, dashboardTerminalHello) {
 	t.Helper()
-	row := dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsAttach)
+	row := dashboardRemoteTerminalCatalog(t, fh, append([]string{proto.CapSessionsWatch, proto.CapSessionsAttach}, extraCaps...)...)
 	handler := agentd.BuildDashboardHandlerForTest()
 	var handlers sync.WaitGroup
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +90,7 @@ func dashboardTerminalOpenWith(t *testing.T, fh *fedHarness, mode, extraQuery st
 	require.Equal(t, mode == "watch", open.ReadOnly)
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
-	require.True(t, open.DriveSize, "a browser view always asks to own the size when alone")
+	require.True(t, open.ShareSize, "a browser view always asks to share the size")
 	answerWith.Stream, answerWith.OK, answerWith.Key, answerWith.Cols, answerWith.Rows = open.Stream, true, kp.Pub, 120, 40
 	answer := fh.peer.envelope(proto.KindSessionAnswer, proto.Endpoint{}, answerWith)
 	answer.InReplyTo = env.ID
@@ -109,20 +111,22 @@ func dashboardTerminalOpenWith(t *testing.T, fh *fedHarness, mode, extraQuery st
 	return got.ws, conn, open, hello
 }
 
-// TestDashboardFederationTerminalSizeOwnerAndTakeOver: a view the peer names
-// size owner forwards the browser's grid as Resize frames; a pinned one
-// learns who else is attached, and a take-over reopen says so to the peer.
-func TestDashboardFederationTerminalSizeOwnerAndTakeOver(t *testing.T) {
-	t.Run("owner", func(t *testing.T) {
+// TestDashboardFederationTerminalSharedSizeAndTakeOver: a view sharing the
+// size forwards the browser's grid as Resize frames and hears the shared size
+// and the other clients back; a take-over reopen says so to the peer, and only
+// when the peer's catalog grants it.
+func TestDashboardFederationTerminalSharedSizeAndTakeOver(t *testing.T) {
+	t.Run("shared", func(t *testing.T) {
 		fh := newFedHarness(t)
 		t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
-		ws, conn, open, hello := dashboardTerminalOpenWith(t, fh, "watch", "", proto.SessionAnswerPayload{SizeOwner: true})
+		ws, conn, open, hello := dashboardTerminalOpenWith(t, fh, "watch", "", proto.SessionAnswerPayload{SharedSize: true, Others: []string{"a local terminal", "\x1b[2Jsneaky"}})
 		require.False(t, open.TakeOver)
-		require.True(t, hello.SizeOwner)
-		require.Empty(t, hello.Others)
+		require.True(t, hello.Shared)
+		require.False(t, hello.TakeOver, "without sessions_takeover the browser offers no take-over")
+		require.Equal(t, []string{"a local terminal", "__2Jsneaky"}, hello.Others, "peer labels arrive in the safe-name charset")
 		require.NoError(t, ws.WriteJSON(map[string]any{"type": "resize", "cols": 190, "rows": 52}))
 		frame := terminalRead(t, conn)
-		require.Equal(t, terminal.Resize, frame.Kind, "the owner's grid reaches the peer")
+		require.Equal(t, terminal.Resize, frame.Kind, "the browser's grid reaches the peer")
 		c, r, err := terminal.ParseSize(frame.Data)
 		require.NoError(t, err)
 		require.Equal(t, [2]int{190, 52}, [2]int{c, r})
@@ -132,20 +136,45 @@ func TestDashboardFederationTerminalSizeOwnerAndTakeOver(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, ws.WriteJSON(map[string]any{"type": "credit", "bytes": len(body)}))
 		require.Equal(t, terminal.Credit, terminalRead(t, conn).Kind, "an out-of-range grid is dropped, not forwarded")
+
+		require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(150, 50)}))
+		var size map[string]any
+		require.NoError(t, ws.ReadJSON(&size))
+		require.Equal(t, map[string]any{"type": "size", "cols": 150.0, "rows": 50.0}, size)
+		status, err := json.Marshal(proto.SessionStatus{Others: []string{"another remote viewer"}})
+		require.NoError(t, err)
+		require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Status, Data: status}))
+		var others map[string]any
+		require.NoError(t, ws.ReadJSON(&others))
+		require.Equal(t, map[string]any{"type": "others", "others": []any{"another remote viewer"}}, others)
+
 		require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Closed, Data: []byte("taken_over")}))
 		var closed map[string]any
 		require.NoError(t, ws.ReadJSON(&closed))
 		require.Equal(t, "taken_over", closed["reason"])
 	})
-	t.Run("shared then take over", func(t *testing.T) {
+	t.Run("take over with the grant", func(t *testing.T) {
 		fh := newFedHarness(t)
 		t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
-		_, _, open, hello := dashboardTerminalOpenWith(t, fh, "interactive", "", proto.SessionAnswerPayload{Others: []string{"a local terminal", "\x1b[2Jsneaky"}})
-		require.False(t, open.TakeOver)
-		require.False(t, hello.SizeOwner)
-		require.Equal(t, []string{"a local terminal", "__2Jsneaky"}, hello.Others, "peer labels arrive in the safe-name charset")
-		_, _, open, _ = dashboardTerminalOpenWith(t, fh, "interactive", "&take_over=1", proto.SessionAnswerPayload{SizeOwner: true})
+		_, _, open, hello := dashboardTerminalOpenWith(t, fh, "interactive", "&take_over=1", proto.SessionAnswerPayload{SharedSize: true}, proto.CapSessionsTakeover)
 		require.True(t, open.TakeOver, "a take-over reopen asks the peer to disconnect the others")
+		require.True(t, hello.TakeOver)
+	})
+	t.Run("take over without the grant", func(t *testing.T) {
+		fh := newFedHarness(t)
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+		row := dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsAttach)
+		server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+		t.Cleanup(server.Close)
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&agent="+row.Agent+"&mode=interactive&take_over=1", nil)
+		require.NoError(t, err)
+		defer ws.Close()
+		require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+		var closed map[string]any
+		require.NoError(t, ws.ReadJSON(&closed))
+		require.Equal(t, "denied", closed["reason"])
+		require.Contains(t, closed["message"], "sessions.takeover")
+		require.Empty(t, fh.peer.envelopes(proto.KindSessionOpen), "a refused take-over never reaches the peer")
 	})
 }
 
@@ -291,10 +320,11 @@ func TestFederationTerminalPinnedBrowserSizeAndClosedReasons(t *testing.T) {
 	}
 }
 
-// TestFederationTerminalSoleViewerOwnsWindowSize: a viewer asking to drive the
-// size of a session nobody else is attached to owns it — it opens at the
-// pinned size, and its Resize frames size the target window.
-func TestFederationTerminalSoleViewerOwnsWindowSize(t *testing.T) {
+// TestFederationTerminalSharedViewerSizesWindow: a viewer sharing the size of
+// a session nobody else is attached to opens at the pinned size, and its
+// Resize frames size the target window (less tmux's status line) and come
+// back as the shared size. A take-over needs its own grant.
+func TestFederationTerminalSharedViewerSizesWindow(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
 	const conv = "browser-owner-target"
@@ -313,27 +343,43 @@ func TestFederationTerminalSoleViewerOwnsWindowSize(t *testing.T) {
 	require.Equal(t, 200, grant.Code)
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
-	open := proto.SessionOpenPayload{Agent: aid, Session: "browser-owner-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, FixedSize: true, DriveSize: true, Cols: 80, Rows: 24}
+	refused := proto.SessionOpenPayload{Agent: aid, Session: "browser-owner-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, FixedSize: true, ShareSize: true, TakeOver: true, Cols: 80, Rows: 24}
+	p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, refused))
+	answer := terminalAnswer(t, p, refused.Stream)
+	require.False(t, answer.OK, "a watch grant alone does not allow a take-over")
+	require.Contains(t, answer.Reason, agentd.PermSessionsTakeover)
+
+	open := proto.SessionOpenPayload{Agent: aid, Session: "browser-owner-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, FixedSize: true, ShareSize: true, Cols: 80, Rows: 24}
 	p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, open))
-	answer := terminalAnswer(t, p, open.Stream)
+	answer = terminalAnswer(t, p, open.Stream)
 	require.True(t, answer.OK, answer.Reason)
-	require.True(t, answer.SizeOwner, "nobody else is attached")
-	require.Empty(t, answer.Others)
-	require.Equal(t, [2]int{120, 40}, [2]int{answer.Cols, answer.Rows}, "a browser owner opens at the pinned size")
+	require.True(t, answer.SharedSize)
+	require.Empty(t, answer.Others, "nobody else is attached")
+	require.Equal(t, [2]int{120, 40}, [2]int{answer.Cols, answer.Rows}, "a browser view opens at the pinned size")
 	conn := fedPeerStream(t, p, open.Stream, kp, answer.Key, true)
 	t.Cleanup(func() { _ = conn.Close() })
 	require.Equal(t, terminal.Output, terminalRead(t, conn).Kind)
 	require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(190, 52)}))
-	fedEventually(t, "owner sizes the window", func() bool {
+	fedEventually(t, "the sole viewer sizes the window", func() bool {
 		mock.mu.Lock()
 		defer mock.mu.Unlock()
 		for _, r := range mock.resizes {
-			if strings.Join(r, " ") == "resize-window -t @1 -x 190 -y 52" {
+			if strings.Join(r, " ") == "resize-window -t @1 -x 190 -y 51" {
 				return true
 			}
 		}
 		return false
 	})
+	for {
+		frame := terminalRead(t, conn)
+		if frame.Kind != terminal.Resize {
+			continue
+		}
+		c, r, err := terminal.ParseSize(frame.Data)
+		require.NoError(t, err)
+		require.Equal(t, [2]int{190, 52}, [2]int{c, r}, "the shared size comes back as the viewer's grid")
+		break
+	}
 }
 
 func TestDashboardFederationTerminalViewerLimit(t *testing.T) {

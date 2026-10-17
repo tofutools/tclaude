@@ -47,10 +47,16 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		if args[len(args)-1] == "#{pane_width} #{pane_height}" {
 			return terminalEcho("120 40")
 		}
+		if args[len(args)-1] == "#{status}" {
+			return terminalEcho("on")
+		}
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
 			m.probes++
 			return terminalEcho(m.pane + "\t@1\t$1\t" + m.windows + "\t1\n")
 		}
+	case "list-clients":
+		// No local terminal is attached; renderers are ignore-size.
+		return exec.Command("true")
 	case "resize-window":
 		m.resizes = append(m.resizes, append([]string(nil), args...))
 		m.options["window-size"] = "manual"

@@ -91,13 +91,14 @@ const (
 	CapSessionsWatch            = "sessions_watch"
 	CapSessionsAttach           = "sessions_attach"
 	CapSessionsFilesRead        = "sessions_files_read"
+	CapSessionsTakeover         = "sessions_takeover" // disconnect a session's other clients
 	CapAgentsReceivePermissions = "agents_receive_permissions"
 	CapAgentsReceive            = "agents_receive"
 	CapTeleportReceive          = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapGroupVisibility, CapGroupLinkAccept, CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
+var AllCaps = []string{CapGroupVisibility, CapGroupLinkAccept, CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsTakeover, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -482,13 +483,15 @@ func (e *Envelope) DecodePayload(v any) error {
 // SessionOpenPayload requests access to one stable agent's current pane.
 // Session and Incarnation pin discovery to one launch; it cannot follow a restart.
 //
-// DriveSize asks for the target window to follow this viewer's size when it
-// is the only client attached to the session. TakeOver first disconnects the
-// other clients — the same one-viewer rule a local web terminal's forced
-// attach applies. Receivers that predate both ignore them and pin the viewer.
+// ShareSize says the viewer reports its size in Resize frames and accepts the
+// window's shared size (Resize) and the other clients (Status) in return: the
+// window takes, per axis, the smallest size across every attached client.
+// TakeOver first disconnects the other clients, so the viewer is the only
+// one; it needs the sessions.takeover grant. Receivers that predate both
+// ignore them and pin the viewer.
 type SessionOpenPayload struct {
 	FixedSize   bool   `json:"fixed_size,omitempty"`
-	DriveSize   bool   `json:"drive_size,omitempty"`
+	ShareSize   bool   `json:"share_size,omitempty"`
 	TakeOver    bool   `json:"take_over,omitempty"`
 	Agent       string `json:"agent"`
 	Session     string `json:"session"`
@@ -500,24 +503,31 @@ type SessionOpenPayload struct {
 	Cols        int    `json:"cols"`
 	Rows        int    `json:"rows"`
 }
-// SessionAnswerPayload accepts or refuses a SessionOpenPayload. SizeOwner says
-// the viewer's Resize frames size the target window. Others describes,
-// generically, what else is attached when it is not (at most
-// MaxSessionOthers entries).
+
+// SessionAnswerPayload accepts or refuses a SessionOpenPayload. SharedSize
+// says the receiver honours ShareSize. Others describes, generically, what
+// else is attached at open (at most MaxSessionOthers entries); later changes
+// arrive as Status frames.
 type SessionAnswerPayload struct {
-	Files     bool     `json:"files,omitempty"`
-	SizeOwner bool     `json:"size_owner,omitempty"`
-	Others    []string `json:"others,omitempty"`
-	Cols      int      `json:"cols,omitempty"`
-	Rows      int      `json:"rows,omitempty"`
-	Stream    string   `json:"stream"`
-	OK        bool     `json:"ok"`
-	Key       []byte   `json:"key,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	Files      bool     `json:"files,omitempty"`
+	SharedSize bool     `json:"shared_size,omitempty"`
+	Others     []string `json:"others,omitempty"`
+	Cols       int      `json:"cols,omitempty"`
+	Rows       int      `json:"rows,omitempty"`
+	Stream     string   `json:"stream"`
+	OK         bool     `json:"ok"`
+	Key        []byte   `json:"key,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
-// MaxSessionOthers bounds SessionAnswerPayload.Others.
+// MaxSessionOthers bounds SessionAnswerPayload.Others and SessionStatus.Others.
 const MaxSessionOthers = 4
+
+// SessionStatus is the JSON body of a terminal Status frame: what else is
+// attached to the session now, sent to a ShareSize viewer when it changes.
+type SessionStatus struct {
+	Others []string `json:"others"`
+}
 
 // ModelOpenPayload binds one model HTTP exchange to a named gateway.
 // Version 1 mandates routebroker credits. Version 2 adds dialect negotiation

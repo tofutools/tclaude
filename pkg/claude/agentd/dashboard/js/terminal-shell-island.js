@@ -225,16 +225,21 @@ function TerminalDisconnectNotice({ onReconnect }) {
   `;
 }
 
-// RemoteSharedNotice explains a pinned remote terminal: the peer's session is
-// also attached elsewhere, so this view shows it at that size. One viewer at a
-// time, as with local web terminals: taking it over disconnects the others
-// and lets this view size the pane.
+// RemoteSharedNotice explains a shared remote terminal: the peer's session is
+// also attached elsewhere, and the smallest attached terminal sets the size.
+// When the peer granted sessions.takeover, taking it over disconnects the
+// others so this view alone sizes the pane.
 export function RemoteSharedNotice({ seed, remote, onTakeOver }) {
-  if (!seed?.remote || remote?.owner || !remote?.others?.length) return null;
+  if (!seed?.remote || !remote?.shared) return null;
+  const others = remote.others || [];
+  if (!others.length && !remote.limited) return null;
   const peer = seed.remote.peerLabel || seed.remote.peer;
+  const text = others.length
+    ? `Also attached on ${peer}: ${others.join(', ')} · sharing the size${remote.limited ? ' · size limited by another viewer' : ''}`
+    : 'Size limited by another viewer';
   return html`<div class="term-remote-shared" role="status">
-    <span>Also attached on ${peer}: ${remote.others.join(', ')}. Shown at their size.</span>
-    <button type="button" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over</button>
+    <span>${text}</span>
+    ${others.length && remote.canTakeOver ? html`<button type="button" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over</button>` : null}
   </div>`;
 }
 

@@ -28,22 +28,39 @@ import (
 type attachParams struct {
 	Target   string `pos:"true" help:"Stable agt_…@peer from federation sessions"`
 	ReadOnly bool   `long:"read-only" help:"Watch without pane keyboard access"`
-	TakeOver bool   `long:"take-over" help:"Disconnect the session's other viewers first, so this terminal sets its size"`
+	TakeOver bool   `long:"take-over" help:"Disconnect the session's other viewers first (needs the peer's sessions.takeover grant)"`
 }
 
-// attachHello is the daemon's first frame for a CLI that asked to drive the
-// pane size: whether this terminal sets it, and if not, what else is attached.
+// attachHello is the daemon's first frame for a CLI that asked to share the
+// pane size: whether the peer shares it, what else is attached, and whether
+// this node may take the session over.
 type attachHello struct {
-	Type      string   `json:"type"`
-	SizeOwner bool     `json:"size_owner"`
-	Others    []string `json:"others"`
+	Type     string   `json:"type"`
+	Shared   bool     `json:"shared"`
+	Others   []string `json:"others"`
+	TakeOver bool     `json:"take_over"`
+}
+
+// attachHelloText words a hello for the operator, or "" when alone.
+func attachHelloText(h attachHello) string {
+	if h.Type != "hello" || len(h.Others) == 0 {
+		return ""
+	}
+	text := "Also attached: " + strings.Join(h.Others, ", ") + "."
+	if h.Shared {
+		text += " Sharing the size: the smallest terminal sets it."
+	}
+	if h.TakeOver {
+		text += " Rerun with --take-over to disconnect them."
+	}
+	return text
 }
 
 // attachCloseText words the peer's closure reason for the operator.
 func attachCloseText(reason string) string {
 	switch reason {
 	case "taken_over":
-		return "another viewer took over this terminal (one viewer at a time)"
+		return "another viewer took over this terminal"
 	case "kicked":
 		return "the peer's operator disconnected this view"
 	case "revoked":
@@ -75,7 +92,7 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 	if err != nil {
 		return fail(stderr, err)
 	}
-	query := url.Values{"target": {p.Target}, "cols": {fmt.Sprint(cols)}, "rows": {fmt.Sprint(rows)}, "drive_size": {"1"}}
+	query := url.Values{"target": {p.Target}, "cols": {fmt.Sprint(cols)}, "rows": {fmt.Sprint(rows)}, "share_size": {"1"}}
 	if p.ReadOnly {
 		query.Set("read_only", "1")
 	}
@@ -97,8 +114,10 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 	}
 	if kind == websocket.TextMessage {
 		var hello attachHello
-		if json.Unmarshal(msg, &hello) == nil && hello.Type == "hello" && !hello.SizeOwner && len(hello.Others) > 0 {
-			fmt.Fprintf(stderr, "Also attached: %s. Showing the pane at their size; rerun with --take-over to disconnect them.\n", strings.Join(hello.Others, ", "))
+		if json.Unmarshal(msg, &hello) == nil {
+			if text := attachHelloText(hello); text != "" {
+				fmt.Fprintln(stderr, text)
+			}
 		}
 	} else {
 		first = msg
@@ -198,6 +217,9 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 				closedReason.Store(string(f.Data))
 				errs <- io.EOF
 				return
+			case terminal.Resize, terminal.Status:
+				// The shared size and the other clients: tmux's own redraw already
+				// fits the terminal, so there is nothing to do here.
 			default:
 				errs <- terminal.ErrProtocol
 				return

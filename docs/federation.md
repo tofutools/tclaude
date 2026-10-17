@@ -230,6 +230,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
@@ -780,8 +781,10 @@ tclaude federation kick <viewer-id>
 
 For restricted peers, a local agent also needs `sessions.watch` or
 `sessions.attach` with `--scope peer=alice/builders`; `sessions.read` is
-separate discovery permission. Watch never authorizes typing. Unrestricted
-trust includes both modes on all live groups, including future groups.
+separate discovery permission. Watch never authorizes typing. Take-over
+(below) needs `sessions.takeover`, likewise scoped for a local agent.
+Unrestricted trust includes both modes and take-over on all live groups,
+including future groups.
 
 A target pane displays `REMOTE WATCH` or `REMOTE INPUT` with the peer label
 while viewers are attached. The original pane border options are restored
@@ -795,23 +798,26 @@ and one pane. The renderer has `ignore-size`, and its PTY has no input path. The
 size stays manual while viewers are attached, then its original sizing policy
 is restored.
 
-A session has one attached viewer at a time, the same rule as a local web
-terminal, which force-attaches and detaches every other client. A remote
-viewer, watch or interactive, that finds no other client on the session owns
-its size: its terminal size, and later resizes, size the target window. With
-other clients attached (a local terminal, or another remote viewer) it opens
-at the target's current size and is told, without naming peers, what else is
-attached. `tclaude federation attach --take-over`, or **Take over** in the
-browser terminal, disconnects them first. Displaced remote viewers close with
-reason `taken_over`. A remote viewer displaced by a local web terminal closes
-the same way. Take-over rides the `sessions.watch` / `sessions.attach`
-permission and needs no grant of its own, so even a watch grant lets a peer
-disconnect this node's local terminals from a shared session — the same rule a
-local web terminal applies. Operators who do not want that should not share
-sessions they are actively using. Ownership is decided when a viewer opens: a
-pinned viewer is not promoted when the others leave, but reopening it claims
-the size. An older peer ignores the request and keeps every viewer at its own
-size.
+Attached clients share the window size, like tmux's `window-size smallest`.
+Each remote viewer, watch or interactive, reports the size it could show (a
+CLI its terminal, a browser its panel), and the target sizes the window to the
+per-axis minimum across those viewers and its own local tmux terminals, less
+the status line. It recomputes, coalesced, when a viewer joins, leaves or
+resizes, and once a second for local terminals. Alone, a viewer simply sizes
+the window. Every viewer renders the shared size, never stretched: a browser
+whose panel is larger shows the grid at the normal font and says the size is
+limited by another viewer. Viewers are told, without naming peers, what else
+is attached.
+
+With the `sessions.takeover` grant, `tclaude federation attach --take-over`,
+or **Take over** in the browser terminal, disconnects the other clients first,
+local tmux terminals included, so the viewer has the window to itself. The
+target checks the grant; the viewing node shows **Take over** only when its
+cached catalog has it, and refuses `--take-over` otherwise. Displaced remote
+viewers close with reason `taken_over`. A remote viewer displaced by a local
+web terminal, which force-attaches and detaches every other client, closes the
+same way. Without the grant a peer never disconnects anyone. An older peer
+ignores sharing and keeps every viewer at the target's size.
 
 Interactive input is
 delivered separately to the resolved pane: special keys use a fixed tmux key
@@ -2616,17 +2622,20 @@ peers cannot call it or chain an attach through another node. It opens the same
 encrypted, incarnation-pinned terminal stream as CLI federation attach, with
 unchanged target-side watch/attach grants, indicators, viewer limits and audit.
 `GET /api/federation/sessions?peer=<instance_id>` returns the existing CLI session
-array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
+array, adding `watch`, `attach` and `takeover` flags; `instance` is the stable peer ID and
 `peer` its display label. Cached catalogs may be stale; the target authorizes
 both initial opens and every ongoing session.
 
 The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`,
-`size_owner`, `others`), then binary output. Its dimensions come from the target
-pane. When `size_owner` is true, the browser fits its own grid and its `resize`
-messages size the target window. Otherwise it renders at the target's size,
-later JSON `size` frames report changes, its `resize` messages are dropped, and
-`others` lists what else is attached. Adding `&take_over=1` to the socket path
-asks the target to disconnect them first.
+`shared`, `others`, `take_over`), then binary output. Its dimensions come from
+the target pane, and later JSON `size` frames report the grid to render. When
+`shared` is true, the browser's `resize` messages report the size its panel
+could show and count toward the shared size; JSON `others` frames update what
+else is attached. Against an older peer `shared` is false and `resize` messages
+are dropped. `take_over` says the peer grants `sessions.takeover`; adding
+`&take_over=1` to the socket path then asks the target to disconnect the other
+clients first, and is refused with `denied` otherwise. The CLI attach socket
+opts into the same sharing with `share_size=1` and gets the same hello.
 Interactive binary input passes through the existing fixed-key/literal-text
 encoder; watch input is discarded. After xterm consumes each output frame,
 the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
