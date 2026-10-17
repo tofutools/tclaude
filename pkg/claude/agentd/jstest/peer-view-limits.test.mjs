@@ -187,6 +187,8 @@ test('on a peer view, the Groups toolbar controls follow the peer\'s management 
   assert.equal(toasts[0], 'forge does not share its global spawn defaults with you');
   assert.match(doc.getElementById('peer-view-managed-style').textContent, /#group-create-open/);
   snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'spawn.defaults', 'groups.create'] } };
+  assert.deepEqual(clicks(), { prof: true, sbx: true, 'group-create-open': false }, 'the pickers also need the peer\'s profile lists');
+  snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'spawn.defaults', 'spawn.catalog', 'groups.create'] } };
   assert.deepEqual(clicks(), { prof: false, sbx: false, 'group-create-open': false }, 'shared grants run the regular dialogs');
   assert.equal(doc.getElementById('peer-view-managed-style'), null, 'nothing left to grey');
   assert.match(doc.getElementById('peer-view-limits-style').textContent, /\[data-act="set-dash-profile"\]/);

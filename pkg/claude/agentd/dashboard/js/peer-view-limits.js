@@ -42,24 +42,36 @@ const GATED_CONTROLS = [
 
 // MANAGED_CONTROLS are the node-configuration controls a peer serves under a
 // grant (node.spawn.defaults.manage, node.groups.create; unrestricted trust
-// holds both): they run their regular local dialogs, routed to the peer.
+// holds both): they run their regular local dialogs, routed to the peer. The
+// default pickers also list the peer's profiles, so they need its catalogs
+// (node.spawn.read) too.
 const MANAGED_CONTROLS = Object.freeze({
-  '[data-act="set-dash-profile"]': 'spawn.defaults',
-  '[data-act="set-dash-sandbox-profile"]': 'spawn.defaults',
-  '#group-create-open': 'groups.create',
+  '[data-act="set-dash-profile"]': ['spawn.defaults', 'spawn.catalog'],
+  '[data-act="set-dash-sandbox-profile"]': ['spawn.defaults', 'spawn.catalog'],
+  '#group-create-open': ['groups.create'],
 });
 
+// managedState is 'shared' when the peer shares every feature, else the
+// first missing one's state.
+function managedState(features, peerView) {
+  for (const feature of features) {
+    const state = featureState(feature, peerView);
+    if (state !== 'shared') return state;
+  }
+  return 'shared';
+}
+
 function managedControl(target, peerView) {
-  for (const [sel, feature] of Object.entries(MANAGED_CONTROLS)) {
+  for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) {
     const el = target?.closest?.(sel);
-    if (el) return { el, state: featureState(feature, peerView), what: feature === 'groups.create' ? 'group creation' : 'its global spawn defaults' };
+    if (el) return { el, state: managedState(features, peerView), what: features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults' };
   }
   return null;
 }
 
 // managedControlsRule greys the managed controls the peer does not share.
 export function managedControlsRule(peerView) {
-  const off = Object.entries(MANAGED_CONTROLS).filter(([, f]) => featureState(f, peerView) !== 'shared').map(([sel]) => `html.remote-node ${sel}`);
+  const off = Object.entries(MANAGED_CONTROLS).filter(([, f]) => managedState(f, peerView) !== 'shared').map(([sel]) => `html.remote-node ${sel}`);
   return off.length ? `${off.join(', ')} { opacity: .45; cursor: not-allowed; }` : '';
 }
 
@@ -215,7 +227,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 export function usableActSelectors(peerView, extra = []) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   const shared = (feature) => featureState(feature, peerView) === 'shared';
-  for (const [sel, feature] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && shared(feature)) out.push(sel);
+  for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
     if (act !== 'dot-toggle') { if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`); continue; }
     if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');

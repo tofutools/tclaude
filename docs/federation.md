@@ -720,8 +720,8 @@ Groups toolbar's 🧠 global default spawn profile, 🛡 global sandbox profile 
 handlers when it shares them, and stay greyed with the reason otherwise.
 
 - `node.spawn.defaults.manage` sets or clears both global defaults, choosing
-  among the peer's existing profiles; the pickers list them with
-  `node.spawn.read`. Creating a profile stays on its own node. With either
+  among the peer's existing profiles; the pickers also need `node.spawn.read`
+  to list them, and stay greyed without it. Creating a profile stays on its own node. With either
   grant the peer's snapshot carries the two current defaults.
 - `node.groups.create` creates a plain group. A restricted peer sets only its
   name, a parent it can see, description, context, attachment and member cap;
