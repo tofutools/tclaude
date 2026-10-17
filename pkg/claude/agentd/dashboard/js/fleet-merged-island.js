@@ -42,7 +42,7 @@ const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 // A control outside any node's group is refused.
 export function limitsCSS(nodes, { self, remote }) {
   const always = [...VIEW_ONLY_ACTS, 'send-elsewhere'];
-  const rules = [refusedActsRule(`${ROOT} :not(details[data-fleet-node] *)`, always.map((a) => `[data-act="${a}"]`))];
+  const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(details[data-fleet-node] [data-act])')];
   for (const { id, peerView } of nodes) {
     if (!NODE_ID.test(id || '')) continue;
     const scope = `${ROOT} details[data-fleet-node="${id}"]`;

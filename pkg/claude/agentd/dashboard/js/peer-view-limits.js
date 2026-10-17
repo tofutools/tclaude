@@ -196,11 +196,17 @@ export function usableActSelectors(peerView, extra = []) {
   return out;
 }
 
-// refusedActsRule greys every data-act control under scope that is not in
-// usable: dimmed, with the not-allowed cursor.
-export function refusedActsRule(scope, usable) {
-  return `${scope} [data-act]:not(${usable.join(', ')}) { opacity: .45; cursor: not-allowed; }`;
+// refusedActsRule greys every control matching target under scope that is
+// not in usable: dimmed, with the not-allowed cursor. Conditions on the
+// control itself belong in target, not scope (a scope :not() would be tested
+// on an ancestor).
+export function refusedActsRule(scope, usable, target = '[data-act]') {
+  return `${scope} ${target}:not(${usable.join(', ')}) { opacity: .45; cursor: not-allowed; }`;
 }
+
+// FUSED_ROOT is the all-nodes Groups view: its rows belong to several nodes,
+// so fleet-merged-island.js guards and greys them per node, not this module.
+const FUSED_ROOT = '#fleetview-fused-groups-root';
 
 // setLimitStyle keeps one generated <style> per id in the document head;
 // empty css removes it.
@@ -217,6 +223,7 @@ export function setLimitStyle(doc, id, css) {
 
 // blockedControl returns the element a click must not reach, and why.
 export function blockedControl(target, peerView) {
+  if (target?.closest?.(FUSED_ROOT)) return null;
   const tab = target?.closest?.('nav [data-tab]');
   if (tab) {
     const state = tabState(tab.dataset.tab, peerView);
@@ -268,7 +275,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // (and so once the marker has named the node).
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
-    setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView)));
+    setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');

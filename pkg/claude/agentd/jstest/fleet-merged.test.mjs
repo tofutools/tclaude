@@ -176,11 +176,31 @@ test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused
   ], { self: 'inst_self', remote: 'inst_forge' });
   const lines = css.split('\n');
   assert.equal(lines.length, 3, 'outside-any-group, this node, forge; the odd ID gets no rule');
-  assert.match(lines[0], /:not\(details\[data-fleet-node\] \*\) \[data-act\]:not\(.*\[data-act="send-elsewhere"\]/);
+  assert.match(lines[0], /\[data-act\]:not\(details\[data-fleet-node\] \[data-act\]\):not\(.*\[data-act="send-elsewhere"\]/);
   assert.doesNotMatch(lines[1], /"jump"/, 'on a peer page this node\'s terminal is not opened from here');
   assert.match(lines[2], /\[data-act="dot-toggle"\]\[data-online="1"\]/);
   assert.match(lines[2], /\[data-act="restart"\]/);
   for (const l of lines) assert.match(l, /\{ opacity: \.45; cursor: not-allowed; \}$/);
+});
+
+test('limitsCSS greys exactly the controls a click refuses', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/fleet-merged-island.js');
+  const css = island.limitsCSS([
+    { id: 'inst_self', peerView: null },
+    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.resume', 'spawn'] } },
+  ], { self: 'inst_self', remote: '' });
+  const doc = harness.document;
+  doc.body.innerHTML = `<div id="fleetview-fused-groups-root"><div class="fleet-merged">
+    <details data-fleet-node="inst_self"><summary><b id="s-jump" data-act="jump"></b><b id="s-spawn" data-act="spawn-agent"></b><b id="s-menu" data-act="group-menu"></b></summary>
+      <details data-fleet-node="inst_self"><summary><b id="s-sub-jump" data-act="web-open-window"></b></summary></details></details>
+    <details data-fleet-node="inst_forge"><summary><b id="f-jump" data-act="jump"></b><b id="f-spawn" data-act="spawn-agent"></b><b id="f-wake" data-act="dot-toggle" data-online="0"></b>
+      <b id="f-stop" data-act="dot-toggle" data-online="1"></b><b id="f-restart" data-act="restart"></b><b id="f-send" data-act="send-elsewhere"></b></summary></details>
+    <b id="loose" data-act="jump"></b><b id="loose-send" data-act="send-elsewhere"></b></div></div>`;
+  const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
+  const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));
+  for (const id of ['s-jump', 's-menu', 's-sub-jump', 'f-jump', 'f-spawn', 'f-wake', 'f-send', 'loose-send']) assert.equal(greyed(id), false, `${id} is usable`);
+  for (const id of ['s-spawn', 'f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
 });
 
 test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {

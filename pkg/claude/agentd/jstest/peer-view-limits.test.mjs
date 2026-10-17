@@ -150,6 +150,15 @@ test('the greying rule is generated from what the peer shares and removed on dis
   assert.ok(!rule().includes('[data-act="restart"]') && !rule().includes('[data-act="spawn-agent"]'));
   await harness.act(() => { snapshot.value = { peer_view: { included: ['agents.status', 'spawn'] } }; });
   assert.ok(rule().includes('[data-act="spawn-agent"]') && !rule().includes('[data-act="message-new"]'), 'recomputed with the snapshot');
+  doc.body.innerHTML = `<b id="spawn" data-act="spawn-agent"></b><b id="restart" data-act="restart"></b><b id="jump" data-act="jump"></b>
+    <div id="fleetview-fused-groups-root"><b id="fused-restart" data-act="restart"></b></div>`;
+  doc.documentElement.classList.add('remote-node');
+  const sel = rule().replace(/ \{[^}]*\}$/, '');
+  assert.equal(doc.getElementById('spawn').matches(sel), false);
+  assert.equal(doc.getElementById('jump').matches(sel), false);
+  assert.equal(doc.getElementById('restart').matches(sel), true);
+  assert.equal(doc.getElementById('fused-restart').matches(sel), false, 'the all-nodes view greys its rows per node itself');
+  assert.equal(mod.blockedControl(doc.getElementById('fused-restart'), null), null, 'and guards them per node');
   dispose();
   assert.equal(doc.getElementById('peer-view-limits-style'), null);
 });
