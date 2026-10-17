@@ -3218,7 +3218,12 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   `/api/spawn/effective-sandbox`, `POST /api/sandbox-profile-enforcement` (a
   preview that writes nothing), and, for a visible group,
   `GET /api/groups/{group}/sandbox-profile` and
-  `/api/groups/{name}/spawn-harness-policy`.
+  `/api/groups/{name}/spawn-harness-policy`. A group named in a query or
+  body must be visible too; the enforcement preview treats the draft as a new
+  profile; and `effective-sandbox`'s `dir` (a project-settings walk) is
+  limited for a restricted peer to a visible group's default or pinned
+  directory. With `catalog`, spawn-options also names the group's default
+  profile (`defaults.group_profile`) and `default_prompts`.
 - `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
 - `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
   recreating a missing launch directory and switching a Codex drive stay

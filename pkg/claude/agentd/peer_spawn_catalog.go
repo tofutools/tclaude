@@ -1,7 +1,10 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -44,10 +47,20 @@ var peerSpawnCatalogGroupParam = map[string]string{
 	"GET /api/groups/{name}/spawn-harness-policy": "name",
 }
 
+// peerSpawnCatalogGuards narrow what a route's request may name on the peer
+// path, beyond its group path parameter: a group in a query or body only when
+// the peer can see it, a directory only one the peer could launch in anyway,
+// and never another stored profile's identity.
+var peerSpawnCatalogGuards = map[string]func(*http.Request, *peerView) bool{
+	"GET /api/spawn-launch-defaults":        peerCatalogQueryGroupVisible,
+	"GET /api/spawn/effective-sandbox":      peerCatalogEffectiveSandboxDir,
+	"POST /api/sandbox-profile-enforcement": peerCatalogEnforcementDraft,
+}
+
 func addPeerSpawnCatalogRules(rules map[string]peerViewRule) {
 	for pattern, next := range peerSpawnCatalogRoutes {
 		rule := peerViewRule{feature: "spawn.catalog", requires: PermNodeSpawnRead}
-		serve := servePeerSpawnCatalog(next, peerSpawnCatalogGroupParam[pattern])
+		serve := servePeerSpawnCatalog(next, peerSpawnCatalogGroupParam[pattern], peerSpawnCatalogGuards[pattern])
 		if strings.HasPrefix(pattern, "GET ") {
 			rule.serve = serve
 		} else {
@@ -59,21 +72,93 @@ func addPeerSpawnCatalogRules(rules map[string]peerViewRule) {
 
 // servePeerSpawnCatalog runs this node's own dashboard read for a peer that
 // holds node.spawn.read (and, on a group's route, can see that group).
-func servePeerSpawnCatalog(next http.HandlerFunc, groupParam string) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
+func servePeerSpawnCatalog(next http.HandlerFunc, groupParam string, guard func(*http.Request, *peerView) bool) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
 	return func(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 		if !v.allows(rule, 0) {
 			writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 			return
 		}
-		if groupParam != "" {
-			g, err := db.GetAgentGroupByName(r.PathValue(groupParam))
-			if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
-				writeError(w, http.StatusNotFound, "not_found", "object not found")
-				return
-			}
+		if groupParam != "" && !peerCatalogGroupVisible(r.PathValue(groupParam), v) || guard != nil && !guard(r, v) {
+			writeError(w, http.StatusNotFound, "not_found", "object not found")
+			return
 		}
 		next(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 	}
+}
+
+func peerCatalogGroupVisible(name string, v *peerView) bool {
+	g, err := db.GetAgentGroupByName(name)
+	return err == nil && g != nil && !g.IsArchived() && fedPeerGroupVisible(v.peer.InstanceID, g.ID)
+}
+
+// peerCatalogQueryGroupVisible: launch defaults resolve a ?group= group's
+// default profile.
+func peerCatalogQueryGroupVisible(r *http.Request, v *peerView) bool {
+	group := r.URL.Query().Get("group")
+	return group == "" || peerCatalogGroupVisible(group, v)
+}
+
+// peerCatalogEffectiveSandboxDir: the effective-sandbox read walks project
+// settings up from ?dir=, which would let a peer probe this host's
+// filesystem. A peer may name a directory it could launch in anyway: any,
+// for unrestricted trust; otherwise a visible group's default directory or
+// its spawn grant's pinned one.
+func peerCatalogEffectiveSandboxDir(r *http.Request, v *peerView) bool {
+	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	if dir == "" || db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		return true
+	}
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
+			continue
+		}
+		if g.DefaultCwd == dir {
+			return true
+		}
+		if grant := fedPeerGroupGrant(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn); grant != nil && grant.SpawnPolicy.Cwd == dir {
+			return true
+		}
+	}
+	return false
+}
+
+// peerCatalogEnforcementDraft: the enforcement preview of a draft names
+// every group using the stored profile the draft's id points at, and the
+// context group's policy. A peer previews a draft as a new profile, in a
+// group it can see.
+func peerCatalogEnforcementDraft(r *http.Request, v *peerView) bool {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	var body map[string]json.RawMessage
+	if json.Unmarshal(raw, &body) != nil {
+		return false
+	}
+	var draft map[string]json.RawMessage
+	if body["draft"] != nil {
+		if json.Unmarshal(body["draft"], &draft) != nil {
+			return false
+		}
+		delete(draft, "id")
+		body["draft"], _ = json.Marshal(draft)
+	}
+	if body["context"] != nil {
+		var hint struct {
+			Group string `json:"group"`
+		}
+		if json.Unmarshal(body["context"], &hint) != nil || hint.Group != "" && !peerCatalogGroupVisible(hint.Group, v) {
+			return false
+		}
+	}
+	raw, _ = json.Marshal(body)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.ContentLength = int64(len(raw))
+	return true
 }
 
 // peerSpawnCatalogReadable reports whether peer may read the catalogs.

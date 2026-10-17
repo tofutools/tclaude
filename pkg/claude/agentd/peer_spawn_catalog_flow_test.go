@@ -68,6 +68,34 @@ func TestPeerSpawnCatalogIsAGrantableReadOnlyPeerView(t *testing.T) {
 	}
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/browse-directories", map[string]any{}))
 	require.Equal(t, 403, rec.Code, "it lends no cwd picker")
+
+	// A group named in a query or body is as gated as a path's.
+	require.Equal(t, 200, get("/api/spawn-launch-defaults?group=one"))
+	require.Equal(t, 404, get("/api/spawn-launch-defaults?group=hidden"))
+	preview := func(group string) int {
+		return testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/sandbox-profile-enforcement", map[string]any{
+			"draft": map[string]any{"id": 1, "name": "probe", "filesystem": []any{}}, "context": map[string]any{"group": group},
+		})).Code
+	}
+	require.NotEqual(t, 404, preview("one"))
+	require.Equal(t, 404, preview("hidden"), "the preview names a group's policy only for a visible group")
+	// The effective-sandbox read walks project settings up from dir: a
+	// restricted peer names only a directory it could launch in anyway.
+	_, err := db.SetAgentGroupDefaultCwd("one", "/srv/one")
+	require.NoError(t, err)
+	require.Equal(t, 404, get("/api/spawn/effective-sandbox?harness=claude&dir=/etc"), "no filesystem probe")
+	require.NotEqual(t, 404, get("/api/spawn/effective-sandbox?harness=claude&dir=/srv/one"))
+	require.NotEqual(t, 404, get("/api/spawn/effective-sandbox?harness=claude"))
+
+	// spawn-options names the group's own defaults to a catalog holder, which
+	// the peer-view snapshot may withhold.
+	require.NoError(t, db.SaveSavedPrompt("", db.SavedPrompt{Name: "house-rules", Body: "Follow the house rules."}))
+	_, err = db.SetAgentGroupDefaultPrompts("one", []string{"house-rules"})
+	require.NoError(t, err)
+	code, opts = peerSpawnOptions(t, fh.peer.id.ID(), "one")
+	require.Equal(t, 200, code)
+	require.Equal(t, []string{"house-rules"}, opts.DefaultPrompts)
+	require.Contains(t, opts.Defaults, "group_profile")
 }
 
 func TestUnrestrictedPeerReadsTheCatalogsAndPicksAnyProfile(t *testing.T) {
@@ -108,6 +136,9 @@ func TestUnrestrictedPeerReadsTheCatalogsAndPicksAnyProfile(t *testing.T) {
 	require.Equal(t, 403, code, "a disabled profile stays unavailable")
 	code, _, _ = peerSpawnPost(t, peer, "one", map[string]any{"brief": "task", "profile": "vip"})
 	require.Equal(t, 403, code, "an operator-only profile is not selectable by trust alone")
+	_, _, missing := peerSpawnPost(t, peer, "one", map[string]any{"brief": "task", "profile": "nope"})
+	_, _, unlisted := peerSpawnPost(t, peer, "one", map[string]any{"brief": "task", "profile": "vip"})
+	require.Equal(t, unlisted, missing, "a missing profile answers like an unlisted one: no name probe")
 
 	setFedTrustLevel(t, fh, db.FederationTrustRestricted)
 	rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/roles", nil))

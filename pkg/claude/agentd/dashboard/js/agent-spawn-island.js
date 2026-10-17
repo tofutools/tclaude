@@ -682,10 +682,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       setDraft({ ...remoteSpawnPins(next, remote.options, operatorSet.current), profile: handle });
       return;
     }
+    // The request names no profile now, so the peer launches its default:
+    // start from that pre-fill, not from a peer profile picked before.
+    for (const field of ['profile', 'harness', 'model', 'effort']) operatorSet.current.delete(field);
+    setPeerPrompts(basePeerPrompts.current);
     const filled = replaceSpawnProfile(draftRef.current, { ...profile, name: profile.localName }, context, {
       autoFocus: actions.autoFocusDefault(), rememberedEffort, pickerUsable: false,
     });
-    setDraft((before) => {
+    setDraft((current) => {
+      const before = {
+        ...baseline, group: current.group,
+        ...Object.fromEntries(['name', 'descr', 'initialMessage', 'role', 'cwd'].map((key) => [key, current[key]])),
+        promptRefs: [...new Set([...basePeerPrompts.current, ...(current.promptRefs || []).filter((ref) => isLocalRef(ref) || !peerPrompts.includes(ref))])],
+      };
       const next = { ...before, profile: handle };
       for (const field of ['name', 'descr', 'initialMessage', 'role']) {
         if (String(filled[field] || '').trim() && !profileOverrides.current.has(field)) next[field] = filled[field];

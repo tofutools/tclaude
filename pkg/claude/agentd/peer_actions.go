@@ -341,6 +341,10 @@ type peerSpawnOptions struct {
 	// Catalog reports node.spawn.read: the requester may read this node's
 	// spawn dialog catalogs and pre-fill the dialog with what it would apply.
 	Catalog bool `json:"catalog"`
+	// DefaultPrompts are the group's own saved prompts (with the group's
+	// default profile in Defaults["group_profile"]): named with Catalog, so
+	// the dialog pre-fills them whatever the peer-view snapshot shares.
+	DefaultPrompts []string `json:"default_prompts,omitempty"`
 }
 
 func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
@@ -367,7 +371,8 @@ func servePeerSpawnOptions(w http.ResponseWriter, r *http.Request, v *peerView, 
 	}
 	out.Catalog = peerSpawnCatalogReadable(v)
 	if out.Catalog {
-		out.Defaults = map[string]string{"cwd": g.DefaultCwd}
+		out.Defaults = map[string]string{"cwd": g.DefaultCwd, "group_profile": g.DefaultProfile}
+		out.DefaultPrompts = g.DefaultPrompts
 		if grant != nil {
 			for k, val := range map[string]string{"cwd": grant.SpawnPolicy.Cwd, "harness": grant.SpawnPolicy.Harness, "model": grant.SpawnPolicy.Model, "profile": grant.SpawnPolicy.Profile} {
 				if val != "" {

@@ -121,6 +121,7 @@ export function normalizeRemoteSpawnOptions(raw) {
     harnesses: Object.freeze((Array.isArray(raw?.harnesses) ? raw.harnesses : []).filter((h) => typeof h === 'string' && h)),
     defaults: Object.freeze({ ...(raw?.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}) }),
     catalog: raw?.catalog === true,
+    defaultPrompts: Object.freeze(list(raw?.default_prompts).filter((p) => typeof p === 'string' && p)),
   });
 }
 
@@ -334,12 +335,18 @@ export function remoteSpawnIntro(remote, group) {
 // remoteSpawnContext is the launch context the dialog opens with: the peer's
 // own groups, harnesses and (when it lends its catalogs) roles, sandbox
 // profiles and default model, never this node's.
-export function remoteSpawnContext(snapshot, options, catalogs = null) {
+export function remoteSpawnContext(snapshot, options, catalogs = null, group = '') {
   const target = catalogs?.target || null;
+  // The peer-view snapshot may withhold a group's defaults from a restricted
+  // peer; spawn-options names them to a catalog holder, so the pre-fill
+  // starts from the profile and prompts the peer really applies.
+  const withDefaults = (g) => (options?.catalog && g?.name === group
+    ? { ...g, default_profile: text(options.defaults?.group_profile), default_prompts: [...(options.defaultPrompts || [])] }
+    : g);
   let harnesses = Array.isArray(snapshot?.harnesses) ? snapshot.harnesses : [];
   if (!harnesses.length && options?.harnesses?.length) harnesses = options.harnesses.map((name) => ({ name }));
   return {
-    groups: Array.isArray(snapshot?.groups) ? snapshot.groups : [],
+    groups: Array.isArray(snapshot?.groups) ? snapshot.groups.map(withDefaults) : [],
     harnesses,
     roles: target ? target.roles : [],
     sandbox_impl: {},

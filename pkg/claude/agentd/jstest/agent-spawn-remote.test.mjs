@@ -330,5 +330,32 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   await pick('#agent-spawn-init-msg', 'go', 'input');
   await submit();
   assert.deepEqual(sent.pop(), { brief: 'Use my style.\n\ngo', name: 'w', model: 'opus' });
+
+  // A local profile after a peer one starts again from what the peer
+  // applies: the peer profile's prompts are neither locked nor sent.
+  await open();
+  await pick('#agent-spawn-load-profile', 'reviewer');
+  await pick('#agent-spawn-load-profile', 'local:mine');
+  const chips = () => [...host.querySelectorAll('.saved-prompt-picker .agent-spawn-role-chip')].map((c) => c.querySelector('.role-chip-inspect').textContent);
+  assert.deepEqual(chips(), ['house-rules', 'style · this node']);
+  await pick('#agent-spawn-name', 'w', 'input');
+  await pick('#agent-spawn-init-msg', 'go', 'input');
+  await submit();
+  assert.deepEqual(sent.pop(), { brief: 'Use my style.\n\ngo', name: 'w', model: 'opus' }, 'no peer profile rides along');
+
+  // The group's own defaults, which a restricted peer's snapshot may
+  // withhold, come from spawn-options: its default profile outranks the
+  // peer-wide default, and its prompts are the peer's to apply.
+  const grouped = remoteMod.normalizeRemoteSpawnOptions({
+    approval: 'automatic', catalog: true, overrides: { model: true },
+    profiles: [], defaults: { group_profile: 'reviewer' }, default_prompts: ['house-rules'],
+  });
+  state.open({ groupName: 'build', remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options: grouped, catalogs, peerFetch, snapshot: { groups: [{ name: 'build' }], harnesses } } });
+  await flush(harness);
+  await harness.act(() => new Promise((r) => setTimeout(r, 400)));
+  await flush(harness);
+  assert.equal(val('#agent-spawn-load-profile'), 'reviewer');
+  assert.equal(val('#agent-spawn-model'), 'opus');
+  assert.deepEqual(chips(), ['review'], 'the group profile\'s prompts, locked as the peer\'s');
   await mounted.unmount();
 });

@@ -37,10 +37,8 @@ func checkSelectableProfile(peer string, group int64, name string) error {
 	if len(name) > 128 || validateGroupName(name) != nil || proto.StripControls(name) != name {
 		return fmt.Errorf("invalid requested profile")
 	}
-	profile, err := db.GetSpawnProfile(name)
-	if err != nil || profile == nil || profile.Disabled {
-		return fmt.Errorf("requested profile is unavailable")
-	}
+	// One answer for a missing, disabled or unlisted profile, so a peer
+	// cannot probe which profile names exist here.
 	if !slices.ContainsFunc(selectableSpawnProfiles(peer, group), func(p proto.CatalogSpawnProfile) bool { return p.Name == name }) {
 		return fmt.Errorf("requested profile is not in this peer's spawn allowlist")
 	}
