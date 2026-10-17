@@ -762,8 +762,10 @@
        irreversible act, so it gets its own label voice. All four are emitted;
        #dnd-trash.dnd-trash-template-mode (set by process-template-dnd.js for
        the duration of a template drag) picks the template pair, and body.wizard
-       picks the voice within whichever pair is active. -->
-  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span></span>
+       picks the voice within whichever pair is active. A group's saved-process
+       chip drag (groups-saved-process-dnd.js) sets .dnd-trash-unpin-mode for
+       the Remove/Unbind pair. -->
+  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span><span class="dnd-trash-label-unpin">Remove</span><span class="dnd-trash-label-unpin-wizard">Unbind</span></span>
 </div>
 <div id="shell-toast-root"></div>
 <!-- The Preact shell owns the command palette overlay. It uses the shared
