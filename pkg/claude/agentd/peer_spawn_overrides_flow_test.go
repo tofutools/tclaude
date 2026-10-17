@@ -1,0 +1,191 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+type peerSpawnOptionsView struct {
+	Group     string            `json:"group"`
+	Approval  string            `json:"approval"`
+	Overrides map[string]bool   `json:"overrides"`
+	Harnesses []string          `json:"harnesses"`
+	Defaults  map[string]string `json:"defaults"`
+	PeerView  struct {
+		Included []string `json:"included"`
+	} `json:"peer_view"`
+}
+
+func peerSpawnOptions(t *testing.T, peer, group string) (int, peerSpawnOptionsView) {
+	t.Helper()
+	rec := testharness.Serve(agentd.PeerViewHandler(peer), testharness.JSONRequest(t, "GET", "/api/spawn-options/"+group, nil))
+	var out peerSpawnOptionsView
+	if rec.Code == 200 {
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	}
+	return rec.Code, out
+}
+
+func peerSpawnPost(t *testing.T, peer, group string, body map[string]any) (int, int64, string) {
+	t.Helper()
+	rec := testharness.Serve(agentd.PeerViewHandler(peer), testharness.JSONRequest(t, "POST", "/api/groups/"+group+"/spawn", body))
+	var out struct {
+		ID   int64  `json:"id"`
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out.ID, out.Code
+}
+
+// waitSpawnSettled waits for an automatic spawn attempt to finish before the
+// fixture tears down.
+func waitSpawnSettled(t *testing.T, id int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		r, err := db.GetFederationSpawnRequest(id)
+		return err == nil && r != nil && (r.Status == db.FedSpawnApproved || r.Reason != "")
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// A peer that can only see a group still gets the spawn dialog: its request
+// waits for this node's operator and may set no launch settings.
+func TestPeerSpawnRequestWithoutGrantWaitsForOperator(t *testing.T) {
+	f := newFlow(t)
+	builders := f.HaveGroup("builders")
+	f.HaveGroup("hidden")
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+
+	code, _ := peerSpawnOptions(t, bob.ID(), "builders")
+	require.Equal(t, 404, code, "an invisible group offers nothing")
+	code, _, _ = peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task"})
+	require.Equal(t, 404, code)
+
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: bob.ID(), Slug: agentd.PermGroupsVisibilityRead, Scope: db.FederationGroupScope(builders.ID)}))
+	code, opts := peerSpawnOptions(t, bob.ID(), "builders")
+	require.Equal(t, 200, code)
+	require.Equal(t, "operator", opts.Approval)
+	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": false, "effort": false}, opts.Overrides)
+	require.Empty(t, opts.Defaults, "a restricted peer learns no local paths")
+	require.Contains(t, opts.PeerView.Included, "spawn.request")
+	require.NotContains(t, opts.PeerView.Included, "spawn")
+	code, _ = peerSpawnOptions(t, bob.ID(), "hidden")
+	require.Equal(t, 404, code)
+
+	for _, field := range []string{"cwd", "harness", "model", "effort"} {
+		value := map[string]string{"cwd": "/srv/work", "harness": "claude", "model": "opus", "effort": "high"}[field]
+		code, _, errCode := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", field: value})
+		require.Equal(t, 403, code, field)
+		require.Equal(t, "override_not_allowed", errCode, field)
+	}
+
+	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "port the parser", "name": "parser"})
+	require.Equal(t, 202, code)
+	req, err := db.GetFederationSpawnRequest(id)
+	require.NoError(t, err)
+	require.Equal(t, db.FedSpawnPending, req.Status)
+	require.True(t, req.Overrides.Empty())
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	found := false
+	for _, m := range msgs {
+		if strings.Contains(m.Subject, fmt.Sprintf("remote spawn request #%d", id)) {
+			found = true
+			require.Contains(t, m.Body, "port the parser")
+		}
+	}
+	require.True(t, found, "the operator is asked to decide")
+	rec := testharness.Serve(agentd.PeerViewHandler(bob.ID()), testharness.JSONRequest(t, "GET", fmt.Sprintf("/api/spawn-requests/%d", id), nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+}
+
+// A spawn grant opens only the overrides it lists; the request stores them
+// for the launch.
+func TestPeerSpawnGrantOpensListedOverrides(t *testing.T) {
+	f := newFlow(t)
+	builders := f.HaveGroup("builders")
+	bob, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob"}))
+
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"bogus"}}})
+	require.Equal(t, 400, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermMessageDirect, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"model"}}})
+	require.Equal(t, 400, rec.Code, "allowed_overrides belongs to groups.members.spawn")
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=builders", "spawn_policy": map[string]any{"allowed_overrides": []string{"model", "effort", "model"}}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	grant, err := db.ListEffectiveFederationPeerGrants(bob.ID())
+	require.NoError(t, err)
+	var stored []string
+	for _, g := range grant {
+		if g.Slug == agentd.PermGroupsMembersSpawn && g.Scope == db.FederationGroupScope(builders.ID) {
+			stored = g.SpawnPolicy.AllowedOverrides
+		}
+	}
+	require.Equal(t, []string{"effort", "model"}, stored)
+
+	code, opts := peerSpawnOptions(t, bob.ID(), "builders")
+	require.Equal(t, 200, code)
+	require.Equal(t, "automatic", opts.Approval)
+	require.Equal(t, map[string]bool{"cwd": false, "harness": false, "model": true, "effort": true}, opts.Overrides)
+	require.Contains(t, opts.PeerView.Included, "spawn")
+
+	code, _, errCode := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "cwd": "/srv/work"})
+	require.Equal(t, 403, code)
+	require.Equal(t, "override_not_allowed", errCode)
+	code, _, _ = peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "model": "bad model;rm"})
+	require.Equal(t, 400, code, "malformed values are refused before any grant check")
+
+	code, id, _ := peerSpawnPost(t, bob.ID(), "builders", map[string]any{"brief": "task", "model": "opus", "effort": "high"})
+	require.Equal(t, 202, code)
+	req, err := db.GetFederationSpawnRequest(id)
+	require.NoError(t, err)
+	require.Equal(t, db.FederationSpawnOverrides{Model: "opus", Effort: "high"}, req.Overrides)
+	waitSpawnSettled(t, id)
+}
+
+// Unrestricted trust opens every override and names the receiver's defaults;
+// values are still validated.
+func TestPeerSpawnUnrestrictedOpensAllOverrides(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("builders")
+	carol, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: carol.ID(), PubKey: carol.Pub, Label: "carol", TrustLevel: db.FederationTrustUnrestricted}))
+
+	code, opts := peerSpawnOptions(t, carol.ID(), "builders")
+	require.Equal(t, 200, code)
+	require.Equal(t, "automatic", opts.Approval)
+	require.Equal(t, map[string]bool{"cwd": true, "harness": true, "model": true, "effort": true}, opts.Overrides)
+	require.Contains(t, opts.Harnesses, "claude")
+	require.Contains(t, opts.Defaults, "cwd")
+
+	for _, bad := range []map[string]any{
+		{"brief": "task", "cwd": "relative/dir"},
+		{"brief": "task", "cwd": "/srv/../etc"},
+		{"brief": "task", "harness": "no-such-harness"},
+		{"brief": "task", "effort": "HIGH!"},
+	} {
+		code, _, _ := peerSpawnPost(t, carol.ID(), "builders", bad)
+		require.Equal(t, 400, code, bad)
+	}
+	dir := t.TempDir()
+	code, id, _ := peerSpawnPost(t, carol.ID(), "builders", map[string]any{"brief": "task", "cwd": dir, "harness": "claude"})
+	require.Equal(t, 202, code)
+	req, err := db.GetFederationSpawnRequest(id)
+	require.NoError(t, err)
+	require.Equal(t, dir, req.Overrides.Cwd)
+	require.Equal(t, "claude", req.Overrides.Harness)
+	waitSpawnSettled(t, id)
+}

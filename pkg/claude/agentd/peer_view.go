@@ -148,8 +148,13 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	rules["GET /api/audit"] = peerViewRule{feature: "audit", requires: PermFederationAuditRead, serve: servePeerGlobalRead(handleDashboardAudit)}
-	rules["POST /api/groups/{name}/spawn"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, write: servePeerSpawn}
-	rules["GET /api/spawn-requests/{id}"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, serve: servePeerSpawnStatus}
+	// Any visible group takes a spawn request (spawn.request): without a spawn
+	// grant it waits for this node's operator. "spawn" says the grant that
+	// launches it automatically, and stays requestable.
+	rules["POST /api/groups/{name}/spawn"] = peerViewRule{feature: "spawn.request", requires: PermGroupsVisibilityRead, group: true, visible: true, write: servePeerSpawn}
+	rules["GET /api/spawn-requests/{id}"] = peerViewRule{feature: "spawn.request", requires: PermGroupsVisibilityRead, group: true, visible: true, serve: servePeerSpawnStatus}
+	rules["GET /api/spawn-options/{name}"] = peerViewRule{feature: "spawn.request", requires: PermGroupsVisibilityRead, group: true, visible: true, serve: servePeerSpawnOptions}
+	rules["feature:spawn"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, serve: servePeerSpawnOptions}
 	rules["POST /api/operator-message"] = peerViewRule{feature: "messaging", requires: PermMessageDirect, group: true, write: servePeerMessage}
 	// Concepts consumed by the UI, whose transports remain outside this contract.
 	rules["feature:session-files"] = peerViewRule{feature: "sessions.files.read", requires: PermSessionsFilesRead, group: true}

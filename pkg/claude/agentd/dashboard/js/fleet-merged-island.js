@@ -160,7 +160,7 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
-  peerActions = peerRoutes, confirm, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
+  peerActions = peerRoutes, confirm, openSpawn, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
@@ -319,8 +319,8 @@ export function MergedGroups({
     <${GroupsInteractionProvider}>
       <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />
     <//>
-    ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups}
-      actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
+    ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups} snapshot=${snapOf(peerReq.nodeId)}
+      actions=${peerActions(peerReq.nodeId)} toast=${toast} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} ...${openSpawn ? { openSpawn } : {}} />`}
     ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}
       self=${fleet.self} fleet=${fleet} api=${launchApi.current} actions=${fleetActions.current} peerActions=${peerActions} timers=${timers} now=${now}
       localGroups=${(snapOf(fleet.self.id)?.groups || []).map((g) => g.name).filter(Boolean).sort()}

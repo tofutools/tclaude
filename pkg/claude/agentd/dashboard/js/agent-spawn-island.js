@@ -1,6 +1,6 @@
 import { SavedPromptChips } from './saved-prompts.js';
 import { h, render } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ManagementOverlay as Overlay,
@@ -56,6 +56,8 @@ import {
   setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
+import { createRemoteSpawnActions, remoteSpawnIntro, watchRemoteSpawnLocks } from './agent-spawn-remote.js';
+import { shellToast } from './shell-state.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
@@ -209,8 +211,17 @@ function roleHoverText(role) {
     .filter(Boolean).join('\n\n');
 }
 
-function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
+function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscard, notify = shellToast }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
+  // A spawn into a peer's group (agent-spawn-remote.js) keeps this dialog
+  // but sends a remote spawn request and never touches this node's state.
+  const remote = current.remote || null;
+  const actions = useMemo(() => (remote ? createRemoteSpawnActions(localActions, remote, { notify }) : localActions), [remote, localActions]);
+  // Disable what the remote request cannot carry, for as long as the dialog
+  // lives (see watchRemoteSpawnLocks): fail-closed for controls added later too.
+  useLayoutEffect(() => (remote
+    ? watchRemoteSpawnLocks(globalThis.document?.getElementById('agent-spawn-modal'), remote)
+    : undefined), [remote]);
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
@@ -834,7 +845,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
       markTiming('request_sent_ms');
-      const payload = await actions.spawn(request);
+      // A remote request carries only the overrides the operator set here.
+      const payload = await actions.spawn(remote
+        ? { ...request, explicit: [...touched.current, ...profileOverrides.current] }
+        : request);
       markTiming('response_received_ms');
       if (!state.isCurrent(current.generation)) return;
       state.close();
@@ -917,10 +931,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     onPaste=${paste}
   >
     <h3 id="agent-spawn-title"><${Words} prefix="spawn-title"
-      plain="Spawn a new agent" wizard="Summon a new familiar" /></h3>
+      plain="Spawn a new agent" wizard="Summon a new familiar" />${remote ? ` on ${remote.node}` : ''}</h3>
     <div class="modal-meta" id="agent-spawn-meta" hidden=${!draft.fixedGroup}>
       ${draft.fixedGroup ? `joining group: ${draft.group}` : ''}
     </div>
+    ${remote && html`<div class="modal-meta agent-spawn-remote-intro" id="agent-spawn-remote-intro">${remoteSpawnIntro(remote, draft.group)}</div>`}
     <label class="cron-create-row" id="agent-spawn-load-profile-row"
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Pattern" /></span>
@@ -1448,7 +1463,7 @@ export function AgentSpawnApp(props) {
   const current = props.state.dialog.value;
   if (!current) return null;
   return html`<${AgentSpawnDialog} key=${current.key} current=${current}
-    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} />`;
+    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} ...${props.notify ? { notify: props.notify } : {}} />`;
 }
 
 export function mountAgentSpawnIsland({ host, state, actions, confirmDiscard, registerCleanup }) {

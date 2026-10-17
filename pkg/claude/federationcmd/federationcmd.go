@@ -463,30 +463,32 @@ type peerGrant struct {
 	GroupName    string `json:"group_name,omitempty"`
 	GroupDeleted bool   `json:"group_deleted,omitempty"`
 	SpawnPolicy  struct {
-		PermissionSlugs []string `json:"permission_slugs,omitempty"`
-		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
-		RequesterPays   string   `json:"requester_pays,omitempty"`
-		JobApproval     string   `json:"job_approval,omitempty"`
-		Profile         string   `json:"profile,omitempty"`
-		Cwd             string   `json:"cwd,omitempty"`
-		Harness         string   `json:"harness,omitempty"`
-		Model           string   `json:"model,omitempty"`
-		MaxLive         int      `json:"max_live,omitempty"`
+		PermissionSlugs  []string `json:"permission_slugs,omitempty"`
+		AllowedProfiles  []string `json:"allowed_profiles,omitempty"`
+		AllowedOverrides []string `json:"allowed_overrides,omitempty"`
+		RequesterPays    string   `json:"requester_pays,omitempty"`
+		JobApproval      string   `json:"job_approval,omitempty"`
+		Profile          string   `json:"profile,omitempty"`
+		Cwd              string   `json:"cwd,omitempty"`
+		Harness          string   `json:"harness,omitempty"`
+		Model            string   `json:"model,omitempty"`
+		MaxLive          int      `json:"max_live,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
-	PermissionSlugs []string `long:"permission-slug" optional:"true" help:"agents.receive.permissions only: allowed carried permission slug (repeatable); omitted allows ordinary slugs."`
-	AllowedProfiles []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
-	RequesterPays   string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
-	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
-	Peer            string   `pos:"true" help:"Trusted peer label or instance id"`
-	Slug            string   `pos:"true" help:"Permission slug to grant"`
-	Scope           string   `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID>; omitted covers all current and future groups"`
-	Profile         string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
-	Cwd             string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
-	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
-	Model           string   `long:"model" optional:"true" help:"Receiver worker model"`
-	MaxLive         int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	PermissionSlugs  []string `long:"permission-slug" optional:"true" help:"agents.receive.permissions only: allowed carried permission slug (repeatable); omitted allows ordinary slugs."`
+	AllowedProfiles  []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
+	AllowedOverrides []string `long:"allow-override" optional:"true" help:"Launch setting the peer may choose per request: cwd, harness, model or effort (repeatable); groups.members.spawn only"`
+	RequesterPays    string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
+	JobApproval      string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
+	Peer             string   `pos:"true" help:"Trusted peer label or instance id"`
+	Slug             string   `pos:"true" help:"Permission slug to grant"`
+	Scope            string   `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID>; omitted covers all current and future groups"`
+	Profile          string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd              string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness          string   `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model            string   `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive          int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
 func grantCmd() *cobra.Command {
@@ -494,6 +496,7 @@ func grantCmd() *cobra.Command {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
 		grant.SpawnPolicy.PermissionSlugs = p.PermissionSlugs
 		grant.SpawnPolicy.AllowedProfiles = p.AllowedProfiles
+		grant.SpawnPolicy.AllowedOverrides = p.AllowedOverrides
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
 		grant.SpawnPolicy.Harness = p.Harness
@@ -915,6 +918,7 @@ type approveParams struct {
 	Cwd     string `long:"cwd" optional:"true" help:"Working directory"`
 	Harness string `long:"harness" optional:"true" help:"Harness to launch"`
 	Model   string `long:"model" optional:"true" help:"Model to launch"`
+	Effort  string `long:"effort" optional:"true" help:"Reasoning effort to launch with"`
 }
 
 func approveCmd() *cobra.Command {
@@ -928,7 +932,7 @@ func approveCmd() *cobra.Command {
 				AgentID string `json:"agent_id"`
 				Label   string `json:"label"`
 			}
-			body := map[string]any{"name": p.Name, "profile": p.Profile, "cwd": p.Cwd, "harness": p.Harness, "model": p.Model}
+			body := map[string]any{"name": p.Name, "profile": p.Profile, "cwd": p.Cwd, "harness": p.Harness, "model": p.Model, "effort": p.Effort}
 			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
 				os.Exit(rc)
 			}

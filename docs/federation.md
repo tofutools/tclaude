@@ -609,6 +609,34 @@ only groups advertising the selected profile.
 
 A visible group without a spawn grant queues the request for human approval.
 
+#### Launch settings a peer may choose
+
+A peer operator spawning from the dashboard (the regular spawn dialog aimed at
+your group) may also choose the directory, harness, model and effort — but only
+where you allow it. Each is closed by default:
+
+```bash
+# Bob: let Alice pick the model and effort for workers in builders
+tclaude federation grant alice groups.members.spawn --scope group=builders --allow-override model --allow-override effort
+```
+
+- An unrestricted peer may choose all four.
+- A `groups.members.spawn` grant opens the ones it lists (`cwd`, `harness`,
+  `model`, `effort`); an unlisted one is refused (`override_not_allowed`), not
+  silently dropped. A requested value wins over the grant's pinned
+  `--cwd/--harness/--model`; leaving it blank keeps them.
+- Without a spawn grant the request waits for your approval and carries none;
+  `tclaude federation requests approve ID --cwd … --harness … --model … --effort …`
+  decides them. A request that failed its automatic launch and returned to you
+  lists what it asked for, and approve applies those unless you pass your own.
+
+The directory must be a clean absolute path on this node; the harness must be
+known here. The grant is checked when the request arrives and again at an
+automatic launch, and the ordinary group spawn path applies every launch
+guardrail to the result. Peers learn what they may set per group from the
+peer view (`GET /api/spawn-options/{group}`), which names your grant's pinned
+settings and the group's default directory only to an unrestricted peer.
+
 The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
 GET returns the incoming request array; POST queues an outgoing request with the
 same `{peer, group, brief, name?, role?, profile?, credentials?, node?, require?,
@@ -2578,7 +2606,8 @@ Requests without the header are proxied as one exchange each, as above.
 
 The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
 `agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
-`node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn`, and
+`node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn` (a grant that
+launches automatically), `spawn.request` (any visible group takes a request), and
 `local_dashboard`, `node.harnesses`, and `node.exec`. `local_dashboard` covers local administration, registries,
 and lifecycle controls. An omitted concept carries a `requires` permission or
 `local_only`. Clients must tolerate additive concept keys; absence of an
@@ -3047,11 +3076,19 @@ retiring a source. It never gives the requester local human identity or the
 source agent's own grants. Whole-agent stop/retire/clone/move actions need their
 peer grant on every affected active group; clone/retire/move also cover owned groups.
 
-- `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?}` under
-  `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
-  harness, model, permissions and launch overrides are refused. Returns a
-  durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
-  that initiating peer's request while its grant remains valid.
+- `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?, cwd?,
+  harness?, model?, effort?}` into any visible group (`spawn.request`). With
+  `groups.members.spawn` it launches automatically under receiver-owned launch
+  policy; without it the request waits for the operator. `cwd`, `harness`,
+  `model` and `effort` are accepted only where the peer may choose them (see
+  "Launch settings a peer may choose"); any other field, and permissions or
+  other launch overrides, are refused. Returns a durable spawn-request row
+  (202); `GET /api/spawn-requests/{id}` reads only that initiating peer's
+  request while the group stays visible to it.
+- `GET /api/spawn-options/{name}`: what the peer may set for a spawn into a
+  visible group: `{group, approval: "automatic"|"operator", overrides:
+  {cwd, harness, model, effort}, profiles, harnesses?, defaults?}`. The
+  dashboard's spawn dialog reads it to disable what the peer may not set.
 - `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
 - `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
   recreating a missing launch directory and switching a Codex drive stay

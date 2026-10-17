@@ -3,15 +3,6 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const pv = { peer: 'desk', included: ['agents.status', 'lifecycle.stop', 'lifecycle.retire', 'lifecycle.teleport', 'spawn'], omitted: [{ feature: 'lifecycle.clone', requires: 'groups.members.clone' }] };
 
-function fakeTimers() {
-  const queue = []; let seq = 0;
-  return {
-    queue,
-    setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; },
-    clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); },
-  };
-}
-
 test('shared lifecycle and spawn controls open the peer action dialog; unshared ones stay greyed', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
@@ -92,35 +83,34 @@ test('the agent dialog offers what the peer shares, confirms the consequence and
   await mounted.unmount();
 });
 
-test('spawn sends a brief under the peer\'s launch policy and follows the request', async (t) => {
+test('spawn on a peer view opens the regular spawn dialog against the peer, never a small one', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-action.js');
   const limits = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
   doc.documentElement.dataset.remoteNodeName = 'forge';
-  const calls = []; const confirms = []; const timers = fakeTimers();
-  const actions = {
-    spawn: async (group, o) => { calls.push(['spawn', group, o]); return { id: 7, status: 'pending' }; },
-    spawnStatus: async (id) => { calls.push(['status', id]); return { id, status: 'approved', result_agent: 'agt_new1' }; },
-  };
-  const confirm = async (o) => { confirms.push(o); return o.action ? o.action() : true; };
-  const mounted = await harness.mount(harness.html`<${mod.PeerActionHost} snapshot=${harness.signals.signal({ peer_view: pv })} remote=${{ id: 'inst_forge7' }} actions=${actions} confirm=${confirm} toast=${() => {}} timers=${timers} doc=${doc} />`);
+  const opened = [];
+  const snap = { peer_view: pv, groups: [{ name: 'ops' }], harnesses: [{ name: 'claude' }] };
+  const mounted = await harness.mount(harness.html`<${mod.PeerActionHost} snapshot=${harness.signals.signal(snap)} remote=${{ id: 'inst_forge7' }} actions=${{}} toast=${() => {}} openSpawn=${async (o) => { opened.push(o); }} doc=${doc} />`);
   await harness.act(() => doc.dispatchEvent(new harness.window.CustomEvent(limits.PEER_ACTION_EVENT, { detail: { action: 'spawn', group: 'ops' } })));
-  const brief = doc.querySelector('#peer-spawn-brief');
-  brief.value = 'Fix the flaky test';
-  await harness.act(() => harness.fireEvent(brief, 'input'));
-  await harness.act(() => doc.querySelector('#peer-spawn-submit').click());
-  await harness.act(() => new Promise((r) => setTimeout(r, 25)));
-  assert.match(confirms[0].body, /forge starts a new agent in its group ops.*own launch policy.*cannot override/);
-  assert.deepEqual(calls[0], ['spawn', 'ops', { brief: 'Fix the flaky test', name: '', role: '', profile: '' }]);
-  assert.match(doc.querySelector('#peer-spawn-status').textContent, /Request 7: pending/);
-  const tick = timers.queue.find((x) => x.ms === 2000);
-  assert.ok(tick, 'a pending request is polled');
-  await harness.act(() => { timers.queue.splice(timers.queue.indexOf(tick), 1); tick.fn(); });
-  await harness.act(() => new Promise((r) => setTimeout(r, 25)));
-  assert.match(doc.querySelector('#peer-spawn-status').textContent, /approved — agent agt_new1/);
-  assert.equal(timers.queue.length, 0, 'polling stops once decided');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].nodeId, 'inst_forge7');
+  assert.equal(opened[0].node, 'forge');
+  assert.equal(opened[0].groupName, 'ops');
+  assert.equal(opened[0].snapshot, snap, 'the dialog opens on the peer\'s groups and harnesses');
+  assert.equal(doc.querySelector('#peer-spawn-modal'), null, 'the small peer spawn dialog is gone');
   await mounted.unmount();
+});
+
+test('a spawn button opens the dialog when the peer takes requests without a grant, or is an older peer offering spawn', async (t) => {
+  const harness = await createPreactHarness(t);
+  const limits = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button id="spawn" data-act="spawn-agent" data-group="ops">+</button>';
+  const button = doc.getElementById('spawn');
+  assert.deepEqual(limits.peerAction(button, { included: ['spawn.request'] }), { action: 'spawn', group: 'ops' });
+  assert.deepEqual(limits.peerAction(button, { included: ['spawn'] }), { action: 'spawn', group: 'ops' });
+  assert.equal(limits.peerAction(button, { included: ['agents.status'] }), null);
 });
 
 test('the action client sends the peer route shapes', async (t) => {
@@ -133,14 +123,12 @@ test('the action client sends the peer route shapes', async (t) => {
   await a.retire('agt_1');
   await a.clone('agt_1', { followUp: 'go on' });
   await a.move('agt_1', 'alpha');
-  await a.spawn('ops', { brief: 'b' });
   assert.deepEqual(await a.localGroups('inst_p'), [{ name: 'c', receives: true }, { name: 'a', receives: false }, { name: 'b', receives: false }]);
   assert.deepEqual(sent, [
     ['POST', '/api/agents/agt_1/stop?force=1', undefined],
     ['POST', '/api/agents/agt_1/retire', {}],
     ['POST', '/api/agents/agt_1/clone', { follow_up: 'go on' }],
     ['POST', '/api/agents/agt_1/move', { group: 'alpha' }],
-    ['POST', '/api/groups/ops/spawn', { brief: 'b' }],
     ['GET', '/api/federation/links', undefined],
   ]);
 });
@@ -212,12 +200,10 @@ test('a node-scoped client addresses the peer routes itself; messages go to one 
   const fetchImpl = async (url, init) => { sent.push([init.method, url, init.body ? JSON.parse(init.body) : undefined]); return { ok: true, json: async () => ({ groups: [] }) }; };
   const a = mod.createPeerActionActions({ fetchImpl, node: 'inst_forge7' });
   await a.resume('agt_1');
-  await a.spawn('ops', { brief: 'b' });
   await a.message('agt_1', { subject: 's', body: 'hi' });
   await a.localGroups('inst_forge7');
   assert.deepEqual(sent, [
     ['POST', '/api/peer/inst_forge7/agents/agt_1/resume', undefined],
-    ['POST', '/api/peer/inst_forge7/groups/ops/spawn', { brief: 'b' }],
     ['POST', '/api/peer/inst_forge7/operator-message', { to: 'agt_1', subject: 's', body: 'hi' }],
     ['GET', '/api/federation/links', undefined],
   ], 'move/teleport destinations stay this node\'s groups');

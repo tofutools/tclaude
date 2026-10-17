@@ -3,13 +3,12 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PEER_ACTION_EVENT } from './peer-view-limits.js';
+import { openRemoteAgentSpawn } from './agent-spawn-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
 
-const SPAWN_POLL_MS = 2000;
-const BRIEF_MAX = 8 * 1024;
 // The peer's operator-message limits (dashboard_operator_message.go).
 const MESSAGE_MAX = 16 * 1024;
 const SUBJECT_MAX = 256;
@@ -77,8 +76,6 @@ export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch
     // permissions allow; otherwise it waits as an offer (tcl-u4yodp).
     moveDirect: (id, body) => call('POST', agent(id, 'move'), body),
     teleport: (id, { group, note = '', clone = false }) => call('POST', agent(id, 'teleport'), { group, ...(note ? { note } : {}), ...(clone ? { clone: true } : {}) }),
-    spawn: (group, { brief, name = '', role = '', profile = '' }) => call('POST', `${api}groups/${encodeURIComponent(group)}/spawn`, { brief, ...(name ? { name } : {}), ...(role ? { role } : {}), ...(profile ? { profile } : {}) }),
-    spawnStatus: (id) => call('GET', `${api}spawn-requests/${encodeURIComponent(id)}`),
     message: (to, { subject = '', body }) => call('POST', `${api}operator-message`, { to, subject, body }),
     // localGroups lists this node's groups, marking those with a link that
     // receives agents from peer (an agents.receive or agents.teleport.receive
@@ -197,52 +194,6 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
   </${Overlay}>`;
 }
 
-function SpawnDialog({ req, actions, confirm, toast, onClose, timers }) {
-  const [brief, setBrief] = useState('');
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('');
-  const [profile, setProfile] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [request, setRequest] = useState(null);
-  const pending = request && (request.status === 'pending' || request.status === 'launching');
-  useEffect(() => {
-    if (!pending) return undefined;
-    let off = false;
-    const t = timers.setTimeout(() => {
-      actions.spawnStatus(request.id).then((r) => { if (!off) setRequest(r); })
-        .catch((e) => { if (!off) setRequest({ ...request, status: 'unknown', reason: errText(e) }); });
-    }, SPAWN_POLL_MS);
-    return () => { off = true; timers.clearTimeout(t); };
-  }, [request]);
-  const bytes = new TextEncoder().encode(brief).length;
-  const run = () => confirm({
-    title: `Spawn an agent in ${req.group} on ${req.node}?`,
-    body: `${req.node} starts a new agent in its group ${req.group} with your brief, under ${req.node}'s own launch policy for you (its profile, harness, model and directory; you cannot override them)${profile ? `, using profile ${profile} if ${req.node} allows it` : ''}. It counts against the live cap ${req.node} gave you.`,
-    okLabel: 'Spawn',
-    busyLabel: 'Sending…',
-    action: () => actions.spawn(req.group, { brief, name: name.trim(), role: role.trim(), profile: profile.trim() }),
-  }).then((r) => { if (r) setRequest(r); })
-    .catch((e) => toast(`Spawn failed: ${e?.code === 'profile_not_allowed' ? `${req.node} does not allow that profile — ${errText(e)}` : e?.code === 'spawn_capacity' ? `${req.node} has no spawn capacity for you right now` : errText(e)}`, true));
-  return html`<${Overlay} id="peer-spawn-modal" labelledby="peer-spawn-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="peer-spawn-title">Spawn in ${req.group} on ${req.node}</h3>
-    ${request ? html`<div id="peer-spawn-status" class=${request.status === 'denied' || request.status === 'expired' || request.status === 'unknown' ? 'fa-danger' : ''}>
-        Request ${request.id}: <b>${request.status}</b>${request.result_agent ? html` — agent <code>${request.result_agent}</code>` : ''}${request.reason ? ` — ${request.reason}` : ''}
-        ${pending && html`<div class="muted">${req.node} decides under its launch policy; this updates on its own.</div>`}
-      </div>` : html`
-      <label class="peer-action-opt peer-action-brief">Brief <textarea id="peer-spawn-brief" rows="5" value=${brief} onInput=${(e) => setBrief(e.currentTarget.value)}></textarea></label>
-      <span class=${bytes > BRIEF_MAX ? 'fa-danger' : 'muted'}>${bytes} / ${BRIEF_MAX} bytes</span>
-      <label class="peer-action-opt">Name <input id="peer-spawn-name" value=${name} onInput=${(e) => setName(e.currentTarget.value)} /></label>
-      <label class="peer-action-opt">Role <input id="peer-spawn-role" value=${role} onInput=${(e) => setRole(e.currentTarget.value)} /></label>
-      <label class="peer-action-opt">Profile <input id="peer-spawn-profile" value=${profile} placeholder="${req.node}'s default" onInput=${(e) => setProfile(e.currentTarget.value)} /></label>`}
-    <div class="modal-buttons">
-      <span class="spacer"></span>
-      <button type="button" onClick=${onClose}>${request ? 'Close' : 'Cancel'}</button>
-      ${!request && html`<button id="peer-spawn-submit" type="button" class="confirm-danger" disabled=${busy || !brief.trim() || bytes > BRIEF_MAX} onClick=${() => { setBusy(true); run().finally(() => setBusy(false)); }}>Spawn…</button>`}
-    </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation action spawn --node ${req.nodeId} --group ${req.group} --brief …</code>, then <code>tclaude federation action spawn-status --node ${req.nodeId} --job ID</code></div>
-  </${Overlay}>`;
-}
-
 // MessageDialog sends one operator message to a member of the peer's group,
 // as `tclaude federation action message` does. The peer delivers it only to an
 // agent it shares messaging for.
@@ -289,18 +240,30 @@ export function groupMembers(groups, name) {
     .map((m) => ({ agent: m.agent_id, label: m.title || m.agent_id }));
 }
 
+// RemoteSpawnOpener hands a spawn request to the regular spawn dialog in
+// remote mode (agent-spawn-remote.js) and closes itself: a spawn on a peer
+// uses the same dialog as here, with what the peer decides disabled.
+function RemoteSpawnOpener({ req, snapshot, toast, openSpawn, onClose }) {
+  useEffect(() => {
+    void openSpawn({ nodeId: req.nodeId, node: req.node, groupName: req.group, snapshot, toast });
+    onClose();
+  }, []);
+  return null;
+}
+
 // PeerActionDialog shows the dialog for one peer action request; req carries
 // the node's name and ID. peerView says what the peer shares, groups are its
-// snapshot's groups (message recipients).
-export function PeerActionDialog({ req, peerView, groups, actions, confirm = shellConfirm, toast = shellToast, timers = globalThis, onClose }) {
-  if (req.action === 'spawn') return html`<${SpawnDialog} req=${req} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${onClose} />`;
+// snapshot's groups (message recipients), snapshot its whole snapshot (the
+// spawn dialog's groups and harnesses).
+export function PeerActionDialog({ req, peerView, groups, snapshot = null, actions, confirm = shellConfirm, toast = shellToast, openSpawn = openRemoteAgentSpawn, onClose }) {
+  if (req.action === 'spawn') return html`<${RemoteSpawnOpener} req=${req} snapshot=${snapshot || { groups }} toast=${toast} openSpawn=${openSpawn} onClose=${onClose} />`;
   if (req.action === 'message') return html`<${MessageDialog} req=${req} members=${groupMembers(groups, req.group)} actions=${actions} toast=${toast} onClose=${onClose} />`;
   return html`<${AgentDialog} req=${req} shared=${sharedFeatures(peerView)} actions=${actions} confirm=${confirm} toast=${toast} onClose=${onClose} />`;
 }
 
 // PeerActionHost listens for peer action clicks on a peer view and shows the
 // matching dialog. snapshot supplies peer_view (what the peer shares).
-export function PeerActionHost({ snapshot, remote = globalThis.__tclaudeRemoteNode, actions = defaultActions(), confirm = shellConfirm, toast = shellToast, timers = globalThis, doc = globalThis.document }) {
+export function PeerActionHost({ snapshot, remote = globalThis.__tclaudeRemoteNode, actions = defaultActions(), confirm = shellConfirm, toast = shellToast, openSpawn = openRemoteAgentSpawn, doc = globalThis.document }) {
   const [req, setReq] = useState(null);
   useEffect(() => {
     if (!remote?.id || !doc) return undefined;
@@ -311,5 +274,5 @@ export function PeerActionHost({ snapshot, remote = globalThis.__tclaudeRemoteNo
   if (!req || !remote?.id) return null;
   const node = doc?.documentElement?.dataset?.remoteNodeName || remote.id.slice(0, 13);
   const snap = snapshot?.value;
-  return html`<${PeerActionDialog} req=${{ ...req, node, nodeId: remote.id }} peerView=${snap?.peer_view} groups=${snap?.groups} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setReq(null)} />`;
+  return html`<${PeerActionDialog} req=${{ ...req, node, nodeId: remote.id }} peerView=${snap?.peer_view} groups=${snap?.groups} snapshot=${snap} actions=${actions} confirm=${confirm} toast=${toast} openSpawn=${openSpawn} onClose=${() => setReq(null)} />`;
 }
