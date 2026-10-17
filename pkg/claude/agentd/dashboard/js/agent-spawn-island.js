@@ -920,8 +920,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // Queue (fresh dialog) or Save (reopened queued spawn): store the draft
   // without launching. Only the name derivation a spawn would confirm runs
   // now; worktree creation, base fetch and everything else stays at launch.
+  // In remote mode the queue shortcut does nothing rather than fall through
+  // to Spawn: queueing never becomes a sent request.
+  const noQueueHotkey = () => {};
   const saveQueued = async () => {
-    if (submitLock.current) return;
+    // Queues are this node's; a remote spawn is sent as a request instead.
+    if (remote || submitLock.current) return;
     submitLock.current = true;
     const release = () => { submitLock.current = false; };
     let next = draft;
@@ -1045,7 +1049,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     labelledby="agent-spawn-title"
     onClose=${state.close}
     onSubmitHotkey=${queued ? saveQueued : submit}
-    onSubmitShiftHotkey=${saveQueued}
+    onSubmitShiftHotkey=${remote ? noQueueHotkey : saveQueued}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}

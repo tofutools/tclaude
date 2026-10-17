@@ -234,8 +234,13 @@ export function createRemoteSpawnActions(base, remote, { notify = () => {}, time
       }).catch(() => { if (now() - startedAt < SPAWN_POLL_LIMIT_MS) watch(request, startedAt); });
     }, SPAWN_POLL_MS);
   };
+  const notQueued = async () => { throw new Error(`Queued spawns wait on this node; a spawn on ${node} is sent as a request now`); };
   return Object.freeze({
     ...base,
+    // Queues are this node's: a remote dialog never saves into or removes
+    // from one, whatever path reaches these.
+    saveQueued: notQueued,
+    deleteQueued: notQueued,
     autoFocusDefault: () => false,
     rememberedEffort: () => '',
     rememberLaunchPreferences() {},

@@ -69,6 +69,7 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
     loadProfiles: local('profiles'), loadWorktrees: local('worktrees'), loadSandboxPolicy: local('sandbox'),
     loadUnsandboxedAutonomy: local('autonomy'), loadLaunchDefaults: local('defaults'), resolveWorktree: local('worktree'),
     uploadAttachments: local('upload'), spawn: local('spawn'), complete: local('complete'), pickDirectory: local('picker'),
+    saveQueued: local('queue save'), deleteQueued: local('queue delete'),
     openProfileEditor: () => {}, openPermissions: () => {}, confirmAutoName: async () => true,
   };
   const state = createAgentSpawnState({ getSnapshot: () => ({ groups: [{ name: 'local-only' }], harnesses: [] }) });
@@ -117,6 +118,14 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
   const modelSel = q('#agent-spawn-model'); setValue(modelSel, 'opus'); await harness.act(() => harness.fireEvent(modelSel, 'change'));
   await flush(harness);
   assert.equal(q('#agent-spawn-cwd').disabled, true, 'the lock survives re-renders');
+  // The queue is this node's: its button is locked, and its shortcut neither
+  // queues nor falls through to sending the request.
+  assert.equal(q('#agent-spawn-queue').disabled, true);
+  assert.match(q('#agent-spawn-queue').title, /Queued spawns wait on this node/);
+  await harness.act(() => harness.fireEvent(brief, 'keydown', { key: 'Enter', ctrlKey: true, shiftKey: true }));
+  await harness.act(() => new Promise((r) => setTimeout(r, 50)));
+  assert.deepEqual(sent, [], 'the queue shortcut sends nothing');
+  assert.equal(q('#agent-spawn-error')?.textContent || '', '');
   await harness.act(() => q('#agent-spawn-submit').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 50)));
   await flush(harness);
