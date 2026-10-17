@@ -801,8 +801,10 @@ is restored.
 Attached clients share the window size, like tmux's `window-size smallest`.
 Each remote viewer, watch or interactive, reports the size it could show (a
 CLI its terminal, a browser its panel), and the target sizes the window to the
-per-axis minimum across those viewers and its own local tmux terminals, less
-the status line. It recomputes, coalesced, when a viewer joins, leaves or
+per-axis minimum across those viewers and its own local tmux terminals showing
+that window, less the status line. A remote viewer's report counts as at least
+20 columns by 5 rows, so a peer cannot shrink the window to a sliver for
+everyone else; local terminals count at their real size. It recomputes, coalesced, when a viewer joins, leaves or
 resizes, and once a second for local terminals. Alone, a viewer simply sizes
 the window. Every viewer renders the shared size, never stretched: a browser
 whose panel is larger shows the grid at the normal font and says the size is

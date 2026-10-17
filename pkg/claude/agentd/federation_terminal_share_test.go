@@ -3,8 +3,10 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,13 +19,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
-// shareTmux answers list-clients from a mutable client table and #{status}
-// from a fixed value, and records the detach/resize commands sharing issues.
+// shareTmux answers list-clients from a mutable client table and the window
+// state from a status setting and a live size that resize-window updates, and
+// records the detach/resize commands sharing issues.
 type shareTmux struct {
-	mu      sync.Mutex
-	clients []string // "tty\tflags\twidth\theight"
-	status  string
-	calls   [][]string
+	mu         sync.Mutex
+	clients    []string // "tty\tflags\twidth\theight\twindow"
+	status     string
+	cols, rows int
+	calls      [][]string
 }
 
 func (m *shareTmux) Command(args ...string) *exec.Cmd {
@@ -34,7 +38,10 @@ func (m *shareTmux) Command(args ...string) *exec.Cmd {
 	case "list-clients":
 		return exec.Command("printf", "%s", strings.Join(m.clients, "\n"))
 	case "display-message":
-		return exec.Command("printf", "%s", m.status)
+		return exec.Command("printf", "%s", fmt.Sprintf("%s\t%d\t%d", m.status, m.cols, m.rows))
+	case "resize-window":
+		m.cols, _ = strconv.Atoi(args[4])
+		m.rows, _ = strconv.Atoi(args[6])
 	case "detach-client":
 		if args[1] == "-t" {
 			m.clients = slices.DeleteFunc(m.clients, func(c string) bool { return strings.HasPrefix(c, args[2]+"\t") })
@@ -89,11 +96,63 @@ func sharingView(t *testing.T, rt *fedRuntime, pin *fedPanePin, cols, rows int) 
 }
 
 func TestFedLocalClientsSkipsRenderers(t *testing.T) {
-	useShareTmux(t, "/dev/ttys001\tattached,focused,UTF-8\t200\t50", "/dev/ttys002\tattached,ignore-size,UTF-8\t80\t24", "garbage", "/dev/ttys003\tattached")
-	clients, err := fedLocalClients("tclaude-x")
+	useShareTmux(t, "/dev/ttys001\tattached,focused,UTF-8\t200\t50\t@1", "/dev/ttys002\tattached,ignore-size,UTF-8\t80\t24\t@1", "garbage", "/dev/ttys003\tattached", "/dev/ttys004\tattached\t30\t10\t@2")
+	clients, err := fedLocalClients("tclaude-x", "@1")
 	require.NoError(t, err)
 	require.Equal(t, []fedLocalClient{{tty: "/dev/ttys001", cols: 200, rows: 50}, {tty: "/dev/ttys003"}}, clients,
-		"renderers attach with ignore-size and never count; a client without a reported size still does")
+		"renderers attach with ignore-size and never count; a client without a reported size still does; one on another window does not")
+	clients, err = fedLocalClients("tclaude-x", "")
+	require.NoError(t, err)
+	require.Len(t, clients, 3, "without a window, every local client counts (take-over detaches them all)")
+}
+
+func TestFedShareFloorsRemoteSizesOnly(t *testing.T) {
+	v := &fedTerminalView{sharing: true}
+	v.setWant(2, 1)
+	require.Equal(t, [2]int{fedShareMinCols, fedShareMinRows}, [2]int{v.wantCols, v.wantRows}, "a remote viewer cannot shrink the window to a sliver")
+	v.setWant(0, 0)
+	require.Equal(t, [2]int{0, 0}, [2]int{v.wantCols, v.wantRows}, "no report stays no report")
+	cols, rows := sharedFedSize([]*fedTerminalView{v}, []fedLocalClient{{cols: 10, rows: 3}})
+	require.Equal(t, [2]int{10, 3}, [2]int{cols, rows}, "this node's own terminals are not floored")
+}
+
+func TestFedTerminalGroupsPreferTakeOver(t *testing.T) {
+	cat := &proto.CatalogPayload{Groups: []proto.CatalogGroup{
+		{Name: "a", Caps: []string{proto.CapSessionsWatch}},
+		{Name: "b", Caps: []string{proto.CapSessionsWatch, proto.CapSessionsTakeover}},
+		{Name: "c", Caps: []string{proto.CapSessionsTakeover}},
+	}}
+	var names []string
+	for _, g := range fedTerminalGroups(cat) {
+		names = append(names, g.Name)
+	}
+	require.Equal(t, []string{"b", "c", "a"}, names, "an open resolves to a take-over group whenever one shares the agent")
+	require.Equal(t, "a", cat.Groups[0].Name, "the cached catalog is not reordered")
+	require.False(t, fedGroupTakeover(cat.Groups[0]))
+	require.True(t, fedGroupTakeover(cat.Groups[1]))
+	require.False(t, fedGroupTakeover(cat.Groups[2]), "take-over without watch or attach opens nothing")
+}
+
+// TestFedWindowSizerLastLeaveWaits: once the last viewer's leave returns, no
+// recompute is running or can start, so a later indicator restore is final.
+func TestFedWindowSizerLastLeaveWaits(t *testing.T) {
+	m := useShareTmux(t, "/dev/ttys001\tattached\t200\t50\t@1")
+	rt := &fedRuntime{ctx: context.Background()}
+	pin := &fedPanePin{tmux: "tclaude-x", pane: "%1", window: "@1", serverSession: "$1"}
+	sharingView(t, rt, pin, 120, 40)
+	s := rt.joinFedWindowSizer(pin)
+	s.leave()
+	select {
+	case <-s.done:
+	default:
+		t.Fatal("the last leave returned before the recompute goroutine")
+	}
+	calls := len(m.commands("resize-window"))
+	time.Sleep(3 * fedResizeSettle)
+	require.Len(t, m.commands("resize-window"), calls, "nothing resizes the window after the last leave")
+	fedSizersMu.Lock()
+	defer fedSizersMu.Unlock()
+	require.NotContains(t, fedSizers, s.key)
 }
 
 func TestPlanFedTakeOver(t *testing.T) {
@@ -171,7 +230,7 @@ func TestFedDebounceRunsOncePerBurst(t *testing.T) {
 // every sharing viewer renders the full shared size and learns what else is
 // attached. A pinned (old) viewer counts as attached but does not size it.
 func TestFedWindowSizerTakesTheSmallestPerAxis(t *testing.T) {
-	m := useShareTmux(t, "/dev/ttys001\tattached\t200\t50", "/dev/ttys002\tattached,ignore-size\t10\t10")
+	m := useShareTmux(t, "/dev/ttys001\tattached\t200\t50\t@1", "/dev/ttys002\tattached,ignore-size\t10\t10\t@1", "/dev/ttys003\tattached\t10\t10\t@2")
 	rt := &fedRuntime{ctx: context.Background()}
 	pin := &fedPanePin{tmux: "tclaude-x", pane: "%1", window: "@1", serverSession: "$1"}
 	wide := sharingView(t, rt, pin, 120, 60)
@@ -195,11 +254,17 @@ func TestFedWindowSizerTakesTheSmallestPerAxis(t *testing.T) {
 	require.Empty(t, wide.sizeCh, "nothing changed for the viewers either")
 
 	m.mu.Lock()
+	m.cols, m.rows = 80, 24
+	m.mu.Unlock()
+	s.apply()
+	require.Equal(t, []string{"resize-window", "-t", "@1", "-x", "120", "-y", "29"}, m.commands("resize-window")[1], "something else resized the window: the live size is compared, so it is restored")
+
+	m.mu.Lock()
 	m.clients = m.clients[1:]
 	m.mu.Unlock()
 	tall.setWant(150, 70)
 	s.apply()
-	require.Equal(t, []string{"resize-window", "-t", "@1", "-x", "120", "-y", "59"}, m.commands("resize-window")[1], "the local terminal left: the viewers alone size it")
+	require.Equal(t, []string{"resize-window", "-t", "@1", "-x", "120", "-y", "59"}, m.commands("resize-window")[2], "the local terminal left: the viewers alone size it")
 	<-wide.sizeCh
 	cols, rows, status := wide.sharedUpdate()
 	require.Equal(t, [2]int{120, 60}, [2]int{cols, rows})

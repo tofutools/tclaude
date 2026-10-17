@@ -663,9 +663,14 @@ test('a shared remote terminal reports its panel, renders the shared size, and t
     proposeDimensions() { return { ...panel }; }
   }
   const remotes = []; const statuses = [];
+  // Only the "limited" grace timer is faked; it fires when the test says so.
+  let graces = [];
+  const elapse = () => { const due = graces; graces = []; due.forEach((g) => !g.cleared && g.handler()); };
   const wsPath = core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'watch' });
   const widget = core.mountTerminalWidget({
     host, wsPath, authenticate: false, onRemoteChange: (v) => remotes.push(v), onStatus: (v) => statuses.push(v),
+    setTimeoutImpl: (handler, ms) => { const g = { handler, cleared: false }; if (ms === 800) graces.push(g); else g.id = setTimeout(handler, ms); return g; },
+    clearTimeoutImpl: (g) => { if (g) { g.cleared = true; clearTimeout(g.id); } },
     TerminalCtor: SizedTerminal, FitAddonCtor: GridFit, WebSocketCtor: fakes.FakeWebSocket,
     ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
     documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
@@ -682,10 +687,20 @@ test('a shared remote terminal reports its panel, renders the shared size, and t
   assert.equal(fitAddon.fitCount, 0, 'a shared view never fits its grid to the panel');
   assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [120, 40], 'the grid is the shared size the peer sent');
   assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [JSON.stringify({ type: 'resize', cols: 190, rows: 52 })], 'it reports what its panel could show');
-  assert.equal(remotes.at(-1).limited, true, 'a smaller shared grid says another viewer limits it');
+  assert.equal(remotes.at(-1).limited, false, 'no note while the peer may still be answering this report');
+  elapse();
+  assert.equal(remotes.at(-1).limited, true, 'a grid still smaller after the grace says another viewer limits it');
 
   shared.onmessage({ data: JSON.stringify({ type: 'size', cols: 190, rows: 52 }) });
   assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [190, 52], 'the peer grants the panel size');
+  assert.equal(remotes.at(-1).limited, false, 'the note clears at once');
+  panel.cols = 200;
+  widget.setActive(false);
+  fakes.observer().handler();
+  assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')).at(-1), JSON.stringify({ type: 'resize', cols: 200, rows: 52 }), 'an inactive but visible pane still reports a resize');
+  assert.equal(remotes.at(-1).limited, false, 'its own growing panel does not flash the note');
+  shared.onmessage({ data: JSON.stringify({ type: 'size', cols: 200, rows: 52 }) });
+  elapse();
   assert.equal(remotes.at(-1).limited, false);
   panel.cols = 150;
   widget.setActive(true);

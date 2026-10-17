@@ -248,7 +248,7 @@ func resolveFedTerminalTarget(address string, readOnly bool) (*db.FederationPeer
 		return nil, proto.SessionOpenPayload{}, errors.New("no peer catalog; list federation sessions first")
 	}
 	var matches []proto.SessionOpenPayload
-	for _, g := range cat.Groups {
+	for _, g := range fedTerminalGroups(cat) {
 		if !g.HasCap(fedTerminalCap(readOnly)) {
 			continue
 		}
@@ -295,7 +295,9 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 	if !human {
 		cat, _, _ := fedCatalogFor(peer.InstanceID)
 		allowed := false
-		for _, g := range cat.Groups {
+		// Groups granting take-over come first; an agent still needs its own
+		// sessions.takeover for one to be offered (below).
+		for _, g := range fedTerminalGroups(cat) {
 			if !g.HasCap(fedTerminalCap(readOnly)) {
 				continue
 			}
@@ -552,6 +554,10 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	v.mu.Lock()
 	v.pin, v.fileRoot, v.fileRootPath, v.fileRootErr = pin, root, rootPath, rootErr
 	v.files = rootErr == nil && fedPeerAllows(peer.InstanceID, pin.group, PermSessionsFilesRead)
+	// Sharing is published with the pin: other viewers' sizers find v by it.
+	if p.ShareSize {
+		v.sharing, v.sizeCh = true, make(chan struct{}, 1)
+	}
 	v.mu.Unlock()
 	if root != nil {
 		v.addCleanup(func() { v.mu.Lock(); _ = root.Close(); v.fileRoot = nil; v.mu.Unlock() })
@@ -569,13 +575,12 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		var others []string
 		displace, others = rt.planFedTakeOver(pin, v, p.TakeOver)
 		v.mu.Lock()
-		v.sharing, v.others, v.sentOthers, v.liveOthers = true, others, others, others
-		v.sizeCh = make(chan struct{}, 1)
+		v.others, v.sentOthers, v.liveOthers = others, others, others
+		v.mu.Unlock()
 		// A CLI reports its real size at open; a browser reports once fitted.
 		if !p.FixedSize {
-			v.wantCols, v.wantRows = p.Cols, p.Rows
+			v.setWant(p.Cols, p.Rows)
 		}
-		v.mu.Unlock()
 	}
 	if p.FixedSize {
 		cols, rows, err := pin.size()
@@ -785,11 +790,15 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 					reason = "revoked"
 					return
 				}
-				if backend.Resize(cols, rows) != nil || write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(cols, rows)}) != nil {
+				// The frame goes first so a CLI clears its screen before
+				// tmux's redraw at the new size arrives.
+				if write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(cols, rows)}) != nil || backend.Resize(cols, rows) != nil {
 					reason = "error"
 					return
 				}
+				v.mu.Lock()
 				v.cols, v.rows = cols, rows
+				v.mu.Unlock()
 			}
 			if status != nil && write(terminal.Frame{Kind: terminal.Status, Data: status}) != nil {
 				reason = "error"

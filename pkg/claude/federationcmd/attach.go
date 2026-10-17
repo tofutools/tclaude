@@ -217,9 +217,16 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 				closedReason.Store(string(f.Data))
 				errs <- io.EOF
 				return
-			case terminal.Resize, terminal.Status:
-				// The shared size and the other clients: tmux's own redraw already
-				// fits the terminal, so there is nothing to do here.
+			case terminal.Resize:
+				// The shared size changed. tmux redraws only its new grid, so
+				// clear what the old one left outside it; the peer sends this
+				// frame before that redraw.
+				if _, err := io.WriteString(stdout, "\x1b[H\x1b[2J"); err != nil {
+					errs <- err
+					return
+				}
+			case terminal.Status:
+				// What else is attached: the hello already said so once.
 			default:
 				errs <- terminal.ErrProtocol
 				return

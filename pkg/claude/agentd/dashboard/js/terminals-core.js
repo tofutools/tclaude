@@ -105,6 +105,9 @@ const MAX_REMOTE_COLS = 500;
 const REMOTE_FONT_MAX = 13;
 const REMOTE_FONT_MIN = 9;
 const MAX_REMOTE_ROWS = 200;
+// How long a shared view waits for the peer to answer its own size report
+// before saying another viewer limits the size.
+const REMOTE_LIMITED_GRACE_MS = 800;
 
 export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
   return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
@@ -241,6 +244,13 @@ export function mountTerminalWidget({
   // last reported to the peer.
   let desired = null;
   let lastDesired = '';
+  // limitedHold runs while the peer may still be answering this view's latest
+  // report: the grid then lags the panel by design, so "limited" waits.
+  let limitedHold = null;
+  function cancelLimitedHold() {
+    if (limitedHold !== null) clearTimeoutImpl(limitedHold);
+    limitedHold = null;
+  }
   // takeOverNext asks the next dial to take the peer's session over.
   let takeOverNext = false;
   function setRemote(next) {
@@ -297,24 +307,34 @@ export function mountTerminalWidget({
   // peer. The grid itself stays at the shared size the peer sends, which can
   // be smaller (another client limits it) but is never stretched.
   function fitShared() {
+    // A hidden host proposes a garbage grid; strictly zero, as in
+    // sendDimensions, so a test DOM without layout still fits.
+    if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
     let dims = null;
     try { dims = fitAddon.proposeDimensions?.(); } catch (_) { /* host may not be laid out yet */ }
     const cols = Math.floor(Number(dims?.cols)); const rows = Math.floor(Number(dims?.rows));
     if (!(cols > 0) || !(rows > 0)) return;
     desired = { cols: Math.min(MAX_REMOTE_COLS, cols), rows: Math.min(MAX_REMOTE_ROWS, rows) };
-    updateLimited();
     sendDesired();
+    updateLimited();
   }
 
   function sendDesired() {
     if (!desired) return;
     const key = `${desired.cols}x${desired.rows}`;
-    if (key !== lastDesired && sendDimensions(desired.cols, desired.rows)) lastDesired = key;
+    if (key !== lastDesired && sendDimensions(desired.cols, desired.rows)) {
+      lastDesired = key;
+      cancelLimitedHold();
+      limitedHold = setTimeoutImpl(() => { limitedHold = null; updateLimited(); }, REMOTE_LIMITED_GRACE_MS);
+    }
   }
 
-  // updateLimited says whether the shared grid is smaller than this panel.
+  // updateLimited says whether the shared grid is smaller than this panel. It
+  // shows only once the peer had time to answer this view's latest report, so
+  // the view's own resize never flashes the note; clearing it is immediate.
   function updateLimited() {
     const limited = !!(remoteState.shared && desired && (term.cols < desired.cols || term.rows < desired.rows));
+    if (limited && limitedHold) return;
     if (limited !== remoteState.limited) setRemote({ limited });
   }
 
@@ -643,7 +663,7 @@ export function mountTerminalWidget({
     const takeOver = remote && takeOverNext;
     takeOverNext = false;
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath + (takeOver ? '&take_over=1' : ''));
-    if (remote) { setRemote(REMOTE_RESET); desired = null; lastDesired = ''; }
+    if (remote) { setRemote(REMOTE_RESET); desired = null; lastDesired = ''; cancelLimitedHold(); }
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -829,7 +849,9 @@ export function mountTerminalWidget({
   disposables.push(term.onResize(sendResize));
 
   const observer = typeof ResizeObserverCtor === 'function'
-    ? new ResizeObserverCtor(() => { if (!disposed && isActive) fit(); })
+    // A shared remote view reports its panel even when inactive: a visible
+    // split pane still takes part in the peer's shared size.
+    ? new ResizeObserverCtor(() => { if (!disposed && (isActive || remote && remoteState.shared)) fit(); })
     : null;
   observer?.observe(host);
 
@@ -868,6 +890,7 @@ export function mountTerminalWidget({
       cancelPostOpenFit();
       cancelInitialResize();
       cancelPostAttachResize();
+      cancelLimitedHold();
       cancelRestartWatchIfAny();
       abortAuth();
       closeSocket();

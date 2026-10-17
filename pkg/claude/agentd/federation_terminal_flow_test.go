@@ -47,8 +47,8 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		if args[len(args)-1] == "#{pane_width} #{pane_height}" {
 			return terminalEcho("120 40")
 		}
-		if args[len(args)-1] == "#{status}" {
-			return terminalEcho("on")
+		if args[len(args)-1] == "#{status}\t#{window_width}\t#{window_height}" {
+			return terminalEcho("on\t120\t39")
 		}
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
 			m.probes++

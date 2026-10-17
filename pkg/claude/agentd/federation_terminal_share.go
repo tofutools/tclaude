@@ -63,9 +63,10 @@ type fedLocalClient struct {
 }
 
 // fedLocalClients lists tmuxSession's attached clients other than federation
-// renderers, which attach with ignore-size.
-func fedLocalClients(tmuxSession string) ([]fedLocalClient, error) {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}").Output()
+// renderers, which attach with ignore-size. A non-empty window keeps only
+// the clients currently showing that window: only they size it.
+func fedLocalClients(tmuxSession, window string) ([]fedLocalClient, error) {
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}\t#{window_id}").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +74,9 @@ func fedLocalClients(tmuxSession string) ([]fedLocalClient, error) {
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		f := strings.Split(line, "\t")
 		if len(f) < 2 || !strings.HasPrefix(f[0], "/dev/") || slices.Contains(strings.Split(f[1], ","), "ignore-size") {
+			continue
+		}
+		if window != "" && len(f) >= 5 && f[4] != window {
 			continue
 		}
 		c := fedLocalClient{tty: f[0]}
@@ -85,9 +89,10 @@ func fedLocalClients(tmuxSession string) ([]fedLocalClient, error) {
 	return clients, nil
 }
 
-// detachFedLocalClients detaches only tmuxSession's non-renderer clients.
+// detachFedLocalClients detaches every one of tmuxSession's non-renderer
+// clients, whichever window they show.
 func detachFedLocalClients(tmuxSession string) {
-	clients, err := fedLocalClients(tmuxSession)
+	clients, err := fedLocalClients(tmuxSession, "")
 	if err != nil {
 		return
 	}
@@ -96,24 +101,32 @@ func detachFedLocalClients(tmuxSession string) {
 	}
 }
 
-// fedStatusLines is how many rows tmux's status line takes from every client
-// of the session: a client's window area is its height minus these.
-func fedStatusLines(pane string) int {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", pane, "#{status}").Output()
+// fedWindowFormat reads the status line setting and the live window size.
+const fedWindowFormat = "#{status}\t#{window_width}\t#{window_height}"
+
+// fedWindowState returns how many rows tmux's status line takes from every
+// client of the session (a client's window area is its height minus these),
+// and the window's current size (0 x 0 when unknown).
+func fedWindowState(pane string) (status, cols, rows int) {
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", pane, fedWindowFormat).Output()
 	if err != nil {
-		return 0
+		return 0, 0, 0
 	}
-	switch s := strings.TrimSpace(string(out)); s {
+	f := strings.Split(strings.TrimSpace(string(out)), "\t")
+	switch f[0] {
 	case "on":
-		return 1
+		status = 1
 	case "off", "":
-		return 0
 	default:
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 5 {
-			return n
+		if n, err := strconv.Atoi(f[0]); err == nil && n >= 0 && n <= 5 {
+			status = n
 		}
-		return 0
 	}
+	if len(f) >= 3 {
+		cols, _ = strconv.Atoi(f[1])
+		rows, _ = strconv.Atoi(f[2])
+	}
+	return status, cols, rows
 }
 
 // fedWindowViewers returns the live incoming viewers of pin's window other
@@ -173,6 +186,30 @@ func sanitizeFedOthers(in []string) []string {
 	return out
 }
 
+// fedTerminalGroups orders cat's groups with those granting take-over first.
+// When several groups share an agent, an open then resolves to one allowing
+// take-over whenever any does, as the session list's takeover flag says.
+func fedTerminalGroups(cat *proto.CatalogPayload) []proto.CatalogGroup {
+	groups := slices.Clone(cat.Groups)
+	slices.SortStableFunc(groups, func(a, b proto.CatalogGroup) int {
+		ta, tb := a.HasCap(proto.CapSessionsTakeover), b.HasCap(proto.CapSessionsTakeover)
+		switch {
+		case ta && !tb:
+			return -1
+		case tb && !ta:
+			return 1
+		}
+		return 0
+	})
+	return groups
+}
+
+// fedGroupTakeover reports whether g lets this node take over its sessions'
+// terminals: take-over without a watch or attach grant opens nothing.
+func fedGroupTakeover(g proto.CatalogGroup) bool {
+	return g.HasCap(proto.CapSessionsTakeover) && (g.HasCap(proto.CapSessionsWatch) || g.HasCap(proto.CapSessionsAttach))
+}
+
 // fedCatalogGroupHasCap reports whether peer's cached catalog grants cap on
 // its group named group.
 func fedCatalogGroupHasCap(peer, group, cap string) bool {
@@ -192,7 +229,7 @@ func fedCatalogGroupHasCap(peer, group, cap string) bool {
 // a take-over has anyone to displace. It disconnects nobody: the caller
 // displaces (displaceFedClients) once the open can no longer fail on this side.
 func (rt *fedRuntime) planFedTakeOver(pin *fedPanePin, v *fedTerminalView, takeOver bool) (displace bool, others []string) {
-	locals, err := fedLocalClients(pin.tmux)
+	locals, err := fedLocalClients(pin.tmux, pin.window)
 	if err != nil {
 		return false, []string{}
 	}
@@ -269,6 +306,9 @@ func (d *fedDebounce) run(ctx context.Context, fn func()) {
 		case <-d.kickCh:
 		default:
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		fn()
 	}
 }
@@ -282,7 +322,7 @@ type fedWindowSizer struct {
 	members  int
 	cancel   context.CancelFunc
 	debounce *fedDebounce
-	applied  [2]int // the window size last set, as cols x window rows
+	done     chan struct{} // closed once the recompute goroutine returned
 }
 
 var (
@@ -298,9 +338,9 @@ func (rt *fedRuntime) joinFedWindowSizer(pin *fedPanePin) *fedWindowSizer {
 	s := fedSizers[key]
 	if s == nil {
 		ctx, cancel := context.WithCancel(rt.ctx)
-		s = &fedWindowSizer{rt: rt, pin: pin, key: key, cancel: cancel, debounce: newFedDebounce(fedResizeSettle)}
+		s = &fedWindowSizer{rt: rt, pin: pin, key: key, cancel: cancel, debounce: newFedDebounce(fedResizeSettle), done: make(chan struct{})}
 		fedSizers[key] = s
-		go s.debounce.run(ctx, s.apply)
+		go func() { defer close(s.done); s.debounce.run(ctx, s.apply) }()
 	}
 	s.members++
 	fedSizersMu.Unlock()
@@ -308,6 +348,9 @@ func (rt *fedRuntime) joinFedWindowSizer(pin *fedPanePin) *fedWindowSizer {
 	return s
 }
 
+// leave unregisters a sharing viewer. The last one stops the recomputes and
+// waits out one in flight, so no resize-window lands after the caller's
+// later cleanup (the indicator restore) put the window's sizing back.
 func (s *fedWindowSizer) leave() {
 	fedSizersMu.Lock()
 	s.members--
@@ -319,9 +362,11 @@ func (s *fedWindowSizer) leave() {
 		}
 	}
 	fedSizersMu.Unlock()
-	if !last {
-		s.kick()
+	if last {
+		<-s.done
+		return
 	}
+	s.kick()
 }
 
 // kick asks for a recompute (coalesced): a viewer joined, left or resized, or
@@ -334,24 +379,21 @@ func (s *fedWindowSizer) kick() { s.debounce.kick() }
 // each viewer's grid (its renderer client) is the full terminal size again.
 func (s *fedWindowSizer) apply() {
 	views := s.rt.fedWindowViewers(s.pin, nil)
-	locals, err := fedLocalClients(s.pin.tmux)
+	locals, err := fedLocalClients(s.pin.tmux, s.pin.window)
 	if err != nil {
 		return
 	}
 	cols, rows := sharedFedSize(views, locals)
-	status := fedStatusLines(s.pin.pane)
-	if cols > 0 && rows > status {
-		size := [2]int{cols, rows - status}
-		if size != s.applied {
-			if err := fedResizeWindow(s.pin.window, size[0], size[1]); err != nil {
-				slog.Debug("federation: sizing the shared window failed", "error", err)
-			} else {
-				s.applied = size
-			}
+	// Compare with the live window, not the last size set: anything else may
+	// have resized it since.
+	status, liveCols, liveRows := fedWindowState(s.pin.pane)
+	if cols > 0 && rows > status && (cols != liveCols || rows-status != liveRows) {
+		if err := fedResizeWindow(s.pin.window, cols, rows-status); err != nil {
+			slog.Debug("federation: sizing the shared window failed", "error", err)
 		}
 	}
 	for _, v := range views {
-		if v.sharing {
+		if v.isSharing() {
 			v.offerShared(cols, rows, fedOthersLabels(len(locals), len(views)-1))
 		}
 	}
@@ -372,10 +414,10 @@ func sharedFedSize(views []*fedTerminalView, locals []fedLocalClient) (cols, row
 		}
 	}
 	for _, v := range views {
-		if v.sharing {
-			v.mu.Lock()
-			c, r := v.wantCols, v.wantRows
-			v.mu.Unlock()
+		v.mu.Lock()
+		sharing, c, r := v.sharing, v.wantCols, v.wantRows
+		v.mu.Unlock()
+		if sharing {
 			take(c, r)
 		}
 	}
@@ -385,8 +427,27 @@ func sharedFedSize(views []*fedTerminalView, locals []fedLocalClient) (cols, row
 	return cols, rows
 }
 
-// setWant records the size a sharing viewer could show.
+// isSharing reports whether v takes part in its window's shared size. It is
+// set by v's open after v.pin is published, so others read it under v.mu.
+func (v *fedTerminalView) isSharing() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.sharing
+}
+
+// fedShareMinCols and fedShareMinRows floor a remote viewer's reported size,
+// so one peer cannot shrink a shared window to a sliver for everyone else.
+// Local terminals are not floored: they are this node's own.
+const (
+	fedShareMinCols = 20
+	fedShareMinRows = 5
+)
+
+// setWant records the size a sharing viewer could show, floored.
 func (v *fedTerminalView) setWant(cols, rows int) {
+	if cols > 0 && rows > 0 {
+		cols, rows = max(cols, fedShareMinCols), max(rows, fedShareMinRows)
+	}
 	v.mu.Lock()
 	v.wantCols, v.wantRows = cols, rows
 	v.mu.Unlock()
