@@ -8,6 +8,8 @@ var peerViewLocalRoutes = []string{
 	"POST /api/profiles",
 	"DELETE /api/profiles/{id}",
 	"GET /api/profiles/{id}/files/{name}",
+	"GET /api/profiles/{id}/archive",
+	"POST /api/profiles/{id}/share",
 	"/api/profiles/{id}/ui/{kind}/",
 	// Process runs are this node's own; a peer view never serves them.
 	"GET /v1/process/context",

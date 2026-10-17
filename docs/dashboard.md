@@ -769,7 +769,8 @@ Turn on **rotated** to include the rotated files.
 **Daemon profiling** comes first: **⏱ Profile daemon…** captures CPU, heap,
 goroutine, block and mutex profiles and an execution trace of this agentd. The
 list shows each capture's CPU split and subprocess rate and links to pprof's
-web UI for it in a new tab. See [Profiling agentd](profiling.md).
+web UI for it in a new tab. **zip** downloads a whole capture, and **share…**
+sends its files to an agent you pick. See [Profiling agentd](profiling.md).
 
 Below it are in-memory poll-latency self-diagnostics per endpoint:
 p50/p90/p99/max, a sparkline, and a per-phase breakdown. They reset on daemon

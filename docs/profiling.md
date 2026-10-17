@@ -26,8 +26,15 @@ goroutine, block and mutex profiles. The daemon serves that UI behind
 dashboard sign-in, so you don't need a Go toolchain, a second port, or an SSH
 tunnel. **summary** opens the counter summary. **trace**, **stacks** and
 **stats** download the execution trace, the full goroutine dump, and the
-counter snapshot. Only one capture can run at a time, and a running capture
-can't be deleted.
+counter snapshot. **zip** downloads every file of the capture as one archive.
+Only one capture can run at a time, and a running capture can't be deleted.
+
+**share…** sends a finished capture to an agent. Pick the agent in the
+search dialog, and the capture's files arrive in its inbox as message
+attachments, with the summary inlined in the message body. The agent can then
+read them with its own tools, for example `go tool pprof -top cpu.pprof`.
+Files over the 25 MiB attachment limit (in practice only a long execution
+trace) are left out, and the message says so.
 
 The graph view needs Graphviz (`dot`) installed on the daemon's host. The flame
 graph and top views work without it.

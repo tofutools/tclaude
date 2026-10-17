@@ -68,6 +68,7 @@ function CaptureRow({ capture, actions, deleting, now }) {
   const base = profileBase(capture);
   const headline = capture.headline;
   const done = capture.status === 'done';
+  const shareable = capture.status !== 'running' && Array.isArray(capture.files) && capture.files.some((file) => file.bytes > 0);
   const started = new Date(capture.started_at);
   return html`<tr data-key=${`profile-${capture.id}`}>
     <td title=${Number.isNaN(started.getTime()) ? '' : started.toLocaleString()}>
@@ -86,8 +87,12 @@ function CaptureRow({ capture, actions, deleting, now }) {
         href=${`${base}/ui/${viewer.kind}/`} target="_blank" rel="noopener" title=${viewer.title}>${viewer.label}</a>`)}
       ${DOWNLOADS.filter((file) => hasFile(capture, file.name)).map((file) => html`<a key=${file.name} class="muted"
         href=${`${base}/files/${file.name}?download=1`} title=${`${file.title} — download`}>${file.label} ⤓</a>`)}
+      ${shareable && html`<a class="muted" href=${`${base}/archive`}
+        title="Every file of this capture as one zip — to keep or hand to someone">zip ⤓</a>`}
     </td>
-    <td>
+    <td class="profile-actions">
+      ${shareable && html`<button type="button" class="tool" title="Send this capture's files to an agent as message attachments"
+        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…</button>`}
       <button type="button" class="tool" disabled=${!done && capture.status === 'running' || deleting === capture.id}
         title="Delete this capture's files" aria-label=${`Delete capture ${capture.id}`}
         onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}</button>
@@ -144,7 +149,7 @@ function CaptureList({ current, actions, now }) {
     <thead><tr>
       <th scope="col">Started</th><th scope="col">Label</th><th scope="col">Status</th>
       <th scope="col">agentd CPU</th><th scope="col">child CPU</th><th scope="col">subproc</th>
-      <th scope="col">Open</th><th scope="col" aria-label="Delete"></th>
+      <th scope="col">Open</th><th scope="col" aria-label="Actions"></th>
     </tr></thead>
     <tbody>
       ${current.captures.map((capture) => html`<${CaptureRow} key=${capture.id} capture=${capture}

@@ -197,7 +197,7 @@ async function settleInitialLayout() {
     () => mountFusedMessagesFeature(),
     () => mountFleetAdminFeature(),
     () => mountDebugFeature(),
-    () => mountProfilesFeature({ confirm: confirmModal }),
+    () => mountProfilesFeature({ confirm: confirmModal, pickAgent }),
     () => mountConfigFeature({ toast, isCyclingTabs }),
     () => mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
     () => mountDirectoryPickerFeature({

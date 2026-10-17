@@ -3470,6 +3470,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .profile-links a { color: #58a6ff; text-decoration: none; }
 .profile-links a.muted { color: #8b949e; }
 .profile-links a:hover { text-decoration: underline; }
+.profile-actions { white-space: nowrap; }
+.profile-actions .tool + .tool { margin-left: 4px; }
 .profile-done { background: #161b22; color: #9da7b3; border-color: #2a3340; }
 #profile-modal .cron-create-row input[type=number] { flex: 0 0 7em; }
 #profile-modal p.muted { font-size: 12px; margin: 0 0 10px; max-width: 520px; }
