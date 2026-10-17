@@ -50,7 +50,10 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   // lastLocal remembers the per-node tab the operator left for the map, so the
   // ⌂ chip and "Open dashboard" return there rather than always to Groups.
   let lastLocal = activeTab.value && !TOP_LEVEL_TABS.has(activeTab.value) ? activeTab.value : 'groups';
-  let lastFleet = readLastView(prefs);
+  // lastFleet is this page's own choice; until there is one the saved pref
+  // answers, read lazily because this module loads before initDashPrefs()
+  // has filled the pref cache.
+  let lastFleet = null;
   const stopTracking = effect(() => {
     const tab = activeTab.value;
     if (tab && !TOP_LEVEL_TABS.has(tab)) lastLocal = tab;
@@ -102,7 +105,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   function setFused(value) { fused.value = value || null; }
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
-  function lastFleetTab() { return lastFleet; }
+  function lastFleetTab() { return lastFleet || readLastView(prefs); }
   return Object.freeze({ fleet, node, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
 }
 

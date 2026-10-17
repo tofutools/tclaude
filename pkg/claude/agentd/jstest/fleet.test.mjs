@@ -429,6 +429,15 @@ test('⌘ Fleet is lit on the fleet views and returns to the one used last', asy
   const fresh = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), prefs });
   assert.equal(fresh.lastFleetTab(), 'map', 'a reload keeps the last view');
   fresh.dispose();
+  // The state is built at module load, before initDashPrefs() fills the
+  // cache, so a pref that lands afterwards must still be honoured.
+  const late = new Map();
+  const early = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'),
+    prefs: { getItem: (k) => late.get(k) ?? null, setItem: (k, v) => { late.set(k, v); } } });
+  assert.equal(early.lastFleetTab(), 'map');
+  late.set(stateMod.LAST_VIEW_PREF, 'fleet-admin');
+  assert.equal(early.lastFleetTab(), 'fleet-admin', 'prefs loaded after the state was built still count');
+  early.dispose();
   await mounted.unmount();
 
   const peerView = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="inst_forge" switchNode=${() => {}} />`);
