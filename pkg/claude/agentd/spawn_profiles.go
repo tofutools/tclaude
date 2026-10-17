@@ -816,6 +816,18 @@ func profilesPromptRefs(profiles []spawnProfileJSON) [][]string {
 // withoutEmbeddedPrompts drops the references a bundle's own embedded prompts
 // satisfy, so validation before import only checks the remaining ones
 // against this library.
+// validEmbeddedPrompts keeps the embedded prompts an import can actually
+// create, normalized; an invalid one cannot satisfy a profile's reference.
+func validEmbeddedPrompts(embedded []db.SavedPrompt) []db.SavedPrompt {
+	out := []db.SavedPrompt{}
+	for _, p := range embedded {
+		if n, err := normalizeSavedPrompt(p); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func withoutEmbeddedPrompts(p spawnProfileJSON, embedded []db.SavedPrompt) spawnProfileJSON {
 	if len(p.PromptRefs) == 0 || len(embedded) == 0 {
 		return p
@@ -1077,7 +1089,7 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 		if existing != nil {
 			allowedID = existing.ID
 		}
-		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, env.SavedPrompts))
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, validEmbeddedPrompts(env.SavedPrompts)))
 		if fail != nil {
 			prev.Valid = false
 			prev.Error = fail.Msg
@@ -1174,35 +1186,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 	}
 	plans := []importPlan{}
 
-	// Embedded saved prompts go in first, so the profiles below can resolve
-	// them; only those an included profile references are created.
-	included := []spawnProfileJSON{}
-	for _, d := range decisions {
-		action := strings.ToLower(strings.TrimSpace(d.Action))
-		if pj, ok := byName[strings.TrimSpace(d.Name)]; ok && includeDecision(d) && action != "skip" {
-			included = append(included, pj)
-		}
-	}
-	if len(env.SavedPrompts) > 0 && len(included) > 0 {
-		wanted := map[string]bool{}
-		for _, refs := range profilesPromptRefs(included) {
-			for _, ref := range cleanRoleRefs(refs) {
-				wanted[ref] = true
-			}
-		}
-		embedded := []db.SavedPrompt{}
-		for _, p := range env.SavedPrompts {
-			if wanted[strings.TrimSpace(p.Name)] {
-				embedded = append(embedded, p)
-			}
-		}
-		promptWarnings, fail := recreateMissingSavedPrompts(embedded)
-		if fail != nil {
-			return profileImportResult{}, fail
-		}
-		result.Warnings = append(result.Warnings, promptWarnings...)
-	}
-
+	embedded := validEmbeddedPrompts(env.SavedPrompts)
 	for _, d := range decisions {
 		source := strings.TrimSpace(d.Name)
 		if source == "" {
@@ -1240,7 +1224,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"profile %q: aliases were omitted from renamed copy %q", source, target))
 		}
-		built, fail := buildProfileFromJSON(pj)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, embedded))
 		if fail != nil {
 			return profileImportResult{}, fail
 		}
@@ -1270,7 +1254,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", fmt.Sprintf(
 				"profile name %q is already an alias of %q — choose another name", plan.target, resolved.Name)}
 		}
-		built, fail := buildProfileFromJSON(plan.profile)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(plan.profile, embedded))
 		if fail != nil {
 			return profileImportResult{}, fail
 		}
@@ -1283,6 +1267,28 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		} else if conflict != "" {
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", conflict}
 		}
+	}
+
+	// Every check passed: create the embedded saved prompts the imported
+	// profiles reference, so the writes below can resolve them.
+	if len(embedded) > 0 && len(plans) > 0 {
+		wanted := map[string]bool{}
+		for _, plan := range plans {
+			for _, ref := range cleanRoleRefs(plan.profile.PromptRefs) {
+				wanted[ref] = true
+			}
+		}
+		create := []db.SavedPrompt{}
+		for _, p := range embedded {
+			if wanted[p.Name] {
+				create = append(create, p)
+			}
+		}
+		promptWarnings, fail := recreateMissingSavedPrompts(create)
+		if fail != nil {
+			return profileImportResult{}, fail
+		}
+		result.Warnings = append(result.Warnings, promptWarnings...)
 	}
 
 	for _, plan := range plans {

@@ -116,12 +116,20 @@ func TestProfileExport_CarriesSavedPrompts(t *testing.T) {
 	require.Len(t, env["saved_prompts"], 1)
 
 	removePromptAndProfile(t, f, "kit", "kit-rules")
+	// A refused import (name clash) writes nothing, embedded prompts included.
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "kit"}).Code)
+	require.Equal(t, http.StatusConflict, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", env).Code)
+	p, err := db.GetSavedPrompt("kit-rules")
+	require.NoError(t, err)
+	assert.Nil(t, p)
+	require.Equal(t, http.StatusNoContent, profileReq(t, f, http.MethodDelete, "/v1/spawn-profiles/kit", nil).Code)
+
 	inspect := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import/inspect", env)
 	require.Equal(t, http.StatusOK, inspect.Code, inspect.Body.String())
 	assert.NotContains(t, inspect.Body.String(), `"valid":false`)
 	imp := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", env)
 	require.Equal(t, http.StatusOK, imp.Code, imp.Body.String())
-	p, err := db.GetSavedPrompt("kit-rules")
+	p, err = db.GetSavedPrompt("kit-rules")
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	assert.Equal(t, "Follow the kit rules.", p.Body)
