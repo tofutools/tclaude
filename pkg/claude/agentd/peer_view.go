@@ -184,7 +184,11 @@ type peerViewOmission struct {
 	Transport bool `json:"transport"`
 }
 type peerViewMetadata struct {
-	Peer     string             `json:"peer"`
+	Peer string `json:"peer"`
+	// Level is the trust this node grants the reading peer ("restricted" or
+	// "unrestricted"), so the peer's map can show that direction of the link
+	// next to its own trust in this node.
+	Level    string             `json:"level"`
 	Included []string           `json:"included"`
 	Omitted  []peerViewOmission `json:"omitted"`
 }
@@ -223,7 +227,10 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 	return false
 }
 func (v *peerView) metadata() peerViewMetadata {
-	out := peerViewMetadata{Peer: peerDisplay(v.peer), Included: []string{}, Omitted: []peerViewOmission{}}
+	out := peerViewMetadata{Peer: peerDisplay(v.peer), Level: db.FederationTrustRestricted, Included: []string{}, Omitted: []peerViewOmission{}}
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		out.Level = db.FederationTrustUnrestricted
+	}
 	groups, _ := db.ListAgentGroups()
 	hasAccess := peerHasAccess(v.peer.InstanceID)
 	features := map[string]peerViewRule{}

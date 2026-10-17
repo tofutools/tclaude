@@ -14,14 +14,17 @@ import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
+import { featureState } from './feature-state-registry.js';
+import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 
 const html = htm.bind(h);
 
-// VIEW_ONLY_ACTS open menus or show data already on screen. On a peer's rows
+// VIEW_ONLY_ACTS open menus or show data already on screen. This node's own
+// groups (home) run every control as on its own Groups view. On a peer's rows
 // the controls the peer shares (peerAction: stop or wake, restart, sandbox
 // restart, retire, clone, spawn, message) open the peer action dialog against
-// that node's peer routes, as on its per-node view; everything else waits for
-// that node's own view.
+// that node's peer routes, as on its per-node view; what it does not share
+// stays out of reach, as there.
 // (The status dot is a power control — wake / shut down — so it is not here.)
 const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
@@ -37,17 +40,17 @@ const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 
 // limitsCSS greys the controls a click here refuses, node by node, from the
 // same rules onClick applies: ⚙ "send elsewhere" and the view-only controls
-// everywhere; on a peer's groups its terminal and the actions it shares; on
-// this node's own groups (on its own page) the terminal, which opens here.
-// A control outside any node's group is refused.
-export function limitsCSS(nodes, { self, remote }) {
+// everywhere; on a peer's groups its terminal and the actions it shares. The
+// home groups (this node's, on its own page) act as on its Groups view, so
+// nothing there is greyed; on a peer's page this node's groups are an
+// overview. A control outside any node's group is refused.
+export function limitsCSS(nodes, { self, home = '' }) {
   const always = [...VIEW_ONLY_ACTS, 'send-elsewhere'];
   const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(details[data-fleet-node] [data-act])')];
   for (const { id, peerView } of nodes) {
-    if (!NODE_ID.test(id || '')) continue;
+    if (!NODE_ID.test(id || '') || id === home) continue;
     const scope = `${ROOT} details[data-fleet-node="${id}"]`;
-    const usable = id !== self ? usableActSelectors(peerView, ['send-elsewhere'])
-      : [...always, ...(remote ? [] : TERMINAL_ACTS)].map((a) => `[data-act="${a}"]`);
+    const usable = id !== self ? usableActSelectors(peerView, ['send-elsewhere']) : always.map((a) => `[data-act="${a}"]`);
     rules.push(refusedActsRule(scope, usable));
   }
   return rules.join('\n');
@@ -78,11 +81,28 @@ function ownGroup(name, node) {
   return node && name.endsWith(at) ? name.slice(0, -at.length) : '';
 }
 
-// readOnlyActions stands in for the Groups actions: the merged overview never
-// changes a node, so every action resolves without doing anything.
+// readOnlyActions stands in for the Groups actions on a peer's groups: they
+// resolve without doing anything (what a peer shares runs through its peer
+// routes instead).
 const readOnlyActions = new Proxy({}, {
   get: (_, key) => (key === 'reportError' ? () => {} : () => Promise.resolve()),
 });
+
+// homeActions routes the Groups actions by the group they act on: a home
+// group's go to this node's Groups actions with the group as this node names
+// it (ownOf), a peer group's resolve without doing anything. A call naming no
+// group (a profile list, an error report, an inline rename the click guard
+// only lets open on home rows) goes to this node's actions.
+export function homeActions(live, ownOf) {
+  return new Proxy({}, {
+    get: (_, key) => (...args) => {
+      const real = live();
+      const group = args.find((a) => a && typeof a === 'object' && a.fleet_node);
+      if (!real || typeof real[key] !== 'function' || (group && !group.fleet_node.home)) return readOnlyActions[key](...args);
+      return real[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? ownOf(a) : a)));
+    },
+  });
+}
 
 // defaultSwitchNode shows one node's own Groups view: it leaves the fused
 // view, as picking a node alone does.
@@ -172,20 +192,25 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
 }
 
 // MergedGroups is the fused Groups view: today's Groups listing over the
-// ticked nodes' groups, named group@node. It is an overview: what a peer
-// shares runs through its peer routes from here, the rest happens in that
-// node's own view, one click on its @node away. The page's own node (this
-// node, or the peer of a ?node= page) comes from the page's snapshot; every
-// other ticked node is read here.
+// ticked nodes' groups, named group@node. This node's own groups (home, on
+// this node's page) work as in its own Groups view; what a peer shares runs
+// through its peer routes from here, as on that peer's per-node view. The
+// page's own node (this node, or the peer of a ?node= page) comes from the
+// page's snapshot; every other ticked node is read here.
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
   peerActions = peerRoutes, confirm, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
+  groupsActions = () => featureState('groups-actions'), groupsFeature = () => featureState('groups'),
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
   const active = current.activeTab === 'groups' && !!current.fused && !!fleet;
   const pageNode = fleet ? remote || fleet.self.id : '';
+  // home is the node whose groups this page's own Groups actions reach: this
+  // node, on its own page. A ?node= page's actions go to that peer (and its
+  // peer-view limits); this node's groups there wait for this node's page.
+  const home = fleet && !remote ? fleet.self.id : '';
   const ticked = fleet ? tickedNodes(fleet, current.fused) : [];
   const polled = ticked.filter((n) => n.id !== pageNode);
   const entries = usePeerSnapshots({ active, peers: polled, fetchImpl, localFetch, timers, now });
@@ -202,9 +227,31 @@ export function MergedGroups({
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
   const snapRef = useRef(snapOf);
   snapRef.current = snapOf;
+  // A fold/unfold persisted by refresh.js moves which header owns subgroup
+  // activity: re-render now rather than on the next poll.
+  const [, setDisclosures] = useState(0);
+  useEffect(() => {
+    if (!host) return undefined;
+    const bump = () => setDisclosures((n) => n + 1);
+    host.addEventListener('tclaude:group-disclosure', bump);
+    return () => host.removeEventListener('tclaude:group-disclosure', bump);
+  }, [host]);
+  const homeRef = useRef(home);
+  homeRef.current = home;
+  // ownOf turns a merged home group back into this node's own group.
+  const ownOf = (g) => {
+    const key = g.key?.startsWith(`${home}/`) ? g.key.slice(home.length + 1) : '';
+    const found = (snapshot.value?.groups || []).find((o) => (o.key || o.name) === key);
+    return found || { ...g, name: ownGroup(g.name, g.fleet_node.name) || g.name, parent: g.parent && (ownGroup(g.parent, g.fleet_node.name) || g.parent), fleet_node: undefined };
+  };
+  const ownOfRef = useRef(ownOf);
+  ownOfRef.current = ownOf;
+  const routed = useRef(null);
+  if (!routed.current) routed.current = homeActions(() => groupsActions(), (g) => ownOfRef.current(g));
 
-  // Read-only overview: stop node-changing controls before their handlers,
-  // and open a group's node from its @node suffix.
+  // Let this node's own groups' controls through to their usual handlers, send
+  // a peer's shared controls to its peer routes, stop the rest before their
+  // handlers, and open a group's node from its @node suffix.
   useEffect(() => {
     if (!host) return undefined;
     const onClick = (event) => {
@@ -216,10 +263,13 @@ export function MergedGroups({
       }
       const act = event.target.closest?.('[data-act]');
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
-      if (ownTerminal(act)) return;
-      event.preventDefault(); event.stopImmediatePropagation();
       const group = act.closest('details[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
+      // A home group's control runs as on this node's Groups view (the
+      // document's data-act handler maps its group@node names back), except
+      // "Send elsewhere", which opens the fleet-wide dialog below.
+      if (instance && instance === homeRef.current && act.dataset.act !== 'send-elsewhere') return;
+      event.preventDefault(); event.stopImmediatePropagation();
       // ⚙ "Send elsewhere" opens the same launch-target dialog as a drop.
       if (act.dataset.act === 'send-elsewhere' && group) {
         const name = group.dataset.fleetNodeName || '';
@@ -236,16 +286,13 @@ export function MergedGroups({
         const req = peerAction(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
-      const where = group ? `${group.dataset.fleetNodeName}'s dashboard` : "the node's own dashboard";
-      toast(`The all-nodes view is an overview — act on this from ${where} (click the @node name)`, true);
+      if (instance && instance !== state.view.value.fleet?.self?.id) {
+        toast(`${name || 'This node'} does not share this action with you`, true);
+      } else {
+        const where = name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard";
+        toast(`Act on this node's groups from ${where}`, true);
+      }
     };
-    // ownTerminal: on this node's own page its own agents' terminals open
-    // as anywhere else (row-actions.js); the merged rows keep their agent.
-    function ownTerminal(act) {
-      if (remote || !TERMINAL_ACTS.has(act.dataset.act)) return false;
-      const self = state.view.value.fleet?.self?.id || '';
-      return !!self && act.closest('details[data-fleet-node]')?.dataset.fleetNode === self;
-    }
     // Editable chips open on Enter/Space in their own keydown, and the row
     // context menu (Ctrl+right-click) opens terminals: guard both like clicks.
     const onKey = (event) => {
@@ -254,8 +301,8 @@ export function MergedGroups({
       onClick(event);
     };
     const onContext = (event) => {
-      const act = event.target?.closest?.('[data-act]');
-      if (act && host.contains(event.target) && !ownTerminal(act)) { event.preventDefault(); event.stopImmediatePropagation(); }
+      if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
+      if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
     };
     // Drag an agent onto a group on another node to move it there (to or from
     // this node). These handlers own the gesture here: the per-node Groups
@@ -333,11 +380,14 @@ export function MergedGroups({
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
   const t = now();
   const nodes = ticked.map((node) => ({
-    node,
+    node: node.id === home ? { ...node, home: true } : node,
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
   const merged = mergeSnapshots(nodes, t, snapshot.value);
-  const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, remote });
+  const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
+  // This node's standing-orders dialog renders with its Groups view, hidden
+  // while fused: open it here for a home group.
+  const standingOrders = groupsFeature()?.standingOrdersDialog?.value || null;
   return html`<div class="fleet-merged">
     <style id="fleet-merged-limits">${limits}</style>
     <div class="fleet-merged-nodes" aria-label="Nodes in this view">
@@ -345,11 +395,13 @@ export function MergedGroups({
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
         <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
       </span>`)}
-      <span class="fleet-merged-note">Overview: shared actions go to the peer; drag an agent onto another node's group to move it; open <b>@node</b> for the rest.</span>
+      <span class="fleet-merged-note">${home ? "This node's groups work as on its own view; a" : 'A'} peer's groups offer what it shares with you; drag an agent onto another node's group to move it; open <b>@node</b> for a node's own view.</span>
     </div>
     <${GroupsInteractionProvider}>
-      <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />
+      <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${routed.current} />
     <//>
+    ${home && standingOrders && groupsActions() && html`<${GroupStandingOrdersDialog}
+      key=${standingOrders.launchID} descriptor=${standingOrders} actions=${groupsActions()} />`}
     ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
     ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}

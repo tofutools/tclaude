@@ -51,7 +51,7 @@ function fakeTimers() {
   return { queue, setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; }, clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); } };
 }
 
-test('the merged view polls peers only while shown, renders group@node, and stays read-only', async (t) => {
+test('the merged view polls peers only while shown, renders group@node, and guards controls', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
@@ -84,20 +84,20 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   assert.equal(harness.fireEvent(chip, 'contextmenu').defaultPrevented, true);
   assert.equal(harness.fireEvent(menu, 'click').defaultPrevented, false, 'menus still open');
   assert.ok(toasts.length >= 2);
-  // A peer agent's terminal opens in the browser; this node's stays an overview.
+  // A peer agent's terminal opens in the browser; this node's goes to its usual handler.
   const inGroup = (node, name, inner) => { const d = el(`<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`); return d.firstElementChild; };
   const peerWin = inGroup('inst_forge', 'forge', '<button data-act="web-open-window" data-agent="agt_ada1">web window</button>');
   assert.equal(harness.fireEvent(peerWin, 'click').defaultPrevented, true);
   assert.deepEqual({ instance: opened[0].instance, agent: opened[0].agent, peerLabel: opened[0].peerLabel }, { instance: 'inst_forge', agent: 'agt_ada1', peerLabel: 'forge' });
   const localWin = inGroup('inst_self', 'desk', '<button data-act="web-open-window" data-agent="agt_me1">web window</button>');
-  harness.fireEvent(localWin, 'click');
-  assert.equal(opened.length, 1, "this node's rows keep the overview rule");
+  assert.equal(harness.fireEvent(localWin, 'click').defaultPrevented, false, "this node's rows run as on its own view");
+  assert.equal(opened.length, 1);
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();
 });
 
-test('a peer row runs what the peer shares through its peer routes; this node and unshared controls stay an overview', async (t) => {
+test('a peer row runs what the peer shares through its peer routes; this node\'s rows act directly; unshared controls are stopped', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
@@ -139,20 +139,18 @@ test('a peer row runs what the peer shares through its peer routes; this node an
   await harness.act(() => doc.querySelector('#peer-message-send').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.deepEqual(calls.shift(), ['inst_forge', 'message', 'agt_ada1', 'hello']);
-  // Unshared (stop), this node's rows and unknown controls keep the overview toast.
+  // Unshared (stop) is stopped with a toast; this node's rows reach their own handlers.
   const before = toasts.length;
   const running = inGroup('inst_forge', 'forge', '<span data-act="dot-toggle" data-online="1" data-agent="agt_ada1">●</span>');
   const local = inGroup('inst_self', 'desk', '<span data-act="dot-toggle" data-online="0" data-agent="agt_me1">○</span>');
+  const localSpawn = inGroup('inst_self', 'desk', '<button data-act="spawn-agent" data-group="ops@desk">+</button>');
   assert.equal(harness.fireEvent(running, 'click').defaultPrevented, true);
-  assert.equal(harness.fireEvent(local, 'click').defaultPrevented, true);
+  assert.match(toasts.at(-1), /forge does not share this action with you/);
+  assert.equal(harness.fireEvent(local, 'click').defaultPrevented, false);
+  assert.equal(harness.fireEvent(localSpawn, 'click').defaultPrevented, false);
   assert.equal(doc.querySelector('#peer-action-modal'), null);
-  assert.equal(toasts.length, before + 2);
+  assert.equal(toasts.length, before + 1);
   assert.equal(calls.length, 0);
-  // On this node's own page its own agents' terminals open as anywhere else:
-  // the click passes on to the ordinary row-action routing.
-  const ownJump = inGroup('inst_self', 'desk', '<button data-act="jump" data-agent="agt_me1">◉</button>');
-  assert.equal(harness.fireEvent(ownJump, 'click').defaultPrevented, false);
-  assert.equal(toasts.length, before + 2);
   // The greying is generated from the same rules, per node.
   const css = doc.querySelector('#fleet-merged-limits').textContent;
   const forgeRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_forge"]'));
@@ -160,9 +158,7 @@ test('a peer row runs what the peer shares through its peer routes; this node an
   assert.match(forgeRule, /\[data-act="spawn-agent"\]/);
   assert.match(forgeRule, /\[data-act="jump"\]/, 'its terminal opens here');
   assert.doesNotMatch(forgeRule, /\[data-online="1"\],|\[data-act="restart"\]/, 'stop and restart are not shared');
-  const selfRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_self"]'));
-  assert.match(selfRule, /\[data-act="jump"\]/);
-  assert.doesNotMatch(selfRule, /spawn-agent|dot-toggle/);
+  assert.ok(!css.includes('details[data-fleet-node="inst_self"]'), 'this node\'s own groups act directly here: nothing greyed');
   await mounted.unmount(); state.dispose();
 });
 
@@ -173,7 +169,7 @@ test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused
     { id: 'inst_self', peerView: null },
     { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.stop', 'lifecycle.restart'] } },
     { id: 'inst_x"]{}*{', peerView: null },
-  ], { self: 'inst_self', remote: 'inst_forge' });
+  ], { self: 'inst_self', home: '' });
   const lines = css.split('\n');
   assert.equal(lines.length, 3, 'outside-any-group, this node, forge; the odd ID gets no rule');
   assert.match(lines[0], /\[data-act\]:not\(details\[data-fleet-node\] \[data-act\]\):not\(.*\[data-act="send-elsewhere"\]/);
@@ -189,7 +185,7 @@ test('limitsCSS greys exactly the controls a click refuses', async (t) => {
   const css = island.limitsCSS([
     { id: 'inst_self', peerView: null },
     { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.resume', 'spawn'] } },
-  ], { self: 'inst_self', remote: '' });
+  ], { self: 'inst_self', home: 'inst_self' });
   const doc = harness.document;
   doc.body.innerHTML = `<div id="fleetview-fused-groups-root"><div class="fleet-merged">
     <details data-fleet-node="inst_self"><summary><b id="s-jump" data-act="jump"></b><b id="s-spawn" data-act="spawn-agent"></b><b id="s-menu" data-act="group-menu"></b></summary>
@@ -199,8 +195,8 @@ test('limitsCSS greys exactly the controls a click refuses', async (t) => {
     <b id="loose" data-act="jump"></b><b id="loose-send" data-act="send-elsewhere"></b></div></div>`;
   const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
   const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));
-  for (const id of ['s-jump', 's-menu', 's-sub-jump', 'f-jump', 'f-spawn', 'f-wake', 'f-send', 'loose-send']) assert.equal(greyed(id), false, `${id} is usable`);
-  for (const id of ['s-spawn', 'f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
+  for (const id of ['s-jump', 's-spawn', 's-menu', 's-sub-jump', 'f-jump', 'f-spawn', 'f-wake', 'f-send', 'loose-send']) assert.equal(greyed(id), false, `${id} is usable`);
+  for (const id of ['f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
 });
 
 test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {
@@ -304,5 +300,30 @@ test('a wide fused view keeps at most four snapshot reads in flight', async (t) 
   assert.equal(peak, island.MAX_IN_FLIGHT);
   assert.equal(timers.queue.length, ids.length - island.MAX_IN_FLIGHT, 'the rest wait their turn');
   await harness.act(async () => { release.splice(0).forEach((r) => r()); await new Promise((r) => setTimeout(r, 5)); });
+  await mounted.unmount(); state.dispose();
+});
+
+test("this node's groups run the Groups actions under their own names; a peer's do nothing", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, rows] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'), harness.importDashboardModule('js/fleet-merged-model.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const timers = fakeTimers(); const calls = [];
+  const ops = group('ops');
+  const live = { openAddMember: (g) => { calls.push(['add', g]); }, renameGroup: async (g, v) => { calls.push(['rename', g.name, v]); } };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: [] } }) });
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [ops], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" groupsActions=${() => live} />`);
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  const homes = [...mounted.container.querySelectorAll('details[data-fleet-home]')].map((d) => d.dataset.groupKey);
+  assert.deepEqual(homes, ['ops@desk'], "only this node's groups are home");
+
+  const routed = island.homeActions(() => live, (g) => (g.name === 'ops@desk' ? ops : null));
+  routed.openAddMember({ name: 'ops@desk', fleet_node: { id: 'inst_self', home: true } });
+  await routed.renameGroup({ name: 'build@forge', fleet_node: { id: 'inst_forge' } }, 'x');
+  assert.deepEqual(calls, [['add', ops]], "a home group's action reaches this node with its own group; a peer's is a no-op");
+
+  assert.deepEqual(rows.ownGroupData({ act: 'spawn-agent', group: 'ops@desk', label: 'ops@desk', agent: 'agt_1', prefill: '{"targetMode":"group","groupName":"ops@desk","scopeGroup":"ops@desk"}' }, 'desk'),
+    { act: 'spawn-agent', group: 'ops', label: 'ops', agent: 'agt_1', prefill: '{"targetMode":"group","groupName":"ops","scopeGroup":"ops"}' });
   await mounted.unmount(); state.dispose();
 });

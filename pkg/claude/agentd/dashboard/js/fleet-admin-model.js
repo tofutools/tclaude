@@ -73,6 +73,8 @@ export function adminView(status, { pools = [] } = {}) {
     grants: grants.get(p.instance_id) || { total: 0, nodeWide: 0, scoped: 0 },
     pools: poolMap.get(p.instance_id) || [],
     keyTransition: keyTransition(p),
+    // asks: an untrusted instance asked to be trusted (see the map).
+    asks: !!p.trust_request,
   });
   const byLabel = (a, b) => a.label.localeCompare(b.label);
   // receiving names each peer's catalog groups that take agents from this

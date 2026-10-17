@@ -782,10 +782,15 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
   await harness.act(() => { fleetState.setFused(['inst_self', 'inst_forge']); });
   const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
-  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill').textContent), ['⌂ desk', 'forge']);
+  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill')?.textContent ?? null), [null, 'F'],
+    'only a peer\'s tab is labelled, and compactly');
+  assert.equal(shown[1].querySelector('.mux-node-pill').title, 'On forge');
   assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
   assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
-  assert.match(host.querySelector('.mux-pane.active .mux-pane-header').textContent, /forge|desk/);
+  const headerPill = (label) => [...host.querySelectorAll('.mux-pane')].find((pane) => pane.textContent.includes(label))
+    .querySelector('.mux-pane-header .mux-node-pill');
+  assert.equal(headerPill('reviewer-2')?.textContent, 'forge', 'a peer\'s pane header names the peer in full');
+  assert.equal(headerPill('builder-1'), null, 'this node\'s pane header carries no node label');
   // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
   // and forge in one press.
   const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
