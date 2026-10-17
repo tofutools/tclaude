@@ -1,6 +1,7 @@
 // This source module intentionally has no Preact imports. Each bounded feature
 // loads its runtime graph only after claiming its stable hosts.
 import { createIslandDescriptor, mountFeatureIsland, mountIslandDescriptor } from './island-lifecycle.js';
+import { registerFeatureState } from './feature-state-registry.js';
 
 const shellDescriptor = createIslandDescriptor({
   name: 'shell',
@@ -139,6 +140,8 @@ const groupsDescriptor = createIslandDescriptor({
     return {
       state: groupsState,
       mount: (registerCleanup) => {
+        // The fused Groups view runs this node's groups through these too.
+        registerCleanup(registerFeatureState('groups-actions', actions));
         mountGroupsIsland({
           filterHost, listHost, state: groupsState, actions,
           registerCleanup,

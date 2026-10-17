@@ -5,6 +5,7 @@
 // the operation. It owns no presentation or operation state.
 
 import { handleRowAction } from './row-action-handler.js';
+import { ownGroupData } from './fleet-merged-model.js';
 
 const BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window', 'group-web-term']);
 
@@ -15,10 +16,11 @@ export function liveActionSource(event, selector = '[data-act]') {
 }
 
 export function actionDescriptor(source, event = null) {
+  const home = source.closest?.('details[data-fleet-home]');
   return Object.freeze({
     producerId: source.id || '',
     openInBackground: Boolean(event?.ctrlKey || event?.metaKey),
-    data: Object.freeze({ ...source.dataset }),
+    data: Object.freeze(home ? ownGroupData(source.dataset, home.dataset.fleetNodeName || '') : { ...source.dataset }),
   });
 }
 

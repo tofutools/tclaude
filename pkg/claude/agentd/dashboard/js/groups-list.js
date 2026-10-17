@@ -633,7 +633,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   } : null;
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
-    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name}
+    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name} data-fleet-home=${fleet?.home ? '' : undefined}
     open=${realGroupOpen(group, dashPrefs)}
   >
     <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
