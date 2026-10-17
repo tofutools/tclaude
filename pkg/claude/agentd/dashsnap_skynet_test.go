@@ -67,6 +67,10 @@ const skynetFederationStubJS = `(function(){
     }
     if (path === '/api/federation/status') return json(status);
     if (path === '/api/federation/join' && window.__dashsnapSetupFresh) return json({ hub_url: 'wss://hub.home:8470', space: 'home', invite: true, expires_at: '2027-01-11T09:00:00Z', expired: false, ca: [{ subject: 'hub.home', sha256: '3F:9A:C2:71:0B:E4:58:D6:1C:A7:93:2E:F0:6B:44:8D:C5:19:7E:A2:30:BB:E1:5F:92:07:D8:6C:4A:F3:21:E9', not_after: '2027-10-10T00:00:00Z', self_signed: true }], current: { enabled: false, name: 'desk' } });
+    if (path === '/api/federation/peer-reach' && window.__dashsnapSetupShare) return json({ rows: [
+      { kind: 'group', group: 'ops', slug: 'message.direct', peers: ['inst_hn3cxq7a/builders'] },
+      { kind: 'group', group: 'ops', slug: 'groups.members.spawn', peers: ['inst_hn3cxq7a/builders'] }
+    ] });
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
     if (path === '/api/federation/grants') return json({ grants: [
       { peer: 'inst_hn3cxq7a', slug: 'message.direct', scope: '' },
@@ -462,7 +466,7 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-fleet-setup-agents",
 			Title:   "Fleet setup guide: let agents use peers",
-			Caption: "Step 4 lists what each trusted peer shares with this node, per group, and the agent permission that uses it, scoped peer=<peer>/<group>.",
+			Caption: "Step 4 lists what each trusted peer shares with this node, per group, which of your groups and agents already use it, and gives one access in place: the peer=<peer>/<group> reach merges into their grants, keeping the rest.",
 			InitJS:  "window.__dashsnapSetupShare = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -471,6 +475,8 @@ func skynetStates() []dashsnap.State {
   document.querySelector('.fs-step[data-step="agents"]').click();
   for (var j = 0; j < 30 && !document.querySelector('[data-remote-group="builders"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('[data-remote-group="builders"]')) throw new Error('setup: no shared group on step 4');
+  for (var k = 0; k < 30 && !document.querySelector('[data-remote-group="builders"] [data-holder]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('[data-remote-group="builders"] [data-holder]')) throw new Error('setup: step 4 shows no holder');
 })();`,
 			SettleMS: 400,
 		},

@@ -139,6 +139,12 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       };
     },
     join: async (code, name) => { log.push(['join', code, name]); return { joined: true }; },
+    peerReach: async () => ({ rows: [{ kind: 'group', group: 'ops', slug: 'message.direct', peers: ['inst_forge/builders', 'inst_lab/ci'] }, { kind: 'agent', agent_id: 'agt_x', title: 'scout', slug: 'message.direct', peers: ['inst_forge'] }] }),
+    setPeerReach: async (b) => {
+      log.push(['peerReach', b]);
+      if (b.target === 'agt_a1') { const e = new Error('ada holds message.direct everywhere on this node, and one grant of a slug holds either local or peer scope; give the peer reach to a group it is in instead'); e.code = 'peer_reach_conflict'; e.status = 409; throw e; }
+      return { rows: [] };
+    },
     nodeLabels: async () => ['gpu', 'ci'],
     hubStatus: async () => {
       if (s_hubGenFails > 0) { s_hubGenFails -= 1; const e = new Error('admin generation changed; retry explicitly'); e.code = 'admin_generation'; e.status = 409; throw e; }
@@ -2318,8 +2324,31 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   await s.click(s.q('.fs-step[data-step="agents"]'));
   const row = s.q('[data-peer="inst_forge"] [data-remote-group="builders"]');
   assert.match(row.textContent, /mail, roster/);
-  assert.match(row.textContent, /tclaude agent permissions grant AGENT message\.direct --scope peer=forge\/builders/);
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual([...row.querySelectorAll('[data-holder]')].map((h) => h.dataset.holder), ['group:ops', 'agent:agt_x'], 'who already uses forge/builders, by group or the whole peer');
+  assert.match(row.querySelector('[data-holder="agent:agt_x"]').textContent, /all of forge/, 'a whole-peer grant is not removable per group');
+  assert.match(row.textContent, /tclaude agent permissions peer-reach add --group GROUP --peer forge\/builders --slug message\.direct/);
   assert.match(s.q('[data-peer="inst_forge"] [data-remote-group="lobby"]').textContent, /visible only/);
+
+  // Give the group build access in place, then take ops's away.
+  const pick = row.querySelector('.fs-reach-pick');
+  assert.deepEqual([...pick.querySelectorAll('option')].map((o) => o.getAttribute('value')).filter(Boolean), ['group:build', 'agent:agt_a1'], 'holders that already have it are not offered');
+  assert.equal(row.querySelector('[data-reach-give]').disabled, true);
+  for (const o of pick.querySelectorAll('option')) { if (o.getAttribute('value') === 'group:build') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(pick, 'change'));
+  await s.click(row.querySelector('[data-reach-give]'));
+  assert.equal(s.confirms.at(-1).title, "Let group build (every member) use forge's builders?");
+  assert.match(s.confirms.at(-1).body, /message\.direct, scoped peer=forge\/builders\. Its other grants are kept\./);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'build', slugs: ['message.direct'], peer: 'inst_forge/builders' });
+  await s.click(row.querySelector('[data-holder="group:ops"] button'));
+  assert.equal(s.confirms.at(-1).title, "Stop group ops using forge's builders?");
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'ops', slugs: ['message.direct'], peer: 'inst_forge/builders', remove: true });
+
+  // An agent whose grant is held for local use is refused with the way out.
+  for (const o of pick.querySelectorAll('option')) { if (o.getAttribute('value') === 'agent:agt_a1') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(pick, 'change'));
+  await s.click(row.querySelector('[data-reach-give]'));
+  assert.match(s.toasts.at(-1), /a group it is in/);
 });
 
 test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done', async (t) => {

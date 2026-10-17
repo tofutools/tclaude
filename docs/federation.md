@@ -354,6 +354,26 @@ groups, including future groups. `peer=` cannot be combined with another
 scope dimension; put the remote group after `/`, not in a separate `group=`
 scope. Git and GitHub scopes continue to use `remote=`.
 
+An agent or group holds one grant per slug, so `grant --scope peer=…` replaces
+the peer groups it held for that slug. To add or remove one peer group and
+keep the rest, use peer reach (human-only):
+
+```bash
+tclaude agent permissions peer-reach add lead --peer bob/builders --slug message.direct --slug sessions.watch
+tclaude agent permissions peer-reach add --group ops --peer bob/builders --slug message.direct
+tclaude agent permissions peer-reach remove lead --peer bob/builders --slug sessions.watch
+tclaude agent permissions peer-reach ls [--peer bob]
+```
+
+`add` merges the peer group into each slug's grant in one transaction; a
+grant that holds the slug for local use, or a deny, is refused (409
+`peer_reach_conflict`, nothing written) instead of being replaced, and the
+usual way out is to give the reach to a group the agent is in. `remove`
+drops the grant when its last peer group goes. The route is
+`GET|POST /v1/permissions/peer-reach` (`/api/federation/peer-reach` from the
+dashboard, local-only) with `{target|group, slugs, peer, remove?}`; both
+answer `{rows:[{kind, group|conv, agent_id, title, slug, peers}]}`.
+
 Unscoped grants, local `group=` scopes, defaults and group ownership never
 authorize remote actions. Peer-scoped grants never authorize local actions.
 Denies are unscoped and block the slug on both local and remote actions.
