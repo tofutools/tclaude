@@ -375,7 +375,7 @@ func skynetStates() []dashsnap.State {
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card .skynet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card:not(.hub) .skynet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('.skynet-edge')) throw new Error('skynet: no map edges');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in the map');
 })();`,

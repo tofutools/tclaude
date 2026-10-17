@@ -98,7 +98,21 @@ export function normalizeFleet(status) {
   return {
     self: { id: status.instance_id, name: status.name || 'this node', color: LOCAL_COLOR, local: true, online: true },
     peers,
-    hub: { state: hubState, url: status.hub_url || '' },
+    hub: { state: hubState, ...hubDetails(status) },
+  };
+}
+
+// hubDetails is what the map's hub card shows besides the connection state:
+// its address, the hub's own ID, the spaces this node is in, and since when
+// the connection has been in its current state.
+function hubDetails(status) {
+  const since = Date.parse(status.hub?.since || '');
+  return {
+    url: status.hub_url || '',
+    id: status.hub?.hub_id || '',
+    spaces: Array.isArray(status.hub?.spaces) ? status.hub.spaces : [],
+    // Go's zero time parses to year 1: not a real timestamp.
+    since: since > 0 ? since : null,
   };
 }
 
@@ -116,6 +130,7 @@ export function normalizeNode(status) {
     // configured: a hub URL is set, so federation was set up at some point.
     configured: !!status.hub_url,
     error: String(status.hub?.last_error || '').slice(0, 120),
+    details: hubDetails(status),
   };
 }
 
@@ -124,7 +139,7 @@ export function normalizeNode(status) {
 export function mapFleet(fleet, node) {
   if (fleet) return fleet;
   if (!node || hubOffReason(node)) return null;
-  return { self: node.self, peers: [], hub: { state: 'connected', url: '' } };
+  return { self: node.self, peers: [], hub: { state: 'connected', ...node.details } };
 }
 
 // hubOffReason says why the chip row is greyed out, or '' when it is usable.

@@ -411,24 +411,42 @@ function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef,
   </article>`;
 }
 
+// HubCard is the federation hub between this node and its peers: every link
+// to a peer is relayed through it.
+function HubCard({ hub, now }) {
+  const connected = hub.state === 'connected';
+  const shortID = hub.id.length > 16 ? `${hub.id.slice(0, 16)}…` : hub.id;
+  return html`<article class=${`skynet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
+    <div class="skynet-card-head"><span class="skynet-card-name">hub</span><span class="skynet-card-kind">relay</span>
+      <span class=${`skynet-card-presence ${connected ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${hub.state}</span></div>
+    <dl class="skynet-card-body">
+      ${hub.url && html`<dt>Address</dt><dd class="skynet-hub-url" title=${hub.url}>${hub.url}</dd>`}
+      ${hub.id && html`<dt>Hub ID</dt><dd title=${hub.id}>${shortID}</dd>`}
+      ${hub.spaces?.length > 0 && html`<dt>Spaces</dt><dd>${hub.spaces.join(', ')}</dd>`}
+      ${hub.since != null && html`<dt>${connected ? 'Up' : 'Since'}</dt><dd>${fmtAge(Math.max(0, now - hub.since))}</dd>`}
+    </dl>
+  </article>`;
+}
+
 // edgePath draws a gentle horizontal S-curve between two anchor points.
 function edgePath(a, b) {
   const dx = Math.max(40, (b.x - a.x) / 2);
   return `M${a.x} ${a.y} C${a.x + dx} ${a.y} ${b.x - dx} ${b.y} ${b.x} ${b.y}`;
 }
 
+// measureEdges routes the links as they run: this node to the hub, and the
+// hub to each peer. Without a hub card every peer links to this node directly.
 export function measureEdges(mapEl) {
   if (!mapEl) return [];
   const box = mapEl.getBoundingClientRect();
   const local = mapEl.querySelector('.skynet-card.local');
   if (!local) return [];
-  const lr = local.getBoundingClientRect();
-  const from = { x: lr.right - box.left, y: lr.top - box.top + lr.height / 2 };
-  return [...mapEl.querySelectorAll('.skynet-card:not(.local)')].map((el) => {
-    const r = el.getBoundingClientRect();
-    const to = { x: r.left - box.left, y: r.top - box.top + r.height / 2 };
-    return { id: el.dataset.nodeId, d: edgePath(from, to), mid: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } };
-  });
+  const side = (el, right) => { const r = el.getBoundingClientRect(); return { x: (right ? r.right : r.left) - box.left, y: r.top - box.top + r.height / 2 }; };
+  const edge = (id, from, to) => ({ id, d: edgePath(from, to), mid: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } });
+  const hub = mapEl.querySelector('.skynet-card.hub');
+  const from = hub ? side(hub, true) : side(local, true);
+  const peers = [...mapEl.querySelectorAll('.skynet-card:not(.local):not(.hub)')].map((el) => edge(el.dataset.nodeId, from, side(el, false)));
+  return hub ? [edge(':hub', side(local, true), side(hub, false)), ...peers] : peers;
 }
 
 export function SkynetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions }) {
@@ -499,10 +517,11 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   const open = (node) => () => pickNode(state, node.id, { navigate: () => navigate(state.lastLocalTab()), remote, switchNode });
   return html`<div class="skynet-map" ref=${mapRef}>
     <svg class="skynet-edges" aria-hidden="true">
-      ${edges.map((e) => { const p = peerById.get(e.id); const live = p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`skynet-edge${live ? ' live' : ' stale'}`} />`; })}
+      ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`skynet-edge${live ? ' live' : ' stale'}`} />`; })}
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="skynet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
     <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
+    <div class="skynet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
     <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="skynet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
     ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
