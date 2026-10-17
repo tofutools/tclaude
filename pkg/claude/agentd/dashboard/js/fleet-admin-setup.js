@@ -97,6 +97,8 @@ export function hubProblem(self) {
   return { title: 'Connecting…', text: `This node is connecting to ${self.hubURL}.` };
 }
 
+function problemInvite(self) { return !!hubProblem(self)?.invite; }
+
 function Copyable({ value, what, copy, toast }) {
   const onCopy = () => copy(value).then(() => toast(`${what} copied`, false)).catch(() => toast(`${what}: ${value}`, false));
   return html`<span class="fs-copy"><code>${value}</code> <button type="button" class="fa-link" onClick=${onCopy} title=${`Copy the ${what.toLowerCase()}`}>copy</button></span>`;
@@ -113,19 +115,120 @@ function IdentityCard({ self, copy, toast }) {
   </div>`;
 }
 
+// JOIN_CODE / INVITE match what a hub admin hands out: a join code (hub
+// address, invite and CA in one string, tclaude hub invite --url) or a bare
+// invite token.
+const JOIN_CODE = /^\s*tchj_/;
+const INVITE = /^\s*tchi_/;
+
+function when(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+// joinConsequence is the confirmation text for joining with a previewed code:
+// where this node connects, what it trusts for TLS, and what it replaces.
+export function joinConsequence(p, name) {
+  const cur = p.current || {};
+  const who = name || cur.name;
+  const ca = p.ca?.length
+    ? ` TLS to the hub trusts only the certificate${p.ca.length === 1 ? '' : 's'} in the code (SHA-256 ${p.ca.map((c) => c.sha256).join(', ')}); compare with what the hub admin reads you.`
+    : ' TLS to the hub uses the system roots.';
+  const moving = cur.hub_url && cur.hub_url !== p.hub_url
+    ? ` This replaces the connection to ${cur.hub_url}${cur.enabled ? ', which drops now; peers reachable only through that hub become unreachable' : ''}.`
+    : '';
+  return `This node connects to ${p.hub_url}${who ? ` as ${who}` : ''}${p.space ? `, in space ${p.space}` : ''}. The hub and every node on it see this node's name, instance ID and fingerprint and can ask to be trusted; nothing here is shared with a peer until you trust it and grant it something.${p.invite ? ' The invite in the code is single-use.' : ''}${ca}${moving}`;
+}
+
+// useJoinPreview asks the daemon to decode a pasted join code, so the page
+// shows exactly what the daemon would apply. A stale answer (the text has
+// changed since) is dropped.
+function useJoinPreview(actions, code) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!JOIN_CODE.test(code)) { setPreview(null); return undefined; }
+    let live = true;
+    setPreview({ loading: true });
+    const t = setTimeout(() => {
+      actions.joinPreview(code)
+        .then((p) => { if (live) setPreview(p); })
+        .catch((e) => { if (live) setPreview({ error: errText(e) }); });
+    }, 150);
+    return () => { live = false; clearTimeout(t); };
+  }, [code]);
+  return preview;
+}
+
+function JoinPreview({ preview }) {
+  if (!preview) return null;
+  if (preview.loading) return html`<div class="muted" id="fleet-setup-code-preview">Reading the code…</div>`;
+  if (preview.error) return html`<div class="fa-danger" id="fleet-setup-code-preview" role="alert">${preview.error}</div>`;
+  const cur = preview.current || {};
+  return html`<div class="fa-dl fs-identity" id="fleet-setup-code-preview">
+    <span class="fa-k">Hub</span><code>${preview.hub_url}</code>
+    ${preview.space && html`<span class="fa-k">Space</span><span>${preview.space}</span>`}
+    <span class="fa-k">Invite</span><span>${preview.invite
+      ? preview.expired ? html`<b class="fa-danger">expired ${when(preview.expires_at)}</b>: ask the hub admin for a new one`
+        : preview.expires_at ? `single-use, until ${when(preview.expires_at)}` : 'single-use'
+      : 'none (the admin admits this node by its instance ID)'}</span>
+    <span class="fa-k">TLS</span><span>${preview.ca?.length
+      ? preview.ca.map((c) => html`<div>${c.self_signed ? 'self-signed ' : ''}<b>${c.subject}</b>, SHA-256 <code class="fs-fp">${c.sha256}</code></div>`)
+      : 'system roots'}</span>
+    ${cur.hub_url && html`<span class="fa-k">Replaces</span><span>${cur.hub_url === preview.hub_url ? 'the same hub, with this invite' : html`<code>${cur.hub_url}</code>${cur.enabled ? ' (connected now)' : ''}`}</span>`}
+  </div>`;
+}
+
+// joinWithCode confirms and applies a previewed join code; it resolves to
+// {error} | {done} | {} like confirmHubSave.
+async function joinWithCode({ code, preview, name, actions, confirm }) {
+  try {
+    const ok = await confirm({
+      title: `Join the hub at ${preview.hub_url}?`,
+      body: joinConsequence(preview, name),
+      okLabel: 'Join', busyLabel: 'Joining…',
+      action: () => actions.join(code, name),
+    });
+    return ok ? { done: 'Joined; connecting to the hub…' } : {};
+  } catch (e) {
+    return { error: errText(e) };
+  }
+}
+
 function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
   const self = view.self;
   const [form, setForm] = useState({ hubURL: '', name: self.name === 'this node' ? '' : self.name, invite: '', caFile: '', clearCA: false, connect: true });
+  const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (k) => (e) => { const value = e.currentTarget.value; setForm((f) => ({ ...f, [k]: value })); };
+  // A bare invite pasted where the join code goes belongs in the invite
+  // field, next to the hub address it needs.
+  const onCode = (e) => {
+    const value = e.currentTarget.value;
+    if (INVITE.test(value)) {
+      setCode('');
+      setForm((f) => ({ ...f, invite: value.trim() }));
+      toast('That is a bare invite: it is in the invite field below; add the hub address', false);
+      return;
+    }
+    setCode(value);
+  };
+  // The refusal retry takes a new invite or a whole new join code.
+  const reinvite = JOIN_CODE.test(form.invite) ? form.invite : code;
+  const preview = useJoinPreview(actions, problemInvite(self) ? reinvite : code);
+  const finish = (p) => p.then((r) => {
+    if (r.error) setError(r.error);
+    else if (r.done) { toast(r.done, false); reload(); }
+  }).finally(() => setBusy(false));
   const save = (next) => {
     if (busy) return;
     setBusy(true); setError('');
-    confirmHubSave({ self, form: next, actions, confirm }).then((r) => {
-      if (r.error) setError(r.error);
-      else if (r.done) { toast(r.done, false); reload(); }
-    }).finally(() => setBusy(false));
+    finish(confirmHubSave({ self, form: next, actions, confirm }));
+  };
+  const joinCode = (c, name) => {
+    if (busy || !preview?.hub_url || preview.expired) return;
+    setBusy(true); setError('');
+    finish(joinWithCode({ code: c, preview, name, actions, confirm }));
   };
   const reconnect = () => actions.setHubEnabled(true)
     .then(() => { toast('Reconnecting to the hub…', false); reload(); })
@@ -145,34 +248,41 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
       <h3>${problem.title}</h3>
       <p>${problem.text}</p>
       ${self.hubError && html`<div class="fs-error" role="note">${self.hubError}</div>`}
-      ${problem.invite && html`<label class="fa-ns-row"><span class="fa-k">new invite</span><input id="fleet-setup-reinvite" type="password" value=${form.invite} placeholder="tchi_…" autocomplete="off" onInput=${set('invite')} /></label>`}
+      ${problem.invite && html`<label class="fa-ns-row"><span class="fa-k">new invite</span><input id="fleet-setup-reinvite" type="password" value=${form.invite} placeholder="tchi_… or a tchj_… join code" autocomplete="off" onInput=${set('invite')} /></label>`}
+      ${problem.invite && JOIN_CODE.test(form.invite) && html`<${JoinPreview} preview=${preview} />`}
       <div class="fs-actions">
-        ${problem.invite && html`<button type="button" class="primary" disabled=${busy || !form.invite.trim()} onClick=${() => save({ ...form, hubURL: self.hubURL, name: self.name, connect: true })}>Retry with this invite…</button>`}
+        ${problem.invite && (JOIN_CODE.test(form.invite)
+          ? html`<button type="button" class="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(form.invite, '')}>Join with this code…</button>`
+          : html`<button type="button" class="primary" disabled=${busy || !form.invite.trim()} onClick=${() => save({ ...form, hubURL: self.hubURL, name: self.name, connect: true })}>Retry with this invite…</button>`)}
         ${!self.enabled && html`<button type="button" class="primary" onClick=${reconnect}>Reconnect</button>`}
         <button type="button" onClick=${onSettings}>Hub settings…</button>
       </div>
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-      <${Cli}><code>tclaude federation status</code>, <code>tclaude federation connect ${self.hubURL} --invite tchi_…</code><//>
+      <${Cli}><code>tclaude federation status</code>, <code>tclaude federation connect ${self.hubURL} --invite tchi_…</code>, <code>tclaude federation join --code-stdin</code><//>
     </div>`;
   }
   return html`<div class="fs-body" data-setup-step="hub">
     <h3>Join a hub</h3>
-    <p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node the hub's address and its own single-use invite (<code>tclaude hub invite --space <i>space</i></code>). Nodes see each other when they join the same space.</p>
+    <p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>
+    <label class="fa-ns-row"><span class="fa-k">join code</span><textarea id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
+    <label class="fa-ns-row"><span class="fa-k">this node's name</span><input id="fleet-setup-name" value=${form.name} placeholder="how other nodes see this one" autocomplete="off" onInput=${set('name')} /></label>
+    <${JoinPreview} preview=${preview} />
+    ${JOIN_CODE.test(code) && html`<div class="fs-actions"><button id="fleet-setup-code-join" type="button" class="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(code, form.name.trim())}>Join hub…</button></div>`}
+    <h4 class="fs-sub">Or with a hub address and an invite</h4>
     <label class="fa-ns-row"><span class="fa-k">hub address</span><input id="fleet-setup-hub" value=${form.hubURL} placeholder="wss://hub.example:8470" autocomplete="off" spellcheck="false" onInput=${set('hubURL')} /></label>
     <label class="fa-ns-row"><span class="fa-k">invite</span><input id="fleet-setup-invite" type="password" value=${form.invite} placeholder="tchi_… (not needed if the admin admitted this node)" autocomplete="off" onInput=${set('invite')} /></label>
-    <label class="fa-ns-row"><span class="fa-k">this node's name</span><input id="fleet-setup-name" value=${form.name} placeholder="how other nodes see this one" autocomplete="off" onInput=${set('name')} /></label>
     <details class="fs-more">
       <summary>The hub uses a self-signed certificate</summary>
       <p class="muted">Copy the hub's certificate (or its CA) to this machine and give its absolute path. The daemon reads it on every connect, so leave the file there.</p>
       <label class="fa-ns-row"><span class="fa-k">CA file</span><input id="fleet-setup-ca" value=${form.caFile} placeholder="/home/you/hub.crt" autocomplete="off" spellcheck="false" onInput=${set('caFile')} /></label>
     </details>
-    <div class="fs-actions"><button id="fleet-setup-join" type="button" class="primary" disabled=${busy || !form.hubURL.trim()} onClick=${() => save(form)}>Join hub…</button></div>
+    <div class="fs-actions"><button id="fleet-setup-join" type="button" class=${JOIN_CODE.test(code) ? '' : 'primary'} disabled=${busy || !form.hubURL.trim()} onClick=${() => save(form)}>Join with this address…</button></div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="fs-aside">
       <b>No invite?</b> The admin can admit this node by its instance ID and fingerprint instead (<code>tclaude hub admit</code>). Send them these:
       <${IdentityCard} self=${self} copy=${copy} toast=${toast} />
     </div>
-    <${Cli}><code>tclaude federation connect wss://… --invite tchi_… [--name …] [--ca-file …]</code><//>
+    <${Cli}><code>tclaude federation join tchj_… [--name …]</code>, or <code>tclaude federation connect wss://… --invite tchi_… [--name …] [--ca-file …]</code><//>
   </div>`;
 }
 

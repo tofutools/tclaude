@@ -66,6 +66,7 @@ const skynetFederationStubJS = `(function(){
       return realFetch(input, init).then(function(r){ return r.clone().json().then(function(p){ delete p['tclaude.dash.fleet.setupSeen']; return json(p); }, function(){ return r; }); });
     }
     if (path === '/api/federation/status') return json(status);
+    if (path === '/api/federation/join' && window.__dashsnapSetupFresh) return json({ hub_url: 'wss://hub.home:8470', space: 'home', invite: true, expires_at: '2026-10-11T09:00:00Z', expired: false, ca: [{ subject: 'hub.home', sha256: '3F:9A:C2:71:0B:E4:58:D6:1C:A7:93:2E:F0:6B:44:8D:C5:19:7E:A2:30:BB:E1:5F:92:07:D8:6C:4A:F3:21:E9', not_after: '2027-10-10T00:00:00Z', self_signed: true }], current: { enabled: false, name: 'desk' } });
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
     if (path === '/api/federation/grants') return json({ grants: [
       { peer: 'inst_hn3cxq7a', slug: 'message.direct', scope: '' },
@@ -429,7 +430,7 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-fleet-setup-join",
 			Title:   "Fleet setup guide: join a hub",
-			Caption: "A node that has never been set up: the node row's ⚙ Fleet chip stays clickable and says set up, and Fleet opens on the setup guide. Step 1 takes the hub address, the invite and this node's name (a self-signed hub's CA file folds away), and shows the instance ID and fingerprint a hub admin can admit instead.",
+			Caption: "A node that has never been set up: the node row's ⚙ Fleet chip stays clickable and says set up, and Fleet opens on the setup guide. Step 1 takes a pasted join code and shows what the daemon read from it — hub, space, invite expiry and the self-signed certificate's SHA-256 to compare with the admin — before one Join confirmation. A hub address and a bare invite still work below it, and the instance ID and fingerprint are there for an admin who admits by ID.",
 			InitJS:  "window.__dashsnapSetupFresh = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('[data-fleet-entry] .node-chip-hint'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -437,10 +438,10 @@ func skynetStates() []dashsnap.State {
   document.querySelector('[data-fleet-entry]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-setup-hub'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-setup-hub')) throw new Error('setup: Fleet did not open on the join step');
-  var hub = document.querySelector('#fleet-setup-hub');
-  hub.value = 'wss://hub.home:8470'; hub.dispatchEvent(new Event('input', { bubbles: true }));
-  var inv = document.querySelector('#fleet-setup-invite');
-  inv.value = 'tchi_k2v9x7q4m1'; inv.dispatchEvent(new Event('input', { bubbles: true }));
+  var code = document.querySelector('#fleet-setup-code');
+  code.value = 'tchj_eyJ2IjoxLCJodWIiOiJ3c3M6Ly9odWIuaG9tZTo4NDcwIiwiaW52aXRlIjoidGNoaV9rMnY5eDdxNG0xIiwic3BhY2UiOiJob21lIn0'; code.dispatchEvent(new Event('input', { bubbles: true }));
+  for (var p = 0; p < 50 && !document.querySelector('#fleet-setup-code-preview code'); p++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-setup-code-preview code')) throw new Error('setup: the pasted join code has no preview');
 })();`,
 			SettleMS: 400,
 		},
