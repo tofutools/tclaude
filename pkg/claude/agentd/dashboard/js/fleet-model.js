@@ -104,7 +104,8 @@ export function normalizeFleet(status) {
 }
 
 // normalizeStrangers lists the hub-visible instances this node has not
-// trusted, for the map's "show untrusted" view. Their names are self-reported:
+// trusted, for the map's "show untrusted" view (an instance that asked to be
+// trusted is listed without it). Their names are self-reported:
 // the map shows them as claims and trusting one still goes through the
 // fingerprint check of Fleet config's trust dialog.
 export function normalizeStrangers(status) {
@@ -117,8 +118,13 @@ export function normalizeStrangers(status) {
       fingerprint: p.fingerprint || '',
       online: !!p.online,
       lastSeen: p.last_seen && !String(p.last_seen).startsWith('0001-') ? p.last_seen : null,
+      // request: this instance asked to be trusted (its note is its own words);
+      // requestedAt: when this node last asked it.
+      request: p.trust_request ? { note: String(p.trust_request.note || ''), trustsYou: !!p.trust_request.trusts_you, receivedAt: Date.parse(p.trust_request.received_at || '') || null } : null,
+      requestedAt: Date.parse(p.trust_requested_at || '') || null,
     }))
-    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+    // Requests first, then by name.
+    .sort((a, b) => (!!b.request - !!a.request) || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
 }
 
 // hubDetails is what the map's hub card shows besides the connection state:

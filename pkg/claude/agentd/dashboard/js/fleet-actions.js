@@ -47,5 +47,16 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
     }
   }
 
-  return Object.freeze({ loadStatus, loadSummary });
+  // requestTrust asks a hub-visible instance to trust this node (or to trust
+  // it back); dismissTrustRequest drops a request received from one.
+  async function postTrustRequest(path, body) {
+    const response = await fetchImpl(`/api/federation/peers/${path}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const out = await readJSON(response);
+    if (!response.ok) throw Object.assign(new Error(out?.error || `HTTP ${response.status}`), { code: out?.code || '' });
+    return out;
+  }
+  const requestTrust = (instance, note = '') => postTrustRequest('trust-request', note ? { instance, note } : { instance });
+  const dismissTrustRequest = (instance) => postTrustRequest('trust-request/dismiss', { instance });
+
+  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest });
 }

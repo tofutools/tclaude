@@ -176,7 +176,22 @@ tclaude federation untrust bob
 ```
 
 The label is the short name you use in addresses (`member@bob`). Envelopes
-from untrusted instances are dropped unanswered. Untrusting a peer also
+from untrusted instances are dropped unanswered, except enrollment (below) and
+trust requests.
+
+A **trust request** asks a hub-visible instance's operator to trust your node,
+or to trust it back (the dashboard's Fleet map sends one when you trust an
+instance from it, and offers **Ask to be trusted…** with an optional note of up
+to 200 characters). It is small, signed and sealed, carries no authority and
+bypasses the outbox; the receiving node keeps it in memory only (at most 64,
+for 7 days or until a restart), rate-limits senders, and ignores it from an
+instance it already trusts. It only shows on the receiver's map and in
+⚙ Fleet config → Peers; trusting the sender still needs the receiver's own
+fingerprint comparison. The note is the sender's own words. API:
+`POST /v1/federation/peers/trust-request` `{instance, note?}` (one per instance
+a minute) and `POST /v1/federation/peers/trust-request/dismiss` `{instance}`;
+status rows carry `trust_request` `{note, trusts_you, received_at}` and
+`trust_requested_at`. Untrusting a peer also
 removes its peer grants and cached catalog.
 
 Trust defaults to **restricted**, including for existing peers: receiving peer
@@ -2469,8 +2484,8 @@ query also works on the CLI API. It returns the local identity (`instance_id`,
 cached `hub` connection state, and `peers`. Summary peers include only trusted
 linked instances, with their stable `instance_id`, `label`, `name`, trust
 `level`, `trusted`, `online`, and `last_seen` fields (plus fingerprint, version,
-and trust time). Add `&untrusted=1` to also list the hub-visible instances not
-trusted here (`trusted: false`, with `instance_id`, `name`, `fingerprint`,
+and trust time). Instances that sent a trust request are always listed. Add `&untrusted=1` to
+also list the other hub-visible instances not trusted here (`trusted: false`, with `instance_id`, `name`, `fingerprint`,
 `online`, `last_seen` and `version`), as the map's Show untrusted view does.
 An empty peer list is `[]`. Presence comes from the cached
 hub directory; no remote requests or status probes run during this read.

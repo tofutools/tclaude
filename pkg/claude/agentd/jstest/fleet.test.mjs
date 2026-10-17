@@ -384,7 +384,7 @@ test('"Show untrusted" asks for strangers, draws them apart from peers, and trus
   const prefs = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, v); } };
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map'), prefs });
   const urls = [];
-  const fetchImpl = async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => status([{ instance_id: 'inst_zed', trusted: false, online: false, fingerprint: 'aaaa-bbbb-cccc-dddd' }]) }; };
+  const fetchImpl = async (url, init) => { urls.push(init?.method === 'POST' ? `POST ${url} ${init.body}` : url); return { ok: true, status: 200, json: async () => status([{ instance_id: 'inst_zed', trusted: false, online: false, fingerprint: 'aaaa-bbbb-cccc-dddd' }]) }; };
   const actions = actionsMod.createFleetActions({ state, fetchImpl });
   await actions.loadStatus();
   assert.equal(urls.at(-1), '/api/federation/status?summary=1', 'unticked: the cheap read');
@@ -409,8 +409,9 @@ test('"Show untrusted" asks for strangers, draws them apart from peers, and trus
   await harness.act(async () => { harness.fireEvent(cards[0].querySelector('[data-fleet="trust"]'), 'click'); await Promise.resolve(); await Promise.resolve(); });
   assert.deepEqual(opened, ['load']);
   assert.match(mounted.container.querySelector('#fake-trust').textContent, /inst_stranger/);
-  await harness.act(async () => { harness.fireEvent(getByRole(mounted.container, 'button', { name: 'done' }), 'click'); await Promise.resolve(); });
-  assert.deepEqual(toasts, ['Trusted carol (restricted)']);
+  await harness.act(async () => { harness.fireEvent(getByRole(mounted.container, 'button', { name: 'done' }), 'click'); for (let i = 0; i < 6; i++) await Promise.resolve(); });
+  assert.deepEqual(toasts, ['Trusted carol (restricted) · asked carol to trust this node back']);
+  assert.ok(urls.includes('POST /api/federation/peers/trust-request {"instance":"inst_stranger"}'), 'trusting also asks it to trust back');
   assert.equal(mounted.container.querySelector('#fake-trust'), null, 'the dialog closes');
   assert.equal(urls.at(-1), '/api/federation/status?summary=1&untrusted=1', 'trusting re-reads the status');
   await mounted.unmount();
@@ -422,6 +423,47 @@ test('"Show untrusted" asks for strangers, draws them apart from peers, and trus
   assert.equal(remote.container.querySelector('[data-fleet="show-untrusted"]'), null, 'a peer view never trusts from the map');
   assert.equal(remote.container.querySelector('.fleet-card.untrusted'), null);
   await remote.unmount(); state.dispose(); fresh.dispose();
+});
+
+test('trust requests: shown without "Show untrusted", dismissable, and this node can ask with a note', async (t) => {
+  const { harness, stateMod, actionsMod, island } = await load(t);
+  const prefs = { getItem: () => null, setItem: () => {} };
+  const activeTab = harness.signals.signal('map');
+  const state = stateMod.createFleetState({ activeTab, prefs });
+  const posts = [];
+  const asker = { instance_id: 'inst_asker', name: 'dave', trusted: false, online: true, fingerprint: 'dddd-eeee', trust_request: { note: 'hi from dave', trusts_you: true, received_at: new Date(Date.now() - 120000).toISOString() } };
+  const fetchImpl = async (url, init) => {
+    if (init?.method === 'POST') { posts.push([url, JSON.parse(init.body)]); return { ok: true, status: 200, json: async () => ({ ok: true }) }; }
+    return { ok: true, status: 200, json: async () => status([asker]) };
+  };
+  const actions = actionsMod.createFleetActions({ state, fetchImpl });
+  await actions.loadStatus();
+  const toasts = [];
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} toast=${(m) => toasts.push(m)} />`);
+  const cards = () => [...mounted.container.querySelectorAll('.fleet-card.untrusted')];
+  assert.deepEqual(cards().map((c) => c.dataset.nodeId), ['inst_asker'], 'only the asker, with the box unticked');
+  assert.ok(cards()[0].classList.contains('asks'));
+  assert.match(cards()[0].textContent, /Trusts this node, asks to be trusted back/);
+  assert.match(cards()[0].textContent, /“hi from dave”/);
+  assert.match(mounted.container.textContent, /1 asking to be trusted/);
+  const bar = await harness.mount(harness.html`<${island.TopLevelBar} state=${state} navigate=${() => {}} />`);
+  assert.match(bar.container.textContent, /🤝 1 asking to be trusted/);
+  await bar.unmount();
+  await harness.act(async () => { harness.fireEvent(cards()[0].querySelector('[data-fleet="dismiss"]'), 'click'); await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(posts.at(-1), ['/api/federation/peers/trust-request/dismiss', { instance: 'inst_asker' }]);
+
+  // With the box ticked, a stranger that has not asked offers "Ask to be trusted…".
+  await harness.act(async () => { state.setShowUntrusted(true); await actions.loadStatus(); });
+  const carol = mounted.container.querySelector('[data-node-id="inst_stranger"]');
+  await harness.act(() => harness.fireEvent(carol.querySelector('[data-fleet="ask"]'), 'click'));
+  const input = carol.querySelector('[data-fleet="ask-note"]');
+  input.value = '  it is alice  ';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  await harness.act(async () => { harness.fireEvent(carol.querySelector('[data-fleet="ask-send"]'), 'click'); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+  assert.deepEqual(posts.at(-1), ['/api/federation/peers/trust-request', { instance: 'inst_stranger', note: 'it is alice' }]);
+  assert.deepEqual(toasts, ['Asked carol to trust this node']);
+  assert.equal(carol.querySelector('[data-fleet="ask-note"]'), null, 'the form closes');
+  await mounted.unmount(); state.dispose();
 });
 
 test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
