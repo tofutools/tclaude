@@ -32,6 +32,46 @@ export function hubBody(self, form) {
   return body;
 }
 
+// confirmHubSave validates a hub connection form ({hubURL, name, invite,
+// caFile, clearCA, connect}), says what saving it will do and saves it once
+// confirmed. It resolves {error} for a form to fix, {done} with the notice
+// for a saved change, or {} when the operator cancels; a failed save is an
+// error too. Node settings and the setup guide share it, so both validate and
+// word the consequence the same way.
+export async function confirmHubSave({ self, form, actions, confirm }) {
+  const body = hubBody(self, form);
+  if (!Object.keys(body).length) return { error: 'Nothing changed.' };
+  if (form.hubURL.trim() && !HUB_RE.test(form.hubURL.trim())) return { error: 'The hub URL is wss://host[:port] (ws:// only to a loopback hub).' };
+  if (form.connect && !form.hubURL.trim()) return { error: 'Set a hub URL to connect.' };
+  if (body.hub_ca_file && !body.hub_ca_file.startsWith('/')) return { error: 'The CA file is an absolute path on this node (the daemon reads it).' };
+  const url = form.hubURL.trim();
+  const moving = 'hub_url' in body && self.hubURL && self.enabled;
+  const disconnecting = body.enabled === false;
+  const ca = body.hub_ca_file === '' ? ' The pinned hub CA file is cleared: TLS to the hub uses the system roots.' : body.hub_ca_file ? ` TLS to the hub trusts the certificates in ${body.hub_ca_file}.` : '';
+  const pinKept = 'hub_url' in body && self.hubURL && !('hub_ca_file' in body) ? ' Any pinned hub CA file is kept; clear it if the new hub uses a different CA.' : '';
+  const staying = !form.connect && !disconnecting;
+  try {
+    const ok = await confirm(staying ? {
+      title: 'Save hub settings?',
+      body: `This node stays disconnected; the settings apply the next time you connect.${ca}${pinKept}`,
+      okLabel: 'Save', busyLabel: 'Saving…',
+      action: () => actions.setHubConfig(body),
+    } : {
+      title: disconnecting ? 'Disconnect from the hub?' : moving ? `Move this node to the hub at ${url}?` : self.enabled ? 'Update the hub connection?' : `Connect to the hub at ${url}?`,
+      body: disconnecting
+        ? 'No peer can reach this node and this node cannot reach any peer until you connect again: remote views, mail, attach and remote jobs stop in both directions. Trusted peers and grants are kept.'
+        : `This node connects to ${url}${body.name ? ` as ${body.name}` : ''}. The hub and every node on it see this node's name, instance ID and fingerprint and can ask to be trusted; nothing here is shared with a peer until you trust it and grant it something.${moving ? ' The current hub connection drops; peers reachable only through the old hub become unreachable.' : ''}${body.invite ? ' The invite token is single-use.' : ''}${ca}${pinKept}`,
+      okLabel: disconnecting ? 'Disconnect' : self.enabled ? 'Save' : 'Connect',
+      busyLabel: 'Saving…',
+      action: () => actions.setHubConfig(body),
+    });
+    if (!ok) return {};
+    return { done: staying ? 'Hub settings saved' : disconnecting ? 'Disconnected from the hub' : 'Hub settings saved; connecting…' };
+  } catch (e) {
+    return { error: errText(e) };
+  }
+}
+
 // NodeSettingsDialog edits this node's hub connection (tclaude federation
 // connect), its node labels (tclaude federation node-labels) and its fleet
 // health notice policy (tclaude federation nodes health).
@@ -46,36 +86,11 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
   const set = (k) => (e) => setForm({ ...form, [k]: e.currentTarget.type === 'checkbox' ? e.currentTarget.checked : e.currentTarget.value });
 
   const saveHub = () => {
-    const body = hubBody(self, form);
-    if (!Object.keys(body).length) { setError('Nothing changed.'); return; }
-    if (form.hubURL.trim() && !HUB_RE.test(form.hubURL.trim())) { setError('The hub URL is wss://host[:port] (ws:// only to a loopback hub).'); return; }
-    if (form.connect && !form.hubURL.trim()) { setError('Set a hub URL to connect.'); return; }
-    if (body.hub_ca_file && !body.hub_ca_file.startsWith('/')) { setError('The CA file is an absolute path on this node (the daemon reads it).'); return; }
     setError('');
-    const url = form.hubURL.trim();
-    const moving = 'hub_url' in body && self.hubURL && self.enabled;
-    const disconnecting = body.enabled === false;
-    const ca = body.hub_ca_file === '' ? ' The pinned hub CA file is cleared: TLS to the hub uses the system roots.' : body.hub_ca_file ? ` TLS to the hub trusts the certificates in ${body.hub_ca_file}.` : '';
-    const pinKept = 'hub_url' in body && self.hubURL && !('hub_ca_file' in body) ? ' Any pinned hub CA file is kept; clear it if the new hub uses a different CA.' : '';
-    if (!form.connect && !disconnecting) {
-      confirm({
-        title: 'Save hub settings?',
-        body: `This node stays disconnected; the settings apply the next time you connect.${ca}${pinKept}`,
-        okLabel: 'Save', busyLabel: 'Saving…',
-        action: () => actions.setHubConfig(body),
-      }).then((r) => { if (r) onDone('Hub settings saved'); }).catch((e) => setError(errText(e)));
-      return;
-    }
-    confirm({
-      title: disconnecting ? 'Disconnect from the hub?' : moving ? `Move this node to the hub at ${url}?` : self.enabled ? 'Update the hub connection?' : `Connect to the hub at ${url}?`,
-      body: disconnecting
-        ? 'No peer can reach this node and this node cannot reach any peer until you connect again: remote views, mail, attach and remote jobs stop in both directions. Trusted peers and grants are kept.'
-        : `This node connects to ${url}${body.name ? ` as ${body.name}` : ''}. The hub and every node on it see this node's name, instance ID and fingerprint and can ask to be trusted; nothing here is shared with a peer until you trust it and grant it something.${moving ? ' The current hub connection drops; peers reachable only through the old hub become unreachable.' : ''}${body.invite ? ' The invite token is single-use.' : ''}${ca}${pinKept}`,
-      okLabel: disconnecting ? 'Disconnect' : self.enabled ? 'Save' : 'Connect',
-      busyLabel: 'Saving…',
-      action: () => actions.setHubConfig(body),
-    }).then((r) => { if (r) onDone(disconnecting ? 'Disconnected from the hub' : 'Hub settings saved; connecting…'); })
-      .catch((e) => setError(errText(e)));
+    confirmHubSave({ self, form, actions, confirm }).then((r) => {
+      if (r.error) setError(r.error);
+      else if (r.done) onDone(r.done);
+    });
   };
 
   const saveLabels = () => {

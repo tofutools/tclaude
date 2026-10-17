@@ -10,6 +10,13 @@ You need three things:
 - **tclaude** on each machine, with `tclaude agentd` running;
 - a group with at least one agent on each side.
 
+Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet →
+Setup guide** (the ⚙ Fleet chip at the right of the tab bar) joins the hub
+with the address and invite, trusts the other machine after you compare
+fingerprints, and shares a group. It shows the CLI command for every step,
+and step 4 of the guide lists what each peer shares and the agent grants
+that use it. The hub itself (steps 1 to 4) is set up on the command line.
+
 ## 1. Install the hub
 
 `tclaude-hub` is a separate binary. It is in the release archives, or:

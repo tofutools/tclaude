@@ -113,6 +113,8 @@ export function normalizeNode(status) {
   return {
     self: { id: status.instance_id, name: status.name || 'this node', color: LOCAL_COLOR, local: true, online: true },
     hub,
+    // configured: a hub URL is set, so federation was set up at some point.
+    configured: !!status.hub_url,
     error: String(status.hub?.last_error || '').slice(0, 120),
   };
 }
@@ -121,7 +123,7 @@ export function normalizeNode(status) {
 export function hubOffReason(node) {
   if (!node) return 'Not connected to a federation hub';
   if (node.hub === 'connected') return '';
-  if (node.hub === 'off') return 'Not connected to a federation hub: federation is off (tclaude federation connect)';
+  if (node.hub === 'off') return 'Not connected to a federation hub: federation is off (set it up in ⚙ Fleet)';
   // A hub also says "refused" as it shuts down, so show its own words.
   if (node.hub === 'refused') return `Not connected to a federation hub: ${node.error || 'the hub refused the connection'}`;
   if (node.hub === 'disconnected') return 'Not connected to a federation hub: hub unreachable, retrying';

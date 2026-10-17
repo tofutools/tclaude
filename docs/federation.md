@@ -13,11 +13,13 @@ a shared relay, **`tclaude-hub`**, so no machine needs an inbound listener and
 laptops behind NAT or a corporate network work as-is.
 
 !!! note "Status"
-    CLI only. Built: discovery, mail with attachments, mail to remote
-    groups, operator mail, automatic or operator-approved remote spawn, and
-    cross-instance group routes, remote session state, and remote terminal
-    watch and interactive attach. The dashboard shows and manages linked
-    nodes too; see [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
+    Built: discovery, mail with attachments, mail to remote groups, operator
+    mail, automatic or operator-approved remote spawn, and cross-instance
+    group routes, remote session state, and remote terminal watch and
+    interactive attach. Everything here is a CLI command; the dashboard shows
+    and manages linked nodes too, and its **⚙ Fleet → Setup guide** joins a
+    hub, trusts peers and shares groups without the CLI; see
+    [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).

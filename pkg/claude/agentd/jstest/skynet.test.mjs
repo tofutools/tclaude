@@ -116,7 +116,7 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'connecting' } }); });
   assert.equal(home().disabled, true, 'a hub not connected yet greys the row out, peers or not');
   assert.match(home().title, /connecting/);
-  assert.equal(mounted.container.querySelectorAll('button.node-chip').length, 2, 'peers only appear once connected');
+  assert.equal(mounted.container.querySelectorAll('button.node-chip:not(.fleet-entry)').length, 2, 'peers only appear once connected');
 
   await harness.act(() => { state.setStatus({ ...status([]), peers: [] }); });
   assert.equal(home().disabled, false, 'connected without peers: ⌂ usable');
@@ -149,6 +149,50 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.match(home().title, /shutting down/, 'a refusal shows the hub\'s reason');
   assert.equal(anchor.getAttribute('aria-disabled'), 'true');
   await mounted.unmount(); state.dispose(); map.remove();
+});
+
+test('without a fleet ⚙ Fleet is always clickable, and a node never set up says so until the guide was opened', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('groups');
+  const stored = new Map();
+  const prefs = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, v); } };
+  const state = stateMod.createSkynetState({ activeTab, prefs });
+  const nav = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${() => {}} />`);
+  const fleet = () => mounted.container.querySelector('[data-fleet-entry]');
+  assert.ok(fleet(), 'there before any status read');
+  assert.equal(fleet().disabled, false);
+  assert.equal(fleet().querySelector('.node-chip-hint'), null, 'no hint before the node is known');
+
+  await harness.act(() => { state.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] }); });
+  assert.equal(fleet().disabled, false, 'federation off, but Fleet is where it is turned on');
+  assert.equal(fleet().querySelector('.node-chip-hint').textContent, 'set up');
+  assert.match(fleet().getAttribute('aria-label'), /set up/);
+  assert.match(fleet().title, /link this node.*federation is off/);
+  await harness.act(() => harness.fireEvent(fleet(), 'click'));
+  assert.deepEqual(nav, ['fleet-admin']);
+  await harness.act(() => { state.setStatus({ ...status([]), peers: [], hub: { state: 'disconnected' } }); });
+  assert.equal(fleet().querySelector('.node-chip-hint'), null, 'a node with a hub set never shows the hint');
+  assert.match(fleet().title, /hub connection and peers.*unreachable/);
+  await harness.act(() => { state.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] }); });
+
+  await harness.act(() => { activeTab.value = 'fleet-admin'; state.markSetupSeen(); });
+  assert.equal(fleet().getAttribute('aria-current'), 'page');
+  assert.equal(fleet().querySelector('.node-chip-hint'), null, 'opening the guide retires the hint');
+  assert.equal(stored.get(stateMod.SETUP_SEEN_PREF), '1', 'and remembers it');
+  await harness.act(() => harness.fireEvent(fleet(), 'click'));
+  assert.deepEqual(nav, ['fleet-admin'], 'no navigation while already there');
+
+  const fresh = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), prefs });
+  fresh.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] });
+  assert.equal(fresh.view.value.setupSeen, true, 'a reload keeps it retired');
+  fresh.dispose();
+
+  await harness.act(() => { activeTab.value = 'groups'; state.setStatus({ ...status([]), peers: [] }); });
+  assert.match(fleet().title, /trust a peer/);
+  await harness.act(() => { state.setStatus(status([])); });
+  assert.equal(fleet(), null, 'with a fleet, the map leads to Fleet');
+  await mounted.unmount(); state.dispose();
 });
 
 test('on a peer view without a local fleet ⌂ still goes home', async (t) => {

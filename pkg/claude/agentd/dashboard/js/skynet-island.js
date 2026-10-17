@@ -197,6 +197,25 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
 // node that has no linked nodes yet.
 const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet';
 
+// FleetChip opens Fleet administration while there is no fleet to reach it
+// through the map: before the hub is set up, while it is down, or before the
+// first peer is trusted. It is never greyed out, since Fleet is where all of
+// that gets fixed. Until the setup guide has been opened once, a node that
+// was never set up says so on the chip.
+function FleetChip({ state, node, off, navigate }) {
+  const current = state.view.value;
+  const active = current.adminActive;
+  const hint = !!node && !node.configured && !current.setupSeen;
+  const title = off
+    ? `Fleet: ${node?.configured ? 'the hub connection and peers' : 'link this node with your other machines or colleagues'} (${off.replace(/^Not connected to a federation hub: /, 'not connected: ')})`
+    : 'Fleet: trust a peer to link nodes';
+  return html`<button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry
+    aria-current=${active ? 'page' : undefined} aria-label=${`Fleet administration${hint ? ': set up' : ''}`} title=${title}
+    onClick=${() => { if (!active) navigate('fleet-admin'); }}>
+    <span aria-hidden="true">⚙</span><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
+  </button>`;
+}
+
 // MapGate greys out the static map anchor (it is not ours to render) when
 // there is no map to show: hub not connected, or no linked nodes.
 function MapGate({ reason, doc = globalThis.document }) {
@@ -221,7 +240,7 @@ function MapGate({ reason, doc = globalThis.document }) {
 // ⌂ and a greyed-out fused button. ⌂ is usable once the hub is connected, and
 // always where it leads somewhere: home from a peer's view, or back from the
 // map or Fleet administration.
-function IdleChips({ state, node, off, remote, onPick }) {
+function IdleChips({ state, node, off, remote, onPick, navigate }) {
   const current = state.view.value;
   const self = node?.self || { id: '', name: 'this node', color: LOCAL_COLOR, local: true };
   const homeOff = off && !remote && !current.topLevel;
@@ -236,6 +255,7 @@ function IdleChips({ state, node, off, remote, onPick }) {
     <button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
       <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
+    ${!remote && html`<${FleetChip} state=${state} node=${node} off=${off} navigate=${navigate} />`}
   </span>`;
 }
 
@@ -252,7 +272,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
   const gate = html`<${MapGate} reason=${off || (fleet ? '' : NO_PEERS)} />`;
   // A fused view already on keeps its row, so it can be left.
-  if (!fleet || (off && !current.fused)) return html`${gate}<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} />`;
+  if (!fleet || (off && !current.fused)) return html`${gate}<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} navigate=${navigate} />`;
   const fused = current.fused;
   const pageNode = remote || fleet.self.id;
   const onFuse = (value) => {

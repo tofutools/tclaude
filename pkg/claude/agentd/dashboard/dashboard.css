@@ -19766,6 +19766,11 @@ nav [data-tab].node-chip.map { color: #8b949e; margin-left: 0; flex: 0 1000 auto
 nav [data-tab].node-chip.map .node-chip-name { display: none; }
 nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 .node-chips-sep { width: 1px; height: 16px; background: #2a3340; margin: 0 3px; }
+/* ⚙ Fleet while there is no fleet to reach it through the map. Never greyed
+   out: it is where the hub connection and the first peer are set up. */
+.node-chip.fleet-entry { --nc: #58a6ff; color: #8b949e; margin-left: 3px; flex: none; }
+.node-chip.fleet-entry:hover { color: #f0f6fc; }
+.node-chip-hint { font: 600 10px/14px ui-sans-serif, system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: #1f6feb; color: #f0f6fc; }
 
 /* Node scope (tcl-sb4grp): fused-view outlines, the node and fused dropdowns. */
 .node-chip.ticked { border-color: color-mix(in srgb, var(--nc, #c9d1d9) 55%, #2a3340); }
@@ -20066,8 +20071,9 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub.warn { color: #e3b341; }
 .fa-hub.off { color: #7d8590; }
 .fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
-.fa-subtabs { display: flex; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
-.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; }
+/* Narrow windows wrap whole tabs onto a second row, never their labels. */
+.fa-subtabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
+.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
 .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
 .fa-table { width: 100%; border-collapse: collapse; }
@@ -20135,6 +20141,51 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-token-input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
 .fa-member { display: inline-flex; align-items: center; gap: 2px; margin-right: 10px; }
 .fa-badge { font-size: 11px; padding: 0 6px; border: 1px solid #1f6feb; border-radius: 8px; color: #58a6ff; }
+
+/* Fleet → Setup guide (js/fleet-admin-setup.js): the steps on the left, the
+   chosen step's form or status on the right. */
+.fleet-setup { display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); gap: 0; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.fs-steps { list-style: none; margin: 0; padding: 10px 0; border-right: 1px solid #30363d; }
+.fs-step { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 14px; border: 0; background: none; color: #8b949e; font: inherit; text-align: left; cursor: pointer; }
+.fs-step:hover { color: #c9d1d9; }
+.fs-step.on { color: #f0f6fc; background: #161b22; box-shadow: inset 2px 0 #1f6feb; }
+.fs-step.done { color: #c9d1d9; }
+.fs-n { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #30363d; display: grid; place-items: center; font-size: 11px; }
+.fs-step.on .fs-n { border-color: #1f6feb; color: #58a6ff; }
+.fs-step.done .fs-n { background: #238636; border-color: #238636; color: #f0f6fc; }
+.fs-progress { padding: 10px 14px 0; font-size: 12px; }
+.fs-body { padding: 12px 18px 14px; min-width: 0; }
+.fs-body h3 { margin: 0 0 6px; font-size: 15px; }
+.fs-body p { margin: 0 0 10px; }
+.fs-body .fa-ns-row { max-width: 680px; grid-template-columns: 130px minmax(0, 1fr); }
+.fs-ok { color: #3fb950; }
+.fs-ok b, .fs-ok code { color: #c9d1d9; }
+.fs-warn { color: #d29922; }
+.fs-error { margin: 0 0 10px; padding: 6px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.fs-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.fs-aside { margin: 12px 0; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; }
+.fs-identity { margin-top: 6px; }
+.fs-copy code { overflow-wrap: anywhere; }
+.fs-more { margin: 4px 0 6px; }
+.fs-more summary { color: #8b949e; cursor: pointer; }
+.fs-more p { margin: 6px 0; }
+.fs-cli { margin-top: 12px; padding-top: 8px; border-top: 1px dashed #30363d; font-size: 12px; overflow-wrap: anywhere; }
+.fs-share { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 10px; }
+.fs-share label { display: inline-flex; align-items: center; gap: 6px; }
+.fs-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-width: 900px; }
+.fs-preset { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; }
+.fs-preset.on { border-color: #1f6feb; background: #1f6feb14; }
+.fs-preset.sensitive.on { border-color: #d29922; background: #d299221a; }
+.fs-preset.held { cursor: default; opacity: 0.75; }
+.fs-preset input { margin-top: 2px; }
+.fs-next { grid-column: 2; padding: 0 18px 14px; }
+.fs-peer { margin: 10px 0 14px; }
+.fs-peer-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+@media (max-width: 720px) {
+  .fleet-setup { grid-template-columns: minmax(0, 1fr); }
+  .fs-steps { border-right: 0; border-bottom: 1px solid #30363d; }
+  .fs-next { grid-column: 1; }
+}
 .fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
 .fa-pool-grants { margin: 4px 0; }
 .fa-nowrap { white-space: nowrap; }
