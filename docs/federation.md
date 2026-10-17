@@ -119,6 +119,8 @@ Admitting instances:
 ```bash
 tclaude-hub admit inst_… --space team-a     # by instance id
 tclaude-hub invite --space team-a --ttl 24h # or a single-use invite token
+tclaude-hub invite --space team-a --url wss://hub.example:8470 [--ca-file hub.crt]
+                                            # the same invite as a tchj_ join code
 tclaude-hub ls                              # instances, spaces, last seen
 tclaude-hub spaces inst_… team-a,team-b     # replace an instance's spaces
 tclaude-hub revoke inst_…                   # drop it (live within ~15s)
@@ -138,8 +140,23 @@ Connection, trust and peer-grant commands are human-only.
 ```bash
 tclaude federation identity                  # your instance id: give it to the hub admin
 tclaude federation connect wss://hub.example:8470 [--invite tchi_…] [--name alice]
+tclaude federation join tchj_… [--name alice] [--preview]   # or --code-file / --code-stdin
 tclaude federation status
 ```
+
+A **join code** (`tchj_…`) bundles the hub address, an optional invite and an
+optional PEM CA bundle into one string. `tclaude hub invite --url … [--ca-file
+…]` mints one, and so do `tclaude federation hub invites create` and the
+dashboard's Hub page on a hub-admin node (`join_code` beside `token`, built
+from that node's own `hub_url` and `hub_ca_file`). `federation join` shows what
+the code holds and what it replaces, then stores the CA under
+`~/.tclaude/data/federation/hub-ca/` (content-addressed, 0600) and writes the
+same configuration as `connect`. Whitespace in a pasted code is ignored. A
+code is a bearer secret that also decides TLS trust for the hub: accept one
+only from the hub admin. The route is human-only `POST /v1/federation/join`
+(`/api/federation/join` from the dashboard) with `{code, name?, preview?}`;
+an expired invite is refused with `join_code_expired`, anything malformed
+with `invalid_join_code`.
 
 Connection settings live under `federation` in
 `~/.tclaude/data/config.json` (`enabled`, `hub_url`, `name`, `invite`,
@@ -3169,7 +3186,8 @@ ready offer and preserve current trust/receive admission.
 `{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
 label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
 Hub setup already uses `POST /api/federation/config` with optional
-`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields, and
+`POST /api/federation/join` for a join code (see [Joining](#joining)). Omitted fields
 are preserved; CA file paths refer to this node's filesystem. URL validation,
 configuration writes and client reload are shared with `federation connect`.
 
@@ -3374,7 +3392,7 @@ The local `/api/federation/hub/` dashboard routes and matching
 | `admissions` | GET, POST | `{admissions:[...]}`; POST `{instance,spaces}` |
 | `admissions/{instance}` | DELETE | Revoke admission |
 | `admissions/cleanup` | POST | Preview `{days:30}`; confirm with `{days,cutoff,instances:[IDs],apply:true}` |
-| `invites` | GET, POST | `{invites:[...]}`; POST `{space,ttl_seconds}` returns bearer once |
+| `invites` | GET, POST | `{invites:[...]}`; POST `{space,ttl_seconds}` returns bearer once, with `join_code` when this node has a hub address |
 | `invites/{token_hash}` | DELETE | Revoke invitation |
 | `spaces` | GET, PUT | `{spaces:[...]}`; PUT `{instance,spaces}` |
 | `settings` | GET, PATCH | `{settings:{key:descriptor}}`; PATCH `{overrides:{key:integer_or_null}}` |
