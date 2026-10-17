@@ -34,6 +34,13 @@ test('withRecentFirst leads with available enabled recents and keeps the rest in
   assert.equal(list[3].recent, undefined, 'source commands are not mutated');
   assert.deepEqual(withRecentFirst(list, []).map(c => c.label), ['A', 'B', 'C', 'D', 'E']);
 
+  const twins = [cmd('Resume agent: worker', { id: 'agent-resume:a' }),
+    cmd('Resume agent: worker', { id: 'agent-resume:b' }), cmd('Same'), cmd('Same')];
+  assert.deepEqual(withRecentFirst(twins, ['agent-resume:b']).map(c => c.id)[0], 'agent-resume:b',
+    'a stable id promotes the exact agent even when titles collide');
+  assert.ok(withRecentFirst(twins, ['Same']).every(c => !c.recent),
+    'an ambiguous label key is never promoted');
+
   const wide = Array.from({ length: 10 }, (_, i) => cmd(`c${i}`));
   const keys = wide.map(c => c.label).reverse();
   assert.equal(withRecentFirst(wide, keys).filter(c => c.recent).length, RECENT_SHOWN);

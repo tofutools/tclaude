@@ -6,10 +6,12 @@
 // match ladder from palette-score.js, with recency only breaking ties
 // between equally good matches.
 //
-// Commands carry no stable id, so the key is `id` when a command sets one
-// and its presented label otherwise. Label keys deliberately make a
-// per-agent command follow its title, and a recent command that no longer
-// exists (agent retired, group deleted) simply drops out of the block.
+// The key is `id` when a command sets one (per-agent commands use the
+// agent's stable id, since two agents can share a title) and its presented
+// label otherwise. A recent command that no longer exists (agent retired,
+// group deleted) simply drops out of the block, and an ambiguous key — two
+// current commands with the same key — is never promoted, so "repeat last"
+// can't silently target the wrong one.
 // Like the rest of this split, the module is pure apart from the injected
 // store, so node:test imports it directly.
 
@@ -33,14 +35,13 @@ export function rememberRecent(keys, key, cap = RECENT_STORED) {
 // withRecentFirst returns the empty-query list: up to `limit` enabled
 // recent commands (copied with recent: true, the last one also marking
 // recentLast for the divider) followed by everything else in build order.
-// A key matches only its first command, so a duplicated label is not
-// promoted twice.
+// Keys shared by several current commands are skipped (mapped to null).
 export function withRecentFirst(commands, recentKeys, limit = RECENT_SHOWN) {
   if (!recentKeys.length) return commands.slice();
   const byKey = new Map();
   for (const command of commands) {
     const key = commandKey(command);
-    if (key && !byKey.has(key)) byKey.set(key, command);
+    if (key) byKey.set(key, byKey.has(key) ? null : command);
   }
   const promoted = new Set();
   const head = [];
