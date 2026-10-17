@@ -395,3 +395,12 @@ test('fused Both keeps a peer group\'s member table beside the not-shared note',
   const home = root.querySelector('details[data-group-key="frontend-squad@desk"]');
   assert.ok(home.querySelector('[data-fused-processes="frontend-squad"]'), "this node's group has its Processes section");
 });
+
+test('fused view lets this node\'s process drags through, the run focus\'s performer dock included', async (t) => {
+  const { harness, root } = await mountFusedLens(t, { focus: 'processes' });
+  const add = (inner) => { const d = harness.document.createElement('div'); d.innerHTML = inner; root.appendChild(d); return d; };
+  const dock = add('<div data-run-dock><span draggable="true" data-run-dock-agent="agt_fe_lead">fe</span></div>').querySelector('[data-run-dock-agent]');
+  assert.equal(harness.fireEvent(dock, 'dragstart').defaultPrevented, false, 'a performer drags onto a step');
+  const peer = add('<details data-fleet-node="inst_forge"><span draggable="true" data-saved-process-drag="tpl">p</span></details>').querySelector('span');
+  assert.equal(harness.fireEvent(peer, 'dragstart').defaultPrevented, true, "a peer group's drags stay stopped");
+});

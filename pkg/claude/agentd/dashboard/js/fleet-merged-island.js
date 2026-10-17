@@ -283,7 +283,7 @@ export function MergedGroups({
   const hoveredGroupKey = useGroupsHover(host, view.groups);
   useGroupsTableControls(host, groups, routed.current);
   // The toolbar counts what this view lists while it is on screen.
-  const listedKey = `${view.shownReal}/${view.total}/${view.groups.map((g) => g.key || g.name).join(',')}`;
+  const listedKey = `${view.shownReal}/${view.total}/${view.groups.map((g) => `${g.key || g.name}:${(g.members || []).map((m) => m.agent_id || m.conv_id).join('+')}`).join(',')}`;
   useEffect(() => {
     groups.listed.value = active ? { groups: view.groups, total: view.total, shownReal: view.shownReal } : null;
   }, [active, listedKey]);
@@ -365,9 +365,11 @@ export function MergedGroups({
       if (!host.contains(event.target)) return;
       const src = dragSource(event.target.closest?.('tr.dnd-draggable'));
       // A home group's process drags (a saved process, a run's performer)
-      // run as on this node's own view.
+      // run as on this node's own view. The single-run focus replaces the
+      // tree and only ever shows a home group (a peer's has no runs here).
       if (!src && homeRef.current && event.target.closest?.(PROCESS_DRAGS)
-        && event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
+        && (event.target.closest('[data-run-dock]')
+          || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
       if (!src) { event.preventDefault(); return; }
       event.stopPropagation();
       dragging = src;

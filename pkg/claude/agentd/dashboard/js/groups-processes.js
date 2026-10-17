@@ -581,9 +581,11 @@ export function GroupProcessBody({ group, fused = null }) {
 // section stays as it is.
 function UnsharedRuns({ group, wizard, fused }) {
   const node = group.fleet_node?.name || 'this node';
-  const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${wizard
-    ? `The rites of ${node} are not shared across realms.`
-    : `Process runs on ${node} are not shared across nodes.`}</div>`;
+  // This node's own groups on a peer's page: their runs show on its own page.
+  const text = group.fleet_node?.local
+    ? (wizard ? 'The rites of this realm show on its own page.' : "This node's process runs show on its own page.")
+    : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
+  const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
   return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>

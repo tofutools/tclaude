@@ -66,7 +66,10 @@ export function GroupsControls({ state, actions }) {
   // count what it lists.
   const listed = state.listed.value;
   const current = listed ? { ...state.view.value, ...listed } : state.view.value;
-  const badge = state.deviationCount.value;
+  // The node-only options are not offered while fused, so their changes do
+  // not count there.
+  const badge = state.deviationCount.value - (listed ? GROUP_VIEW_OPTIONS
+    .filter((option) => option.nodeOnly && state.visibility.value[option.key] !== option.defaultValue).length : 0);
   const columns = state.columnOptions.value;
   const wizard = useWizardTheme();
   useGroupsFocusRestore(state);
@@ -275,8 +278,8 @@ export function useGroupsHover(host, groups) {
 // context names them (see groups-process-scope.js).
 export function GroupsLensList({
   state, groups, rosters, snapshot, actions, triggers = [], hoveredGroupKey = null, processSource = undefined, wizard,
+  focus = effectiveGroupsFocus(state),
 }) {
-  const focus = effectiveGroupsFocus(state);
   // Every lens renders the same groups tree; Processes frames it and swaps
   // each group's member details for its runs, Both frames it and shows the
   // two as sections of each group.
@@ -343,11 +346,14 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   }, [focus]);
 
   // While fused this list is hidden and the fused Groups view
-  // (fleet-merged-island.js) shows the standing-orders dialog: one copy only.
+  // (fleet-merged-island.js) shows the standing-orders dialog and the runs:
+  // one copy only, so a process start handed to a group (takeProcessStart)
+  // opens where it is seen.
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
-      actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
+      actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard}
+      focus=${state.listed.value ? 'agents' : focus} />
     ${state.standingOrdersDialog.value && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
