@@ -16,6 +16,7 @@ import {
   openRetireAgentDialog, retireResultNeedsReconcile,
 } from './transaction-dialog-controller.js';
 import { lastSnapshot } from './dashboard.js';
+import { discardQueuedSpawn } from './queued-spawns.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -46,7 +47,9 @@ let dndSourceRetired = false;
 // permissions). Its ONLY valid drop is the trash, where it routes to a
 // DELETE (kill pane + drop rows) rather than a retire. Every hover handler
 // keys off this to make a pending source inert over group / ungrouped
-// targets and to relabel the trash gesture as a delete.
+// targets and to relabel the trash gesture as a delete. A QUEUED spawn row
+// (queued-spawns.js) rides the same flag — also not an agent, also only
+// droppable on the trash — and is told apart by its payload's queuedId.
 let dndSourcePending = false;
 // dndSourceGroup: the real group a dragged member row comes from (''
 // for the virtual sources). Like the flags above, dragover/dragenter
@@ -251,6 +254,8 @@ function bindDnd() {
     // valid drag is to the trash (→ delete). It has no conv-id / source
     // group / virtual-source flags, so it needs its own source predicate.
     const sourcePending = row.hasAttribute('data-dnd-pending');
+    const queuedId = sourcePending ? row.getAttribute('data-dnd-queued') || '' : '';
+    const queuedGroup = queuedId ? row.getAttribute('data-dnd-queued-group') || '' : '';
     const label = row.getAttribute('data-dnd-label') || conv;
     // A draggable row is a real-group member (has a source group), a
     // virtual-Ungrouped row, a virtual-Conversations row, a virtual-Retired
@@ -261,7 +266,7 @@ function bindDnd() {
     // most-supported channel; the JSON body keeps the encoding
     // self-describing. We allow both move (default) and copy effects
     // so Ctrl-drag can flip the cursor hint via dropEffect.
-    const payloadObj = {conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, label};
+    const payloadObj = {conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, queuedId, queuedGroup, label};
     const payload = JSON.stringify(payloadObj);
     e.dataTransfer.setData('application/x-tclaude-member', payload);
     e.dataTransfer.setData('text/plain', payload);
@@ -323,7 +328,7 @@ function bindDnd() {
     e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
     box.classList.toggle('dnd-effect-clone', isClone);
     let text;
-    if (targetRetired && dndSourcePending) text = '🗑 delete stuck spawn';
+    if (targetRetired && dndSourcePending) text = dndSourcePayload?.queuedId ? '🗑 discard queued agent' : '🗑 delete stuck spawn';
     else if (targetRetired) text = '↓ retire — demote to conversation';
     else if (targetUngrouped) text = dndSourceRetired ? '↓ reinstate (no group)' : dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
     else if (isClone) text = '→ clone into group';
@@ -453,6 +458,12 @@ function bindDnd() {
     // pending row is not a real agent and must never take the retire path.
     if (sourcePending) {
       if (!targetRetired) return; // inert everywhere else (see dndInertOnto)
+      if (payload.queuedId) {
+        // Same confirm + DELETE as the row's trash button; it refreshes on
+        // success, so only a cancel or failure needs the reconcile here.
+        if (!await discardQueuedSpawn({ id: payload.queuedId, group: payload.queuedGroup, draft: { name: payload.label } })) await refresh();
+        return;
+      }
       await runDndDeletePending(payload);
       return;
     }

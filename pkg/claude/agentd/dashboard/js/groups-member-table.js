@@ -27,6 +27,7 @@ import { fleetState } from './fleet-state.js';
 import { presenceView } from './agent-presence.js';
 import { hubOffReason } from './fleet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
+import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
 
 const html = htm.bind(h);
 
@@ -1230,9 +1231,61 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
   >${columns.map((column) => html`<${MemberCell} key=${column.key} column=${column} member=${member} group=${group} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} grants=${grants} menuKey=${menuKey} editorKey=${editorKey} />`)}</tr>`;
 }
 
-export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead, lead = null }) {
+// QueuedMemberRow is a queued spawn (queued-spawns.js) drawn as a member row:
+// ▶ where the status light sits, "queued" for the state, and the draft's
+// launch shape in the other columns. Not an agent yet, so there is no
+// terminal to focus; the trash discards, the cog reopens the spawn dialog,
+// and dragging it onto the bin discards too (dnd.js, data-dnd-queued).
+function QueuedMemberRow({ entry, columns }) {
+  const draft = entry.draft || {};
+  const label = queuedSpawnLabel(entry);
+  const act = (fn) => (event) => { event.preventDefault(); event.stopPropagation(); void fn(entry); };
+  const edit = act(editQueuedSpawn);
+  const muted = (value) => (value ? html`<span class="muted">${value}</span>` : html`<span class="muted">—</span>`);
+  const harness = String(draft.harness || '');
+  const labels = harnessLabels(harness);
+  const roles = Array.isArray(draft.roleRefs) ? draft.roleRefs.filter(Boolean) : [];
+  const brief = String(draft.initialMessage || '').trim().replace(/\s+/g, ' ');
+  const descr = String(draft.descr || '').trim();
+  const branch = String(draft.worktreeBranch || draft.worktree || '').trim();
+  const cell = (column) => {
+    switch (column.key) {
+      case 'ctl': return html`<td><div class="agent-ctl">
+        <button type="button" class="status-dot queued-play" data-act="queued-spawn-launch"
+          title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
+          aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
+        <div class="row-actions">
+          <button class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /></button>
+          <button class="icon-btn warn" data-act="queued-spawn-discard" title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
+          <button type="button" class="cog-btn" data-act="queued-spawn-edit" title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
+        </div></div>
+        ${draft.profile || harness ? html`<div class="agent-harness" title=${draft.profile ? `Queued with profile ${draft.profile}` : `Queued for ${labels.long}${draft.model ? ` · ${draft.model}` : ''}`}><span class="runtime-meta runtime-meta-offline">${draft.profile
+          ? String(draft.profile)
+          : html`<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${labels.long} />${draft.model ? html`<span class="harness-sep">·</span><span class="harness-model">${displayModel(String(draft.model), harness)}</span>` : null}${draft.effort ? html`<span class="harness-effort" title=${draft.effort}>${shortEffort(draft.effort)}</span>` : null}`}</span></div>` : null}</td>`;
+      case 'title': return html`<td class="name-cell"><div class="rowname"><span class="rowname-text queued-name" role="button" tabindex="0"
+        title="Click to review or edit the queued spawn" onClick=${edit}
+        onKeyDown=${(event) => { if (event.key === 'Enter' || event.key === ' ') edit(event); }}>${label}</span></div></td>`;
+      case 'state': return html`<td class="state-cell"><span class="state-pill-wrap" title=${`queued${entry.created_at ? ` ${relTime(entry.created_at)}` : ''} — prepared but not started; ▶ spawns it`}><span class="state-pill state-queued">queued</span></span></td>`;
+      case 'age': return html`<td><span class="last-hook" title=${entry.created_at || ''}>${entry.created_at ? relTime(entry.created_at) : ''}</span></td>`;
+      case 'cwd': return html`<td>${draft.cwd ? html`<span class="cwd" title=${draft.cwd}>${shortCwd(draft.cwd)}</span>` : muted('')}</td>`;
+      case 'branch': return html`<td>${branch ? html`<span class="branch muted" title=${`worktree branch at launch: ${branch}`}>⎇ ${branch}</span>` : muted('')}</td>`;
+      case 'role': return html`<td>${muted(roles.join(', ') || String(draft.role || ''))}</td>`;
+      case 'task': return html`<td class="task-cell">${muted(String(draft.task || ''))}</td>`;
+      case 'descr': return html`<td class="descr-cell">${descr ? html`<span class="descr-text">${descr}</span>` : brief ? html`<span class="muted" title=${brief}>“${brief.length > 60 ? `${brief.slice(0, 59)}…` : brief}”</span>` : muted('')}</td>`;
+      default: return html`<td></td>`;
+    }
+  };
+  return html`<tr class="dnd-draggable queued-row" draggable=${true} data-key=${`queued:${entry.id}`}
+    data-dnd-pending="1" data-dnd-queued=${entry.id} data-dnd-queued-group=${entry.group || ''}
+    data-dnd-conv=${`queued:${entry.id}`} data-dnd-label=${label}
+  >${columns.map((column) => html`<${Fragment} key=${column.key}>${cell(column)}<//>`)}</tr>`;
+}
+
+// MemberTable lists a group's members, its queued spawns (if any) heading the
+// rows outside the sort — they are not agents yet, so no column orders them.
+export function MemberTable({ members, group, tableKey, ungrouped = false, snapshot, actions, SortHead, lead = null, queued = [] }) {
   const columns = visibleMemberCols();
   const activeSort = tableSortState('members', columns);
-  return html`<table><${SortHead} table="members" columns=${columns} lead=${lead} /><tbody>${applySortState(members, MEMBER_ACCESSORS, activeSort).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
+  return html`<table><${SortHead} table="members" columns=${columns} lead=${lead} /><tbody>${queued.map((entry) => html`<${QueuedMemberRow} key=${`queued:${entry.id}`} entry=${entry} columns=${columns} />`)}${applySortState(members, MEMBER_ACCESSORS, activeSort).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
 }
 // dashboard-imperative-boundary: media-effects

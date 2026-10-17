@@ -1,7 +1,8 @@
 // Queued spawns: spawn-dialog drafts the operator prepared but has not
 // launched yet. They ride the snapshot (snapshot.queued_spawns) and surface in
-// two places — the toolbar's ⏸ queued chip and a "Queued" block in each target
-// group. Both render QueuedSpawnRow, so ▶ / edit / ✕ behave identically.
+// two places — the toolbar's ⏸ queued chip (QueuedSpawnRow) and a row at the
+// head of each target group's member table (groups-member-table.js's
+// QueuedMemberRow). Both call the launch / edit / discard actions below.
 //
 // A queued spawn is only a stored draft. Launching reopens the spawn dialog
 // from it and submits through the ordinary path, so worktree creation, base
@@ -104,13 +105,8 @@ export function QueuedSpawnRow({ entry, showGroup = true, Tag = 'div' }) {
   </${Tag}>`;
 }
 
-// GroupQueuedBlock lists a group's queued spawns above its member table, the
-// same slot the "Pending spawns" block uses.
-export function GroupQueuedBlock({ group, snapshot }) {
-  const rows = queuedSpawns(snapshot).filter((entry) => entry.group === group);
-  if (!rows.length) return null;
-  return html`<div class="group-queued-block">
-    <div class="group-queued-title"><span class="theme-copy-regular">⏸ Queued</span><span class="theme-copy-wizard">⏸ Dormant summonings</span></div>
-    ${rows.map((entry) => html`<${QueuedSpawnRow} key=${entry.id} entry=${entry} showGroup=${false} />`)}
-  </div>`;
+// groupQueuedSpawns is the queue for one group, oldest first as the snapshot
+// lists them.
+export function groupQueuedSpawns(snapshot, group) {
+  return queuedSpawns(snapshot).filter((entry) => entry.group === group);
 }

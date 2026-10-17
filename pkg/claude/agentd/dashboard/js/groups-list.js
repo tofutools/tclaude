@@ -26,7 +26,7 @@ import {
   GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
 } from './groups-processes.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
-import { GroupQueuedBlock } from './queued-spawns.js';
+import { groupQueuedSpawns } from './queued-spawns.js';
 
 const html = htm.bind(h);
 
@@ -619,18 +619,20 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // Both hands them to the runs body, which lays the two out as sections.
   const processes = useProcessesPerspective();
   // Queued spawns are this node's own drafts, so a peer's group never has any.
-  const queuedBlock = fleet ? null : html`<${GroupQueuedBlock} group=${group.name} snapshot=${snapshot} />`;
+  // They ride the member table as its leading rows.
+  const queued = fleet ? [] : groupQueuedSpawns(snapshot, group.name);
   const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null;
-  const members = !view.members.length && !view.away
-    ? html`<div class="muted">(no members yet)</div>`
-    : !view.visible.length
-      ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
-      : html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead}
-        lead=${processes?.fused ? html`<span class="group-header-actions gf-table-actions"><${GroupActions} group=${group} actions=${actions} fold=${false} /></span>` : null} />`;
   // In Both the agent controls head the member table's first column, which
   // has no title of its own; the section line keeps them only while it is
   // folded (or there is no table), so they never go out of reach.
-  const table = !!view.visible.length;
+  const table = !!view.visible.length || !!queued.length;
+  const hiddenNote = !view.visible.length && (view.members.length || view.away)
+    ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`
+    : null;
+  const members = table
+    ? html`<${MemberTable} members=${view.visible} group=${group} tableKey=${`group:${group.name}`} snapshot=${snapshot} actions=${actions} SortHead=${SortHead} queued=${queued}
+        lead=${processes?.fused ? html`<span class="group-header-actions gf-table-actions"><${GroupActions} group=${group} actions=${actions} fold=${false} /></span>` : null} />${hiddenNote}`
+    : hiddenNote || html`<div class="muted">(no members yet)</div>`;
   const fused = processes?.fused ? {
     actions: html`<${GroupActions} group=${group} actions=${actions} controls=${!table} />`,
     closedActions: table ? html`<${GroupActions} group=${group} actions=${actions} fold=${false} />` : null,
@@ -638,7 +640,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     // section; triggers follow both sections. Neither sits above a section
     // line, which would move its controls when the card folds.
     after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
-    agents: html`<${ForceBlock} group=${group} />${pending}${queuedBlock}${members}`,
+    agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
   } : null;
   return html`<details
     class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
@@ -650,7 +652,6 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
       ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
         ${processes ? null : pending}
-        ${processes ? null : queuedBlock}
         ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
         <${ForceBlock} group=${group} />`}
         <${GroupTriggersSection} group=${group} triggers=${triggers} />
