@@ -210,6 +210,10 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.groupGrantHeld('set-group-dir', 'build', restricted), false, 'another group holds nothing');
   assert.equal(mod.groupGrantHeld('retire-agent', 'ops', restricted), false, 'only group controls are grant-gated');
   assert.equal(mod.groupGrantHeld('set-group-dir', 'anything', { level: 'unrestricted' }), true);
+  assert.equal(mod.groupGrantHeld('group-settings', 'ops', restricted), true, "the ⚙ menu's settings items ride on groups.settings");
+  assert.equal(mod.groupGrantHeld('nest-group', 'build', restricted), false);
+  assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', restricted), false, 'the environment is its own grant');
+  assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', null), true, "this node's own group holds every field");
 
   doc.body.innerHTML = `<span id="ops-dir" data-act="set-group-dir" data-group="ops"><span id="ops-text" data-act="group-web-term" data-group="ops">~/src</span></span>
     <span id="build-dir" data-act="set-group-dir" data-group="build">x</span>`;

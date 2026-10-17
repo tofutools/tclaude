@@ -2,7 +2,7 @@ import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
-import { announceNodeChanged, nodeFetch } from './node-api.js';
+import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -50,6 +50,20 @@ export function descendantsOf(name, groups) {
   return found;
 }
 
+// groupSettingsPatch is the PATCH body for the settings dialog's values.
+function groupSettingsPatch(values) {
+	return {
+		descr: values.descr.trim(), default_cwd: values.defaultCwd.trim(),
+		default_context: values.defaultContext, default_profile: values.defaultProfile,
+		default_prompts: values.defaultPrompts || [],
+		environment: values.environment.map((entry) => ({ name: entry.name.trim(), value: entry.value })).filter((entry) => entry.name),
+		max_members: Math.max(0, Number(values.maxMembers) || 0),
+		notify_enabled: !!values.notifyEnabled,
+		remote_control_policy: values.remoteControlPolicy,
+		reinject_after_compact: values.reinjectAfterCompact || 'contexts',
+	};
+}
+
 export function createActionDialogActions({
   state,
   fetchImpl = fetch,
@@ -68,9 +82,9 @@ export function createActionDialogActions({
   return Object.freeze({
     openClone: state.openClone,
     openReincarnate: state.openReincarnate,
-    openNest({ group }) {
+    openNest({ group, node = '' }) {
       if (!group) { notify('no group', true); return; }
-      state.openNest({ group });
+      state.openNest({ group, node });
     },
     openTaskLink: state.openTaskLink,
     openGroupAttachment: state.openGroupAttachment,
@@ -90,8 +104,10 @@ export function createActionDialogActions({
     openTerminalChooser: state.openTerminalChooser,
     finishChoice: state.finishChoice,
     close: state.close,
-    nestModel(group) {
-      const groups = getSnapshot()?.groups || [];
+    // node names another node's group (the fused Groups view): its parent
+    // candidates are that node's groups.
+    nestModel(group, node = '') {
+      const groups = (nodeSnapshot(node) || getSnapshot())?.groups || [];
       const current = groups.find((item) => item.name === group);
       const blocked = descendantsOf(group, groups);
       return {
@@ -156,12 +172,13 @@ export function createActionDialogActions({
       await refresh();
       return payload;
     },
-    async nestGroup({ group, parent }, owner) {
-      await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/parent`, {
+    async nestGroup({ group, parent, node = '' }, owner) {
+      await requestJSON(nodeFetch(node, { fetchImpl }), `/api/groups/${encodeURIComponent(group)}/parent`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent }),
       });
       state.close(owner);
       notify(parent ? `${group}: nested under ${parent}` : `${group}: moved to top level`);
+      announceNodeChanged(node);
       await refresh();
     },
     // Persist the two independent pieces of an agent's task reference — the full
@@ -199,39 +216,46 @@ export function createActionDialogActions({
       announceNodeChanged(node);
       await refresh();
     },
-		async saveGroupSettings({ group, values }, owner) {
+		// Only the parts that changed are sent (all of them without an initial
+		// baseline): each has its own permission gate, and a caller acting on
+		// another node may hold some of them only. node names that node's group
+		// (the fused Groups view); blank is the page's.
+		async saveGroupSettings({ group, values, initial = null, node = '' }, owner) {
 			const newName = String(values.name || '').trim();
 			if (!newName) throw new Error('name is required');
-			const patch = {
-				descr: values.descr.trim(), default_cwd: values.defaultCwd.trim(),
-				default_context: values.defaultContext, default_profile: values.defaultProfile,
-				default_prompts: values.defaultPrompts || [],
-				environment: values.environment.map((entry) => ({ name: entry.name.trim(), value: entry.value })).filter((entry) => entry.name),
-				max_members: Math.max(0, Number(values.maxMembers) || 0),
-				notify_enabled: !!values.notifyEnabled,
-				remote_control_policy: values.remoteControlPolicy,
-				reinject_after_compact: values.reinjectAfterCompact || 'contexts',
-			};
-			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}`, {
-				method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-			});
-			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
-				method: values.sandboxProfile ? 'PUT' : 'DELETE', headers: { 'Content-Type': 'application/json' },
-				...(values.sandboxProfile ? { body: JSON.stringify({ name: values.sandboxProfile }) } : {}),
-			});
-			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/attachment`, {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(values.attachmentURL.trim() ? { url: values.attachmentURL.trim(), label: values.attachmentLabel.trim() } : { clear: true }),
-			});
+			const api = nodeFetch(node, { fetchImpl });
+			const patch = groupSettingsPatch(values);
+			const before = initial ? groupSettingsPatch(initial) : null;
+			const changedFields = Object.fromEntries(Object.entries(patch)
+				.filter(([key, value]) => !before || JSON.stringify(value) !== JSON.stringify(before[key])));
+			const attachment = (v) => (v.attachmentURL.trim() ? { url: v.attachmentURL.trim(), label: v.attachmentLabel.trim() } : { clear: true });
+			if (Object.keys(changedFields).length) {
+				await requestJSON(api, `/api/groups/${encodeURIComponent(group)}`, {
+					method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changedFields),
+				});
+			}
+			if (!initial || values.sandboxProfile !== initial.sandboxProfile) {
+				await requestJSON(api, `/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
+					method: values.sandboxProfile ? 'PUT' : 'DELETE', headers: { 'Content-Type': 'application/json' },
+					...(values.sandboxProfile ? { body: JSON.stringify({ name: values.sandboxProfile }) } : {}),
+				});
+			}
+			if (!initial || JSON.stringify(attachment(values)) !== JSON.stringify(attachment(initial))) {
+				await requestJSON(api, `/api/groups/${encodeURIComponent(group)}/attachment`, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attachment(values)),
+				});
+			}
 			if (newName !== group) {
-				await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/rename`, {
+				await requestJSON(api, `/api/groups/${encodeURIComponent(group)}/rename`, {
 					method: 'POST', headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ new_name: newName }),
 				});
-				migrateGroupRenamePrefs(group, newName);
+				// Rename prefs are this browser's view of the page node's groups.
+				if (!node) migrateGroupRenamePrefs(group, newName);
 			}
 			state.close(owner);
 			notify(`${newName}: settings saved`);
+			announceNodeChanged(node);
 			await refresh();
 		},
     async clonePreset({ source, create, name }, owner) {

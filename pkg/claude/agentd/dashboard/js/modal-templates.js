@@ -51,8 +51,9 @@ export function openFromGroupModal(groupName) {
   return managementController().openTemplateFromGroup(groupName || '');
 }
 
-export function openGroupContextModal(groupName) {
-  return managementController().openGroupContext(groupName);
+// node names another node's group (the fused Groups view); blank is the page's.
+export function openGroupContextModal(groupName, node = '') {
+  return managementController().openGroupContext(groupName, node);
 }
 
 export function openGroupCloneModal(groupName, placement = null) {

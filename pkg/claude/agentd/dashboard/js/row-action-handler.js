@@ -45,12 +45,35 @@ import {
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
+import { GROUP_GRANT_ACTS, READ_ONLY_ACTS } from './peer-view-limits.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 
 export async function handleRowAction(action) {
-  // A control on this node's own group in the fused Groups view names it
-  // group@node: the operations below take this node's plain group name.
-  const data = action.fleetHome ? Object.freeze(ownGroupData(action.data, action.fleetHome)) : action.data;
+  // A control on a group in the fused Groups view names it group@node: the
+  // operations below take that node's plain group name.
+  const data = action.fleetName ? Object.freeze(ownGroupData(action.data, action.fleetName)) : action.data;
   const act = data.act;
+  // node is the group's node in the fused view (blank: the page's). Only the
+  // group controls of GROUP_GRANT_ACTS address it: their requests go through
+  // api and their dialogs take node, reading its snapshot (never the page's,
+  // whose same-named group is another one). Any other control that acts acts
+  // on the page's node only (the fused view stops it before here; this is
+  // the backstop); view-only ones show what is on screen.
+  const node = isPageNode(action.fleetNode) ? '' : action.fleetNode;
+  if (node && !READ_ONLY_ACTS.has(act)) {
+    if (!GROUP_GRANT_ACTS[act]) {
+      toast(`${action.fleetName || 'That node'}: act on its groups from its own dashboard`, true);
+      return;
+    }
+    if (!nodeSnapshot(node)) {
+      toast(`${action.fleetName || 'That node'} is still loading — try again in a moment`, true);
+      return;
+    }
+  }
+  const api = nodeFetch(node);
+  // changed re-reads what an operation changed: the page, and the fused
+  // view's copy of node.
+  const changed = () => { announceNodeChanged(node); refresh(); };
   // Ctrl/Cmd-click on the Groups tab's terminal launchers keeps the current
   // dashboard tab visible while the pane opens (or becomes active) behind it.
   // Plain clicks and every non-click caller retain the historical reveal.
@@ -185,14 +208,14 @@ export async function handleRowAction(action) {
         // The group-header bell: flip agent_groups.notify_enabled.
         // Non-destructive and instantly reversible — no confirm.
         const cur = data.enabled === '1';
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}`, {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ notify_enabled: !cur }),
         });
         if (!r.ok) { toast(`Notification toggle failed: ${await r.text()}`, true); return; }
         toast(cur ? `${group}: notifications muted 🔕` : `${group}: notifications on 🔔`);
-        refresh();
+        changed();
         return;
       }
       case 'toggle-agent-notify': {
@@ -761,7 +784,7 @@ export async function handleRowAction(action) {
         // PATCH /api/groups/{name} {remote_control_policy}, the same endpoint
         // + method the default_profile / notify_enabled chips use.
         const next = data.next || 'inherit';
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}`, {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ remote_control_policy: next }),
@@ -769,7 +792,7 @@ export async function handleRowAction(action) {
         if (!r.ok) { toast(`set remote-control policy failed: ${await r.text()}`, true); return; }
         const pretty = next === 'optin' ? 'opt-in (default on)' : next === 'deny' ? 'deny (default off)' : 'inherit (defer to profile)';
         toast(`${group}: remote-control policy → ${pretty}`);
-        refresh();
+        changed();
         return;
       }
       case 'set-default-spawn-group': {
@@ -881,11 +904,11 @@ export async function handleRowAction(action) {
         // Open the group startup-context editor. Unlike the cwd
         // chip's inline <input>, the context is multi-line, so it
         // gets its own modal with a <textarea>.
-        openGroupContextModal(group);
+        openGroupContextModal(group, node);
         return; // Modal owns the save + refresh.
       }
       case 'group-settings': {
-        openGroupSettingsDialog({ group });
+        openGroupSettingsDialog({ group, node });
         return;
       }
       case 'clone-group': {
@@ -904,20 +927,20 @@ export async function handleRowAction(action) {
       case 'nest-group': {
         // Open the parent picker (n-level groups-in-groups, JOH-392). The
         // modal owns its PUT + toast + refresh.
-        openNestGroupDialog({ group });
+        openNestGroupDialog({ group, node });
         return;
       }
       case 'unnest-group': {
         // One-click "back to top level": clear the group's parent directly.
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/parent`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/parent`, {
           method: 'PUT', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ parent: '' }),
         });
-        ok = r.ok;
-        if (!ok) toast(`Un-nest failed: ${await r.text()}`, true);
-        else toast(`${group}: moved to top level`);
-        break;
+        if (!r.ok) { toast(`Un-nest failed: ${await r.text()}`, true); return; }
+        toast(`${group}: moved to top level`);
+        changed();
+        return;
       }
       case 'delete-group': {
         openDeleteGroupModal(group);

@@ -27,14 +27,19 @@ export function peerPath(node, path) {
   return `/api/peer/${encodeURIComponent(node)}/${url.pathname.slice('/api/'.length)}${url.search}`;
 }
 
+// isPageNode reports whether node is the page's own node (blank included):
+// its requests are the page's plain fetch, and its data the page snapshot.
+export function isPageNode(node, { self = selfNode, remote = globalThis.__tclaudeRemoteNode } = {}) {
+  return !node || node === (remote?.id || self);
+}
+
 // nodeFetch returns a fetch whose /api/ requests reach node. self is this
 // node's instance ID (needed only to reach it from a peer's page); a blank
 // node, or the page's own node, is the page's fetch.
 export function nodeFetch(node, {
   self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
-  const page = remote?.id || self;
-  if (!node || node === page) return fetchImpl;
+  if (isPageNode(node, { self, remote })) return fetchImpl;
   if (node === self && remote?.localFetch) return remote.localFetch;
   if (!NODE_ID.test(node)) throw new Error(`invalid node: ${node}`);
   return (input, init) => {
@@ -58,4 +63,20 @@ export function announceNodeChanged(node) {
   for (const listener of [...nodeListeners]) {
     try { listener(node); } catch (_) { /* one view's failure is not the change's */ }
   }
+}
+
+// nodeSnapshot is the latest snapshot of another node's dashboard, which a
+// dialog acting on that node's group or agent reads instead of the page's
+// (null for the page's own node: callers use the page snapshot). The fused
+// Groups view, which polls those nodes, is the source.
+let snapshotSource = () => null;
+
+export function setNodeSnapshotSource(source) {
+  snapshotSource = source;
+  return () => { if (snapshotSource === source) snapshotSource = () => null; };
+}
+
+export function nodeSnapshot(node) {
+  if (isPageNode(node)) return null;
+  try { return snapshotSource(node) || null; } catch (_) { return null; }
 }

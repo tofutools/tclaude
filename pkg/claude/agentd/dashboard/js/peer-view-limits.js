@@ -30,7 +30,7 @@ const SUBTAB_FEATURES = Object.freeze({
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
 // (The status dot is a power control — wake / shut down — so it is not here.)
-const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
+export const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
 // GROUP_GRANT_ACTS are group controls a peer serves through its peer-granted
 // routes (peer_grant_routes.go), with the peer grants they need in their
@@ -48,6 +48,18 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'set-group-sandbox-profile': ['groups.settings', 'groups.members.spawn.sandbox', 'feature:spawn.catalog'],
   'group-attachment': ['groups.settings'],
   'rename-group': ['groups.settings'],
+  // The ⚙ menu's group settings (nesting is board layout only).
+  'group-settings': ['groups.settings'],
+  'set-group-context': ['groups.settings'],
+  'toggle-group-notify': ['groups.settings'],
+  'set-group-remote-control': ['groups.settings'],
+  'nest-group': ['groups.settings'],
+  'unnest-group': ['groups.settings'],
+  // Fields of the settings dialog with no control of their own: the
+  // environment reaches every spawned agent's process, and the default saved
+  // prompts every spawn's brief.
+  'set-group-environment': ['groups.settings.environment'],
+  'set-group-prompts': ['groups.settings', 'groups.members.spawn.prompts'],
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group
@@ -60,6 +72,12 @@ export function groupGrantHeld(act, group, peerView) {
   return Array.isArray(held) && need.every((slug) => (slug.startsWith('feature:')
     ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
     : held.includes(slug)));
+}
+
+// groupFieldHeld is groupGrantHeld for a dialog that may be on this node's
+// own group: without a peer view (this node's snapshot) everything is held.
+export function groupFieldHeld(act, group, peerView) {
+  return !peerView || groupGrantHeld(act, group, peerView);
 }
 
 // cssString quotes a value for an attribute selector: group names come from

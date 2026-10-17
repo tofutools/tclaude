@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // Peer-granted dashboard routes: a trusted peer's operator changes this
@@ -31,9 +33,9 @@ import (
 const (
 	// PermGroupsSettings is the federation peer grant (group-scoped) for a
 	// group's ordinary settings: description, startup context, member cap,
-	// notifications, remote-control policy, attachment and name; its default
-	// directory, profile and sandbox profile also need the matching spawn
-	// grant. Unrestricted trust holds it.
+	// notifications, remote-control policy, attachment, name and nesting; its
+	// default directory, profile, saved prompts and sandbox profile also need
+	// the matching spawn grant. Unrestricted trust holds it.
 	PermGroupsSettings = "groups.settings"
 )
 
@@ -47,7 +49,7 @@ var peerGrantFamilies = map[string][]string{
 	PermGroupsSettings: {
 		PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir, PermGroupsSettingsDefaultContext,
 		PermGroupsSettingsDefaultProfile, PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications,
-		PermGroupsSettingsRemoteControlPolicy, PermGroupsAttachment, PermGroupsRename,
+		PermGroupsSettingsRemoteControlPolicy, PermGroupsAttachment, PermGroupsRename, PermGroupsNest,
 	},
 	PermGroupsSettingsEnvironment: {PermGroupsSettingsEnvironment},
 }
@@ -113,6 +115,23 @@ func (a *peerGrantAuthority) allowsDefaultProfile(name string) error {
 	return checkSelectableProfile(a.peer, a.group.ID, name)
 }
 
+// allowsDefaultPrompts reports whether a peer may set the group's default
+// saved prompts, which open every spawn's brief there: only with the grant
+// to choose a spawn's saved prompts.
+func (a *peerGrantAuthority) allowsDefaultPrompts() bool {
+	return peerSpawnFieldHeld(a.peer, a.group.ID, PermGroupsMembersSpawnPrompts)
+}
+
+// allowsParent reports whether a peer may nest the group under parent: one
+// of the groups this node shows it (blank clears the parent).
+func (a *peerGrantAuthority) allowsParent(parent string) bool {
+	if parent == "" {
+		return true
+	}
+	p, err := db.GetAgentGroupByName(parent)
+	return err == nil && p != nil && !p.IsArchived() && fedPeerGroupVisible(a.peer, p.ID)
+}
+
 // gate is requirePermissionEx for a peer-granted request: the slug must be
 // one the peer's grants cover, and a gate naming a group must name the
 // route's own.
@@ -174,8 +193,8 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 }
 
 // peerGroupGrants names, per group, the peer grants of peerGrantFamilies
-// (and the spawn directory and sandbox grants a group's default directory
-// and sandbox assignment also need) that
+// (and the spawn directory, prompts and sandbox grants a group's default
+// directory, saved prompts and sandbox assignment also need) that
 // peer holds there, so its dashboard enables exactly the controls a click
 // would be allowed to run. It rides on every peer-view read, so it lists the
 // peer's grants once. Unrestricted trust holds them all on every visible
@@ -212,7 +231,7 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		if len(held) == 0 {
 			continue
 		}
-		for _, slug := range []string{PermGroupsMembersSpawnCwd, PermGroupsMembersSpawnSandbox} {
+		for _, slug := range []string{PermGroupsMembersSpawnCwd, PermGroupsMembersSpawnPrompts, PermGroupsMembersSpawnSandbox} {
 			if holds(g.ID, slug) || holds(g.ID, PermGroupsMembersSpawnAll) {
 				held = append(held, slug)
 			}
@@ -222,8 +241,44 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 	return out
 }
 
+// projectPeerGroupSettings fills a group row with the settings held (the
+// group's peerGroupGrants) lets the peer change, which the peer projection
+// otherwise withholds: an editor that started blank would overwrite values
+// the peer never saw. (Unrestricted trust reads the complete snapshot.)
+func projectPeerGroupSettings(row *dashboardGroup, g *db.AgentGroup, peer string, held []string) {
+	holds := func(slug string) bool { return slices.Contains(held, slug) }
+	if holds(PermGroupsSettingsEnvironment) {
+		row.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...)
+	}
+	if !holds(PermGroupsSettings) {
+		return
+	}
+	attachment := groupAttachmentViewFor(g)
+	row.AttachmentURL, row.AttachmentLabel, row.AttachmentLabelOverride = attachment.URL, attachment.Label, attachment.LabelOverride
+	row.DefaultContext, row.ReinjectAfterCompact = g.DefaultContext, g.EffectiveReinjectAfterCompact()
+	row.DefaultProfile = g.DefaultProfile
+	row.MaxMembers, row.NotifyEnabled = g.MaxMembers, g.NotifyEnabled
+	row.RemoteControlPolicy = remoteControlPolicyToWire(g.RemoteControl)
+	if holds(PermGroupsMembersSpawnCwd) {
+		row.DefaultCwd = g.DefaultCwd
+	}
+	if holds(PermGroupsMembersSpawnPrompts) {
+		row.DefaultPrompts = append([]string(nil), g.DefaultPrompts...)
+	}
+	if holds(PermGroupsMembersSpawnSandbox) {
+		row.SandboxProfile = g.SandboxProfile
+	}
+	// A parent the peer does not see stays unnamed.
+	if g.ParentGroupID != nil && fedPeerGroupVisible(peer, *g.ParentGroupID) {
+		if p, err := db.GetAgentGroupByID(*g.ParentGroupID); err == nil && p != nil && !p.IsArchived() {
+			row.Parent = p.Name
+		}
+	}
+}
+
 // addPeerGroupSettingsRules declares the group settings a peer may change
-// with groups.settings: the quick options and settings of a group's header.
+// with groups.settings: the quick options and settings of a group's header
+// and ⚙ menu.
 func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 	settings := func(param string, extra func(string, *db.AgentGroup) []string) peerViewRule {
 		return peerViewRule{feature: "groups.settings", requires: PermGroupsSettings, group: true, invoke: &peerInvokeSpec{param: param, extra: extra}}
@@ -233,6 +288,7 @@ func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 		"POST /api/groups/{name}/rename",
 		"GET /api/groups/{name}/attachment",
 		"POST /api/groups/{name}/attachment",
+		"PUT /api/groups/{name}/parent",
 	} {
 		rules[pattern] = withPeerInvoke(pattern, settings("name", nil))
 	}

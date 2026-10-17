@@ -4127,6 +4127,10 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 	}
+	if a := peerGrantFromRequest(r); a != nil && body.DefaultPrompts != nil && !a.allowsDefaultPrompts() {
+		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for group:%s", PermGroupsMembersSpawnPrompts, g.Name))
+		return
+	}
 	var defaultPrompts []string
 	if body.DefaultPrompts != nil {
 		// Validate before any field is written so a bad name cannot leave a

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 )
@@ -19,7 +20,8 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
 		"projected": "Members Online",
-		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe FederationLinks",
+		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent",
+		"denied":    "DefaultSpawnGroup Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",
@@ -55,6 +57,20 @@ func classifyPeerFields(byPolicy map[string]string) map[string]string {
 // prevents an accidentally copied private field or an unclassified addition
 // from escaping. It does not mutate the shared gather.
 var allPeerProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true}
+
+// peerGroupSettingsPolicy classifies the group settings a peer reads only
+// where its grants let it change them: every row drops them, and
+// projectPeerGroupSettings sets the granted ones afterwards, so the final
+// snapshot gate (peerSnapshotGate) passes them.
+const peerGroupSettingsPolicy = "settings"
+
+// peerSnapshotGate is the final gate's policy set for a snapshot projected
+// with fields: the per-row settings projection already decided those.
+func peerSnapshotGate(fields map[string]bool) map[string]bool {
+	out := maps.Clone(fields)
+	out[peerGroupSettingsPolicy] = true
+	return out
+}
 
 // peerDefaultsProjectionFields adds the node's global spawn and sandbox
 // profile names, for a peer that reads the spawn catalogs or manages the

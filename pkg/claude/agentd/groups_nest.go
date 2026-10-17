@@ -43,6 +43,11 @@ func handleGroupParent(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		}
 	}
 	parent := strings.TrimSpace(body.Parent)
+	// A peer nests a group only under one this node shows it.
+	if a := peerGrantFromRequest(r); a != nil && !a.allowsParent(parent) {
+		writeError(w, http.StatusNotFound, "not_found", db.ErrGroupParentNotFound.Error())
+		return
+	}
 	if parent == g.Name {
 		// Friendlier than round-tripping to the cycle sentinel.
 		writeError(w, http.StatusConflict, "cycle", db.ErrGroupParentCycle.Error())

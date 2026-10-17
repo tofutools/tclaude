@@ -529,6 +529,33 @@ func fleetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "fleet-merged-groups-peer-settings-dialog",
+			Title:   "Groups · fused nodes, a peer group's settings dialog",
+			Caption: "The ⚙ menu's settings dialog on a forge group in the fused view: it reads forge's own group, and its save goes to forge through the peer proxy, sending only what changed. Directory browsing and the saved-prompt picker read this machine, so they are disabled on another node's group.",
+			InitJS:  fleetFederationStubJS + `;window.__dashsnapPeerSettings = true;`,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  var scope = '#fleetview-fused-groups-root details[data-fleet-node="inst_hn3cxq7a"] ';
+  for (var i = 0; i < 80 && !document.querySelector(scope + '.group-header-cog .cog-btn'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var cog = document.querySelector(scope + '.group-header-cog .cog-btn');
+  if (!cog) throw new Error('fleet: no forge group cog in the fused view');
+  cog.click();
+  for (var j = 0; j < 30 && !document.querySelector(scope + '[data-act="group-settings"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var item = document.querySelector(scope + '[data-act="group-settings"]');
+  if (!item) throw new Error('fleet: no settings item in the forge cog menu');
+  if (getComputedStyle(item).opacity !== '1') throw new Error('fleet: a granted forge cog item is greyed');
+  item.click();
+  for (var k = 0; k < 30 && !document.querySelector('#group-settings-modal'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  var name = document.querySelector('#group-settings-name');
+  if (!name) throw new Error('fleet: the forge settings dialog did not open');
+  if (/@/.test(name.value)) throw new Error('fleet: the dialog shows the fused name ' + name.value);
+  if (!document.querySelector('#group-settings-default-cwd-browse').disabled) throw new Error('fleet: browsing is enabled for a peer group');
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "fleet-fused-messages",
 			Title:   "Messages · fused nodes",
 			Caption: "Messages with every node fused: the same panes, filters, bulk bar, pager and reader as one node's Messages. The node chips narrow the view to one node; the fused folders span the nodes in view, and each node lists its own folders under its heading. Rows carry their node's pill, and actions go to that node.",

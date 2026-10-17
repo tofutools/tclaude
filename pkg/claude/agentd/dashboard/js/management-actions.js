@@ -11,6 +11,7 @@ import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import { refuseInPeerView } from './peer-view-guard.js';
+import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
 import { exportParams, landingParams, queryString } from './paf-model.js';
 import {
   loadSandboxProfiles,
@@ -289,8 +290,8 @@ export function createManagementActions({
         throw new Error(body?.error || `HTTP ${response.status}`);
       return body;
     },
-    async saveContext(name, context) {
-      const response = await fetch(`/api/groups/${encodeURIComponent(name)}`, {
+    async saveContext(name, context, node = '') {
+      const response = await nodeFetch(node)(`/api/groups/${encodeURIComponent(name)}`, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -619,13 +620,16 @@ export function createManagementActions({
   function openGroupImport(file = null) {
     state.openDialog({ kind: 'group-import', file, key: ++importKey });
   }
-  function openGroupContext(name) {
-    const group = (getSnapshot()?.groups || []).find(
+  // node names another node's group (the fused Groups view): its snapshot
+  // holds the context, and the save goes to it.
+  function openGroupContext(name, node = '') {
+    const group = ((nodeSnapshot(node) || getSnapshot())?.groups || []).find(
       (item) => item.name === name,
     );
     state.openDialog({
       kind: 'group-context',
       group: name,
+      node,
       context: group?.default_context || '',
     });
   }
@@ -746,14 +750,15 @@ export function createManagementActions({
     state.openDialog({ kind: 'group-export', group });
   }
 
-  async function saveGroupContext(name, context) {
-    await groups.saveContext(name, context.trim());
+  async function saveGroupContext(name, context, node = '') {
+    await groups.saveContext(name, context.trim(), node);
     state.closeDialog();
     notify(
       context.trim()
         ? `${name}: startup context updated`
         : `${name}: startup context cleared`,
     );
+    announceNodeChanged(node);
     await refresh();
   }
   async function loadDeployWorktrees(repo) {
