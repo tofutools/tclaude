@@ -139,6 +139,11 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	// Triggers stay local-only even for unrestricted trust, so the snapshot
 	// must not advertise them or the Groups view fetches a refused route.
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
+	// Guard against a vacuous pass: the flag is on, only the peer view hides it.
+	// The local snapshot keeps it (TestDashboardSnapshotDynamicallyGatesTriggers).
+	loaded, err := config.Load()
+	require.NoError(t, err)
+	require.True(t, loaded.TriggersEnabled())
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"triggers_enabled":false`)
@@ -152,7 +157,7 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code)
 	require.NotContains(t, rec.Body.String(), "private-group")
-	_, err := db.UntrustFederationPeer(fh.peer.id.ID())
+	_, err = db.UntrustFederationPeer(fh.peer.id.ID())
 	require.NoError(t, err)
 	req := testharness.JSONRequest(t, "GET", "/api/snapshot", nil)
 	req.Header.Set("X-Tclaude-Peer", "bob")
