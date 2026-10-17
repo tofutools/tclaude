@@ -183,10 +183,18 @@ func TestDashboardProfiles_InterruptedCapturesAndValidation(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, profileStatusInterrupted, list[0].Status,
 		"a running record this daemon is not running ended with an earlier process")
+	cliID, cliDir, err := createProfileDir(time.Now())
+	require.NoError(t, err)
+	require.NoError(t, writeProfileMeta(cliDir, &profileCapture{
+		ID: cliID, Source: "cli", Status: profileStatusRunning, Seconds: 30, StartedAt: time.Now(),
+	}))
+	assert.ErrorIs(t, deleteProfileCapture(cliID), errProfileBusy, "an in-flight CLI capture cannot be deleted")
+	assert.NoError(t, deleteProfileCapture(id), "a stale running record can be deleted")
 	require.NoError(t, os.WriteFile(filepath.Join(store, "not-a-capture"), nil, 0o600))
 	list, err = listProfileCaptures()
 	require.NoError(t, err)
-	assert.Len(t, list, 1, "stray entries in the store are ignored")
+	require.Len(t, list, 1, "stray entries in the store are ignored")
+	assert.Equal(t, profileStatusRunning, list[0].Status, "a recent CLI capture is still running")
 
 	zero := 0
 	secs, trace, _, err := profileRequest{TraceSeconds: &zero}.normalize()

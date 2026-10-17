@@ -606,8 +606,14 @@ func deleteProfileCapture(id string) error {
 	if id == runningProfileID() {
 		return errProfileBusy
 	}
-	if _, err := os.Stat(filepath.Join(dir, profileMetaFile)); err != nil {
+	c, err := readProfileMeta(dir)
+	if err != nil {
 		return err
+	}
+	// A CLI capture is written by another process; refuse while it can still
+	// be fetching artifacts into this directory.
+	if c.Status == profileStatusRunning && c.Source != "dashboard" && !profileCaptureStale(c) {
+		return errProfileBusy
 	}
 	dropProfileViewers(id)
 	return os.RemoveAll(dir)
