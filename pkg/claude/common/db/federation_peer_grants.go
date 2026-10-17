@@ -17,26 +17,73 @@ type FederationSpawnPolicy struct {
 	// PermissionSlugs is the optional receiver allowlist for agents.receive.permissions.
 	PermissionSlugs []string `json:"permission_slugs,omitempty"`
 	AllowedProfiles []string `json:"allowed_profiles,omitempty"`
-	// AllowedOverrides lists the launch settings (cwd, harness, model, effort)
-	// the peer may choose per spawn request; groups.members.spawn only. Unset
-	// keeps them receiver-owned: the fields below, then the group defaults.
-	AllowedOverrides []string `json:"allowed_overrides,omitempty"`
-	RequesterPays    string   `json:"requester_pays,omitempty"`
-	JobApproval      string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
-	Profile          string   `json:"profile,omitempty"`
-	Cwd              string   `json:"cwd,omitempty"`
-	Harness          string   `json:"harness,omitempty"`
-	Model            string   `json:"model,omitempty"`
-	MaxLive          int      `json:"max_live,omitempty"`
+	// The launch settings a peer may choose per spawn request are their own
+	// grants (groups.members.spawn.cwd, .harness, …); see migrateV269toV270.
+	// LegacyAllowedOverrides only decodes the list those grants replaced
+	// (see UnmarshalJSON), so a caller still sending it is refused rather
+	// than silently ignored. It is never written back.
+	LegacyAllowedOverrides []string `json:"-"`
+	RequesterPays          string   `json:"requester_pays,omitempty"`
+	JobApproval            string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
+	Profile                string   `json:"profile,omitempty"`
+	Cwd                    string   `json:"cwd,omitempty"`
+	Harness                string   `json:"harness,omitempty"`
+	Model                  string   `json:"model,omitempty"`
+	MaxLive                int      `json:"max_live,omitempty"`
 }
 
 // Equal includes selectable profiles in inherited-policy conflict checks.
 func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
 	return p.IncludeMembers == other.IncludeMembers && slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
-		slices.Equal(p.AllowedOverrides, other.AllowedOverrides) &&
 		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
 		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
 		p.Model == other.Model && p.MaxLive == other.MaxLive
+}
+
+// UnmarshalJSON also reads the replaced allowed_overrides list.
+func (p *FederationSpawnPolicy) UnmarshalJSON(b []byte) error {
+	type plain FederationSpawnPolicy
+	var v struct {
+		plain
+		Legacy []string `json:"allowed_overrides"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*p = FederationSpawnPolicy(v.plain)
+	p.LegacyAllowedOverrides = v.Legacy
+	return nil
+}
+
+// legacySpawnOverrideFields are the fields allowed_overrides could list.
+var legacySpawnOverrideFields = []string{"cwd", "harness", "model", "effort"}
+
+// ExpandLegacySpawnOverrides turns a spawn grant's replaced allowed_overrides
+// list into the groups.members.spawn.<field> grants with its scope that took
+// its place (migrateV269toV270 does the same for stored grants).
+func ExpandLegacySpawnOverrides(grants []FederationPeerGrant) []FederationPeerGrant {
+	have := map[[2]string]bool{}
+	for _, g := range grants {
+		have[[2]string{g.Slug, g.Scope}] = true
+	}
+	out := make([]FederationPeerGrant, 0, len(grants))
+	var added []FederationPeerGrant
+	for _, g := range grants {
+		legacy := g.SpawnPolicy.LegacyAllowedOverrides
+		g.SpawnPolicy.LegacyAllowedOverrides = nil
+		out = append(out, g)
+		if g.Slug != "groups.members.spawn" {
+			continue
+		}
+		for _, field := range legacy {
+			key := [2]string{"groups.members.spawn." + field, g.Scope}
+			if slices.Contains(legacySpawnOverrideFields, field) && !have[key] {
+				have[key] = true
+				added = append(added, FederationPeerGrant{PoolID: g.PoolID, PoolName: g.PoolName, Peer: g.Peer, Slug: key[0], Scope: g.Scope})
+			}
+		}
+	}
+	return append(out, added...)
 }
 
 type FederationPeerGrant struct {
@@ -75,12 +122,24 @@ func DeleteFederationPeerGrant(peer, slug, scope string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, slug, scope)
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, slug, scope)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	// The launch settings a spawn grant let the peer choose go with it, so
+	// a later spawn grant does not quietly reopen them.
+	if n > 0 && slug == "groups.members.spawn" {
+		if _, err := tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, peer, scope); err != nil {
+			return false, err
+		}
+	}
+	return n > 0, tx.Commit()
 }
 
 func ListFederationPeerGrants(peer string) ([]FederationPeerGrant, error) {

@@ -5,28 +5,62 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
-// Remote spawn launch overrides: the launch settings a peer may choose per
-// spawn request instead of leaving them to this node's grant policy and group
-// defaults. Choosing a directory on this machine is the sensitive one, so
-// every field is closed by default: unrestricted trust opens all of them, an
-// explicit groups.members.spawn grant opens the ones it lists
-// (allowed_overrides), and a request without a spawn grant (operator
-// approval) may set none. The ordinary group spawn path still applies every
-// launch guardrail to the result.
+// Remote spawn launch settings: what a peer may choose per spawn request
+// instead of leaving it to this node's grant policy, profiles and group
+// defaults. Each is its own peer grant, group-scoped like the
+// groups.members.spawn grant it extends, and closed by default:
+//
+//   - groups.members.spawn.cwd, .harness, .model, .effort: the launch
+//     directory, harness, model and effort;
+//   - groups.members.spawn.profile: any enabled spawn profile that is not
+//     operator-only (the grant's --allow-profile list names single ones);
+//   - groups.members.spawn.roles: the role set, from this node's roles (roles
+//     carry permissions here);
+//   - groups.members.spawn.sandbox: an explicit sandbox profile tier;
+//   - groups.members.spawn.all: every field above.
+//
+// They apply only together with an automatic spawn (a groups.members.spawn
+// grant, or unrestricted trust, which opens all of them): a request waiting
+// for the operator may set none. The ordinary group spawn path still applies
+// every launch guardrail to the result.
 const (
 	fedOverrideCwd     = "cwd"
 	fedOverrideHarness = "harness"
 	fedOverrideModel   = "model"
 	fedOverrideEffort  = "effort"
+	fedOverrideProfile = "profile"
+	fedOverrideRoles   = "roles"
+	fedOverrideSandbox = "sandbox"
+
+	PermGroupsMembersSpawnCwd     = "groups.members.spawn.cwd"
+	PermGroupsMembersSpawnHarness = "groups.members.spawn.harness"
+	PermGroupsMembersSpawnModel   = "groups.members.spawn.model"
+	PermGroupsMembersSpawnEffort  = "groups.members.spawn.effort"
+	PermGroupsMembersSpawnProfile = "groups.members.spawn.profile"
+	PermGroupsMembersSpawnRoles   = "groups.members.spawn.roles"
+	PermGroupsMembersSpawnSandbox = "groups.members.spawn.sandbox"
+	PermGroupsMembersSpawnAll     = "groups.members.spawn.all"
 )
 
-var fedSpawnOverrideFields = []string{fedOverrideCwd, fedOverrideHarness, fedOverrideModel, fedOverrideEffort}
+var fedSpawnOverrideFields = []string{fedOverrideCwd, fedOverrideHarness, fedOverrideModel, fedOverrideEffort, fedOverrideProfile, fedOverrideRoles, fedOverrideSandbox}
+
+// fedSpawnFieldSlugs maps each field to the grant that opens it.
+var fedSpawnFieldSlugs = map[string]string{
+	fedOverrideCwd:     PermGroupsMembersSpawnCwd,
+	fedOverrideHarness: PermGroupsMembersSpawnHarness,
+	fedOverrideModel:   PermGroupsMembersSpawnModel,
+	fedOverrideEffort:  PermGroupsMembersSpawnEffort,
+	fedOverrideProfile: PermGroupsMembersSpawnProfile,
+	fedOverrideRoles:   PermGroupsMembersSpawnRoles,
+	fedOverrideSandbox: PermGroupsMembersSpawnSandbox,
+}
 
 var (
 	// No leading '-': a model reaches harness command lines, where it must
@@ -35,44 +69,41 @@ var (
 	fedSpawnEffortRE = regexp.MustCompile(`^[a-z]{1,32}$`)
 )
 
-// normalizeSpawnOverrideAllowlist validates a grant's allowed_overrides.
-func normalizeSpawnOverrideAllowlist(slug string, policy *db.FederationSpawnPolicy) error {
-	if len(policy.AllowedOverrides) == 0 {
-		policy.AllowedOverrides = nil
-		return nil
+const fedSpawnMaxRoles = 16
+
+// fedSpawnFieldGranted reports whether peer holds the grant for one field
+// in group, or the all-fields grant, at least as specific as the spawn grant
+// in force there: a group-scoped spawn grant narrows what a broader field
+// grant opens, as its own policy narrows a broader spawn grant's.
+// Unrestricted trust is the caller's.
+func fedSpawnFieldGranted(peer string, groupID int64, field string) bool {
+	slug, ok := fedSpawnFieldSlugs[field]
+	if !ok {
+		return false
 	}
-	if slug != PermGroupsMembersSpawn {
-		return fmt.Errorf("allowed_overrides requires groups.members.spawn")
+	spawn := fedPeerExplicitGroupGrant(peer, groupID, PermGroupsMembersSpawn)
+	if spawn == nil {
+		return false
 	}
-	for _, field := range policy.AllowedOverrides {
-		if !slices.Contains(fedSpawnOverrideFields, field) {
-			return fmt.Errorf("unknown spawn override %q (allowed: cwd, harness, model, effort)", field)
+	for _, s := range []string{slug, PermGroupsMembersSpawnAll} {
+		if g := fedPeerExplicitGroupGrant(peer, groupID, s); g != nil && fedGrantRank(*g) >= fedGrantRank(*spawn) {
+			return true
 		}
 	}
-	slices.Sort(policy.AllowedOverrides)
-	policy.AllowedOverrides = slices.Compact(policy.AllowedOverrides)
-	return nil
+	return false
 }
 
 // fedSpawnOverridesAllowed reports which launch settings peer may choose for
-// a spawn into group. Only a grant that also auto-approves (or unrestricted
+// a spawn into group. Only an automatic spawn (a grant, or unrestricted
 // trust) opens any: an operator-approved request carries none.
 func fedSpawnOverridesAllowed(peer string, groupID int64) map[string]bool {
 	out := map[string]bool{}
-	if db.FederationPeerUnrestricted(peer) {
-		if fedPeerGroupGrant(peer, groupID, PermGroupsMembersSpawn) != nil {
-			for _, field := range fedSpawnOverrideFields {
-				out[field] = true
-			}
-		}
+	if fedPeerGroupGrant(peer, groupID, PermGroupsMembersSpawn) == nil {
 		return out
 	}
-	grant := fedPeerExplicitGroupGrant(peer, groupID, PermGroupsMembersSpawn)
-	if grant == nil {
-		return out
-	}
-	for _, field := range grant.SpawnPolicy.AllowedOverrides {
-		if slices.Contains(fedSpawnOverrideFields, field) {
+	unrestricted := db.FederationPeerUnrestricted(peer)
+	for _, field := range fedSpawnOverrideFields {
+		if unrestricted || fedSpawnFieldGranted(peer, groupID, field) {
 			out[field] = true
 		}
 	}
@@ -97,6 +128,25 @@ func validateFedSpawnOverrides(o db.FederationSpawnOverrides) error {
 	}
 	if o.Effort != "" && !fedSpawnEffortRE.MatchString(o.Effort) {
 		return fmt.Errorf("invalid requested effort")
+	}
+	if len(o.Roles) > fedSpawnMaxRoles {
+		return fmt.Errorf("at most %d requested roles", fedSpawnMaxRoles)
+	}
+	for _, name := range o.Roles {
+		if len(name) > 128 || validateGroupName(name) != nil {
+			return fmt.Errorf("invalid requested role")
+		}
+		if role, err := db.GetRole(name); err != nil || role == nil {
+			return fmt.Errorf("requested role %q is not a role on this node", name)
+		}
+	}
+	if o.SandboxProfile != "" {
+		if len(o.SandboxProfile) > 128 || validateGroupName(o.SandboxProfile) != nil {
+			return fmt.Errorf("invalid requested sandbox profile")
+		}
+		if profile, err := db.GetSandboxProfile(o.SandboxProfile); err != nil || profile == nil {
+			return fmt.Errorf("requested sandbox profile %q is not a sandbox profile on this node", o.SandboxProfile)
+		}
 	}
 	return nil
 }
@@ -165,10 +215,18 @@ func fedSpawnOverridesApplied(o db.FederationSpawnOverrides, allowed map[string]
 		return value
 	}
 	out := db.FederationSpawnOverrides{
-		Cwd:     keep(fedOverrideCwd, o.Cwd, explicit.Cwd),
-		Harness: keep(fedOverrideHarness, o.Harness, explicit.Harness),
-		Model:   keep(fedOverrideModel, o.Model, explicit.Model),
-		Effort:  keep(fedOverrideEffort, o.Effort, explicit.Effort),
+		Cwd:            keep(fedOverrideCwd, o.Cwd, explicit.Cwd),
+		Harness:        keep(fedOverrideHarness, o.Harness, explicit.Harness),
+		Model:          keep(fedOverrideModel, o.Model, explicit.Model),
+		Effort:         keep(fedOverrideEffort, o.Effort, explicit.Effort),
+		SandboxProfile: keep(fedOverrideSandbox, o.SandboxProfile, ""),
+	}
+	if len(o.Roles) > 0 {
+		if allowed[fedOverrideRoles] {
+			out.Roles = o.Roles
+		} else {
+			dropped = append(dropped, fedOverrideRoles)
+		}
 	}
 	// The peer chose its model and effort for the harness it requested: when
 	// the launch runs another one (the operator named a different harness,
@@ -206,7 +264,7 @@ func fedSpawnOverridesAllowedList(peer string, groupID int64) []string {
 // notice, one per line, or "" when there are none.
 func fedSpawnOverridesText(o db.FederationSpawnOverrides) string {
 	out := ""
-	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}} {
+	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}, {"roles", strings.Join(o.Roles, ", ")}, {"sandbox profile", o.SandboxProfile}} {
 		if kv[1] != "" {
 			out += fmt.Sprintf("\n  %s: %q", kv[0], kv[1])
 		}
@@ -233,7 +291,7 @@ func checkFedSpawnOverrides(peer string, groupID int64, o db.FederationSpawnOver
 		return err
 	}
 	allowed := fedSpawnOverridesAllowed(peer, groupID)
-	for field, value := range map[string]string{fedOverrideCwd: o.Cwd, fedOverrideHarness: o.Harness, fedOverrideModel: o.Model, fedOverrideEffort: o.Effort} {
+	for field, value := range map[string]string{fedOverrideCwd: o.Cwd, fedOverrideHarness: o.Harness, fedOverrideModel: o.Model, fedOverrideEffort: o.Effort, fedOverrideRoles: strings.Join(o.Roles, ","), fedOverrideSandbox: o.SandboxProfile} {
 		if value != "" && !allowed[field] {
 			return fmt.Errorf("this node does not let you choose the %s for this group", field)
 		}

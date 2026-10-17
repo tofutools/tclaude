@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -26,8 +27,10 @@ func normalizeSelectableProfiles(slug string, policy *db.FederationSpawnPolicy) 
 	}
 	slices.Sort(policy.AllowedProfiles)
 	policy.AllowedProfiles = slices.Compact(policy.AllowedProfiles)
-	// The override allowlist is the other per-request spawn choice a grant opens.
-	return normalizeSpawnOverrideAllowlist(slug, policy)
+	if len(policy.LegacyAllowedOverrides) > 0 {
+		return fmt.Errorf("allowed_overrides was replaced by grants of their own: grant groups.members.spawn.%s (or groups.members.spawn.all) with the same scope", strings.Join(policy.LegacyAllowedOverrides, ", groups.members.spawn."))
+	}
+	return nil
 }
 
 func checkSelectableProfile(peer string, group int64, name string) error {
@@ -50,10 +53,10 @@ func selectableSpawnProfiles(peer string, group int64) []proto.CatalogSpawnProfi
 	if launchGrant == nil {
 		return nil
 	}
-	// An explicit grant names its selectable profiles. Unrestricted trust,
-	// which already reads the whole registry over node.spawn.read, may also
-	// pick any enabled profile that is not operator-only (a spawn request may
-	// come from the peer's agents, not only its operator).
+	// An explicit grant names its selectable profiles. Unrestricted trust
+	// and groups.members.spawn.profile may also pick any enabled profile that
+	// is not operator-only (a spawn request may come from the peer's agents,
+	// not only its operator).
 	var profiles []*db.SpawnProfile
 	allowed := map[string]bool{}
 	if grant := fedPeerExplicitGroupGrant(peer, group, PermGroupsMembersSpawn); grant != nil {
@@ -64,7 +67,7 @@ func selectableSpawnProfiles(peer string, group int64) []proto.CatalogSpawnProfi
 			}
 		}
 	}
-	if db.FederationPeerUnrestricted(peer) {
+	if db.FederationPeerUnrestricted(peer) || fedSpawnFieldGranted(peer, group, fedOverrideProfile) {
 		all, _ := db.ListSpawnProfiles()
 		for _, profile := range all {
 			if profile != nil && !profile.OperatorOnly && !allowed[profile.Name] {

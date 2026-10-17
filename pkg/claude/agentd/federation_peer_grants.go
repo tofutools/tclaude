@@ -52,13 +52,22 @@ var federationPeerSlugs = map[string]string{
 	PermAgentsReceivePermissions: proto.CapAgentsReceivePermissions,
 	PermAgentsTeleportReceive:    proto.CapTeleportReceive,
 	PermGroupsMembersSpawn:       proto.CapSpawn,
-	PermGroupsMembersStop:        "stop",
-	PermGroupsMembersResume:      "resume",
-	PermGroupsMembersRetire:      "retire",
-	PermGroupsMembersClone:       "clone",
-	PermAgentMove:                "move",
-	PermRoutesConsume:            proto.CapRoutes,
-	PermJobsRun:                  proto.CapJobs,
+	// The launch settings a peer may choose on a spawn (federation_spawn_overrides.go).
+	PermGroupsMembersSpawnCwd:     "spawn_cwd",
+	PermGroupsMembersSpawnHarness: "spawn_harness",
+	PermGroupsMembersSpawnModel:   "spawn_model",
+	PermGroupsMembersSpawnEffort:  "spawn_effort",
+	PermGroupsMembersSpawnProfile: "spawn_profile",
+	PermGroupsMembersSpawnRoles:   "spawn_roles",
+	PermGroupsMembersSpawnSandbox: "spawn_sandbox",
+	PermGroupsMembersSpawnAll:     "spawn_all",
+	PermGroupsMembersStop:         "stop",
+	PermGroupsMembersResume:       "resume",
+	PermGroupsMembersRetire:       "retire",
+	PermGroupsMembersClone:        "clone",
+	PermAgentMove:                 "move",
+	PermRoutesConsume:             proto.CapRoutes,
+	PermJobsRun:                   proto.CapJobs,
 }
 
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
@@ -85,6 +94,19 @@ func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPe
 	return fedPeerExplicitGroupGrant(peer, groupID, slug)
 }
 
+// fedGrantRank orders grants matching one group: a group scope above an
+// unscoped grant, then a direct grant above a pool's.
+func fedGrantRank(g db.FederationPeerGrant) int {
+	n := 0
+	if g.Scope != "" {
+		n = 2
+	}
+	if g.PoolID == "" {
+		n++
+	}
+	return n
+}
+
 func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
 	grants, err := db.ListEffectiveFederationPeerGrants(peer)
 	if err != nil {
@@ -98,6 +120,11 @@ func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.Fede
 		if slug != "" && grant.Slug != slug {
 			continue
 		}
+		// A spawn's launch-setting grant only extends a spawn grant; on its
+		// own it shows the peer nothing.
+		if slug == "" && strings.HasPrefix(grant.Slug, PermGroupsMembersSpawn+".") {
+			continue
+		}
 		if grant.Scope == "" || grant.Scope == db.FederationGroupScope(groupID) {
 			candidates = append(candidates, grant)
 		}
@@ -107,16 +134,7 @@ func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.Fede
 	}
 	// Most specific scope wins. For launch policy only, direct policy wins
 	// among equally specific matches; conflicting inherited policies refuse.
-	rank := func(g db.FederationPeerGrant) int {
-		n := 0
-		if g.Scope != "" {
-			n = 2
-		}
-		if g.PoolID == "" {
-			n++
-		}
-		return n
-	}
+	rank := fedGrantRank
 	best := candidates[0]
 	for _, g := range candidates[1:] {
 		if rank(g) > rank(best) {

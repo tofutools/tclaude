@@ -278,6 +278,9 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		Harness string `json:"harness,omitempty"`
 		Model   string `json:"model,omitempty"`
 		Effort  string `json:"effort,omitempty"`
+		// Roles and SandboxProfile need their groups.members.spawn.* grants.
+		Roles          []string `json:"roles,omitempty"`
+		SandboxProfile string   `json:"sandbox_profile,omitempty"`
 	}
 	if !decodePeerAction(w, r, &body) {
 		return
@@ -286,7 +289,7 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		writeError(w, 400, "invalid_arg", "invalid remote spawn fields")
 		return
 	}
-	overrides := db.FederationSpawnOverrides{Cwd: body.Cwd, Harness: body.Harness, Model: body.Model, Effort: body.Effort}
+	overrides := db.FederationSpawnOverrides{Cwd: body.Cwd, Harness: body.Harness, Model: body.Model, Effort: body.Effort, Roles: body.Roles, SandboxProfile: body.SandboxProfile}
 	if err := validateFedSpawnOverrides(overrides); err != nil {
 		writeError(w, 400, "invalid_arg", err.Error())
 		return
@@ -318,7 +321,7 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	req.CreatedAt = time.Now().UTC()
 	v.groupName = g.Name
 	if fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn) {
-		go autoApproveFederationSpawnWithPeerAction(req, v.peer, true)
+		goBackground(func() { autoApproveFederationSpawnWithPeerAction(req, v.peer, true) })
 	} else {
 		notifyFederationSpawnRequest(v.peer, req, "operator")
 	}

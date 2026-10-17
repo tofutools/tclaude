@@ -655,6 +655,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // The settings a remote request names: those the operator set, less a role
+  // set or sandbox profile they changed and then put back as the peer has it.
+  const remoteExplicit = (value) => [...operatorSet.current].filter((key) => !['roleRefs', 'sandboxProfile'].includes(key)
+    || JSON.stringify(value[key] ?? null) !== JSON.stringify(baseline[key] ?? null));
   // A remote spawn's profile pick. Clear returns to what the peer applies.
   // A peer profile replaces the pre-fill as it does locally (it rides by
   // name, so the peer applies all of it). A local profile fills only what
@@ -996,7 +1000,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('request_sent_ms');
       // A remote request carries only the overrides the operator set here.
       const payload = await actions.spawn(remote
-        ? { ...request, explicit: [...operatorSet.current], prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
+        ? { ...request, explicit: remoteExplicit(next), prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
         : request);
       markTiming('response_received_ms');
       if (queued) {

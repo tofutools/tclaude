@@ -32,6 +32,13 @@ const SPAWN_POLL_LIMIT_MS = 30 * 60 * 1000;
 export const REMOTE_BRIEF_MAX = 8 * 1024;
 const SAFE_NODE = /^inst_[a-z0-9]{4,64}$/;
 const OVERRIDES = Object.freeze(['cwd', 'harness', 'model', 'effort']);
+// FIELDS are every launch setting a peer's grants may open (its
+// groups.members.spawn.* grants): the string overrides above, then the
+// profile pick, the role set and an explicit sandbox profile.
+const FIELDS = Object.freeze([...OVERRIDES, 'profile', 'roles', 'sandbox']);
+// The dialog's draft key the operator sets for each list-like field.
+const FIELD_DRAFT_KEYS = Object.freeze({ roles: 'roleRefs', sandbox: 'sandboxProfile' });
+const SANDBOX_PROFILE_NONE = '/omit-all-tclaude-sandbox-profiles';
 // A ref or profile handle with this prefix names this node's library item
 // rather than the target's.
 export const LOCAL_REF = 'local:';
@@ -54,6 +61,7 @@ const FIELD_CONTROLS = Object.freeze({
   'agent-spawn-model-custom': 'model',
   'agent-spawn-effort': 'effort',
   'agent-spawn-role-add': 'roles',
+  'agent-spawn-sandbox-profile': 'sandbox',
 });
 
 function text(value) { return typeof value === 'string' ? value : ''; }
@@ -109,7 +117,7 @@ export function remoteSpawnApi(nodeId, { fetchImpl = (...a) => globalThis.fetch(
 // always-carried fields.
 export function normalizeRemoteSpawnOptions(raw) {
   const overrides = {};
-  for (const field of OVERRIDES) overrides[field] = raw?.overrides?.[field] === true;
+  for (const field of FIELDS) overrides[field] = raw?.overrides?.[field] === true;
   const profiles = (Array.isArray(raw?.profiles) ? raw.profiles : [])
     .filter((p) => typeof p?.name === 'string' && p.name)
     .map((p) => Object.freeze({ name: p.name, harness: text(p.harness), model: text(p.model), effort: text(p.effort) }));
@@ -217,7 +225,9 @@ export function remotePromptBodies(refs, peerApplied, remote) {
 // profile can fill some field the request carries.
 export function remoteFieldAllowed(field, options, catalogs = null) {
   if (field === 'always' || field === 'prompts') return true;
-  if (field === 'roles') return false;
+  // Roles and sandbox profiles are picked from the peer's own lists, which
+  // only its catalogs (node.spawn.read) show.
+  if (field === 'roles' || field === 'sandbox') return options?.overrides?.[field] === true && !!catalogs?.target;
   if (field === 'profile') {
     return (options?.profiles?.length || 0) > 0
       || ((catalogs?.local?.profiles?.length || 0) > 0 && OVERRIDES.some((f) => options?.overrides?.[f] === true));
@@ -248,7 +258,13 @@ export function remoteLockReason(field, remote) {
       ? `${node} lists no spawn profiles you may pick for this group — its own default profile applies`
       : `${node} runs an older tclaude that does not say which profiles you may pick — its own default profile applies`;
   }
-  if (field === 'roles') return `A remote spawn does not add roles yet — ${node} applies its profile and group roles`;
+  if (field === 'roles' || field === 'sandbox') {
+    const word = field === 'roles' ? 'roles' : 'sandbox profile';
+    if (!options?.known) return `${node} runs an older tclaude that does not take the ${word} from a remote spawn — its own defaults apply`;
+    if (options.approval !== 'automatic') return `${node} has not given you a spawn grant for this group — its operator decides the ${word} when approving`;
+    if (options.overrides?.[field] === true) return `${node} lets you choose the ${word}, but does not share its list with you (node.spawn.read) — its profile and group defaults apply`;
+    return `${node} does not let you choose the ${word} (groups.members.spawn.${field}) — its profile and group defaults apply`;
+  }
   if (OVERRIDES.includes(field)) {
     const word = FIELD_WORDS[field];
     const fixed = text(options?.defaults?.[field]);
@@ -321,6 +337,15 @@ export function remoteSpawnBody(request, explicit, options, prompts = []) {
     const value = text(body[field]).trim();
     if (value && said.has(field) && remoteFieldAllowed(field, options)) out[field] = value;
   }
+  const roles = list(body.role_refs).filter((r) => typeof r === 'string' && r);
+  if (said.has(FIELD_DRAFT_KEYS.roles) && options?.overrides?.roles === true) {
+    // There is no "no roles" on the wire: the peer would apply its profile
+    // and group roles, not the empty set shown here.
+    if (!roles.length) throw new Error('a remote spawn cannot remove every role — keep one, or Clear to the peer\'s defaults');
+    out.roles = roles;
+  }
+  const sandbox = text(body.sandbox_profile);
+  if (sandbox && sandbox !== SANDBOX_PROFILE_NONE && said.has(FIELD_DRAFT_KEYS.sandbox) && options?.overrides?.sandbox === true) out.sandbox_profile = sandbox;
   return out;
 }
 
