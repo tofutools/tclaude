@@ -144,10 +144,38 @@ test('manager traps Tab, closes on Escape, and contains the parent submit hotkey
   await harness.input(host.querySelector('[aria-label="Prompt body"]'), 'text');
   last.focus();
   await harness.act(() => harness.fireEvent(last, 'keydown', { key: 'Tab' }));
-  assert.equal(harness.document.activeElement, host.querySelector('[aria-label="Edit saved prompt"]'));
+  assert.equal(harness.document.activeElement, host.querySelector('#saved-prompts-export'));
   await harness.act(async () => { harness.fireEvent(name, 'keydown', { key: 'Escape' }); await Promise.resolve(); });
   await flush(harness);
   assert.equal(host.querySelector('#saved-prompts-manage-modal'), null);
   assert.equal(harness.document.activeElement, manage);
+  await mounted.unmount();
+});
+
+test('manager clones under a free name and imports only new prompts unless overwrite is chosen', async (t) => {
+  const { harness, host, mounted, calls } = await setup(t);
+  await harness.act(() => harness.getByRole(host, 'button', { name: 'Manage prompts…' }).click());
+  await select(harness, host, 'Edit saved prompt', 'review');
+  await harness.act(async () => { harness.getByRole(host, 'button', { name: 'Clone' }).click(); await Promise.resolve(); });
+  await flush(harness);
+  assert.equal(host.querySelector('[aria-label="Prompt name"]').value, 'review-copy');
+  await harness.act(async () => { harness.getByRole(host, 'button', { name: 'Save prompt' }).click(); await Promise.resolve(); });
+  await flush(harness);
+  assert.deepEqual(JSON.parse(calls.find((call) => call.method === 'POST').body), { name: 'review-copy', body: 'Review this.\n' });
+
+  const file = { text: async () => JSON.stringify({ kind: 'tclaude.saved-prompts', version: 1, prompts: [
+    { name: 'review', body: 'Different text.' }, { name: 'fresh', body: 'Fresh text.' },
+  ] }) };
+  const input = host.querySelector('#saved-prompts-manage-modal input[type="file"]');
+  Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+  await harness.act(async () => { harness.fireEvent(input, 'change'); await Promise.resolve(); });
+  await flush(harness);
+  assert.match(host.querySelector('#saved-prompts-import').textContent, /1 new, 1 differ/);
+  const posts = () => calls.filter((call) => call.method === 'POST' || call.method === 'PATCH').length;
+  const before = posts();
+  await harness.act(async () => { host.querySelector('#saved-prompts-import-submit').click(); await Promise.resolve(); });
+  await flush(harness);
+  assert.equal(posts() - before, 1, 'only the new prompt is written');
+  assert.deepEqual(JSON.parse(calls.filter((call) => call.method === 'POST').at(-1).body), { name: 'fresh', body: 'Fresh text.' });
   await mounted.unmount();
 });
