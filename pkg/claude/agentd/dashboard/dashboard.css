@@ -19907,6 +19907,12 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
   background: radial-gradient(circle at 1px 1px, #21262d 1px, transparent 1.2px) 0 0 / 22px 22px, #0d1117;
 }
 .skynet-map-local { grid-column: 1; z-index: 1; }
+/* The hub sits between this node and its peers, narrower than a node card,
+   and shrinks with the middle column rather than widening the map. */
+.skynet-map-hub { grid-column: 2; justify-self: center; width: min(240px, 100% - 16px); min-width: 0; z-index: 1; }
+.skynet-card.hub { --nc: #8b949e; }
+.skynet-card.hub .skynet-card-body { grid-template-columns: 56px minmax(0, 1fr); }
+.skynet-hub-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .skynet-map-peers { grid-column: 3; display: grid; grid-template-columns: minmax(300px, 340px); gap: 28px; z-index: 1; justify-content: end; }
 .skynet-map-peers.wide { grid-template-columns: repeat(2, minmax(300px, 340px)); }
 .skynet-map-alone { align-self: center; padding: 14px 16px; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; font-size: 13px; }
@@ -20318,7 +20324,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 }
 @media (max-width: 720px) {
   .skynet-map { grid-template-columns: minmax(0, 1fr); row-gap: 20px; padding: 16px 12px 56px; align-items: start; }
-  .skynet-map-local, .skynet-map-peers, .skynet-map-peers.wide { grid-column: 1; }
+  .skynet-map-local, .skynet-map-hub, .skynet-map-peers, .skynet-map-peers.wide { grid-column: 1; }
+  .skynet-map-hub { justify-self: stretch; width: auto; }
   .skynet-map-peers, .skynet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
   .skynet-edges, .skynet-edge-label { display: none; }
 }
