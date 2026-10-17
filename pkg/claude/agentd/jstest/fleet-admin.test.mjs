@@ -2178,6 +2178,7 @@ test('setup progress: joining, trusting and sharing are the setup; agents using 
     { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } },
   ], 'what the peer holds on the group is not granted again');
   assert.deepEqual(g.agentSlugs(['mail', 'roster', 'spawn', 'routes']), ['message.direct', 'groups.members.spawn', 'routes.consume']);
+  assert.deepEqual(g.agentSlugs(['sessions_watch', 'sessions_attach', 'jobs']), ['sessions.watch', 'sessions.attach', 'jobs.run'], 'every shared terminal and job cap pairs with an agent grant');
   assert.deepEqual(g.capWords(['sessions_watch', 'presence', 'mail']), ['mail', 'presence', 'watch terminals']);
   assert.deepEqual(g.capWords(['future_cap']), ['future_cap'], 'a cap this build does not know is shown as is');
 });
@@ -2272,4 +2273,30 @@ test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done
   await s.click(s.q('[data-setup-next="share"]'));
   assert.ok(s.q('[data-setup-step="share"]'), 'a done step leads on to the next');
   assert.equal(s.q('[data-setup-next="agents"]') !== null, true);
+});
+
+test('the landing is decided once: finishing setup never swaps the guide away', async (t) => {
+  let current = joinedStatus({ peers: [{ instance_id: 'inst_forge', label: 'forge', name: 'forge', fingerprint: FP_FORGE, trusted: true, online: true, level: 'restricted' }] });
+  const s = await setup(t, { statusFn: () => current });
+  await s.show();
+  assert.ok(s.q('[data-setup-step="share"]'));
+  current = { ...current, peer_grants: [{ peer: 'inst_forge', slug: 'message.direct', scope: 'group=build' }] };
+  await s.click(s.q('#fleet-setup-share'));
+  await s.harness.act(() => { s.timers.queue.shift()?.fn(); });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.q('.fs-step[data-step="share"]').classList.contains('done'), true, 'the status read saw the share');
+  assert.ok(s.q('#fleet-setup'), 'the guide stays open after the last required step');
+  assert.ok(s.q('[data-setup-next="agents"]'), 'and leads on to step 4');
+});
+
+test('a set-up node whose hub drops keeps Peers on screen', async (t) => {
+  const settled = await setup(t);
+  await settled.show();
+  assert.ok(settled.q('#fleet-trusted'));
+  const dropped = status();
+  settled.actions.status = async () => ({ ...dropped, hub: { state: 'disconnected' } });
+  await settled.harness.act(() => { settled.timers.queue.find((q) => q.ms !== 5000)?.fn(); });
+  await settled.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.match(settled.q('.fa-identity').textContent, /disconnected/, 'the status read saw the drop');
+  assert.ok(settled.q('#fleet-trusted'), 'Peers stays while the hub is down');
 });

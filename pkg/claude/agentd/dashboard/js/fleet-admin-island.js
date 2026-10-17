@@ -343,8 +343,12 @@ export function FleetAdmin({
   const [status, setStatus] = useState(null);
   const [pools, setPools] = useState([]);
   const [failure, setFailure] = useState('');
-  // An empty page follows the setup: the guide until it is done, else Peers.
+  // With no page asked for, Fleet lands on the guide until setup is done,
+  // else on Peers. The landing is decided once, from the first status read,
+  // so finishing a step (or a hub blip) never swaps the page under the
+  // operator.
   const [page, setPage] = useState(() => takeFleetPage() || '');
+  const landing = useRef('');
   const [dialog, setDialog] = useState(null);
   const [grantTarget, setGrantTarget] = useState('');
   // runPreselect is the Run target another page sent the operator to (the hub).
@@ -421,7 +425,8 @@ export function FleetAdmin({
   }).then((ok) => { if (ok) done(`${r.label} is now restricted`); }).catch((e) => toast(`Restrict failed: ${errText(e)}`, true));
 
   const progress = setupProgress(view);
-  const sub = SUB_PAGES.find((p) => p.id === (page || (progress.complete ? 'peers' : 'setup'))) || SUB_PAGES[1];
+  if (!landing.current) landing.current = progress.complete ? 'peers' : 'setup';
+  const sub = SUB_PAGES.find((p) => p.id === (page || landing.current)) || SUB_PAGES[1];
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}

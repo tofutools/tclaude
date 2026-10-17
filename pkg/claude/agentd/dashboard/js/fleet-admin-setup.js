@@ -35,11 +35,11 @@ const CAP_USES = Object.freeze([
   { cap: 'presence', word: 'presence' },
   { cap: 'agents.status.read', word: 'agent status', slug: 'agents.status.read' },
   { cap: 'sessions', word: 'sessions', slug: 'sessions.read' },
-  { cap: 'sessions_watch', word: 'watch terminals' },
-  { cap: 'sessions_attach', word: 'attach terminals' },
+  { cap: 'sessions_watch', word: 'watch terminals', slug: 'sessions.watch' },
+  { cap: 'sessions_attach', word: 'attach terminals', slug: 'sessions.attach' },
   { cap: 'spawn', word: 'spawn workers', slug: 'groups.members.spawn' },
   { cap: 'routes', word: 'routes', slug: 'routes.consume' },
-  { cap: 'jobs', word: 'jobs' },
+  { cap: 'jobs', word: 'jobs', slug: 'jobs.run' },
   { cap: 'agents_receive', word: 'receive agents' },
 ]);
 
