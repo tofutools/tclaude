@@ -49,10 +49,11 @@ func TestDashboardPeerAttachmentStreamsChunksUnderMessagesRead(t *testing.T) {
 	exchanges := 0
 	previous := fetchPeerAttachmentChunk
 	t.Cleanup(func() { fetchPeerAttachmentChunk = previous })
-	fetchPeerAttachmentChunk = func(_ context.Context, peer *db.FederationPeer, message, attachment, offset int64) (humanAttachmentChunk, int, error) {
+	fetchPeerAttachmentChunk = func(_ context.Context, peer *db.FederationPeer, message, attachment, offset, length int64) (humanAttachmentChunk, int, error) {
 		exchanges++
 		require.Equal(t, id.ID(), peer.InstanceID)
-		uri := "/api/human-attachment-chunk?message=" + strconv.FormatInt(message, 10) + "&attachment=" + strconv.FormatInt(attachment, 10) + "&offset=" + strconv.FormatInt(offset, 10)
+		uri := "/api/human-attachment-chunk?message=" + strconv.FormatInt(message, 10) + "&attachment=" + strconv.FormatInt(attachment, 10) +
+			"&offset=" + strconv.FormatInt(offset, 10) + "&length=" + strconv.FormatInt(length, 10)
 		rec := httptest.NewRecorder()
 		PeerViewHandler(peer.InstanceID).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, uri, nil))
 		require.LessOrEqual(t, rec.Body.Len(), fedPeerViewResponseBodyLimit, "a chunk must fit one peer-view reply")
@@ -82,7 +83,7 @@ func TestDashboardPeerAttachmentStreamsChunksUnderMessagesRead(t *testing.T) {
 	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "sandbox")
 
-	// A Range across the first chunk boundary reads only the chunks it needs.
+	// A Range across a chunk-size boundary reads from its start: only what it needs.
 	exchanges = 0
 	req := dashboardRequest(http.MethodGet, url, "")
 	req.Header.Set("Range", "bytes="+strconv.Itoa(peerAttachmentChunk-5)+"-"+strconv.Itoa(peerAttachmentChunk+4))
@@ -90,7 +91,15 @@ func TestDashboardPeerAttachmentStreamsChunksUnderMessagesRead(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusPartialContent, rec.Code, rec.Body.String())
 	require.Equal(t, content[peerAttachmentChunk-5:peerAttachmentChunk+5], rec.Body.Bytes())
-	require.LessOrEqual(t, exchanges, 3)
+	require.Equal(t, 2, exchanges, "metadata, then one chunk read from the range start")
+
+	// A HEAD (the image viewer's preflight) asks only for the metadata.
+	exchanges = 0
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, dashboardRequest(http.MethodHead, url, ""))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, strconv.Itoa(len(content)), rec.Header().Get("Content-Length"))
+	require.Equal(t, 1, exchanges)
 
 	// An unknown peer is refused before anything is asked of it.
 	rec = httptest.NewRecorder()

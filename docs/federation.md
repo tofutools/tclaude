@@ -3987,8 +3987,9 @@ wipe and human message mutations are not shared through these routes.
 A human notification's files are part of the mail `node.messages.read` shows.
 `GET /api/peer-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only) reads one
 from the peer in base64 chunks of at most 4 MiB
-(`GET /api/human-attachment-chunk?message=&attachment=&offset=` on the peer,
-under the same grant) and serves it to the dashboard with Range support. The
+(`GET /api/human-attachment-chunk?message=&attachment=&offset=&length=` on the
+peer, under the same grant; `length=0` reads only the file's name, type and
+size) and serves it to the dashboard with Range support. The
 peer's declared type is narrowed to images (not SVG), video, audio or plain
 text, anything else is an opaque download, and the response is a sandboxed,
 `nosniff` attachment.

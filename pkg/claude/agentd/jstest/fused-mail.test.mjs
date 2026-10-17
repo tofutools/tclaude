@@ -320,3 +320,31 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   assert.ok(calls.includes('/api/peer/inst_forge/mailboxes?agents_limit=100&q=bot&include_retired=1&hide_prev_gens=1'));
   await mounted.unmount(); state.dispose();
 });
+
+test('on a peer\'s page, this node\'s own notification files keep their local route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
+  const timers = fakeTimers();
+  const respond = async (url) => {
+    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [] });
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    const peer = url.startsWith('/api/peer/');
+    return ok({ messages: [{ id: peer ? 8 : 5, from_agent: 'agt_abcd1234', from_conv: 'c0ffee00-0000-4000-8000-000000000001', subject: 'note', body: 'b', created_at: '2026-01-01T00:00:00Z',
+      attachments: [{ id: 7, filename: 'notes.txt', content_type: 'text/plain', size_bytes: 10, url: `/api/human-messages/${peer ? 8 : 5}/attachments/7` }] }], total: 1 });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="inst_forge" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
+  await once();
+  await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Human notifications/ }), 'click'));
+  await once();
+  await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_self/human/5"] .mail-row'), 'click'));
+  assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/human-messages/5/attachments/7');
+  assert.equal(c.querySelector('#fused-mail-reader [data-act]'), null, 'a peer\'s page refuses data-act buttons; the reply box answers instead');
+  await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_forge/human/8"] .mail-row'), 'click'));
+  assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/peer-attachments/inst_forge/8/7');
+  await mounted.unmount(); state.dispose();
+});

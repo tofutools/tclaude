@@ -274,9 +274,10 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
     const human = item.kind === 'human';
     const headers = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
       <${MessageBody} message=${item} />`;
-    if (human && !(node.local && !remote)) {
-      // A peer's notification: its files load through this node's peer
-      // attachment route, and it is answered through the peer's human-inbox.
+    if (human && (!node.local || remote)) {
+      // A peer's notification (its files already point at this node's peer
+      // attachment route) is answered through the peer's human-inbox; so is
+      // this node's on a peer's page, where its data-act buttons are refused.
       return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0">
         ${headers}
         <${HumanAttachment} message=${item} />
@@ -379,7 +380,7 @@ export function FusedMail({
   // A peer's notification files load through this node's peer attachment route.
   const pageMessages = (node, i) => {
     const list = pages[i]?.messages || [];
-    return isHuman && !(node.local && !remote) ? list.map((m) => withPeerAttachments(node.id, m)) : list;
+    return isHuman && !node.local ? list.map((m) => withPeerAttachments(node.id, m)) : list;
   };
   const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pageMessages(node, i) })));
   const pageCount = isAccess ? 1 : merged ? mergedPages(total, pageSize) : Math.max(1, Math.ceil(total / pageSize));

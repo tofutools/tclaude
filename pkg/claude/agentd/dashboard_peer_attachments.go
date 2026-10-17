@@ -21,8 +21,9 @@ import (
 // Messages view). The peer view carries JSON replies of at most
 // fedPeerViewResponseBodyLimit, so a file crosses as base64 chunks:
 //
-//	GET /api/human-attachment-chunk?message=N&attachment=M&offset=O
-//	    one chunk of a stored attachment with its name, type and size. Served
+//	GET /api/human-attachment-chunk?message=N&attachment=M&offset=O[&length=L]
+//	    one chunk of a stored attachment (at most L bytes; length=0 asks only
+//	    for its name, type and size) with its name, type and size. Served
 //	    to this node's dashboard and, through the peer view, to a peer granted
 //	    node.messages.read (the grant that already shows it the message).
 //
@@ -62,6 +63,15 @@ func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "message, attachment and offset are required")
 		return
 	}
+	length := int64(peerAttachmentChunk)
+	if v := q.Get("length"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "length must be a non-negative integer")
+			return
+		}
+		length = min(length, n)
+	}
 	a, err := resolveHumanMessageAttachment(messageID, attachmentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "read attachment")
@@ -87,7 +97,7 @@ func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_arg", "offset is past the end of the file")
 		return
 	}
-	data := make([]byte, min(int64(peerAttachmentChunk), size-offset))
+	data := make([]byte, min(length, size-offset))
 	if _, err := f.ReadAt(data, offset); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusInternalServerError, "io", "read attachment")
 		return
@@ -165,15 +175,20 @@ func (p *peerAttachmentReader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-// fetchPeerAttachmentChunk asks a peer for one chunk over the peer view.
-var fetchPeerAttachmentChunk = func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset int64) (humanAttachmentChunk, int, error) {
+// fetchPeerAttachmentChunk asks a peer for one chunk over the peer view:
+// up to length bytes from offset (length 0: only the file's metadata).
+var fetchPeerAttachmentChunk = func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
 	rt := currentFederation()
 	if rt == nil {
 		return humanAttachmentChunk{}, http.StatusBadGateway, errPeerViewOffline
 	}
-	q := url.Values{"message": {strconv.FormatInt(messageID, 10)}, "attachment": {strconv.FormatInt(attachmentID, 10)}, "offset": {strconv.FormatInt(offset, 10)}}
+	q := url.Values{"message": {strconv.FormatInt(messageID, 10)}, "attachment": {strconv.FormatInt(attachmentID, 10)},
+		"offset": {strconv.FormatInt(offset, 10)}, "length": {strconv.FormatInt(length, 10)}}
 	reply, err := exchangePeerView(ctx, rt, peer, fedPeerViewRequest{Method: http.MethodGet, URI: "/api/human-attachment-chunk?" + q.Encode(), Header: http.Header{}})
 	if err != nil {
+		if errors.Is(err, errPeerViewBusy) {
+			return humanAttachmentChunk{}, http.StatusServiceUnavailable, err
+		}
 		if errors.Is(err, errPeerViewTimeout) {
 			return humanAttachmentChunk{}, http.StatusGatewayTimeout, err
 		}
@@ -218,18 +233,20 @@ func handleDashboardPeerAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	// Each chunk gets the peer view's own timeout; a whole large file may take
 	// longer than one exchange.
-	fetch := func(offset int64) (humanAttachmentChunk, int, error) {
+	fetch := func(offset, length int64) (humanAttachmentChunk, int, error) {
 		ctx, cancel := context.WithTimeout(r.Context(), fedPeerViewTimeout)
 		defer cancel()
-		return fetchPeerAttachmentChunk(ctx, peer, messageID, attachmentID, offset)
+		return fetchPeerAttachmentChunk(ctx, peer, messageID, attachmentID, offset, length)
 	}
-	first, status, err := fetch(0)
+	// The first exchange carries only the name, type and size: a HEAD or a
+	// Range request then fetches just the chunks it reads.
+	first, status, err := fetch(0, 0)
 	if err != nil {
 		writeError(w, status, "peer_attachment", err.Error())
 		return
 	}
-	reader := &peerAttachmentReader{first: first, buf: first.Data, fetch: func(offset int64) (humanAttachmentChunk, error) {
-		c, _, err := fetch(offset)
+	reader := &peerAttachmentReader{first: first, fetch: func(offset int64) (humanAttachmentChunk, error) {
+		c, _, err := fetch(offset, peerAttachmentChunk)
 		return c, err
 	}}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": first.Filename}))
