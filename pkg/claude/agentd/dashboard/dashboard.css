@@ -20104,17 +20104,18 @@ body.wizard nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.no
 @media (min-width: 1200px) {
   nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { flex-shrink: 0; }
 }
-/* Remote per-node view (?node=, js/remote-node.js): the peer's name stands in
-   for the dashboard title, a 3px line in the node's own colour runs along the
-   top edge (fixed overlay: no layout change), and a "peer view" pill opens what
-   the peer shares. No colour means "remote" in general — only that node. */
-html.remote-node .dashboard-title { display: none; }
+/* Remote per-node view (?node=, js/remote-node.js): the title reads
+   "tclaude @ <peer>" with the peer's name in its node colour, a 3px line in
+   that colour runs along the top edge (fixed overlay: no layout change), and a
+   "peer view" pill opens what the peer shares. No colour means "remote" in
+   general — only that node. */
 html.remote-node body::before {
   content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000;
   background: var(--remote-node-color, #8b949e); pointer-events: none;
 }
 .remote-node-host:empty { display: none; }
 .remote-node-marker { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.remote-node-at { color: #7d8590; font-weight: 400; margin: 0 -3px; }
 .remote-node-title { color: var(--nc); font-weight: 600; white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
 .remote-node-pill {
   font: inherit; font-size: 11px; font-weight: normal; line-height: 1.4; padding: 1px 8px; border-radius: 10px; cursor: pointer;

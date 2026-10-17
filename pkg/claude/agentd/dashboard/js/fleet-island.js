@@ -713,7 +713,7 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
 }
 
 // RemoteMarker marks a peer's per-node view without moving any component: the
-// node's name replaces the dashboard title (CSS hides "tclaude"), a thin line
+// title reads "tclaude @ <node>" in the node's colour, a thin line
 // in the node's colour runs along the top edge, and a "peer view" pill lists
 // what the peer shares and whether the data is live.
 export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashboardState.snapshot, now = () => Date.now(), switchNode = defaultSwitchNode }) {
@@ -753,6 +753,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
   const pv = peerViewSummary(snapshot.value?.peer_view);
   const level = peer?.level || '';
   return html`<span class="remote-node-marker" ref=${rootRef} style=${`--nc:${color}`}>
+    <span class="remote-node-at" aria-hidden="true">@</span>
     <span class="remote-node-title" title=${`Peer view of ${name} (${remote})`}>${name}</span>
     <button type="button" class=${`remote-node-pill ${hv.state}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       onClick=${() => setOpen(!open)} title="What this peer shares with you">
