@@ -769,7 +769,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-focus-both",
 			Title:   "Groups — Both focus (default)",
-			Caption: "The Both | Agents | Processes switch sits right after the compact group search (features.processes on), Both selected by default. Each open group shows one action row (agent controls, then process controls, captioned apart) and two thin section rules, Agents then Processes, with content at the same left edge as the single lenses; a quiet group's Processes section folds to one line.",
+			Caption: "The Both | Agents | Processes switch sits right after the compact group search (features.processes on), Both selected by default. Each open group shows two thin section rules, Agents then Processes, each carrying its own controls after its counts, with content at the same left edge as the single lenses; a quiet group's Processes section folds to one line and keeps its controls.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + `return (async function(){
   var deadline = Date.now() + 3000;
@@ -781,11 +781,12 @@ func baseStates() []dashsnap.State {
   if (both.getAttribute('aria-pressed') !== 'true') throw new Error('Both is not the default focus');
   if (!document.querySelector('#groups-list [data-fused-section="agents"] table')) throw new Error('Both lost the member tables');
   if (!document.querySelector('#groups-list [data-fused-section="processes"]')) throw new Error('Both shows no Processes section');
-  if (!document.querySelector('#groups-list .group-fused-actions [data-act="spawn-agent"] ~ .gf-run-controls')) throw new Error('the fused action row is missing');
+  if (!document.querySelector('#groups-list [data-fused-section="agents"] > .gf-section-head [data-act="spawn-agent"]')) throw new Error('the agent controls are not on the Agents line');
+  if (!document.querySelector('#groups-list [data-fused-section="processes"] > .gf-section-head .gf-run-controls')) throw new Error('the process controls are not on the Processes line');
   document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = true; });
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   // Frame the parent's own action row and sections, below its subgroup.
-  var row = document.querySelector('#groups-list details[data-group-key="frontend-squad"] > .subtable > .group-fused-actions');
+  var row = document.querySelector('#groups-list details[data-group-key="frontend-squad"] > .subtable > [data-fused-section="agents"]');
   if (row) row.scrollIntoView({ block: 'start' });
 })();`,
 			SettleMS: 300,
@@ -808,7 +809,7 @@ func baseStates() []dashsnap.State {
   var group = node.closest('details[data-group-key]');
   var row = Array.prototype.find.call(group.querySelectorAll('[data-fused-section="agents"] tr[data-dnd-agent]'), function(r){ return r.dataset.dndAgent === agent && r.closest('details[data-group-key]') === group; });
   if (!row) throw new Error('performer row missing for ' + agent);
-  var head = group.querySelector(':scope > .subtable > .group-fused-actions');
+  var head = group.querySelector(':scope > .subtable > [data-fused-section="agents"]');
   (head || row).scrollIntoView({ block: 'start' });
   row.querySelector('td').dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
   await new Promise(function(resolve){ setTimeout(resolve, 260); });

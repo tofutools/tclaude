@@ -387,9 +387,9 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 
 // GroupRuns is a group's runs. In Both (`fused`) it also lays out the rest of
 // the group body around them, since its start and edit state drive both the
-// shared action row and the Processes section: the agent and process
-// controls as one row, then `fused.between` (task force card, triggers),
-// then the Agents and Processes sections.
+// process controls and the Processes section: the Agents and Processes
+// sections, each with its own controls on its header line, then
+// `fused.after` (the group's triggers).
 function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
@@ -496,19 +496,15 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     const counts = countText(groupProcessCounts(entry), wizard);
     const n = savedProcesses.length;
     const saved = !n ? '' : wizard ? `${n} written rite${n === 1 ? '' : 's'}` : `${plural(n, 'saved process')}`;
-    return html`<div class="group-header-actions group-fused-actions">
-        <span class="gf-cap">${wizard ? 'familiars' : 'agents'}</span>${fused.actions}
-        <span class="gf-divider" aria-hidden="true"></span>
-        <span class="gf-cap">${wizard ? 'rites' : 'processes'}</span>${controls(true)}
-        ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
-      </div>
-      ${fused.between}
-      <${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} summary=${fused.agentsSummary}>${fused.agents}<//>
+    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} summary=${fused.agentsSummary}
+        actions=${fused.actions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
         summary=${[counts || (wizard ? 'none walking' : 'none running'), saved].filter(Boolean).join(' · ')}
+        actions=${html`${controls(true)}${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}`}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class="gp-group" data-process-group=${group.name}>${body}</div>
-      <//>`;
+      <//>
+      ${fused.after}`;
   }
   return html`<div class="gp-group" data-process-group=${group.name}>
     ${controls(false)}
@@ -524,20 +520,26 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // FusedSection is one of Both's two sections in a group: a thin labelled
 // divider row, not a box, so the content keeps the exact left edge it has
 // in Agents and Processes -- Both adds a line, never a nesting level. The
-// row folds the section; the choice is remembered per group (see
-// groups-fused-sections.js), and `force` holds it open while a start or edit
-// form inside needs it.
-export function FusedSection({ group, section, label, summary = '', auto = true, force = false, attrs = {}, children }) {
+// line carries the section's own controls (`actions`) after its counts, so
+// they stay in reach while the section is folded. The label, and the empty
+// rest of the line, fold the section; the choice is remembered per group
+// (see groups-fused-sections.js), and `force` holds it open while a start
+// or edit form inside needs it.
+export function FusedSection({ group, section, label, summary = '', auto = true, force = false, attrs = {}, actions = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
-  const toggle = () => { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); };
-  return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}`} data-fused-section=${section} ...${attrs}>
-    <button type="button" class="gf-section-head" aria-expanded=${open ? 'true' : 'false'} disabled=${force}
-      title=${force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`} onClick=${toggle}>
-      <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
-      <span class="gf-label">${label}</span>
-      ${summary && html`<span class="gf-summary">${summary}</span>`}
-    </button>
+  const toggle = () => { if (!force) { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); } };
+  const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
+  return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
+    <div class="gf-section-head">
+      <button type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
+        <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
+        <span class="gf-label">${label}</span>
+        ${summary && html`<span class="gf-summary">${summary}</span>`}
+      </button>
+      ${actions && html`<span class="group-header-actions gf-section-actions">${actions}</span>`}
+      <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
+    </div>
     ${open && children}
   </div>`;
 }

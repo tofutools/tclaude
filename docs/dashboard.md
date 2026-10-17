@@ -135,10 +135,12 @@ Processes shows each group's runs as live graph cards with *+ start process*
 one run with its graph, a node inspector for decisions, a performer dock to
 drag-reassign agent nodes, and pause (⏸) / resume (⏵).
 
-Both, the default, shows each group's members and runs together: one action
-row with the agent controls and the process controls captioned apart, then an
-**Agents** and a **Processes** section. Each section folds from its header
-line, and the choice is remembered per group; with no choice made, a group
+Both, the default, shows each group's members and runs together as an
+**Agents** and a **Processes** section. Each section's header line carries
+its counts and then its own controls (spawn, subgroup, power on, shutdown for
+Agents; agent process, group process, resume, pause for Processes), which
+stay usable while it is folded. Each section folds from its header line, and
+the choice is remembered per group; with no choice made, a group
 with nothing running shows its Processes section as a single line. In Both,
 clicking a group header's run counts opens that group's Processes section
 instead of switching lenses. In a real group, hovering links the two halves with dashed

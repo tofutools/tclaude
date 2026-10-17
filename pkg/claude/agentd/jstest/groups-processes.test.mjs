@@ -452,19 +452,18 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   assert.equal(started[0].group, undefined, 'an agent-scoped run names no group');
 });
 
-test('Both shows each group\'s members and runs as sections under one captioned action row', async (t) => {
+test('Both shows each group\'s members and runs as sections, each with its controls on its header line', async (t) => {
   const { harness, root, details } = await mountFocus(t, { fused: true });
   assert.ok(root.querySelector('[data-groups-fused]'));
   assert.equal(root.querySelector('[data-groups-processes]'), null);
   const fe = details('frontend-squad');
-  const row = fe.querySelector('.group-fused-actions');
-  assert.deepEqual([...row.querySelectorAll('.gf-cap')].map((el) => el.textContent), ['agents', 'processes']);
-  assert.ok(row.querySelector('[data-act="spawn-agent"]'), 'agent controls first');
-  assert.ok(row.querySelector('[data-process-start-agent="frontend-squad"]'), 'then the process controls');
-  assert.ok(row.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
-  assert.equal(fe.querySelectorAll('.group-header-actions').length, 1, 'one action row, not two');
-
   const section = (el, name) => el.querySelector(`:scope > .subtable > [data-fused-section="${name}"]`);
+  const head = (el, name) => section(el, name).querySelector(':scope > .gf-section-head');
+  assert.ok(head(fe, 'agents').querySelector('.gf-section-toggle + .gf-section-actions [data-act="spawn-agent"]'), 'agent controls follow the Agents counts');
+  assert.ok(head(fe, 'processes').querySelector('.gf-section-actions [data-process-start-agent="frontend-squad"]'), 'process controls follow the Processes counts');
+  assert.ok(head(fe, 'processes').querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
+  assert.equal(fe.querySelector(':scope > .subtable > .group-header-actions'), null, 'no separate action row');
+
   assert.ok(section(fe, 'agents').querySelector('table'), 'the member table shows');
   const runs = section(fe, 'processes');
   assert.ok(runs.classList.contains('open'), 'a group with runs shows them');
@@ -476,11 +475,12 @@ test('Both shows each group\'s members and runs as sections under one captioned 
   assert.equal(quiet.classList.contains('open'), false, 'a quiet group folds its runs to one line');
   assert.equal(quiet.querySelector('[data-process-group]'), null);
   assert.equal(quiet.querySelector('.gf-summary').textContent, 'none running');
-  await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-head'), 'click'));
+  assert.ok(quiet.querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'a folded section keeps its controls');
+  await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-toggle'), 'click'));
   assert.ok(section(infra, 'processes').querySelector('[data-quickstart-folded="infra-crew"]'), 'opened, Get started stays a line');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1', 'the choice is remembered');
-  await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-head'), 'click'));
+  await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-fill'), 'click'));
   assert.equal(section(fe, 'agents').querySelector('table'), null, 'Agents folds too');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '0');
 });
