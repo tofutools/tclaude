@@ -12,8 +12,9 @@ import (
 var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
 		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
+		"defaults":  "SpawnProfileDefault SandboxProfileDefault",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",
-		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault SandboxProfilesRev Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles SavedPrompts QueuedSpawns Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
+		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfilesRev Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles Roles SavedPrompts QueuedSpawns Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
@@ -54,6 +55,11 @@ func classifyPeerFields(byPolicy map[string]string) map[string]string {
 // prevents an accidentally copied private field or an unclassified addition
 // from escaping. It does not mutate the shared gather.
 var allPeerProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true}
+
+// peerDefaultsProjectionFields adds the node's global spawn and sandbox
+// profile names, for a peer that reads the spawn catalogs or manages the
+// defaults: the Groups toolbar shows what it would change.
+var peerDefaultsProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true, "defaults": true}
 
 func filterPeerFields(v reflect.Value, grants map[string]bool) {
 	switch v.Kind() {

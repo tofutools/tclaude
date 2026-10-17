@@ -761,13 +761,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/groups/{name}/attachment", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupAttachment(w, asDashboardHumanPeer(r), g)
 	}))
-	mux.HandleFunc("POST /api/groups/{name}/clone", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-		// asDashboardHumanPeer so the shared, permission-checked
-		// handleGroupClone sees the cookie-authed dashboard caller as a
-		// human — same wiring as the export/rename routes. Body:
-		// {new_name?, no_clone_members?, copy_owners?}.
-		handleGroupClone(w, asDashboardHumanPeer(r), g)
-	}))
+	mux.HandleFunc("POST /api/groups/{name}/clone", groupRoute(handleDashboardGroupClone))
 	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
 	// Nest a group under another / clear its parent (JOH-392). asDashboardHumanPeer
 	// so the shared, permission-checked handleGroupParent sees the cookie-authed
@@ -839,6 +833,14 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 // the {name} path wildcard to a group row, replies 404 when no such
 // group exists, and otherwise hands the resolved group to fn. Hoisting
 // auth + lookup here keeps each route registration a single line.
+// handleDashboardGroupClone stamps asDashboardHumanPeer so the shared,
+// permission-checked handleGroupClone sees the cookie-authed dashboard caller
+// as a human — same wiring as the export/rename routes. Body:
+// {new_name?, no_clone_members?, copy_owners?}.
+func handleDashboardGroupClone(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	handleGroupClone(w, asDashboardHumanPeer(r), g)
+}
+
 func groupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !checkDashboardAuth(w, r) {
