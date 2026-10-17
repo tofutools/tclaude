@@ -248,7 +248,7 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		// A stored request is acknowledged once; automatic failure returns it to
 		// pending for a human, never for an automatic retry.
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
-		go autoApproveFederationSpawn(req, peer)
+		goBackground(func() { autoApproveFederationSpawn(req, peer) })
 		return
 	}
 	notifyFederationSpawnRequest(peer, req, senderName)

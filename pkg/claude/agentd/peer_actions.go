@@ -321,7 +321,7 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	req.CreatedAt = time.Now().UTC()
 	v.groupName = g.Name
 	if fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsMembersSpawn) {
-		go autoApproveFederationSpawnWithPeerAction(req, v.peer, true)
+		goBackground(func() { autoApproveFederationSpawnWithPeerAction(req, v.peer, true) })
 	} else {
 		notifyFederationSpawnRequest(v.peer, req, "operator")
 	}
