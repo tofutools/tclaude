@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -147,19 +148,29 @@ func storeHubCA(bundle string) (string, error) {
 	return path, nil
 }
 
+// errLoopbackHub: this node dials its hub on a loopback address, which no
+// other machine can use, so a join code built from it would point every
+// node at itself.
+var errLoopbackHub = errors.New("this node reaches the hub at a loopback address, which other machines cannot dial: hand out the bare invite with the hub's public address, or mint a join code with tclaude hub invite --url wss://…")
+
 // hubJoinCode builds a join code for an invite this node minted through its
-// hub connection: the hub address and CA file this node uses, which other
-// nodes reach the hub with too unless the admin connects through another
-// address (then they use the bare invite with the right address). Any error
+// hub connection, from the hub address and CA file this node uses. Any error
 // leaves the invite usable on its own.
 func hubJoinCode(invite, space string, expires time.Time) (string, error) {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil || cfg.Federation == nil || cfg.Federation.HubURL == "" {
 		return "", errors.New("no hub address configured")
 	}
-	jc := proto.JoinCode{Hub: cfg.Federation.HubURL, Invite: invite, Space: space, Expires: expires}
-	if cfg.Federation.HubCAFile != "" {
-		raw, err := os.ReadFile(cfg.Federation.HubCAFile)
+	return joinCodeFor(cfg.Federation.HubURL, cfg.Federation.HubCAFile, invite, space, expires)
+}
+
+func joinCodeFor(hubURL, caFile, invite, space string, expires time.Time) (string, error) {
+	if u, err := url.Parse(hubURL); err != nil || isLoopbackHost(u.Hostname()) {
+		return "", errLoopbackHub
+	}
+	jc := proto.JoinCode{Hub: hubURL, Invite: invite, Space: space, Expires: expires}
+	if caFile != "" {
+		raw, err := os.ReadFile(caFile)
 		if err != nil {
 			return "", err
 		}

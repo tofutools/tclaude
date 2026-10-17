@@ -623,6 +623,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         ${newToken.join_code && html`<div>Join code, shown once — the node pastes it in ⚙ Fleet → Setup guide (or <code>tclaude federation join --code-stdin</code>). It holds the invite plus this hub's address and certificate trust as this node uses them:
           <textarea id="fleet-hub-join-code" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${newToken.join_code}</textarea>
           <button type="button" class="fa-link" onClick=${() => copy(newToken.join_code).then(() => toast('Join code copied', false)).catch(() => toast('Copy it from the page', true))}>copy join code</button></div>`}
+        ${newToken.join_code_note && html`<div class="muted" id="fleet-hub-join-code-note">No join code: ${newToken.join_code_note}.</div>`}
         <div>${newToken.join_code ? 'Or the bare invite, for a node that reaches the hub at another address' : 'Invite token, shown once'}: <code>${newToken.token}</code>
         <button type="button" class="fa-link" onClick=${() => copy(newToken.token).then(() => toast('Invite token copied', false)).catch(() => toast('Copy it from the page', true))}>copy</button>
         <button type="button" class="fa-link" onClick=${() => setNewToken(null)}>hide</button></div></div>`}

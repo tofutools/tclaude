@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/base64"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -114,8 +115,8 @@ func TestFederationJoinCode_RefusesExpiredMangledAndUnsafeCodes(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "join_code_expired")
 
-	plain, err := proto.EncodeJoinCode(proto.JoinCode{Hub: "ws://hub.example:8470", Invite: "tchi_x"})
-	require.NoError(t, err)
+	// Hand-built: the encoder refuses it too.
+	plain := proto.JoinCodePrefix + base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"hub":"ws://hub.example:8470","invite":"tchi_x"}`))
 	for name, code := range map[string]string{"invite": "tchi_abc", "mangled": expired[:30], "plain ws off loopback": plain} {
 		rec = fedHuman(t, f, http.MethodPost, "/v1/federation/join", map[string]any{"code": code})
 		require.Equal(t, http.StatusBadRequest, rec.Code, name)
@@ -142,19 +143,28 @@ func TestFederationJoinCode_AHubInviteMintedThroughTheDashboardComesAsAJoinCode(
 	rec = call("POST", "hub/invites", map[string]any{"space": "home", "ttl_seconds": 3600})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var created struct {
-		Token    string `json:"token"`
-		JoinCode string `json:"join_code"`
+		Token        string `json:"token"`
+		JoinCode     string `json:"join_code"`
+		JoinCodeNote string `json:"join_code_note"`
 	}
 	testharness.DecodeJSON(t, rec, &created)
-	code, err := proto.DecodeJoinCode(created.JoinCode)
-	require.NoError(t, err)
-	require.Equal(t, fh.url, code.Hub, "the address this node reaches the hub at")
-	require.Equal(t, created.Token, code.Invite)
-	require.Equal(t, "home", code.Space)
-	require.WithinDuration(t, time.Now().Add(time.Hour), code.Expires, time.Minute)
-	require.Empty(t, code.CA, "this node trusts the system roots, so the code does too")
+	require.NotEmpty(t, created.Token)
+	require.Empty(t, created.JoinCode, "this node dials the hub on loopback, which no other machine can")
+	require.Contains(t, created.JoinCodeNote, "loopback")
+}
 
-	// The dashboard previews the same code it would join with.
-	rec = call("POST", "join", map[string]any{"code": created.JoinCode, "preview": true})
-	require.Equal(t, 200, rec.Code, rec.Body.String())
+func TestFederationJoinCode_BuiltFromThisNodesHubAddressAndCA(t *testing.T) {
+	_, _, ca := tlsHub(t)
+	caFile := filepath.Join(t.TempDir(), "hub.crt")
+	require.NoError(t, os.WriteFile(caFile, []byte(ca), 0o600))
+	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	raw, err := agentd.JoinCodeForTest("wss://hub.example:8470", caFile, "tchi_abc", "home", exp)
+	require.NoError(t, err)
+	code, err := proto.DecodeJoinCode(raw)
+	require.NoError(t, err)
+	require.Equal(t, proto.JoinCode{V: 1, Hub: "wss://hub.example:8470", Invite: "tchi_abc", Space: "home", Expires: exp, CA: ca}, code)
+	for _, loop := range []string{"ws://127.0.0.1:8470", "wss://localhost:8470", "wss://[::1]:8470"} {
+		_, err = agentd.JoinCodeForTest(loop, "", "tchi_abc", "home", exp)
+		require.Error(t, err, loop)
+	}
 }

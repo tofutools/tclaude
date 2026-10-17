@@ -73,6 +73,7 @@ func TestJoinCodeRejectsWhatItCannotTrust(t *testing.T) {
 	for name, c := range map[string]JoinCode{
 		"http hub":      {Hub: "https://hub.example"},
 		"no host":       {Hub: "wss://"},
+		"plain ws lan":  {Hub: "ws://hub.lan:8470"},
 		"foreign token": {Hub: "wss://hub.example", Invite: "tcle1.secret"},
 		"not a cert":    {Hub: "wss://hub.example", CA: "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIA==\n-----END PRIVATE KEY-----\n"},
 		"empty bundle":  {Hub: "wss://hub.example", CA: "hello"},

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -108,6 +109,10 @@ func (c JoinCode) validate() error {
 	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" {
 		return fmt.Errorf("%w: hub address %q is not ws:// or wss://host[:port]", ErrJoinCode, c.Hub)
 	}
+	// The same rule the hub client applies: plain ws only to loopback.
+	if host := u.Hostname(); u.Scheme == "ws" && host != "localhost" && !isLoopbackIP(host) {
+		return fmt.Errorf("%w: plain ws:// is only allowed to loopback; use wss:// for %s", ErrJoinCode, host)
+	}
 	if c.Invite != "" && (!strings.HasPrefix(c.Invite, InvitePrefix) || strings.ContainsFunc(c.Invite, unicode.IsSpace)) {
 		return fmt.Errorf("%w: the invite is not a %s… token", ErrJoinCode, InvitePrefix)
 	}
@@ -117,6 +122,11 @@ func (c JoinCode) validate() error {
 		}
 	}
 	return nil
+}
+
+func isLoopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // CertInfo describes one certificate of a CA bundle, for the operator to

@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -142,6 +143,8 @@ func hubOperatorRoute(operation string) http.HandlerFunc {
 				expires, _ := time.Parse(time.RFC3339Nano, raw)
 				if code, err := hubJoinCode(token, space, expires.UTC().Truncate(time.Second)); err == nil && token != "" {
 					created["join_code"] = code
+				} else if errors.Is(err, errLoopbackHub) {
+					created["join_code_note"] = err.Error()
 				}
 			}
 		}
