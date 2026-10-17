@@ -15,6 +15,7 @@ import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { AwayControl } from './peer-mail.js';
 import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
+import { SetupGuide, setupProgress } from './fleet-admin-setup.js';
 import { KeyTransitionDialog, keyBadge } from './fleet-admin-identity.js';
 import { RunPage } from './fleet-admin-run.js';
 import { viewersFocus, viewersOpened } from './remote-viewers.js';
@@ -36,8 +37,10 @@ const html = htm.bind(h);
 // so a peer coming online or a CLI-side change shows without a reload.
 const ADMIN_POLL_MS = 5000;
 
-// SUB_PAGES are the admin sections.
+// SUB_PAGES are the admin sections. The setup guide comes first: it is where
+// the view opens until this node is joined, trusts a peer and shares a group.
 const SUB_PAGES = Object.freeze([
+  { id: 'setup', label: 'Setup guide' },
   { id: 'peers', label: 'Peers' },
   { id: 'harnesses', label: 'Harnesses' },
   { id: 'run', label: 'Run scripts' },
@@ -340,7 +343,8 @@ export function FleetAdmin({
   const [status, setStatus] = useState(null);
   const [pools, setPools] = useState([]);
   const [failure, setFailure] = useState('');
-  const [page, setPage] = useState(() => takeFleetPage() || 'peers');
+  // An empty page follows the setup: the guide until it is done, else Peers.
+  const [page, setPage] = useState(() => takeFleetPage() || '');
   const [dialog, setDialog] = useState(null);
   const [grantTarget, setGrantTarget] = useState('');
   // runPreselect is the Run target another page sent the operator to (the hub).
@@ -416,13 +420,19 @@ export function FleetAdmin({
     action: () => setLevel(actions, { instance: r.id, level: 'restricted' }),
   }).then((ok) => { if (ok) done(`${r.label} is now restricted`); }).catch((e) => toast(`Restrict failed: ${errText(e)}`, true));
 
-  const sub = SUB_PAGES.find((p) => p.id === page) || SUB_PAGES[0];
+  const progress = setupProgress(view);
+  const sub = SUB_PAGES.find((p) => p.id === (page || (progress.complete ? 'peers' : 'setup'))) || SUB_PAGES[1];
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
-      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'boards' && boardUpdates?.updates?.length > 0
+      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'setup' && !progress.complete
+        ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
         ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
-    ${sub.id === 'peers'
+    ${sub.id === 'setup'
+      ? html`<${SetupGuide} onSeen=${state.markSetupSeen} view=${view} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
+          onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
+          onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
+      : sub.id === 'peers'
       ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} proposable=${proposable} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`

@@ -69,14 +69,14 @@ let s_output = [];
 let s_viewers = [];
 // s_landing, when set, answers an agent import with the landing it resolves.
 let s_landing = null;
-async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null } } = {}) {
+async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null }, statusFn = status } = {}) {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
   const activeTab = harness.signals.signal('groups');
   const state = stateMod.createSkynetState({ activeTab });
   const log = []; const toasts = []; const confirms = [];
   const actions = {
-    status: async () => { log.push(['status']); return status(); },
+    status: async () => { log.push(['status']); return statusFn(); },
     pools: async () => [],
     previewTrust: async (o) => { log.push(['preview', o]); return preview; },
     trust: async (o) => { log.push(['trust', o]); return { ok: true }; },
@@ -2140,4 +2140,136 @@ test('hub: stale cleanup previews exact IDs before applying, defaults to 30 days
   assert.match(s.confirms.at(-1).body, /old laptop inst_old/);
   assert.match(s.confirms.at(-1).body, /Admins, this node and connected instances are excluded/);
   assert.equal(s.confirms.at(-1).preformatted, true);
+});
+
+// A node that has never been set up, and the same node at later setup stages.
+const freshStatus = () => ({ enabled: false, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', peers: [] });
+const joinedStatus = (extra = {}) => ({ ...freshStatus(), enabled: true, hub_url: 'wss://hub.example', hub: { state: 'connected', spaces: ['home'] }, ...extra });
+const typeInto = async (s, el, value) => { el.value = value; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+
+test('setup progress: joining, trusting and sharing are the setup; agents using a peer is optional', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [m, g] = await Promise.all([harness.importDashboardModule('js/fleet-admin-model.js'), harness.importDashboardModule('js/fleet-admin-setup.js')]);
+  const fresh = m.adminView(freshStatus());
+  let p = g.setupProgress(fresh);
+  assert.deepEqual([p.current, p.done, p.total, p.complete], ['hub', 0, 3, false]);
+  assert.equal(g.hubProblem(fresh.self), null, 'a node never set up has nothing to fix yet');
+  const joined = m.adminView(joinedStatus());
+  assert.deepEqual(joined.self.spaces, ['home']);
+  assert.equal(g.setupProgress(joined).current, 'trust');
+  const forge = { instance_id: 'inst_forge', label: 'forge', trusted: true, level: 'restricted' };
+  assert.equal(g.setupProgress(m.adminView(joinedStatus({ peers: [forge] }))).current, 'share', 'a trusted peer with no grants has nothing shared');
+  assert.equal(g.setupProgress(m.adminView(joinedStatus({ peers: [{ ...forge, level: 'unrestricted' }] }))).complete, true, 'an unrestricted peer already holds everything');
+  p = g.setupProgress(m.adminView(status()));
+  assert.deepEqual([p.current, p.done, p.complete], ['agents', 3, true]);
+  assert.equal(p.steps.find((st) => st.id === 'agents').optional, true);
+
+  assert.match(g.hubProblem(m.adminView({ ...joinedStatus(), hub: { state: 'refused', last_error: 'invite already used' } }).self).title, /refused/);
+  assert.equal(g.hubProblem(m.adminView({ ...joinedStatus(), hub: { state: 'refused' } }).self).invite, true, 'a refusal asks for a new invite');
+  assert.equal(g.hubProblem(m.adminView({ ...joinedStatus(), hub: { state: 'disconnected' } }).self).settings, true);
+  assert.match(g.hubProblem(m.adminView({ ...joinedStatus(), enabled: false, hub: null }).self).title, /Federation is off/);
+
+  const rows = m.grantRows([{ peer: 'inst_forge', slug: 'message.direct', scope: 'group=ops' }, { peer: 'inst_forge', slug: 'groups.roster.read', scope: '' }]);
+  const mail = g.SHARE_PRESETS.find((x) => x.id === 'mail');
+  assert.equal(g.presetHeld(mail, rows, 'ops'), false, 'an unscoped grant does not make a group preset held');
+  assert.deepEqual(g.shareGrants({ peer: 'inst_forge', group: 'ops', presets: ['mail', 'spawn'], rows }), [
+    { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' },
+    { peer: 'inst_forge', slug: 'groups.presence.read', scope: 'group=ops' },
+    { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } },
+  ], 'what the peer holds on the group is not granted again');
+  assert.deepEqual(g.agentSlugs(['mail', 'roster', 'spawn', 'routes']), ['message.direct', 'groups.members.spawn', 'routes.consume']);
+  assert.deepEqual(g.capWords(['sessions_watch', 'presence', 'mail']), ['mail', 'presence', 'watch terminals']);
+  assert.deepEqual(g.capWords(['future_cap']), ['future_cap'], 'a cap this build does not know is shown as is');
+});
+
+test('a node never set up opens Fleet on the setup guide and joins a hub from it', async (t) => {
+  const s = await setup(t, { statusFn: freshStatus });
+  await s.show();
+  assert.ok(s.q('#fleet-setup'), 'the guide is the landing page');
+  assert.equal(s.q('.fa-subtab.on').textContent.trim(), 'Setup guide 0/3');
+  assert.equal(s.state.view.value.setupSeen, true, 'opening the guide retires the chip hint');
+  assert.equal(s.q('.fs-step.on').dataset.step, 'hub');
+  assert.match(s.q('.fs-identity').textContent, /inst_self.*self-fp-0000/, 'the identity a hub admin can admit by');
+  const join = s.q('#fleet-setup-join');
+  assert.equal(join.disabled, true, 'nothing to join without an address');
+  await typeInto(s, s.q('#fleet-setup-hub'), 'http://hub.home');
+  await s.click(join);
+  assert.match(s.q('.fs-body [role="alert"]').textContent, /wss:\/\/host/);
+  assert.equal(s.log.some((l) => l[0] === 'hubConfig'), false);
+  await typeInto(s, s.q('#fleet-setup-hub'), 'wss://hub.home:8470');
+  await typeInto(s, s.q('#fleet-setup-invite'), 'tchi_abc');
+  await s.click(join);
+  assert.match(s.confirms.at(-1).title, /Connect to the hub at wss:\/\/hub\.home:8470/);
+  assert.match(s.confirms.at(-1).body, /single-use/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'hubConfig'), ['hubConfig', { hub_url: 'wss://hub.home:8470', invite: 'tchi_abc', enabled: true }]);
+  assert.match(s.toasts.at(-1), /connecting/);
+});
+
+test('a refused join explains why and retries with a new invite', async (t) => {
+  const s = await setup(t, { statusFn: () => ({ ...joinedStatus(), hub: { state: 'refused', last_error: 'hub refused: invite already used' } }) });
+  await s.show();
+  assert.match(s.q('[data-setup-step="hub"]').textContent, /The hub refused this node.*invite already used/);
+  await typeInto(s, s.q('#fleet-setup-reinvite'), 'tchi_new');
+  await s.click([...s.mounted.container.querySelectorAll('.fs-actions button')].find((b) => /Retry/.test(b.textContent)));
+  assert.deepEqual(s.log.find((l) => l[0] === 'hubConfig'), ['hubConfig', { invite: 'tchi_new' }], 'only the invite changes');
+});
+
+test('the guide trusts from the waiting list, shares a group as presets and shows what peers share', async (t) => {
+  const s = await setup(t, { statusFn: () => joinedStatus({
+    peers: [
+      { instance_id: 'inst_forge', label: 'forge', name: 'forge', fingerprint: FP_FORGE, trusted: true, online: true, level: 'restricted' },
+      { instance_id: 'inst_carol', name: 'Carol@Buildbox', fingerprint: FP_NEW, trusted: false, online: true },
+    ],
+    remote: [{ peer: 'inst_forge', groups: [{ name: 'builders', caps: ['mail', 'roster'] }, { name: 'lobby', caps: [] }] }],
+  }) });
+  await s.show();
+  assert.equal(s.q('.fs-step.on').dataset.step, 'share', 'opens on the first step not done');
+  assert.equal(s.q('#fleet-setup-group').getAttribute('value'), 'build', 'the first group is picked');
+  assert.ok(s.q('[data-preset="mail"] input').hasAttribute('checked'), 'mail is the default share');
+  await s.click(s.q('#fleet-setup-share'));
+  assert.equal(s.confirms.at(-1).title, 'Share build with forge?');
+  assert.match(s.confirms.at(-1).body, /forge gets message\.direct .* in group build\./);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').map((l) => l[1]), [
+    { peer: 'inst_forge', slug: 'message.direct', scope: 'group=build' },
+    { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=build' },
+    { peer: 'inst_forge', slug: 'groups.presence.read', scope: 'group=build' },
+  ]);
+  assert.match(s.toasts.at(-1), /Shared build with forge/);
+
+  const group = s.q('#fleet-setup-group');
+  for (const o of group.querySelectorAll('option')) { if (o.value === 'ops') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(group, 'change'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await s.check(s.q('[data-preset="spawn"] input'));
+  assert.match(s.q('[data-setup-step="share"] .fs-actions').textContent, /Grants message\.direct, groups\.presence\.read, groups\.members\.spawn in ops/, 'the roster grant forge holds on ops is not sent again');
+  assert.match(s.q('[data-setup-step="share"] .fs-cli').textContent, /tclaude federation grant forge groups\.members\.spawn --scope group=ops --max-live 2/);
+
+  await s.click(s.q('.fs-step[data-step="trust"]'));
+  assert.match(s.q('#fleet-setup-waiting').textContent, new RegExp(FP_NEW), 'the full fingerprint to compare');
+  assert.match(s.q('#fleet-setup-trusted').textContent, /forge.*restricted, online/);
+  await s.click(s.q('#fleet-setup-waiting [data-fa="trust"]'));
+  assert.ok(s.q('#fleet-trust-modal'), 'Trust… opens the same trust dialog as Peers');
+  await s.click([...s.q('#fleet-trust-modal').querySelectorAll('button')].find((b) => b.textContent === 'Cancel'));
+
+  await s.click(s.q('.fs-step[data-step="agents"]'));
+  const row = s.q('[data-peer="inst_forge"] [data-remote-group="builders"]');
+  assert.match(row.textContent, /mail, roster/);
+  assert.match(row.textContent, /tclaude agent permissions grant AGENT message\.direct --scope peer=forge\/builders/);
+  assert.match(s.q('[data-peer="inst_forge"] [data-remote-group="lobby"]').textContent, /visible only/);
+});
+
+test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  assert.ok(s.q('#fleet-trusted'), 'Peers is the landing page once set up');
+  const tab = [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Setup guide/.test(b.textContent));
+  assert.equal(tab.textContent, 'Setup guide', 'no progress badge when done');
+  await s.click(tab);
+  assert.equal(s.mounted.container.querySelectorAll('.fs-step.done').length, 3);
+  assert.match(s.q('.fs-progress').textContent, /Set up/);
+  assert.match(s.q('[data-setup-step="agents"]').textContent, /Let your agents use peers/);
+  await s.click(s.q('.fs-step[data-step="trust"]'));
+  await s.click(s.q('[data-setup-next="share"]'));
+  assert.ok(s.q('[data-setup-step="share"]'), 'a done step leads on to the next');
+  assert.equal(s.q('[data-setup-next="agents"]') !== null, true);
 });

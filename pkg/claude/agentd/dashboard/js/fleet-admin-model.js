@@ -77,8 +77,12 @@ export function adminView(status, { pools = [] } = {}) {
   const byLabel = (a, b) => a.label.localeCompare(b.label);
   // receiving names each peer's catalog groups that take agents from this
   // node (agents.receive), for the move dialog's group picker.
-  const receiving = new Map((Array.isArray(status.remote) ? status.remote : []).map((r) => [r?.peer,
+  const remote = Array.isArray(status.remote) ? status.remote : [];
+  const receiving = new Map(remote.map((r) => [r?.peer,
     (r?.groups || []).filter((g) => g?.name && (g.caps || []).includes('agents_receive')).map((g) => g.name).sort()]));
+  // catalog is each peer's catalog groups with what they allow this node.
+  const catalog = new Map(remote.map((r) => [r?.peer,
+    (r?.groups || []).filter((g) => g?.name).map((g) => ({ name: g.name, caps: Array.isArray(g.caps) ? g.caps : [] })).sort((a, b) => a.name.localeCompare(b.name))]));
   return {
     self: {
       id: status.instance_id,
@@ -88,8 +92,9 @@ export function adminView(status, { pools = [] } = {}) {
       hubURL: status.hub_url || '',
       hubState: status.hub?.state || (status.enabled ? 'connecting' : 'disabled'),
       hubError: status.hub?.last_error || '',
+      spaces: Array.isArray(status.hub?.spaces) ? status.hub.spaces : [],
     },
-    trusted: peers.filter((p) => p?.trusted && p.instance_id).map((p) => ({ ...row(p), receiving: receiving.get(p.instance_id) || [] })).sort(byLabel),
+    trusted: peers.filter((p) => p?.trusted && p.instance_id).map((p) => ({ ...row(p), receiving: receiving.get(p.instance_id) || [], catalog: catalog.get(p.instance_id) || [] })).sort(byLabel),
     waiting: peers.filter((p) => p && !p.trusted && p.instance_id).map(row).sort(byLabel),
   };
 }

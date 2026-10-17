@@ -17,6 +17,15 @@ const skynetFederationStubJS = `(function(){
       { instance_id: 'inst_w5zea3nq', name: 'carol@buildbox', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', trusted: false, online: true }
     ],
     peer_grants: [{ peer: 'inst_hn3cxq7a', slug: 'message.direct' }, { peer: 'inst_hn3cxq7a', slug: 'groups.roster.read', scope: 'ops' }, { peer: 'inst_hn3cxq7a', slug: 'sessions.watch', scope: 'ops' }] };
+  // Setup guide stages: a node never set up, and one joined with a trusted
+  // peer it has not shared anything with yet.
+  if (window.__dashsnapSetupFresh) status = { enabled: false, instance_id: status.instance_id, name: 'desk', fingerprint: status.fingerprint, peers: [] };
+  if (window.__dashsnapSetupShare) {
+    status.hub.spaces = ['home'];
+    status.peers = [status.peers[0], status.peers[2]];
+    status.peer_grants = [];
+    status.remote = [{ peer: 'inst_hn3cxq7a', label: 'forge', online: true, groups: [{ name: 'builders', caps: ['mail', 'roster', 'presence', 'spawn'] }, { name: 'infra', caps: ['agents.status.read', 'sessions'] }] }];
+  }
   if (window.__dashsnapKeyConflict) status.peers[1].identity_transition = { state: 'conflict', old_id: 'inst_2p6ym4ke', new_id: 'inst_8r3kq0vd', new_fingerprint: '8r3k-q0vd-n6wz-2hc4-pm7y-e1xa', received_at: '2026-10-10T08:41:00Z', accept_after: '2026-10-10T08:51:00Z', reason: 'competing signed successors' };
   if (window.__dashsnapKeyPending) status.peers[0].identity_transition = { state: 'pending', old_id: 'inst_hn3cxq7a', new_id: 'inst_c7m2x9tf', new_fingerprint: 'c7m2-x9tf-4kp1-wq8e-zn3d-6hv0', received_at: '2026-10-10T09:02:00Z', accept_after: '2026-10-10T09:12:00Z' };
   var res = { status: 'current', cpu: { logical_cores: 8, load_average: [2.7, 2, 1] }, ram: { total_bytes: 32e9, available_bytes: 12e9, available_estimated: false }, data_disk: { total_bytes: 500e9, available_bytes: 210e9 } };
@@ -49,6 +58,12 @@ const skynetFederationStubJS = `(function(){
       return json({ kind: 'skill', skill: name, skill_roots: roots, preview_token: 'pv_' + Date.now(), warnings: [],
         files: [{ path: 'SKILL.md', bytes: 3010, text: '---\nname: ' + name + '\ndescription: Reruns a failing Go test until it flakes, then bisects.\n---\n\n# ' + name + '\n' }, { path: 'bin/rerun.sh', bytes: 1210, executable: true, security: true, text: '#!/usr/bin/env bash\n# rerun one go test N times, stop at the first failure\nset -euo pipefail\npkg="$1"; name="$2"; n="${3:-50}"\nfor i in $(seq "$n"); do go test "$pkg" -run "^${name}$" -count=1 || exit 1; done\n' }, { path: 'bisect.py', bytes: 4930, security: true, text: 'import subprocess\n' }, { path: 'notes/patterns.md', bytes: 2110, text: '# Patterns\n' }],
         changes: (choice.skill_targets || []).map(function(t, i){ var r = roots.filter(function(x){ return x.id === t; })[0]; return { item: t + '/' + name, action: i === 1 ? 'replace' : 'create', path: (r ? r.path : t) + '/' + name }; }) });
+    }
+    // The setup guide states start before the guide was ever opened: the
+    // daemon is shared by every state, so its "seen" pref is kept out of it.
+    if (path === '/api/dashboard/prefs' && (window.__dashsnapSetupFresh || window.__dashsnapSetupShare)) {
+      if (init && init.method === 'POST') { if (String(init.body || '').indexOf('tclaude.dash.fleet.setupSeen') >= 0) return json({ ok: true }); return realFetch(input, init); }
+      return realFetch(input, init).then(function(r){ return r.clone().json().then(function(p){ delete p['tclaude.dash.fleet.setupSeen']; return json(p); }, function(){ return r; }); });
     }
     if (path === '/api/federation/status') return json(status);
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
@@ -408,6 +423,53 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('#fleet-waiting [data-fa="trust"]')) throw new Error('skynet: no Trust action for the waiting instance');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in fleet admin');
   if (location.pathname !== '/fleet-admin') throw new Error('skynet: fleet admin not routed to /fleet-admin: ' + location.pathname);
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-setup-join",
+			Title:   "Fleet setup guide: join a hub",
+			Caption: "A node that has never been set up: the node row's ⚙ Fleet chip stays clickable and says set up, and Fleet opens on the setup guide. Step 1 takes the hub address, the invite and this node's name (a self-signed hub's CA file folds away), and shows the instance ID and fingerprint a hub admin can admit instead.",
+			InitJS:  "window.__dashsnapSetupFresh = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('[data-fleet-entry] .node-chip-hint'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('[data-fleet-entry] .node-chip-hint')) throw new Error('setup: no set-up hint on the Fleet chip');
+  document.querySelector('[data-fleet-entry]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-setup-hub'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-setup-hub')) throw new Error('setup: Fleet did not open on the join step');
+  var hub = document.querySelector('#fleet-setup-hub');
+  hub.value = 'wss://hub.home:8470'; hub.dispatchEvent(new Event('input', { bubbles: true }));
+  var inv = document.querySelector('#fleet-setup-invite');
+  inv.value = 'tchi_k2v9x7q4m1'; inv.dispatchEvent(new Event('input', { bubbles: true }));
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-setup-share",
+			Title:   "Fleet setup guide: share a group",
+			Caption: "Joined, with forge trusted and carol waiting: the guide opens on step 3. Pick a peer and one of this node's groups, then what the peer may do there; each preset is a set of ordinary peer grants, the CLI line underneath spells them out.",
+			InitJS:  "window.__dashsnapSetupShare = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-setup-share'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-setup-share')) throw new Error('setup: guide not on the share step');
+  document.querySelector('[data-preset="status"] input').click();
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-setup-agents",
+			Title:   "Fleet setup guide: let agents use peers",
+			Caption: "Step 4 lists what each trusted peer shares with this node, per group, and the agent permission that uses it, scoped peer=<peer>/<group>.",
+			InitJS:  "window.__dashsnapSetupShare = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fs-step[data-step="agents"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.fs-step[data-step="agents"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-remote-group="builders"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('[data-remote-group="builders"]')) throw new Error('setup: no shared group on step 4');
 })();`,
 			SettleMS: 400,
 		},

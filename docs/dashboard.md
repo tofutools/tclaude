@@ -816,6 +816,10 @@ unreachable, still connecting or refused the connection) until this node is
 connected to its federation hub, and greys out again if that connection drops;
 it follows the connection within about five seconds, without a reload. Once
 connected, ⌂ works with no peers at all; each trusted peer adds a button.
+Until there is a linked node, a **⚙ Fleet** chip ends the row and is never
+greyed out: it opens Fleet administration, where the hub connection and the
+first peer are set up. On a node that was never set up it reads **set up**
+until you have opened the setup guide once.
 **nodes ▾** and the map icon stay greyed out until there is a linked node to
 show. ⌂ always works where it leads somewhere: home from a peer's view, and
 back from the map or ⚙ Fleet.
@@ -1025,8 +1029,9 @@ items. Accepting grants nothing beyond them.
 
 ### Fleet administration (⚙ Fleet)
 
-**⚙ Fleet** (or "Fleet administration" in the command palette, before any peer
-is trusted) manages this node's federation. The identity bar at the top shows
+**⚙ Fleet** (the node row's ⚙ Fleet chip before any peer is linked, the map's
+⚙ Fleet after, or "Fleet administration" in the command palette) manages this
+node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
 the hub connection with **Disconnect**, **version & updates…** for this
 node, and away cover: **away…** picks a trusted peer's operator (and an
@@ -1044,6 +1049,26 @@ policy, with offline/back, resource and failure notices and their thresholds
 defaults. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 
+- **Setup guide** — where Fleet opens until this node is joined to a hub,
+  trusts a peer and shares a group with it (the tab counts the steps done);
+  afterwards it is one tab away, for linking more nodes. Each step shows its
+  state, does the step in place and names its CLI:
+    1. **Join a hub**: the hub address, the single-use invite from the hub
+       admin and this node's name (a self-signed hub's CA file folds away),
+       with this node's instance ID and fingerprint to send an admin who
+       admits nodes directly. A refused or unreachable hub is explained, and a
+       refusal takes a new invite in place.
+    2. **Trust your peers**: the nodes waiting in your spaces with their full
+       fingerprints, and the same Trust… dialog as Peers; your own fingerprint
+       to read to the other operator.
+    3. **Share groups**: a peer, one of your groups and presets of ordinary
+       peer grants on it (Mail: `message.direct`, roster and presence;
+       Status: `agents.status.read`, `sessions.read`; Watch terminals:
+       `sessions.watch`; Spawn workers: `groups.members.spawn`, cap 2), with
+       what the peer already holds there left out. Peer grants has the rest.
+    4. **Let agents use peers** (optional): what each trusted peer shares with
+       this node, per group, and the agent grant (`peer=<peer>/<group>`) that
+       uses it.
 - **Peers** — while a peer views an agent terminal here, a panel on top shows
   who watches or drives which agent; **Disconnect…** closes that view (the peer
   can reopen it while any sessions.watch/attach grant covers that group, or at
