@@ -1,6 +1,6 @@
 import { computed, effect, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
-import { normalizeFleet, normalizeNode } from './skynet-model.js';
+import { mapFleet, normalizeFleet, normalizeNode } from './skynet-model.js';
 import { parseFused } from './skynet-scope.js';
 import { dashPrefs } from './prefs.js';
 
@@ -50,6 +50,8 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     activeTab: activeTab.value,
     fleet: fleet.value,
     node: node.value,
+    // mapFleet is the fleet, or this node alone while it is on a hub.
+    mapFleet: mapFleet(fleet.value, node.value),
     summaries: summaries.value,
     focused: focused.value,
     statusLoaded: statusLoaded.value,

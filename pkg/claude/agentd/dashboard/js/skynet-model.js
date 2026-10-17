@@ -119,6 +119,14 @@ export function normalizeNode(status) {
   };
 }
 
+// mapFleet is what the map shows: the fleet, or this node alone once its hub
+// connection is up, so the map opens as soon as the node joins a hub.
+export function mapFleet(fleet, node) {
+  if (fleet) return fleet;
+  if (!node || hubOffReason(node)) return null;
+  return { self: node.self, peers: [], hub: { state: 'connected', url: '' } };
+}
+
 // hubOffReason says why the chip row is greyed out, or '' when it is usable.
 export function hubOffReason(node) {
   if (!node) return 'Not connected to a federation hub';

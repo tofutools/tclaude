@@ -193,8 +193,8 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   </span>`;
 }
 
-// NO_PEERS says why the fused view and the map are greyed out on a connected
-// node that has no linked nodes yet.
+// NO_PEERS says why the fused view is greyed out on a connected node that has
+// no linked nodes yet.
 const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet';
 
 // FleetChip opens Fleet administration while there is no fleet to reach it
@@ -217,7 +217,8 @@ function FleetChip({ state, node, off, navigate }) {
 }
 
 // MapGate greys out the static map anchor (it is not ours to render) when
-// there is no map to show: hub not connected, or no linked nodes.
+// there is no map to show: the hub is not connected. A connected node with no
+// linked nodes yet still gets its map, showing this node alone.
 function MapGate({ reason, doc = globalThis.document }) {
   useEffect(() => {
     const anchor = doc?.querySelector?.('nav [data-tab="map"]');
@@ -245,7 +246,7 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
   const self = node?.self || { id: '', name: 'this node', color: LOCAL_COLOR, local: true };
   const homeOff = off && !remote && !current.topLevel;
   const isCurrent = !remote && !current.topLevel;
-  return html`<span class=${`node-chips${off ? ' hub-off' : ''}`} role="group" aria-label="Nodes" title=${off || undefined}>
+  return html`<span class=${`node-chips${off ? ' hub-off' : ' has-map'}`} role="group" aria-label="Nodes" title=${off || undefined}>
     <button type="button" class=${`node-chip local${isCurrent ? ' active' : ''}`} style=${`--nc:${self.color}`} disabled=${homeOff}
       aria-current=${isCurrent ? 'page' : undefined} aria-label=${`${self.name} (this node)${homeOff ? `. ${off}` : ''}`}
       title=${homeOff ? off : `${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
@@ -264,13 +265,13 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
 // always there, greyed out until this node's hub connection is up (and again
 // when it drops); peers only add buttons. The map entry is the static
 // nav[data-tab="map"] anchor right after this host, so tab routing keeps one
-// owner; MapGate greys it out by the same rule.
+// owner; MapGate greys it out while the hub is not connected.
 export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
   const off = hubOffReason(current.node);
   const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
-  const gate = html`<${MapGate} reason=${off || (fleet ? '' : NO_PEERS)} />`;
+  const gate = html`<${MapGate} reason=${off} />`;
   // A fused view already on keeps its row, so it can be left.
   if (!fleet || (off && !current.fused)) return html`${gate}<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} navigate=${navigate} />`;
   const fused = current.fused;
@@ -355,9 +356,10 @@ export function ScopeBanner({ state, remote = remoteNodeID(), switchNode = defau
 // nothing below moves.
 export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const current = state.view.value;
-  if (!current.topLevel || !current.fleet) return null;
-  const n = current.fleet.peers.length + 1;
-  const hub = current.fleet.hub.state;
+  const fleet = current.mapFleet;
+  if (!current.topLevel || !fleet) return null;
+  const n = fleet.peers.length + 1;
+  const hub = fleet.hub.state;
   // "Groups · all nodes" is the fused Groups view of every node.
   const go = (tab) => {
     if (tab !== 'groups-fused') { navigate(tab); return; }
@@ -366,7 +368,7 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
   return html`<span class="skynet-toplevel-bar">
     <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('groups-fused', false, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
-    <span class="skynet-toplevel-note">Skynet · ${n} nodes · hub ${hub} · pick ⌂ ${current.fleet.self.name} to return to its dashboard</span>
+    <span class="skynet-toplevel-note">Skynet · ${n} node${n === 1 ? '' : 's'} · hub ${hub} · pick ⌂ ${fleet.self.name} to return to its dashboard</span>
   </span>`;
 }
 
@@ -431,7 +433,7 @@ export function measureEdges(mapEl) {
 
 export function SkynetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions }) {
   const current = state.view.value;
-  const fleet = current.fleet;
+  const fleet = current.mapFleet;
   const mapRef = useRef(null);
   const [edges, setEdges] = useState([]);
   const [updating, setUpdating] = useState(null);
@@ -439,8 +441,8 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   const fleetKey = fleet ? [fleet.self.id, ...fleet.peers.map((p) => p.id)].join(',') : '';
 
   // Never strand the operator on an empty map: once the node list has loaded
-  // without linked nodes (a /map deep link on an unlinked node, or the last
-  // peer untrusted while the map is open), return to the per-node tab. Fleet
+  // without a map to show (a /map deep link on a node off any hub, or the hub
+  // dropping while the map is open), return to the per-node tab. Fleet
   // administration stays: it is where the first peer gets trusted.
   const multiNode = current.mapActive;
   useEffect(() => {
@@ -488,7 +490,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
     return () => ro.disconnect();
   }, [current.mapActive, fleetKey, current.summaries]);
 
-  if (!fleet) return html`<div class="empty">No linked nodes. Link this node to others with <code>tclaude federation</code> (see docs/federation.md).</div>`;
+  if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
   const card = (node) => cardView(node, current.summaries[node.id], t);
@@ -501,7 +503,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="skynet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
     <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
-    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
+    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="skynet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
     ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
