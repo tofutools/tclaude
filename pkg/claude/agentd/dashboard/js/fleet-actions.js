@@ -13,7 +13,9 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
 
   async function loadStatus() {
     try {
-      const response = await fetchImpl('/api/federation/status?summary=1', { credentials: 'same-origin' });
+      // The map's "show untrusted" view also wants the hub-visible strangers.
+      const url = `/api/federation/status?summary=1${state.untrustedShown?.() ? '&untrusted=1' : ''}`;
+      const response = await fetchImpl(url, { credentials: 'same-origin' });
       // 404 (no route on this daemon) or 403 (federation not available to the
       // dashboard) mean there is no fleet to show. Other failures are transient:
       // keep the last known fleet so a daemon hiccup does not yank the map.

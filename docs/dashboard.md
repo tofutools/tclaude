@@ -860,6 +860,12 @@ share. **Open dashboard** opens that node's view. Cards are polled only while
 the map is on screen; an unreachable peer keeps its last data, marked with its
 age.
 
+**Show untrusted** (in the legend) adds the instances visible on the hub that
+this node has not trusted, as dotted cards with their self-reported name,
+instance ID and fingerprint. **Trust…** opens the same dialog as ⚙ Fleet
+config → Peers: compare the full fingerprint with that node's operator, pick a
+label and a trust level, and confirm. The box is remembered per browser.
+
 To update a node: click **update…** (or **manage…**) on its card, check the
 version and warnings, then **Update to vX…** and confirm. The node replaces its
 binaries (keeping the old ones for **Roll back…**) and restarts its daemon;

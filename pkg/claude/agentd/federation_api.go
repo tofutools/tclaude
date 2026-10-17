@@ -538,8 +538,11 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		seen[p.InstanceID] = true
 	}
 	summary := r.URL.Query().Get("summary") == "1"
+	// untrusted=1 keeps the hub-visible strangers in a summary read, for the
+	// Fleet map's "show untrusted" view; the full read always lists them.
+	strangers := !summary || r.URL.Query().Get("untrusted") == "1"
 	for _, e := range dir {
-		if summary || seen[e.InstanceID] {
+		if !strangers || seen[e.InstanceID] {
 			continue
 		}
 		resp.Peers = append(resp.Peers, fedPeerJSON{

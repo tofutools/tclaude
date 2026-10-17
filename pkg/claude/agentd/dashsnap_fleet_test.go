@@ -382,6 +382,42 @@ func fleetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "fleet-map-untrusted",
+			Title:   "Fleet map: show untrusted",
+			Caption: "Show untrusted adds the hub-visible instances this node has not trusted to the map: dotted, uncoloured cards with their self-reported name, instance ID and fingerprint, on dotted links from the hub, each with Trust….",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('[data-fleet="show-untrusted"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var box = document.querySelector('[data-fleet="show-untrusted"]');
+  if (!box.checked) box.click();
+  for (var j = 0; j < 50 && !document.querySelector('.fleet-card.untrusted'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.fleet-card.untrusted [data-fleet="trust"]')) throw new Error('fleet: no untrusted card with Trust…');
+  for (var k = 0; k < 30 && !document.querySelector('.fleet-edge.untrusted'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.fleet-edge.untrusted')) throw new Error('fleet: no untrusted edge');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-map-untrusted-trust",
+			Title:   "Trust from the map",
+			Caption: "Trust… on an untrusted card opens Fleet config's trust dialog: the full fingerprint to compare out of band, a local label, the trust level (or the default profile), and the comparison acknowledgement.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('[data-fleet="show-untrusted"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var box = document.querySelector('[data-fleet="show-untrusted"]');
+  if (!box.checked) box.click();
+  for (var j = 0; j < 50 && !document.querySelector('.fleet-card.untrusted [data-fleet="trust"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.fleet-card.untrusted [data-fleet="trust"]').click();
+  for (var k = 0; k < 50 && !document.querySelector('#fleet-trust-modal #fleet-trust-submit'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-trust-modal')) throw new Error('fleet: trust dialog did not open from the map');
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "fleet-map-leave",
 			Title:   "] leaves the map",
 			Caption: "Map and Fleet config hide every per-node tab and their own anchors, so ] (like [ and ←/→) hands off to the fleet island, which returns to the per-node tab the operator left — here Groups.",
