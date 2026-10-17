@@ -1,7 +1,8 @@
 // fleet-model.js — DOM-free helpers for the Fleet node chip row and map view.
 //
 // Data comes from two local dashboard endpoints:
-//   GET /api/federation/status?summary=1 — this node plus its federation peers.
+//   GET /api/federation/status?summary=1 — this node plus its federation peers
+//   (&untrusted=1 adds the hub-visible strangers while the map shows them).
 //   GET /api/node-summary (local) and /api/peer/{instance_id}/node-summary — the
 //   lightweight per-node map-card summary (see "Node summaries and polling" in
 //   docs/federation.md).
@@ -100,6 +101,24 @@ export function normalizeFleet(status) {
     peers,
     hub: { state: hubState, ...hubDetails(status) },
   };
+}
+
+// normalizeStrangers lists the hub-visible instances this node has not
+// trusted, for the map's "show untrusted" view. Their names are self-reported:
+// the map shows them as claims and trusting one still goes through the
+// fingerprint check of Fleet config's trust dialog.
+export function normalizeStrangers(status) {
+  return (Array.isArray(status?.peers) ? status.peers : [])
+    .filter((p) => p && !p.trusted && p.instance_id)
+    .map((p) => ({
+      id: p.instance_id,
+      name: p.name || '',
+      label: p.name || String(p.instance_id).slice(0, 13),
+      fingerprint: p.fingerprint || '',
+      online: !!p.online,
+      lastSeen: p.last_seen && !String(p.last_seen).startsWith('0001-') ? p.last_seen : null,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
 }
 
 // hubDetails is what the map's hub card shows besides the connection state:

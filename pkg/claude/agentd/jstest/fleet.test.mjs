@@ -338,6 +338,52 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   await bar.unmount(); await mounted.unmount(); state.dispose();
 });
 
+test('"Show untrusted" asks for strangers, draws them apart from peers, and trusts through the fingerprint dialog', async (t) => {
+  const { harness, stateMod, actionsMod, island } = await load(t);
+  const stored = new Map();
+  const prefs = { getItem: (k) => stored.get(k) ?? null, setItem: (k, v) => { stored.set(k, v); } };
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map'), prefs });
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => status([{ instance_id: 'inst_zed', trusted: false, online: false, fingerprint: 'aaaa-bbbb-cccc-dddd' }]) }; };
+  const actions = actionsMod.createFleetActions({ state, fetchImpl });
+  await actions.loadStatus();
+  assert.equal(urls.at(-1), '/api/federation/status?summary=1', 'unticked: the cheap read');
+  const toasts = []; const opened = [];
+  const TrustDialog = ({ row, onDone }) => harness.html`<div id="fake-trust">${row.id}<button type="button" onClick=${() => onDone(`Trusted ${row.label} (restricted)`)}>done</button></div>`;
+  const loadTrust = async () => { opened.push('load'); return { TrustDialog, actions: {} }; };
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} toast=${(m) => toasts.push(m)} loadTrust=${loadTrust} />`);
+  assert.equal(mounted.container.querySelector('.fleet-card.untrusted'), null, 'strangers hidden by default');
+  const box = mounted.container.querySelector('[data-fleet="show-untrusted"]');
+  assert.equal(box.hasAttribute('checked'), false);
+  await harness.act(async () => { box.checked = true; harness.fireEvent(box, 'change'); await Promise.resolve(); });
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.equal(urls.at(-1), '/api/federation/status?summary=1&untrusted=1');
+  assert.equal(stored.get(stateMod.SHOW_UNTRUSTED_PREF), '1', 'the choice is remembered');
+  const cards = [...mounted.container.querySelectorAll('.fleet-card.untrusted')];
+  assert.deepEqual(cards.map((c) => c.dataset.nodeId), ['inst_stranger', 'inst_zed']);
+  assert.match(cards[0].textContent, /carol/);
+  assert.match(cards[0].textContent, /not trusted/);
+  assert.match(cards[1].textContent, /unnamed/);
+  assert.match(cards[1].textContent, /aaaa-…-dddd/);
+  assert.equal(mounted.container.querySelectorAll('.fleet-card:not(.untrusted):not(.hub):not(.local)').length, 2, 'trusted peers still render as nodes');
+  await harness.act(async () => { harness.fireEvent(cards[0].querySelector('[data-fleet="trust"]'), 'click'); await Promise.resolve(); await Promise.resolve(); });
+  assert.deepEqual(opened, ['load']);
+  assert.match(mounted.container.querySelector('#fake-trust').textContent, /inst_stranger/);
+  await harness.act(async () => { harness.fireEvent(getByRole(mounted.container, 'button', { name: 'done' }), 'click'); await Promise.resolve(); });
+  assert.deepEqual(toasts, ['Trusted carol (restricted)']);
+  assert.equal(mounted.container.querySelector('#fake-trust'), null, 'the dialog closes');
+  assert.equal(urls.at(-1), '/api/federation/status?summary=1&untrusted=1', 'trusting re-reads the status');
+  await mounted.unmount();
+  const fresh = stateMod.createFleetState({ activeTab: harness.signals.signal('map'), prefs });
+  assert.equal(fresh.view.value.showUntrusted, true, 'a reload keeps the box ticked');
+  fresh.setShowUntrusted(false);
+  assert.deepEqual(fresh.view.value.strangers, []);
+  const remote = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} remote="inst_forge" />`);
+  assert.equal(remote.container.querySelector('[data-fleet="show-untrusted"]'), null, 'a peer view never trusts from the map');
+  assert.equal(remote.container.querySelector('.fleet-card.untrusted'), null);
+  await remote.unmount(); state.dispose(); fresh.dispose();
+});
+
 test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
   const { harness, stateMod, actionsMod } = await load(t);
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map') });
