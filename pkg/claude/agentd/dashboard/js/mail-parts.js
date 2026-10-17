@@ -5,6 +5,7 @@
 // with what it can do: the fused view adds a node pill to each row and
 // disables what the owning node does not allow from here.
 import { Fragment, h } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { focusRow } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
@@ -13,6 +14,7 @@ import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
+import { MessageDownloadMenu } from './message-download-menu.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
 
 const html = htm.bind(h);
@@ -348,4 +350,60 @@ export function MessageBody({ message }) {
   return html`<div class="mail-reader-body">${bodilessNotice(message)
     ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
     : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>`;
+}
+
+// LocalHumanActions are the reader's buttons for a human notification on this
+// node. row-action-handler.js runs them (data-act), as on every surface that
+// shows a notification: reply opens the reply dialog, focus raises the
+// sender's terminal.
+export function LocalHumanActions({ message, senderLive, harness = '', toast }) {
+  const fromTarget = message.from_agent || message.from_conv;
+  return html`<${Fragment}>
+    ${message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
+      data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
+      title="Reply to this agent — opens a dialog to send your answer back">reply</button>
+      <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
+        data-harness=${harness}
+        disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
+    <button data-act=${message.read ? 'msg-mark-unread' : 'msg-mark-read'}
+      data-id=${message.id} title=${message.read ? 'Mark this message unread' : 'Mark this message read'}>${message.read ? 'mark unread' : 'mark read'}</button>
+    <${MessageDownloadMenu} message=${message} toast=${toast} />
+    <button class="danger" data-act="msg-delete" data-id=${message.id} title="Permanently delete this message">delete</button>
+  </${Fragment}>`;
+}
+
+// PeerHumanReply answers a human notification that lives on another node,
+// through that node's human-inbox routes (actions.read / actions.reply, each
+// a promise). canAnswer is whether the node lets this operator answer; when
+// it does not, the notification is read-only here. children follow the
+// buttons (such as an Open on NODE button).
+export function PeerHumanReply({ message, nodeName, canAnswer, actions, toast, onDone, children = null }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setText(''); setBusy(false); }, [message.id, nodeName]);
+  const replyable = !!(message.from_agent || message.from_conv);
+  const run = (what, p, done) => {
+    setBusy(true);
+    p.then(() => { setBusy(false); setText(''); toast(done, false); onDone?.(); }, (e) => {
+      setBusy(false);
+      const reason = e?.message || String(e);
+      toast(e?.status === 403 ? `${what}: ${nodeName} does not allow it from here (${reason}).` : `${what} failed: ${reason}`, true);
+    });
+  };
+  if (!canAnswer) {
+    return html`<div class="mail-reader-actions"><span class="muted">${nodeName} shares its notifications for reading; answer them on its own dashboard.</span>
+      <span class="spacer"></span>${children}</div>`;
+  }
+  return html`<${Fragment}>
+    ${replyable && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${message.from_title || message.from_agent || 'the agent'} on ${nodeName}`}
+      value=${text} disabled=${busy} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}
+    <div class="mail-reader-actions">
+      ${replyable && html`<button type="button" class="primary" data-human="reply" disabled=${busy || !text.trim()}
+        onClick=${() => run('Reply', actions.reply(message.id, text.trim()), `Replied on ${nodeName}`)}>send reply</button>`}
+      ${!message.read && html`<button type="button" data-human="read" disabled=${busy}
+        title=${`Mark this message read on ${nodeName}`}
+        onClick=${() => run('Mark read', actions.read(message.id), `Marked read on ${nodeName}`)}>mark read</button>`}
+      <span class="spacer"></span>${children}
+    </div>
+  </${Fragment}>`;
 }

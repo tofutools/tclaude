@@ -86,6 +86,9 @@ import { confirmModal, toast } from './refresh.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, wz } from './mail-labels.js';
 import { humanNotificationTargetPage } from './human-notification-attention.js';
+import { withPeerAttachments } from './human-attachments.js';
+import { remoteNodeID } from './fleet-model.js';
+import { featureState } from './peer-view-limits.js';
 import {
   adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
@@ -459,6 +462,10 @@ async function loadMessages() {
     // The request lifecycle rejects stale page/search responses; this guard
     // covers a response whose mailbox was switched while it was in flight.
     if (mail.selected !== id) return;
+    // On a peer's page its notification files load through this node's peer
+    // attachment route; the URLs the peer sends name its own routes.
+    const remote = remoteNodeID();
+    if (remote && id === HUMAN_ID && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m));
     mailState.messageRequest.commitRequest(token, data);
   } catch (error) {
     if (mailState.messageRequest.failRequest(token, error)) clearMessages();
@@ -784,8 +791,10 @@ function setShowPrevGens(on) {
 function mailboxView() {
   const q = (mail.boxQuery || '').trim().toLowerCase();
   const pinned = mail.mailboxes.filter(mb => (mb.kind === 'all' || mb.kind === 'human') && mailboxMatchesFilter(mb, q));
-  const access = accessRequestsMailbox();
-  if (mailboxMatchesFilter(access, q)) pinned.push(access);
+  // A peer's snapshot withholds its access requests; they are answered in
+  // the fused Messages view or on its own dashboard.
+  const access = remoteNodeID() ? null : accessRequestsMailbox();
+  if (access && mailboxMatchesFilter(access, q)) pinned.push(access);
   const groups = mail.mailboxes.filter(mb => mb.kind === 'group' && mailboxMatchesFilter(mb, q));
   const agents = mail.mailboxes.filter(mb => mb.kind === 'agent');
   return {
@@ -995,10 +1004,15 @@ function selectMessage(id) {
 function markOpenedHumanRead(id) {
   const m = mail.messages.find(x => x.id === id);
   if (!m || m.read) return;
+  // On a peer's page the notification is the peer's: it is marked read
+  // through its human-inbox route, and only where the peer lets this
+  // operator answer (/api/human-messages is this node's own).
+  const remote = remoteNodeID();
+  if (remote && featureState('human.inbox.answer', lastSnapshot?.peer_view) !== 'shared') return;
   m.read = true;  // optimistic — selectMessage repaints immediately after
   (async () => {
     try {
-      const r = await fetch('/api/human-messages/read', {
+      const r = await fetch(remote ? '/api/human-inbox/read' : '/api/human-messages/read', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),

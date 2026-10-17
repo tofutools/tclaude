@@ -14,9 +14,10 @@ import { dashboardState } from './snapshot-store.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import {
-  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, MailFilters, MailFooterToggles, MailGutters,
-  MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
+  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, LocalHumanActions, MailFilters, MailFooterToggles, MailGutters,
+  MailPager, MailRow, MessageBody, MessageHeaders, PeerHumanReply, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
+import { featureState } from './peer-view-limits.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './fleet-model.js';
@@ -67,7 +68,8 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
       ? `${mailbox.unread || 0} pending · ${mailbox.total} total access request${mailbox.total === 1 ? '' : 's'}`
       : `${mailbox.in} received · ${mailbox.out} sent`;
   let lead = null;
-  if (mailbox.kind === 'agent' && !nested) {
+  // Wiping is this node's own: a peer never serves it.
+  if (mailbox.kind === 'agent' && !nested && !remoteNodeID()) {
     lead = html`<input type="checkbox" class="mail-box-check" data-conv=${mailbox.id}
       checked=${current.selectedBoxes.has(mailbox.id)} disabled=${current.busy} title="Select for bulk wipe"
       onChange=${(event) => controller.toggleBoxSelection(mailbox.id, event.currentTarget.checked)} />`;
@@ -139,7 +141,7 @@ function MailSidebar({ current, controller }) {
       : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
           label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
-      <div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>
+      ${!remoteNodeID() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
       ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
@@ -176,7 +178,8 @@ function MessageRow({ message, current, aggregate, controller }) {
     checked=${current.selectedMsgs.has(message.id)} busy=${current.busy}
     onCheck=${(checked) => controller.toggleMessageSelection(message.id, checked)}
     onSelect=${() => controller.selectMessage(message.id)}
-    onDelete=${() => controller.deleteOneMessage(message.id)} />`;
+    onDelete=${() => controller.deleteOneMessage(message.id)}
+    canDelete=${!remoteNodeID()} deleteTitle=${remoteNodeID() ? 'Only this node’s operator can delete its messages' : 'Delete this message'} />`;
 }
 
 function MessageList({ current, controller, model }) {
@@ -246,14 +249,18 @@ function MessageList({ current, controller, model }) {
 // still useful with no notifications).
 function FolderActions({ current, controller, solo = false }) {
   const human = current.selected === 'human';
+  // A peer's page: the human folder's sweeps are this node's own routes, and
+  // the agent folder's mark all read goes to the peer (no data-act, so the
+  // peer-view guard lets it through to the peer, which decides).
+  const remote = !!remoteNodeID();
   return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
     <button id="mail-mark-all" data-act="msg-mark-all-read"
-      title="Mark every human notification read" hidden=${!human}>✓ mark all read</button>
+      title="Mark every human notification read" hidden=${!human || remote}>✓ mark all read</button>
     <button id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
-      hidden=${!human || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
+      hidden=${!human || remote} onClick=${() => openPeerMail({})}>✉ peer</button>
     <button class="danger" id="mail-clear-read" data-act="msg-clear"
-      title="Delete every human notification that has been marked read" hidden=${!human}>🗑 delete read</button>
-    <button id="mail-agent-mark-all" data-act="mail-agent-mark-all"
+      title="Delete every human notification that has been marked read" hidden=${!human || remote}>🗑 delete read</button>
+    <button id="mail-agent-mark-all" data-act=${remote ? undefined : 'mail-agent-mark-all'}
       title="Mark every message this agent has received as read (on its behalf)"
       onClick=${controller.markAllAgentRead} hidden=${human}>✓ mark all read</button>
   </span>`;
@@ -262,8 +269,11 @@ function FolderActions({ current, controller, solo = false }) {
 function MessageBulkBar({ current, controller, model }) {
   // "All agent messages" and group folders span many inboxes, so no
   // folder-wide action applies there.
-  const folderActions = !model.access && current.selected !== 'all' && !current.selected.startsWith('group:');
-  if (model.access) return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
+  const remote = !!remoteNodeID();
+  const folderActions = !model.access && current.selected !== 'all' && !current.selected.startsWith('group:') && !(remote && current.selected === 'human');
+  // On a peer's page the human folder has no bulk action: deleting is the
+  // peer operator's own.
+  if (model.access || (remote && current.selected === 'human')) return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
   if (current.busy && current.progress?.where === 'bulk') {
     return html`<div id="mail-bulk-bar" class="mail-bulk-bar"><${Progress} progress=${current.progress} /></div>`;
   }
@@ -283,8 +293,8 @@ function MessageBulkBar({ current, controller, model }) {
       onClick=${() => controller.setMessagesRead([...current.selectedMsgs], true)}>✓ read</button>
       <button disabled=${count === 0} title="Mark the selected messages unread"
         onClick=${() => controller.setMessagesRead([...current.selectedMsgs], false)}>○ unread</button></${Fragment}>`}
-    <button class="danger" disabled=${count === 0} title="Delete the selected messages"
-      onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button>
+    ${!remote && html`<button class="danger" disabled=${count === 0} title="Delete the selected messages"
+      onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button>`}
     ${folderActions && html`<${FolderActions} current=${current} controller=${controller} />`}
   </div>`;
 }
@@ -465,6 +475,26 @@ function senderHarness(message) {
   return sender?.state?.harness || '';
 }
 
+// remoteNodeName is how this page names the peer it shows.
+function remoteNodeName(remote) {
+  return document.documentElement.dataset.remoteNodeName || remote.slice(0, 13);
+}
+
+async function postPeerJSON(url, body) {
+  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let data = null;
+  try { data = await res.json(); } catch (_) { data = null; }
+  if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
+  return data;
+}
+
+// peerHumanActions answer a notification on the peer this page shows: the
+// page's fetch sends /api/human-inbox to that peer.
+const peerHumanActions = Object.freeze({
+  read: (id) => postPeerJSON('/api/human-inbox/read', { id }),
+  reply: (id, body) => postPeerJSON('/api/human-inbox/reply', { id, body }),
+});
+
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
@@ -480,33 +510,36 @@ function MessageReader({ current, controller, model }) {
     role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
     ? 'Unfurl a scroll to read it.' : 'Select a message to read.'}</div></div>`;
   const human = current.selected === 'human';
-  const peer = human && !remoteNodeID() ? peerOfMessage(message) : '';
+  const remote = remoteNodeID();
+  const peer = human && !remote ? peerOfMessage(message) : '';
   const ticket = peer ? awayTicket(message) : '';
-  const fromTarget = message.from_agent || message.from_conv;
-  const senderLive = controller.senderOnline(message.from_agent, message.from_conv);
+  let actions;
+  if (human && remote) {
+    // A peer's notification is answered through its human-inbox routes, where
+    // the peer allows it; this node's own routes would act on its own mail.
+    actions = html`<${PeerHumanReply} message=${message} nodeName=${remoteNodeName(remote)}
+      canAnswer=${featureState('human.inbox.answer', dashboardState.snapshot.value?.peer_view) === 'shared'}
+      actions=${peerHumanActions} toast=${shellToast} onDone=${controller.reloadMail} />`;
+  } else {
+    actions = html`<div class="mail-reader-actions">
+      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
+      ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
+        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}
+      ${human
+        ? html`<${LocalHumanActions} message=${message} senderLive=${controller.senderOnline(message.from_agent, message.from_conv)}
+            harness=${senderHarness(message)} toast=${shellToast} />`
+        : html`<${Fragment}><button onClick=${() => controller.setMessagesRead([message.id], !message.read)}
+            data-id=${message.id} title=${message.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}>${message.read ? 'mark unread' : 'mark read'}</button>
+          ${!remote && html`<button class="danger" data-id=${message.id}
+            onClick=${() => controller.deleteOneMessage(message.id)} title="Permanently delete this message">delete</button>`}</${Fragment}>`}
+    </div>`;
+  }
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
     role="region" aria-label="Message reader" tabindex="0">
     <${MessageHeaders} message=${message} />
     <${MessageBody} message=${message} />
     ${human && html`<${HumanAttachment} message=${message} />`}
-    <div class="mail-reader-actions">
-      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
-      ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
-        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}
-      ${human && message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
-        data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
-        title="Reply to this agent — opens a dialog to send your answer back">reply</button>
-        <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
-          data-harness=${senderHarness(message)}
-          disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
-      <button data-act=${human ? (message.read ? 'msg-mark-unread' : 'msg-mark-read') : undefined}
-        onClick=${human ? undefined : () => controller.setMessagesRead([message.id], !message.read)}
-        data-id=${message.id} title=${message.read ? (human ? 'Mark this message unread' : 'Mark this message unread for the recipient')
-          : (human ? 'Mark this message read' : 'Mark this message read on the recipient’s behalf')}>${message.read ? 'mark unread' : 'mark read'}</button>
-      ${human && html`<${MessageDownloadMenu} message=${message} toast=${shellToast} />`}
-      <button class="danger" data-act=${human ? 'msg-delete' : undefined} data-id=${message.id}
-        onClick=${human ? undefined : () => controller.deleteOneMessage(message.id)} title="Permanently delete this message">delete</button>
-    </div>
+    ${actions}
   </div>`;
 }
 

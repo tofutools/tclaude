@@ -13,7 +13,9 @@ import (
 // (dashboard.html + css + every js/*.js) catches it at `go test ./...`,
 // the same string-pin approach as the slop / wizard guards.
 func TestDashboardHTML_HumanReplyWired(t *testing.T) {
-	island := string(mustReadFS(dashboardAssetsFS, "js/mail-island.js"))
+	// The reader's notification buttons are a shared Messages part
+	// (mail-parts.js), rendered by mail-island.js and fused-mail.js alike.
+	island := string(mustReadFS(dashboardAssetsFS, "js/mail-parts.js"))
 	quickReader := string(mustReadFS(dashboardAssetsFS, "js/groups-notification-reader.js"))
 	html := string(mustReadFS(dashboardAssetsFS, "dashboard.html"))
 	must := func(needle, why string) {

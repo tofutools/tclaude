@@ -3986,8 +3986,17 @@ Reading a page does not change any message's read state.
 `POST /api/peer/INSTANCE/mailbox/mark-read` accepts `{ids:[ID],read:true|false}`
 or `{conv:CONV,read:true}` under the separate, off-by-default instance-wide
 `node.messages.manage` grant. It changes agent mail read state only. Delete,
-wipe, attachment downloads and human message mutations are not shared through
-these routes. Attachment metadata is display data, not download authority.
+wipe and human message mutations are not shared through these routes.
+
+A human notification's files are part of the mail `node.messages.read` shows.
+`GET /api/peer-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only) reads one
+from the peer in base64 chunks of at most 4 MiB
+(`GET /api/human-attachment-chunk?message=&attachment=&offset=&length=` on the
+peer, under the same grant; `length=0` reads only the file's name, type and
+size) and serves it to the dashboard with Range support. The
+peer's declared type is narrowed to images (not SVG), video, audio or plain
+text, anything else is an opaque download, and the response is a sandboxed,
+`nosniff` attachment.
 
 Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped

@@ -31,9 +31,11 @@ import { enterFirstRow, focusRow, leaveFirstRow, movePaneFocus, moveRowSelection
 import { messageKind, msgPreview } from './mail-labels.js';
 import { messageDeleteEndpoint } from './mail-state.js';
 import {
-  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, MailFilters, MailFooterToggles, MailGutters,
-  MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
+  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, LocalHumanActions, MailFilters, MailFooterToggles, MailGutters,
+  MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, PeerHumanReply, SectionToggle, SelectAll,
 } from './mail-parts.js';
+import { withPeerAttachments } from './human-attachments.js';
+import { senderOnline } from './mail-bridge.js';
 import {
   FUSED_FOLDERS, PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderMatches, folderURL, mergeMessages, mergeRequests,
   mergedDepth, mergedPages, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
@@ -241,7 +243,15 @@ function AccessReader({ item, node, busy, run, actions, confirm, toast, onDone }
   return { body, buttons };
 }
 
-function Reader({ item, folder, remote, actions, confirm, toast, openOnNode, onDone, onDelete }) {
+// senderHarness names the harness of a notification's sender on this node,
+// for the focus button.
+function senderHarness(message, snapshot) {
+  const agents = snapshot?.value?.agents || [];
+  const sender = agents.find((a) => (message.from_agent && a?.agent_id === message.from_agent) || (message.from_conv && a?.conv_id === message.from_conv));
+  return sender?.state?.harness || '';
+}
+
+function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openOnNode, onDone, onDelete }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { setText(''); setBusy(false); }, [item?.key]);
@@ -262,24 +272,39 @@ function Reader({ item, folder, remote, actions, confirm, toast, openOnNode, onD
   } else {
     const target = replyTarget(item);
     const human = item.kind === 'human';
-    const canHuman = human && canActOnHuman(node);
-    const attachments = item.attachments?.length > 0 || item.attachment;
-    body = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
-      <${MessageBody} message=${item} />
-      ${human && attachments && (node.local && !remote
-        ? html`<${HumanAttachment} message=${item} />`
-        : html`<div class="muted">Attachments stay on ${node.name}.</div>`)}
-      ${((canHuman && target) || (!human && target)) && html`<textarea class="fused-mail-reply" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
-    buttons = human
-      ? (canHuman ? html`
-        ${!item.read && html`<button type="button" data-fused="read" disabled=${busy} onClick=${() => run('Mark read', actions.humanRead(node, item.id), `Marked read on ${node.name}`)}>mark read</button>`}
-        ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.humanReply(node, item.id, text.trim()), `Replied on ${node.name}`)}>send reply</button>`}`
-        : html`<span class="muted">${node.name} shares its notifications for reading; answer them on its own dashboard.</span>`)
-      : html`
+    const headers = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
+      <${MessageBody} message=${item} />`;
+    if (human && (!node.local || remote)) {
+      // A peer's notification (its files already point at this node's peer
+      // attachment route) is answered through the peer's human-inbox; so is
+      // this node's on a peer's page, where its data-act buttons are refused.
+      return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0">
+        ${headers}
+        <${HumanAttachment} message=${item} />
+        <${PeerHumanReply} message=${item} nodeName=${node.name} canAnswer=${canActOnHuman(node)} toast=${toast} onDone=${onDone}
+          actions=${{ read: (id) => actions.humanRead(node, id), reply: (id, body) => actions.humanReply(node, id, body) }}>${open}</${PeerHumanReply}>
+      </div>`;
+    }
+    if (human) {
+      // This node's notification: the same buttons as its own Messages, run
+      // by the page's action handlers. The view re-reads once they act.
+      return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
+        onClick=${(e) => { if (e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
+        ${headers}
+        <${HumanAttachment} message=${item} />
+        <div class="mail-reader-actions fused-mail-actions">
+          <${LocalHumanActions} message=${item} senderLive=${senderOnline(item.from_agent, item.from_conv, snapshot.value)}
+            harness=${senderHarness(item, snapshot)} toast=${toast} />
+          <span class="spacer"></span>${open}</div>
+      </div>`;
+    }
+    body = html`${headers}
+      ${target && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
+    buttons = html`
         <button type="button" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
           onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}</button>
         ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>send reply</button>`}`;
-    if (node.local && !remote && (human || folder.id !== 'access')) {
+    if (node.local && !remote) {
       buttons = html`${buttons}<button type="button" class="danger" data-fused="delete" disabled=${busy} title="Permanently delete this message" onClick=${() => onDelete([item])}>delete</button>`;
     }
   }
@@ -352,7 +377,12 @@ export function FusedMail({
   const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig ? entries[n.id].page : null));
   const total = pages.reduce((s, p) => s + (p?.total || 0), 0);
   const totalUnfiltered = pages.reduce((s, p) => s + (p?.totalUnfiltered || 0), 0);
-  const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pages[i]?.messages || [] })));
+  // A peer's notification files load through this node's peer attachment route.
+  const pageMessages = (node, i) => {
+    const list = pages[i]?.messages || [];
+    return isHuman && !node.local ? list.map((m) => withPeerAttachments(node.id, m)) : list;
+  };
+  const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pageMessages(node, i) })));
   const pageCount = isAccess ? 1 : merged ? mergedPages(total, pageSize) : Math.max(1, Math.ceil(total / pageSize));
   const rows = isAccess || !merged ? allRows : allRows.slice((page - 1) * pageSize, page * pageSize);
   const item = rows.find((r) => r.key === selected) || null;
@@ -570,7 +600,7 @@ export function FusedMail({
         onPage=${(n) => { setPage(n); setSelected(''); }} onPageSize=${setPageSize}
         note=${deeper ? 'pick one node for older mail' : ''} />
     </div>
-    <${Reader} item=${item} folder=${folder} remote=${remote} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
+    <${Reader} item=${item} remote=${remote} snapshot=${snapshot} timers=${timers} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
       onDone=${() => setReload((r) => r + 1)} onDelete=${deleteRows} />
     <${MailGutters} />
   </div>`;
