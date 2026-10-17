@@ -769,7 +769,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "groups-focus-both",
 			Title:   "Groups — Both focus (default)",
-			Caption: "The Both | Agents | Processes switch sits right after the compact group search (features.processes on), Both selected by default. Each open group shows two thin section rules, Agents then Processes, each carrying its own controls after its counts, with content at the same left edge as the single lenses; a quiet group's Processes section folds to one line and keeps its controls.",
+			Caption: "The Both | Agents | Processes switch sits right after the compact group search (features.processes on), Both selected by default. Each open group shows two thin section rules, Agents then Processes, with content at the same left edge as the single lenses. Open, the agent controls sit in the member table's untitled first header cell and the process controls on a slim title row above the runs; a quiet group's Processes section folds to one line and keeps its controls there.",
 			InitJS:  processContextFixtureInitJS(),
 			JS: showGroups + `return (async function(){
   var deadline = Date.now() + 3000;
@@ -781,8 +781,8 @@ func baseStates() []dashsnap.State {
   if (both.getAttribute('aria-pressed') !== 'true') throw new Error('Both is not the default focus');
   if (!document.querySelector('#groups-list [data-fused-section="agents"] table')) throw new Error('Both lost the member tables');
   if (!document.querySelector('#groups-list [data-fused-section="processes"]')) throw new Error('Both shows no Processes section');
-  if (!document.querySelector('#groups-list [data-fused-section="agents"] > .gf-section-head [data-act="spawn-agent"]')) throw new Error('the agent controls are not on the Agents line');
-  if (!document.querySelector('#groups-list [data-fused-section="processes"] > .gf-section-head .gf-run-controls')) throw new Error('the process controls are not on the Processes line');
+  if (!document.querySelector('#groups-list [data-fused-section="agents"] table > thead th:first-child .gf-table-actions [data-act="spawn-agent"]')) throw new Error('the agent controls do not head the member table');
+  if (!document.querySelector('#groups-list [data-fused-section="processes"] .gf-title-row .gf-run-controls')) throw new Error('the process controls do not head the open runs');
   document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = true; });
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   // Frame the parent's own action row and sections, below its subgroup.
