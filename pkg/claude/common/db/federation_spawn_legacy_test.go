@@ -28,3 +28,17 @@ func TestNodeProfileExpandsLegacySpawnOverrides(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"max_live":2}`, string(raw))
 }
+
+// An assignment that managed a spawn grant with a legacy list also manages
+// the field grants the list became, so the profile can take them away.
+func TestNodeProfileAssignmentManagesExpandedFieldGrants(t *testing.T) {
+	var a FederationNodeProfileAssignment
+	require.NoError(t, json.Unmarshal([]byte(`{"profile":{"definition":{"trust_level":"restricted","labels":[],"peer_grants":[
+		{"peer":"","slug":"groups.members.spawn","scope":"group=1","spawn_policy":{"allowed_overrides":["model"]}}]}},
+		"managed_pools":{},"managed_grants":{"groups.members.spawn\ngroup=1":true}}`), &a))
+	require.True(t, a.ManagedGrants["groups.members.spawn.model\ngroup=1"])
+	var none FederationNodeProfileAssignment
+	require.NoError(t, json.Unmarshal([]byte(`{"profile":{"definition":{"trust_level":"restricted","labels":[],"peer_grants":[
+		{"peer":"","slug":"groups.members.spawn","scope":"group=1","spawn_policy":{"allowed_overrides":["model"]}}]}}}`), &none))
+	require.Empty(t, none.ManagedGrants, "an unmanaged spawn grant adopts nothing")
+}

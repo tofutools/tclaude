@@ -663,8 +663,10 @@ tclaude federation grant alice groups.members.spawn.all --scope group=builders
   only when it is at least as specific (a group scope above an unscoped
   grant, a direct grant above a pool's): a group-scoped spawn grant without
   field grants of its own narrows broader ones, as its policy narrows a
-  broader spawn grant's. On its own a field grant shows the peer nothing, and
-  revoking a spawn grant revokes the field grants with its scope.
+  broader spawn grant's. So a direct spawn grant added beside a pool's (say,
+  to change the live cap) needs its own field grants too. On its own a field
+  grant shows the peer nothing, and revoking a spawn grant (or removing it
+  from a node profile) revokes the field grants with its scope.
 - `groups.members.spawn.profile` lets the peer pick profiles that bring
   their own roles, sandbox and approval modes and environment; mark a profile
   operator-only to keep it out.

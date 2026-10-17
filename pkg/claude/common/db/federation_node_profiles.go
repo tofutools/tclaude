@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -44,6 +45,25 @@ type FederationNodeProfile struct {
 	Revision   int64                     `json:"revision"`
 	Definition FederationNodeProfileSpec `json:"definition"`
 }
+
+// UnmarshalJSON also manages the field grants a legacy allowed_overrides
+// list on a managed spawn grant expanded into (see ExpandLegacySpawnOverrides):
+// the profile placed them, so it also takes them away.
+func (a *FederationNodeProfileAssignment) UnmarshalJSON(b []byte) error {
+	type plain FederationNodeProfileAssignment
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	for _, g := range v.Profile.Definition.PeerGrants {
+		if strings.HasPrefix(g.Slug, "groups.members.spawn.") && v.ManagedGrants[nodeProfileGrantKey(FederationPeerGrant{Slug: "groups.members.spawn", Scope: g.Scope})] {
+			v.ManagedGrants[nodeProfileGrantKey(g)] = true
+		}
+	}
+	*a = FederationNodeProfileAssignment(v)
+	return nil
+}
+
 type FederationNodeProfileAssignment struct {
 	Profile       FederationNodeProfile `json:"profile"`
 	ManagedPools  map[string]bool       `json:"managed_pools"`
@@ -613,6 +633,11 @@ func planFederationNodeProfileTx(tx *sql.Tx, profileID, peer, token string, newP
 			} else {
 				g := oldGrants[key]
 				_, e = tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, g.Slug, g.Scope)
+				// A spawn grant's field grants go with it (as on a revoke),
+				// unless this profile still wants them.
+				if e == nil && g.Slug == "groups.members.spawn" {
+					e = deleteUnwantedSpawnFieldGrants(tx, peer, g.Scope, desiredGrants)
+				}
 			}
 		}
 		if e != nil {
@@ -650,4 +675,31 @@ type FederationTeleportLanding struct {
 	CredentialsDefault string                `json:"credentials_default,omitempty"`
 	CredentialsAllowed []string              `json:"credentials_allowed,omitempty"`
 	Limits             config.TeleportLimits `json:"limits,omitempty"`
+}
+
+func deleteUnwantedSpawnFieldGrants(tx *sql.Tx, peer, scope string, desired map[string]FederationPeerGrant) error {
+	rows, err := tx.Query(`SELECT slug FROM federation_peer_grants WHERE peer=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, peer, scope)
+	if err != nil {
+		return err
+	}
+	var drop []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if _, ok := desired[nodeProfileGrantKey(FederationPeerGrant{Slug: slug, Scope: scope})]; !ok {
+			drop = append(drop, slug)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, slug := range drop {
+		if _, err := tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, slug, scope); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -122,19 +122,24 @@ func DeleteFederationPeerGrant(peer, slug, scope string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, slug, scope)
+	tx, err := d.Begin()
 	if err != nil {
 		return false, err
 	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, slug, scope)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
 	// The launch settings a spawn grant let the peer choose go with it, so
 	// a later spawn grant does not quietly reopen them.
-	if slug == "groups.members.spawn" {
-		if _, err := d.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, peer, scope); err != nil {
+	if n > 0 && slug == "groups.members.spawn" {
+		if _, err := tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, peer, scope); err != nil {
 			return false, err
 		}
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return n > 0, tx.Commit()
 }
 
 func ListFederationPeerGrants(peer string) ([]FederationPeerGrant, error) {

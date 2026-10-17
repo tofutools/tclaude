@@ -174,15 +174,23 @@ func DeleteFederationNodeGroupGrant(id, slug, scope string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	r, err := d.Exec(`DELETE FROM federation_node_group_grants WHERE group_id=? AND slug=? AND scope=?`, id, slug, scope)
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	r, err := tx.Exec(`DELETE FROM federation_node_group_grants WHERE group_id=? AND slug=? AND scope=?`, id, slug, scope)
 	if err != nil {
 		return false, err
 	}
 	// As for a peer's grants: a spawn grant's field grants go with it.
-	if slug == "groups.members.spawn" {
-		if _, err := d.Exec(`DELETE FROM federation_node_group_grants WHERE group_id=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, id, scope); err != nil {
+	if n, _ := r.RowsAffected(); n > 0 && slug == "groups.members.spawn" {
+		if _, err := tx.Exec(`DELETE FROM federation_node_group_grants WHERE group_id=? AND slug LIKE 'groups.members.spawn.%' AND scope=?`, id, scope); err != nil {
 			return false, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
 	n, err := r.RowsAffected()
 	return n > 0, err
