@@ -18644,6 +18644,13 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 #dnd-trash.dnd-trash-template-mode .dnd-trash-label-template { display: inline; }
 body.wizard #dnd-trash.dnd-trash-template-mode .dnd-trash-label-template { display: none; }
 body.wizard #dnd-trash.dnd-trash-template-mode .dnd-trash-label-template-wizard { display: inline; }
+/* A saved-process chip drag removes the process from its group: Remove/Unbind. */
+.dnd-trash-label-unpin, .dnd-trash-label-unpin-wizard { display: none; }
+#dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-regular,
+#dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-wizard { display: none; }
+#dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin { display: inline; }
+body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin { display: none; }
+body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { display: inline; }
 
 /* Wizard: the delete button becomes an unmaking sigil, matching the banishment
    sigil the group member rows' retire icon wears — tarnished gold at rest,
@@ -20672,9 +20679,13 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 .gq-saved-label { font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #8b949e; }
 .gq-saved-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #30363d; border-radius: 999px; padding: 2px 4px 2px 10px; background: #161b22; font-size: 12px; }
 .gq-saved-chip.open { border-color: #58a6ff; }
+.gq-saved-chip[data-saved-process-drag] { cursor: grab; }
+.gq-saved-chip.gq-saved-drag-source { opacity: .45; }
 .gq-saved-name { color: #e6edf3; font-weight: 600; }
 .gq-saved-run { font: inherit; font-size: 10px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #238636; background: #1b3a26; color: #7ee787; cursor: pointer; }
 .gq-saved-run:hover, .gq-saved-run:focus-visible { background: #238636; color: #fff; outline: none; }
+.gq-saved-remove { font: inherit; font-size: 13px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid transparent; background: transparent; color: #6e7681; cursor: pointer; }
+.gq-saved-remove:hover, .gq-saved-remove:focus-visible { border-color: #f85149; color: #ff7b72; outline: none; }
 .gq-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
 .gq-strip .gq-param input { flex: 0 1 160px; }
 .gq-strip-title { font-size: 12px; color: #8b949e; }
@@ -20912,6 +20923,9 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 .dpp-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dpp-acts select { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
 .dpp-acts .dpp-start { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.dpp-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; font-size: 11px; color: #6e7681; }
+.dpp-unpin { background: none; border: 0; padding: 0 0 0 4px; color: inherit; cursor: pointer; font: inherit; }
+.dpp-unpin:hover:not(:disabled), .dpp-unpin:focus-visible { color: #ff7b72; outline: none; }
 body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }

@@ -391,6 +391,9 @@ function bindDnd() {
     // dndDragActive, so it would otherwise preventDefault + clear the shared
     // pill on a template drop.
     if (e.dataTransfer.types.includes('application/x-tclaude-process-template')) return;
+    // Likewise a saved-process chip drag (groups-saved-process-dnd.js), which
+    // removes a process from its group on the bin.
+    if (e.dataTransfer.types.includes('application/x-tclaude-saved-process')) return;
     // A terminal-tab drag (terminal-shell-island.js) detaches or reattaches a
     // terminal and, like the three above, carries only its own custom MIME. It
     // also adds a document-level drop listener for the duration of the drag.

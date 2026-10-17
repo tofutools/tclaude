@@ -478,6 +478,44 @@ test('a saved process publishes to the library and is removed from the group aft
   assert.equal(root.querySelector('[data-saved-publish]'), null, 'a listed process is already published');
 });
 
+test('a saved chip\'s × opens the removal confirmation directly; keep backs out', async (t) => {
+  const { root, api, click } = await mount(t, { context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_nightly"]'));
+  assert.deepEqual(api.calls.unpin, [], 'remove asks first');
+  assert.match(root.querySelector('.gq-confirm').textContent, /stays in the template library/);
+  await click([...root.querySelectorAll('.gq-confirm .gq-link')].find((el) => el.textContent === 'keep'));
+  assert.equal(root.querySelector('.gq-confirm'), null, 'keep backs out');
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_nightly"]'));
+  assert.ok(root.querySelector('.gq-confirm'), '× asks again after keep');
+  await click(root.querySelector('[data-saved-remove-confirm]'));
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_nightly' }]);
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  assert.equal(root.querySelector('.gq-confirm'), null, '▶ switches the open strip to its start form');
+  assert.ok(root.querySelector('[data-saved-strip="tmpl_ship"]'));
+});
+
+test('dragging a saved chip onto the bin removes it from the group', async (t) => {
+  const { harness, root, api, notes, settle } = await mount(t, { context: SAVED_CONTEXT });
+  const doc = harness.window.document;
+  const trash = doc.createElement('div');
+  trash.id = 'dnd-trash';
+  doc.body.appendChild(trash);
+  t.after(() => trash.remove());
+  const chip = root.querySelector('[data-saved-process-drag="tmpl_nightly"]');
+  assert.equal(chip.draggable, true);
+  const transfer = { data: {}, setData(type, value) { this.data[type] = value; }, get types() { return Object.keys(this.data); } };
+  harness.fireEvent(chip, 'dragstart', { dataTransfer: transfer, target: chip });
+  assert.equal(transfer.data['application/x-tclaude-saved-process'], 'tmpl_nightly');
+  assert.equal(transfer.data['text/plain'], undefined, 'text/plain is withheld so dnd.js ignores this drag');
+  assert.ok(trash.classList.contains('dnd-trash-unpin-mode'), 'the bin speaks the remove voice');
+  await harness.act(() => harness.fireEvent(trash, 'drop', { dataTransfer: transfer, target: trash }));
+  await settle();
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_nightly' }], 'a listed process unpins without asking');
+  assert.deepEqual(notes, [{ message: 'Removed nightly-check from webshop', error: false }]);
+  assert.equal(trash.classList.contains('show'), false, 'the bin is torn down after the drop');
+});
+
 test('Edit steps reopens a saved process as a step list and saves a new version of it', async (t) => {
   const api = fakeApi({ stored: { tmpl_ship: SAVED_VIEW } });
   const { root, click, setValue } = await mount(t, { api, context: SAVED_CONTEXT });
