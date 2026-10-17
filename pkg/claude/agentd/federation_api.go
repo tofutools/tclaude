@@ -842,6 +842,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
 	if rt != nil {
+		rt.forgetTrustRequest(entry.InstanceID)
 		// Catalog construction reads shared daemon state, including tmux.
 		// Let flow cleanup drain this work before restoring its globals.
 		goBackground(func() {

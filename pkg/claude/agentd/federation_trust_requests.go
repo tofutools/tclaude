@@ -31,6 +31,9 @@ type fedTrustRequest struct {
 type fedTrustRequestState struct {
 	in     map[string]fedTrustRequest
 	out    map[string]time.Time
+	// dismissed holds when each sender's request was dismissed, so a replay
+	// of that same envelope (created before) does not bring it back.
+	dismissed map[string]time.Time
 	rates  map[string][]time.Time
 	global []time.Time
 }
@@ -92,24 +95,26 @@ func (rt *fedRuntime) handleTrustRequestInbound(from string, s *proto.Sealed) bo
 	if s == nil {
 		return false
 	}
+	// Larger envelopes are never trust requests: leave them to the
+	// trusted-peer path without parsing them here.
+	if len(s.Env) > proto.MaxTrustRequestBytes {
+		return false
+	}
 	var header struct {
 		Kind string `json:"kind"`
 	}
 	if json.Unmarshal(s.Env, &header) != nil || header.Kind != proto.KindTrustRequest {
 		return false
 	}
-	if len(s.Env) > proto.MaxTrustRequestBytes {
-		return true
-	}
-	// A trusted sender has nothing to ask for.
-	if p, err := db.GetFederationPeer(from); err != nil || p != nil {
-		return true
-	}
 	now := time.Now()
 	rt.trustReqMu.Lock()
 	ok := rt.trustRequestAdmit(from, now)
 	rt.trustReqMu.Unlock()
 	if !ok {
+		return true
+	}
+	// A trusted sender has nothing to ask for.
+	if p, err := db.GetFederationPeer(from); err != nil || p != nil {
 		return true
 	}
 	key := rt.directoryKey(from)
@@ -131,6 +136,10 @@ func (rt *fedRuntime) handleTrustRequestInbound(from string, s *proto.Sealed) bo
 	}
 	rt.trustReqMu.Lock()
 	st := &rt.trustReq
+	if at, ok := st.dismissed[from]; ok && !env.CreatedAt.After(at) {
+		rt.trustReqMu.Unlock()
+		return true
+	}
 	if st.in == nil {
 		st.in = map[string]fedTrustRequest{}
 	}
@@ -156,6 +165,20 @@ func (st *fedTrustRequestState) pruneIn(now time.Time) {
 			delete(st.in, id)
 		}
 	}
+	// A replay is only possible within an envelope's lifetime.
+	for id, at := range st.dismissed {
+		if now.Sub(at) > fedEnrollmentTTL+time.Minute {
+			delete(st.dismissed, id)
+		}
+	}
+}
+
+// forgetTrustRequest drops a request once its sender is trusted, so an
+// untrust later does not bring the old request back.
+func (rt *fedRuntime) forgetTrustRequest(id string) {
+	rt.trustReqMu.Lock()
+	defer rt.trustReqMu.Unlock()
+	delete(rt.trustReq.in, id)
 }
 
 // directoryKey is a directory peer's signing key, only when the hub-listed
@@ -214,7 +237,16 @@ func handleFederationTrustRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if dismiss {
 		rt.trustReqMu.Lock()
-		delete(rt.trustReq.in, req.Instance)
+		if _, ok := rt.trustReq.in[req.Instance]; ok {
+			delete(rt.trustReq.in, req.Instance)
+			if rt.trustReq.dismissed == nil {
+				rt.trustReq.dismissed = map[string]time.Time{}
+			}
+			rt.trustReq.dismissed[req.Instance] = time.Now()
+			if len(rt.trustReq.dismissed) > fedTrustRequestMax {
+				rt.trustReq.pruneIn(time.Now())
+			}
+		}
 		rt.trustReqMu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": req.Instance})
 		return

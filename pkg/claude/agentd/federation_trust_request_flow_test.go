@@ -40,17 +40,18 @@ func fedTrustRequestStatus(t *testing.T, h *fedHarness) fedTrustRequestView {
 func TestFederation_TrustRequests(t *testing.T) {
 	h := newFedHarness(t)
 	bob := h.peer.id.ID()
-	ask := func(note string, trustsYou bool) {
+	ask := func(note string, trustsYou bool) *proto.Envelope {
 		env, err := proto.NewEnvelope(h.peer.id, proto.KindTrustRequest, proto.Endpoint{}, proto.Endpoint{Instance: h.peer.agentdID}, time.Minute, proto.TrustRequest{Note: note, TrustsYou: trustsYou})
 		require.NoError(t, err)
 		h.peer.send(env)
+		return env
 	}
 
 	rec := fedHuman(t, h.f, http.MethodPost, "/v1/federation/peers/untrust", map[string]any{"instance": bob})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Nil(t, fedTrustRequestStatus(t, h).Peers[0].TrustRequest)
 
-	ask("hi, it's bob\x1b[31m\non the laptop", true)
+	first := ask("hi, it's bob\x1b[31m\non the laptop", true)
 	fedEventually(t, "trust request shown", func() bool { return fedTrustRequestStatus(t, h).Peers[0].TrustRequest != nil })
 	row := fedTrustRequestStatus(t, h).Peers[0]
 	require.Equal(t, bob, row.InstanceID)
@@ -61,6 +62,13 @@ func TestFederation_TrustRequests(t *testing.T) {
 	rec = fedHuman(t, h.f, http.MethodPost, "/v1/federation/peers/trust-request/dismiss", map[string]any{"instance": bob})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Nil(t, fedTrustRequestStatus(t, h).Peers[0].TrustRequest)
+	// A replay of the dismissed envelope stays dismissed; a new request shows.
+	h.peer.send(first)
+	time.Sleep(10 * time.Millisecond)
+	ask("asking again", false)
+	fedEventually(t, "new trust request shown", func() bool { return fedTrustRequestStatus(t, h).Peers[0].TrustRequest != nil })
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, "asking again", fedTrustRequestStatus(t, h).Peers[0].TrustRequest.Note)
 
 	rec = fedHuman(t, h.f, http.MethodPost, "/v1/federation/peers/trust-request", map[string]any{"instance": bob, "note": strings.Repeat("x", 201)})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
