@@ -6,7 +6,7 @@ import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
 } from './management-overlay.js';
-import { shortCwd } from './helpers.js';
+import { relTime, shortCwd } from './helpers.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
@@ -221,7 +221,22 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     normalizeNames: current.normalizeNames,
   }), [current]);
   const rememberedEffort = (model) => actions.rememberedEffort(model);
+  // A reopened queued spawn restores its stored draft over a fresh one, so a
+  // field added to the form since it was queued still gets its default.
+  const queued = current.options.queued;
   const initial = useMemo(() => {
+    if (queued) {
+      return {
+        ...createSpawnDraft({
+          groups: context.groups,
+          harnesses: context.harnesses,
+          groupName: queued.draft.group,
+          autoFocus: actions.autoFocusDefault(),
+          rememberedEffort,
+        }),
+        ...queued.draft,
+      };
+    }
     const value = createSpawnDraft({
       groups: context.groups,
       harnesses: context.harnesses,
@@ -260,6 +275,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Busy with a queue save rather than a launch: the Spawn button must not
+  // read "Spawning…" while nothing is being spawned.
+  const [queueing, setQueueing] = useState(false);
   const [progress, setProgress] = useState('');
   const [browseBusy, setBrowseBusy] = useState('');
   const [helpOpen, setHelpOpen] = useState('');
@@ -346,6 +364,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     actions.loadProfiles().then((nextProfiles) => {
       if (request !== profileRequest.current || !state.isCurrent(generation)) return;
       setProfiles(nextProfiles);
+      // A queued draft already carries the profile it was prepared with;
+      // re-applying defaults here would overwrite what the operator queued.
+      if (queued) return;
       // Legacy parity: a default captured for the group at open must never
       // bleed into a different group selected while the profile request ran.
       if (draftRef.current.group !== initial.group) return;
@@ -836,6 +857,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       markTiming('request_sent_ms');
       const payload = await actions.spawn(request);
       markTiming('response_received_ms');
+      if (queued) {
+        // The agent exists now; a leftover queue row would offer to launch it
+        // twice, so its removal failing is worth telling the operator.
+        actions.deleteQueued(queued.id).catch((cause) => {
+          actions.notifyError?.(`spawned, but could not remove it from the queue: ${errorMessage(cause)}`);
+        });
+      }
       if (!state.isCurrent(current.generation)) return;
       state.close();
       markTiming('elapsed_ms');
@@ -853,6 +881,87 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }
     }
   };
+
+  // Queue (fresh dialog) or Save (reopened queued spawn): store the draft
+  // without launching. Only the name derivation a spawn would confirm runs
+  // now; worktree creation, base fetch and everything else stays at launch.
+  const saveQueued = async () => {
+    if (submitLock.current) return;
+    submitLock.current = true;
+    const release = () => { submitLock.current = false; };
+    let next = draft;
+    const validation = validateSpawnDraft(next, context);
+    if (validation) {
+      setError(validation);
+      if (validation.includes('name') || validation.includes('description')) nameRef.current?.focus();
+      release();
+      return;
+    }
+    if (attachments.length) {
+      setError('attachments cannot be queued yet — remove them, or spawn now');
+      release();
+      return;
+    }
+    const derived = !next.name.trim() && !next.descr.trim()
+      ? deriveSpawnNameFromMessage(next.initialMessage) : '';
+    if (derived) {
+      const proceed = await actions.confirmAutoName(derived);
+      if (!state.isCurrent(current.generation)) return;
+      if (!proceed) {
+        nameRef.current?.focus();
+        release();
+        return;
+      }
+      next = { ...next, name: derived };
+    }
+    setError('');
+    setProgress(queued ? 'Saving…' : 'Queueing…');
+    busyRef.current = true;
+    setBusy(true);
+    setQueueing(true);
+    try {
+      await actions.saveQueued(queued?.id || 0, next);
+      if (!state.isCurrent(current.generation)) return;
+      state.close();
+      actions.queued(next, !!queued);
+    } catch (cause) {
+      if (state.isCurrent(current.generation)) {
+        setError(errorMessage(cause));
+        setProgress('');
+        busyRef.current = false;
+        setBusy(false);
+        setQueueing(false);
+        release();
+      }
+    }
+  };
+
+  const discardQueued = async () => {
+    if (!queued || submitLock.current) return;
+    const proceed = await actions.confirmDiscardQueued(draft.name || draft.descr || 'unnamed agent');
+    if (!proceed || !state.isCurrent(current.generation)) return;
+    try {
+      await actions.deleteQueued(queued.id);
+      if (!state.isCurrent(current.generation)) return;
+      state.close();
+      actions.dequeued(draft);
+    } catch (cause) {
+      if (state.isCurrent(current.generation)) setError(errorMessage(cause));
+    }
+  };
+
+  // ▶ on a queued row opens this dialog with autoSpawn: launch once the same
+  // loads submit waits for have landed, so a failure (a taken branch name, a
+  // denied permission) stays on screen next to the fields that fix it.
+  const autoSpawned = useRef(false);
+  const policyReady = view.sandboxProfilesDisabled || !!sandboxPolicy.error
+    || sandboxPolicy.key === sandboxPolicyKey(draft.group, draft.sandboxProfile, current.sandboxRevision);
+  useEffect(() => {
+    if (!current.options.autoSpawn || autoSpawned.current) return;
+    if (worktrees.phase !== 'ready' || !policyReady) return;
+    autoSpawned.current = true;
+    void submit();
+  }, [worktrees.phase, policyReady]);
 
   const selectedModel = modelSelectValue(draft, context);
   const sandboxHelp = harnessBuiltinModeHelpForImplementation(
@@ -900,7 +1009,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     id="agent-spawn-modal"
     labelledby="agent-spawn-title"
     onClose=${state.close}
-    onSubmitHotkey=${submit}
+    onSubmitHotkey=${queued ? saveQueued : submit}
+    onSubmitShiftHotkey=${saveQueued}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
@@ -916,8 +1026,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     onDrop=${drop}
     onPaste=${paste}
   >
-    <h3 id="agent-spawn-title"><${Words} prefix="spawn-title"
-      plain="Spawn a new agent" wizard="Summon a new familiar" /></h3>
+    <h3 id="agent-spawn-title">${queued
+      ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
+      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}</h3>
+    ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
+      ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
+    </div>`}
     <div class="modal-meta" id="agent-spawn-meta" hidden=${!draft.fixedGroup}>
       ${draft.fixedGroup ? `joining group: ${draft.group}` : ''}
     </div>
@@ -1431,14 +1545,26 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">
-      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
+        title="Remove this prepared spawn from the queue without launching it"
+        onClick=${() => { void discardQueued(); }}>Discard</button>`}
+      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${queued ? 'Close' : 'Cancel'}</button>
       <span id="agent-spawn-progress" class="agent-spawn-progress" role="status" aria-live="polite">
         ${busy ? progress : ''}
       </span>
       <span class="spacer"></span>
-      <button id="agent-spawn-submit" class=${`primary${busy ? ' slop-pull-active' : ''}`} type="button"
-        disabled=${busy} aria-busy=${busy ? 'true' : undefined} onClick=${() => { void submit(); }}>
-        ${busy ? 'Spawning…' : 'Spawn'}
+      <button id="agent-spawn-queue" class="agent-spawn-queue-btn" type="button" disabled=${busy}
+        title=${queued
+          ? 'Save changes and keep it queued (Ctrl/⌘+Enter)'
+          : 'Prepare this agent without starting it — launch it later from ⏸ queued. Worktree creation, branch fetch and the spawn itself happen at launch. (Ctrl/⌘+Shift+Enter)'}
+        onClick=${() => { void saveQueued(); }}>
+        ${queued ? 'Save' : '⏸ Add to queue'}
+      </button>
+      <button id="agent-spawn-submit" class=${`${queued ? 'agent-spawn-launch-btn' : 'primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
+        disabled=${busy} aria-busy=${busy ? 'true' : undefined}
+        title=${queued ? 'Launch it now and remove it from the queue' : 'Spawn the agent now (Ctrl/⌘+Enter)'}
+        onClick=${() => { void submit(); }}>
+        ${busy && !queueing ? 'Spawning…' : (queued ? '▶ Spawn now' : 'Spawn')}
       </button>
     </div>
   </${Overlay}>`;

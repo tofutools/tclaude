@@ -39,6 +39,9 @@ export function ManagementOverlay({
   beforeClose = null,
   onCloseError = null,
   onSubmitHotkey = null,
+  // Ctrl/Cmd+Shift+Enter: a dialog's secondary submit. Falls back to
+  // onSubmitHotkey when a dialog has none.
+  onSubmitShiftHotkey = null,
   onSubmitEnter = null,
   dirty = false,
   blocked = false,
@@ -129,20 +132,21 @@ export function ManagementOverlay({
         onSubmitEnter();
         return;
       }
+      const hotkey = event.shiftKey && onSubmitShiftHotkey ? onSubmitShiftHotkey : onSubmitHotkey;
       if (
-        onSubmitHotkey &&
+        hotkey &&
         event.key === 'Enter' &&
         !event.isComposing &&
         event.keyCode !== 229 &&
         (event.ctrlKey || event.metaKey)
       ) {
         event.preventDefault();
-        onSubmitHotkey();
+        hotkey();
       }
     };
     dialog.addEventListener('keydown', handleKeyDown);
     return () => dialog.removeEventListener('keydown', handleKeyDown);
-  }, [blocked, onSubmitEnter, onSubmitHotkey]);
+  }, [blocked, onSubmitEnter, onSubmitHotkey, onSubmitShiftHotkey]);
   useLayoutEffect(() => {
     const cleanup = registerClose?.(close);
     return () => {

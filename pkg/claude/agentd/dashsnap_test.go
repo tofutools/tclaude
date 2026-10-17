@@ -25,6 +25,7 @@ package agentd_test
 // stderr noise).
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -655,6 +656,20 @@ func seedPalette(t *testing.T, f *testharness.Flow) {
 	} {
 		if _, err := db.CreateRole(&r); err != nil && !errors.Is(err, db.ErrRoleNameTaken) {
 			t.Fatalf("seedPalette role %s: %v", r.Name, err)
+		}
+	}
+	// Two prepared-but-unlaunched spawns, so the ⏸ queued chip and the
+	// infra-crew Queued block have content.
+	for _, draft := range []string{
+		`{"group":"infra-crew","name":"db-migration-2","roleRefs":["dev"],"harness":"claude","model":"opus","initialMessage":"Once db-migration-1 lands, rebase onto main and run the second migration."}`,
+		`{"group":"frontend-squad","name":"fe-reviewer","roleRefs":["reviewer"],"harness":"codex","initialMessage":"Review the charts PR when fe-dev-charts opens it."}`,
+	} {
+		var target struct {
+			Group string `json:"group"`
+		}
+		_ = json.Unmarshal([]byte(draft), &target)
+		if _, err := db.CreateQueuedSpawn(target.Group, draft, time.Now().Add(-14*time.Minute)); err != nil {
+			t.Fatalf("seed queued spawn: %v", err)
 		}
 	}
 }
@@ -3564,6 +3579,53 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			// toolbar exactly as before (the only reopen affordance is the edge tab).
 			Caption: "Palette dock collapsed, members expanded — main list reclaims the width; + new group / ⚙ cog / 🧠 default-profile / 🛡 sandbox-profile are back in the toolbar.",
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.remove('dock-open');`,
+		},
+		{
+			Key:     "queued-spawns-dock",
+			Title:   "Queued spawns — dock chip + popover",
+			Caption: "⏸ queued chip in the dock head beside + new group / ⚙, popover open: ▶ spawns, a row click reopens the dialog, ✕ discards. infra-crew shows its striped Queued block.",
+			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');
+return (async function(){
+  var deadline=Date.now()+5000;
+  while(!document.querySelector('#dock-actions-primary #queued-spawns-open') && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
+  var chip=document.querySelector('#dock-actions-primary #queued-spawns-open');
+  if(!chip) throw new Error('queued chip missing from the dock head');
+  chip.click();
+  await new Promise(function(r){setTimeout(r,100);});
+  if(document.querySelectorAll('.queued-spawns-popover .queued-spawn-row').length!==2) throw new Error('popover rows missing');
+  if(!document.querySelector('details[data-group-key="infra-crew"] .group-queued-block .queued-spawn-row')) throw new Error('infra-crew queued block missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "queued-spawns-toolbar",
+			Title:   "Queued spawns — toolbar chip (dock collapsed)",
+			Caption: "Dock collapsed: the ⏸ queued chip rides back to the filter bar right of ⚙; popover opens leftward.",
+			JS: showGroups + collapseGroups + `document.body.classList.remove('dock-open');
+return (async function(){
+  var deadline=Date.now()+5000;
+  while(!document.querySelector('.filter-bar #queued-spawns-open') && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
+  var chip=document.querySelector('.filter-bar #queued-spawns-open');
+  if(!chip) throw new Error('queued chip missing from the filter bar');
+  chip.click();
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "queued-spawns-edit",
+			Title:   "Queued spawns — reopened in the spawn dialog",
+			Caption: "Clicking a queued row reopens the full spawn dialog pre-filled, with a Queued banner and Discard / Close / Save / ▶ Spawn now.",
+			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');
+return (async function(){
+  var deadline=Date.now()+5000;
+  var row;
+  while(!(row=document.querySelector('details[data-group-key="infra-crew"] .group-queued-block .queued-spawn-row')) && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
+  if(!row) throw new Error('queued row missing');
+  row.querySelector('.queued-spawn-name').click();
+  while(!document.querySelector('#agent-spawn-queued-banner') && Date.now()<deadline) await new Promise(function(r){setTimeout(r,50);});
+  if(document.querySelector('#agent-spawn-name').value!=='db-migration-2') throw new Error('queued draft not restored');
+})();`,
+			SettleMS: 600,
 		},
 		{
 			// JOH-388 req 3 — the WIDE case: a block far wider than the viewport
