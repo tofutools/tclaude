@@ -35,7 +35,7 @@ func TestPeerSpawnCatalogIsAGrantableReadOnlyPeerView(t *testing.T) {
 	}
 	catalog := []string{"/api/spawn-profiles", "/api/spawn-profile-default", "/api/spawn-launch-defaults", "/api/saved-prompts", "/api/roles",
 		"/api/sandbox-profiles", "/api/sandbox-profile-default", "/api/groups/one/sandbox-profile", "/api/spawn-harness-policy",
-		"/api/groups/one/spawn-harness-policy"}
+		"/api/groups/one/spawn-harness-policy", "/api/spawn-launch-catalog"}
 	for _, path := range catalog {
 		require.Equal(t, 403, get(path), "%s needs a grant", path)
 	}

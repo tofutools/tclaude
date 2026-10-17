@@ -16,7 +16,8 @@ import (
 // dialog on the requesting node (agent-spawn-remote.js); node.spawn.read lets
 // it read what this node's own dialog reads -- spawn profiles and the default,
 // launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn
-// harness policies, the default model -- so it pre-fills exactly what this
+// harness policies, the default model, the harness and sandbox
+// implementation catalogs -- so it pre-fills exactly what this
 // node would apply, and offers this node's profiles and prompts next to the
 // requester's own. Unrestricted trust holds it. Read-only: the routes are GET
 // patterns (plus the sandbox enforcement preview, which writes nothing), and
@@ -38,6 +39,7 @@ var peerSpawnCatalogRoutes = map[string]http.HandlerFunc{
 	"GET /api/groups/{name}/spawn-harness-policy": groupRoute(handleDashboardGroupSpawnHarnessPolicy),
 	"GET /api/claude-settings/default-model":      handleDashboardClaudeDefaultModel,
 	"GET /api/spawn/effective-sandbox":            handleDashboardSpawnEffectiveSandbox,
+	"GET /api/spawn-launch-catalog":               handleDashboardSpawnLaunchCatalog,
 }
 
 // peerSpawnCatalogGroupParam names the path's group on the routes that read
@@ -164,4 +166,19 @@ func peerCatalogEnforcementDraft(r *http.Request, v *peerView) bool {
 // peerSpawnCatalogReadable reports whether peer may read the catalogs.
 func peerSpawnCatalogReadable(v *peerView) bool {
 	return v.allows(peerViewRule{feature: "spawn.catalog", requires: PermNodeSpawnRead}, 0)
+}
+
+// handleDashboardSpawnLaunchCatalog serves the launch catalogs the spawn
+// dialog reads from the dashboard snapshot -- the spawnable harnesses with
+// their models and modes, and the sandbox implementations -- on their own, so
+// a peer's dialog (which the peer-view snapshot does not give them) offers
+// what this node can launch.
+func handleDashboardSpawnLaunchCatalog(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"harnesses":    buildHarnessCatalog(),
+		"sandbox_impl": buildSandboxImplCatalog(),
+	})
 }

@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { remoteLaunchFields } from './agent-spawn-remote.js';
 
 const html = htm.bind(h);
 
@@ -58,7 +59,8 @@ export function requestedSettings(r, typed = {}) {
   const fields = OVERRIDE_LABELS.filter(([k]) => (Array.isArray(asked[k]) ? asked[k].length : asked[k]));
   if (!Array.isArray(r.overrides_allowed)) {
     const drops = new Set(r.would_drop || []);
-    return fields.map(([k, label, field = k]) => ({ key: k, label, value: shown(asked[k]), dropped: drops.has(field), reason: drops.has(field) ? NOT_ALLOWED : '' }));
+    return [...fields.map(([k, label, field = k]) => ({ key: k, label, value: shown(asked[k]), dropped: drops.has(field), reason: drops.has(field) ? NOT_ALLOWED : '' })),
+      ...launchSettings(asked, (field) => drops.has(field))];
   }
   const allowed = new Set(r.overrides_allowed);
   const own = (k) => String(typed[k] || '').trim();
@@ -74,7 +76,16 @@ export function requestedSettings(r, typed = {}) {
       if (out[k] && !out[k].replaced && !out[k].dropped) Object.assign(out[k], { dropped: true, reason: OTHER_HARNESS });
     }
   }
-  return fields.map(([k]) => out[k]);
+  return [...fields.map(([k]) => out[k]), ...launchSettings(asked, (field) => !allowed.has(field))];
+}
+
+// launchSettings lists a request's further launch settings, one row per
+// field that opens them; the operator's approval has no values of its own
+// for them, so each applies while the peer may still choose it.
+function launchSettings(asked, dropped) {
+  return remoteLaunchFields(asked.launch).map(({ field, label, keys }) => ({
+    key: `launch:${field}`, label, value: keys.join(', '), ...(dropped(field) ? { dropped: true, reason: NOT_ALLOWED } : {}),
+  }));
 }
 
 function droppedNote(list) {

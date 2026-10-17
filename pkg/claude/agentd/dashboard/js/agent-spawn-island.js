@@ -355,6 +355,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const basePeerPrompts = useRef([]);
   const [showFrom, setShowFrom] = useState(['target', 'local']);
   const remotePrompts = useMemo(() => (remote ? remoteSpawnPrompts(remote) : null), [remote]);
+  // With groups.members.spawn.prompts the prompt set rides by name, so the
+  // peer's own prompts can be dropped like any other.
+  const remotePromptsOpen = remote?.options?.overrides?.prompts === true;
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -881,6 +884,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       onSave: (kept) => {
         if (!state.isCurrent(generation)) return;
         touched.current.add('permissionOverrides');
+        operatorSet.current.add('permissionOverrides');
         profileOverrides.current.add('permissionOverrides');
         setDraft((before) => ({ ...before, permissionOverrides: { ...kept } }));
       },
@@ -895,6 +899,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       onSave: (kept) => {
         if (!state.isCurrent(generation)) return;
         touched.current.add('contextFeatures');
+        operatorSet.current.add('contextFeatures');
         profileOverrides.current.add('contextFeatures');
         setDraft((before) => ({ ...before, contextFeatures: { ...kept } }));
       },
@@ -1000,7 +1005,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       markTiming('request_sent_ms');
       // A remote request carries only the overrides the operator set here.
       const payload = await actions.spawn(remote
-        ? { ...request, explicit: remoteExplicit(next), prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
+        ? { ...request, explicit: remoteExplicit(next), promptRefs: [...(next.promptRefs || [])], prompts: remotePromptBodies(next.promptRefs, peerPrompts, remote) }
         : request);
       markTiming('response_received_ms');
       if (queued) {
@@ -1236,10 +1241,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       ${remote
         ? html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
           onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}
-          library=${remotePrompts} visible=${showFrom} locked=${peerPrompts}
-          lockedReason=${`${remote.node} applies this prompt itself (its profile or group default) — a remote spawn cannot drop it`}
+          library=${remotePrompts} visible=${showFrom} locked=${remotePromptsOpen ? [] : peerPrompts}
+          lockedReason=${`${remote.node} applies this prompt itself (its profile or group default) — dropping it needs groups.members.spawn.prompts`}
           sources=${[{ source: 'target', label: `${remote.node}'s prompts` }, { source: 'local', label: "This node's prompts", chip: 'this node' }]}
-          hint=${`Prompts ${remote.node} does not apply itself are written into the brief.`}/>`
+          hint=${remotePromptsOpen
+            ? `${remote.node}'s prompts are applied by ${remote.node}; this node's are written into the brief.`
+            : `Prompts ${remote.node} does not apply itself are written into the brief.`}/>`
         : html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
           onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}/>`}
     </div>
@@ -1256,7 +1263,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
-		<div class="cron-create-row" id="agent-spawn-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><button type="button" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}><${Words} plain="＋ add override" wizard="✦ bind override" /></button>${effectiveEnvironment.length ? html`<button type="button" class="sbx-effective-environment-toggle" id="agent-spawn-effective-environment-toggle" disabled=${busy} aria-expanded=${effectiveEnvironmentOpen ? 'true' : 'false'} aria-controls="agent-spawn-environment-preview" aria-label=${`${effectiveEnvironmentOpen ? 'Hide' : 'Show'} effective environment (${effectiveEnvironment.length} ${effectiveEnvironment.length === 1 ? 'variable' : 'variables'})`} onClick=${() => { setHelpOpen(''); setEffectiveEnvironmentOpen((value) => !value); }}>${effectiveEnvironmentOpen ? '▾' : '▸'} <${Words} plain="Effective env" wizard="Runes in force" /> (${effectiveEnvironment.length})</button>` : null}<${HelpDisclosure} id="agent-spawn-environment-help" label=${wizard ? 'Summoning rune overrides' : 'Environment overrides'} help=${wizard ? ENVIRONMENT_OVERRIDE_HELP_WIZARD : ENVIRONMENT_OVERRIDE_HELP} open=${helpOpen === 'agent-spawn-environment-help'} setOpen=${setHelpOpen} /></div>${effectiveEnvironment.length ? html`<div id="agent-spawn-environment-preview" class="sbx-effective-environment-help" hidden=${!effectiveEnvironmentOpen}><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><${HelpDisclosure} id="agent-spawn-effective-environment-help" label=${wizard ? 'Runes in force' : 'Effective environment'} help=${wizard ? EFFECTIVE_ENVIRONMENT_HELP_WIZARD : EFFECTIVE_ENVIRONMENT_HELP} open=${helpOpen === 'agent-spawn-effective-environment-help'} setOpen=${setHelpOpen} /></div>` : null}</div></div>
+		<div class="cron-create-row" id="agent-spawn-environment-row" data-remote-spawn-field="environment"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><button type="button" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}><${Words} plain="＋ add override" wizard="✦ bind override" /></button>${effectiveEnvironment.length ? html`<button type="button" class="sbx-effective-environment-toggle" id="agent-spawn-effective-environment-toggle" disabled=${busy} aria-expanded=${effectiveEnvironmentOpen ? 'true' : 'false'} aria-controls="agent-spawn-environment-preview" aria-label=${`${effectiveEnvironmentOpen ? 'Hide' : 'Show'} effective environment (${effectiveEnvironment.length} ${effectiveEnvironment.length === 1 ? 'variable' : 'variables'})`} onClick=${() => { setHelpOpen(''); setEffectiveEnvironmentOpen((value) => !value); }}>${effectiveEnvironmentOpen ? '▾' : '▸'} <${Words} plain="Effective env" wizard="Runes in force" /> (${effectiveEnvironment.length})</button>` : null}<${HelpDisclosure} id="agent-spawn-environment-help" label=${wizard ? 'Summoning rune overrides' : 'Environment overrides'} help=${wizard ? ENVIRONMENT_OVERRIDE_HELP_WIZARD : ENVIRONMENT_OVERRIDE_HELP} open=${helpOpen === 'agent-spawn-environment-help'} setOpen=${setHelpOpen} /></div>${effectiveEnvironment.length ? html`<div id="agent-spawn-environment-preview" class="sbx-effective-environment-help" hidden=${!effectiveEnvironmentOpen}><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><${HelpDisclosure} id="agent-spawn-effective-environment-help" label=${wizard ? 'Runes in force' : 'Effective environment'} help=${wizard ? EFFECTIVE_ENVIRONMENT_HELP_WIZARD : EFFECTIVE_ENVIRONMENT_HELP} open=${helpOpen === 'agent-spawn-effective-environment-help'} setOpen=${setHelpOpen} /></div>` : null}</div></div>
     <div class="cron-create-row agent-spawn-roles-row">
       <span class="cron-create-label"><${Words} plain="Roles" wizard="Classes" /></span>
       <div class="agent-spawn-role-picker">
@@ -1428,6 +1435,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             onChange=${(event) => {
     const value = event.currentTarget.value;
     touched.current.add('sandboxImpl');
+    operatorSet.current.add('sandboxImpl');
     profileOverrides.current.add('sandboxImpl');
     setDraft((before) => setSpawnSandboxImpl(before, value));
   }}>
@@ -1459,6 +1467,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       onChange=${(event) => {
         const value = event.currentTarget.value;
         touched.current.add('sandbox');
+        operatorSet.current.add('sandbox');
         profileOverrides.current.add('sandbox');
         setDraft((before) => ({ ...before, sandbox: value }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
@@ -1557,6 +1566,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         onChange=${(event) => {
           touched.current.add('trustDir'); touched.current.add('trustDirSpecified');
           profileOverrides.current.add('trustDir'); profileOverrides.current.add('trustDirSpecified');
+          operatorSet.current.add('trustDir'); operatorSet.current.add('trustDirSpecified');
           setDraft((before) => ({ ...before, trustDir: event.currentTarget.checked, trustDirSpecified: true }));
         }} /> ${`Pre-trust this directory — skip the trust-folder dialog (edits ${view.trustDirStore || "the harness's config"})`}
     </label>

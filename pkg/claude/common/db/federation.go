@@ -646,11 +646,14 @@ type FederationSpawnOverrides struct {
 	Roles []string `json:"roles,omitempty"`
 	// SandboxProfile adds an explicit sandbox profile tier.
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	// Launch carries further spawn request settings by their wire key
+	// (agentd's fedSpawnLaunchKeys), laid over the launch as sent.
+	Launch map[string]json.RawMessage `json:"launch,omitempty"`
 }
 
 // Empty reports whether no override is set.
 func (o FederationSpawnOverrides) Empty() bool {
-	return o.Cwd == "" && o.Harness == "" && o.Model == "" && o.Effort == "" && len(o.Roles) == 0 && o.SandboxProfile == ""
+	return o.Cwd == "" && o.Harness == "" && o.Model == "" && o.Effort == "" && len(o.Roles) == 0 && o.SandboxProfile == "" && len(o.Launch) == 0
 }
 
 func (o FederationSpawnOverrides) dbValue() string {

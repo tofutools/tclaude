@@ -2422,4 +2422,8 @@ test('a request whose grant lets the peer choose nothing previews typed values a
   assert.deepEqual(requestedSettings(r, { harness: 'claude' }).map((s) => [s.key, !!s.replaced, !!s.dropped]), [['harness', true, false], ['model', false, true]]);
   const old = { overrides: { harness: 'codex' }, would_drop: ['harness'] };
   assert.equal(requestedSettings(old, { harness: 'claude' })[0].dropped, true, 'an older daemon without overrides_allowed falls back to would_drop');
+  const launch = { overrides: { launch: { is_owner: true, approval: 'plan', tools: 'x', prompt_refs: [] } }, overrides_allowed: ['owner'] };
+  assert.deepEqual(requestedSettings(launch).map((s) => [s.key, s.value, !!s.dropped]),
+    [['launch:permissions', 'approval, tools', true], ['launch:owner', 'is_owner', false], ['launch:prompts', 'prompt_refs', true]],
+    'launch settings preview per field that opens them');
 });

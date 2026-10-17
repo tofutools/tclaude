@@ -27,6 +27,7 @@ func registerDashboardSpawnProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-profiles", dashboardSpawnProfilesRoute(handleSpawnProfiles))
 	mux.HandleFunc("/api/spawn-profile-default", dashboardSpawnProfilesRoute(handleGlobalDefaultSpawnProfile))
 	mux.HandleFunc("GET /api/spawn-launch-defaults", dashboardSpawnProfilesRoute(handleSpawnLaunchDefaults))
+	mux.HandleFunc("GET /api/spawn-launch-catalog", handleDashboardSpawnLaunchCatalog)
 	// Literal segments are more specific than {name}, so the mux picks them
 	// unambiguously (mirrors /api/templates/from-group/import/export).
 	mux.HandleFunc("POST /api/spawn-profiles/from-agent", dashboardSpawnProfilesRoute(handleSpawnProfileFromAgent))

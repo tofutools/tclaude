@@ -1,12 +1,14 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -24,7 +26,22 @@ import (
 //   - groups.members.spawn.roles: the role set, from this node's roles (roles
 //     carry permissions here);
 //   - groups.members.spawn.sandbox: an explicit sandbox profile tier;
+//   - groups.members.spawn.permissions: the approval, tool and sandbox
+//     modes, the trust-folder answer and the per-slug permissions;
+//   - groups.members.spawn.environment: environment overrides;
+//   - groups.members.spawn.owner: group ownership at birth;
+//   - groups.members.spawn.features: the harness features, context and
+//     window settings, the description and task link;
+//   - groups.members.spawn.prompts: the saved prompt set, from this node's
+//     saved prompts (replacing the profile and group defaults);
+//   - groups.members.spawn.worktree: launching in a git worktree, which the
+//     peer creates first through the worktree routes (peer_spawn_worktrees.go);
 //   - groups.members.spawn.all: every field above.
+//
+// The last six ride as launch settings (FederationSpawnOverrides.Launch):
+// keys of the ordinary spawn request (fedSpawnLaunchKeys), laid over the
+// launch this node builds, so the group spawn path validates them exactly as
+// it does a local spawn's.
 //
 // They apply only together with an automatic spawn (a groups.members.spawn
 // grant, or unrestricted trust, which opens all of them): a request waiting
@@ -38,18 +55,32 @@ const (
 	fedOverrideProfile = "profile"
 	fedOverrideRoles   = "roles"
 	fedOverrideSandbox = "sandbox"
+	// Launch settings (fedSpawnLaunchKeys).
+	fedOverridePermissions = "permissions"
+	fedOverrideEnvironment = "environment"
+	fedOverrideOwner       = "owner"
+	fedOverrideFeatures    = "features"
+	fedOverridePrompts     = "prompts"
+	fedOverrideWorktree    = "worktree"
 
-	PermGroupsMembersSpawnCwd     = "groups.members.spawn.cwd"
-	PermGroupsMembersSpawnHarness = "groups.members.spawn.harness"
-	PermGroupsMembersSpawnModel   = "groups.members.spawn.model"
-	PermGroupsMembersSpawnEffort  = "groups.members.spawn.effort"
-	PermGroupsMembersSpawnProfile = "groups.members.spawn.profile"
-	PermGroupsMembersSpawnRoles   = "groups.members.spawn.roles"
-	PermGroupsMembersSpawnSandbox = "groups.members.spawn.sandbox"
-	PermGroupsMembersSpawnAll     = "groups.members.spawn.all"
+	PermGroupsMembersSpawnCwd         = "groups.members.spawn.cwd"
+	PermGroupsMembersSpawnHarness     = "groups.members.spawn.harness"
+	PermGroupsMembersSpawnModel       = "groups.members.spawn.model"
+	PermGroupsMembersSpawnEffort      = "groups.members.spawn.effort"
+	PermGroupsMembersSpawnProfile     = "groups.members.spawn.profile"
+	PermGroupsMembersSpawnRoles       = "groups.members.spawn.roles"
+	PermGroupsMembersSpawnSandbox     = "groups.members.spawn.sandbox"
+	PermGroupsMembersSpawnPermissions = "groups.members.spawn.permissions"
+	PermGroupsMembersSpawnEnvironment = "groups.members.spawn.environment"
+	PermGroupsMembersSpawnOwner       = "groups.members.spawn.owner"
+	PermGroupsMembersSpawnFeatures    = "groups.members.spawn.features"
+	PermGroupsMembersSpawnPrompts     = "groups.members.spawn.prompts"
+	PermGroupsMembersSpawnWorktree    = "groups.members.spawn.worktree"
+	PermGroupsMembersSpawnAll         = "groups.members.spawn.all"
 )
 
-var fedSpawnOverrideFields = []string{fedOverrideCwd, fedOverrideHarness, fedOverrideModel, fedOverrideEffort, fedOverrideProfile, fedOverrideRoles, fedOverrideSandbox}
+var fedSpawnOverrideFields = []string{fedOverrideCwd, fedOverrideHarness, fedOverrideModel, fedOverrideEffort, fedOverrideProfile, fedOverrideRoles, fedOverrideSandbox,
+	fedOverridePermissions, fedOverrideEnvironment, fedOverrideOwner, fedOverrideFeatures, fedOverridePrompts, fedOverrideWorktree}
 
 // fedSpawnFieldSlugs maps each field to the grant that opens it.
 var fedSpawnFieldSlugs = map[string]string{
@@ -60,7 +91,53 @@ var fedSpawnFieldSlugs = map[string]string{
 	fedOverrideProfile: PermGroupsMembersSpawnProfile,
 	fedOverrideRoles:   PermGroupsMembersSpawnRoles,
 	fedOverrideSandbox: PermGroupsMembersSpawnSandbox,
+
+	fedOverridePermissions: PermGroupsMembersSpawnPermissions,
+	fedOverrideEnvironment: PermGroupsMembersSpawnEnvironment,
+	fedOverrideOwner:       PermGroupsMembersSpawnOwner,
+	fedOverrideFeatures:    PermGroupsMembersSpawnFeatures,
+	fedOverridePrompts:     PermGroupsMembersSpawnPrompts,
+	fedOverrideWorktree:    PermGroupsMembersSpawnWorktree,
 }
+
+// fedSpawnLaunchKeys are the spawn request keys (agent.SpawnRequest) a remote
+// spawn may carry as launch settings, each with the field that opens it. Not
+// carried: what only means something on the requesting node (focus,
+// attachments, queueing) and the break-glass acknowledgement, which only this
+// node's own operator gives.
+var fedSpawnLaunchKeys = map[string]string{
+	"approval":                  fedOverridePermissions,
+	"tools":                     fedOverridePermissions,
+	"auto_review":               fedOverridePermissions,
+	"ask_user_question_timeout": fedOverridePermissions,
+	"trust_dir":                 fedOverridePermissions,
+	"permission_overrides":      fedOverridePermissions,
+	"sandbox":                   fedOverridePermissions,
+	"sandbox_implementation":    fedOverridePermissions,
+	"allow_unenforced_sandbox":  fedOverridePermissions,
+	"omit_sandbox_profiles":     fedOverridePermissions,
+	"environment":               fedOverrideEnvironment,
+	"is_owner":                  fedOverrideOwner,
+	"include_group_context":     fedOverrideFeatures,
+	"context_features":          fedOverrideFeatures,
+	"remote_control":            fedOverrideFeatures,
+	"auto_memory":               fedOverrideFeatures,
+	"peer_messaging":            fedOverrideFeatures,
+	"copilot_api":               fedOverrideFeatures,
+	"codex_app_server":          fedOverrideFeatures,
+	"fast_mode":                 fedOverrideFeatures,
+	"ssh_workaround":            fedOverrideFeatures,
+	"auto_compact_window":       fedOverrideFeatures,
+	"context_window_max":        fedOverrideFeatures,
+	"descr":                     fedOverrideFeatures,
+	"task_ref_url":              fedOverrideFeatures,
+	"prompt_refs":               fedOverridePrompts,
+	"worktree_path":             fedOverrideWorktree,
+	"worktree_branch":           fedOverrideWorktree,
+}
+
+// fedSpawnMaxLaunch bounds a request's launch settings as stored JSON.
+const fedSpawnMaxLaunch = 32 << 10
 
 var (
 	// No leading '-': a model reaches harness command lines, where it must
@@ -148,7 +225,82 @@ func validateFedSpawnOverrides(o db.FederationSpawnOverrides) error {
 			return fmt.Errorf("requested sandbox profile %q is not a sandbox profile on this node", o.SandboxProfile)
 		}
 	}
+	return validateFedSpawnLaunch(o.Launch)
+}
+
+// validateFedSpawnLaunch checks that launch settings name only carried keys
+// and decode as the spawn request's fields. Their values are the group spawn
+// path's to judge, as a local spawn's are.
+func validateFedSpawnLaunch(launch map[string]json.RawMessage) error {
+	if len(launch) == 0 {
+		return nil
+	}
+	for key := range launch {
+		if _, ok := fedSpawnLaunchKeys[key]; !ok {
+			return fmt.Errorf("a remote spawn cannot set %q", key)
+		}
+	}
+	raw, err := json.Marshal(launch)
+	if err != nil || len(raw) > fedSpawnMaxLaunch {
+		return fmt.Errorf("requested launch settings are over %d bytes", fedSpawnMaxLaunch)
+	}
+	if err := json.Unmarshal(raw, new(agent.SpawnRequest)); err != nil {
+		return fmt.Errorf("invalid requested launch settings: %v", err)
+	}
 	return nil
+}
+
+// fedSpawnLaunchFields lists the fields a request's launch settings need,
+// sorted.
+func fedSpawnLaunchFields(launch map[string]json.RawMessage) []string {
+	var out []string
+	for key := range launch {
+		if field := fedSpawnLaunchKeys[key]; field != "" && !slices.Contains(out, field) {
+			out = append(out, field)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// fedSpawnLaunchBody is the group spawn body of a launch: this node's own
+// request with the launch settings laid over it, as raw JSON so a setting
+// sent empty (no prompts, no permission overrides) stays an explicit empty
+// rather than an omitted field the profile tiers would fill. A description
+// goes ahead of this node's own "spawned for" line rather than replacing it.
+func fedSpawnLaunchBody(spawn agent.SpawnRequest, launch map[string]json.RawMessage) ([]byte, error) {
+	base, err := json.Marshal(spawn)
+	if err != nil || len(launch) == 0 {
+		return base, err
+	}
+	merged := map[string]json.RawMessage{}
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for key, value := range launch {
+		if _, ok := fedSpawnLaunchKeys[key]; ok {
+			merged[key] = value
+		}
+	}
+	var descr string
+	if raw, ok := launch["descr"]; ok {
+		if err := json.Unmarshal(raw, &descr); err != nil {
+			return nil, err
+		}
+	}
+	if descr = strings.TrimSpace(descr); descr != "" {
+		merged["descr"], _ = json.Marshal(descr + " — " + spawn.Descr)
+	} else {
+		merged["descr"], _ = json.Marshal(spawn.Descr)
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(out, new(agent.SpawnRequest)); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // fedSpawnHarnessOffered reports whether a remote spawn may choose a harness:
@@ -228,6 +380,19 @@ func fedSpawnOverridesApplied(o db.FederationSpawnOverrides, allowed map[string]
 			dropped = append(dropped, fedOverrideRoles)
 		}
 	}
+	for _, field := range fedSpawnLaunchFields(o.Launch) {
+		if !allowed[field] {
+			dropped = append(dropped, field)
+		}
+	}
+	for key, value := range o.Launch {
+		if allowed[fedSpawnLaunchKeys[key]] {
+			if out.Launch == nil {
+				out.Launch = map[string]json.RawMessage{}
+			}
+			out.Launch[key] = value
+		}
+	}
 	// The peer chose its model and effort for the harness it requested: when
 	// the launch runs another one (the operator named a different harness,
 	// or the requested harness is dropped), they go too unless the operator
@@ -264,7 +429,12 @@ func fedSpawnOverridesAllowedList(peer string, groupID int64) []string {
 // notice, one per line, or "" when there are none.
 func fedSpawnOverridesText(o db.FederationSpawnOverrides) string {
 	out := ""
-	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}, {"roles", strings.Join(o.Roles, ", ")}, {"sandbox profile", o.SandboxProfile}} {
+	var launch []string
+	for key := range o.Launch {
+		launch = append(launch, key)
+	}
+	slices.Sort(launch)
+	for _, kv := range [][2]string{{"directory", o.Cwd}, {"harness", o.Harness}, {"model", o.Model}, {"effort", o.Effort}, {"roles", strings.Join(o.Roles, ", ")}, {"sandbox profile", o.SandboxProfile}, {"launch settings", strings.Join(launch, ", ")}} {
 		if kv[1] != "" {
 			out += fmt.Sprintf("\n  %s: %q", kv[0], kv[1])
 		}
@@ -294,6 +464,11 @@ func checkFedSpawnOverrides(peer string, groupID int64, o db.FederationSpawnOver
 	for field, value := range map[string]string{fedOverrideCwd: o.Cwd, fedOverrideHarness: o.Harness, fedOverrideModel: o.Model, fedOverrideEffort: o.Effort, fedOverrideRoles: strings.Join(o.Roles, ","), fedOverrideSandbox: o.SandboxProfile} {
 		if value != "" && !allowed[field] {
 			return fmt.Errorf("this node does not let you choose the %s for this group", field)
+		}
+	}
+	for _, field := range fedSpawnLaunchFields(o.Launch) {
+		if !allowed[field] {
+			return fmt.Errorf("this node does not let you choose the %s settings for this group", field)
 		}
 	}
 	return nil

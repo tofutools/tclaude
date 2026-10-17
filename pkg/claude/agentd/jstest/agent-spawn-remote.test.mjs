@@ -46,7 +46,10 @@ test('remote spawn allowances, lock reasons and request mapping', async (t) => {
   assert.match(mod.remoteLockReason('cwd', { node: 'forge', options: granted }), /forge's grant does not let you choose the directory — it uses \/srv\/forge/);
   assert.equal(mod.remoteFieldAllowed('queue', granted), false, 'queueing is this node\'s, never a remote request');
   assert.match(mod.remoteLockReason('queue', { node: 'forge', options: granted }), /Queued spawns wait on this node/);
-  assert.match(mod.remoteLockReason('owner', { node: 'forge', options: granted }), /forge applies its own setting/);
+  assert.match(mod.remoteLockReason('owner', { node: 'forge', options: granted }), /older tclaude that does not take the group ownership/);
+  const knows = mod.normalizeRemoteSpawnOptions({ approval: 'automatic', overrides: { model: true, owner: false } });
+  assert.match(mod.remoteLockReason('owner', { node: 'forge', options: knows }), /does not let you choose the group ownership \(groups\.members\.spawn\.owner\)/);
+  assert.match(mod.remoteLockReason('environment', { node: 'forge', options: knows }), /older tclaude/, 'a field the peer does not report is an older peer\'s');
 
   const request = { body: { initial_message: ' fix it ', name: 'w', role: 'r', profile: 'reviewer', cwd: '/local/dir', harness: 'claude', model: 'opus', effort: 'high', sandbox: 'on' } };
   assert.deepEqual(mod.remoteSpawnBody(request, ['model', 'cwd', 'profile'], granted), { brief: 'fix it', name: 'w', role: 'r', profile: 'reviewer', model: 'opus' },
@@ -116,9 +119,9 @@ test('the spawn dialog opened on a peer keeps every control and disables what th
     ['agent-spawn-cwd-browse', /this machine's folders, not forge's/],
     ['agent-spawn-harness', /choose the harness/],
     ['agent-spawn-load-profile', /lists no spawn profiles/],
-    ['agent-spawn-attach-btn', /forge applies its own setting/],
-    ['agent-spawn-owner', /forge applies its own setting/],
-    ['agent-spawn-descr', /forge applies its own setting/],
+    ['agent-spawn-attach-btn', /Attachments cannot be sent to forge/],
+    ['agent-spawn-owner', /older tclaude that does not take the group ownership/],
+    ['agent-spawn-descr', /older tclaude that does not take the harness features/],
   ]) {
     const el = q(`#${id}`);
     assert.ok(el, id);
@@ -372,5 +375,90 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   assert.equal(val('#agent-spawn-load-profile'), 'reviewer');
   assert.equal(val('#agent-spawn-model'), 'opus');
   assert.deepEqual(chips(), ['review'], 'the group profile\'s prompts, locked as the peer\'s');
+  await mounted.unmount();
+});
+
+test('an unrestricted peer opens the dialog like a local spawn', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ AgentSpawnApp }, { createAgentSpawnState }, remoteMod] = await Promise.all([
+    harness.importDashboardModule('js/agent-spawn-island.js'),
+    harness.importDashboardModule('js/agent-spawn-state.js'),
+    harness.importDashboardModule('js/agent-spawn-remote.js'),
+  ]);
+  const local = (name) => () => { throw new Error(`local ${name} must not run for a remote spawn`); };
+  const actions = {
+    autoFocusDefault: () => true, rememberedEffort: () => '', rememberLaunchPreferences: () => {},
+    dashboardDefaultProfile: () => '',
+    loadProfiles: local('profiles'), loadWorktrees: local('worktrees'), loadSandboxPolicy: local('sandbox'),
+    loadUnsandboxedAutonomy: local('autonomy'), loadLaunchDefaults: local('defaults'), resolveWorktree: local('worktree'),
+    uploadAttachments: local('upload'), spawn: local('spawn'), complete: () => {}, pickDirectory: local('picker'),
+    openProfileEditor: () => {}, openPermissions: () => {}, confirmAutoName: async () => true,
+  };
+  const respond = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  const peerCatalog = {
+    '/api/spawn-profiles': [],
+    '/api/spawn-profile-default': { name: '' },
+    '/api/saved-prompts': [{ name: 'house-rules', body: 'Follow the house rules.' }],
+    '/api/roles': [{ name: 'builder', descr: 'builds' }],
+    '/api/sandbox-profiles': [{ name: 'tight' }],
+    '/api/claude-settings/default-model': { model: 'sonnet' },
+    '/api/spawn-launch-catalog': { harnesses, sandbox_impl: { options: [], default: '' } },
+  };
+  const peerFetch = async (path) => respond(peerCatalog[String(path).split('?')[0]] ?? {});
+  const all = Object.fromEntries(['cwd', 'harness', 'model', 'effort', 'profile', 'roles', 'sandbox', 'permissions', 'environment', 'owner', 'features', 'prompts', 'worktree'].map((f) => [f, true]));
+  const options = remoteMod.normalizeRemoteSpawnOptions({ approval: 'automatic', catalog: true, overrides: all, profiles: [], default_prompts: ['house-rules'] });
+  const catalogs = await remoteMod.loadRemoteSpawnCatalogs({ options, peerFetch, localFetch: async () => respond([]) });
+  assert.equal(catalogs.target.harnesses[0].name, 'claude', 'the peer\'s harness descriptors are read');
+
+  const state = createAgentSpawnState({ getSnapshot: () => ({ groups: [], harnesses: [] }) });
+  const sent = [];
+  const api = { spawn: async (group, body) => { sent.push(body); return { id: 5, status: 'pending' }; }, status: async (id) => ({ id, status: 'approved' }) };
+  harness.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host);
+  // The peer-view snapshot carries no harness descriptors: they come from
+  // the catalog.
+  state.open({ groupName: 'build', remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options, catalogs, peerFetch, snapshot: { groups: [{ name: 'build', default_prompts: ['house-rules'] }], harnesses: [] } } });
+  await flush(harness);
+  await harness.act(() => new Promise((r) => setTimeout(r, 400)));
+  await flush(harness);
+  const q = (sel) => host.querySelector(sel);
+
+  for (const id of ['agent-spawn-cwd', 'agent-spawn-harness', 'agent-spawn-owner', 'agent-spawn-perms', 'agent-spawn-descr', 'agent-spawn-task',
+    'agent-spawn-approval', 'agent-spawn-sandbox', 'agent-spawn-sandbox-impl', 'agent-spawn-sandbox-profile', 'agent-spawn-trust-dir',
+    'agent-spawn-remote-control', 'agent-spawn-auto-memory', 'agent-spawn-group-context', 'agent-spawn-wt-repo', 'agent-spawn-role-add']) {
+    assert.ok(q(`#${id}`), id);
+    assert.equal(q(`#${id}`).disabled, false, `${id} is live under unrestricted trust`);
+  }
+  assert.equal(q('.sbx-add-row').disabled, false, 'environment overrides can be added');
+  assert.ok([...q('#agent-spawn-sandbox-profile').querySelectorAll('option')].some((o) => o.getAttribute('value') === 'tight'), 'the peer\'s sandbox profiles are offered');
+  const chip = q('#agent-spawn-prompt-refs .agent-spawn-role-chip .role-chip-remove');
+  assert.equal(chip.disabled, false, 'the peer\'s own default prompt can be dropped');
+  for (const id of ['agent-spawn-focus', 'agent-spawn-attach-btn', 'agent-spawn-queue', 'agent-spawn-cwd-browse']) {
+    assert.equal(q(`#${id}`).disabled, true, `${id} only means something on this node`);
+  }
+
+  const set = async (sel, value, event = 'input') => {
+    const el = q(sel); setValue(el, value); await harness.act(() => harness.fireEvent(el, event)); await flush(harness);
+  };
+  await set('#agent-spawn-name', 'w');
+  await set('#agent-spawn-init-msg', 'go');
+  await set('#agent-spawn-descr', 'nightly');
+  await set('#agent-spawn-approval', 'plan', 'change');
+  await set('#agent-spawn-sandbox-profile', 'tight', 'change');
+  const owner = q('#agent-spawn-owner'); owner.checked = true;
+  await harness.act(() => harness.fireEvent(owner, 'change')); await flush(harness);
+  await harness.act(() => q('.sbx-add-row').click()); await flush(harness);
+  await set('.sbx-env-name', 'MODE');
+  await set('.sbx-env-value', 'fast');
+  await harness.act(() => chip.click()); await flush(harness);
+  await harness.act(() => q('#agent-spawn-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 50)));
+  await flush(harness);
+  assert.equal(q('#agent-spawn-error')?.textContent || '', '');
+  assert.deepEqual(sent.pop(), {
+    brief: 'go', name: 'w', sandbox_profile: 'tight',
+    launch: { approval: 'plan', environment: [{ name: 'MODE', value: 'fast' }], is_owner: true, descr: 'nightly', prompt_refs: [] },
+  });
   await mounted.unmount();
 });
