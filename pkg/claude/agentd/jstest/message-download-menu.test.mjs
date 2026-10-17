@@ -91,3 +91,17 @@ test('the default download hands the export URL to a transient anchor and remove
   assert.deepEqual(clicked, [{ href: '/api/human-messages/9/export?attachments=1', download: true }]);
   assert.equal(harness.document.querySelector('a[download]'), null, 'the anchor does not outlive the click');
 });
+
+test('a peer\'s notification downloads through this node\'s peer export route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MessageDownloadMenu } = await harness.importDashboardModule('js/message-download-menu.js');
+  const downloads = [];
+  const mounted = await harness.mount(harness.html`<${MessageDownloadMenu} message=${withFiles} node="inst_forge"
+    download=${(href) => downloads.push(href)} toast=${() => {}} />`);
+  const root = mounted.container;
+  await harness.act(() => root.querySelector('.mail-download-main').click());
+  await harness.act(() => root.querySelector('.mail-download-caret').click());
+  await harness.act(() => root.querySelector('[data-export="md"]').click());
+  assert.deepEqual(downloads, ['/api/peer-message-export/inst_forge/7?attachments=1', '/api/peer-message-export/inst_forge/7']);
+  await mounted.unmount();
+});

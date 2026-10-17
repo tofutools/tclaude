@@ -20,7 +20,7 @@
     '/api/federation/', '/api/peer/', '/api/node-summary', '/api/node/update',
     '/api/dashboard/prefs', '/api/auth/', '/api/human-messages', '/api/browser-notifications', '/api/slop/',
     // A peer's notification files, read by this node from the peer.
-    '/api/peer-attachments/',
+    '/api/peer-attachments/', '/api/peer-message-export/',
   ];
   const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST']);
   const prefix = '/api/peer/' + encodeURIComponent(id) + '/';

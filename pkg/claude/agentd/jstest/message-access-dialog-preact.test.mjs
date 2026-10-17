@@ -317,6 +317,28 @@ test('human reply follows live online state and trusts server offline until a ne
   await mounted.unmount();
 });
 
+test('a notification on another node is answered through that node, text only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  const sent = [];
+  state.openHumanReply({ id: 5, agent: 'agt_sender', conv: 'conv-forge', label: 'sender', nodeName: 'forge', online: true,
+    send: async (body) => { sent.push(body); } });
+  let local = 0;
+  const actions = { sendMessage: async () => {}, grantSudo: async () => {}, savePermissions: async () => {}, replyHuman: async () => { local++; } };
+  // This node's snapshot does not know forge's agent; forge's view decides.
+  const { host, mounted } = await mountDialogs(harness, state, actions, snapshot({ online: false, groups: [] }));
+  assert.match(host.querySelector('#human-reply-to').textContent, /sender on forge/);
+  assert.equal(host.querySelector('#human-reply-attach-btn'), null, 'the peer takes no attachments');
+  await harness.input(host.querySelector('#human-reply-body'), 'on it');
+  assert.equal(host.querySelector('#human-reply-submit').disabled, false);
+  await harness.act(async () => { host.querySelector('#human-reply-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(sent, ['on it']);
+  assert.equal(local, 0, 'never through this node\'s own reply route');
+  assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
 test('sudo selection excludes blocklisted slugs and preserves a failed draft for retry', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');

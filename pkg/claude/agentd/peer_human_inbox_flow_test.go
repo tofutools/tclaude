@@ -113,6 +113,16 @@ func TestPeerHumanInboxUnrestrictedOnlyAndOneShot(t *testing.T) {
 	m, err := db.GetHumanMessage(processMsg)
 	require.NoError(t, err)
 	require.False(t, m.ReadAt.IsZero())
+	code, body = serve("POST", "/api/human-inbox/read", map[string]any{"id": processMsg, "read": false})
+	require.Equal(t, 200, code, body)
+	m, err = db.GetHumanMessage(processMsg)
+	require.NoError(t, err)
+	require.True(t, m.ReadAt.IsZero(), "read:false marks the notification unread again")
+	code, body = serve("POST", "/api/human-inbox/read", map[string]any{"all": true})
+	require.Equal(t, 200, code, body)
+	m, err = db.GetHumanMessage(agentMsg)
+	require.NoError(t, err)
+	require.False(t, m.ReadAt.IsZero(), "all:true marks every notification read")
 
 	reqID := got.AccessRequests[0].ID
 	for _, d := range []string{"always", "always_scoped", "extend", " approve"} {

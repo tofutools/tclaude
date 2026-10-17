@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -33,6 +35,15 @@ import (
 //	    the dashboard's previews, players and downloads work unchanged. The
 //	    peer's bytes never run on this origin: the type is narrowed to media
 //	    and plain text, and the response is a sandboxed download.
+//
+//	GET /api/human-message-export-parts?message=N
+//	    the reader's "⤓ download" as JSON: the Markdown the export route would
+//	    serve, alone and as a zip's message.md, with the files the zip holds.
+//	    Served like the chunk route, under node.messages.read.
+//
+//	GET /api/peer-message-export/{node}/{message}[?attachments=1]
+//	    local-only: a peer's notification as this node's export route serves
+//	    its own, the zip assembled here from the peer's parts and chunks.
 
 // peerAttachmentChunk is the most a chunk carries: base64 and the JSON
 // envelope must stay under fedPeerViewResponseBodyLimit.
@@ -46,9 +57,61 @@ type humanAttachmentChunk struct {
 	Data        []byte `json:"data"`
 }
 
+// humanMessageExportParts is a notification's export, split so another node
+// can rebuild the .md and .zip downloads: ZipMarkdown links the files in Files.
+type humanMessageExportParts struct {
+	Basename    string                   `json:"basename"`
+	Markdown    string                   `json:"markdown"`
+	ZipMarkdown string                   `json:"zip_markdown,omitempty"`
+	Files       []humanMessageExportFile `json:"files,omitempty"`
+}
+
+type humanMessageExportFile struct {
+	AttachmentID int64  `json:"attachment_id"`
+	Name         string `json:"name"`
+}
+
 func registerDashboardPeerAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/human-attachment-chunk", handleDashboardHumanAttachmentChunk)
+	mux.HandleFunc("GET /api/human-message-export-parts", handleDashboardHumanMessageExportParts)
 	mux.HandleFunc("GET /api/peer-attachments/{node}/{message}/{attachment}", handleDashboardPeerAttachment)
+	mux.HandleFunc("GET /api/peer-message-export/{node}/{message}", handleDashboardPeerMessageExport)
+}
+
+func handleDashboardHumanMessageExportParts(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	messageID, err := strconv.ParseInt(r.URL.Query().Get("message"), 10, 64)
+	if err != nil || messageID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "message is required")
+		return
+	}
+	m, err := db.GetHumanMessage(messageID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "read message")
+		return
+	}
+	if m == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such message")
+		return
+	}
+	sender := humanMessageSenderLabel(m)
+	parts := humanMessageExportParts{Basename: humanMessageExportBasename(m), Markdown: humanMessageMarkdown(m, sender, nil)}
+	if len(m.Attachments) > 0 {
+		// As the local zip does: a file no longer on disk is named in
+		// message.md and left out of the archive.
+		names := humanMessageExportNames(m.Attachments)
+		for i, a := range m.Attachments {
+			if _, statErr := os.Stat(a.StoragePath); statErr != nil {
+				names[i] = ""
+				continue
+			}
+			parts.Files = append(parts.Files, humanMessageExportFile{AttachmentID: a.ID, Name: names[i]})
+		}
+		parts.ZipMarkdown = humanMessageMarkdown(m, sender, names)
+	}
+	writeJSON(w, http.StatusOK, parts)
 }
 
 func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request) {
@@ -178,35 +241,150 @@ func (p *peerAttachmentReader) Seek(offset int64, whence int) (int64, error) {
 // fetchPeerAttachmentChunk asks a peer for one chunk over the peer view:
 // up to length bytes from offset (length 0: only the file's metadata).
 var fetchPeerAttachmentChunk = func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
-	rt := currentFederation()
-	if rt == nil {
-		return humanAttachmentChunk{}, http.StatusBadGateway, errPeerViewOffline
-	}
 	q := url.Values{"message": {strconv.FormatInt(messageID, 10)}, "attachment": {strconv.FormatInt(attachmentID, 10)},
 		"offset": {strconv.FormatInt(offset, 10)}, "length": {strconv.FormatInt(length, 10)}}
-	reply, err := exchangePeerView(ctx, rt, peer, fedPeerViewRequest{Method: http.MethodGet, URI: "/api/human-attachment-chunk?" + q.Encode(), Header: http.Header{}})
+	var c humanAttachmentChunk
+	if status, err := peerViewGetJSON(ctx, peer, "/api/human-attachment-chunk?"+q.Encode(), &c); err != nil {
+		return humanAttachmentChunk{}, status, err
+	}
+	if c.Size < 0 || int64(len(c.Data)) > c.Size-c.Offset {
+		return humanAttachmentChunk{}, http.StatusBadGateway, errors.New("peer returned an invalid attachment chunk")
+	}
+	return c, http.StatusOK, nil
+}
+
+// fetchPeerMessageExportParts asks a peer for a notification's export parts.
+var fetchPeerMessageExportParts = func(ctx context.Context, peer *db.FederationPeer, messageID int64) (humanMessageExportParts, int, error) {
+	var parts humanMessageExportParts
+	status, err := peerViewGetJSON(ctx, peer, "/api/human-message-export-parts?message="+strconv.FormatInt(messageID, 10), &parts)
+	return parts, status, err
+}
+
+// peerViewGetJSON runs one GET over the peer view and decodes its JSON reply,
+// mapping transport failures to the status this node answers with.
+func peerViewGetJSON(ctx context.Context, peer *db.FederationPeer, uri string, out any) (int, error) {
+	rt := currentFederation()
+	if rt == nil {
+		return http.StatusBadGateway, errPeerViewOffline
+	}
+	reply, err := exchangePeerView(ctx, rt, peer, fedPeerViewRequest{Method: http.MethodGet, URI: uri, Header: http.Header{}})
 	if err != nil {
 		if errors.Is(err, errPeerViewBusy) {
-			return humanAttachmentChunk{}, http.StatusServiceUnavailable, err
+			return http.StatusServiceUnavailable, err
 		}
 		if errors.Is(err, errPeerViewTimeout) {
-			return humanAttachmentChunk{}, http.StatusGatewayTimeout, err
+			return http.StatusGatewayTimeout, err
 		}
-		return humanAttachmentChunk{}, http.StatusBadGateway, err
+		return http.StatusBadGateway, err
 	}
 	if !validPeerViewReply(reply) {
-		return humanAttachmentChunk{}, http.StatusBadGateway, errors.New("peer returned an invalid response")
+		return http.StatusBadGateway, errors.New("peer returned an invalid response")
 	}
 	if reply.Status != http.StatusOK {
 		var e struct{ Error string }
 		_ = json.Unmarshal(reply.Body, &e)
-		return humanAttachmentChunk{}, reply.Status, fmt.Errorf("peer refused the attachment: %s", e.Error)
+		return reply.Status, fmt.Errorf("peer refused: %s", e.Error)
 	}
-	var c humanAttachmentChunk
-	if err := json.Unmarshal(reply.Body, &c); err != nil || c.Size < 0 || int64(len(c.Data)) > c.Size-c.Offset {
-		return humanAttachmentChunk{}, http.StatusBadGateway, errors.New("peer returned an invalid attachment chunk")
+	if err := json.Unmarshal(reply.Body, out); err != nil {
+		return http.StatusBadGateway, errors.New("peer returned an invalid reply")
 	}
-	return c, http.StatusOK, nil
+	return http.StatusOK, nil
+}
+
+// peerExportRequest reads the {node} and {message} of a local peer route and
+// looks the peer up; ok is false when it has already answered.
+func peerExportRequest(w http.ResponseWriter, r *http.Request) (peer *db.FederationPeer, messageID int64, ok bool) {
+	messageID, err := strconv.ParseInt(r.PathValue("message"), 10, 64)
+	if err != nil || messageID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "message must be a positive ID")
+		return nil, 0, false
+	}
+	peer, err = db.GetFederationPeer(r.PathValue("node"))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "peer_unavailable", "could not read peer trust")
+		return nil, 0, false
+	}
+	if peer == nil {
+		writeError(w, http.StatusForbidden, "not_trusted", "linked trusted peer required")
+		return nil, 0, false
+	}
+	return peer, messageID, true
+}
+
+// handleDashboardPeerMessageExport serves a peer's notification the way
+// serveHumanMessageExport serves this node's own: Markdown, or with
+// attachments=1 a zip of message.md plus attachments/, read chunk by chunk.
+func handleDashboardPeerMessageExport(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
+	peer, messageID, ok := peerExportRequest(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), fedPeerViewTimeout)
+	parts, status, err := fetchPeerMessageExportParts(ctx, peer, messageID)
+	cancel()
+	if err != nil {
+		writeError(w, status, "peer_export", err.Error())
+		return
+	}
+	base := exportSlugUnsafe.ReplaceAllString(strings.ToLower(parts.Basename), "-")
+	if base == "" || base == "-" {
+		base = fmt.Sprintf("msg-%d", messageID)
+	}
+	if r.URL.Query().Get("attachments") != "1" || parts.ZipMarkdown == "" {
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": base + ".md"}))
+		_, _ = w.Write([]byte(parts.Markdown))
+		return
+	}
+	fetch := func(attachmentID, offset, length int64) (humanAttachmentChunk, error) {
+		ctx, cancel := context.WithTimeout(r.Context(), fedPeerViewTimeout)
+		defer cancel()
+		c, _, err := fetchPeerAttachmentChunk(ctx, peer, messageID, attachmentID, offset, length)
+		return c, err
+	}
+	// Every file's size is known before the first byte goes out, so a file
+	// the peer no longer has fails the request rather than a half-sent zip.
+	readers := make([]*peerAttachmentReader, len(parts.Files))
+	for i, f := range parts.Files {
+		first, err := fetch(f.AttachmentID, 0, 0)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "peer_export", err.Error())
+			return
+		}
+		readers[i] = &peerAttachmentReader{first: first, fetch: func(offset int64) (humanAttachmentChunk, error) {
+			return fetch(f.AttachmentID, offset, peerAttachmentChunk)
+		}}
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": base + ".zip"}))
+	zw := zip.NewWriter(w)
+	modified := time.Now()
+	if err := writeZipEntry(zw, "message.md", modified, strings.NewReader(parts.ZipMarkdown)); err != nil {
+		return
+	}
+	// The peer named the files, but the archive is unpacked elsewhere: the
+	// names are made plain and unique again here, as the local export does.
+	named := make([]*db.HumanMessageAttachment, len(parts.Files))
+	for i, f := range parts.Files {
+		named[i] = &db.HumanMessageAttachment{Filename: f.Name}
+	}
+	names := humanMessageExportNames(named)
+	for i := range parts.Files {
+		name := names[i]
+		if err := writeZipEntry(zw, "attachments/"+name, modified, readers[i]); err != nil {
+			slog.Warn("dashboard: peer message export failed", "peer", peer.InstanceID, "message", messageID, "error", err)
+			return
+		}
+	}
+	if err := zw.Close(); err != nil {
+		slog.Warn("dashboard: peer message export failed", "peer", peer.InstanceID, "message", messageID, "error", err)
+	}
 }
 
 func handleDashboardPeerAttachment(w http.ResponseWriter, r *http.Request) {

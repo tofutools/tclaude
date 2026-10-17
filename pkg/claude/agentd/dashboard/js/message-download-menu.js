@@ -29,7 +29,7 @@ export function triggerDownload(href, documentRef = globalThis.document) {
 }
 
 export function MessageDownloadMenu({
-  message, toast, download = triggerDownload, fetchImpl = globalThis.fetch?.bind(globalThis),
+  message, node = '', toast, download = triggerDownload, fetchImpl = globalThis.fetch?.bind(globalThis),
   clipboard = globalThis.navigator?.clipboard,
 }) {
   const [open, setOpen] = useState(false);
@@ -62,7 +62,7 @@ export function MessageDownloadMenu({
   const copyMarkdown = async () => {
     try {
       if (!clipboard?.writeText) throw new Error('clipboard unavailable');
-      const response = await fetchImpl(messageExportHref(message.id, false));
+      const response = await fetchImpl(messageExportHref(message.id, false, node));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await clipboard.writeText(await response.text());
       toast?.(`Message #${message.id} copied as Markdown`);
@@ -99,16 +99,16 @@ export function MessageDownloadMenu({
   return html`<span class="mail-download" ref=${rootRef} onFocusOut=${onFocusOut}>
     <button type="button" class="mail-download-main"
       title=${count ? `Download this message with its ${filesNote} as a .zip` : 'Download this message as Markdown'}
-      onClick=${() => download(messageExportHref(message.id, count > 0))}>⤓ download</button><button
+      onClick=${() => download(messageExportHref(message.id, count > 0, node))}>⤓ download</button><button
       type="button" class="mail-download-caret" ref=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
       aria-label="More download options" title="More download options"
       onClick=${() => setOpen(!open)}>▾</button>
     ${open && html`<div class="mail-download-menu" role="menu" aria-label="Download message" onKeyDown=${onMenuKeyDown}>
       ${count > 0 && html`<button type="button" role="menuitem" data-export="zip"
-        onClick=${() => run(() => download(messageExportHref(message.id, true)))}>
+        onClick=${() => run(() => download(messageExportHref(message.id, true, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📦</span><span>Message + attachments (.zip)<small>message.md + ${filesNote}</small></span></button>`}
       <button type="button" role="menuitem" data-export="md"
-        onClick=${() => run(() => download(messageExportHref(message.id, false)))}>
+        onClick=${() => run(() => download(messageExportHref(message.id, false, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📄</span><span>Message only (.md)<small>${count ? 'headers + body, attachments listed by name' : 'headers + body'}</small></span></button>
       <div class="mail-download-sep" role="separator"></div>
       <button type="button" role="menuitem" data-export="copy" onClick=${() => run(copyMarkdown)}>

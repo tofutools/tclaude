@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -121,4 +122,76 @@ func TestPeerAttachmentTypeShowsOnlyInertMedia(t *testing.T) {
 	} {
 		require.Equal(t, want, peerAttachmentType(declared), declared)
 	}
+}
+
+// The reader's ⤓ download for a peer's notification: the same Markdown the
+// peer's own export serves, and a zip assembled here from its files.
+func TestDashboardPeerMessageExportMatchesThePeersOwn(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	id, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: id.ID(), PubKey: id.Pub, Label: "forge", Name: "forge", TrustLevel: db.FederationTrustRestricted}))
+	dir := testutil.CanonicalTempDir(t)
+	path := filepath.Join(dir, "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello from forge"), 0o600))
+	messageID, err := db.InsertHumanMessageWithAttachments(&db.HumanMessage{FromConv: "conv-a", Subject: "Build report", Body: "see file"},
+		[]*db.HumanMessageAttachment{{Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 16, StoragePath: path}})
+	require.NoError(t, err)
+
+	serve := func(uri string, out any) (int, error) {
+		rec := httptest.NewRecorder()
+		PeerViewHandler(id.ID()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, uri, nil))
+		if rec.Code != http.StatusOK {
+			return rec.Code, io.ErrUnexpectedEOF
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), out))
+		return http.StatusOK, nil
+	}
+	prevParts, prevChunk := fetchPeerMessageExportParts, fetchPeerAttachmentChunk
+	t.Cleanup(func() { fetchPeerMessageExportParts, fetchPeerAttachmentChunk = prevParts, prevChunk })
+	fetchPeerMessageExportParts = func(_ context.Context, peer *db.FederationPeer, message int64) (humanMessageExportParts, int, error) {
+		var parts humanMessageExportParts
+		status, err := serve("/api/human-message-export-parts?message="+strconv.FormatInt(message, 10), &parts)
+		return parts, status, err
+	}
+	fetchPeerAttachmentChunk = func(_ context.Context, peer *db.FederationPeer, message, attachment, offset, length int64) (humanAttachmentChunk, int, error) {
+		var c humanAttachmentChunk
+		status, err := serve("/api/human-attachment-chunk?message="+strconv.FormatInt(message, 10)+"&attachment="+strconv.FormatInt(attachment, 10)+
+			"&offset="+strconv.FormatInt(offset, 10)+"&length="+strconv.FormatInt(length, 10), &c)
+		return c, status, err
+	}
+	mux := http.NewServeMux()
+	registerDashboardPeerAttachmentRoutes(mux)
+	url := "/api/peer-message-export/" + id.ID() + "/" + strconv.FormatInt(messageID, 10)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, dashboardRequest(http.MethodGet, url, ""))
+	require.Equal(t, http.StatusForbidden, rec.Code, "without node.messages.read the peer refuses: "+rec.Body.String())
+
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: id.ID(), Slug: PermNodeMessagesRead}))
+	local := httptest.NewRecorder()
+	serveHumanMessageExport(local, httptest.NewRequest(http.MethodGet, "/api/human-messages/1/export", nil), messageID)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, dashboardRequest(http.MethodGet, url, ""))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, local.Body.String(), rec.Body.String(), "the same Markdown as the peer's own download")
+	require.Equal(t, local.Header().Get("Content-Disposition"), rec.Header().Get("Content-Disposition"))
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, dashboardRequest(http.MethodGet, url+"?attachments=1", ""))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "application/zip", rec.Header().Get("Content-Type"))
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	require.NoError(t, err)
+	entries := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		require.NoError(t, err)
+		data, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		entries[f.Name] = string(data)
+	}
+	require.Equal(t, "hello from forge", entries["attachments/notes.txt"])
+	require.Contains(t, entries["message.md"], "[notes.txt](<attachments/notes.txt>)")
 }

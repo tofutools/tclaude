@@ -156,22 +156,45 @@ func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerVi
 		}
 		decidePeerHumanInboxRequest(w, v, r.PathValue("id"), body.Decision)
 	case r.URL.Path == "/api/human-inbox/read":
+		// The same envelope as this node's own /api/human-messages/read:
+		// {"id":N} marks read, {"id":N,"read":false} unread, {"all":true}
+		// marks every notification read.
 		var body struct {
-			ID int64 `json:"id"`
+			ID   int64 `json:"id"`
+			All  bool  `json:"all"`
+			Read *bool `json:"read"`
 		}
 		if !decodePeerAction(w, r, &body) {
+			return
+		}
+		if body.All {
+			v.auditDetail = "read all"
+			n, err := db.MarkAllHumanMessagesRead()
+			if err != nil {
+				writeError(w, 500, "io", "mark read")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"marked": n})
 			return
 		}
 		if body.ID <= 0 {
 			writeError(w, 400, "invalid_arg", "id is required")
 			return
 		}
-		v.auditDetail = fmt.Sprintf("read id=%d", body.ID)
-		if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
+		read := body.Read == nil || *body.Read
+		var err error
+		if read {
+			v.auditDetail = fmt.Sprintf("read id=%d", body.ID)
+			_, err = db.MarkHumanMessageRead(body.ID)
+		} else {
+			v.auditDetail = fmt.Sprintf("unread id=%d", body.ID)
+			_, err = db.MarkHumanMessageUnread(body.ID)
+		}
+		if err != nil {
 			writeError(w, 500, "io", "mark read")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"id": body.ID, "read": true})
+		writeJSON(w, 200, map[string]any{"id": body.ID, "read": read})
 	default:
 		var body struct {
 			ID   int64  `json:"id"`

@@ -15,6 +15,7 @@ import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
+import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
 
 const html = htm.bind(h);
@@ -352,58 +353,77 @@ export function MessageBody({ message }) {
     : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>`;
 }
 
-// LocalHumanActions are the reader's buttons for a human notification on this
-// node. row-action-handler.js runs them (data-act), as on every surface that
-// shows a notification: reply opens the reply dialog, focus raises the
-// sender's terminal.
-export function LocalHumanActions({ message, senderLive, harness = '', toast }) {
-  const fromTarget = message.from_agent || message.from_conv;
-  return html`<${Fragment}>
-    ${message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
-      data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
-      title="Reply to this agent — opens a dialog to send your answer back">reply</button>
-      <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
-        data-harness=${harness}
-        disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
-    <button data-act=${message.read ? 'msg-mark-unread' : 'msg-mark-read'}
-      data-id=${message.id} title=${message.read ? 'Mark this message unread' : 'Mark this message read'}>${message.read ? 'mark unread' : 'mark read'}</button>
-    <${MessageDownloadMenu} message=${message} toast=${toast} />
-    <button class="danger" data-act="msg-delete" data-id=${message.id} title="Permanently delete this message">delete</button>
-  </${Fragment}>`;
-}
-
-// PeerHumanReply answers a human notification that lives on another node,
-// through that node's human-inbox routes (actions.read / actions.reply, each
-// a promise). canAnswer is whether the node lets this operator answer; when
-// it does not, the notification is read-only here. children follow the
-// buttons (such as an Open on NODE button).
-export function PeerHumanReply({ message, nodeName, canAnswer, actions, toast, onDone, children = null }) {
-  const [text, setText] = useState('');
+// HumanActions are the reader's buttons for a human notification, one row
+// wherever a notification is read (this node's Messages, a peer's page, the
+// fused view): reply, focus, mark read/unread, ⤓ download and delete, then
+// children (such as an Open on NODE button); before leads the row.
+//
+// On this node row-action-handler.js runs them (data-act): reply opens the
+// reply dialog, focus raises the sender's terminal. A notification that lives
+// on another node (peer = { name, exportNode, canAnswer, mark(id, read),
+// reply(id, body) }, each action a promise) is answered through that node's
+// human-inbox routes, reply in the same dialog. What the node does not take
+// from here stays in place, greyed, with the reason on hover.
+export function HumanActions({ message, senderLive, harness = '', toast, peer = null, onDone, openReply = openHumanReplyModal, before = null, children = null }) {
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setText(''); setBusy(false); }, [message.id, nodeName]);
-  const replyable = !!(message.from_agent || message.from_conv);
-  const run = (what, p, done) => {
+  useEffect(() => { setBusy(false); }, [message.id, peer?.name]);
+  const label = message.from_title || message.from_conv || message.from_agent || 'the agent';
+  const markTitle = message.read ? 'Mark this message unread' : 'Mark this message read';
+  const markLabel = message.read ? 'mark unread' : 'mark read';
+  if (!peer) {
+    const fromTarget = message.from_agent || message.from_conv;
+    return html`<div class="mail-reader-actions">
+      ${before}
+      ${message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
+        data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
+        title="Reply to this agent — opens a dialog to send your answer back">reply</button>
+        <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
+          data-harness=${harness}
+          disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
+      <button data-act=${message.read ? 'msg-mark-unread' : 'msg-mark-read'} data-id=${message.id} title=${markTitle}>${markLabel}</button>
+      <span class="spacer"></span>
+      <${MessageDownloadMenu} message=${message} toast=${toast} />
+      <button class="danger" data-act="msg-delete" data-id=${message.id} title="Permanently delete this message">delete</button>
+      ${children}
+    </div>`;
+  }
+  const { name } = peer;
+  const readOnly = `${name} shares its notifications for reading only — answering them from here needs its unrestricted trust`;
+  const mark = () => {
     setBusy(true);
-    p.then(() => { setBusy(false); setText(''); toast(done, false); onDone?.(); }, (e) => {
+    const read = !message.read;
+    peer.mark(message.id, read).then((res) => {
+      // A node on an older build ignores read:false and marks it read.
+      if (res && typeof res.read === 'boolean' && res.read !== read) {
+        throw Object.assign(new Error(`${name} runs an older build that cannot mark notifications unread`), { status: 409 });
+      }
+      setBusy(false);
+      toast(`Marked ${read ? 'read' : 'unread'} on ${name}`, false);
+      onDone?.();
+    }).catch((e) => {
       setBusy(false);
       const reason = e?.message || String(e);
-      toast(e?.status === 403 ? `${what}: ${nodeName} does not allow it from here (${reason}).` : `${what} failed: ${reason}`, true);
+      toast(e?.status === 403 ? `${markLabel}: ${name} does not allow it from here (${reason}).` : `${markLabel} failed: ${reason}`, true);
     });
   };
-  if (!canAnswer) {
-    return html`<div class="mail-reader-actions"><span class="muted">${nodeName} shares its notifications for reading; answer them on its own dashboard.</span>
-      <span class="spacer"></span>${children}</div>`;
-  }
-  return html`<${Fragment}>
-    ${replyable && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${message.from_title || message.from_agent || 'the agent'} on ${nodeName}`}
-      value=${text} disabled=${busy} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}
-    <div class="mail-reader-actions">
-      ${replyable && html`<button type="button" class="primary" data-human="reply" disabled=${busy || !text.trim()}
-        onClick=${() => run('Reply', actions.reply(message.id, text.trim()), `Replied on ${nodeName}`)}>send reply</button>`}
-      ${!message.read && html`<button type="button" data-human="read" disabled=${busy}
-        title=${`Mark this message read on ${nodeName}`}
-        onClick=${() => run('Mark read', actions.read(message.id), `Marked read on ${nodeName}`)}>mark read</button>`}
-      <span class="spacer"></span>${children}
-    </div>
-  </${Fragment}>`;
+  const reply = () => openReply({
+    id: message.id, agent: message.from_agent || '', conv: message.from_conv || '', label, subject: message.subject || '',
+    // senderLive is known only where the page shows the owning node's own
+    // view; otherwise the node itself refuses an offline sender.
+    nodeName: name, online: typeof senderLive === 'boolean' ? senderLive : undefined,
+    send: (body) => peer.reply(message.id, body).then(() => { toast(`Replied on ${name}`, false); onDone?.(); }),
+  });
+  return html`<div class="mail-reader-actions">
+    ${before}
+    ${(message.from_conv || message.from_agent) && html`<${Fragment}><button type="button" data-human="reply" disabled=${!peer.canAnswer}
+      title=${peer.canAnswer ? `Reply to this agent on ${name} — opens a dialog to send your answer back` : readOnly} onClick=${reply}>reply</button>
+      <button type="button" data-human="focus" disabled
+        title=${`Focus raises a terminal window on this node; ${name}'s agent opens from its Groups tab`}>focus</button></${Fragment}>`}
+    <button type="button" data-human="mark" disabled=${busy || !peer.canAnswer}
+      title=${peer.canAnswer ? `${markTitle} on ${name}` : readOnly} onClick=${mark}>${markLabel}</button>
+    <span class="spacer"></span>
+    <${MessageDownloadMenu} message=${message} node=${peer.exportNode || ''} toast=${toast} />
+    <button type="button" class="danger" data-human="delete" disabled title=${`Only ${name}'s own operator deletes its notifications`}>delete</button>
+    ${children}
+  </div>`;
 }
