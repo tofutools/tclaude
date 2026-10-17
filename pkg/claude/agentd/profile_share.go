@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
@@ -137,7 +138,7 @@ func handleProfileShare(w http.ResponseWriter, r *http.Request) {
 		To   string `json:"to"`
 		Note string `json:"note"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, profileShareNoteMax+1024)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 6*profileShareNoteMax+1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
 		return
 	}
@@ -270,7 +271,11 @@ func profileShareBody(dir string, c *profileCapture, note string, skipped []stri
 	if raw, err := os.ReadFile(filepath.Join(dir, profileSummaryFile)); err == nil && len(raw) > 0 {
 		summary := string(raw)
 		if len(summary) > profileShareSummaryMax {
-			summary = summary[:profileShareSummaryMax] + "\n… (truncated; see summary.txt)"
+			cut := profileShareSummaryMax
+			for cut > 0 && !utf8.RuneStart(summary[cut]) {
+				cut--
+			}
+			summary = summary[:cut] + "\n… (truncated; see summary.txt)"
 		}
 		b.WriteString("\n--- summary.txt ---\n")
 		b.WriteString(strings.TrimRight(summary, "\n"))
