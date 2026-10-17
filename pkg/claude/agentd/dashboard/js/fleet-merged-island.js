@@ -182,6 +182,15 @@ export function MergedGroups({
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
   const snapRef = useRef(snapOf);
   snapRef.current = snapOf;
+  // A fold/unfold persisted by refresh.js moves which header owns subgroup
+  // activity: re-render now rather than on the next poll.
+  const [, setDisclosures] = useState(0);
+  useEffect(() => {
+    if (!host) return undefined;
+    const bump = () => setDisclosures((n) => n + 1);
+    host.addEventListener('tclaude:group-disclosure', bump);
+    return () => host.removeEventListener('tclaude:group-disclosure', bump);
+  }, [host]);
 
   // Read-only overview: stop node-changing controls before their handlers,
   // and open a group's node from its @node suffix.
