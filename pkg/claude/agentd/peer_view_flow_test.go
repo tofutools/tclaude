@@ -129,6 +129,7 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &obj))
 		meta := obj["peer_view"].(map[string]any)
 		require.Contains(t, meta["included"], map[string]string{"/api/costs": "costs", "/api/audit": "audit"}[path])
+		require.Equal(t, "restricted", meta["level"])
 	}
 	fh.f.HaveGroup("private-group")
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
@@ -136,6 +137,7 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "private-group")
 	require.Contains(t, rec.Body.String(), `"peer_view"`)
+	require.Contains(t, rec.Body.String(), `"level":"unrestricted"`)
 	// Triggers stay local-only even for unrestricted trust, so the snapshot
 	// must not advertise them or the Groups view fetches a refused route.
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))

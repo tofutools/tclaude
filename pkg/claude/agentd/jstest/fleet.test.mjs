@@ -257,7 +257,7 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
   assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'terminals', requires: 'sessions.attach', transport: true }, { feature: 'costs', requires: 'costs.read', requestable: true }] }).omitted, [{ feature: 'costs', requires: 'costs.read', requestable: true }]);
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups') });
   state.setStatus(status([]));
-  const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
+  const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', level: 'unrestricted', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
   const switched = [];
   const mounted = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="inst_forge" snapshot=${snapshot} switchNode=${(id) => switched.push(id)} />`);
   assert.match(mounted.container.textContent, /forge/);
@@ -266,7 +266,8 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
   assert.match(pill.textContent, /offline · data 2 min old/);
   await harness.act(() => harness.fireEvent(pill, 'click'));
   const pop = mounted.container.querySelector('[role="dialog"]');
-  assert.match(pop.textContent, /Shared groups/); assert.match(pop.textContent, /Not shared costs/);
+  assert.match(pop.textContent, /Shared groups/); assert.match(pop.textContent, /Hidden from you costs/);
+  assert.match(pop.textContent, /You trust it restricted · It trusts you unrestricted/, 'both directions of trust are named');
   await harness.act(() => harness.fireEvent(getByRole(pop, 'button', { name: /Back to desk/ }), 'click'));
   assert.deepEqual(switched, ['']);
   await mounted.unmount();
@@ -292,6 +293,45 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
   assert.ok(mounted.container.querySelector('[aria-label="lab node"].stale'), 'an offline peer renders as stale');
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.queue.length, 0, 'leaving the map cancels every pending poll');
+  await mounted.unmount(); state.dispose();
+});
+
+test('a link names its trust in each direction; the popover spells out who can do what', async (t) => {
+  const { harness, stateMod, island, model } = await load(t);
+  const link = model.linkView('desk', { name: 'lab', level: 'unrestricted' }, { theirLevel: 'restricted', omitted: ['costs', 'spawn'] });
+  assert.deepEqual([link.in.from, link.in.to, link.in.short], ['lab', 'desk', 'full access']);
+  assert.deepEqual([link.out.from, link.out.to, link.out.short], ['desk', 'lab', 'limited · 2 hidden']);
+  assert.equal(link.asymmetric, true);
+  assert.equal(model.linkView('desk', { name: 'forge', level: 'restricted' }, { theirLevel: '', omitted: [] }).out.short, 'not reported', 'an older peer does not say');
+  assert.equal(model.linkView('desk', { name: 'forge', level: 'restricted' }, { theirLevel: '', omitted: [] }).asymmetric, false);
+
+  const activeTab = harness.signals.signal('map');
+  const state = stateMod.createFleetState({ activeTab });
+  state.setStatus(status([]));
+  state.commitSummary('inst_lab', { shared_groups: 0, shared_agents: 0, online_agents: 0, waiting_for_input: 0, peer_view: { level: 'restricted', omitted: [{ feature: 'costs', requires: 'costs.read' }] } }, '');
+  const nav = [];
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${fakeTimers()} navigate=${(tab) => nav.push(tab)} />`);
+  const lab = mounted.container.querySelector('[aria-label="lab node"]');
+  assert.doesNotMatch(lab.textContent, /unrestricted peer/, 'no bare level badge on the card');
+  assert.match(lab.textContent, /You trust it⚠ unrestricted/);
+  assert.match(lab.textContent, /It trusts yourestricted/);
+  assert.match(lab.textContent, /Hidden from youcosts/);
+  const badge = getByRole(mounted.container, 'button', { name: 'Trust between lab and desk' });
+  assert.match(badge.textContent, /⚠ lab → desk full access/);
+  assert.match(badge.textContent, /desk → lab limited · 1 hidden/);
+  assert.ok(badge.classList.contains('asymmetric'));
+  await harness.act(() => harness.fireEvent(badge, 'click'));
+  const pop = mounted.container.querySelector('.fleet-link-pop');
+  assert.match(pop.textContent, /Asymmetric link/);
+  assert.match(pop.textContent, /lab has full peer access to desk.*You set this/);
+  assert.match(pop.textContent, /desk can use only what lab shares\. lab's operator set this\. Hidden from you: costs\./);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(mounted.container.querySelector('.fleet-link-pop'), null, 'Escape closes the popover');
+  await harness.act(() => harness.fireEvent(badge, 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Change in Fleet config…' }), 'click'));
+  assert.deepEqual(nav, ['fleet-admin']);
+  const forge = getByRole(mounted.container, 'button', { name: 'Trust between forge and desk' });
+  assert.match(forge.textContent, /desk → forge not reported/, 'no summary yet: the other direction is unknown');
   await mounted.unmount(); state.dispose();
 });
 

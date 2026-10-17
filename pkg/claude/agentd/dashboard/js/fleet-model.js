@@ -221,6 +221,12 @@ export function resourceView(resources) {
   return Object.keys(out).length ? out : null;
 }
 
+// trustLevel reads a peer_view trust level: 'unrestricted', 'restricted', or
+// '' when the node did not say (an older daemon).
+function trustLevel(level) {
+  return level === 'unrestricted' || level === 'restricted' ? level : '';
+}
+
 // cardView derives what a node card shows from the node, its last summary
 // entry and the current time. A summary is only ever data the node chose to
 // share with us; the card says "shared" rather than implying totals.
@@ -257,6 +263,9 @@ export function cardView(node, entry, now = Date.now()) {
     latestVersion: summary?.latest_version || '',
     updateAvailable: summary?.update_available === true && !!summary?.latest_version,
     omitted,
+    // The trust the node grants us: the other direction from node.level,
+    // which is the trust we grant it.
+    theirLevel: trustLevel(summary?.peer_view?.level),
   };
 }
 
@@ -340,5 +349,25 @@ export function peerViewSummary(meta) {
     .filter(shownOmission)
     .map((o) => (typeof o === 'string' ? { feature: o, requires: '' } : { feature: o?.feature || '', requires: o?.requires || '', ...(typeof o?.requestable === 'boolean' ? { requestable: o.requestable } : {}) }))
     .filter((o) => o.feature);
-  return { included, omitted, full: !omitted.length && !included.length };
+  return { included, omitted, level: trustLevel(meta.level), full: !omitted.length && !included.length };
+}
+
+// linkView describes both directions of a peer link for the map: what the
+// peer may do on this node (the trust we grant it) and what this node may use
+// on the peer (the trust it grants us). Each direction names its nodes so the
+// operator never has to infer direction from an arrow.
+export function linkView(selfName, peer, card) {
+  const ours = peer.level === 'unrestricted' ? 'unrestricted' : 'restricted';
+  const theirs = card?.theirLevel || '';
+  const hidden = card?.omitted || [];
+  return {
+    // The peer acting on this node.
+    in: { from: peer.name, to: selfName, level: ours, short: ours === 'unrestricted' ? 'full access' : 'limited' },
+    // This node acting on the peer.
+    out: {
+      from: selfName, to: peer.name, level: theirs, hidden,
+      short: theirs === 'unrestricted' ? 'full access' : theirs === 'restricted' ? `limited${hidden.length ? ` · ${hidden.length} hidden` : ''}` : 'not reported',
+    },
+    asymmetric: !!theirs && theirs !== ours,
+  };
 }
