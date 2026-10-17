@@ -506,7 +506,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
     const ro = new ResizeObserver(update);
     ro.observe(mapRef.current);
     return () => ro.disconnect();
-  }, [current.mapActive, fleetKey, current.summaries]);
+  }, [current.mapActive, fleetKey, current.summaries, fleet?.hub.state]);
 
   if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
   const t = now();

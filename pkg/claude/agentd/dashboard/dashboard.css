@@ -19861,12 +19861,13 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 #tab-map.active { margin: -16px -24px; }
 .skynet-map {
   position: relative; min-height: calc(100vh - 99px - var(--footer-h)); box-sizing: border-box; padding: 32px 40px 56px;
-  display: grid; grid-template-columns: minmax(280px, 340px) minmax(260px, 1fr) auto; align-items: center; column-gap: 0;
+  display: grid; grid-template-columns: minmax(280px, 340px) minmax(120px, 1fr) auto; align-items: center; column-gap: 0;
   background: radial-gradient(circle at 1px 1px, #21262d 1px, transparent 1.2px) 0 0 / 22px 22px, #0d1117;
 }
 .skynet-map-local { grid-column: 1; z-index: 1; }
-/* The hub sits between this node and its peers, narrower than a node card. */
-.skynet-map-hub { grid-column: 2; justify-self: center; width: min(240px, 100% - 48px); z-index: 1; }
+/* The hub sits between this node and its peers, narrower than a node card,
+   and shrinks with the middle column rather than widening the map. */
+.skynet-map-hub { grid-column: 2; justify-self: center; width: min(240px, 100% - 16px); min-width: 0; z-index: 1; }
 .skynet-card.hub { --nc: #8b949e; }
 .skynet-card.hub .skynet-card-body { grid-template-columns: 56px minmax(0, 1fr); }
 .skynet-hub-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
