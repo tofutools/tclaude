@@ -94,6 +94,16 @@ type Export struct {
 	CronRuns    []CronRun    `json:"cron_runs"`
 	Messages    []Message    `json:"messages"`
 	Convs       []Conv       `json:"convs"`
+	// SavedPrompts embeds every saved prompt Group.DefaultPrompts names, so
+	// the group's spawn defaults travel with it. Import creates the missing
+	// ones and never overwrites a local prompt of the same name.
+	SavedPrompts []SavedPrompt `json:"saved_prompts,omitempty"`
+}
+
+// SavedPrompt is one saved_prompts row a group's default prompts reference.
+type SavedPrompt struct {
+	Name string `json:"name"`
+	Body string `json:"body"`
 }
 
 // Group is the agent_groups row, minus the autoincrement id (regenerated
@@ -106,6 +116,9 @@ type Group struct {
 	AttachmentURL   string                           `json:"attachment_url,omitempty"`
 	AttachmentLabel string                           `json:"attachment_label,omitempty"`
 	Permissions     []GroupPermission                `json:"permissions,omitempty"`
+	// DefaultPrompts is the ordered saved-prompt set fresh spawns into the
+	// group compose into their brief; bodies ride in Export.SavedPrompts.
+	DefaultPrompts []string `json:"default_prompts,omitempty"`
 	// DefaultModel is LEGACY / import-only (JOH-220). The vestigial
 	// per-group default_model column was dropped, so a current export
 	// never writes this field — CollectGroupExport leaves it "" and

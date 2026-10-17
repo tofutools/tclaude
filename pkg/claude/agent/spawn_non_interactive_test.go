@@ -9,7 +9,7 @@ import (
 func TestNonInteractiveSpawnRequiresExplicitPrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	_, code := RunSpawn(&SpawnParams{Group: "test", NonInteractive: true}, &stdout, &stderr, strings.NewReader(""))
-	if code != rcInvalidArg || !strings.Contains(stderr.String(), "requires --initial-message or --file") {
+	if code != rcInvalidArg || !strings.Contains(stderr.String(), "requires --initial-message, --file or --prompt") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 }

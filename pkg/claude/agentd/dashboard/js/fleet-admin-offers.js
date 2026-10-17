@@ -9,7 +9,7 @@ import { LandingPicker, landingBlocks, landingSentence, receiverDecides, sentLan
 const html = htm.bind(h);
 
 // CONFIG_SECTIONS mirror configbundle.Sections (the offer-config selectors).
-export const CONFIG_SECTIONS = Object.freeze(['roles', 'sandbox-profiles', 'profiles', 'templates', 'process-templates', 'default-permissions', 'config']);
+export const CONFIG_SECTIONS = Object.freeze(['roles', 'saved-prompts', 'sandbox-profiles', 'profiles', 'templates', 'process-templates', 'default-permissions', 'config']);
 
 const OPEN = new Set(['pending', 'ready']);
 

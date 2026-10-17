@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
+import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { grantListToOverrides, grantOverridesToList } from './permission-grant-list.js';
@@ -1398,6 +1399,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
       ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
     </div></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
+    <div class="cron-create-row" hidden=${local} title="Saved prompts that open the task brief of agents spawned from this profile, in order, ahead of the initial message. They replace the group's default prompts."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="profile-editor-prompt-refs" value=${draft.prompt_refs} onChange=${(refs) => change(setDraft, 'prompt_refs', refs)} confirmDiscard=${confirmDiscard}/></div>
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
 		<div class="cron-create-row" id="profile-editor-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name} placeholder="NAME" onInput=${(event) => setEnvironment(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value} placeholder="value" onInput=${(event) => setEnvironment(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => change(setDraft, 'environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" onClick=${() => change(setDraft, 'environment', [...draft.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /></button><${HelpDisclosure} id="profile-editor-environment-help" label=${wizWord('Profile environment variables', 'Pattern runes')} help=${wizWord(PROFILE_ENVIRONMENT_HELP, PROFILE_ENVIRONMENT_HELP_WIZARD)} open=${environmentHelpOpen === 'profile-editor-environment-help'} setOpen=${setEnvironmentHelpOpen} /></div></div></div>
@@ -2253,6 +2255,8 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':
       return html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'saved-prompts':
+      return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
       return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${state.sandboxProfiles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
@@ -2303,6 +2307,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
   const controller = {
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
+    openSavedPrompts: ({ initial = '', clone = false } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openTemplatesManageModal: actions.openTemplateManager, openTemplateEditor: actions.openTemplateEditor,
     updateTemplates: actions.updateTemplates, removeTemplate: actions.removeTemplate,

@@ -13,12 +13,12 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
 		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",
-		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
+		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles SavedPrompts Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
 		"projected": "Members Online",
-		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe FederationLinks",
+		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",

@@ -3687,7 +3687,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				"its pane), but other control characters are not", agent.MaxInitialMessageBytes))
 		return
 	}
-	if body.NonInteractive && body.InitialMessage == "" {
+	if body.NonInteractive && body.InitialMessage == "" && len(cleanRoleRefs(body.PromptRefs)) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_initial_message", "non_interactive requires initial_message")
 		return
 	}
@@ -4266,6 +4266,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	// Saved prompts compose ahead of the brief. A one-shot takes only the
+	// prompts its caller named: an ambient profile/group default must never
+	// rewrite a non-interactive prompt or shell command.
+	promptRefs := resolvePromptRefsLaunchField(body, g, profileTiers)
+	if body.NonInteractive && !body.PromptRefsSpecified() {
+		promptRefs = nil
+	}
+	// An interactive shell takes no brief at all, so a group or profile's
+	// prompts (which the dashboard pre-fills explicitly) must not refuse it.
+	if h.Name == harness.ShellName && !body.NonInteractive {
+		promptRefs = nil
+	}
+	if len(promptRefs) > 0 {
+		composed, fail := composeSavedPrompts(promptRefs, body.InitialMessage)
+		if fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
+		body.InitialMessage = composed
+	}
+	body.PromptRefs = promptRefs
 	if h.Name == harness.ShellName && !body.NonInteractive && body.InitialMessage != "" {
 		writeError(w, http.StatusBadRequest, "invalid_initial_message",
 			"shell spawn requires non_interactive when initial_message is set")
@@ -6146,6 +6167,37 @@ func resolveRoleRefsLaunchField(body agent.SpawnRequest, tiers []launchProfileTi
 		}
 	}
 	return nil, ""
+}
+
+// resolvePromptRefsLaunchField resolves the saved-prompt set the way role
+// refs resolve: the highest tier that names any prompts wins as a whole. The
+// group's own default prompts apply when neither the named profile nor the
+// group's default profile names any, ahead of the global default profile —
+// the same order the dashboard's spawn dialog pre-fills them in.
+func resolvePromptRefsLaunchField(body agent.SpawnRequest, g *db.AgentGroup, tiers []launchProfileTier) []string {
+	if body.PromptRefsSpecified() {
+		return cleanRoleRefs(body.PromptRefs)
+	}
+	var groupPrompts []string
+	if g != nil {
+		groupPrompts = cleanRoleRefs(g.DefaultPrompts)
+	}
+	defaultTiers := 0
+	for _, tier := range tiers {
+		if tier.defaultTier {
+			// The second ambient tier is the global default profile.
+			if defaultTiers++; defaultTiers == 2 && len(groupPrompts) > 0 {
+				return groupPrompts
+			}
+		}
+		if tier.profile == nil {
+			continue
+		}
+		if refs := cleanRoleRefs(tier.profile.PromptRefs); len(refs) > 0 {
+			return refs
+		}
+	}
+	return groupPrompts
 }
 
 func cleanRoleRefs(refs []string) []string {

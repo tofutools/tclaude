@@ -281,6 +281,11 @@ type SpawnRequest struct {
 	// membership/routing label.
 	RoleRef  string   `json:"role_ref,omitempty"`
 	RoleRefs []string `json:"role_refs,omitempty"`
+	// PromptRefs names saved prompts whose bodies, in order, are composed
+	// ahead of InitialMessage into the agent's task brief. Like RoleRefs the
+	// set is resolved whole: an explicit set (even empty) beats the profile
+	// and group defaults.
+	PromptRefs []string `json:"prompt_refs,omitempty"`
 	// Descr is the short, one-line description shown on the dashboard
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
@@ -637,6 +642,7 @@ type SpawnRequest struct {
 	roleSpecified                bool
 	roleRefSpecified             bool
 	roleRefsSpecified            bool
+	promptRefsSpecified          bool
 	descrSpecified               bool
 	initialMessageSpecified      bool
 	autoFocusSpecified           bool
@@ -665,6 +671,7 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	_, r.roleSpecified = fields["role"]
 	_, r.roleRefSpecified = fields["role_ref"]
 	_, r.roleRefsSpecified = fields["role_refs"]
+	_, r.promptRefsSpecified = fields["prompt_refs"]
 	_, r.descrSpecified = fields["descr"]
 	_, r.initialMessageSpecified = fields["initial_message"]
 	_, r.autoFocusSpecified = fields["auto_focus"]
@@ -702,6 +709,13 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 	}
 	if r.roleRefsSpecified {
 		stated["role_refs"] = r.RoleRefs
+	}
+	if r.promptRefsSpecified {
+		refs := r.PromptRefs
+		if refs == nil {
+			refs = []string{}
+		}
+		stated["prompt_refs"] = refs
 	}
 	if r.descrSpecified {
 		stated["descr"] = r.Descr
@@ -776,6 +790,13 @@ func (r SpawnRequest) RoleRefSpecified() bool { return r.roleRefSpecified }
 // RoleRefsSpecified reports whether role_refs appeared in decoded JSON.
 func (r SpawnRequest) RoleRefsSpecified() bool { return r.roleRefsSpecified }
 
+// PromptRefsSpecified reports whether prompt_refs appeared in decoded JSON.
+func (r SpawnRequest) PromptRefsSpecified() bool { return r.promptRefsSpecified }
+
+// StatePromptRefs records an explicit saved-prompt set, so an empty set still
+// overrides the profile and group defaults.
+func (r *SpawnRequest) StatePromptRefs(v []string) { r.PromptRefs, r.promptRefsSpecified = v, true }
+
 // DescrSpecified reports whether descr appeared in decoded JSON.
 func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
 
@@ -814,11 +835,14 @@ type SpawnParams struct {
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
-	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
-	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
-	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
-	HarnessConfig             string `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
+	Profile string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
+	// Prompts sits after Profile so the short-flag enricher, which takes the
+	// first free letter in field order, never hands it Profile's pinned -p.
+	Prompts                   []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
+	SandboxProfile            string   `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
+	OmitSandboxProfiles       bool     `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
+	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
+	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -1344,8 +1368,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		return nil, rcInvalidArg
 	}
 	if p.NonInteractive {
-		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" {
-			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message or --file")
+		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" && len(p.Prompts) == 0 {
+			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message, --file or --prompt")
 			return nil, rcInvalidArg
 		}
 		if invalid := nonInteractiveUnsupportedOption(p); invalid != "" {
@@ -1747,6 +1771,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	// An explicit owner choice outranks the profile stack in either direction;
 	// omission leaves the daemon free to resolve group/global defaults.
+	if len(p.Prompts) > 0 {
+		req.StatePromptRefs(p.Prompts)
+	}
 	if p.Owner {
 		req.StateIsOwner(true)
 	} else if p.NoOwner {

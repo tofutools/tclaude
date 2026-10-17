@@ -96,6 +96,23 @@ export function spawnNameHint(name, normalizeEnabled = true) {
   };
 }
 
+// cleanPromptRefs trims and de-duplicates a saved-prompt reference list,
+// keeping the first occurrence's order.
+export function cleanPromptRefs(refs) {
+  return [...new Set((Array.isArray(refs) ? refs : []).map((value) => text(value).trim()).filter(Boolean))];
+}
+
+// groupDefaultPrompts is the group's own saved-prompt set: the dialog's
+// pre-fill whenever the applied profile names none (the daemon's order).
+export function groupDefaultPrompts(groups, groupName) {
+  return cleanPromptRefs(findSpawnGroup(groups, groupName)?.default_prompts);
+}
+
+function profilePromptRefs(profile, groups, groupName) {
+  const refs = cleanPromptRefs(profile?.prompt_refs);
+  return refs.length ? refs : groupDefaultPrompts(groups, groupName);
+}
+
 export function groupDefaultProfileName(groups, groupName) {
   return text(findSpawnGroup(groups, groupName)?.default_profile);
 }
@@ -778,6 +795,7 @@ export function createSpawnDraft({
     fixedGroup: !!groupName,
     profile: '',
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
+    promptRefs: groupDefaultPrompts(groups, group?.name),
 		environment: [],
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
@@ -821,6 +839,10 @@ export function selectSpawnGroup(draft, groupName, context) {
     includeGroupContext: true,
     remoteControl: groupRemoteControlDefault(group),
     sandboxProfile: '',
+    // Follow the group's prompt defaults unless the operator picked their own.
+    promptRefs: JSON.stringify(cleanPromptRefs(draft.promptRefs))
+      === JSON.stringify(groupDefaultPrompts(context.groups, draft.group))
+      ? groupDefaultPrompts(context.groups, groupName) : draft.promptRefs,
   };
 }
 
@@ -955,6 +977,7 @@ export function applySpawnProfile(
     ? [...new Set(profile.role_refs.map(text).filter(Boolean))]
     : (text(profile.role_ref) ? [text(profile.role_ref)] : []);
   if (profile.descr) next.descr = text(profile.descr);
+  next.promptRefs = profilePromptRefs(profile, context.groups, next.group);
   if (profile.initial_message) next.initialMessage = text(profile.initial_message);
   if (profile.auto_focus != null) next.autoFocus = !!profile.auto_focus;
   if (profile.sync_worktree != null) next.syncWorktree = !!profile.sync_worktree;
@@ -1002,6 +1025,7 @@ export function clearSpawnProfileFields(draft, context, {
     ...draft,
     profile: '',
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
+    promptRefs: groupDefaultPrompts(context.groups, draft.group),
     harness: defaults.harness,
     model: defaults.model,
     customModel: defaults.customModel,
@@ -1152,6 +1176,7 @@ export function spawnProfileSeed(draft, context) {
     agent_name: text(draft.name).trim(),
     role: text(draft.role).trim(),
     role_refs: [...new Set((draft.roleRefs || []).map((value) => text(value).trim()).filter(Boolean))],
+    prompt_refs: cleanPromptRefs(draft.promptRefs),
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,
@@ -1219,6 +1244,7 @@ export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
   if (JSON.stringify(draft.permissionOverrides || {})
     !== JSON.stringify(baseline.permissionOverrides || {})) return true;
   if (JSON.stringify(draft.roleRefs || []) !== JSON.stringify(baseline.roleRefs || [])) return true;
+  if (JSON.stringify(draft.promptRefs || []) !== JSON.stringify(baseline.promptRefs || [])) return true;
   return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
 }
 
@@ -1269,6 +1295,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     name: text(draft.name).trim(),
     role: text(draft.role).trim(),
     role_refs: [...new Set((draft.roleRefs || []).map((value) => text(value).trim()).filter(Boolean))],
+    prompt_refs: cleanPromptRefs(draft.promptRefs),
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,

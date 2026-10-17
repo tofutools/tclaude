@@ -109,6 +109,7 @@ type profileJSON struct {
 	Role           string   `json:"role,omitempty"`
 	RoleRef        string   `json:"role_ref,omitempty"`
 	RoleRefs       []string `json:"role_refs,omitempty"`
+	PromptRefs     []string `json:"prompt_refs,omitempty"`
 	Descr          string   `json:"descr,omitempty"`
 	InitialMessage string   `json:"initial_message,omitempty"`
 	StartupContext string   `json:"startup_context,omitempty"`
@@ -801,6 +802,9 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}
 	if len(roleRefs) > 0 {
 		ident = append(ident, "roles="+strings.Join(roleRefs, ","))
+	}
+	if len(p.PromptRefs) > 0 {
+		ident = append(ident, "prompts="+strings.Join(p.PromptRefs, ","))
 	}
 	if len(ident) > 0 {
 		fmt.Fprintf(w, "  agent:   %s\n", strings.Join(ident, " · "))

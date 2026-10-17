@@ -331,7 +331,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   );
   assert.equal(request.url, '/api/groups/alpha/spawn');
   assert.deepEqual(request.body, {
-    name: 'worker', role: 'reviewer', role_refs: [], descr: 'does review', initial_message: 'ship it',
+    name: 'worker', role: 'reviewer', role_refs: [], prompt_refs: [], descr: 'does review', initial_message: 'ship it',
     auto_focus: true, include_group_context: true, profile: 'group-default',
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
@@ -1897,23 +1897,33 @@ test('palette profile and fast selection prefill the dialog after profiles load'
   assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '');
 });
 
-test('spawn saved prompt inserts into the initial message without launching', async (t) => {
+test('spawn saved prompts are chips sent as prompt_refs, separate from the typed brief', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => [{ name: 'brief', body: 'Implement the task.' }] }));
-  let spawns = 0;
-  const mounted = await mountSpawn(t, { spawn: async () => { spawns++; return {}; } });
+  const spawnRequests = [];
+  const mounted = await mountSpawn(t, { spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; } });
   const { harness, host, state } = mounted;
-  state.open({ groupName: 'alpha' });
-  await flush(harness);
-  await flush(harness);
-  const body = host.querySelector('#agent-spawn-init-msg');
-  await harness.input(body, 'Task: ');
-  body.selectionStart = 6; body.selectionEnd = 6;
-  const picker = host.querySelector('[aria-label="Insert saved prompt"]');
-  Object.defineProperty(picker, 'value', { configurable: true, writable: true, value: 'brief' });
-  await harness.act(() => harness.fireEvent(picker, 'change'));
-  assert.equal(body.value, 'Task: Implement the task.');
-  assert.equal(spawns, 0);
-  await harness.input(body, 'Implement the task with tests.');
-  assert.equal(body.value, 'Implement the task with tests.');
-  await mounted.cleanup();
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await harness.input(host.querySelector('#agent-spawn-init-msg'), 'Task: ship it');
+    const add = host.querySelector('#agent-spawn-prompt-refs [aria-label="Add saved prompt"]');
+    setValue(add, 'brief');
+    await harness.act(() => harness.fireEvent(add, 'change'));
+    await flush(harness);
+    assert.match(host.querySelector('#agent-spawn-prompt-refs').textContent, /brief/);
+    assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'Task: ship it', 'adding a prompt leaves the brief alone');
+    assert.equal(spawnRequests.length, 0, 'adding a prompt does not launch');
+    await settleWorktrees(harness);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    await settleWorktrees(harness);
+    assert.equal(spawnRequests.length, 1, host.querySelector('#agent-spawn-error')?.textContent);
+    assert.deepEqual(spawnRequests[0].body.prompt_refs, ['brief']);
+    assert.equal(spawnRequests[0].body.initial_message, 'Task: ship it');
+  } finally {
+    await mounted.cleanup();
+  }
 });

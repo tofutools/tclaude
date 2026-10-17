@@ -45,7 +45,9 @@ import { syncChromeTopInset } from './chrome-inset.js';
 // each from the module that actually exports it — a bad named import would
 // abort the whole ES-module graph at link time (node --check can't catch that,
 // it's single-file only).
-import { refresh } from './refresh.js';
+import { refresh, confirmModal, toast } from './refresh.js';
+import { deleteSavedPrompt } from './saved-prompts-actions.js';
+import { openSavedPromptsManager as openSavedPrompts } from './modal-saved-prompts.js';
 import { profileSummary, profileDetailChips, createProfile } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
@@ -55,6 +57,29 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
+
+async function removeSavedPrompt(name) {
+  const ok = await confirmModal({
+    title: 'Delete saved prompt?',
+    body: `Delete the saved prompt "${name}"? This is refused while a spawn profile or group still uses it.`,
+    meta: name,
+    okLabel: 'Delete prompt',
+  });
+  if (!ok) return;
+  try {
+    await deleteSavedPrompt(name);
+    toast(`saved prompt deleted: ${name}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message || String(error), true);
+  }
+}
+
+// promptPreview is a saved prompt's first non-blank line, clipped for a chip.
+function promptPreview(body) {
+  const line = String(body || '').split('\n').map((part) => part.trim()).find(Boolean) || '';
+  return line.length > 40 ? `${line.slice(0, 39)}…` : line;
+}
 
 // The persisted open/collapsed flag. dash-namespaced like every other
 // server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
@@ -174,6 +199,22 @@ export const dockSections = Object.freeze([
     // surfacing), then a dashboard refresh so the dock card leaves at once.
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
     onManageAll: () => openRolesManageModal(),
+  },
+  {
+    key: 'saved_prompts',
+    icon: () => wizWord('📝', '📜'),
+    title: () => wizWord('Saved prompts', 'Incantations'),
+    empty: () => wizWord('no saved prompts yet', 'no incantations yet'),
+    items: (snap) => (snap && snap.saved_prompts) || [],
+    name: (p) => p.name,
+    chips: (p) => (promptPreview(p.body) ? [{ text: promptPreview(p.body), more: false, title: p.body }] : []),
+    // Not a drag source: a prompt is added through the spawn dialog, a
+    // profile or the group settings rather than dropped onto a group.
+    drag: false,
+    onManageItem: (p) => openSavedPrompts({ initial: p.name }),
+    onCloneItem: (p) => openSavedPrompts({ initial: p.name, clone: true }),
+    onDeleteItem: (p) => removeSavedPrompt(p.name),
+    onManageAll: () => openSavedPrompts(),
   },
 ]);
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,10 +110,13 @@ type spawnProfileJSON struct {
 	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// Identity / enrollment fields (dialog-side).
-	AgentName      string   `json:"agent_name,omitempty"`
-	Role           string   `json:"role,omitempty"`
-	RoleRef        string   `json:"role_ref,omitempty"`
-	RoleRefs       []string `json:"role_refs,omitempty"`
+	AgentName string   `json:"agent_name,omitempty"`
+	Role      string   `json:"role,omitempty"`
+	RoleRef   string   `json:"role_ref,omitempty"`
+	RoleRefs  []string `json:"role_refs,omitempty"`
+	// PromptRefs names saved prompts, in order, whose bodies compose the
+	// spawned agent's initial message ahead of any typed brief.
+	PromptRefs     []string `json:"prompt_refs,omitempty"`
 	Descr          string   `json:"descr,omitempty"`
 	InitialMessage string   `json:"initial_message,omitempty"`
 	// StartupContext is profile-owned guidance injected into every resolved
@@ -176,6 +180,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Role:                       p.Role,
 		RoleRef:                    p.RoleRef,
 		RoleRefs:                   append([]string{}, p.RoleRefs...),
+		PromptRefs:                 append([]string{}, p.PromptRefs...),
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
@@ -475,6 +480,10 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if len(resolvedRoleRefs) > 0 {
 		roleRef = resolvedRoleRefs[0]
 	}
+	promptRefs, fail := resolveSavedPromptRefs(body.PromptRefs)
+	if fail != nil {
+		return nil, fail
+	}
 
 	return &db.SpawnProfile{
 		Name:                       name,
@@ -506,6 +515,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Role:                       strings.TrimSpace(body.Role),
 		RoleRef:                    roleRef,
 		RoleRefs:                   resolvedRoleRefs,
+		PromptRefs:                 promptRefs,
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
 		StartupContext:             startupContext,
@@ -553,6 +563,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("role_ref")
 	case len(body.RoleRefs) != 0:
 		return nil, reject("role_refs")
+	case len(body.PromptRefs) != 0:
+		return nil, reject("prompt_refs")
 	case strings.TrimSpace(body.Descr) != "":
 		return nil, reject("descr")
 	case strings.TrimSpace(body.InitialMessage) != "":
@@ -786,6 +798,48 @@ type profileExportEnvelope struct {
 	FormatVersion int                `json:"format_version"`
 	ExportedAt    string             `json:"exported_at,omitempty"`
 	Profiles      []spawnProfileJSON `json:"profiles"`
+	// SavedPrompts embeds every saved prompt the profiles reference, so their
+	// prompt_refs resolve on the importing machine. Import creates the missing
+	// ones and never overwrites a local prompt of the same name.
+	SavedPrompts []db.SavedPrompt `json:"saved_prompts,omitempty"`
+}
+
+// profilesPromptRefs lists each profile's saved-prompt reference set.
+func profilesPromptRefs(profiles []spawnProfileJSON) [][]string {
+	out := make([][]string, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, p.PromptRefs)
+	}
+	return out
+}
+
+// withoutEmbeddedPrompts drops the references a bundle's own embedded prompts
+// satisfy, so validation before import only checks the remaining ones
+// against this library.
+// validEmbeddedPrompts keeps the embedded prompts an import can actually
+// create, normalized; an invalid one cannot satisfy a profile's reference.
+func validEmbeddedPrompts(embedded []db.SavedPrompt) []db.SavedPrompt {
+	out := []db.SavedPrompt{}
+	for _, p := range embedded {
+		if n, err := normalizeSavedPrompt(p); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func withoutEmbeddedPrompts(p spawnProfileJSON, embedded []db.SavedPrompt) spawnProfileJSON {
+	if len(p.PromptRefs) == 0 || len(embedded) == 0 {
+		return p
+	}
+	refs := []string{}
+	for _, ref := range p.PromptRefs {
+		if !slices.ContainsFunc(embedded, func(e db.SavedPrompt) bool { return e.Name == strings.TrimSpace(ref) }) {
+			refs = append(refs, ref)
+		}
+	}
+	p.PromptRefs = refs
+	return p
 }
 
 type profileImportInspectResult struct {
@@ -816,6 +870,7 @@ type profileImportRequest struct {
 	FormatVersion int                     `json:"format_version"`
 	ExportedAt    string                  `json:"exported_at,omitempty"`
 	Profiles      []spawnProfileJSON      `json:"profiles"`
+	SavedPrompts  []db.SavedPrompt        `json:"saved_prompts,omitempty"`
 	Decisions     []profileImportDecision `json:"decisions,omitempty"`
 }
 
@@ -837,6 +892,7 @@ func profileImportRequestEnvelope(req profileImportRequest) profileExportEnvelop
 		FormatVersion: req.FormatVersion,
 		ExportedAt:    req.ExportedAt,
 		Profiles:      req.Profiles,
+		SavedPrompts:  req.SavedPrompts,
 	}
 }
 
@@ -964,11 +1020,17 @@ func handleSpawnProfilesExport(w http.ResponseWriter, r *http.Request) {
 			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
 		}
 	}
+	prompts, err := collectReferencedSavedPrompts(profilesPromptRefs(out)...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, profileExportEnvelope{
 		Format:        profileExportFormat,
 		FormatVersion: profileExportVersion,
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
 		Profiles:      out,
+		SavedPrompts:  prompts,
 	})
 }
 
@@ -1027,7 +1089,7 @@ func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResu
 		if existing != nil {
 			allowedID = existing.ID
 		}
-		built, fail := buildProfileFromJSON(pj)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, validEmbeddedPrompts(env.SavedPrompts)))
 		if fail != nil {
 			prev.Valid = false
 			prev.Error = fail.Msg
@@ -1124,6 +1186,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 	}
 	plans := []importPlan{}
 
+	embedded := validEmbeddedPrompts(env.SavedPrompts)
 	for _, d := range decisions {
 		source := strings.TrimSpace(d.Name)
 		if source == "" {
@@ -1161,7 +1224,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"profile %q: aliases were omitted from renamed copy %q", source, target))
 		}
-		built, fail := buildProfileFromJSON(pj)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(pj, embedded))
 		if fail != nil {
 			return profileImportResult{}, fail
 		}
@@ -1191,7 +1254,7 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", fmt.Sprintf(
 				"profile name %q is already an alias of %q — choose another name", plan.target, resolved.Name)}
 		}
-		built, fail := buildProfileFromJSON(plan.profile)
+		built, fail := buildProfileFromJSON(withoutEmbeddedPrompts(plan.profile, embedded))
 		if fail != nil {
 			return profileImportResult{}, fail
 		}
@@ -1204,6 +1267,28 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 		} else if conflict != "" {
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", conflict}
 		}
+	}
+
+	// Every check passed: create the embedded saved prompts the imported
+	// profiles reference, so the writes below can resolve them.
+	if len(embedded) > 0 && len(plans) > 0 {
+		wanted := map[string]bool{}
+		for _, plan := range plans {
+			for _, ref := range cleanRoleRefs(plan.profile.PromptRefs) {
+				wanted[ref] = true
+			}
+		}
+		create := []db.SavedPrompt{}
+		for _, p := range embedded {
+			if wanted[p.Name] {
+				create = append(create, p)
+			}
+		}
+		promptWarnings, fail := recreateMissingSavedPrompts(create)
+		if fail != nil {
+			return profileImportResult{}, fail
+		}
+		result.Warnings = append(result.Warnings, promptWarnings...)
 	}
 
 	for _, plan := range plans {

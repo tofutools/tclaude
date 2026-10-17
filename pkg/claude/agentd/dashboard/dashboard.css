@@ -8000,6 +8000,21 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
 }
 #agent-spawn-role-add:focus { border: 0; }
+/* Saved-prompt chips reuse the role picker; the add select and Manage button
+   sit inside the same field. */
+.saved-prompt-chip-add {
+  box-sizing: border-box; width: auto; min-width: 112px; min-height: 21px;
+  flex: 1 1 112px; align-self: center;
+  border: 0; border-radius: 0; background: transparent;
+  color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
+}
+.saved-prompt-chip-add:focus { border: 0; }
+.saved-prompt-picker .saved-prompt-chip-manage { flex: 0 0 auto; margin-left: auto; padding: 2px 8px; font-size: 12px; }
+.saved-prompt-inspect-body { white-space: pre-wrap; max-height: 180px; overflow: auto; color: #c9d1d9; }
+.saved-prompts-transfer { margin: 0 0 8px; }
+.saved-prompts-import { border: 1px solid #303b49; border-radius: 5px; background: #111820; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
+.saved-prompts-import-list { margin: 6px 0; padding-left: 18px; max-height: 140px; overflow: auto; }
+.saved-prompts-import-overwrite { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
 .agent-spawn-role-inspect {
   display: grid; gap: 5px; margin-top: 6px; border: 1px solid #303b49; border-radius: 5px;
   background: #111820; padding: 8px 10px; color: #aebdcd; font-size: 12px;
