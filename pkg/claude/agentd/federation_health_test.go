@@ -43,13 +43,60 @@ func TestFleetHealthPresenceDebounceAndRecovery(t *testing.T) {
 	require.Empty(t, healthMessages(t), "short flap suppressed")
 	rt.observeFleetPresence(map[string]bool{}, now.Add(3*time.Second))
 	rt.flushFleetHealth(now.Add(5 * time.Second))
+	require.Empty(t, healthMessages(t), "an emitted offline transition waits for the first notice delay")
+	rt.observeFleetPresence(map[string]bool{peer: true}, now.Add(time.Minute))
+	rt.flushFleetHealth(now.Add(2 * time.Minute))
+	require.Empty(t, healthMessages(t), "a restart shorter than the first delay never reaches the inbox")
+	rt.observeFleetPresence(map[string]bool{}, now.Add(3*time.Minute))
+	rt.flushFleetHealth(now.Add(3*time.Minute + 2*time.Second))
+	rt.flushFleetHealth(now.Add(8*time.Minute + 2*time.Second))
 	require.Len(t, healthMessages(t), 1)
-	rt.flushFleetHealth(now.Add(6 * time.Second))
-	require.Len(t, healthMessages(t), 1)
-	rt.observeFleetPresence(map[string]bool{peer: true}, now.Add(7*time.Second))
-	rt.flushFleetHealth(now.Add(9 * time.Second))
+	require.Contains(t, healthMessages(t)[0].Body, "offline for 5 minutes")
+	rt.observeFleetPresence(map[string]bool{peer: true}, now.Add(9*time.Minute))
+	rt.flushFleetHealth(now.Add(10 * time.Minute))
 	require.Len(t, healthMessages(t), 2)
 	require.Contains(t, healthMessages(t)[0].Body, "back online")
+}
+
+func TestFleetHealthOfflineNoticesEscalateAndSilence(t *testing.T) {
+	rt, peer := healthFixture(t)
+	now := time.Now()
+	rt.observeFleetPresence(map[string]bool{peer: true}, now)
+	rt.observeFleetPresence(map[string]bool{}, now)
+	rt.flushFleetHealth(now.Add(2 * time.Second))
+	require.False(t, rt.offlineNotices()[peer].Silenced)
+	require.Equal(t, now.Add(5*time.Minute), *rt.offlineNotices()[peer].NextAt)
+	for _, at := range []time.Duration{5 * time.Minute, 6 * time.Minute, 30 * time.Minute, 4 * time.Hour, 27 * time.Hour, 28 * time.Hour, 52 * time.Hour} {
+		rt.flushFleetHealth(now.Add(at))
+	}
+	require.Len(t, healthMessages(t), 5, "5 min, 30 min, 4 h, then daily")
+	// A suspended daemon catches up with one notice, not a burst.
+	rt.flushFleetHealth(now.Add(200 * time.Hour))
+	require.Len(t, healthMessages(t), 6)
+	require.Equal(t, now.Add(220*time.Hour), *rt.offlineNotices()[peer].NextAt)
+
+	require.True(t, rt.silenceOffline(peer))
+	rt.flushFleetHealth(now.Add(300 * time.Hour))
+	require.Len(t, healthMessages(t), 6, "silenced")
+	require.True(t, rt.offlineNotices()[peer].Silenced)
+	rt.observeFleetPresence(map[string]bool{peer: true}, now.Add(301*time.Hour))
+	rt.flushFleetHealth(now.Add(302 * time.Hour))
+	require.Len(t, healthMessages(t), 6, "a silenced disconnection ends without a back-online notice")
+	require.Empty(t, rt.offlineNotices())
+	require.False(t, rt.silenceOffline(peer), "nothing to silence while online")
+
+	// The next disconnection notifies again.
+	rt.observeFleetPresence(map[string]bool{}, now.Add(303*time.Hour))
+	rt.flushFleetHealth(now.Add(303*time.Hour + 2*time.Second))
+	rt.flushFleetHealth(now.Add(303*time.Hour + 5*time.Minute))
+	require.Len(t, healthMessages(t), 7)
+
+	// Removing trust ends the reminders.
+	_, err := db.UntrustFederationPeer(peer)
+	require.NoError(t, err)
+	rt.flushFleetHealth(now.Add(400 * time.Hour))
+	require.Len(t, healthMessages(t), 7)
+	require.Empty(t, rt.offlineNotices())
 }
 func TestFleetHealthFreshResourcesSustainAndUnknown(t *testing.T) {
 	rt, peer := healthFixture(t)

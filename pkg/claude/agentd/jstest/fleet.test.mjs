@@ -573,3 +573,37 @@ test('⌘ Fleet is lit on the fleet views and returns to the one used last', asy
   await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'disconnected' } }); });
   await peerView.unmount(); state.dispose();
 });
+
+test('an offline peer card shows its offline notices and silences this disconnection', async (t) => {
+  const { harness, stateMod, actionsMod, island, model } = await load(t);
+  const now = Date.parse('2026-10-09T21:00:00Z');
+  const lab = { offline_notice: { since: '2026-10-09T20:37:00Z', notices: 1, next_at: '2026-10-09T21:07:00Z', silenced: false } };
+  const withNotice = (notice) => { const s = status([]); s.peers[1] = { ...s.peers[1], offline_notice: notice }; return s; };
+  assert.deepEqual(model.offlineNotice({ offline_notice: lab.offline_notice }), { since: Date.parse(lab.offline_notice.since), notices: 1, nextAt: now + 420000, silenced: false });
+  assert.equal(model.offlineNotice({}), null);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map'), prefs: { getItem: () => null, setItem: () => {} } });
+  let reply = withNotice(lab.offline_notice);
+  const posts = [];
+  const fetchImpl = async (url, init) => {
+    if (init?.method === 'POST') { posts.push(url); reply = withNotice({ ...lab.offline_notice, next_at: undefined, silenced: true }); return { ok: true, status: 200, json: async () => ({}) }; }
+    return { ok: true, status: 200, json: async () => reply };
+  };
+  const actions = actionsMod.createFleetActions({ state, fetchImpl });
+  await actions.loadStatus();
+  const toasts = [];
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} now=${() => now} toast=${(m) => toasts.push(m)} />`);
+  const card = () => mounted.container.querySelector('[aria-label="lab node"]');
+  assert.match(card().querySelector('.fleet-card-notice').textContent, /1 notice sent · next notice in 7 min/);
+  assert.equal(mounted.container.querySelector('[aria-label="forge node"] .fleet-card-notice'), null, 'online peers show no notice row');
+  await harness.act(async () => { harness.fireEvent(card().querySelector('[data-fleet="silence-offline"]'), 'click'); for (let i = 0; i < 6; i++) await Promise.resolve(); });
+  assert.deepEqual(posts, ['/api/federation/nodes/health/silence?peer=inst_lab']);
+  assert.deepEqual(toasts, ['Offline notices for lab silenced until it reconnects']);
+  assert.match(card().querySelector('.fleet-card-notice.silenced').textContent, /silenced until it reconnects/);
+  assert.equal(card().querySelector('[data-fleet="silence-offline"]'), null);
+  await mounted.unmount();
+  reply = withNotice(lab.offline_notice);
+  await actions.loadStatus();
+  const remote = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} remote="inst_forge" />`);
+  assert.equal(remote.container.querySelector('[data-fleet="silence-offline"]'), null, 'a peer view never silences');
+  await remote.unmount(); state.dispose();
+});
