@@ -21130,8 +21130,6 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 .dock-process-toggle button { font: inherit; font-size: 10.5px; background: none; border: 0; color: #7d8590; padding: 1px 8px; cursor: pointer; }
 .dock-process-toggle button.on { background: #1f2a37; color: #d4d4d4; }
 .dock-process-tools .dpp-spacer { flex: 1; }
-.dock-process-import, .dock-process-new { font: inherit; font-size: 11px; background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #c9d1d9; padding: 1px 7px; cursor: pointer; }
-.dock-process-import:hover, .dock-process-new:hover { border-color: #58a6ff; }
 .dock-processes .pwf-inline-error { display: block; font-size: 11px; margin-top: 4px; }
 .dock-process-open { cursor: pointer; text-align: left; }
 .dock-process-open:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }

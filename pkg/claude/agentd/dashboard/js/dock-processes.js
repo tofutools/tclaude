@@ -382,7 +382,10 @@ export function DockProcesses({
         event.preventDefault();
         setDropOver(false);
         const file = event.dataTransfer.files?.[0];
-        if (file) setDropped(file);
+        if (!file) return;
+        // The review dialog renders inside the section, so open it first.
+        if (!open) { setOpen(true); setSectionOpen('processes', true); }
+        setDropped(file);
       }}>
     <summary class="dock-section-head">
       <span class="dock-section-title">
