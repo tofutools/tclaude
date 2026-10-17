@@ -2,6 +2,7 @@ import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -182,18 +183,20 @@ export function createActionDialogActions({
       notify(url ? `task link updated: ${label}` : `task link cleared: ${label}`);
       await refresh();
     },
-    async setGroupAttachment({ group, url, attachmentLabel, changed }, owner) {
+    async setGroupAttachment({ group, node = '', url, attachmentLabel, changed }, owner) {
       if (!changed) {
         state.close(owner);
         notify('no changes');
         return;
       }
-      await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/attachment`, {
+      // node names another node's group (the fused view); blank is the page's.
+      await requestJSON(nodeFetch(node, { fetchImpl }), `/api/groups/${encodeURIComponent(group)}/attachment`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(url ? { url, label: attachmentLabel } : { clear: true }),
       });
       state.close(owner);
       notify(url ? `${group}: attachment updated` : `${group}: attachment cleared`);
+      announceNodeChanged(node);
       await refresh();
     },
 		async saveGroupSettings({ group, values }, owner) {

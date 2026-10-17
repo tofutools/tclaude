@@ -16,6 +16,10 @@ import (
 func registerDashboardPeerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/peer/{node}/{tail...}", handleDashboardPeer)
 	mux.HandleFunc("POST /api/peer/{node}/{tail...}", handleDashboardPeer)
+	// Peer-granted routes change settings with the dashboard's own methods.
+	mux.HandleFunc("PATCH /api/peer/{node}/{tail...}", handleDashboardPeer)
+	mux.HandleFunc("PUT /api/peer/{node}/{tail...}", handleDashboardPeer)
+	mux.HandleFunc("DELETE /api/peer/{node}/{tail...}", handleDashboardPeer)
 }
 
 func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {

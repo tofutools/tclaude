@@ -3,6 +3,7 @@ import { dashboardState } from './snapshot-store.js';
 import { mapFleet, normalizeFleet, normalizeNode, normalizeStrangers } from './fleet-model.js';
 import { parseFused } from './fleet-scope.js';
 import { dashPrefs } from './prefs.js';
+import { setSelfNode } from './node-api.js';
 
 // SETUP_SEEN_PREF remembers that the operator has opened Fleet's setup guide,
 // which retires the "set up" hint on the Fleet chip.
@@ -103,6 +104,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   function setStatus(status) {
     node.value = normalizeNode(status);
     fleet.value = normalizeFleet(status);
+    setSelfNode(fleet.value?.self?.id || '');
     strangers.value = normalizeStrangers(status);
     noFleet.value = !fleet.value;
     return fleet.value;

@@ -4117,6 +4117,16 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if !requireGroupActive(w, g) {
 		return
 	}
+	if a := peerGrantFromRequest(r); a != nil && body.DefaultProfile != nil {
+		name, err := resolveGroupDefaultProfileName(*body.DefaultProfile)
+		if err == nil {
+			err = a.allowsDefaultProfile(name)
+		}
+		if err != nil {
+			writeError(w, http.StatusForbidden, "profile_not_allowed", "a peer may set only a profile it may pick for a spawn into this group")
+			return
+		}
+	}
 	var defaultPrompts []string
 	if body.DefaultPrompts != nil {
 		// Validate before any field is written so a bad name cannot leave a

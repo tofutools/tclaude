@@ -423,6 +423,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       if (groupAttachment) {
         await actions.setGroupAttachment({
           group: descriptor.group,
+          node: descriptor.node || '',
           url: nextURL,
           attachmentLabel: nextURL ? nextLabel : '',
           changed,

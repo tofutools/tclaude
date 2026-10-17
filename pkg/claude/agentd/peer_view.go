@@ -91,8 +91,12 @@ type peerViewRule struct {
 	// unrestrictedOnly rules are held only through unrestricted trust: they
 	// cannot be granted or requested (the human inbox across own nodes).
 	unrestrictedOnly bool
-	serve            func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write            func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	// invoke runs the route through this node's own dashboard handler under
+	// the peer's grants (peer_grant_routes.go); serve or write is
+	// servePeerInvoke.
+	invoke *peerInvokeSpec
+	serve  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -171,6 +175,7 @@ func peerViewRules() map[string]peerViewRule {
 	// so the hover cards behind them are held the same way.
 	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}
 	rules["GET /api/pr-details"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRDetails)}
+	addPeerGroupSettingsRules(rules)
 	addPeerSpawnCatalogRules(rules)
 	addPeerNodeManageRules(rules)
 	addPeerSpawnWorktreeRules(rules)
@@ -207,6 +212,9 @@ type peerViewMetadata struct {
 	Level    string             `json:"level"`
 	Included []string           `json:"included"`
 	Omitted  []peerViewOmission `json:"omitted"`
+	// Groups names, per visible group, the group-scoped grants behind the
+	// controls a peer-granted route serves (peerGroupGrants).
+	Groups map[string][]string `json:"groups,omitempty"`
 }
 
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
@@ -276,6 +284,7 @@ func (v *peerView) metadata() peerViewMetadata {
 			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable, Transport: rule.serve == nil && rule.write == nil})
 		}
 	}
+	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })
 	return out
@@ -329,6 +338,7 @@ func servePeerGlobalRead(next http.HandlerFunc) func(http.ResponseWriter, *http.
 		next(w, r)
 	}
 }
+
 // servePeerGrantedRead runs a local dashboard read whose response has no
 // empty "rows" shape to fall back to; a peer without the grant gets a 403.
 func servePeerGrantedRead(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {

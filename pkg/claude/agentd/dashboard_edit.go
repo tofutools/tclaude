@@ -762,7 +762,9 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		handleGroupAttachment(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/clone", groupRoute(handleDashboardGroupClone))
-	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
+	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardRenameGroup(w, asDashboardHumanPeer(r), g)
+	}))
 	// Nest a group under another / clear its parent (JOH-392). asDashboardHumanPeer
 	// so the shared, permission-checked handleGroupParent sees the cookie-authed
 	// dashboard caller as the human (groups.nest-gated on the /v1 path). Body: {parent}.
@@ -1023,6 +1025,10 @@ func dashboardDeleteGroup(w http.ResponseWriter, group *db.AgentGroup) {
 // caller is the human (cookie auth ≈ requirePermission's bypass), so
 // no slug check is needed here.
 func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	// The operator always passes; a peer's operator needs its grant.
+	if _, ok := requireGroupPermission(w, r, PermGroupsRename, g); !ok {
+		return
+	}
 	var body struct {
 		NewName string `json:"new_name"`
 	}

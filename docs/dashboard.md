@@ -906,6 +906,14 @@ the Markdown or zip from the peer under `node.messages.read`. Focus, deleting
 and wiping stay with the peer's own operator and are greyed, and its access
 requests are answered in the fused Messages view.
 
+A group's quick options — description, default directory (typed: the folder
+browser reads this machine), member cap, default profile, sandbox profile and
+attachment — and its rename work as on this node when the peer grants
+`groups.settings` for that group (unrestricted trust holds it). The default
+directory and sandbox profile also need the matching spawn grant, and the
+profile pickers the peer's `node.spawn.read` (docs/federation.md, "Changing a
+peer's groups").
+
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
 They stay in place so the layout does not jump; hover or click one to see why.
 The peer-view pill names both directions of trust and lists what is hidden
@@ -973,10 +981,12 @@ not shared across nodes, so its groups say so instead. On a peer's rows, the
 controls that peer shares with you run through its peer routes, exactly as on
 its per-node view: the status dot (stop, or wake a stopped agent), restart,
 sandbox restart, retire, clone, the group's spawn button (the regular spawn
-dialog, aimed at that node, as above) and its ✉ message button (one agent at a
-time). Everything else — and every control on this
-node's own rows — stays an overview: click a group's `@node` suffix to act on
-it in that node's dashboard. An unreachable node keeps its last rows, marked
+dialog, aimed at that node, as above), its ✉ message button (one agent at a
+time) and the group quick options and rename it grants (`groups.settings`, as
+above), which go to that node's own group. This node's groups work as on its
+own view; on a peer's page their quick options and rename still go straight
+to this node. Everything else stays an overview: click a group's `@node`
+suffix to act on it in that node's dashboard. An unreachable node keeps its last rows, marked
 stale; a node no longer trusted drops them. The old `/fleet` address opens this
 view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
 `tclaude federation action ... --node NODE`.

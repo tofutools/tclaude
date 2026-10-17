@@ -96,7 +96,7 @@ function GroupAttachment({ group, actions, placement }) {
       type="button" class=${`group-attachment ${placementClass} group-attachment-empty`}
       aria-label=${`Attach a persistent link to ${group.name}`}
       title="Attach a persistent Linear project, GitHub board, or other reference"
-      onClick=${openEditor}
+      data-act="group-attachment" data-group=${group.name} onClick=${openEditor}
     >${visibleIcon}${visibleLabel}</button>`;
   }
   const display = url
@@ -110,7 +110,7 @@ function GroupAttachment({ group, actions, placement }) {
         type="button" class="group-attachment-invalid"
         aria-label=${`Edit the unsafe stored attachment for ${group.name}`}
         title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
-        onClick=${openEditor}
+        data-act="group-attachment" data-group=${group.name} onClick=${openEditor}
       >${visibleIcon}${visibleLabel}</button>`;
   return html`<span class=${`group-attachment ${placementClass} group-attachment-set`}>
     ${display}
@@ -119,7 +119,7 @@ function GroupAttachment({ group, actions, placement }) {
       tabindex=${fixed ? '-1' : undefined}
       aria-label=${`Edit the persistent link for ${group.name}`}
       title="Edit or clear this group attachment"
-      onClick=${openEditor}
+      data-act="group-attachment" data-group=${group.name} onClick=${openEditor}
     >✎</button>
   </span>`;
 }
@@ -295,7 +295,7 @@ function GroupProfileChip({ group, actions, kind }) {
     setBusy(true);
     busyRef.current = true;
     setError('');
-    actions.groupProfileChoices(kind).then((items) => {
+    actions.groupProfileChoices(kind, group).then((items) => {
       if (live) setChoices(items);
     }).catch((err) => {
       if (live) setError((err && err.message) || String(err));
@@ -334,7 +334,7 @@ function GroupProfileChip({ group, actions, kind }) {
             void Promise.resolve()
               .then(() => actions.setGroupProfile(group, kind, created))
               .catch((error) => actions.reportError(error));
-          });
+          }, group);
           return;
         }
         if (name === current) {

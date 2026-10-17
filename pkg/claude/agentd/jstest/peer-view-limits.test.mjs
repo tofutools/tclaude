@@ -195,3 +195,38 @@ test('on a peer view, the Groups toolbar controls follow the peer\'s management 
   assert.ok(mod.usableActSelectors(snapshot.value.peer_view).includes('[data-act="set-dash-sandbox-profile"]'));
   dispose();
 });
+
+test('group controls follow the grants the peer names per group; unrestricted trust holds them all', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  const restricted = { ...pv, level: 'restricted', included: [...pv.included, 'spawn.catalog'], groups: { ops: ['groups.settings', 'groups.members.spawn.cwd'], 'a"b': ['groups.settings', 'groups.members.spawn.sandbox'] } };
+  assert.equal(mod.groupGrantHeld('set-group-dir', 'ops', restricted), true);
+  assert.equal(mod.groupGrantHeld('set-group-dir', 'a"b', restricted), false, "a group's default directory also needs the spawn directory grant");
+  assert.equal(mod.groupGrantHeld('set-group-profile', 'ops', restricted), true);
+  assert.equal(mod.groupGrantHeld('set-group-profile', 'ops', { ...restricted, included: pv.included }), false, "the profile picker reads the peer's spawn catalog");
+  assert.equal(mod.groupGrantHeld('set-group-sandbox-profile', 'ops', restricted), false, 'a sandbox profile also needs the spawn sandbox grant');
+  assert.equal(mod.groupGrantHeld('set-group-sandbox-profile', 'a"b', restricted), true);
+  assert.equal(mod.groupGrantHeld('set-group-dir', 'build', restricted), false, 'another group holds nothing');
+  assert.equal(mod.groupGrantHeld('retire-agent', 'ops', restricted), false, 'only group controls are grant-gated');
+  assert.equal(mod.groupGrantHeld('set-group-dir', 'anything', { level: 'unrestricted' }), true);
+
+  doc.body.innerHTML = `<span id="ops-dir" data-act="set-group-dir" data-group="ops"><span id="ops-text" data-act="group-web-term" data-group="ops">~/src</span></span>
+    <span id="build-dir" data-act="set-group-dir" data-group="build">x</span>`;
+  const el = (id) => doc.getElementById(id);
+  assert.equal(mod.blockedControl(el('ops-dir'), restricted), null, 'a granted control runs its own handler');
+  assert.equal(mod.blockedControl(el('ops-text'), restricted, { ctrlKey: false }), null, "a plain click on the chip's text opens its editor");
+  assert.equal(mod.blockedControl(el('ops-text'), restricted, { ctrlKey: true }).state, 'local', 'Ctrl-click opens a terminal: never on a peer');
+  const refused = mod.blockedControl(el('build-dir'), restricted);
+  assert.equal(refused.state, 'omitted');
+  assert.equal(mod.limitHint(refused.state, refused.what, 'forge'), "forge does not share this group's settings with you");
+
+  // The greying is the same rule, with peer-chosen group names escaped.
+  const selectors = mod.groupGrantSelectors(restricted);
+  assert.ok(selectors.includes('[data-act="set-group-dir"][data-group="ops"]'));
+  assert.ok(selectors.includes('[data-act="set-group-dir"][data-group="ops"] [data-act="group-web-term"]'));
+  assert.ok(selectors.includes('[data-act="set-group-sandbox-profile"][data-group="a\\"b"]'));
+  assert.ok(!selectors.some((s) => s.includes('set-group-sandbox-profile"][data-group="ops"')));
+  assert.ok(mod.groupGrantSelectors({ level: 'unrestricted' }).includes('[data-act="rename-group"]'), 'unrestricted needs no per-group rule');
+  assert.ok(mod.groupGrantSelectors(restricted, (g) => `${g}@forge`).includes('[data-act="set-group-dir"][data-group="ops@forge"]'));
+});

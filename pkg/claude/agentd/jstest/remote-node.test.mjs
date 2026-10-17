@@ -32,7 +32,7 @@ test('a malformed node id is ignored rather than proxied', () => {
   assert.equal(boot('?node=../../api').window.__tclaudeRemoteNode, undefined);
 });
 
-test('per-node API reads go through the peer proxy; fleet reads stay local; other methods are refused', async () => {
+test('per-node API requests go through the peer proxy; fleet reads stay local; other methods are refused', async () => {
   const { window, calls, classes } = boot('?node=inst_forge7');
   assert.ok(classes.has('remote-node'));
   await window.fetch('/api/groups?x=1');
@@ -45,10 +45,13 @@ test('per-node API reads go through the peer proxy; fleet reads stay local; othe
   assert.deepEqual(calls.map((c) => c.url), [
     '/api/peer/inst_forge7/groups?x=1', '/api/federation/status?summary=1', '/api/peer/inst_lab/node-summary', '/api/node-summary', '/api/node/update', '/static/js/x.js', '/api/peer/inst_forge7/operator-message',
   ]);
-  const refused = await window.fetch('/api/groups/x', { method: 'DELETE' });
+  // Peer-granted routes use the dashboard's own methods; the peer decides.
+  for (const method of ['PATCH', 'PUT', 'DELETE']) await window.fetch('/api/groups/x', { method });
+  assert.deepEqual(calls.slice(7).map((c) => c.url), Array(3).fill('/api/peer/inst_forge7/groups/x'));
+  const refused = await window.fetch('/api/groups/x', { method: 'OPTIONS' });
   assert.equal(refused.status, 403);
   assert.equal((await refused.json()).code, 'peer_view_read_only');
-  assert.equal(calls.length, 7, 'a refused method never reaches any agentd');
+  assert.equal(calls.length, 10, 'a refused method never reaches any agentd');
 });
 
 test('snapshot failures publish remote health for the marker', async () => {

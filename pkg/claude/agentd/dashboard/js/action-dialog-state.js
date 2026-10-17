@@ -67,8 +67,8 @@ export function createActionDialogState() {
     openTaskLink({ conv, agentLabel = '', url = '', taskLabel = '' }) {
       return !!open({ kind: 'task-link', conv, agentLabel, url, taskLabel });
     },
-    openGroupAttachment({ group, url = '', attachmentLabel = '' }) {
-      return !!open({ kind: 'group-attachment', group, url, attachmentLabel });
+    openGroupAttachment({ group, node = '', url = '', attachmentLabel = '' }) {
+      return !!open({ kind: 'group-attachment', group, node, url, attachmentLabel });
     },
 		openGroupSettings({ group }) {
 			return !!open({ kind: 'group-settings', group });
