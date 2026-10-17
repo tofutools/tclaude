@@ -323,7 +323,7 @@ test('a link names its trust in each direction; the popover spells out who can d
   await harness.act(() => harness.fireEvent(badge, 'click'));
   const pop = mounted.container.querySelector('.fleet-link-pop');
   assert.match(pop.textContent, /Asymmetric link/);
-  assert.match(pop.textContent, /lab can do everything on desk.*You set this/);
+  assert.match(pop.textContent, /lab has full peer access to desk.*You set this/);
   assert.match(pop.textContent, /desk can use only what lab shares\. lab's operator set this\. Hidden from you: costs\./);
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(mounted.container.querySelector('.fleet-link-pop'), null, 'Escape closes the popover');

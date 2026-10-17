@@ -437,12 +437,12 @@ function HubCard({ hub, now }) {
 // its nodes, and opens a popover that spells out who can do what.
 function LinkBadge({ link, at, open, onToggle, onConfigure }) {
   const sentence = (dir, ours) => {
-    if (dir.level === 'unrestricted') return html`<b>${dir.from} can do everything on ${dir.to}</b>: read, message, spawn agents and run commands.`;
+    if (dir.level === 'unrestricted') return html`<b>${dir.from} has full peer access to ${dir.to}</b>: every permission a peer can be granted. Administration stays local.`;
     if (dir.level === 'restricted') return ours ? html`<b>${dir.from} can use only what ${dir.to} grants it.</b>` : html`<b>${dir.from} can use only what ${dir.to} shares.</b>`;
-    return html`<b>${dir.to} has not reported how it trusts ${dir.from}</b> (it runs an older tclaude).`;
+    return html`<b>${dir.to} has not reported how it trusts ${dir.from}</b> (it may be unreachable, still loading, or on an older tclaude).`;
   };
   const tag = (level) => html`<span class=${`fleet-link-tag ${level || 'unknown'}`}>${level || 'unknown'}</span>`;
-  return html`<span class=${`fleet-link${open ? ' open' : ''}`} style=${`left:${at.x}px;top:${at.y}px`}>
+  return html`<span class=${`fleet-edge-link${open ? ' open' : ''}`} style=${`left:${at.x}px;top:${at.y}px`}>
     <button type="button" class=${`fleet-edge-label${link.asymmetric ? ' asymmetric' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${`Trust between ${link.in.from} and ${link.in.to}`} onClick=${onToggle}>
       <span class=${`fleet-link-row ${link.in.level}`}><span class="fleet-link-dir">${link.in.level === 'unrestricted' ? '⚠ ' : ''}${link.in.from} → ${link.in.to}</span> ${link.in.short}</span>
@@ -540,7 +540,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   // A link popover closes on Escape or a press anywhere outside it.
   useEffect(() => {
     if (!linkOpen) return undefined;
-    const onDown = (event) => { if (!event.target?.closest?.('.fleet-link')) setLinkOpen(''); };
+    const onDown = (event) => { if (!event.target?.closest?.('.fleet-edge-link')) setLinkOpen(''); };
     const onKey = (event) => { if (event.key === 'Escape') setLinkOpen(''); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);

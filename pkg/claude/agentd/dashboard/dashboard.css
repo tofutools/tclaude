@@ -19945,8 +19945,8 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-edge.stale { stroke: #6e7681; stroke-dasharray: 6 5; }
 /* A peer link's label: one row per direction, each naming its nodes, and a
    popover that spells out who can do what. */
-.fleet-link { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
-.fleet-link.open { z-index: 6; }
+.fleet-edge-link { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
+.fleet-edge-link.open { z-index: 6; }
 .fleet-edge-label { display: grid; gap: 1px; text-align: left; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 3px 9px; font: 11px/1.5 system-ui, sans-serif; color: #c9d1d9; white-space: nowrap; cursor: pointer; }
 .fleet-edge-label:hover, .fleet-edge-label[aria-expanded="true"] { border-color: #58a6ff; }
 .fleet-edge-label.asymmetric { border-color: #6e5a1f; }
@@ -20371,7 +20371,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
   .fleet-map-local, .fleet-map-hub, .fleet-map-peers, .fleet-map-peers.wide { grid-column: 1; }
   .fleet-map-hub { justify-self: stretch; width: auto; }
   .fleet-map-peers, .fleet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
-  .fleet-edges, .fleet-link { display: none; }
+  .fleet-edges, .fleet-edge-link { display: none; }
 }
 
 
