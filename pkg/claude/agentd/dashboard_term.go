@@ -497,8 +497,17 @@ var defaultPTYWinsize = pty.Winsize{Cols: 80, Rows: 24}
 // terminal window attached, closing the web view detaches that too. That's an
 // accepted simplification for now; detaching only our own client (by its PTY
 // tty, which tmux exposes as #{client_tty}) is a deliberate future refinement.
+//
+// A remote viewer's renderer is the exception: it is a federation viewer, not
+// part of this browser terminal, so while one is attached only the other
+// clients are detached (a remote viewer that took the session over from this
+// terminal would otherwise be dropped by this terminal's own teardown).
 func detachTmuxSession(tmuxSession string) {
 	if tmuxSession == "" {
+		return
+	}
+	if fedRendererActive(tmuxSession) {
+		detachFedLocalClients(tmuxSession)
 		return
 	}
 	_ = clcommon.TmuxCommand("detach-client", "-s", clcommon.ExactTarget(tmuxSession)).Run()

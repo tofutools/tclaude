@@ -33,6 +33,7 @@ type terminalTmux struct {
 	version string
 	attach  []string
 	probes  int
+	resizes [][]string
 }
 
 func terminalEcho(s string) *exec.Cmd { return exec.Command("printf", "%s", s) }
@@ -51,6 +52,7 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 			return terminalEcho(m.pane + "\t@1\t$1\t" + m.windows + "\t1\n")
 		}
 	case "resize-window":
+		m.resizes = append(m.resizes, append([]string(nil), args...))
 		m.options["window-size"] = "manual"
 		return exec.Command("true")
 	case "show-options":

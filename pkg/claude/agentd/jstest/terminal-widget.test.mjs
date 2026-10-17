@@ -648,6 +648,60 @@ test('a remote terminal shrinks its font to fit the peer grid, down to a floor, 
   assert.deepEqual(socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'nothing resizes the peer');
 });
 
+test('a remote terminal alone on the session owns its size; a shared one offers a take-over', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  class SizedTerminal extends fakes.FakeTerminal {
+    resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+  }
+  let fitAddon = null;
+  class GridFit extends fakes.FakeFitAddon {
+    constructor() { super(); fitAddon = this; }
+    fit() { super.fit(); fakes.terminal().resize(190, 52); }
+  }
+  const remotes = []; const statuses = [];
+  const wsPath = core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'watch' });
+  const widget = core.mountTerminalWidget({
+    host, wsPath, authenticate: false, onRemoteChange: (v) => remotes.push(v), onStatus: (v) => statuses.push(v),
+    TerminalCtor: SizedTerminal, FitAddonCtor: GridFit, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
+  });
+  widget.setActive(true);
+  await widget.connect();
+  const shared = fakes.sockets[0];
+  assert.ok(shared.url.endsWith(wsPath), 'a first open asks for no take-over');
+  shared.open();
+  shared.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 120, rows: 40, others: ['a local terminal', '\u0007x'.repeat(60), 3] }) });
+  assert.equal(remotes.at(-1).owner, false);
+  assert.deepEqual(remotes.at(-1).others, ['a local terminal', ' x'.repeat(60).trim().slice(0, 80)], 'others are bounded, control-free strings');
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [120, 40], 'a shared session renders pinned');
+  assert.equal(fitAddon.fitCount, 0, 'a pinned view never fits its grid');
+  assert.deepEqual(shared.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'a pinned view never resizes the peer');
+
+  await widget.takeOver();
+  const owned = fakes.sockets[1];
+  assert.equal(owned.url, `wss://dashboard.test${wsPath}&take_over=1`, 'take over reopens asking the peer to disconnect the others');
+  owned.open();
+  owned.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 120, rows: 40, size_owner: true, others: ['ignored'] }) });
+  assert.equal(remotes.at(-1).owner, true);
+  assert.deepEqual(remotes.at(-1).others, [], 'an owner has nobody to take over from');
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [190, 52], 'an owner fits like a local terminal');
+  assert.ok(owned.sent.includes(JSON.stringify({ type: 'resize', cols: 190, rows: 52 })), 'and its grid sizes the peer window');
+  owned.onmessage({ data: JSON.stringify({ type: 'size', cols: 80, rows: 24 }) });
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [190, 52], 'an owner ignores pinned-size updates');
+
+  await widget.connect();
+  assert.ok(fakes.sockets[2].url.endsWith(wsPath), 'a plain reconnect does not take over again');
+  fakes.sockets[2].open();
+  fakes.sockets[2].onmessage({ data: JSON.stringify({ type: 'closed', reason: 'taken_over' }) });
+  fakes.sockets[2].disconnect();
+  assert.equal(statuses.at(-1), 'closed: another viewer took over this terminal (one viewer at a time)');
+  widget.dispose();
+});
+
 test('a remote terminal follows the hello: pinned size, no resizes, watch-only drops input, and a closure says why', async (t) => {
   const harness = await createPreactHarness(t);
   const core = await harness.importDashboardModule('js/terminals-core.js');

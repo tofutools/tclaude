@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -56,6 +57,8 @@ type fedTerminalView struct {
 	fileRootPath string
 	fileRootErr  error
 	files        bool
+	owner        bool     // this view's grid sizes the target window
+	others       []string // what else was attached, when not the owner
 }
 
 func (rt *fedRuntime) terminalsLocked() *fedTerminalState {
@@ -205,6 +208,8 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 			}
 			v.cols, v.rows = a.answer.Cols, a.answer.Rows
 			v.files = a.answer.Files
+			v.owner = p.DriveSize && a.answer.SizeOwner
+			v.others = sanitizeFedOthers(a.answer.Others)
 			return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.answer.Key, true)
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -309,6 +314,11 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		return
 	}
 	p.FixedSize = browser
+	// The browser bridge always asks to own the size when alone. The CLI asks
+	// with drive_size=1, which also opts it into a JSON hello frame an older
+	// CLI would reject.
+	p.DriveSize = browser || r.URL.Query().Get("drive_size") == "1"
+	p.TakeOver = p.DriveSize && r.URL.Query().Get("take_over") == "1"
 	p.Cols, p.Rows = queryInt(r, "cols", 80), queryInt(r, "rows", 24)
 	if p.Cols < 1 || p.Cols > 1000 || p.Rows < 1 || p.Rows > 1000 {
 		writeError(w, 400, "invalid_arg", "terminal dimensions must be 1..1000")
@@ -352,6 +362,13 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 	}
 	ws.SetReadLimit(terminal.MaxPayload + 5)
 	v.addCleanup(func() { _ = ws.Close() })
+	// Only a CLI that asked to drive the size reads this one text frame; the
+	// rest of the stream stays binary terminal frames.
+	if p.DriveSize {
+		if ws.WriteJSON(map[string]any{"type": "hello", "size_owner": v.owner, "others": v.others}) != nil {
+			return
+		}
+	}
 	fedTerminalAudit("sessions.attach.open", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" read_only="+fmt.Sprint(readOnly), 200)
 	defer fedTerminalAudit("sessions.attach.close", caller, peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID, 200)
 	authorized := func() bool {
@@ -474,11 +491,16 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 	}
 	var v *fedTerminalView
 	answer := func(ok bool, key []byte, reason string) {
-		cols, rows := 0, 0
+		a := proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason}
 		if v != nil {
-			cols, rows = v.cols, v.rows
+			v.mu.Lock()
+			a.Cols, a.Rows, a.Files = v.cols, v.rows, v.files
+			if ok {
+				a.SizeOwner, a.Others = v.owner, v.others
+			}
+			v.mu.Unlock()
 		}
-		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason, Cols: cols, Rows: rows, Files: v != nil && v.files})
+		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, a)
 	}
 	if p.Cols < 1 || p.Rows < 1 || p.Cols > 1000 || p.Rows > 1000 {
 		answer(false, nil, "invalid terminal dimensions")
@@ -510,6 +532,9 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	if root != nil {
 		v.addCleanup(func() { v.mu.Lock(); _ = root.Close(); v.fileRoot = nil; v.mu.Unlock() })
 	}
+	if p.DriveSize {
+		rt.claimFedSessionSize(pin, v, p.TakeOver)
+	}
 	if p.FixedSize {
 		cols, rows, err := pin.size()
 		if err != nil {
@@ -530,6 +555,14 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		return
 	}
 	v.addCleanup(func() { _ = backend.Close() })
+	// A CLI owner reports its real size up front; a browser owner opens at the
+	// pinned size and sends its fitted grid once it knows it owns the window.
+	if !p.FixedSize && v.sizeOwner() {
+		if err := fedResizeWindow(pin.window, p.Cols, p.Rows); err != nil {
+			answer(false, nil, "could not size the target window")
+			return
+		}
+	}
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		answer(false, nil, "stream unavailable")
@@ -539,7 +572,9 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		answer(false, nil, "viewer closed")
 		return
 	}
+	v.mu.Lock()
 	v.cols, v.rows = p.Cols, p.Rows
+	v.mu.Unlock()
 	answer(true, kp.Pub, "")
 	conn, err := rt.joinStream(v.ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 	if err != nil {
@@ -578,6 +613,9 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	}()
 
 	errs := make(chan error, 2)
+	// rendererEnded marks the renderer's tmux client going away by itself:
+	// while the session lives on, that is a detach — another terminal took it.
+	var rendererEnded atomic.Bool
 	go func() {
 		defer workers.Done()
 		b := make([]byte, terminal.MaxPayload)
@@ -602,6 +640,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 				}
 			}
 			if err != nil {
+				rendererEnded.Store(true)
 				errs <- err
 				return
 			}
@@ -650,9 +689,26 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 					errs <- err
 					return
 				}
+				owner := v.sizeOwner()
+				// A pinned browser view renders at the target's size; only the
+				// size owner's grid reaches the window.
+				if v.fixedSize && !owner {
+					continue
+				}
+				if owner {
+					if err := fedResizeWindow(backend.pin.window, c, r); err != nil {
+						errs <- err
+						return
+					}
+				}
 				if err := backend.Resize(c, r); err != nil {
 					errs <- err
 					return
+				}
+				if owner {
+					v.mu.Lock()
+					v.cols, v.rows = c, r
+					v.mu.Unlock()
 				}
 			default:
 				errs <- terminal.ErrProtocol
@@ -667,9 +723,12 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	for {
 		select {
 		case err := <-errs:
-			if !authorized() {
+			switch {
+			case !authorized():
 				reason = "revoked"
-			} else if err != io.EOF {
+			case rendererEnded.Load():
+				reason = fedTerminalTakenOver
+			case err != io.EOF:
 				reason = "error"
 			}
 			return
@@ -684,7 +743,8 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 				return
 			}
 		case <-ticker.C:
-			if v.fixedSize {
+			// A pinned view follows the target's size; an owner sets it.
+			if v.fixedSize && !v.sizeOwner() {
 				cols, rows, err := backend.pin.size()
 				if err != nil {
 					reason = "exit"

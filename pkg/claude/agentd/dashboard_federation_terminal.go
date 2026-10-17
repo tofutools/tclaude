@@ -97,7 +97,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	if p.ReadOnly {
 		mode = "watch"
 	}
-	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent, "viewer_id": v.ID, "files": v.files}) != nil {
+	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent, "viewer_id": v.ID, "files": v.files, "size_owner": v.owner, "others": v.others}) != nil {
 		return
 	}
 	fedTerminalAudit("sessions.attach.open", "", peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" browser mode="+mode, 200)
@@ -151,7 +151,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			if frame.Kind == terminal.Closed {
 				reason := string(frame.Data)
 				switch reason {
-				case "exit", "reincarnated", "revoked", "untrusted", "kicked", "error":
+				case "exit", "reincarnated", "revoked", "untrusted", "kicked", fedTerminalTakenOver, "error":
 				default:
 					reason = "error"
 				}
@@ -204,12 +204,22 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			}
 			if kind == websocket.TextMessage {
 				var control struct {
-					Type  string
-					Bytes int
+					Type       string
+					Bytes      int
+					Cols, Rows int
 				}
 				if json.Unmarshal(body, &control) == nil {
 					if control.Type == "resize" {
-						continue
+						// Only the size owner's grid reaches the peer; a pinned
+						// view's fits stay in this browser.
+						if !v.owner || control.Cols < 1 || control.Rows < 1 || control.Cols > 1000 || control.Rows > 1000 {
+							continue
+						}
+						if authorized() == "" && write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(control.Cols, control.Rows)}) == nil {
+							continue
+						}
+						stopped <- "error"
+						return
 					}
 					if control.Type == "credit" {
 						creditMu.Lock()

@@ -792,8 +792,24 @@ are audited on both instances; kicks are audited at the target.
 
 The renderer requires tmux 3.2 or newer and a session with exactly one window
 and one pane. The renderer has `ignore-size`, and its PTY has no input path. The window
-size stays pinned while viewers are attached, then its original sizing policy
-is restored. Resizing a viewer never resizes the target. Interactive input is
+size stays manual while viewers are attached, then its original sizing policy
+is restored.
+
+A session has one attached viewer at a time, the same rule as a local web
+terminal, which force-attaches and detaches every other client. A remote
+viewer, watch or interactive, that finds no other client on the session owns
+its size: its terminal size, and later resizes, size the target window. With
+other clients attached (a local terminal, or another remote viewer) it opens
+at the target's current size and is told, without naming peers, what else is
+attached. `tclaude federation attach --take-over`, or **Take over** in the
+browser terminal, disconnects them first. Displaced remote viewers close with
+reason `taken_over`. A remote viewer displaced by a local web terminal closes
+the same way. The take-over right is part of the watch or attach grant;
+operators who do not want peers to displace local terminals should not share
+sessions they are actively using. An older peer ignores the request and keeps
+every viewer at its own size.
+
+Interactive input is
 delivered separately to the resolved pane: special keys use a fixed tmux key
 table, text is literal, and unknown escape sequences are discarded. It can answer prompts, send
 Ctrl-C, or perform any other action available at that keyboard.
@@ -2600,9 +2616,13 @@ array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
 `peer` its display label. Cached catalogs may be stale; the target authorizes
 both initial opens and every ongoing session.
 
-The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`),
-then binary output. Its dimensions come from the pinned target pane. Later JSON
-`size` frames report changes; browser `resize` messages never resize the target.
+The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`,
+`size_owner`, `others`), then binary output. Its dimensions come from the target
+pane. When `size_owner` is true, the browser fits its own grid and its `resize`
+messages size the target window. Otherwise it renders at the target's size,
+later JSON `size` frames report changes, its `resize` messages are dropped, and
+`others` lists what else is attached. Adding `&take_over=1` to the socket path
+asks the target to disconnect them first.
 Interactive binary input passes through the existing fixed-key/literal-text
 encoder; watch input is discarded. After xterm consumes each output frame,
 the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
@@ -2610,7 +2630,7 @@ Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
 through the browser renderer. Operational refusals use a hello-less JSON
 `closed` frame after upgrade; authentication/origin failures remain HTTP errors.
 Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
-`untrusted`, `kicked`, `offline`, or `error`; initial opens also use `denied` and
+`untrusted`, `kicked`, `taken_over`, `offline`, or `error`; initial opens also use `denied` and
 `limit`. A stalled connection can be aborted without delaying viewer cleanup.
 Detach closes the viewer and never stops the agent.
 

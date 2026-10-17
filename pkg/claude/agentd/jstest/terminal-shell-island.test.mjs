@@ -837,3 +837,20 @@ test('a widget disconnect asking to close the tab closes only that pane, without
     'closing an exited pane sends no detach');
   await harness.act(() => cleanup());
 });
+
+test('a pinned remote pane names what else is attached and offers a take-over; an owner shows nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RemoteSharedNotice } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const seed = { remote: { peer: 'inst_forge7', peerLabel: 'brain', agent: 'agt_ada1' } };
+  let takeOvers = 0;
+  const mounted = await harness.mount(harness.html`<${RemoteSharedNotice} seed=${seed}
+    remote=${{ owner: false, others: ['a local terminal', 'another remote viewer'] }} onTakeOver=${() => { takeOvers += 1; }} />`);
+  const notice = mounted.container.querySelector('.term-remote-shared');
+  assert.match(notice.textContent, /Also attached on brain: a local terminal, another remote viewer\./);
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Take over' }), 'click', { button: 0 }));
+  assert.equal(takeOvers, 1);
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ owner: true, others: [] }} onTakeOver=${() => {}} />`);
+  assertAbsent(mounted.container.querySelector('.term-remote-shared'));
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${{}} remote=${{ owner: false, others: ['x'] }} onTakeOver=${() => {}} />`);
+  assertAbsent(mounted.container.querySelector('.term-remote-shared'), 'a local pane never shows it');
+});

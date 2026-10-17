@@ -481,8 +481,15 @@ func (e *Envelope) DecodePayload(v any) error {
 
 // SessionOpenPayload requests access to one stable agent's current pane.
 // Session and Incarnation pin discovery to one launch; it cannot follow a restart.
+//
+// DriveSize asks for the target window to follow this viewer's size when it
+// is the only client attached to the session. TakeOver first disconnects the
+// other clients — the same one-viewer rule a local web terminal's forced
+// attach applies. Receivers that predate both ignore them and pin the viewer.
 type SessionOpenPayload struct {
 	FixedSize   bool   `json:"fixed_size,omitempty"`
+	DriveSize   bool   `json:"drive_size,omitempty"`
+	TakeOver    bool   `json:"take_over,omitempty"`
 	Agent       string `json:"agent"`
 	Session     string `json:"session"`
 	Incarnation string `json:"incarnation"`
@@ -493,15 +500,24 @@ type SessionOpenPayload struct {
 	Cols        int    `json:"cols"`
 	Rows        int    `json:"rows"`
 }
+// SessionAnswerPayload accepts or refuses a SessionOpenPayload. SizeOwner says
+// the viewer's Resize frames size the target window. Others describes,
+// generically, what else is attached when it is not (at most
+// MaxSessionOthers entries).
 type SessionAnswerPayload struct {
-	Files  bool   `json:"files,omitempty"`
-	Cols   int    `json:"cols,omitempty"`
-	Rows   int    `json:"rows,omitempty"`
-	Stream string `json:"stream"`
-	OK     bool   `json:"ok"`
-	Key    []byte `json:"key,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Files     bool     `json:"files,omitempty"`
+	SizeOwner bool     `json:"size_owner,omitempty"`
+	Others    []string `json:"others,omitempty"`
+	Cols      int      `json:"cols,omitempty"`
+	Rows      int      `json:"rows,omitempty"`
+	Stream    string   `json:"stream"`
+	OK        bool     `json:"ok"`
+	Key       []byte   `json:"key,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
 }
+
+// MaxSessionOthers bounds SessionAnswerPayload.Others.
+const MaxSessionOthers = 4
 
 // ModelOpenPayload binds one model HTTP exchange to a named gateway.
 // Version 1 mandates routebroker credits. Version 2 adds dialect negotiation

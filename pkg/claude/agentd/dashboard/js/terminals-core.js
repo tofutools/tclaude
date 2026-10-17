@@ -86,16 +86,19 @@ export function createAgentRosterReconciler() {
 // A remote terminal is a peer's agent pane, bridged by this node's daemon over
 // the federation terminal stream (the path `tclaude federation attach` uses).
 // It keeps the local framing (binary output and input) and adds JSON text
-// control frames: hello (mode and the target's pinned size), size, and closed
-// (a reason, sent just before the socket closes). The viewer renders at the
-// pinned size and never resizes the target; watch mode sends no input. Each
+// control frames: hello (mode, the target's size, and whether this view owns
+// it), size, and closed (a reason, sent just before the socket closes). One
+// viewer at a time: alone on the session, the view owns the size, fits like a
+// local terminal and its resizes size the peer's window. With others attached
+// it renders pinned at their size (hello.others names them) until it takes
+// the session over. Watch mode sends no input. Each
 // binary output frame is acknowledged with {type:'credit', bytes} once xterm
 // has written it, which is what refills the stream's flow-control window.
 export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
 // A peer's pinned size beyond these is refused rather than rendered: a hostile
 // peer must not be able to make this tab allocate a huge grid.
 const MAX_REMOTE_COLS = 500;
-// A remote pane keeps the peer's size, so its font shrinks (to a readable
+// A pinned remote pane keeps the peer's size, so its font shrinks (to a readable
 // floor) until the whole grid fits; past the floor the host scrolls.
 const REMOTE_FONT_MAX = 13;
 const REMOTE_FONT_MIN = 9;
@@ -117,6 +120,7 @@ export const REMOTE_CLOSE = Object.freeze({
   revoked: { text: 'the peer revoked your access to this terminal', final: true },
   untrusted: { text: 'the peer is no longer trusted', final: true },
   kicked: { text: "the peer's operator disconnected this view", final: false },
+  taken_over: { text: 'another viewer took over this terminal (one viewer at a time)', final: false },
   denied: { text: "the peer does not share this terminal with you", final: true },
   limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
   offline: { text: 'the peer is unreachable', final: false },
@@ -229,7 +233,9 @@ export function mountTerminalWidget({
   let instanceBaseline = null;
   let cancelRestartWatch = null;
   const remote = isRemoteTerminalPath(wsPath);
-  let remoteState = { mode: '', closed: null, files: false, viewer: '' };
+  let remoteState = { mode: '', closed: null, files: false, viewer: '', owner: false, others: [] };
+  // takeOverNext asks the next dial to take the peer's session over.
+  let takeOverNext = false;
   function setRemote(next) {
     if (disposed) return;
     remoteState = Object.freeze({ ...remoteState, ...next });
@@ -275,7 +281,7 @@ export function mountTerminalWidget({
 
   function fit() {
     if (disposed) return;
-    if (remote) { fitRemote(); return; }
+    if (remote && !remoteState.owner) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
   }
 
@@ -595,8 +601,10 @@ export function mountTerminalWidget({
 
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
-    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '' });
+    const takeOver = remote && takeOverNext;
+    takeOverNext = false;
+    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath + (takeOver ? '&take_over=1' : ''));
+    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '', owner: false, others: [] });
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -690,10 +698,25 @@ export function mountTerminalWidget({
       // files says the peer shares this terminal's files with us
       // (sessions.files.read); viewer_id pins downloads to this very view.
       const viewer = typeof msg.viewer_id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(msg.viewer_id) ? msg.viewer_id : '';
-      setRemote({ mode, files: msg.files === true && !!viewer, viewer });
+      // size_owner: alone on the session (or after a take-over), this view's
+      // grid sizes the peer's window, so it fits like a local terminal.
+      // Otherwise others names what else is attached (a take-over offer).
+      const owner = msg.size_owner === true;
+      const others = owner || !Array.isArray(msg.others) ? [] : msg.others
+        .filter((o) => typeof o === 'string')
+        .map((o) => o.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 4);
+      setRemote({ mode, files: msg.files === true && !!viewer, viewer, owner, others });
       setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
+      if (owner) {
+        term.options.fontSize = REMOTE_FONT_MAX;
+        initialResizeReady = true;
+        if (isActive) fit();
+        sendResize();
+      }
     } else if (msg?.type === 'size') {
-      size();
+      if (!remoteState.owner) size();
     } else if (msg?.type === 'closed') {
       setRemote({ closed: { reason: String(msg.reason || ''), message: String(msg.message || '') } });
     }
@@ -773,6 +796,13 @@ export function mountTerminalWidget({
     fit,
     focus,
     sendResize,
+    // takeOver reopens a remote terminal asking the peer to disconnect the
+    // session's other viewers, so this view owns its size.
+    takeOver() {
+      if (disposed || !remote) return Promise.resolve(false);
+      takeOverNext = true;
+      return connect();
+    },
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
     setActive(next) {
       if (disposed) return;
