@@ -18,7 +18,14 @@ func migrateV266toV267(d *sql.DB) error {
 		{"spawn_profiles", "prompt_refs"},
 		{"agent_groups", "default_prompts"},
 	} {
-		var present int
+		// A partial DB healed by an older migration test may lack either table.
+		var haveTable, present int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, col.table).Scan(&haveTable); err != nil {
+			return fmt.Errorf("migrate v266→v267 (probe %s): %w", col.table, err)
+		}
+		if haveTable == 0 {
+			continue
+		}
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+col.table+`') WHERE name = ?`, col.column).Scan(&present); err != nil {
 			return fmt.Errorf("migrate v266→v267 (inspect %s): %w", col.table, err)
 		}
