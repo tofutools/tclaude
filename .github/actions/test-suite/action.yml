@@ -114,6 +114,9 @@ runs:
             ;;
           jstest)
             pkgs="./pkg/claude/agentd/jstest"
+            # One `node --test` run over every suite: ~7m on the macOS
+            # runner, so a slow runner hits go test's default 10m limit.
+            timeout="-timeout=20m"
             # This shard owns its runner, so let Node use every core; the
             # in-test default (NumCPU-2, sized for sharing a runner with the
             # Go packages) would leave the 3-core macOS runner near-serial.
