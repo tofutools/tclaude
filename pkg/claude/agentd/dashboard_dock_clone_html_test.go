@@ -31,9 +31,9 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	// --- The card ⚙ is now a menu trigger, not a direct editor deep-link. ---
 	must(`data-dock-act="card-menu"`, "the card ⚙ toggles its actions menu")
 	must("dock-card-menu${menuOpen ? ' open' : ''}", "the card renders its actions menu from component state")
-	must(`data-dock-act="edit-item"`, "the menu's Edit item dispatches to the editor")
-	must(`data-dock-act="clone-item"`, "the menu's Clone item dispatches to the clone dialog")
-	must(`data-dock-act="delete-item"`, "the menu's Delete item dispatches to the delete flow")
+	must("menuItem('edit-item', 'Edit', () => section.onManageItem(item))", "the menu's Edit item dispatches to the editor")
+	must("menuItem('clone-item', wizWord('Clone', 'Mirror'), () => section.onCloneItem(item))", "the menu's Clone item dispatches to the clone dialog")
+	must("menuItem('delete-item', wizWord('Delete', 'Dispel'), () => section.onDeleteItem(item), true)", "the menu's Delete item dispatches to the delete flow")
 	// Clone re-letters to "Mirror" in wizard mode, echoing the templates
 	// manager's 🪞 duplicate wording; Delete → "Dispel".
 	must(`wizWord('Clone', 'Mirror')`, "the Clone menu item carries the wizard vocabulary")
@@ -61,11 +61,11 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	// toast). Profiles/roles get a dashboard refresh after (their removes only
 	// repaint the closed manager overlay); deleteTemplate already refreshes.
 	must("onDeleteItem:", "the sections carry a delete hook")
-	must("removeProfile(p.name).then(() => refresh())", "profile delete reuses removeProfile + refreshes the dock")
+	must("removeProfile(p.name).then((removed) => {", "profile delete reuses removeProfile + refreshes the dock")
 	must("removeRole(rl.name).then(() => refresh())", "role delete reuses removeRole + refreshes the dock")
-	must("onDeleteItem: (t) => deleteTemplate(t.name)", "template delete reuses deleteTemplate (which self-refreshes)")
+	must("onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {", "template delete reuses deleteTemplate (which self-refreshes)")
 	// The Delete item is styled destructive (red), distinct from Edit / Clone.
-	must(`class="dock-card-menu-item danger"`, "the Delete menu item is marked destructive")
+	must("class=${`dock-card-menu-item${danger ? ' danger' : ''}`}", "the Delete menu item is marked destructive")
 	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
 	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
 

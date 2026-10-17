@@ -17659,6 +17659,9 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
   list-style: none;
 }
 .dock-section-head::-webkit-details-marker { display: none; }
+/* The chevron in the title is the only disclosure glyph: drop the global
+   details > summary::before arrow, which otherwise became a third flex item. */
+#agent-dock .dock-section > .dock-section-head::before { content: none; }
 .dock-section-head:hover .dock-section-title { color: #c9d1d9; }
 .dock-section-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: #adbac7; min-width: 0; }
 /* The disclosure chevron points down when the section is open, right when
@@ -17674,6 +17677,45 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
 .dock-section-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 
 .dock-empty { color: #6e7681; font-size: 11px; font-style: italic; padding: 2px 6px 4px; }
+
+/* The library search sits above every section and stays put while they
+   scroll; the sticky section headings dock just below it. */
+.dock-search {
+  position: sticky; top: 0; z-index: 2;
+  height: 34px; box-sizing: border-box; padding: 0 0 8px;
+  background: #12171d;
+}
+.dock-search-input {
+  width: 100%; box-sizing: border-box; height: 26px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
+  color: #c9d1d9; font: inherit; font-size: 12px; padding: 3px 8px;
+}
+.dock-search-input:focus { outline: none; border-color: #58a6ff; }
+#dock-body .dock-section-head { top: 34px; }
+.dock-search-empty { padding: 4px 6px 10px; }
+.dock-section-tools { display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto; }
+.dock-section-tools .dock-card-menu { font-weight: 400; }
+.dock-section.is-drop-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; border-radius: 6px; }
+.dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
+.dock-card-pin { font-size: 10px; margin-right: 3px; }
+
+/* Library dialogs: the config-bundle import review. */
+.library-import-list { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin: 4px 0 8px; }
+.library-import-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #21262d; font-size: 12px; cursor: pointer; }
+.library-import-row input { flex: none; width: auto; margin: 0; }
+.library-import-kind { flex: 0 0 110px; color: #6e7681; }
+.library-import-name { flex: 1; min-width: 0; color: #d4d4d4; overflow-wrap: anywhere; }
+.library-import-row.is-skipped .library-import-name { color: #6e7681; text-decoration: line-through; }
+.library-import-action { flex: none; font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid #30363d; color: #6e7681; }
+.library-import-action.is-create { color: #56d364; border-color: #2ea04366; }
+.library-import-action.is-replace { color: #f2cc60; border-color: #f2cc6066; }
+.library-import-option { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12.5px; }
+.library-import-option input { flex: none; width: auto; margin: 0; }
+.library-import-values { margin-top: 6px; }
+.library-import-security { color: #f2cc60; }
+body.wizard #agent-dock .dock-search { background: #191225; }
+body.wizard #agent-dock .dock-search-input { background: #140e1e; border-color: #3a2f57; color: #e6dcff; }
+body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
 
 /* A card is a future drag source: the grab cursor + grip glyph advertise it,
    data-dock-kind/name on the element carry the payload the DnD tickets wire.

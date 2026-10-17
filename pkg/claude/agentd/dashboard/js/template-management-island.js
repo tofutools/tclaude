@@ -419,9 +419,9 @@ export function TemplateDuplicateDialog({
   );
 }
 
-export function TemplateImportDialog({ state, actions, confirmDiscard }) {
+export function TemplateImportDialog({ initialRaw = '', state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [raw, setRaw] = useState('');
+  const [raw, setRaw] = useState(initialRaw);
   const [file, setFile] = useState(null);
   const [as, setAs] = useState('');
   const [update, setUpdate] = useState(false);

@@ -11,6 +11,9 @@
 //   share (.pwf).
 // - ⤒ and dropping a .pwf on the section import through the existing review.
 // - ⧉ opens Automations › Processes, where templates are managed and deleted.
+// - The card ⚙ menu carries the library's shared rows (dock-library.js):
+//   rename and clone (both through a name dialog), pin to top, copy the id,
+//   share as .pwf, delete. The dock's search filters the cards.
 
 import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -26,6 +29,12 @@ import { groupsState } from './groups-state.js';
 import { showRunsLens } from './groups-focus.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
+import { managementController } from './management-controller.js';
+import { exportWorkflow } from './process-workflow-share.js';
+import {
+  LIBRARY_EVENT, menuPlacement, cloneProcess, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
+  renameItem, togglePin,
+} from './dock-library.js';
 
 const html = htm.bind(h);
 
@@ -178,7 +187,14 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
   </div>`;
 }
 
-function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipHost = null }) {
+// askProcessName opens the library's name dialog for a rename or a clone.
+function askProcessName({ title, blurb, initial, okLabel, submit, controller = managementController }) {
+  controller().openLibraryName({ title, blurb, initial, okLabel, submit });
+}
+
+function ProcessCard({
+  row, open, onOpen, openMenu, setOpenMenu, onDelete, clipHost = null, pinned = false, onMenu = () => {},
+}) {
   const ref = useRef(null);
   const name = row.name || row.id;
   // The ⚙ menu shares the dock's one-open-menu state, so the dock's outside
@@ -187,18 +203,18 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipH
   const menuOpen = openMenu === menuKey;
   const menuRef = useRef(null);
   const cogRef = useRef(null);
-  const [opensUp, setOpensUp] = useState(false);
+  const [placement, setPlacement] = useState({ up: false, maxHeight: null });
   // This is the dock's last section, so a bottom card's menu would open below
   // the scroll area; flip it up like the other sections' cards do.
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !cogRef.current) {
-      setOpensUp(false);
+      setPlacement({ up: false, maxHeight: null });
       return;
     }
     const clip = clipHost?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const cogTop = cogRef.current.getBoundingClientRect().top;
-    setOpensUp(menuRect.bottom > clip.bottom && menuRect.height < cogTop - clip.top);
+    const cog = cogRef.current.getBoundingClientRect();
+    const height = menuRef.current.scrollHeight || menuRef.current.getBoundingClientRect().height;
+    setPlacement(menuPlacement({ clipTop: clip.top, clipBottom: clip.bottom, cogTop: cog.top, cogBottom: cog.bottom, height }));
   }, [menuOpen, clipHost]);
   const act = (event, action) => {
     event.preventDefault();
@@ -214,7 +230,7 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipH
     <span class="dock-grip" aria-hidden="true">⠿</span>
     <div role="button" tabIndex="0" class="dock-card-body dock-process-open" aria-expanded=${open ? 'true' : 'false'}
       onClick=${toggle} onKeyDown=${(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }}>
-      <span class="dock-card-name">${name} <span class="dock-process-version">v${row.versionCount || 1}</span></span>
+      <span class="dock-card-name">${pinned ? html`<span class="dock-card-pin" title="Pinned to the top" aria-label="Pinned">📌</span>` : null}${name} <span class="dock-process-version">v${row.versionCount || 1}</span></span>
       <span class="dock-process-summary">${processSummaryText(row)}</span>
       <span class="dock-chips dock-chips-compact">${(row.pinnedGroups || []).length
         ? row.pinnedGroups.map((group) => html`<span key=${group} class="dock-chip dock-process-pin">${group}</span>`)
@@ -224,9 +240,18 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipH
       <button ref=${cogRef} type="button" class="dock-card-manage" data-dock-act="card-menu" data-dock-kind="processes" data-dock-name=${row.id}
         aria-haspopup="menu" aria-expanded=${menuOpen ? 'true' : 'false'} title="More actions" aria-label=${`Actions for ${name}`}
         onClick=${(event) => { event.preventDefault(); setOpenMenu(menuOpen ? null : menuKey); }}>⚙</button>
-      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${opensUp ? ' opens-up' : ''}`} role="menu" aria-label=${name}>
+      <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
+          style=${placement.maxHeight != null ? `max-height:${placement.maxHeight}px;overflow-y:auto` : null} role="menu" aria-label=${name}>
         <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" data-dock-kind="processes" data-dock-name=${row.id}
           onClick=${(event) => act(event, () => handOffProcessDraft({ id: row.id, name }))}>Edit</button>
+        ${[
+          ['clone-item', wizWord('Clone', 'Mirror')],
+          ['rename-item', 'Rename…'],
+          ['pin-item', pinned ? 'Unpin' : 'Pin to top'],
+          ['copy-item', 'Copy id'],
+          ['export-item', 'Export .pwf'],
+        ].map(([key, label]) => html`<button key=${key} type="button" role="menuitem" class="dock-card-menu-item" data-dock-act=${key}
+          data-dock-kind="processes" data-dock-name=${row.id} onClick=${(event) => act(event, () => onMenu(key, row))}>${label}</button>`)}
         <button type="button" role="menuitem" class="dock-card-menu-item danger" data-dock-act="delete-item" data-dock-kind="processes" data-dock-name=${row.id}
           onClick=${(event) => act(event, () => onDelete(row))}>${wizWord('Delete', 'Dispel')}</button>
       </div>
@@ -239,8 +264,11 @@ function ProcessCard({ row, open, onOpen, openMenu, setOpenMenu, onDelete, clipH
 export function DockProcesses({
   groups = [], isSectionOpen, setSectionOpen, openMenu = null, setOpenMenu = () => {}, clipHost = null,
   fetchImpl = (...args) => fetch(...args), confirm = shellConfirm,
+  terms = [], prefs = dashPrefs, notify = shellToast, onMatches = null, controller = managementController,
 }) {
   const [open, setOpen] = useState(() => isSectionOpen('processes'));
+  const [, setPinsVersion] = useState(0);
+  const searching = terms.length > 0;
   const [all, setAll] = useState(false);
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
@@ -250,23 +278,84 @@ export function DockProcesses({
   const load = useCallback(() => {
     libraryRows(all, fetchImpl).then((next) => { setRows(next); setError(''); }).catch((cause) => setError(cause.message));
   }, [all]);
-  useEffect(() => { if (open) load(); }, [open, load]);
+  useEffect(() => { if (open || searching) load(); }, [open, searching, load]);
   useEffect(() => {
     document.addEventListener(PROCESS_LIBRARY_EVENT, load);
-    return () => document.removeEventListener(PROCESS_LIBRARY_EVENT, load);
+    document.addEventListener(LIBRARY_EVENT, load);
+    return () => {
+      document.removeEventListener(PROCESS_LIBRARY_EVENT, load);
+      document.removeEventListener(LIBRARY_EVENT, load);
+    };
   }, [load]);
   const remove = async (row) => {
     try {
       if (!(await deleteFromLibrary(row, { confirm, fetchImpl }))) return;
+      dropPin(prefs, 'processes', row.id);
       if (preview?.row.id === row.id) setPreview(null);
     } catch (cause) {
       setError(`Delete failed: ${cause.message}`);
     }
   };
+  // Pins key on the template id, which a rename keeps.
+  const pins = pinnedNames(prefs, 'processes');
+  const { items: matched } = filterSection({
+    terms,
+    titles: [wizWord('Processes', 'Rites'), 'processes', 'rites', 'workflows'],
+    items: rows || [],
+    textsOf: (row) => [row.name, row.id, processSummaryText(row), ...leafTexts(row)],
+  });
+  const shown = orderPinned(matched, (row) => row.id, pins);
+  useEffect(() => { onMatches?.('processes', searching && rows === null ? null : shown.length); }, [shown.length, searching, rows === null]);
+  const menu = async (key, row) => {
+    const name = String(row.name || '').trim() || row.id;
+    if (key === 'pin-item') {
+      togglePin(prefs, 'processes', row.id);
+      setPinsVersion((value) => value + 1);
+    } else if (key === 'copy-item') {
+      try {
+        await navigator.clipboard.writeText(row.id);
+        notify?.(`copied ${row.id}`);
+      } catch {
+        notify?.('copy failed: the clipboard is not available here', true);
+      }
+    } else if (key === 'export-item') {
+      const failed = await exportWorkflow(row.id, { fetchImpl }).catch((cause) => cause.message);
+      if (failed) notify?.(`export failed: ${failed}`, true);
+    } else if (key === 'rename-item') {
+      askProcessName({
+        controller,
+        title: `Rename ${wizWord('process', 'rite')}: ${name}`,
+        blurb: 'Saved as a new version; the history and the groups it is pinned to stay.',
+        initial: name,
+        okLabel: 'Rename',
+        submit: async (to) => {
+          if (to === name) return;
+          await renameItem({ section: 'processes', name: row.id, to, fetchImpl });
+          notify?.(`renamed ${name} → ${to}`);
+          document.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+          void processContext?.refresh?.();
+        },
+      });
+    } else if (key === 'clone-item') {
+      askProcessName({
+        controller,
+        title: `${wizWord('Clone', 'Mirror')} ${wizWord('process', 'rite')}: ${name}`,
+        blurb: 'A new template with the same steps, starting its own history; it is not pinned to any group.',
+        initial: freeName(name, (rows || []).map((other) => other.name)),
+        okLabel: wizWord('Create copy', 'Mirror it'),
+        submit: async (to) => {
+          await cloneProcess({ id: row.id, to, fetchImpl });
+          notify?.(`created ${to}`);
+          document.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+        },
+      });
+    }
+  };
   const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
   const current = preview && rows?.find((row) => row.id === preview.row.id);
-  return html`<details class="dock-section dock-processes" data-key="processes" open=${open}
-      onToggle=${(event) => { const next = event.currentTarget.hasAttribute('open'); setOpen(next); setSectionOpen('processes', next); }}
+  if (searching && rows !== null && !shown.length) return null;
+  return html`<details class="dock-section dock-processes" data-key="processes" open=${open || searching}
+      onToggle=${(event) => { if (searching) return; const next = event.currentTarget.hasAttribute('open'); setOpen(next); setSectionOpen('processes', next); }}
       onDragOver=${(event) => { if (!fileDrag(event)) return; event.preventDefault(); setDropOver(true); }}
       onDragLeave=${(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropOver(false); }}
       onDrop=${(event) => {
@@ -281,7 +370,7 @@ export function DockProcesses({
         <span class="dock-section-chevron" aria-hidden="true">▸</span>
         <span class="dock-section-icon" aria-hidden="true">◈</span>
         ${wizWord('Processes', 'Rites')}
-        <span class="dock-section-count">${rows ? rows.length : ''}</span>
+        <span class="dock-section-count">${rows ? (searching && shown.length !== rows.length ? `${shown.length}/${rows.length}` : rows.length) : ''}</span>
       </span>
       <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
         title="Open Automations › Processes"
@@ -299,8 +388,9 @@ export function DockProcesses({
       </div>
       ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
       ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
-      ${(rows || []).map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview}
-        openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} clipHost=${clipHost} />`)}
+      ${shown.map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview}
+        openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} clipHost=${clipHost}
+        pinned=${pins.includes(row.id)} onMenu=${menu} />`)}
       <div class=${`dock-process-drop${dropOver ? ' is-over' : ''}`}>⤓ ${wizWord('drop a .pwf here to import it', 'drop a .pwf scroll here')}</div>
     </div>
     ${current && html`<${Preview} row=${current} anchor=${preview.anchor} groups=${groups} fetchImpl=${fetchImpl}

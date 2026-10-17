@@ -116,6 +116,11 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardRoleRoutes(mux)
 	mux.HandleFunc("/api/saved-prompts", dashboardRolesRoute(handleSavedPrompts))
 	mux.HandleFunc("/api/saved-prompts/{name}", dashboardRolesRoute(handleSavedPromptByName))
+	// The right panel's library: rename any kind, and move items between
+	// nodes as config bundles.
+	mux.HandleFunc("POST /api/library/rename", dashboardRolesRoute(handleLibraryRename))
+	mux.HandleFunc("GET /api/config-bundle/export", dashboardRolesRoute(handleConfigBundleExport))
+	mux.HandleFunc("POST /api/config-bundle/import", dashboardRolesRoute(handleConfigBundleImport))
 	registerDashboardSpawnAttachmentRoutes(mux)
 	registerDashboardPluginRoutes(mux)
 	registerRemoteAccessAdminRoutes(mux)
