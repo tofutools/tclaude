@@ -327,3 +327,71 @@ test("this node's groups run the Groups actions under their own names; a peer's 
     { act: 'spawn-agent', group: 'ops', label: 'ops', agent: 'agt_1', prefill: '{"targetMode":"group","groupName":"ops","scopeGroup":"ops"}' });
   await mounted.unmount(); state.dispose();
 });
+
+// fusedGroups mounts the fused view with its own Groups toolbar state and a
+// process context covering this node's groups only.
+async function mountFusedLens(t, { focus = 'agents', query = '' } = {}) {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, groupsStateMod, islandMod] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
+    harness.importDashboardModule('js/groups-state.js'), harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const values = new Map([['tclaude.dash.groups.lens', focus]]);
+  const prefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
+  const groups = groupsStateMod.createGroupsState({ prefs, resetOffsets: () => {}, reorder: (g) => g,
+    columns: { list: () => [{ key: 'id', label: 'ID' }], hidden: () => false, setHidden: () => {}, deviationCount: () => 0 } });
+  groups.initialize();
+  if (query) groups.setQuery(query);
+  // Both nodes have a group with the same id: only the name scoping may tell them apart.
+  const home = { processes_enabled: true, groups: [group('frontend-squad', { id: 'grp_fe', members: [{ agent_id: 'agt_fe_lead', conv_id: 'c1', title: 'fe-lead', online: true }] })], agents: [] };
+  groups.publish(home);
+  const fleet = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  fleet.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const peerSnap = { groups: [group('frontend-squad', { id: 'grp_fe', members: [{ agent_id: 'agt_far1', conv_id: 'cf', title: 'far-away', online: true }] }), group('ops')], agents: [] };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => peerSnap });
+  const fixture = JSON.parse((await import('node:fs')).readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
+  const source = { context: harness.signals.signal(fixture), status: harness.signals.signal('ready'), error: harness.signals.signal(''), refresh: () => Promise.resolve() };
+  const timers = fakeTimers();
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const toolbar = harness.document.createElement('div'); harness.document.body.appendChild(toolbar);
+  const bar = await harness.mount(harness.html`<${islandMod.GroupsControls} state=${groups} actions=${{ refresh: async () => {} }} />`, toolbar);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${fleet} host=${host} snapshot=${groups.snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" groups=${groups} processSource=${source} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  t.after(async () => { await mounted.unmount(); await bar.unmount(); fleet.dispose(); });
+  return { harness, groups, root: mounted.container, toolbar: bar.container };
+}
+
+test('fused Groups is driven by the Groups toolbar: its filter narrows every node, and the counts are the fused ones', async (t) => {
+  const { harness, groups, root, toolbar } = await mountFusedLens(t);
+  const keys = () => [...root.querySelectorAll('details[data-group-key]')].map((d) => d.dataset.groupKey);
+  assert.deepEqual(keys(), ['frontend-squad@desk', 'frontend-squad@forge', 'ops@forge']);
+  await harness.act(() => { groups.setQuery('far-away'); });
+  assert.deepEqual(keys(), ['frontend-squad@forge'], 'the filter matches a peer group by its member');
+  assert.equal(toolbar.querySelector('#filter-groups-count').textContent, '1 / 3', 'the toolbar counts the fused listing');
+  assert.equal(toolbar.querySelector('#filter-groups-ungrouped'), null, "this node's virtual groups are not offered while fused");
+  assert.ok(toolbar.querySelector('#filter-groups-offline'));
+  assert.ok(toolbar.querySelector('[data-groups-focus="processes"]'), 'the lens switch is there');
+});
+
+test('fused Processes shows this node\'s runs on its groups, and says a peer\'s are not shared', async (t) => {
+  const { root } = await mountFusedLens(t, { focus: 'processes' });
+  const home = root.querySelector('details[data-group-key="frontend-squad@desk"]');
+  const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
+  assert.deepEqual([...home.querySelectorAll('[data-process-run-card]')].map((c) => c.dataset.processRunCard), ['run_migrate', 'run_release', 'run_reindex'],
+    "a home group's runs are read under its own name");
+  assert.ok(home.querySelector('[data-process-group="frontend-squad"]'), 'the runs body acts on the own group');
+  assert.equal(peer.querySelectorAll('[data-process-run-card]').length, 0, "a peer group with the same name and id gets none of this node's runs");
+  assert.match(peer.querySelector('[data-process-unshared]').textContent, /Process runs on forge are not shared across nodes/);
+  assert.ok(home.querySelector('summary .gpi-graphs'), 'the home header shows its process graphs');
+  assert.equal(peer.querySelector('summary .gpi-graphs'), null, 'the peer header shows none');
+});
+
+test('fused Both keeps a peer group\'s member table beside the not-shared note', async (t) => {
+  const { root } = await mountFusedLens(t, { focus: 'both' });
+  const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
+  assert.ok(peer.querySelector('[data-fused-section="agents"]'), 'the Agents section is there');
+  assert.match(peer.textContent, /far-away/);
+  assert.ok(peer.querySelector('[data-process-unshared]'));
+  const home = root.querySelector('details[data-group-key="frontend-squad@desk"]');
+  assert.ok(home.querySelector('[data-fused-processes="frontend-squad"]'), "this node's group has its Processes section");
+});

@@ -19950,10 +19950,11 @@ nav [data-tab="map"].node-chip { display: none; }
 .node-pop-foot { border-top: 1px solid #21262d; margin-top: 4px; padding: 7px 8px 3px; color: #7d8590; font-size: 11.5px; line-height: 1.45; }
 .node-pop-foot b { color: #c9d1d9; font-weight: 500; }
 
-/* Fused Groups replaces this node's roster in the Groups tab. */
+/* Fused Groups replaces this node's roster in the Groups tab; the toolbar
+   (filter, lens, view menu) stays and drives it. */
 #fleetview-fused-groups-root { display: none; }
 html.scope-fused #fleetview-fused-groups-root { display: block; }
-html.scope-fused #tab-groups > :not(#fleetview-fused-groups-root) { display: none !important; }
+html.scope-fused #tab-groups > :not(#fleetview-fused-groups-root):not(.filter-bar) { display: none !important; }
 /* Fused Messages likewise replaces this node's mail client. */
 #fleetview-fused-messages-root { display: none; }
 html.scope-fused #fleetview-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }

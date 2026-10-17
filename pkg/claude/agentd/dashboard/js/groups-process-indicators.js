@@ -17,6 +17,7 @@ import { featureState } from './feature-state-registry.js';
 import { revealRunsLens } from './groups-focus.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
+import { useProcessScope } from './groups-process-scope.js';
 
 const html = htm.bind(h);
 
@@ -54,7 +55,9 @@ export function groupProcessCounts(entry) {
 // otherwise the group's row in the Processes focus. The group's row is opened
 // too (the open state is shared between lenses, so a group folded in one
 // would hide its runs in another).
-export function openGroupInProcesses(groupName, filter = 'running', { doc = document } = {}) {
+// `rowKey` is the group's row when the list names it apart from the run
+// context (the fused view's group@node).
+export function openGroupInProcesses(groupName, filter = 'running', { doc = document, rowKey = groupName } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
   // Tick the clicked kind without unticking the others.
@@ -66,7 +69,7 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
     groups.rerender?.();
   }
   const reveal = () => {
-    const row = doc.querySelector(`details[data-group-key="${cssString(groupName)}"]`);
+    const row = doc.querySelector(`details[data-group-key="${cssString(rowKey)}"]`);
     if (!row) return;
     row.open = true;
     const target = fused ? row.querySelector(`[data-fused-processes="${cssString(groupName)}"]`) || row : row;
@@ -138,10 +141,11 @@ export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen
 // GroupProcessGraphs is a group header's process indicator, shown beside the
 // member bots in both perspectives; a quiet group shows nothing.
 export function GroupProcessGraphs({ group, snapshot, source = processContext, wizard = false }) {
-  if (!enabled(snapshot, source)) return null;
-  const counts = groupProcessCounts(groupContextEntry(source.context.value, group));
+  const own = useProcessScope()(group);
+  if (!own || !enabled(snapshot, source)) return null;
+  const counts = groupProcessCounts(groupContextEntry(source.context.value, own));
   return html`<${ProcessGraphRow} counts=${counts} wizard=${wizard} groupName=${group.name}
-    onOpen=${(filter) => openGroupInProcesses(group.name, filter)} />`;
+    onOpen=${(filter) => openGroupInProcesses(own.name, filter, { rowKey: group.name })} />`;
 }
 
 export function MemberProcessCell({ member, group, snapshot, source = processContext }) {

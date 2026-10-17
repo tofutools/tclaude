@@ -1,8 +1,13 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { GroupsNativeList } from './groups-list.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
+import {
+  BrokerRefusalNotice, GroupsLensList, useGroupsHover, useGroupsTableControls, useWizardTheme,
+} from './groups-island.js';
+import { GROUP_VIEW_OPTIONS, buildGroupsView, groupsState } from './groups-state.js';
+import { GroupsProcessScope } from './groups-process-scope.js';
+import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
@@ -35,6 +40,7 @@ const TERMINAL_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
 const MOVE_MIME = 'application/x-tclaude-fleet-move';
+const PROCESS_DRAGS = '[data-saved-process-drag], [data-run-dock-agent]';
 const ROOT = '#fleetview-fused-groups-root';
 const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 
@@ -191,8 +197,17 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
   return entries;
 }
 
-// MergedGroups is the fused Groups view: today's Groups listing over the
-// ticked nodes' groups, named group@node. This node's own groups (home, on
+// NODE_ONLY_OFF keeps the node-only virtual groups (Ungrouped, Retired, …)
+// out of a listing of several nodes, whatever this node's view shows.
+const NODE_ONLY_OFF = Object.fromEntries(GROUP_VIEW_OPTIONS.filter((o) => o.nodeOnly).map((o) => [o.key, false]));
+
+// keepOrder leaves the merged groups in node order: the remembered group
+// order names one node's own groups.
+const keepOrder = (list) => list;
+
+// MergedGroups is the fused Groups view: the Groups listing (GroupsLensList,
+// as on one node's view, under the same toolbar and its filter, view and
+// lens state in `groups`) over the ticked nodes' groups, named group@node. This node's own groups (home, on
 // this node's page) work as in its own Groups view; what a peer shares runs
 // through its peer routes from here, as on that peer's per-node view. The
 // page's own node (this node, or the peer of a ?node= page) comes from the
@@ -201,7 +216,7 @@ export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
   peerActions = peerRoutes, confirm, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
-  groupsActions = () => featureState('groups-actions'), groupsFeature = () => featureState('groups'),
+  groupsActions = () => featureState('groups-actions'), groupsFeature = () => featureState('groups'), groups = groupsState, processSource = undefined,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
@@ -248,6 +263,35 @@ export function MergedGroups({
   ownOfRef.current = ownOf;
   const routed = useRef(null);
   if (!routed.current) routed.current = homeActions(() => groupsActions(), (g) => ownOfRef.current(g));
+  // processScope resolves a listed group to the group the run context names:
+  // a home group to this node's own, any other to none (its node's runs are
+  // not read here; see groups-process-scope.js).
+  const processScope = useRef(null);
+  if (!processScope.current) processScope.current = (g) => (g?.fleet_node?.home ? ownOfRef.current(g) : null);
+
+  const t = now();
+  const nodes = ticked.map((node) => ({
+    node: node.id === home ? { ...node, home: true } : node,
+    entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
+  }));
+  const merged = current.fused && fleet ? mergeSnapshots(nodes, t, snapshot.value) : null;
+  // The toolbar's filter and view menu narrow this listing as they do one
+  // node's (renderRevision: a column or order change re-renders).
+  groups.renderRevision.value;
+  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, keepOrder);
+  const wizard = useWizardTheme();
+  const hoveredGroupKey = useGroupsHover(host, view.groups);
+  useGroupsTableControls(host, groups, routed.current);
+  // The toolbar counts what this view lists while it is on screen.
+  const listedKey = `${view.shownReal}/${view.total}/${view.groups.map((g) => g.key || g.name).join(',')}`;
+  useEffect(() => {
+    groups.listed.value = active ? { groups: view.groups, total: view.total, shownReal: view.shownReal } : null;
+  }, [active, listedKey]);
+  useEffect(() => () => { groups.listed.value = null; }, []);
+  useEffect(() => {
+    syncBotAnimations();
+    syncWizardOrbit();
+  });
 
   // Let this node's own groups' controls through to their usual handlers, send
   // a peer's shared controls to its peer routes, stop the rest before their
@@ -320,6 +364,10 @@ export function MergedGroups({
     const onDragStart = (event) => {
       if (!host.contains(event.target)) return;
       const src = dragSource(event.target.closest?.('tr.dnd-draggable'));
+      // A home group's process drags (a saved process, a run's performer)
+      // run as on this node's own view.
+      if (!src && homeRef.current && event.target.closest?.(PROCESS_DRAGS)
+        && event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
       if (!src) { event.preventDefault(); return; }
       event.stopPropagation();
       dragging = src;
@@ -378,12 +426,6 @@ export function MergedGroups({
 
   if (!current.fused) return null;
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
-  const t = now();
-  const nodes = ticked.map((node) => ({
-    node: node.id === home ? { ...node, home: true } : node,
-    entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
-  }));
-  const merged = mergeSnapshots(nodes, t, snapshot.value);
   const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
   // This node's standing-orders dialog renders with its Groups view, hidden
   // while fused: open it here for a home group.
@@ -397,8 +439,12 @@ export function MergedGroups({
       </span>`)}
       <span class="fleet-merged-note">${home ? "This node's groups work as on its own view; a" : 'A'} peer's groups offer what it shares with you; drag an agent onto another node's group to move it; open <b>@node</b> for a node's own view.</span>
     </div>
-    <${GroupsInteractionProvider}>
-      <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${routed.current} />
+    <${BrokerRefusalNotice} snapshot=${snapshot.value} />
+    <${GroupsProcessScope} value=${processScope.current}>
+      <${GroupsInteractionProvider}>
+        <${GroupsLensList} state=${groups} groups=${view.groups} rosters=${home ? snapshot.value?.groups : []} snapshot=${merged}
+          actions=${routed.current} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
+      <//>
     <//>
     ${home && standingOrders && groupsActions() && html`<${GroupStandingOrdersDialog}
       key=${standingOrders.launchID} descriptor=${standingOrders} actions=${groupsActions()} />`}
