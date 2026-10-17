@@ -151,7 +151,7 @@ function useJoinPreview(actions, code) {
     setPreview({ loading: true });
     const t = setTimeout(() => {
       actions.joinPreview(code)
-        .then((p) => { if (live) setPreview(p); })
+        .then((p) => { if (live) setPreview({ ...p, code }); })
         .catch((e) => { if (live) setPreview({ error: errText(e) }); });
     }, 150);
     return () => { live = false; clearTimeout(t); };
@@ -225,8 +225,9 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
     setBusy(true); setError('');
     finish(confirmHubSave({ self, form: next, actions, confirm }));
   };
+  // Join only with the code the preview on screen describes.
   const joinCode = (c, name) => {
-    if (busy || !preview?.hub_url || preview.expired) return;
+    if (busy || !preview?.hub_url || preview.expired || preview.code !== c) return;
     setBusy(true); setError('');
     finish(joinWithCode({ code: c, preview, name, actions, confirm }));
   };

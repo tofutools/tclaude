@@ -66,7 +66,7 @@ const skynetFederationStubJS = `(function(){
       return realFetch(input, init).then(function(r){ return r.clone().json().then(function(p){ delete p['tclaude.dash.fleet.setupSeen']; return json(p); }, function(){ return r; }); });
     }
     if (path === '/api/federation/status') return json(status);
-    if (path === '/api/federation/join' && window.__dashsnapSetupFresh) return json({ hub_url: 'wss://hub.home:8470', space: 'home', invite: true, expires_at: '2026-10-11T09:00:00Z', expired: false, ca: [{ subject: 'hub.home', sha256: '3F:9A:C2:71:0B:E4:58:D6:1C:A7:93:2E:F0:6B:44:8D:C5:19:7E:A2:30:BB:E1:5F:92:07:D8:6C:4A:F3:21:E9', not_after: '2027-10-10T00:00:00Z', self_signed: true }], current: { enabled: false, name: 'desk' } });
+    if (path === '/api/federation/join' && window.__dashsnapSetupFresh) return json({ hub_url: 'wss://hub.home:8470', space: 'home', invite: true, expires_at: '2027-01-11T09:00:00Z', expired: false, ca: [{ subject: 'hub.home', sha256: '3F:9A:C2:71:0B:E4:58:D6:1C:A7:93:2E:F0:6B:44:8D:C5:19:7E:A2:30:BB:E1:5F:92:07:D8:6C:4A:F3:21:E9', not_after: '2027-10-10T00:00:00Z', self_signed: true }], current: { enabled: false, name: 'desk' } });
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
     if (path === '/api/federation/grants') return json({ grants: [
       { peer: 'inst_hn3cxq7a', slug: 'message.direct', scope: '' },
