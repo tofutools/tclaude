@@ -257,7 +257,7 @@ const fleetFederationStubJS = `(function(){
     if (path === '/api/node/update') return json({ current_version: 'v0.42.1', install_method: 'release', protocol_version: 1, binaries: [{ name: 'tclaude', path: '/home/op/.local/bin/tclaude', version: 'v0.42.1', install_method: 'release' }, { name: 'tclaude-agentd', path: '/home/op/.local/bin/tclaude-agentd', version: 'v0.42.1', install_method: 'release' }], latest_version: 'v0.43.0', checked_at: '2026-10-10T08:00:00Z', update_available: true, rollback_available: true, warnings: ['Version skew: inst_2p6ym4ke runs v0.41.0'] });
     if (path === '/api/peer/inst_hn3cxq7a/node/update') return json({ error: 'node.update is not shared', code: 'permission_denied' }, 403);
     if (path === '/api/node-summary') return json({ version: 'v0.42.1', latest_version: 'v0.43.0', update_available: true, update_checked_at: '2026-10-10T08:00:00Z', presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
-    if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ version: 'v0.43.0', update_available: false, presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
+    if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ version: 'v0.43.0', update_available: false, presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', level: 'restricted', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
     if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
     // A peer view of forge: serve this daemon's own per-node data as if forge
     // answered through the proxy, with forge's peer_view metadata on the snapshot.
@@ -375,9 +375,26 @@ func fleetStates() []dashsnap.State {
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && document.querySelectorAll('.fleet-card:not(.hub) .fleet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var i = 0; i < 80 && document.querySelectorAll('.fleet-card:not(.hub) .fleet-card-body:not(.fleet-card-trust)').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('.fleet-edge')) throw new Error('fleet: no map edges');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('fleet: per-node tabs still visible in the map');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-map-link",
+			Title:   "Fleet map: a link's trust",
+			Caption: "Each peer link's label names both directions of trust (peer → this node, this node → peer); clicking it spells out who can do what and who set it. Cards say \"You trust it\" / \"It trusts you\" instead of a bare level badge. lab is unreachable, so its trust in this node is not reported.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !/hidden/.test((document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]') || {}).textContent || ''); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var badge = document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]');
+  if (!badge) throw new Error('fleet: no link label for forge');
+  badge.click();
+  for (var j = 0; j < 30 && !document.querySelector('.fleet-link-pop'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.fleet-link-pop')) throw new Error('fleet: link popover did not open');
 })();`,
 			SettleMS: 400,
 		},

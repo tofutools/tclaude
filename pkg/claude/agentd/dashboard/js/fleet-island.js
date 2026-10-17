@@ -6,7 +6,7 @@ import { RequestAccessDialog } from './peer-access.js';
 import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './fleet-model.js';
+import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, linkView, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './fleet-model.js';
 import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind, tickedNodes, toggleNode, withFused } from './fleet-scope.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './fleet-state.js';
@@ -385,19 +385,32 @@ function CardRows({ card, node, onUpdate }) {
     <dt>Resources</dt><dd>${r ? html`${r.cpu != null && html`<${Meter} label="cpu" value=${r.cpu} />`}${r.mem != null && html`<${Meter} label="mem" value=${r.mem} />`}${r.disk != null && html`<${Meter} label="disk" value=${r.disk} />`}` : html`<span class="muted">not shared</span>`}</dd>
     ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
     ${card.health && html`<dt>Health</dt><dd class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
-    ${card.omitted.length > 0 && html`<dt>Not shared</dt><dd class="muted">${card.omitted.join(', ')}</dd>`}
+    ${card.omitted.length > 0 && html`<dt>Hidden from you</dt><dd class="muted">${card.omitted.join(', ')}</dd>`}
   </dl>`;
 }
 
-function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef, shown }) {
-  const kind = node.local ? 'this node' : node.level === 'unrestricted' ? '⚠ unrestricted peer' : 'restricted peer';
+// TrustRows names both directions of a peer's trust on its card. The card's
+// other rows (and "Hidden from you") are what the peer shares with this node,
+// so its own trust level is never shown as a bare "unrestricted peer" badge.
+function TrustRows({ node, card, selfName }) {
+  const link = linkView(selfName, node, card);
+  const theirs = link.out.level;
+  return html`<dl class="fleet-card-body fleet-card-trust">
+    <dt>You trust it</dt><dd class=${`fleet-trust ${link.in.level}`} title=${`What ${node.name} may do on ${selfName}. You set this in Fleet config.`}>${link.in.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'}</dd>
+    <dt>It trusts you</dt><dd class=${`fleet-trust ${theirs || 'unknown'}`} title=${`What ${selfName} may do on ${node.name}. ${node.name}'s operator sets this.`}>${theirs || 'not reported'}</dd>
+  </dl>`;
+}
+
+function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, cardRef, shown }) {
+  const kind = node.local ? 'this node' : 'peer';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
   return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
-      <span class=${`fleet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
+      <span class="fleet-card-kind">${kind}</span>
       <span class=${`fleet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
+    ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} />`}
     ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
     ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
@@ -418,6 +431,29 @@ function HubCard({ hub, now }) {
       ${hub.since != null && html`<dt>${connected ? 'Up' : 'Since'}</dt><dd>${fmtAge(Math.max(0, now - hub.since))}</dd>`}
     </dl>
   </article>`;
+}
+
+// LinkBadge labels a peer's link with both directions of trust, each naming
+// its nodes, and opens a popover that spells out who can do what.
+function LinkBadge({ link, at, open, onToggle, onConfigure }) {
+  const sentence = (dir, ours) => {
+    if (dir.level === 'unrestricted') return html`<b>${dir.from} can do everything on ${dir.to}</b>: read, message, spawn agents and run commands.`;
+    if (dir.level === 'restricted') return ours ? html`<b>${dir.from} can use only what ${dir.to} grants it.</b>` : html`<b>${dir.from} can use only what ${dir.to} shares.</b>`;
+    return html`<b>${dir.to} has not reported how it trusts ${dir.from}</b> (it runs an older tclaude).`;
+  };
+  const tag = (level) => html`<span class=${`fleet-link-tag ${level || 'unknown'}`}>${level || 'unknown'}</span>`;
+  return html`<span class=${`fleet-link${open ? ' open' : ''}`} style=${`left:${at.x}px;top:${at.y}px`}>
+    <button type="button" class=${`fleet-edge-label${link.asymmetric ? ' asymmetric' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+      aria-label=${`Trust between ${link.in.from} and ${link.in.to}`} onClick=${onToggle}>
+      <span class=${`fleet-link-row ${link.in.level}`}><span class="fleet-link-dir">${link.in.level === 'unrestricted' ? '⚠ ' : ''}${link.in.from} → ${link.in.to}</span> ${link.in.short}</span>
+      <span class=${`fleet-link-row ${link.out.level || 'unknown'}`}><span class="fleet-link-dir">${link.out.level === 'unrestricted' ? '⚠ ' : ''}${link.out.from} → ${link.out.to}</span> ${link.out.short}</span>
+    </button>
+    ${open && html`<div class="fleet-link-pop" role="dialog" aria-label=${`Trust between ${link.in.from} and ${link.in.to}`}>
+      <div class="fleet-link-pop-head">${link.asymmetric ? '⇄ Asymmetric link: each side trusts the other differently' : `Trust between ${link.in.from} and ${link.in.to}`}</div>
+      <p>${tag(link.in.level)} ${sentence(link.in, true)} You set this. <button type="button" class="fleet-link-act" onClick=${onConfigure}>Change in Fleet config…</button></p>
+      <p>${tag(link.out.level)} ${sentence(link.out, false)}${link.out.level ? ` ${link.out.to}'s operator set this.` : ''}${link.out.hidden.length > 0 ? html` <span class="muted">Hidden from you: ${link.out.hidden.join(', ')}.</span>` : ''}</p>
+    </div>`}
+  </span>`;
 }
 
 // edgePath draws a gentle horizontal S-curve between two anchor points.
@@ -448,6 +484,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const [edges, setEdges] = useState([]);
   const [updating, setUpdating] = useState(null);
   const [terminals, setTerminals] = useState(null);
+  const [linkOpen, setLinkOpen] = useState('');
   const fleetKey = fleet ? [fleet.self.id, ...fleet.peers.map((p) => p.id)].join(',') : '';
 
   // Never strand the operator on an empty map: once the node list has loaded
@@ -500,6 +537,16 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     return () => ro.disconnect();
   }, [current.mapActive, fleetKey, current.summaries, fleet?.hub.state]);
 
+  // A link popover closes on Escape or a press anywhere outside it.
+  useEffect(() => {
+    if (!linkOpen) return undefined;
+    const onDown = (event) => { if (!event.target?.closest?.('.fleet-link')) setLinkOpen(''); };
+    const onKey = (event) => { if (event.key === 'Escape') setLinkOpen(''); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [linkOpen]);
+
   if (!fleet) return html`<div class="empty">Not connected to a federation hub. Set it up in ⚙ Fleet or with <code>tclaude federation</code> (see docs/federation.md).</div>`;
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
@@ -511,14 +558,15 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     <svg class="fleet-edges" aria-hidden="true">
       ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`fleet-edge${live ? ' live' : ' stale'}`} />`; })}
     </svg>
-    ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="fleet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
+    ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<${LinkBadge} key=${`l-${e.id}`} link=${linkView(fleet.self.name, p, card(p))} at=${e.mid} open=${linkOpen === e.id}
+      onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${() => { setLinkOpen(''); navigate('fleet-admin'); }} />`; })}
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
     <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`fleet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="fleet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.length === 0 && html`<div class="fleet-map-alone">${NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
     ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
-    <div class="fleet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you.</span></div>
+    <div class="fleet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you. A link's label shows its trust in each direction; click it for details.</span></div>
   </div>`;
 }
 
@@ -598,10 +646,11 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       peer view${hv.label ? html` <span class="remote-node-health">· ${hv.label}</span>` : ''}
     </button>
     ${open && html`<div class="remote-node-pop" role="dialog" aria-label=${`Peer view of ${name}`}>
-      <div class="rnp-head">Peer view of <b>${name}</b>${level ? html` · ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} peer` : ''}</div>
+      <div class="rnp-head">Peer view of <b>${name}</b></div>
+      ${level && html`<div class="rnp-row"><span class="rnp-k">You trust it</span> ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} · <span class="rnp-k">It trusts you</span> ${pv?.level || 'not reported'}</div>`}
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
-      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
+      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Hidden from you</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}
