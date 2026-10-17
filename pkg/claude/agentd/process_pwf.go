@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -124,6 +126,11 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 		byRef[ref] = &pwf.Template{Ref: ref, Head: head, Source: source}
 		order = append(order, ref)
 		for _, sp := range pwf.SubprocessRefs(tmpl) {
+			if !wellFormedPWFRef(sp) {
+				// A half-typed reference in a draft names nothing the store
+				// could hold; the file reports it as not carried.
+				continue
+			}
 			if sp.Version != "" {
 				if err := load(sp.TemplateRef+"@"+sp.Version, false, depth+1); err != nil {
 					return err
@@ -151,6 +158,16 @@ func collectPWFBundle(r *http.Request, fs *store.FS, id, version string) (pwf.Bu
 		bundle.Templates = append(bundle.Templates, *byRef[ref])
 	}
 	return bundle, nil
+}
+
+// pwfVersionRE is a subprocess pin's version: sha256:<64 lowercase hex>.
+var pwfVersionRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func wellFormedPWFRef(sp model.Subprocess) bool {
+	if store.ValidateTemplateID(sp.TemplateRef) != nil {
+		return false
+	}
+	return sp.Version == "" || pwfVersionRE.MatchString(sp.Version)
 }
 
 func isPWFNotFound(err error) bool {

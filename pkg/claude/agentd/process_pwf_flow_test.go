@@ -154,7 +154,8 @@ func TestProcessWorkflowExportImportFailingValidation(t *testing.T) {
 	draft := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: pwf-draft\nstart: s\n" +
 		"nodes:\n  s:\n    type: start\n    next:\n      pass: work\n" +
 		"  work:\n    type: task\n    next:\n      pass: later\n" +
-		"  later:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-unwritten\n    next:\n      pass: done\n" +
+		"  later:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-unwritten\n    next:\n      pass: pinned\n" +
+		"  pinned:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-half-typed\n      version: v1\n    next:\n      pass: done\n" +
 		"  done:\n    type: end\n"
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-draft", map[string]any{"source": draft})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -165,6 +166,8 @@ func TestProcessWorkflowExportImportFailingValidation(t *testing.T) {
 	testharness.DecodeJSON(t, check, &checked)
 	require.NotEmpty(t, checked.Problems)
 	assert.Contains(t, checked.Problems, `template "pwf-draft" references "pwf-unwritten", which the file does not carry`)
+	assert.Contains(t, checked.Problems, `template "pwf-draft" references "pwf-half-typed@v1", which the file does not carry`,
+		"a malformed pin is a problem, not an export failure")
 
 	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-draft/export", nil)
 	require.Equal(t, http.StatusOK, exp.Code, exp.Body.String())
