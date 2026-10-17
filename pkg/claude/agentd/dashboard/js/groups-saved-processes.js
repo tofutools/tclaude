@@ -5,7 +5,8 @@
 // the process's start inputs and command consent, then starts it in the
 // group (a new one is built from the group's process buttons). The strip
 // also edits the steps, publishes the process to the
-// template library, or removes it from the group.
+// template library, or removes it from the group; the chip's × opens the
+// strip straight at that removal confirmation.
 
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
@@ -29,13 +30,13 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, editing = '', onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, onEdit, onClose }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(removing);
   const params = process.params || [];
   const profiles = [...new Set([...(process.programProfiles || []), ...extraProfiles])].sort();
   const missing = params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
@@ -140,6 +141,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
 // there as a graph.
 export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', onEdit }) {
   const [open, setOpen] = useState('');
+  const [removing, setRemoving] = useState(false);
   const [loading, setLoading] = useState('');
   const editGraph = async (process) => {
     if (loading) return;
@@ -168,10 +170,13 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         aria-label=${`Edit ${process.name}`} title=${editing ? 'Save or cancel the open editor first' : `Edit ${process.name} here as a graph`} onClick=${() => editGraph(process)}>✎</button>`}
         <button type="button" class="gq-saved-run" data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
           aria-label=${`Start ${process.name}`} title=${`Start ${process.name} in ${group.name}`}
-          onClick=${() => setOpen(open === process.templateId ? '' : process.templateId)}>▶</button>
+          onClick=${() => { setOpen(open === process.templateId && !removing ? '' : process.templateId); setRemoving(false); }}>▶</button>
+        <button type="button" class="gq-saved-remove" data-saved-remove-chip=${process.templateId}
+          aria-label=${`Remove ${process.name} from ${group.name}`} title=${`Remove ${process.name} from ${group.name}'s processes`}
+          onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
       </span>`)}
     </div>
-    ${current && html`<${StartStrip} key=${current.templateId} editing=${editing} group=${group} process=${current} api=${api} source=${source}
+    ${current && html`<${StartStrip} key=${`${current.templateId}:${removing}`} removing=${removing} editing=${editing} group=${group} process=${current} api=${api} source=${source}
       wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;

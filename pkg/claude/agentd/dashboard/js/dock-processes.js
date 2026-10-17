@@ -7,7 +7,8 @@
 //   the groups it is pinned to. Dragging it onto a group pins it there
 //   (dock-dnd.js, kind 'processes').
 // - Clicking a card opens a preview: the graph as a not-yet-started run, then
-//   Start in <group>, Edit, Pin to group and share (.pwf).
+//   Start in <group>, Edit, Pin to group, unpin (× on a pinned group) and
+//   share (.pwf).
 // - ⤒ and dropping a .pwf on the section import through the existing review.
 // - ⧉ opens Automations › Processes, where templates are managed and deleted.
 
@@ -67,6 +68,14 @@ export async function pinToGroup(group, templateId, { api = processRunApi, doc =
   void context?.refresh?.();
 }
 
+// unpinFromGroup removes the template from a group's processes; the template
+// stays in the library.
+export async function unpinFromGroup(group, templateId, { api = processRunApi, doc = document, context = processContext } = {}) {
+  await api.unpinProcess(group, templateId);
+  doc.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+  void context?.refresh?.();
+}
+
 // deleteFromLibrary asks first (the same confirmation as Automations ›
 // Processes), deletes the template with its whole version history, and asks
 // every library view and the group chips to reload. False when declined.
@@ -121,12 +130,12 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
   const rect = anchor?.getBoundingClientRect?.();
   const style = rect ? `top:${Math.max(8, Math.min(rect.top, window.innerHeight - 340))}px;right:${Math.max(8, window.innerWidth - rect.left + 10)}px` : '';
   const pinned = new Set(row.pinnedGroups || []);
-  const pin = async (group) => {
+  const change = async (group, act) => {
     if (!group || busy) return;
     setBusy(true);
     setError('');
     try {
-      await pinToGroup(group, row.id);
+      await act(group, row.id);
       onChanged();
     } catch (cause) {
       setError(cause.message);
@@ -134,6 +143,8 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
       setBusy(false);
     }
   };
+  const pin = (group) => change(group, pinToGroup);
+  const unpin = (group) => change(group, unpinFromGroup);
   const pick = (event, act) => {
     const group = event.currentTarget.value;
     event.currentTarget.value = '';
@@ -143,6 +154,10 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
     <div class="dpp-head"><b>${row.name || row.id}</b><span class="dpp-meta">v${row.versionCount || 1}${row.listed === false ? ' · group-only' : ''}</span>
       <span class="dpp-spacer"></span><button type="button" class="dpp-close" aria-label="Close" onClick=${onClose}>✕</button></div>
     ${row.description && html`<p class="dpp-desc">${row.description}</p>`}
+    ${pinned.size > 0 && html`<div class="dpp-pins" data-dock-process-pins>Pinned to
+      ${[...pinned].map((group) => html`<span key=${group} class="dock-chip dock-process-pin">${group}<button type="button" class="dpp-unpin"
+        data-dock-process-unpin=${group} disabled=${busy} aria-label=${`Unpin from ${group}`} title=${`Unpin from ${group} (the template stays in the library)`}
+        onClick=${() => unpin(group)}>×</button></span>`)}</div>`}
     <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
     <div class="dpp-acts">
       <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, setFocus: groupsState.setFocus, rerender: groupsState.rerender }); })}>

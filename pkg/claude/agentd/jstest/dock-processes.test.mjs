@@ -47,6 +47,20 @@ test('pinToGroup pins, then asks library views and the process context to reload
   assert.deepEqual(events, [PROCESS_LIBRARY_EVENT]);
 });
 
+test('unpinFromGroup unpins, then asks library views and the process context to reload', async (t) => {
+  const { unpinFromGroup, PROCESS_LIBRARY_EVENT } = await load(t);
+  const calls = [];
+  const events = [];
+  const doc = { dispatchEvent: (event) => events.push(event.type) };
+  await unpinFromGroup('tclaude', 'ship-feature', {
+    api: { unpinProcess: async (group, id) => calls.push([group, id]) },
+    doc,
+    context: { refresh: async () => calls.push(['refresh']) },
+  });
+  assert.deepEqual(calls, [['tclaude', 'ship-feature'], ['refresh']]);
+  assert.deepEqual(events, [PROCESS_LIBRARY_EVENT]);
+});
+
 test('a Start in request expands the group and expires if never taken', async (t) => {
   const harness = await createPreactHarness(t);
   const { requestProcessStart, takeProcessStart } = await harness.importDashboardModule('js/process-start-handoff.js');

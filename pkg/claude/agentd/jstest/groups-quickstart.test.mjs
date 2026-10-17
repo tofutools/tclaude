@@ -478,6 +478,19 @@ test('a saved process publishes to the library and is removed from the group aft
   assert.equal(root.querySelector('[data-saved-publish]'), null, 'a listed process is already published');
 });
 
+test('a saved chip\'s × opens the removal confirmation directly; keep backs out', async (t) => {
+  const { root, api, click } = await mount(t, { context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_nightly"]'));
+  assert.deepEqual(api.calls.unpin, [], 'remove asks first');
+  assert.match(root.querySelector('.gq-confirm').textContent, /stays in the template library/);
+  await click(root.querySelector('[data-saved-remove-confirm]'));
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_nightly' }]);
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  assert.equal(root.querySelector('.gq-confirm'), null, '▶ switches the open strip to its start form');
+  assert.ok(root.querySelector('[data-saved-strip="tmpl_ship"]'));
+});
+
 test('Edit steps reopens a saved process as a step list and saves a new version of it', async (t) => {
   const api = fakeApi({ stored: { tmpl_ship: SAVED_VIEW } });
   const { root, click, setValue } = await mount(t, { api, context: SAVED_CONTEXT });
