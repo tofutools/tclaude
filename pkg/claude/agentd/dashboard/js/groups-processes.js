@@ -578,7 +578,7 @@ export function UngroupedProcessBody({ group }) {
   if (perspective.fused) {
     if (!entries.length) return null;
     return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-      summary=${`${entries.length} ${wizard ? 'rite' : 'run'}${entries.length === 1 ? '' : 's'}`} attrs=${{ 'data-fused-processes': group.key || group.name }}>
+      attrs=${{ 'data-fused-processes': group.key || group.name }}>
       <div class="gp-group" data-process-group=${group.key || group.name}>
         <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
           onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
