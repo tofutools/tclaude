@@ -96,17 +96,20 @@ function staleFallback(loc) {
 }
 
 // defaultGroupsLocation is bare Groups in its remembered lens: a fallback or
-// fresh load that lands on Groups says /groups/processes when that is what
-// shows, so neither the URL nor a later Back disagrees with the screen.
+// fresh load that lands on Groups says /groups/agents or /groups/processes
+// when that is what shows, so neither the URL nor a later Back disagrees with
+// the screen. Bare /groups is the default Both lens.
 function defaultGroupsLocation() {
-  if (featureState('groups')?.focus?.value === 'processes' && groupsProcessesFocusAvailable()) {
-    return normalizeLocation({ tab: 'groups', subtab: 'processes' });
+  const focus = featureState('groups')?.focus?.value;
+  if ((focus === 'processes' || focus === 'agents') && groupsProcessesFocusAvailable()) {
+    return normalizeLocation({ tab: 'groups', subtab: focus });
   }
   return normalizeLocation({ tab: DEFAULT_TAB });
 }
 
-// The Groups Processes focus (/groups/processes) exists only while the
+// The Groups lenses (/groups/agents, /groups/processes) exist only while the
 // processes feature is on; processes.js mirrors that onto body.hide-processes.
+// Without it there is one lens, and it lives at bare /groups.
 function groupsProcessesFocusAvailable() {
   return !document.body.classList.contains('hide-processes');
 }
@@ -114,7 +117,7 @@ function groupsProcessesFocusAvailable() {
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
-    && !(loc.tab === 'groups' && loc.subtab === 'processes' && !groupsProcessesFocusAvailable())
+    && !(loc.tab === 'groups' && (loc.subtab === 'processes' || loc.subtab === 'agents') && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 

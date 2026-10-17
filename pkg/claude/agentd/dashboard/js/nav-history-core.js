@@ -60,7 +60,7 @@ export const KNOWN_TABS = new Set([
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
-  groups: new Set(['members', 'routes', 'processes']),
+  groups: new Set(['members', 'routes', 'agents', 'processes']),
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),

@@ -4,7 +4,7 @@
 // perspectives), and a `run › node` badge with a step strip on each member
 // row for the process node that agent performs (Agents focus, mock G1). Both
 // read the process context read model (process-context.js) and click
-// through to the Processes focus.
+// through to the runs (the Processes focus, or Both's Processes section).
 //
 // Large fleets: one context fetch per snapshot poll, and one agent→runs index
 // per context object (cached), so each row is a Map lookup.
@@ -14,7 +14,8 @@ import htm from 'htm';
 import { ProcessRunBadge } from './process-kit.js';
 import { groupContextEntry, processContext, withRunKind } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
-import { chooseGroupsFocus } from './groups-focus.js';
+import { revealRunsLens } from './groups-focus.js';
+import { setFusedSectionOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
 
 const html = htm.bind(h);
@@ -48,33 +49,40 @@ export function groupProcessCounts(entry) {
   };
 }
 
-// openGroupInProcesses switches to the Processes focus with the `filter` kind
-// ticked and brings
-// the group's row into view, opened so its runs show (the open state is
-// shared with Agents, so a group folded there would hide them).
+// openGroupInProcesses shows the group's runs with the `filter` kind ticked
+// and brings them into view: in Both, the group's Processes section, opened;
+// otherwise the group's row in the Processes focus. The group's row is opened
+// too (the open state is shared between lenses, so a group folded in one
+// would hide its runs in another).
 export function openGroupInProcesses(groupName, filter = 'running', { doc = document } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
   // Tick the clicked kind without unticking the others.
   groups.setProcessFilter?.(withRunKind(groups.processFilter?.value, filter));
   groups.setFocusedRun?.(null);
-  chooseGroupsFocus(groups, 'processes', { doc });
+  const fused = revealRunsLens(groups, { doc });
+  if (fused) {
+    setFusedSectionOpen(groupName, 'processes', true);
+    groups.rerender?.();
+  }
   const reveal = () => {
     const row = doc.querySelector(`details[data-group-key="${cssString(groupName)}"]`);
     if (!row) return;
     row.open = true;
-    row.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    const target = fused ? row.querySelector(`[data-fused-processes="${cssString(groupName)}"]`) || row : row;
+    target.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(reveal));
   else reveal();
 }
 
-// openRunInProcesses opens one run in the Processes lens's single-run focus.
+// openRunInProcesses opens one run in the single-run focus, which Both and
+// Processes share.
 export function openRunInProcesses(groupName, runId, { doc = document } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
   if (groupName && runId && groups.setFocusedRun) groups.setFocusedRun({ group: groupName, runId });
-  chooseGroupsFocus(groups, 'processes', { doc });
+  revealRunsLens(groups, { doc });
 }
 
 function cssString(value) {
@@ -107,7 +115,7 @@ function FlowGlyph() {
 }
 
 // ProcessGraphRow renders counts as the glyph row; nothing when no run is
-// present. With onOpen each glyph is a button opening the Processes focus on
+// present. With onOpen each glyph is a button showing the group's runs on
 // its filter (without toggling the enclosing <details>).
 export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen = null }) {
   const present = GRAPH_STATES.filter((spec) => counts[spec.key] > 0);
@@ -120,7 +128,7 @@ export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen
       const className = `gpi-graph gpi-state-${spec.state}`;
       if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} role="img" title=${label} aria-label=${label}>${body}</span>`;
       return html`<button key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
-        title=${`${label} — show ${groupName}'s ${spec.plain} in the Processes focus`} aria-label=${label}
+        title=${`${label} — show ${groupName}'s processes`} aria-label=${label}
         onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onOpen(spec.filter); }}
       >${body}</button>`;
     })}

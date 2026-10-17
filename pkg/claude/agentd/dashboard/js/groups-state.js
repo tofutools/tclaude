@@ -16,7 +16,7 @@ import {
   setMemberColHidden,
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
-import { GROUPS_FOCUS_PREF, normalizeGroupsFocus } from './groups-focus.js';
+import { GROUPS_FOCUS_PREF, normalizeGroupsFocus, restoreGroupsFocus } from './groups-focus.js';
 import { DEFAULT_RUN_FILTER, normalizeRunFilter } from './process-context.js';
 
 // The run filter became a checklist (process-context.js RUN_KINDS). A fresh
@@ -183,8 +183,8 @@ export function createGroupsState({
   const standingOrdersDialog = signal(null);
   const subview = signal('members');
   const routeSelection = signal('');
-  // Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
-  const focus = signal('agents');
+  // Both | Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
+  const focus = signal('both');
   // The ticked run kinds (running / planned / done) over the Processes
   // lens's run cards, as a canonical "running,planned" string.
   const processFilter = signal(DEFAULT_RUN_FILTER);
@@ -224,7 +224,7 @@ export function createGroupsState({
     }
     batch(() => {
       query.value = prefs.getItem(FILTER_KEY) || '';
-      focus.value = normalizeGroupsFocus(prefs.getItem(GROUPS_FOCUS_PREF));
+      focus.value = restoreGroupsFocus(prefs);
       processFilter.value = normalizeRunFilter(prefs.getItem(PROCESS_FILTER_PREF));
       visibility.value = restored;
       renderRevision.value++;

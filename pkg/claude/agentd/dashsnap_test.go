@@ -767,18 +767,45 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
-			Key:     "groups-focus-agents",
-			Title:   "Groups — Agents focus switch",
-			Caption: "The Agents | Processes icon pair sits right after the compact group search (features.processes on), Agents selected with its distinct-agent count badge over the usual member tables. The toolbar is one row in both perspectives.",
-			JS: showGroups + collapseGroups + `return (async function(){
+			Key:     "groups-focus-both",
+			Title:   "Groups — Both focus (default)",
+			Caption: "The Both | Agents | Processes switch sits right after the compact group search (features.processes on), Both selected by default. Each open group shows one action row (agent controls, then process controls, captioned apart) and two thin section rules, Agents then Processes, with content at the same left edge as the single lenses; a quiet group's Processes section folds to one line.",
+			InitJS:  processContextFixtureInitJS(),
+			JS: showGroups + `return (async function(){
   var deadline = Date.now() + 3000;
-  while (!document.querySelector('.groups-focus-switch') && Date.now() < deadline) {
+  while (!document.querySelector('[data-groups-fused] [data-fused-section]') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
+  var both = document.querySelector('.groups-focus-switch [data-groups-focus="both"]');
+  if (!both) throw new Error('groups focus switch did not render');
+  if (both.getAttribute('aria-pressed') !== 'true') throw new Error('Both is not the default focus');
+  if (!document.querySelector('#groups-list [data-fused-section="agents"] table')) throw new Error('Both lost the member tables');
+  if (!document.querySelector('#groups-list [data-fused-section="processes"]')) throw new Error('Both shows no Processes section');
+  if (!document.querySelector('#groups-list .group-fused-actions [data-act="spawn-agent"] ~ .gf-run-controls')) throw new Error('the fused action row is missing');
+  document.querySelectorAll('#groups-list details[data-group-key]').forEach(function(d){ d.open = true; });
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  // Frame the parent's own action row and sections, below its subgroup.
+  var row = document.querySelector('#groups-list details[data-group-key="frontend-squad"] > .subtable > .group-fused-actions');
+  if (row) row.scrollIntoView({ block: 'start' });
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "groups-focus-agents",
+			Title:   "Groups — Agents focus",
+			Caption: "The Agents focus (/groups/agents): the member tables alone, with process state as small indicators, as before Both existed.",
+			// Set through the island's signal, not a click, so the pref does
+			// not leak the lens into later states that boot on bare Groups.
+			JS: showGroups + collapseGroups + `return (async function(){
+  var registry = await import('/static/js/feature-state-registry.js');
+  var groups = registry.featureState('groups');
+  if (!groups || !groups.focus) throw new Error('groups focus state missing');
+  groups.focus.value = 'agents';
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var agents = document.querySelector('.groups-focus-switch [data-groups-focus="agents"]');
-  if (!agents) throw new Error('groups focus switch did not render');
-  if (agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents is not the default focus');
+  if (!agents || agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents focus is not selected');
   if (!document.querySelector('#groups-list details[data-group-key]')) throw new Error('Agents focus lost the member tables');
+  if (document.querySelector('[data-fused-section]')) throw new Error('Agents still shows Both sections');
 })();`,
 			SettleMS: 200,
 		},
@@ -824,20 +851,20 @@ func baseStates() []dashsnap.State {
   if (!groups || !groups.focus) throw new Error('groups focus state missing');
   groups.focus.value = 'processes';
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var box = document.querySelector('.groups-run-menu input[data-process-filter="running"]');
+  var box = document.querySelector('.groups-focus-runs:not(.groups-focus-lead) .groups-run-menu input[data-process-filter="running"]');
   if (!box) throw new Error('run-kind checklist missing');
   // As a keyboard user would: focus the icon (which opens the menu), then tab in.
   var icon = document.querySelector('.groups-focus-switch [data-groups-focus="processes"]');
   icon.focus();
   await new Promise(function(resolve){ setTimeout(resolve, 200); });
   box.focus();
-  var menu = document.querySelector('.groups-run-menu').getBoundingClientRect();
+  var menu = document.querySelector('.groups-focus-runs:not(.groups-focus-lead) .groups-run-menu').getBoundingClientRect();
   var anchor = icon.getBoundingClientRect();
   if (menu.left < anchor.left - 8 || menu.left > anchor.right || menu.top < anchor.bottom) throw new Error('checklist is not anchored under the Processes icon');
-  var ticked = Array.prototype.map.call(document.querySelectorAll('.groups-run-menu input'), function(input){ return input.checked; });
+  var ticked = Array.prototype.map.call(document.querySelectorAll('.groups-focus-runs:not(.groups-focus-lead) .groups-run-menu input'), function(input){ return input.checked; });
   if (ticked.join(',') !== 'true,true,false') throw new Error('default run kinds are not running + planned: ' + ticked.join(','));
   await new Promise(function(resolve){ setTimeout(resolve, 200); });
-  if (getComputedStyle(document.querySelector('.groups-run-menu')).visibility !== 'visible') throw new Error('checklist does not open on keyboard focus');
+  if (getComputedStyle(document.querySelector('.groups-focus-runs:not(.groups-focus-lead) .groups-run-menu')).visibility !== 'visible') throw new Error('checklist does not open on keyboard focus');
 })();`,
 			SettleMS: 300,
 		},

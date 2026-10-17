@@ -58,7 +58,7 @@ test('graphs stay hidden until the context has loaded', async (t) => {
   assert.equal(mounted.container.textContent, '');
 });
 
-test('a header graph opens the Processes focus on its filter without toggling the group', async (t) => {
+async function mountGraphs(t) {
   const { harness, mod } = await setup(t);
   const [{ registerFeatureState }, { createGroupsState }] = await Promise.all([
     harness.importDashboardModule('js/feature-state-registry.js'),
@@ -73,17 +73,36 @@ test('a header graph opens the Processes focus on its filter without toggling th
   t.after(registerFeatureState('groups', state));
   const navigated = [];
   harness.document.addEventListener('tclaude:navigated', (event) => navigated.push(event.detail.location));
-  let toggles = 0;
-  const mounted = await harness.mount(harness.html`<details onClick=${() => { toggles++; }}><summary>
+  const counter = { toggles: 0 };
+  const mounted = await harness.mount(harness.html`<details onClick=${() => { counter.toggles++; }}><summary>
     <${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${fakeSource(harness)} />
   </summary></details>`);
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
-  assert.equal(toggles, 0);
+  const click = () => harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
+  return { harness, state, navigated, counter, click };
+}
+
+test('from Agents, a header graph opens the Processes focus on its filter without toggling the group', async (t) => {
+  const { state, navigated, counter, click } = await mountGraphs(t);
+  state.setFocus('agents');
+  await click();
+  assert.equal(counter.toggles, 0);
   assert.equal(state.focus.value, 'processes');
   state.setProcessFilter('done');
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
+  await click();
   assert.equal(state.processFilter.value, 'planned,done', 'the clicked kind is ticked without unticking the others');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
+});
+
+test('in Both, a header graph stays in Both and opens the group\'s Processes section', async (t) => {
+  const { harness, state, navigated, counter, click } = await mountGraphs(t);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem('tclaude.dash.groups.fused.processes.frontend-squad', '0');
+  await click();
+  assert.equal(counter.toggles, 0);
+  assert.equal(state.focus.value, 'both');
+  assert.deepEqual(navigated, [], 'no lens change, no history entry');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.frontend-squad'), '1', 'a folded section is opened');
+  assert.equal(state.processFilter.value, 'running,planned');
 });
 
 test('member rows get a run › node badge per run: running, waiting on a human, and queued (dashed) stack', async (t) => {

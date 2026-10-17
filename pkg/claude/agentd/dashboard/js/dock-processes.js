@@ -23,6 +23,7 @@ import { handOffProcessDraft } from './process-draft-handoff.js';
 import { requestProcessStart } from './process-start-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { groupsState } from './groups-state.js';
+import { showRunsLens } from './groups-focus.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 
@@ -160,7 +161,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
         onClick=${() => unpin(group)}>×</button></span>`)}</div>`}
     <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
     <div class="dpp-acts">
-      <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, setFocus: groupsState.setFocus, rerender: groupsState.rerender }); })}>
+      <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); })}>
         <option value="">${wizWord('▶ Start in…', '▶ Begin in…')}</option>
         ${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
       </select>

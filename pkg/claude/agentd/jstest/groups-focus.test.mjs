@@ -60,19 +60,23 @@ test('the focus switch is hidden while features.processes is off', async (t) => 
   assert.ok(root.querySelector('details[data-group-key="webshop"]'));
 });
 
-test('switching to Processes swaps the list for the placeholder, persists and pushes one entry', async (t) => {
+test('switching lenses swaps the frame, persists and pushes one entry each', async (t) => {
   const { harness, root, state, store, navigated } = await setup(t);
   const radios = root.querySelector('[role="group"][aria-label="Groups focus"]');
   assert.ok(radios);
+  const both = getByRole(radios, 'button', { name: /Both/ });
   const agents = getByRole(radios, 'button', { name: /Agents/ });
   const processes = getByRole(radios, 'button', { name: /Processes/ });
-  assert.equal(agents.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual([...radios.querySelectorAll('[data-groups-focus]')].map((b) => b.dataset.groupsFocus), ['both', 'agents', 'processes']);
+  assert.equal(both.getAttribute('aria-pressed'), 'true', 'Both is the default');
+  assert.ok(root.querySelector('[data-groups-fused]'));
+  assert.ok(root.querySelector('details[data-group-key="webshop"]'), 'Both shows the tree while runs load');
   assert.equal(agents.querySelector('.groups-focus-count').textContent, '3', 'distinct agents across shown groups');
 
   await harness.act(() => harness.fireEvent(processes, 'click'));
   assert.equal(processes.getAttribute('aria-pressed'), 'true');
   assert.equal(state.focus.value, 'processes');
-  assert.equal(store.values.get('tclaude.dash.groups.focus'), 'processes');
+  assert.equal(store.values.get('tclaude.dash.groups.lens'), 'processes');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
   assert.ok(root.querySelector('[data-groups-processes]'));
   assert.equal(root.querySelector('details[data-group-key="webshop"]'), null);
@@ -82,9 +86,25 @@ test('switching to Processes swaps the list for the placeholder, persists and pu
   assert.equal(navigated.length, 1, 're-selecting the shown focus adds no entry');
 
   await harness.act(() => harness.fireEvent(agents, 'click'));
-  assert.deepEqual(navigated[1], { tab: 'groups' });
+  assert.deepEqual(navigated[1], { tab: 'groups', subtab: 'agents' });
+  assert.equal(store.values.get('tclaude.dash.groups.lens'), 'agents');
   assert.ok(root.querySelector('details[data-group-key="webshop"]'));
+  assert.equal(root.querySelector('[data-groups-fused]'), null);
   assert.equal(harness.document.body.classList.contains('groups-focus-processes'), false);
+
+  await harness.act(() => harness.fireEvent(both, 'click'));
+  assert.deepEqual(navigated[2], { tab: 'groups' });
+  assert.ok(root.querySelector('[data-groups-fused] details[data-group-key="webshop"]'));
+});
+
+test('the two-lens pref carries over only a remembered Processes', async (t) => {
+  const { harness, state } = await setup(t, { prefs: { 'tclaude.dash.groups.focus': 'agents' } });
+  assert.equal(state.focus.value, 'both', 'the old default reads as the new one');
+  const { restoreGroupsFocus } = await harness.importDashboardModule('js/groups-focus.js');
+  assert.equal(restoreGroupsFocus(memoryPrefs({ 'tclaude.dash.groups.focus': 'processes' })), 'processes');
+  assert.equal(restoreGroupsFocus(memoryPrefs()), 'both');
+  assert.equal(restoreGroupsFocus(memoryPrefs({ 'tclaude.dash.groups.focus': 'processes', 'tclaude.dash.groups.lens': 'agents' })), 'agents',
+    'the new pref wins');
 });
 
 test('the Processes icon carries the run-kind checklist: running + planned by default, never empty, remembered', async (t) => {
@@ -121,8 +141,11 @@ test('history restores set the focus; Route map restores leave it alone', async 
   assert.equal(state.focus.value, 'processes');
   await restore({ tab: 'terminals' });
   assert.equal(state.focus.value, 'processes');
-  await restore({ tab: 'groups' });
+  await restore({ tab: 'groups', subtab: 'agents' });
   assert.equal(state.focus.value, 'agents');
+  await restore({ tab: 'groups' });
+  assert.equal(state.focus.value, 'both');
+  assert.ok(root.querySelector('[data-groups-fused]'));
   assert.deepEqual(navigated, [], 'restores never announce a navigation');
 });
 
@@ -130,11 +153,12 @@ test('the wizard skin renames the lenses', async (t) => {
   const { harness, root } = await setup(t);
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } })));
   const radios = root.querySelector('[role="group"][aria-label="Party lens"]');
-  assert.ok(getByRole(radios, 'button', { name: /Familiars/ }));
+  assert.ok(getByRole(radios, 'button', { name: /^Familiars/ }));
+  assert.ok(getByRole(radios, 'button', { name: /Whole party/ }));
   assert.ok(getByRole(radios, 'button', { name: /Rites/ }));
 });
 
-test('the palette offers both lenses while processes are on and switches through the Groups state', async (t) => {
+test('the palette offers every lens while processes are on and switches through the Groups state', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `export let lastSnapshot = null; export function setLastSnapshot(v) { lastSnapshot=v; } export function webTerminalDefault() { return false; }`);
   harness.document.body.innerHTML = '<nav><button data-tab="groups" class="active"></button><button data-tab="processes"></button></nav>';
@@ -154,8 +178,8 @@ test('the palette offers both lenses while processes are on and switches through
   assert.equal(focusCommands().length, 0, 'no focus commands while processes are off');
   harness.document.body.classList.remove('hide-processes');
   const commands = focusCommands();
-  assert.deepEqual(commands.map((c) => c.label), ['Groups › Processes focus', 'Groups › Agents focus']);
-  commands[0].run();
+  assert.deepEqual(commands.map((c) => c.label), ['Groups › Both focus', 'Groups › Processes focus', 'Groups › Agents focus']);
+  commands[1].run();
   assert.equal(state.focus.value, 'processes');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
 });

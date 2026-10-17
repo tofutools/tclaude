@@ -306,17 +306,18 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     return () => document.body.classList.remove('groups-focus-processes');
   }, [focus]);
 
-  // Both perspectives render the same groups tree; Processes frames it and
-  // swaps each group's member details for its runs.
+  // Every lens renders the same groups tree; Processes frames it and swaps
+  // each group's member details for its runs, Both frames it and shows the
+  // two as sections of each group.
   const tree = html`<${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
     triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
-    ${focus === 'processes'
-    ? html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
-      filter=${state.processFilter.value} source=${processSource}
-      focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`
-    : tree}
+    ${focus === 'agents'
+    ? tree
+    : html`<${GroupsProcessesFocus} groups=${current.groups} allGroups=${state.snapshot.value?.groups} wizard=${wizard}
+      filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
+      focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`}
     ${state.standingOrdersDialog.value && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}

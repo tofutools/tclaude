@@ -639,9 +639,10 @@ export function buildCommands(snapshot) {
       run: () => processesTab.click(),
     });
   }
-  // The Groups Agents | Processes focus switch (features.processes only).
+  // The Groups Both | Agents | Processes focus switch (features.processes only).
   if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
     for (const [focus, plain, arcane, words] of [
+      ['both', 'Both', 'Whole party', 'both fused combined agents processes familiars rites'],
       ['processes', 'Processes', 'Rites', 'processes process runs graphs rites'],
       ['agents', 'Agents', 'Familiars', 'agents members tables familiars'],
     ]) {

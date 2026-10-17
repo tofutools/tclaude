@@ -31,6 +31,7 @@ import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
+import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
 
 const html = htm.bind(h);
 
@@ -323,8 +324,19 @@ function plural(n, word) {
 // start a process for one agent, start one for the group, resume every
 // paused run, pause every running one. Pause stands in for shutdown because
 // it is reversible: work in flight finishes, nothing new is dispatched until
-// resume. Ending runs (cancel) is deliberately not one click away.
-function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, onStart }) {
+// resume. Ending runs (cancel) is deliberately not one click away. Pause and
+// resume wear ⏸/⏵ rather than the agent row's 🛑/🟢, so in Both, where the
+// two rows sit side by side, "pause every run" never reads as "shut down
+// every agent".
+// RunGlyph draws pause and resume as SVG: the ⏸/⏵ characters render at
+// very different sizes across fonts.
+function RunGlyph({ kind }) {
+  return html`<svg class="gp-run-glyph" viewBox="0 0 12 12" aria-hidden="true" data-run-glyph=${kind}>${kind === 'pause'
+    ? html`<rect x="2.5" y="2" width="2.6" height="8" rx=".6" /><rect x="6.9" y="2" width="2.6" height="8" rx=".6" />`
+    : html`<path d="M3.2 1.8v8.4c0 .5.5.8.9.5l6.2-4.2c.4-.3.4-.8 0-1L4.1 1.3c-.4-.3-.9 0-.9.5z" />`}</svg>`;
+}
+
+function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, onStart, inline = false }) {
   const [busy, setBusy] = useState('');
   const pausable = runs.filter((run) => !run.paused);
   const resumable = runs.filter((run) => run.paused);
@@ -353,7 +365,8 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
     }
   };
   const shared = { 'data-group': group.name };
-  return html`<div class="group-header-actions gp-run-controls">
+  // Inline is Both's half-row beside the agent controls; otherwise the row.
+  return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
     <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
       title=${wizard ? `Begin a rite for one familiar of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
       aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
@@ -363,15 +376,20 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
     <span class="group-actions">
       <button type="button" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
         onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
-        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
+        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /></button>
       <button type="button" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
         onClick=${() => bulk('pause', pausable)} aria-label="Pause every running process in this group"
-        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>
+        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /></button>
     </span>
-  </div>`;
+  <//>`;
 }
 
-function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify }) {
+// GroupRuns is a group's runs. In Both (`fused`) it also lays out the rest of
+// the group body around them, since its start and edit state drive both the
+// shared action row and the Processes section: the agent and process
+// controls as one row, then `fused.between` (task force card, triggers),
+// then the Agents and Processes sections.
+function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes), {list, origin, saved} (the step-list editor;
@@ -414,7 +432,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     && !memberRunEntries(context, members, 'all').length;
   // Past the first run (a process exists anywhere, or the operator used or
   // dismissed the panel) an empty group folds Get started to one line.
-  const folded = fresh && (quickStartSeen() || Object.keys(context?.runs || {}).length > 0);
+  // Both always folds it: a full panel in every quiet group would bury the
+  // member tables.
+  const folded = fresh && (!!fused || quickStartSeen() || Object.keys(context?.runs || {}).length > 0);
   const editing = quick && typeof quick === 'object';
   const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
   const people = groupRoster({ members }, busy);
@@ -450,16 +470,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <button type="button" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸</button></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
-  return html`<div class="gp-group" data-process-group=${group.name}>
-    <${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)} agentIds=${members.map((member) => member.agent_id).filter(Boolean)}
-      wizard=${wizard} runApi=${runApi}
-      source=${source} notify=${notify} onStart=${startScope} />
-    <div class="gp-group-head">
-      <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
-      <span class="gp-spacer"></span>
-      ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
-    </div>
-    ${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
+  const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
+    agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
+    source=${source} notify=${notify} onStart=${startScope} inline=${inline} />`;
+  const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
       editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
       onEdit=${(edit) => {
@@ -475,27 +489,76 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
     ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
-      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
+      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
+  if (fused) {
+    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0;
+    const counts = countText(groupProcessCounts(entry), wizard);
+    const n = savedProcesses.length;
+    const saved = !n ? '' : wizard ? `${n} written rite${n === 1 ? '' : 's'}` : `${plural(n, 'saved process')}`;
+    return html`<div class="group-header-actions group-fused-actions">
+        <span class="gf-cap">${wizard ? 'familiars' : 'agents'}</span>${fused.actions}
+        <span class="gf-divider" aria-hidden="true"></span>
+        <span class="gf-cap">${wizard ? 'rites' : 'processes'}</span>${controls(true)}
+      </div>
+      ${fused.between}
+      <${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} summary=${fused.agentsSummary}>${fused.agents}<//>
+      <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
+        summary=${[counts || (wizard ? 'none walking' : 'none running'), saved].filter(Boolean).join(' · ')}
+        auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
+        <div class="gp-group" data-process-group=${group.name}>${body}</div>
+      <//>`;
+  }
+  return html`<div class="gp-group" data-process-group=${group.name}>
+    ${controls(false)}
+    <div class="gp-group-head">
+      <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
+      <span class="gp-spacer"></span>
+      ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+    </div>
+    ${body}
+  </div>`;
+}
+
+// FusedSection is one of Both's two sections in a group: a thin labelled
+// divider row, not a box, so the content keeps the exact left edge it has
+// in Agents and Processes -- Both adds a line, never a nesting level. The
+// row folds the section; the choice is remembered per group (see
+// groups-fused-sections.js), and `force` holds it open while a start or edit
+// form inside needs it.
+export function FusedSection({ group, section, label, summary = '', auto = true, force = false, attrs = {}, children }) {
+  const [, bump] = useState(0);
+  const open = force || fusedSectionOpen(group, section, auto);
+  const toggle = () => { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); };
+  return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}`} data-fused-section=${section} ...${attrs}>
+    <button type="button" class="gf-section-head" aria-expanded=${open ? 'true' : 'false'} disabled=${force}
+      title=${force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`} onClick=${toggle}>
+      <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
+      <span class="gf-label">${label}</span>
+      ${summary && html`<span class="gf-summary">${summary}</span>`}
+    </button>
+    ${open && children}
   </div>`;
 }
 
 const ProcessesPerspective = createContext(null);
 
-// useProcessesPerspective is what the groups tree reads to tell the two
-// perspectives apart: null in Agents, the run context and handlers in
-// Processes.
+// useProcessesPerspective is what the groups tree reads to tell the lenses
+// apart: null in Agents, the run context and handlers in Processes, and the
+// same with `fused` set in Both.
 export function useProcessesPerspective() {
   return useContext(ProcessesPerspective);
 }
 
 // GroupProcessBody replaces a real group's member details in the Processes
 // perspective: its own scope's runs only (subgroups render theirs nested).
-export function GroupProcessBody({ group }) {
+// In Both it is the whole group body instead; `fused` carries the agent half
+// (see GroupRuns).
+export function GroupProcessBody({ group, fused = null }) {
   const perspective = useProcessesPerspective();
   if (!perspective) return null;
   return html`<${GroupRuns} group=${group} roster=${perspective.rosters.get(group.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} />`;
 }
 
 // ungroupedRuns are the agent-scoped runs of Ungrouped's agents, the only
@@ -510,6 +573,18 @@ export function UngroupedProcessBody({ group }) {
   const { wizard, filter } = perspective;
   const entries = ungroupedRuns(perspective, group);
   const label = filterLabel(filter, wizard);
+  // In Both, Ungrouped's runs follow its member table only when there are
+  // any: it has no controls, so an empty section would be pure noise.
+  if (perspective.fused) {
+    if (!entries.length) return null;
+    return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
+      summary=${`${entries.length} ${wizard ? 'rite' : 'run'}${entries.length === 1 ? '' : 's'}`} attrs=${{ 'data-fused-processes': group.key || group.name }}>
+      <div class="gp-group" data-process-group=${group.key || group.name}>
+        <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
+          onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
+      </div>
+    <//>`;
+  }
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
     <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
       onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
@@ -575,9 +650,12 @@ function findFocusGroup(focusedRun, rosters, groups) {
 // either the single-run focus or `children` -- the shared groups tree --
 // under the ProcessesPerspective it reads. The run filter itself is the
 // checklist on the toolbar's Processes button (groups-focus.js).
+//
+// `fused` frames Both the same way, except that the tree never waits on the
+// run context: until it is ready the tree shows as in Agents.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = DEFAULT_RUN_FILTER, wizard = false, source = processContext, api = processRunApi,
-  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -605,14 +683,23 @@ export function GroupsProcessesFocus({
     }
   }, [focusedRun?.runId]);
   if (status === 'ready' && focusGroup) {
-    return html`<div class="gp-focus" data-groups-processes>
+    return html`<div class="gp-focus" data-groups-processes=${fused ? undefined : ''} data-groups-fused=${fused ? '' : undefined}>
       ${source.error.value && html`<span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span>`}
       <${GroupsRunFocus} group=${focusGroup} roster=${rosters.get(focusGroup.name)} context=${context} runId=${focusedRun.runId}
         wizard=${wizard} source=${source} api=${runApi} onClose=${() => onFocusRun(null)}
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify };
+  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused };
+  if (fused) {
+    return html`<div class="gp-focus gf-focus" data-groups-fused>
+      ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
+      ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
+      ${status === 'ready'
+        ? html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`
+        : html`<div class="gp-tree">${children}</div>`}
+    </div>`;
+  }
   return html`<div class="gp-focus" data-groups-processes>
     ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}

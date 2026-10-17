@@ -20323,15 +20323,20 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .filter-bar .groups-search .filter-count { position: absolute; right: 28px; padding: 0 6px; border-radius: 8px; background: #21262d; color: #8b949e; font-size: 10.5px; pointer-events: none; }
 .filter-bar .groups-search button.clear-filter { position: absolute; right: 2px; padding: 2px 7px; }
 
-/* Groups Agents | Processes focus switch (js/groups-focus.js): two icon
-   buttons with bot-style corner count badges. The run-kind checklist floats
-   under the Processes icon on hover / keyboard focus, so switching lenses
-   never adds a toolbar row. */
+/* Groups Both | Agents | Processes focus switch (js/groups-focus.js): three
+   icon buttons with bot-style corner count badges. The run-kind checklist
+   floats under the Both and Processes icons on hover / keyboard focus, so
+   switching lenses never adds a toolbar row. */
 .groups-focus-switch { display: inline-flex; border: 1px solid #30363d; border-radius: 7px; background: #0f141a; flex: none; }
 .groups-focus-runs { position: relative; display: inline-flex; border-left: 1px solid #30363d; }
 .groups-focus-option { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 28px; padding: 0; border: 0; border-radius: 0; background: transparent; color: #8b949e; font: inherit; font-size: 15px; cursor: pointer; }
-.groups-focus-switch > .groups-focus-option:first-child { border-radius: 6px 0 0 6px; }
+.groups-focus-switch > .groups-focus-option { border-left: 1px solid #30363d; }
 .groups-focus-runs .groups-focus-option { border-radius: 0 6px 6px 0; }
+.groups-focus-runs.groups-focus-lead { border-left: 0; }
+.groups-focus-lead .groups-focus-option { width: 46px; border-radius: 6px 0 0 6px; }
+.groups-focus-both { display: inline-flex; align-items: center; gap: 2px; }
+.groups-focus-both .groups-focus-people { width: 15px; height: 12px; }
+.groups-focus-both .groups-focus-flow { width: 16px; height: 12px; }
 .groups-focus-option:not(.active) > :not(.groups-focus-count) { filter: grayscale(0.6); opacity: 0.75; }
 .groups-focus-option:hover { background: #161b22; }
 .groups-focus-option:hover > * { filter: none; opacity: 1; }
@@ -20384,7 +20389,8 @@ body.groups-focus-processes .groups-dnd-hints { display: none; }
 .groups-processes-placeholder-glyph { font-size: 26px; color: #58a6ff; }
 body.wizard .groups-focus-switch { border-color: rgba(122, 93, 176, 0.5); background: #140f28; }
 body.wizard .groups-focus-option { color: #b39ddb; }
-body.wizard .groups-focus-runs { border-left-color: rgba(122, 93, 176, 0.5); }
+body.wizard .groups-focus-runs,
+body.wizard .groups-focus-switch > .groups-focus-option { border-left-color: rgba(122, 93, 176, 0.5); }
 body.wizard .groups-focus-option.active { background: #241b3d; color: #f3e6c0; box-shadow: inset 0 -2px 0 #d4af37; }
 body.wizard .groups-focus-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 body.wizard .groups-focus-option.active .groups-focus-count { background: #a97bd6; color: #14102a; }
@@ -20455,6 +20461,36 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-subtree-total { color: #6e7681; font-size: 11px; }
 details[open] > summary .gp-subtree-total { display: none; }
 .gp-error { color: #ff7b72; }
+.gp-run-glyph { width: 11px; height: 11px; fill: #c9d1d9; vertical-align: -1px; }
+
+/* Groups › Both (js/groups-processes.js FusedSection): one action row with
+   the agent and process controls captioned apart, then the group's Agents
+   and Processes sections. A section head is a thin labelled rule, not a
+   box: the content under it keeps the exact left edge it has in the other
+   lenses, so Both adds a line per section and never a nesting level. */
+.group-fused-actions { flex-wrap: wrap; row-gap: 6px; }
+.gf-cap { color: #6e7681; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 2px; }
+.gf-divider { width: 1px; height: 18px; background: #30363d; margin: 0 8px; }
+.gf-run-controls { display: inline-flex; align-items: center; gap: 4px; }
+.gf-section { margin: 0 0 6px; }
+.gf-section-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; margin: 0 0 6px; padding: 3px 0;
+  background: none; border: 0; border-bottom: 1px solid #21262d; border-radius: 0;
+  color: #8b949e; font: inherit; font-size: 11px; text-align: left; cursor: pointer;
+}
+.gf-section-head:hover { color: #c9d1d9; border-bottom-color: #30363d; }
+.gf-section-head:disabled { cursor: default; }
+.gf-section-head:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.gf-section:not(.open) > .gf-section-head { margin-bottom: 0; }
+.gf-tri { width: 10px; color: #6e7681; }
+.gf-label { color: #c9d1d9; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 10.5px; }
+.gf-summary { color: #8b949e; }
+.gf-section > .gp-group { padding: 0; }
+.gf-section > .gp-group .gp-card, .gf-section > .gp-group .gp-planned-list { margin-left: 0; }
+.gf-section > .gp-group .gp-empty { margin: 0 0 4px; }
+body.wizard .gf-divider { background: rgba(122, 93, 176, 0.5); }
+body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
+body.wizard .gf-label { color: #f3e6c0; }
 body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
