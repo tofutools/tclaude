@@ -216,3 +216,28 @@ test('group disclosure binders scope to the stable host and no-op harmlessly whe
   secondTitle();
   secondDetails();
 });
+
+test('fused Groups folds remember their group@node disclosure like the node Groups view', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
+  const [{ bindDetailsPersistence, bindGroupTitleToggle }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/refresh.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  harness.document.body.innerHTML = `<div id="groups-list"></div><div id="fleetview-fused-groups-root"><details data-group-key="ops@forge"><summary><strong class="group-name">ops@forge</strong></summary></details></div>`;
+  const root = harness.document.getElementById('fleetview-fused-groups-root');
+  let rerenders = 0;
+  root.addEventListener('tclaude:group-disclosure', () => { rerenders += 1; });
+  const unbindDetails = bindDetailsPersistence();
+  const unbindTitle = bindGroupTitleToggle();
+  const details = root.querySelector('details');
+  harness.fireEvent(details, 'toggle');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.ops@forge'), null, 'a render-time toggle is not a choice');
+  harness.fireEvent(details.querySelector('.group-name'), 'click', { detail: 1 });
+  details.open = true;
+  harness.fireEvent(details, 'toggle');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.ops@forge'), '1');
+  assert.equal(rerenders, 1, 'the fused island is told to re-render');
+  unbindTitle();
+  unbindDetails();
+});
