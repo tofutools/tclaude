@@ -406,10 +406,13 @@ func (p *probeJobTmux) Command(args ...string) *exec.Cmd {
 			case p.writeAfter > 0:
 				go func() {
 					time.Sleep(p.writeAfter)
-					_ = os.WriteFile(resultPath, []byte(p.write), 0o600)
+					// Publish the way the real job does (staging file +
+					// rename): a plain WriteFile can be read while still
+					// empty, which the probe rightly calls unreadable.
+					_ = writeTclaudeLayerProbeResult(resultPath, p.write)
 				}()
 			default:
-				_ = os.WriteFile(resultPath, []byte(p.write), 0o600)
+				_ = writeTclaudeLayerProbeResult(resultPath, p.write)
 			}
 		}
 		if p.refuse {
