@@ -145,6 +145,46 @@ func TestProcessWorkflowExportImportRoundTrip(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, bad.Code, bad.Body.String())
 }
 
+// A draft that fails validation, and points at a subprocess template nobody
+// has written yet, still shares: the check names its problems, the export
+// carries it as saved, and the importer's review lists the same problems
+// before storing it.
+func TestProcessWorkflowExportImportFailingValidation(t *testing.T) {
+	f, root := processAuthoringFlow(t)
+	draft := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: pwf-draft\nstart: s\n" +
+		"nodes:\n  s:\n    type: start\n    next:\n      pass: work\n" +
+		"  work:\n    type: task\n    next:\n      pass: later\n" +
+		"  later:\n    type: subprocess\n    subprocess:\n      templateRef: pwf-unwritten\n    next:\n      pass: done\n" +
+		"  done:\n    type: end\n"
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/pwf-draft", map[string]any{"source": draft})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	check := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-draft/export?check=1", nil)
+	require.Equal(t, http.StatusOK, check.Code, check.Body.String())
+	var checked struct{ Problems []string }
+	testharness.DecodeJSON(t, check, &checked)
+	require.NotEmpty(t, checked.Problems)
+	assert.Contains(t, checked.Problems, `template "pwf-draft" references "pwf-unwritten", which the file does not carry`)
+
+	exp := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/pwf-draft/export", nil)
+	require.Equal(t, http.StatusOK, exp.Code, exp.Body.String())
+	file := exp.Body.Bytes()
+	archive, err := pwf.Open(bytes.NewReader(file), int64(len(file)), paf.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, checked.Problems, archive.Problems, "the check reports what every reader of the file sees")
+
+	require.NoError(t, os.RemoveAll(root))
+	prev := pwfRaw(t, f, http.MethodPost, "/v1/process/import", file)
+	require.Equal(t, http.StatusOK, prev.Code, prev.Body.String())
+	var view struct{ Problems []string }
+	testharness.DecodeJSON(t, prev, &view)
+	assert.Equal(t, checked.Problems, view.Problems)
+	applied := pwfApply(t, f, file, "")
+	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
+	got := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/pwf-draft", nil)
+	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
+}
+
 func TestProcessWorkflowExportUnknownTemplate(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
 	rec := pwfRaw(t, f, http.MethodGet, "/v1/process/templates/nope/export", nil)

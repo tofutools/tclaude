@@ -197,3 +197,37 @@ test('import flow: each choice is reviewed again, and the apply carries the revi
   await harness.act(async () => { doc.querySelector('[data-pwf-import]').click(); await settle(); });
   assert.equal(calls.at(-1), `/v1/process/import?apply=1&review=digest-${reviewed}&map=dev%3Dengineer&rename=1&group=webshop`);
 });
+
+test('exportWorkflow: a workflow that fails validation is shared only after the operator confirms', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { exportWorkflow } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const respond = (problems) => async (url) => (url.endsWith('?check=1')
+    ? { ok: true, status: 200, json: async () => ({ problems }) }
+    : { ok: true, status: 200, blob: async () => 'pwf-bytes' });
+  const run = async (problems, answer) => {
+    const calls = [];
+    const asked = [];
+    const downloads = [];
+    const fetchImpl = async (url, init) => { calls.push(url); return respond(problems)(url, init); };
+    const result = await exportWorkflow('ship', {
+      fetchImpl, download: (blob, name) => downloads.push(name), confirm: async (req) => { asked.push(req); return answer; },
+    });
+    return { result, calls, asked, downloads };
+  };
+
+  const clean = await run([], false);
+  assert.equal(clean.result, '');
+  assert.equal(clean.asked.length, 0, 'a valid workflow downloads without asking');
+  assert.deepEqual(clean.downloads, ['ship.pwf']);
+
+  const declined = await run(['template "ship": nodes.work: task has no performer'], false);
+  assert.equal(declined.result, '', 'declining is not an error');
+  assert.equal(declined.asked.length, 1);
+  assert.match(declined.asked[0].body, /task has no performer/);
+  assert.equal(declined.asked[0].okLabel, 'Share anyway');
+  assert.deepEqual(declined.downloads, []);
+  assert.deepEqual(declined.calls, ['/v1/process/templates/ship/export?check=1']);
+
+  const confirmed = await run(['template "ship": nodes.work: task has no performer'], true);
+  assert.deepEqual(confirmed.downloads, ['ship.pwf']);
+});

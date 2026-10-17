@@ -140,6 +140,10 @@ type Template struct {
 	Head   bool
 	Source []byte
 	Parsed *model.Template
+	// Problems are the template's validation errors. A template that fails
+	// validation is still carried, the way the store keeps an unfinished
+	// draft; it just cannot run until someone fixes it.
+	Problems []string
 }
 
 // Bundle is what Write packs: the root and every template it references.
@@ -176,6 +180,11 @@ type Archive struct {
 	Templates  map[string]*Template
 	Order      []string
 	Signatures []paf.SignatureResult
+	// Problems is everything that keeps the workflow from running as
+	// carried: each template's validation errors and every reference the
+	// file does not carry. Readers recompute it rather than trusting the
+	// file, so it is not part of workflow.json.
+	Problems []string
 }
 
 // Root returns the root template.
@@ -192,22 +201,45 @@ func (a *Archive) Head(id string) *Template {
 }
 
 // ParseTemplate parses one template source and returns it with its ref.
-// Sources with validation errors are refused.
+// It accepts what the template store accepts as a draft: validation errors
+// are advisory (see TemplateProblems), but a source the store could not keep
+// as written (an unknown field, a duplicate or merge key) or a graph past the
+// size budget is refused.
 func ParseTemplate(source []byte) (*model.Template, string, error) {
+	tmpl, ref, _, err := parseTemplate(source)
+	return tmpl, ref, err
+}
+
+func parseTemplate(source []byte) (*model.Template, string, []string, error) {
 	parsed, err := model.Parse(source)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if parsed.Template == nil {
-		return nil, "", errors.New("not a process template")
-	}
-	if parsed.Diagnostics.HasErrors() {
-		return nil, "", fmt.Errorf("template %q has validation errors", parsed.Template.ID)
+		return nil, "", nil, errors.New("not a process template")
 	}
 	if !templateIDRE.MatchString(parsed.Template.ID) {
-		return nil, "", fmt.Errorf("template id %q is not portable", parsed.Template.ID)
+		return nil, "", nil, fmt.Errorf("template id %q is not portable", parsed.Template.ID)
 	}
-	return parsed.Template, parsed.Ref, nil
+	blocking := model.PreflightNormalizedGraphCardinality(parsed.Template).Errors()
+	if parsed.Diagnostics.HasSourceFidelityError() || parsed.Diagnostics.HasNormalizedGraphBudgetError() {
+		blocking = append(blocking, parsed.Diagnostics.Errors()...)
+	}
+	if len(blocking) > 0 {
+		return nil, "", nil, fmt.Errorf("template %q cannot be carried: %s", parsed.Template.ID, problemText(blocking[0]))
+	}
+	var problems []string
+	for _, d := range parsed.Diagnostics.Errors() {
+		problems = append(problems, problemText(d))
+	}
+	return parsed.Template, parsed.Ref, problems, nil
+}
+
+func problemText(d model.Diagnostic) string {
+	if d.Path != "" {
+		return d.Path + ": " + d.Message
+	}
+	return d.Message
 }
 
 // templatePath is a template's entry name: templates/<id>/<semantic hash>.
@@ -246,34 +278,40 @@ func resolveIn(sp model.Subprocess, byRef map[string]*Template, order []string) 
 }
 
 // checkClosure verifies the template set: refs match content, at most one
-// head per id, the root is present, and every reference resolves inside the
-// file. A workflow must arrive complete.
-func checkClosure(root string, byRef map[string]*Template, order []string) error {
+// head per id, and the root is present. A reference that does not resolve
+// inside the file is not an error, since an unfinished draft may point at a
+// template nobody has written yet; it is returned as a problem.
+func checkClosure(root string, byRef map[string]*Template, order []string) ([]string, error) {
 	if byRef[root] == nil {
-		return fmt.Errorf("root template %q is not in the file", root)
+		return nil, fmt.Errorf("root template %q is not in the file", root)
 	}
 	heads := map[string]bool{}
 	for _, ref := range order {
 		t := byRef[ref]
 		if t.Head {
 			if heads[t.Parsed.ID] {
-				return fmt.Errorf("template %q has more than one head", t.Parsed.ID)
+				return nil, fmt.Errorf("template %q has more than one head", t.Parsed.ID)
 			}
 			heads[t.Parsed.ID] = true
 		}
 	}
+	var problems []string
 	for _, ref := range order {
-		for _, sp := range SubprocessRefs(byRef[ref].Parsed) {
+		t := byRef[ref]
+		for _, p := range t.Problems {
+			problems = append(problems, fmt.Sprintf("template %q: %s", t.Parsed.ID, p))
+		}
+		for _, sp := range SubprocessRefs(t.Parsed) {
 			if resolveIn(sp, byRef, order) == nil {
 				want := sp.TemplateRef
 				if sp.Version != "" {
 					want += "@" + sp.Version
 				}
-				return fmt.Errorf("template %q references %q, which the file does not carry", byRef[ref].Parsed.ID, want)
+				problems = append(problems, fmt.Sprintf("template %q references %q, which the file does not carry", t.Parsed.ID, want))
 			}
 		}
 	}
-	return nil
+	return problems, nil
 }
 
 // Summarize derives workflow.json's computed fields from the templates.
@@ -354,24 +392,24 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// Write packs a bundle into a PWF file. The bundle must be complete: the
-// root and every template its subprocess steps reference.
-func Write(out io.Writer, b Bundle, opts WriteOptions) error {
+// prepare parses a bundle's templates in file order (root first) and checks
+// the set, returning what keeps the workflow from running as carried.
+func prepare(b Bundle) (map[string]*Template, []string, []string, error) {
 	byRef := map[string]*Template{}
 	var order []string
 	for i := range b.Templates {
 		t := b.Templates[i]
-		parsed, ref, err := ParseTemplate(t.Source)
+		parsed, ref, problems, err := parseTemplate(t.Source)
 		if err != nil {
-			return fmt.Errorf("pwf: %w", err)
+			return nil, nil, nil, fmt.Errorf("pwf: %w", err)
 		}
 		if t.Ref != "" && t.Ref != ref {
-			return fmt.Errorf("pwf: template source hashes to %s, not %s", ref, t.Ref)
+			return nil, nil, nil, fmt.Errorf("pwf: template source hashes to %s, not %s", ref, t.Ref)
 		}
 		if byRef[ref] != nil {
-			return fmt.Errorf("pwf: template %s given twice", ref)
+			return nil, nil, nil, fmt.Errorf("pwf: template %s given twice", ref)
 		}
-		t.Ref, t.Parsed = ref, parsed
+		t.Ref, t.Parsed, t.Problems = ref, parsed, problems
 		byRef[ref] = &t
 		if ref == b.Root {
 			order = append([]string{ref}, order...)
@@ -379,8 +417,29 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 			order = append(order, ref)
 		}
 	}
-	if err := checkClosure(b.Root, byRef, order); err != nil {
-		return fmt.Errorf("pwf: %w", err)
+	problems, err := checkClosure(b.Root, byRef, order)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("pwf: %w", err)
+	}
+	return byRef, order, problems, nil
+}
+
+// Problems says what would keep a bundle's workflow from running as
+// carried, without writing it: the same list a reader of the written file
+// gets as Archive.Problems. A bundle with problems can still be written.
+func Problems(b Bundle) ([]string, error) {
+	_, _, problems, err := prepare(b)
+	return problems, err
+}
+
+// Write packs a bundle into a PWF file. The bundle should be complete (the
+// root and every template its subprocess steps reference), but templates
+// with validation errors and references it does not carry are written as
+// they are and reported to readers as Archive.Problems.
+func Write(out io.Writer, b Bundle, opts WriteOptions) error {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return err
 	}
 	wf := Summarize(b.Root, byRef, order)
 	wf.Title = strings.TrimSpace(b.Title)
@@ -593,14 +652,14 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 		if a.Templates[te.Ref] != nil {
 			return nil, fmt.Errorf("pwf: template %s listed twice", te.Ref)
 		}
-		parsed, ref, err := ParseTemplate(source)
+		parsed, ref, problems, err := parseTemplate(source)
 		if err != nil {
 			return nil, fmt.Errorf("pwf: %s: %w", name, err)
 		}
 		if ref != te.Ref {
 			return nil, fmt.Errorf("pwf: %s hashes to %s", name, ref)
 		}
-		a.Templates[ref] = &Template{Ref: ref, Head: te.Head, Source: source, Parsed: parsed}
+		a.Templates[ref] = &Template{Ref: ref, Head: te.Head, Source: source, Parsed: parsed, Problems: problems}
 		a.Order = append(a.Order, ref)
 		carried[name] = true
 	}
@@ -612,7 +671,7 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	if len(a.Order) == 0 || a.Order[0] != m.Root || a.Workflow.Root != m.Root {
 		return nil, errors.New("pwf: the root template must be listed first in workflow.json and match the manifest")
 	}
-	if err := checkClosure(m.Root, a.Templates, a.Order); err != nil {
+	if a.Problems, err = checkClosure(m.Root, a.Templates, a.Order); err != nil {
 		return nil, fmt.Errorf("pwf: %w", err)
 	}
 	derived := Summarize(m.Root, a.Templates, a.Order)

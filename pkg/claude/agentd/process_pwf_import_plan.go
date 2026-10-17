@@ -317,6 +317,9 @@ func (p *pwfPlanner) rewriteNodes(nodes map[string]model.Node, changed *bool) er
 		})
 		if sp := node.Subprocess; sp != nil {
 			switch {
+			case sp.TemplateRef != "" && sp.Version != "" && p.a.Templates[sp.TemplateRef+"@"+sp.Version] == nil:
+				// A pin the file does not carry stays as written; the review
+				// lists it among the workflow's problems.
 			case sp.TemplateRef != "" && sp.Version != "":
 				child, err := p.plan(sp.TemplateRef + "@" + sp.Version)
 				if err != nil {
