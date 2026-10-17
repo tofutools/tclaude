@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Dashboard surface for daemon profiling (Activity › Performance):
@@ -28,9 +29,19 @@ func registerProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/profiles", dashboardAuthed(handleProfileStart))
 	mux.HandleFunc("DELETE /api/profiles/{id}", dashboardAuthed(handleProfileDelete))
 	mux.HandleFunc("GET /api/profiles/{id}/files/{name}", dashboardReadAuthed(handleProfileFile))
-	mux.HandleFunc("/api/profiles/{id}/ui/{kind}/", dashboardReadAuthed(func(w http.ResponseWriter, r *http.Request) {
+	viewer := func(w http.ResponseWriter, r *http.Request) {
 		serveProfileViewer(w, r, r.PathValue("id"), r.PathValue("kind"))
-	}))
+	}
+	readViewer, fullViewer := dashboardReadAuthed(viewer), dashboardAuthed(viewer)
+	mux.HandleFunc("/api/profiles/{id}/ui/{kind}/", func(w http.ResponseWriter, r *http.Request) {
+		// pprof's saveconfig/deleteconfig write its settings file whatever
+		// the method, so they never ride the cookie-only read path.
+		if strings.HasSuffix(r.URL.Path, "/saveconfig") || strings.HasSuffix(r.URL.Path, "/deleteconfig") {
+			fullViewer(w, r)
+			return
+		}
+		readViewer(w, r)
+	})
 }
 
 func dashboardAuthed(h http.HandlerFunc) http.HandlerFunc {

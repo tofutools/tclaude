@@ -143,6 +143,12 @@ func TestDashboardProfiles_CaptureListViewDelete(t *testing.T) {
 	rec = profileRequestTo(t, mux, http.MethodGet, "/api/profiles/"+got.ID+"/ui/cpu/top", "", nil, "")
 	assert.Equal(t, http.StatusForbidden, rec.Code, "the viewer still requires the session cookie")
 
+	saveConfig := httptest.NewRequest(http.MethodGet, "/api/profiles/"+got.ID+"/ui/cpu/saveconfig?config=x", nil)
+	saveConfig.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, saveConfig)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "pprof's config writes need the full Origin check")
+
 	// pprof's own web UI, mounted under the capture.
 	rec = do(http.MethodGet, "/api/profiles/"+got.ID+"/ui/cpu/", "")
 	require.Equal(t, http.StatusMovedPermanently, rec.Code, rec.Body.String())
@@ -232,4 +238,22 @@ func TestProfileCLI_CapturesOverHTTP(t *testing.T) {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(raw), `"subprocesses"`)
+}
+
+func TestLoopbackHostOnly(t *testing.T) {
+	h := loopbackHostOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	for host, want := range map[string]int{
+		"127.0.0.1:6060":        http.StatusOK,
+		"localhost:6060":        http.StatusOK,
+		"[::1]:6060":            http.StatusOK,
+		"evil.example:6060":     http.StatusForbidden,
+		"rebound.attacker.test": http.StatusForbidden,
+		"192.168.1.5:6060":      http.StatusForbidden,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+		r.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		assert.Equal(t, want, rec.Code, host)
+	}
 }

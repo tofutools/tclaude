@@ -55,14 +55,24 @@ func profileViewerFor(id, kind string) (*profileViewer, error) {
 
 	key := profileViewerKey(id, kind)
 	profileViewers.mu.Lock()
-	defer profileViewers.mu.Unlock()
 	if v := profileViewers.byKey[key]; v != nil {
 		touchProfileViewer(key)
+		profileViewers.mu.Unlock()
 		return v, nil
 	}
+	profileViewers.mu.Unlock()
+	// Parse outside the lock: a large heap/allocs profile must not stall
+	// requests for viewers already cached. A concurrent duplicate build is
+	// harmless; the first one stored wins.
 	v, err := buildProfileViewer(path)
 	if err != nil {
 		return nil, err
+	}
+	profileViewers.mu.Lock()
+	defer profileViewers.mu.Unlock()
+	if existing := profileViewers.byKey[key]; existing != nil {
+		touchProfileViewer(key)
+		return existing, nil
 	}
 	if profileViewers.byKey == nil {
 		profileViewers.byKey = map[string]*profileViewer{}

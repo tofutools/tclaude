@@ -73,6 +73,26 @@ func validatePprofAddr(addr string) error {
 	return nil
 }
 
+// loopbackHostOnly rejects requests whose Host header is not a loopback name.
+// The TCP endpoint has no other authentication, so this is what stops a web
+// page that DNS-rebinds its own hostname to 127.0.0.1 from reading profiles.
+func loopbackHostOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+		if host != "localhost" {
+			if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // startProfilingServer brings up the profiling endpoints requested on the
 // serve command line. It returns a stop func that is safe to call when
 // nothing was started. Any failure is fatal to startup: the operator asked
@@ -123,8 +143,14 @@ func startProfilingServer(socket bool, addr string, out io.Writer) (func(), erro
 	// it on for the daemon's lifetime while the endpoint is up.
 	pinContentionProfiling()
 
-	srv := &http.Server{Handler: profilingMux(), ReadHeaderTimeout: 5 * time.Second}
+	var servers []*http.Server
 	for _, ln := range listeners {
+		var handler http.Handler = profilingMux()
+		if _, isTCP := ln.Addr().(*net.TCPAddr); isTCP {
+			handler = loopbackHostOnly(handler)
+		}
+		srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+		servers = append(servers, srv)
 		slog.Info("agentd profiling endpoint listening", "addr", ln.Addr().String())
 		fmt.Fprintf(out, "  profiling (pprof): %s\n", ln.Addr().String())
 		go func(ln net.Listener) {
@@ -134,7 +160,9 @@ func startProfilingServer(socket bool, addr string, out io.Writer) (func(), erro
 		}(ln)
 	}
 	return func() {
-		_ = srv.Close()
+		for _, srv := range servers {
+			_ = srv.Close()
+		}
 		if socketPath != "" {
 			removeSocketPaths([]string{socketPath})
 		}
@@ -269,7 +297,15 @@ func captureProfileOverHTTP(client *http.Client, base, dir string, c *profileCap
 	fmt.Fprintf(out, "Profiling agentd for %ds (trace %ds) into %s ...\n", c.Seconds, c.TraceSeconds, dir)
 	var wg sync.WaitGroup
 	var cpuErr, traceErr error
+	deltaErrs := make([]error, len(profileFiles))
 	wg.Go(func() { cpuErr = fetch(fmt.Sprintf("/debug/pprof/profile?seconds=%d", c.Seconds), "cpu.pprof") })
+	// Block and mutex profiles are cumulative since daemon start; ?seconds=N
+	// makes net/http/pprof serve only the window's delta.
+	for i, f := range profileFiles {
+		if f.Delta {
+			wg.Go(func() { deltaErrs[i] = fetch(fmt.Sprintf("/debug/pprof/%s?seconds=%d", f.Lookup, c.Seconds), f.Name) })
+		}
+	}
 	if c.TraceSeconds > 0 {
 		wg.Go(func() { traceErr = fetch(fmt.Sprintf("/debug/pprof/trace?seconds=%d", c.TraceSeconds), "trace.out") })
 	}
@@ -281,12 +317,17 @@ func captureProfileOverHTTP(client *http.Client, base, dir string, c *profileCap
 		fmt.Fprintf(out, "  warning: trace capture failed: %v\n", traceErr)
 		_ = os.Remove(filepath.Join(dir, "trace.out"))
 	}
+	for _, err := range deltaErrs {
+		if err != nil {
+			fmt.Fprintf(out, "  warning: %v\n", err)
+		}
+	}
 	after, err := readStats("stats-after.json")
 	if err != nil {
 		return err
 	}
 	for _, f := range profileFiles {
-		if f.Lookup == "" {
+		if f.Lookup == "" || f.Delta {
 			continue
 		}
 		path := "/debug/pprof/" + f.Lookup

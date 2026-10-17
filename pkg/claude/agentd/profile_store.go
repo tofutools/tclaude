@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/pprof/profile"
 	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -53,6 +55,9 @@ var profileFiles = []struct {
 	// Lookup is the runtime/pprof profile written after the CPU window.
 	Lookup string
 	Debug  int
+	// Delta marks cumulative-since-start profiles (block, mutex) that are
+	// stored as the difference over the capture window.
+	Delta bool
 }{
 	{Name: "cpu.pprof", Kind: "cpu"},
 	{Name: "trace.out"},
@@ -60,8 +65,8 @@ var profileFiles = []struct {
 	{Name: "allocs.pprof", Kind: "allocs", Lookup: "allocs"},
 	{Name: "goroutine.pprof", Kind: "goroutine", Lookup: "goroutine"},
 	{Name: "goroutines.txt", Lookup: "goroutine", Debug: 2},
-	{Name: "block.pprof", Kind: "block", Lookup: "block"},
-	{Name: "mutex.pprof", Kind: "mutex", Lookup: "mutex"},
+	{Name: "block.pprof", Kind: "block", Lookup: "block", Delta: true},
+	{Name: "mutex.pprof", Kind: "mutex", Lookup: "mutex", Delta: true},
 	{Name: "stats-before.json"},
 	{Name: "stats-after.json"},
 	{Name: profileSummaryFile},
@@ -335,6 +340,7 @@ func startInProcessProfile(req profileRequest) (*profileCapture, error) {
 	}
 	before := perfstats.Take()
 	restoreRates := enableContentionProfiling()
+	baselines := snapshotDeltaBaselines()
 	if err := pprof.StartCPUProfile(cpuFile); err != nil {
 		restoreRates()
 		_ = cpuFile.Close()
@@ -350,12 +356,12 @@ func startInProcessProfile(req profileRequest) (*profileCapture, error) {
 			profileRunner.mu.Unlock()
 		}()
 		defer restoreRates()
-		runInProcessProfile(dir, c, cpuFile, before)
+		runInProcessProfile(dir, c, cpuFile, before, baselines)
 	}()
 	return &snapshot, nil
 }
 
-func runInProcessProfile(dir string, c *profileCapture, cpuFile *os.File, before perfstats.Snapshot) {
+func runInProcessProfile(dir string, c *profileCapture, cpuFile *os.File, before perfstats.Snapshot, baselines map[string]*profile.Profile) {
 	var traceErr error
 	if c.TraceSeconds > 0 {
 		traceErr = captureTrace(filepath.Join(dir, "trace.out"), time.Duration(c.TraceSeconds)*time.Second)
@@ -378,7 +384,13 @@ func runInProcessProfile(dir string, c *profileCapture, cpuFile *os.File, before
 		if f.Lookup == "" {
 			continue
 		}
-		if err := writeLookupProfile(filepath.Join(dir, f.Name), f.Lookup, f.Debug); err != nil {
+		var err error
+		if f.Delta {
+			err = writeDeltaProfile(filepath.Join(dir, f.Name), f.Lookup, baselines[f.Lookup])
+		} else {
+			err = writeLookupProfile(filepath.Join(dir, f.Name), f.Lookup, f.Debug)
+		}
+		if err != nil {
 			notes = append(notes, fmt.Sprintf("%s: %v", f.Name, err))
 		}
 	}
@@ -430,6 +442,62 @@ func writeLookupProfile(path, name string, debug int) error {
 		return err
 	}
 	if err := p.WriteTo(f, debug); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// snapshotDeltaBaselines records the cumulative block/mutex profiles at the
+// start of a capture. The runtime never resets them, so without a baseline
+// every capture would include contention since daemon start.
+func snapshotDeltaBaselines() map[string]*profile.Profile {
+	out := map[string]*profile.Profile{}
+	for _, f := range profileFiles {
+		if !f.Delta {
+			continue
+		}
+		var buf bytes.Buffer
+		if p := pprof.Lookup(f.Lookup); p != nil && p.WriteTo(&buf, 0) == nil {
+			if parsed, err := profile.Parse(&buf); err == nil {
+				out[f.Lookup] = parsed
+			}
+		}
+	}
+	return out
+}
+
+// writeDeltaProfile writes name's profile minus base, the same delta
+// net/http/pprof serves for ?seconds=N.
+func writeDeltaProfile(path, name string, base *profile.Profile) error {
+	if base == nil {
+		return fmt.Errorf("no baseline for %s profile", name)
+	}
+	p := pprof.Lookup(name)
+	if p == nil {
+		return fmt.Errorf("no %s profile", name)
+	}
+	var buf bytes.Buffer
+	if err := p.WriteTo(&buf, 0); err != nil {
+		return err
+	}
+	now, err := profile.Parse(&buf)
+	if err != nil {
+		return err
+	}
+	base = base.Copy()
+	base.Scale(-1)
+	delta, err := profile.Merge([]*profile.Profile{base, now})
+	if err != nil {
+		return err
+	}
+	delta.TimeNanos = now.TimeNanos
+	delta.DurationNanos = now.TimeNanos - base.TimeNanos
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := delta.Write(f); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -510,7 +578,9 @@ func listProfileCaptures() ([]profileCapture, error) {
 			continue
 		}
 		c.ID = e.Name()
-		if c.Status == profileStatusRunning && c.ID != running && profileCaptureStale(c) {
+		// Re-read the running id: a capture that started after the first read
+		// already has its "running" meta.json on disk.
+		if c.Status == profileStatusRunning && c.ID != running && c.ID != runningProfileID() && profileCaptureStale(c) {
 			c.Status = profileStatusInterrupted
 		}
 		out = append(out, *c)
