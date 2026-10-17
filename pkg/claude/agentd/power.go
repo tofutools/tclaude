@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -171,7 +172,7 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	serveShutdown(w, scope, groupName, memberIDs, shutdownGraceFor(body.GraceMs))
+	serveShutdown(w, scope, groupName, aliveConvIDs(memberIDs), shutdownGraceFor(body.GraceMs))
 }
 
 // handleGroupShutdown serves POST /api/groups/{name}/shutdown: the group
@@ -189,7 +190,30 @@ func handleGroupShutdown(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	if !ok {
 		return
 	}
-	serveShutdown(w, "group", g.Name, memberIDs, shutdownGraceFor(body.GraceMs))
+	targets := aliveConvIDs(memberIDs)
+	if !peerMayPower(w, r, targets, PermGroupsMembersStop) {
+		return
+	}
+	serveShutdown(w, "group", g.Name, targets, shutdownGraceFor(body.GraceMs))
+}
+
+// peerMayPower holds a peer's group shut down or power on to the agents its
+// grant covers in every group they belong to, as its per-agent stop and
+// wake are (peerAgentActionAllowed): the route's grant names only the group
+// in its path, and a member may also sit in a group the peer holds nothing
+// in. A local caller passes.
+func peerMayPower(w http.ResponseWriter, r *http.Request, targets []string, slug string) bool {
+	a := peerGrantFromRequest(r)
+	if a == nil {
+		return true
+	}
+	for _, conv := range targets {
+		if !peerAgentActionAllowed(a.peer, conv, slug) {
+			writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for every affected group", slug))
+			return false
+		}
+	}
+	return true
 }
 
 // shutdownGraceFor resolves the grace window: the body override wins,
@@ -202,9 +226,8 @@ func shutdownGraceFor(ms *int64) time.Duration {
 	return min(grace, shutdownGraceCap)
 }
 
-// serveShutdown stops the running agents among memberIDs and reports each.
-func serveShutdown(w http.ResponseWriter, scope, groupName string, memberIDs []string, grace time.Duration) {
-	targets := aliveConvIDs(memberIDs)
+// serveShutdown stops targets, running agents, and reports each.
+func serveShutdown(w http.ResponseWriter, scope, groupName string, targets []string, grace time.Duration) {
 
 	outcomes := runShutdown(targets, grace)
 	// Deterministic order so the dashboard list (and the flow test)
@@ -270,22 +293,25 @@ func handlePowerOn(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	servePowerOn(w, scope, groupName, memberIDs)
+	servePowerOn(w, scope, groupName, offlineConvIDs(memberIDs))
 }
 
 // handleGroupPowerOn serves POST /api/groups/{name}/power-on: the group
 // scope of /api/power-on, addressed by its path like handleGroupShutdown.
-func handleGroupPowerOn(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
+func handleGroupPowerOn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	memberIDs, ok := groupMemberConvIDs(w, g)
 	if !ok {
 		return
 	}
-	servePowerOn(w, "group", g.Name, memberIDs)
+	targets := offlineConvIDs(memberIDs)
+	if !peerMayPower(w, r, targets, PermGroupsMembersResume) {
+		return
+	}
+	servePowerOn(w, "group", g.Name, targets)
 }
 
-// servePowerOn resumes the offline agents among memberIDs and reports each.
-func servePowerOn(w http.ResponseWriter, scope, groupName string, memberIDs []string) {
-	targets := offlineConvIDs(memberIDs)
+// servePowerOn resumes targets, offline agents, and reports each.
+func servePowerOn(w http.ResponseWriter, scope, groupName string, targets []string) {
 
 	outcomes := runPowerOn(targets)
 	// Deterministic order so the dashboard list (and the flow test)

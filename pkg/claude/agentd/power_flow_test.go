@@ -590,3 +590,39 @@ func TestGroupResume_ReportsAnAgentThatNeverComesOnlineAsAnError(t *testing.T) {
 		"a resume that never came up must not be reported as resumed; member=%+v", out.Members[0])
 	assert.Contains(t, out.Members[0].Detail, "did not come online")
 }
+
+// Scenario: the dashboard's group buttons use the group's own routes
+// (POST /api/groups/{name}/shutdown and /power-on), which answer with the
+// same outcome report as the scope-in-body routes.
+func TestPower_GroupRoutes_StopThenResumeTheGroup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const group = "tclaude-dev"
+	const conv = "pgrt-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "route-worker")
+	f.HaveAliveSession(conv, "spwn-pgrt", "tmux-pgrt", f.World.HomeDir)
+	f.HaveMember(group, conv)
+
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/shutdown", map[string]any{"grace_ms": 60}))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var stopped shutdownResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stopped))
+	assert.Equal(t, "group", stopped.Scope)
+	assert.Equal(t, group, stopped.Group)
+	assert.Equal(t, 1, stopped.Targeted, "agents=%+v", stopped.Agents)
+	assert.Equal(t, "exited_gracefully", outcomeFor(stopped.Agents, conv))
+	assert.False(t, f.World.Tmux.IsAlive("tmux-pgrt"))
+
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/power-on", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resumed powerOnResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resumed))
+	assert.Equal(t, group, resumed.Group)
+	assert.Equal(t, "resumed", outcomeFor(resumed.Agents, conv), "agents=%+v", resumed.Agents)
+	agent := findDashAgent(fetchDashSnapshot(t, mux), conv)
+	require.NotNil(t, agent)
+	assert.True(t, agent.Online)
+}
