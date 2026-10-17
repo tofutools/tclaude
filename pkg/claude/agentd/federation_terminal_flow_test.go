@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -34,13 +35,21 @@ type terminalTmux struct {
 	attach  []string
 	probes  int
 	resizes [][]string
+	// mouse answers the wheel's pane-state query; copy records copy-mode
+	// commands the wheel issues.
+	mouse string
+	copy  [][]string
 }
 
 func terminalEcho(s string) *exec.Cmd { return exec.Command("printf", "%s", s) }
 func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	switch args[0] {
+	cmd := args[0]
+	if cmd == "-T" && len(args) > 2 {
+		cmd = args[2]
+	}
+	switch cmd {
 	case "-V":
 		return terminalEcho(m.version)
 	case "display-message":
@@ -49,6 +58,9 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		}
 		if args[len(args)-1] == "#{status}\t#{window_width}\t#{window_height}" {
 			return terminalEcho("on\t120\t39")
+		}
+		if strings.Contains(args[len(args)-1], "#{mouse_any_flag}") {
+			return terminalEcho(m.mouse)
 		}
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
 			m.probes++
@@ -84,7 +96,24 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		m.attach = append([]string{}, args...)
 		// An actual PTY child produces output and waits until the renderer closes.
 		return exec.Command("sh", "-c", "printf 'remote renderer ready'; exec cat")
+	case "copy-mode":
+		m.copy = append(m.copy, append([]string(nil), args...))
+		return exec.Command("true")
 	case "send-keys":
+		if len(args) > 4 && args[3] == "-X" {
+			m.copy = append(m.copy, append([]string(nil), args...))
+			return exec.Command("true")
+		}
+		if len(args) > 4 && args[3] == "-H" {
+			for _, h := range args[4:] {
+				b, err := strconv.ParseUint(h, 16, 8)
+				if err != nil {
+					return exec.Command("false")
+				}
+				m.keys = append(m.keys, byte(b))
+			}
+			return exec.Command("true")
+		}
 		if len(args) > 5 && args[3] == "-l" && args[4] == "--" {
 			m.keys = append(m.keys, []byte(strings.ReplaceAll(args[5], "\\;", ";"))...)
 			return exec.Command("true")
@@ -203,7 +232,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	opts, keys, argv := mock.snapshot()
 	require.Empty(t, keys)
 	require.Contains(t, opts["pane-border-format"], "REMOTE WATCH")
-	require.Equal(t, []string{"attach-session", "-f", "ignore-size", "-t", "=tclaude-terminal-runtime"}, argv)
+	require.Equal(t, []string{"-T", "sync", "attach-session", "-f", "ignore-size", "-t", "=tclaude-terminal-runtime"}, argv)
 	rec := fedHuman(t, f, http.MethodGet, "/v1/federation/viewers", nil)
 	require.Equal(t, 200, rec.Code)
 	require.Contains(t, rec.Body.String(), o.Stream)
@@ -229,6 +258,29 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	require.Equal(t, len(typed), n)
 	_, keys, _ = mock.snapshot()
 	require.Equal(t, typed, keys, "fixed key encoding preserves controls")
+	// The renderer PTY is read-only, so tmux never sees the viewer's mouse:
+	// wheel reports are applied to the pane the way tmux's bindings would.
+	// An application with mouse reporting gets them at pane coordinates (the
+	// indicator border pushes the pane down one row).
+	mock.mu.Lock()
+	mock.keys, mock.mouse = nil, "0 0 1 1 0 off 0 1 120 39 off"
+	mock.mu.Unlock()
+	wheel := []byte("\x1b[<65;10;5M\x1b[<65;10;5M")
+	require.NoError(t, terminal.Write(c, terminal.Frame{Kind: terminal.Input, Data: wheel}))
+	require.Equal(t, terminal.Credit, terminalRead(t, c).Kind)
+	_, keys, _ = mock.snapshot()
+	require.Equal(t, "\x1b[<65;10;4M\x1b[<65;10;4M", string(keys))
+	// Without application mouse mode, tmux mouse mode scrolls copy mode.
+	mock.mu.Lock()
+	mock.keys, mock.mouse = nil, "0 0 0 0 0 on 0 1 120 39 off"
+	mock.mu.Unlock()
+	wheel = []byte("\x1b[<64;10;5M\x1b[<64;10;5M")
+	require.NoError(t, terminal.Write(c, terminal.Frame{Kind: terminal.Input, Data: wheel}))
+	require.Equal(t, terminal.Credit, terminalRead(t, c).Kind)
+	mock.mu.Lock()
+	require.Empty(t, mock.keys)
+	require.Equal(t, [][]string{{"copy-mode", "-e", "-t", "%1"}, {"send-keys", "-t", "%1", "-X", "-N", "10", "scroll-up"}}, mock.copy)
+	mock.mu.Unlock()
 	// A replacement pane is never followed, even with the same session name.
 	mock.mu.Lock()
 	mock.pane = "%2"

@@ -103,6 +103,13 @@ func TmuxArgs(args ...string) []string {
 // a harness draws reaches the browser as plain, unclickable label text.
 const TmuxHyperlinksFeature = "hyperlinks"
 
+// TmuxSyncFeature is the tmux terminal-feature name for synchronized output
+// (DEC mode 2026). With it tmux brackets each redraw so the renderer paints the
+// finished frame; without it a redraw split across network frames shows its
+// intermediate state, most visibly as a flickering cursor. Terminals that do not
+// know the mode ignore it.
+const TmuxSyncFeature = "sync"
+
 // TmuxClientFeaturesEnv asks a `tclaude session attach` child process to pass
 // tmux `-T <features>` for the client it forks. The dashboard's web terminals
 // reach tmux through that wrapper rather than by spawning tmux themselves, so
