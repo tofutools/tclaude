@@ -2,13 +2,18 @@ package agentd
 
 import (
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -37,7 +42,12 @@ type backgroundTerminal struct {
 	// that has since been replaced. The attach endpoints always follow an
 	// agent to its latest generation, so it has no Key: the dashboard cannot
 	// reattach it, only point at `tmux attach`.
-	Superseded   bool  `json:"superseded,omitempty"`
+	Superseded bool `json:"superseded,omitempty"`
+	// Killable marks a row the dashboard may end outright with
+	// POST /api/background-terminals/kill: shells, group shells, unrecognised
+	// sessions and superseded generations. A live agent or session is not —
+	// it has the lifecycle shutdown, which lets the harness exit cleanly.
+	Killable     bool  `json:"killable,omitempty"`
 	LastActivity int64 `json:"last_activity,omitempty"`
 	Created      int64 `json:"created,omitempty"`
 }
@@ -51,9 +61,11 @@ type backgroundTmuxSession struct {
 	name     string
 	activity int64
 	created  int64
+	// cwd is the active pane's working directory, "" when tmux cannot tell.
+	cwd string
 }
 
-const backgroundTmuxFormat = "#{session_name}\t#{session_attached}\t#{session_activity}\t#{session_created}"
+const backgroundTmuxFormat = "#{session_name}\t#{session_attached}\t#{session_activity}\t#{session_created}\t#{pane_current_path}"
 
 // handleDashboardBackgroundTerminals lists the unattached tclaude tmux sessions.
 //
@@ -106,6 +118,9 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 		if len(fields) > 3 {
 			s.created, _ = strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64)
 		}
+		if len(fields) > 4 {
+			s.cwd = strings.TrimSpace(fields[4])
+		}
 		sessions = append(sessions, s)
 	}
 	return sessions, nil
@@ -138,7 +153,12 @@ func classifyBackgroundTerminals(sessions []backgroundTmuxSession) []backgroundT
 		}
 	}
 	if len(shells)+len(groupShells) > 0 {
-		out = append(out, classifyShells(shells, groupShells)...)
+		convs, _ := db.ListAgentConvIDs()
+		groupNames, _ := listAgentGroupNames()
+		out = append(out, classifyShells(shells, groupShells, convs, groupNames)...)
+	}
+	for i := range out {
+		out[i].Killable = out[i].Superseded || (out[i].Kind != "agent" && out[i].Kind != "session")
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a, b := backgroundKindRank(out[i].Kind), backgroundKindRank(out[j].Kind); a != b {
@@ -188,23 +208,28 @@ func classifySessionRow(s backgroundTmuxSession, row *db.SessionRow) backgroundT
 	return t
 }
 
-// classifyShells reverses the hashed shell names. The hash is one-way, so the
-// candidates (every agent conversation, crossed with every group) are hashed
-// and matched; that is a few thousand sha256 sums at most, run only when a
-// shell is actually sitting in the background.
-func classifyShells(shells, groupShells []backgroundTmuxSession) []backgroundTerminal {
-	var groupNames []string
-	if groups, err := db.ListAgentGroups(); err == nil {
-		for _, g := range groups {
-			groupNames = append(groupNames, g.Name)
-		}
+func listAgentGroupNames() ([]string, error) {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return nil, err
 	}
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Name)
+	}
+	return names, nil
+}
+
+// classifyShells reverses the hashed shell names. The hash is one-way, so the
+// candidates (every agent conversation in convs, crossed with every group) are
+// hashed and matched; that is a few thousand sha256 sums at most, run only
+// when a shell is actually sitting in the background.
+func classifyShells(shells, groupShells []backgroundTmuxSession, convs map[string]struct{}, groupNames []string) []backgroundTerminal {
 	out := make([]backgroundTerminal, 0, len(shells)+len(groupShells))
 
 	type shellIdentity struct{ conv, group string }
 	shellOwners := map[string]shellIdentity{}
 	if len(shells) > 0 {
-		convs, _ := db.ListAgentConvIDs()
 		for conv := range convs {
 			shellOwners[shellHashPrefix(conv)] = shellIdentity{conv: conv}
 			for _, group := range groupNames {
@@ -279,4 +304,117 @@ func backgroundConvTitle(convID string) string {
 		return short8(convID)
 	}
 	return title
+}
+
+// handleDashboardBackgroundTerminalKill ends one background terminal.
+//
+//	POST /api/background-terminals/kill {"tmux_session": "<name>"}
+//
+// The name must be one the listing would return right now and mark Killable:
+// a session a client attached to meanwhile is no longer in the background,
+// and a live agent or session goes through the lifecycle shutdown instead.
+func handleDashboardBackgroundTerminalKill(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		TmuxSession string `json:"tmux_session"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.TmuxSession) == "" {
+		writeError(w, http.StatusBadRequest, "body", `expected {"tmux_session": "<name>"}`)
+		return
+	}
+	sessions, err := listBackgroundTmuxSessions()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "tmux", err.Error())
+		return
+	}
+	var row *backgroundTerminal
+	for _, t := range classifyBackgroundTerminals(sessions) {
+		if t.TmuxSession == body.TmuxSession {
+			row = &t
+			break
+		}
+	}
+	switch {
+	case row == nil:
+		writeError(w, http.StatusNotFound, "not_background", "no background terminal "+body.TmuxSession+" (attached or already gone)")
+		return
+	case !row.Killable:
+		writeError(w, http.StatusConflict, "not_killable", "a running "+row.Kind+" is stopped with shutdown, not killed here")
+		return
+	}
+	if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)); err != nil {
+		writeError(w, http.StatusInternalServerError, "tmux", "kill-session: "+err.Error())
+		return
+	}
+	slog.Info("background terminal killed from dashboard", "tmux_session", row.TmuxSession, "kind", row.Kind)
+	writeJSON(w, http.StatusOK, map[string]string{"tmux_session": row.TmuxSession})
+}
+
+// reapOrphanedTerminalShells kills dashboard web shells (tclaude-term-* and
+// tclaude-groupterm-*) that nothing can use any more, on each reaper tick:
+//
+//   - the owner is gone: the agent was deleted (or the group removed), so the
+//     shell's hashed name no longer matches anything and the dashboard can
+//     neither label nor reattach it;
+//   - its directory is gone: the worktree it was opened in has been removed,
+//     so the shell sits in a deleted directory.
+//
+// These shells are never in the sessions table, so no other cleanup reaches
+// them. Only unattached shells are touched — one somebody is looking at stays
+// until they close it — and the owner rule is skipped whenever the agent or
+// group list cannot be read, so a DB hiccup never reads as "every owner gone".
+func reapOrphanedTerminalShells() {
+	sessions, err := listBackgroundTmuxSessions()
+	if err != nil || len(sessions) == 0 {
+		return
+	}
+	var shells, groupShells []backgroundTmuxSession
+	for _, s := range sessions {
+		switch {
+		case strings.HasPrefix(s.name, "tclaude-groupterm-"):
+			groupShells = append(groupShells, s)
+		case strings.HasPrefix(s.name, "tclaude-term-"):
+			shells = append(shells, s)
+		}
+	}
+	if len(shells)+len(groupShells) == 0 {
+		return
+	}
+	convs, convErr := db.ListAgentConvIDs()
+	groupNames, groupErr := listAgentGroupNames()
+	ownersKnown := convErr == nil && groupErr == nil
+	cwds := make(map[string]string, len(shells)+len(groupShells))
+	for _, s := range append(shells, groupShells...) {
+		cwds[s.name] = s.cwd
+	}
+	for _, t := range classifyShells(shells, groupShells, convs, groupNames) {
+		reason := ""
+		switch {
+		case ownersKnown && t.Kind == "other":
+			reason = "owner gone"
+		case directoryGone(cwds[t.TmuxSession]):
+			reason = "directory gone"
+		default:
+			continue
+		}
+		if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(t.TmuxSession)); err != nil {
+			slog.Warn("reaper: kill orphaned web shell failed", "tmux_session", t.TmuxSession, "error", err)
+			continue
+		}
+		slog.Info("reaper: killed orphaned web shell", "tmux_session", t.TmuxSession, "reason", reason, "cwd", cwds[t.TmuxSession])
+	}
+}
+
+func directoryGone(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(dir)
+	return errors.Is(err, os.ErrNotExist)
 }

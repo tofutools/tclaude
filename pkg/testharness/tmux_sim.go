@@ -944,10 +944,15 @@ func (t *TmuxSim) renderSessionFormat(format, name string) string {
 			attached++
 		}
 	}
+	cwd := ""
+	if s := t.sessions[name]; s != nil {
+		cwd = s.cwd
+	}
 	t.mu.Unlock()
 	return strings.NewReplacer(
 		"#{session_name}", name,
 		"#{session_attached}", strconv.Itoa(attached),
+		"#{pane_current_path}", cwd,
 		"#{session_activity}", "0",
 		"#{session_created}", "0",
 		"#{pane_dead}", "0",
@@ -1007,6 +1012,15 @@ func (t *TmuxSim) MarkAlive(name string) {
 		t.nextPID++
 		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: fakePaneBasePID + t.nextPID}
 	}
+}
+
+// MarkAliveIn is MarkAlive with the pane's working directory, as
+// #{pane_current_path} reports it.
+func (t *TmuxSim) MarkAliveIn(name, cwd string) {
+	t.MarkAlive(name)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessions[name].cwd = cwd
 }
 
 // SetPaneIdentityForTest gives a simulated pane independently controlled tmux
