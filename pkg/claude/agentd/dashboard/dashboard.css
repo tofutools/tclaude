@@ -19962,8 +19962,18 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-link-tag.unknown { background: #30363d; color: #8b949e; }
 .fleet-link-act { background: none; border: 0; padding: 0; color: #58a6ff; font: inherit; cursor: pointer; }
 .fleet-link-act:hover { text-decoration: underline; }
+.fleet-edge.untrusted { stroke: #484f58; stroke-dasharray: 2 5; }
 .fleet-card { box-sizing: border-box; background: #161b22; border: 1px solid #2a3340; border-top: 3px solid var(--nc); border-radius: 8px; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
 .fleet-card.stale { border-style: dashed; border-top-style: solid; opacity: .85; }
+/* An untrusted instance on the hub: no node colour, a dotted outline, and its
+   self-reported name in plain weight. */
+.fleet-card.untrusted { --nc: #484f58; background: #0d1117; border-style: dotted; border-top-style: solid; box-shadow: none; }
+/* Untrusted instances sit apart from the peers, in one dotted section. */
+.fleet-map-strangers { grid-column: 1 / -1; margin-top: 36px; padding: 10px 14px 14px; border: 1px dotted #484f58; border-radius: 10px; background: rgba(13, 17, 23, .6); }
+.fleet-map-strangers h4 { margin: 0 0 10px; color: #8b949e; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+.fleet-map-strangers-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.fleet-card.untrusted .fleet-card-name { font-weight: 400; color: #c9d1d9; }
+.fleet-card.untrusted code { font-size: 11px; }
 .fleet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
 .fleet-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px; border-bottom: 1px solid #21262d; }
 .fleet-card-name { font-size: 15px; font-weight: 600; color: #f0f6fc; }
@@ -19990,9 +20000,12 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-key { padding: 0 12px 8px; font-size: 12px; }
 .fleet-card-key.pending { color: #e3b341; }
 .fleet-card-key.conflict { color: #f85149; }
-.fleet-legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 16px; align-items: center; color: #7d8590; font-size: 11px; }
+.fleet-legend { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: #7d8590; font-size: 11px; }
 .fleet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
 .fleet-legend i.stale { border-top: 2px dashed #6e7681; }
+.fleet-legend i.untrusted { border-top: 2px dotted #484f58; }
+.fleet-untrusted-toggle { display: inline-flex; align-items: center; gap: 5px; color: #c9d1d9; cursor: pointer; }
+.fleet-untrusted-toggle input { margin: 0; }
 .fleet-card-foot button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
 .fleet-card-foot button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 /* The wizard skin's longer tab names fill the bar at ~1280 px. While the node

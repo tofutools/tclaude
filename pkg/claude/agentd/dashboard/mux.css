@@ -500,6 +500,7 @@ body.wizard .mux-pane-xterm {
   font: 500 10.5px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc;
   background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117);
 }
+.mux-node-pill.compact { justify-content: center; min-width: 16px; padding: 0 3px; box-sizing: border-box; }
 .mux-scope-empty { padding: 24px; color: #8b949e; }
 /* A tab's ⚙ (tcl-xy5wkp): the Groups row menu, pinned to the viewport
    because .mux-tabs scrolls sideways and would clip it. TabGear places it. */

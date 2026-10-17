@@ -2469,7 +2469,10 @@ query also works on the CLI API. It returns the local identity (`instance_id`,
 cached `hub` connection state, and `peers`. Summary peers include only trusted
 linked instances, with their stable `instance_id`, `label`, `name`, trust
 `level`, `trusted`, `online`, and `last_seen` fields (plus fingerprint, version,
-and trust time). An empty peer list is `[]`. Presence comes from the cached
+and trust time). Add `&untrusted=1` to also list the hub-visible instances not
+trusted here (`trusted: false`, with `instance_id`, `name`, `fingerprint`,
+`online`, `last_seen` and `version`), as the map's Show untrusted view does.
+An empty peer list is `[]`. Presence comes from the cached
 hub directory; no remote requests or status probes run during this read.
 
 Summary responses omit `peer_grants`, `outbox`, and `remote`, and avoid loading

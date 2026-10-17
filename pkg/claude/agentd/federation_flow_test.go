@@ -527,6 +527,28 @@ func TestFederation_LocalTitleWithAtStaysLocal(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "envelope_id")
 }
 
+// TestFederation_SummaryUntrustedPeers: a summary status read leaves out
+// hub-visible strangers unless it asks for them with untrusted=1 (the Fleet
+// map's "show untrusted" view).
+func TestFederation_SummaryUntrustedPeers(t *testing.T) {
+	h := newFedHarness(t)
+	rec := fedHuman(t, h.f, http.MethodPost, "/v1/federation/peers/untrust", map[string]any{"instance": h.peer.id.ID()})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	read := func(path string) fedStatusView {
+		rec := fedHuman(t, h.f, http.MethodGet, path, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var v fedStatusView
+		testharness.DecodeJSON(t, rec, &v)
+		return v
+	}
+	require.Empty(t, read("/v1/federation/status?summary=1").Peers)
+	peers := read("/v1/federation/status?summary=1&untrusted=1").Peers
+	require.Len(t, peers, 1)
+	require.Equal(t, h.peer.id.ID(), peers[0].InstanceID)
+	require.False(t, peers[0].Trusted)
+	require.True(t, peers[0].Online)
+}
+
 func TestFederation_ConfigGuards(t *testing.T) {
 	f := newFlow(t)
 	agentd.ResetFederationForTest()

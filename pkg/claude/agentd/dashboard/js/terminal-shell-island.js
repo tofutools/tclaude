@@ -520,11 +520,15 @@ function TabGear({ gear, snapshot, menuKey }) {
 
 const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
 
-// NodePill names a pane's node in a fused view (fleet-scope.js), in that
-// node's colour.
-function NodePill({ node }) {
-  if (!node) return null;
-  return html`<span class="mux-node-pill" style=${`--nc:${node.color}`} title=${node.local ? 'This node' : `On ${node.name}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
+// NodePill names a remote pane's node in a fused view (fleet-scope.js), in
+// that node's colour. This node's panes go unlabelled: the label is there to
+// set a peer's panes apart. A tab is short of room for the agent's name, so it
+// gets the compact form, the node's initial, with the full name on hover; the
+// pane header has room for the whole name.
+function NodePill({ node, compact = false }) {
+  if (!node || node.local) return null;
+  const cls = `mux-node-pill${compact ? ' compact' : ''}`;
+  return html`<span class=${cls} style=${`--nc:${node.color}`} title=${`On ${node.name}`}>${compact ? [...node.name][0]?.toUpperCase() : node.name}</span>`;
 }
 
 function PaneTab({
@@ -615,7 +619,7 @@ function PaneTab({
       ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
-      <${NodePill} node=${scope?.node} />
+      <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${pane.label}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}

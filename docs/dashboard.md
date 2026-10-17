@@ -834,8 +834,9 @@ fleet views.
 **nodes ▾**, after the node buttons, shows several nodes together: tick the
 nodes (all by default), and **Groups** lists the ticked nodes' groups as one
 tree (see [Groups on several nodes](#groups-on-several-nodes)),
-**Terminals** shows the open terminals on the ticked nodes, each tab and pane
-labelled with its node (the others stay open, out of sight), and **Messages**
+**Terminals** shows the open terminals on the ticked nodes, a peer's labelled
+with its node — its initial on the tab, the full name in the pane header — while
+this node's go unlabelled (the others stay open, out of sight), and **Messages**
 their mail (see [Messages on several nodes](#messages-on-several-nodes)); the
 button reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
 alone, as does unticking all but one. Every other tab still shows one node, the
@@ -867,6 +868,12 @@ it). Each link's label has one row per direction, such as `forge → desk full
 access` and `desk → forge limited · 3 hidden`. Click it for a plain-language
 explanation and a shortcut to Fleet config. A peer on an older tclaude does not
 report its side ("not reported").
+
+**Show untrusted** (in the legend) adds the instances visible on the hub that
+this node has not trusted, as dotted cards with their self-reported name,
+instance ID and fingerprint. **Trust…** opens the same dialog as ⚙ Fleet
+config → Peers: compare the full fingerprint with that node's operator, pick a
+label and a trust level, and confirm. The box is remembered per browser.
 
 To update a node: click **update…** (or **manage…**) on its card, check the
 version and warnings, then **Update to vX…** and confirm. The node replaces its

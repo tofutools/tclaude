@@ -626,11 +626,26 @@ export function noteGroupDisclosureIntent(key) {
   if (key) groupDisclosureIntents.add(key);
 }
 
+// Both Groups hosts fold the same way and persist the same per-group key:
+// the fused view's groups are keyed group@node, so each node's groups there
+// remember their own disclosure, apart from the node's own Groups view.
+const GROUP_DISCLOSURE_ROOTS = ['#groups-list', '#fleetview-fused-groups-root'];
+const FUSED_GROUPS_ROOT = 'fleetview-fused-groups-root';
+function groupDisclosureRoots() {
+  return GROUP_DISCLOSURE_ROOTS.map(sel => $(sel)).filter(Boolean);
+}
+function listenOnRoots(roots, type, handler) {
+  roots.forEach(root => root.addEventListener(type, handler, true));
+  return () => roots.forEach(root => root.removeEventListener(type, handler, true));
+}
+
 let groupTitleToggleCleanup = null;
 function bindGroupTitleToggle() {
   if (groupTitleToggleCleanup) return groupTitleToggleCleanup;
-  const root = $('#groups-list');
-  if (!root) return () => {};
+  const roots = groupDisclosureRoots();
+  if (!roots.length) return () => {};
+  // The fused view's group@node keys are not spawn targets on this node.
+  const remember = (e, key) => { if (e.currentTarget?.id !== FUSED_GROUPS_ROOT) recordGroupInteraction(key); };
   const onClick = e => {
     const summary = e.target.closest('summary');
     if (!summary) return;
@@ -660,21 +675,21 @@ function bindGroupTitleToggle() {
       // (drives the command palette's default spawn target).
       const key = details.getAttribute('data-group-key');
       noteGroupDisclosureIntent(key);
-      recordGroupInteraction(key);
+      remember(e, key);
       return;
     }
     if (e.target.closest('.group-name')) {
       // Genuine mouse fold/unfold of the group title — remember it.
       const key = details.getAttribute('data-group-key');
       noteGroupDisclosureIntent(key);
-      recordGroupInteraction(key);
+      remember(e, key);
       return; // the title — allow toggle
     }
     e.preventDefault();
   };
-  root.addEventListener('click', onClick, true);
+  const unlisten = listenOnRoots(roots, 'click', onClick);
   const cleanup = () => {
-    root.removeEventListener('click', onClick, true);
+    unlisten();
     if (groupTitleToggleCleanup === cleanup) groupTitleToggleCleanup = null;
   };
   groupTitleToggleCleanup = cleanup;
@@ -687,8 +702,8 @@ function bindGroupTitleToggle() {
 let detailsPersistenceCleanup = null;
 function bindDetailsPersistence() {
   if (detailsPersistenceCleanup) return detailsPersistenceCleanup;
-  const root = $('#groups-list');
-  if (!root) return () => {};
+  const roots = groupDisclosureRoots();
+  if (!roots.length) return () => {};
   const onToggle = e => {
     const d = e.target;
     if (!(d instanceof HTMLDetailsElement)) return;
@@ -709,11 +724,15 @@ function bindDetailsPersistence() {
     // avoid turning that into a second render. A genuine disclosure change
     // necessarily changes the persisted open preference.
     const changed = next === null ? previous !== null : previous !== next;
-    if (changed) featureState('groups')?.rerender();
+    if (!changed) return;
+    // The fused island is not the Groups feature; it re-renders on this event.
+    const fused = e.currentTarget?.id === FUSED_GROUPS_ROOT;
+    if (fused) e.currentTarget.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
+    else featureState('groups')?.rerender();
   };
-  root.addEventListener('toggle', onToggle, true);
+  const unlisten = listenOnRoots(roots, 'toggle', onToggle);
   const cleanup = () => {
-    root.removeEventListener('toggle', onToggle, true);
+    unlisten();
     if (detailsPersistenceCleanup === cleanup) detailsPersistenceCleanup = null;
   };
   detailsPersistenceCleanup = cleanup;
