@@ -98,7 +98,8 @@ export function paneNode(fleet, seed, colorOf) {
 }
 
 // paneScope says how a fused view shows a pane: hidden when its node is not
-// ticked, and labelled with its node whenever a view is fused.
+// ticked, and which node it is on whenever a view is fused (the pane only
+// labels a peer's node; see NodePill).
 export function paneScope(fleet, fused, seed, colorOf) {
   if (!fused) return { hidden: false, node: null };
   const node = paneNode(fleet, seed, colorOf);

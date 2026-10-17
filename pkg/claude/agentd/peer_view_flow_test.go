@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -128,6 +129,7 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &obj))
 		meta := obj["peer_view"].(map[string]any)
 		require.Contains(t, meta["included"], map[string]string{"/api/costs": "costs", "/api/audit": "audit"}[path])
+		require.Equal(t, "restricted", meta["level"])
 	}
 	fh.f.HaveGroup("private-group")
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
@@ -135,6 +137,20 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "private-group")
 	require.Contains(t, rec.Body.String(), `"peer_view"`)
+	require.Contains(t, rec.Body.String(), `"level":"unrestricted"`)
+	// Triggers stay local-only even for unrestricted trust, so the snapshot
+	// must not advertise them or the Groups view fetches a refused route.
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
+	// Guard against a vacuous pass: the flag is on, only the peer view hides it.
+	// The local snapshot keeps it (TestDashboardSnapshotDynamicallyGatesTriggers).
+	loaded, err := config.Load()
+	require.NoError(t, err)
+	require.True(t, loaded.TriggersEnabled())
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"triggers_enabled":false`)
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/triggers", nil))
+	require.Equal(t, 403, rec.Code)
 	for _, path := range []string{"/api/config", "/api/new-endpoint"} {
 		rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", path, nil))
 		require.Equal(t, 403, rec.Code)
@@ -143,7 +159,7 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code)
 	require.NotContains(t, rec.Body.String(), "private-group")
-	_, err := db.UntrustFederationPeer(fh.peer.id.ID())
+	_, err = db.UntrustFederationPeer(fh.peer.id.ID())
 	require.NoError(t, err)
 	req := testharness.JSONRequest(t, "GET", "/api/snapshot", nil)
 	req.Header.Set("X-Tclaude-Peer", "bob")

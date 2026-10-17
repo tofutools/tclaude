@@ -225,6 +225,24 @@ function TerminalDisconnectNotice({ onReconnect }) {
   `;
 }
 
+// RemoteSharedNotice explains a shared remote terminal: the peer's session is
+// also attached elsewhere, and the smallest attached terminal sets the size.
+// When the peer granted sessions.takeover, taking it over disconnects the
+// others so this view alone sizes the pane.
+export function RemoteSharedNotice({ seed, remote, onTakeOver }) {
+  if (!seed?.remote || !remote?.shared) return null;
+  const others = remote.others || [];
+  if (!others.length && !remote.limited) return null;
+  const peer = seed.remote.peerLabel || seed.remote.peer;
+  const text = others.length
+    ? `Also attached on ${peer}: ${others.join(', ')} · sharing the size${remote.limited ? ' · size limited by another viewer' : ''}`
+    : 'Size limited by another viewer';
+  return html`<div class="term-remote-shared" role="status">
+    <span>${text}</span>
+    ${others.length && remote.canTakeOver ? html`<button type="button" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over</button>` : null}
+  </div>`;
+}
+
 // RemoteBadge marks a peer's terminal: whose it is and whether this view can
 // type (interactive) or only watch, as the peer granted it.
 function RemoteBadge({ seed, remote }) {
@@ -339,6 +357,8 @@ function TerminalPane({
         snapshot=${processSnapshot} onComposeMessage=${onComposeMessage
           ? (seed) => onComposeMessage({ ...seed, restoreFocus: () => actions.activatePane(pane.key) })
           : null} />` : null}
+      <${RemoteSharedNotice} seed=${pane.seed} remote=${remote}
+        onTakeOver=${() => void actions.widgetFor(pane.id)?.takeOver()} />
       ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
         peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}
@@ -520,11 +540,15 @@ function TabGear({ gear, snapshot, menuKey }) {
 
 const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
 
-// NodePill names a pane's node in a fused view (fleet-scope.js), in that
-// node's colour.
-function NodePill({ node }) {
-  if (!node) return null;
-  return html`<span class="mux-node-pill" style=${`--nc:${node.color}`} title=${node.local ? 'This node' : `On ${node.name}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
+// NodePill names a remote pane's node in a fused view (fleet-scope.js), in
+// that node's colour. This node's panes go unlabelled: the label is there to
+// set a peer's panes apart. A tab is short of room for the agent's name, so it
+// gets the compact form, the node's initial, with the full name on hover; the
+// pane header has room for the whole name.
+function NodePill({ node, compact = false }) {
+  if (!node || node.local) return null;
+  const cls = `mux-node-pill${compact ? ' compact' : ''}`;
+  return html`<span class=${cls} style=${`--nc:${node.color}`} title=${`On ${node.name}`}>${compact ? [...node.name][0]?.toUpperCase() : node.name}</span>`;
 }
 
 function PaneTab({
@@ -615,7 +639,7 @@ function PaneTab({
       ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
-      <${NodePill} node=${scope?.node} />
+      <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${pane.label}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}

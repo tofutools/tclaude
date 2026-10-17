@@ -834,8 +834,9 @@ fleet views.
 **nodes ▾**, after the node buttons, shows several nodes together: tick the
 nodes (all by default), and **Groups** lists the ticked nodes' groups as one
 tree (see [Groups on several nodes](#groups-on-several-nodes)),
-**Terminals** shows the open terminals on the ticked nodes, each tab and pane
-labelled with its node (the others stay open, out of sight), and **Messages**
+**Terminals** shows the open terminals on the ticked nodes, a peer's labelled
+with its node — its initial on the tab, the full name in the pane header — while
+this node's go unlabelled (the others stay open, out of sight), and **Messages**
 their mail (see [Messages on several nodes](#messages-on-several-nodes)); the
 button reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
 alone, as does unticking all but one. Every other tab still shows one node, the
@@ -855,10 +856,31 @@ with ⌘ Fleet lit.
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and
 how many are online, agents waiting for input, cpu/mem/disk, the tclaude
-version (↑ when a newer release is known), health, and what the peer does not
-share. **Open dashboard** opens that node's view. Cards are polled only while
+version (↑ when a newer release is known), health, and what the peer hides
+from you. **Open dashboard** opens that node's view. Cards are polled only while
 the map is on screen; an unreachable peer keeps its last data, marked with its
 age.
+
+Trust between two nodes can differ by direction, so the map always names both.
+A peer card shows **You trust it** (what the peer may do on this node; you set
+it) and **It trusts you** (what this node may do on the peer; its operator sets
+it). Each link's label has one row per direction, such as `forge → desk full
+access` and `desk → forge limited · 3 hidden`. Click it for a plain-language
+explanation and a shortcut to Fleet config. A peer on an older tclaude does not
+report its side ("not reported").
+
+**Show untrusted** (in the legend) adds the instances visible on the hub that
+this node has not trusted, as dotted cards with their self-reported name,
+instance ID and fingerprint. **Trust…** opens the same dialog as ⚙ Fleet
+config → Peers: compare the full fingerprint with that node's operator, pick a
+label and a trust level, and confirm. The box is remembered per browser.
+Trusting an instance from the map also asks it to trust this node back.
+
+An instance that asked to be trusted shows on the map even with the box off,
+as an amber card first in the untrusted section with its note (its own words)
+and whether it already trusts this node; the top bar counts the requests.
+**Dismiss** forgets a request. **Ask to be trusted…** on any other untrusted
+card sends this node's own request, with an optional note.
 
 To update a node: click **update…** (or **manage…**) on its card, check the
 version and warnings, then **Update to vX…** and confirm. The node replaces its
@@ -876,7 +898,8 @@ and a peer-view pill lists what it shares.
 
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
 They stay in place so the layout does not jump; hover or click one to see why.
-The peer-view pill lists what is not shared and the grant each needs. Usage
+The peer-view pill names both directions of trust and lists what is hidden
+from you, with the grant each needs. Usage
 and costs say when they are not shared.
 
 If the peer granted you lifecycle actions, its agents' stop (the status dot),
@@ -904,7 +927,7 @@ terminal.
 
 #### Requesting access from a peer
 
-Each feature in the pill's "Not shared" list has a **request…** link. It asks
+Each feature in the pill's "Hidden from you" list has a **request…** link. It asks
 the peer's operator for the grant that feature needs: how long it lasts (1
 hour to 30 days, or permanent) and a reason. A group permission asked for
 without a group covers every group on the peer, including future ones; the

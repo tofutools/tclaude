@@ -86,20 +86,28 @@ export function createAgentRosterReconciler() {
 // A remote terminal is a peer's agent pane, bridged by this node's daemon over
 // the federation terminal stream (the path `tclaude federation attach` uses).
 // It keeps the local framing (binary output and input) and adds JSON text
-// control frames: hello (mode and the target's pinned size), size, and closed
-// (a reason, sent just before the socket closes). The viewer renders at the
-// pinned size and never resizes the target; watch mode sends no input. Each
+// control frames: hello (mode, the target's size, shared, others, take_over),
+// size, others, and closed (a reason, sent just before the socket closes).
+// A shared view (a current peer) fits its panel and reports that size; the
+// peer's window takes, per axis, the smallest size across every attached
+// client, and the view renders the grid it is sent — never stretched — and
+// says when another client limits it. With the peer's sessions.takeover grant
+// it can take the session over, disconnecting the others. An older peer pins
+// the view at its own size instead. Watch mode sends no input. Each
 // binary output frame is acknowledged with {type:'credit', bytes} once xterm
 // has written it, which is what refills the stream's flow-control window.
 export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
 // A peer's pinned size beyond these is refused rather than rendered: a hostile
 // peer must not be able to make this tab allocate a huge grid.
 const MAX_REMOTE_COLS = 500;
-// A remote pane keeps the peer's size, so its font shrinks (to a readable
+// A pinned remote pane keeps the peer's size, so its font shrinks (to a readable
 // floor) until the whole grid fits; past the floor the host scrolls.
 const REMOTE_FONT_MAX = 13;
 const REMOTE_FONT_MIN = 9;
 const MAX_REMOTE_ROWS = 200;
+// How long a shared view waits for the peer to answer its own size report
+// before saying another viewer limits the size.
+const REMOTE_LIMITED_GRACE_MS = 800;
 
 export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
   return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
@@ -117,6 +125,7 @@ export const REMOTE_CLOSE = Object.freeze({
   revoked: { text: 'the peer revoked your access to this terminal', final: true },
   untrusted: { text: 'the peer is no longer trusted', final: true },
   kicked: { text: "the peer's operator disconnected this view", final: false },
+  taken_over: { text: 'another viewer took over this terminal', final: false },
   denied: { text: "the peer does not share this terminal with you", final: true },
   limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
   offline: { text: 'the peer is unreachable', final: false },
@@ -229,7 +238,21 @@ export function mountTerminalWidget({
   let instanceBaseline = null;
   let cancelRestartWatch = null;
   const remote = isRemoteTerminalPath(wsPath);
-  let remoteState = { mode: '', closed: null, files: false, viewer: '' };
+  const REMOTE_RESET = Object.freeze({ mode: '', closed: null, files: false, viewer: '', shared: false, others: [], canTakeOver: false, limited: false });
+  let remoteState = REMOTE_RESET;
+  // desired: the grid a shared view's panel could show; lastDesired: the one
+  // last reported to the peer.
+  let desired = null;
+  let lastDesired = '';
+  // limitedHold runs while the peer may still be answering this view's latest
+  // report: the grid then lags the panel by design, so "limited" waits.
+  let limitedHold = null;
+  function cancelLimitedHold() {
+    if (limitedHold !== null) clearTimeoutImpl(limitedHold);
+    limitedHold = null;
+  }
+  // takeOverNext asks the next dial to take the peer's session over.
+  let takeOverNext = false;
   function setRemote(next) {
     if (disposed) return;
     remoteState = Object.freeze({ ...remoteState, ...next });
@@ -275,8 +298,44 @@ export function mountTerminalWidget({
 
   function fit() {
     if (disposed) return;
+    if (remote && remoteState.shared) { fitShared(); return; }
     if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
+  }
+
+  // fitShared measures the grid this panel could show and reports it to the
+  // peer. The grid itself stays at the shared size the peer sends, which can
+  // be smaller (another client limits it) but is never stretched.
+  function fitShared() {
+    // A hidden host proposes a garbage grid; strictly zero, as in
+    // sendDimensions, so a test DOM without layout still fits.
+    if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+    let dims = null;
+    try { dims = fitAddon.proposeDimensions?.(); } catch (_) { /* host may not be laid out yet */ }
+    const cols = Math.floor(Number(dims?.cols)); const rows = Math.floor(Number(dims?.rows));
+    if (!(cols > 0) || !(rows > 0)) return;
+    desired = { cols: Math.min(MAX_REMOTE_COLS, cols), rows: Math.min(MAX_REMOTE_ROWS, rows) };
+    sendDesired();
+    updateLimited();
+  }
+
+  function sendDesired() {
+    if (!desired) return;
+    const key = `${desired.cols}x${desired.rows}`;
+    if (key !== lastDesired && sendDimensions(desired.cols, desired.rows)) {
+      lastDesired = key;
+      cancelLimitedHold();
+      limitedHold = setTimeoutImpl(() => { limitedHold = null; updateLimited(); }, REMOTE_LIMITED_GRACE_MS);
+    }
+  }
+
+  // updateLimited says whether the shared grid is smaller than this panel. It
+  // shows only once the peer had time to answer this view's latest report, so
+  // the view's own resize never flashes the note; clearing it is immediate.
+  function updateLimited() {
+    const limited = !!(remoteState.shared && desired && (term.cols < desired.cols || term.rows < desired.rows));
+    if (limited && limitedHold) return;
+    if (limited !== remoteState.limited) setRemote({ limited });
   }
 
   // fitRemote scales the font so the peer's grid fits the host, never
@@ -320,6 +379,12 @@ export function mountTerminalWidget({
   }
 
   function sendResize() {
+    // A remote grid is the peer's: a shared view reports its panel, never the
+    // grid it was sent; a pinned view reports nothing.
+    if (remote) {
+      if (remoteState.shared) sendDesired();
+      return false;
+    }
     return sendDimensions(term.cols, term.rows);
   }
 
@@ -595,8 +660,10 @@ export function mountTerminalWidget({
 
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
-    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '' });
+    const takeOver = remote && takeOverNext;
+    takeOverNext = false;
+    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath + (takeOver ? '&take_over=1' : ''));
+    if (remote) { setRemote(REMOTE_RESET); desired = null; lastDesired = ''; cancelLimitedHold(); }
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -680,9 +747,15 @@ export function mountTerminalWidget({
       const cols = Number(msg.cols); const rows = Number(msg.rows);
       if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= MAX_REMOTE_COLS && rows <= MAX_REMOTE_ROWS && (cols !== term.cols || rows !== term.rows)) {
         term.resize(cols, rows);
-        if (typeof requestAnimationFrameImpl === 'function') requestAnimationFrameImpl(fit);
+        if (remoteState.shared) updateLimited();
+        else if (typeof requestAnimationFrameImpl === 'function') requestAnimationFrameImpl(fit);
       }
     };
+    const othersOf = (list) => (!Array.isArray(list) ? [] : list
+      .filter((o) => typeof o === 'string')
+      .map((o) => o.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 80))
+      .filter(Boolean)
+      .slice(0, 4));
     if (msg?.type === 'hello') {
       const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
       term.options.disableStdin = mode !== 'interactive';
@@ -690,10 +763,23 @@ export function mountTerminalWidget({
       // files says the peer shares this terminal's files with us
       // (sessions.files.read); viewer_id pins downloads to this very view.
       const viewer = typeof msg.viewer_id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(msg.viewer_id) ? msg.viewer_id : '';
-      setRemote({ mode, files: msg.files === true && !!viewer, viewer });
+      // shared: the peer sizes its window to the smallest attached client, so
+      // this view reports what its panel could show (at the normal font) and
+      // renders the grid it is sent. others: what else is attached;
+      // take_over: the peer lets this node disconnect them.
+      const shared = msg.shared === true;
+      setRemote({ mode, files: msg.files === true && !!viewer, viewer, shared, others: othersOf(msg.others), canTakeOver: msg.take_over === true });
       setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
+      if (shared) {
+        term.options.fontSize = REMOTE_FONT_MAX;
+        initialResizeReady = true;
+        lastDesired = '';
+        fit();
+      }
     } else if (msg?.type === 'size') {
       size();
+    } else if (msg?.type === 'others') {
+      setRemote({ others: othersOf(msg.others) });
     } else if (msg?.type === 'closed') {
       setRemote({ closed: { reason: String(msg.reason || ''), message: String(msg.message || '') } });
     }
@@ -763,7 +849,9 @@ export function mountTerminalWidget({
   disposables.push(term.onResize(sendResize));
 
   const observer = typeof ResizeObserverCtor === 'function'
-    ? new ResizeObserverCtor(() => { if (!disposed && isActive) fit(); })
+    // A shared remote view reports its panel even when inactive: a visible
+    // split pane still takes part in the peer's shared size.
+    ? new ResizeObserverCtor(() => { if (!disposed && (isActive || remote && remoteState.shared)) fit(); })
     : null;
   observer?.observe(host);
 
@@ -773,6 +861,13 @@ export function mountTerminalWidget({
     fit,
     focus,
     sendResize,
+    // takeOver reopens a remote terminal asking the peer to disconnect the
+    // session's other viewers, so this view owns its size.
+    takeOver() {
+      if (disposed || !remote) return Promise.resolve(false);
+      takeOverNext = true;
+      return connect();
+    },
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
     setActive(next) {
       if (disposed) return;
@@ -795,6 +890,7 @@ export function mountTerminalWidget({
       cancelPostOpenFit();
       cancelInitialResize();
       cancelPostAttachResize();
+      cancelLimitedHold();
       cancelRestartWatchIfAny();
       abortAuth();
       closeSocket();

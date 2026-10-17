@@ -176,7 +176,22 @@ tclaude federation untrust bob
 ```
 
 The label is the short name you use in addresses (`member@bob`). Envelopes
-from untrusted instances are dropped unanswered. Untrusting a peer also
+from untrusted instances are dropped unanswered, except enrollment (below) and
+trust requests.
+
+A **trust request** asks a hub-visible instance's operator to trust your node,
+or to trust it back (the dashboard's Fleet map sends one when you trust an
+instance from it, and offers **Ask to be trusted…** with an optional note of up
+to 200 characters). It is small, signed and sealed, carries no authority and
+bypasses the outbox; the receiving node keeps it in memory only (at most 64,
+for 7 days or until a restart), rate-limits senders, and ignores it from an
+instance it already trusts. It only shows on the receiver's map and in
+⚙ Fleet config → Peers; trusting the sender still needs the receiver's own
+fingerprint comparison. The note is the sender's own words. API:
+`POST /v1/federation/peers/trust-request` `{instance, note?}` (one per instance
+a minute) and `POST /v1/federation/peers/trust-request/dismiss` `{instance}`;
+status rows carry `trust_request` `{note, trusts_you, received_at}` and
+`trust_requested_at`. Untrusting a peer also
 removes its peer grants and cached catalog.
 
 Trust defaults to **restricted**, including for existing peers: receiving peer
@@ -230,6 +245,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
@@ -832,8 +848,10 @@ tclaude federation kick <viewer-id>
 
 For restricted peers, a local agent also needs `sessions.watch` or
 `sessions.attach` with `--scope peer=alice/builders`; `sessions.read` is
-separate discovery permission. Watch never authorizes typing. Unrestricted
-trust includes both modes on all live groups, including future groups.
+separate discovery permission. Watch never authorizes typing. Take-over
+(below) needs `sessions.takeover`, likewise scoped for a local agent.
+Unrestricted trust includes both modes and take-over on all live groups,
+including future groups.
 
 A target pane displays `REMOTE WATCH` or `REMOTE INPUT` with the peer label
 while viewers are attached. The original pane border options are restored
@@ -844,8 +862,33 @@ are audited on both instances; kicks are audited at the target.
 
 The renderer requires tmux 3.2 or newer and a session with exactly one window
 and one pane. The renderer has `ignore-size`, and its PTY has no input path. The window
-size stays pinned while viewers are attached, then its original sizing policy
-is restored. Resizing a viewer never resizes the target. Interactive input is
+size stays manual while viewers are attached, then its original sizing policy
+is restored.
+
+Attached clients share the window size, like tmux's `window-size smallest`.
+Each remote viewer, watch or interactive, reports the size it could show (a
+CLI its terminal, a browser its panel), and the target sizes the window to the
+per-axis minimum across those viewers and its own local tmux terminals showing
+that window, less the status line. A remote viewer's report counts as at least
+20 columns by 5 rows, so a peer cannot shrink the window to a sliver for
+everyone else; local terminals count at their real size. It recomputes, coalesced, when a viewer joins, leaves or
+resizes, and once a second for local terminals. Alone, a viewer simply sizes
+the window. Every viewer renders the shared size, never stretched: a browser
+whose panel is larger shows the grid at the normal font and says the size is
+limited by another viewer. Viewers are told, without naming peers, what else
+is attached.
+
+With the `sessions.takeover` grant, `tclaude federation attach --take-over`,
+or **Take over** in the browser terminal, disconnects the other clients first,
+local tmux terminals included, so the viewer has the window to itself. The
+target checks the grant; the viewing node shows **Take over** only when its
+cached catalog has it, and refuses `--take-over` otherwise. Displaced remote
+viewers close with reason `taken_over`. A remote viewer displaced by a local
+web terminal, which force-attaches and detaches every other client, closes the
+same way. Without the grant a peer never disconnects anyone. An older peer
+ignores sharing and keeps every viewer at the target's size.
+
+Interactive input is
 delivered separately to the resolved pane: special keys use a fixed tmux key
 table, text is literal, and unknown escape sequences are discarded. It can answer prompts, send
 Ctrl-C, or perform any other action available at that keyboard.
@@ -2521,7 +2564,10 @@ query also works on the CLI API. It returns the local identity (`instance_id`,
 cached `hub` connection state, and `peers`. Summary peers include only trusted
 linked instances, with their stable `instance_id`, `label`, `name`, trust
 `level`, `trusted`, `online`, and `last_seen` fields (plus fingerprint, version,
-and trust time). An empty peer list is `[]`. Presence comes from the cached
+and trust time). Instances that sent a trust request are always listed. Add `&untrusted=1` to
+also list the other hub-visible instances not trusted here (`trusted: false`, with `instance_id`, `name`, `fingerprint`,
+`online`, `last_seen` and `version`), as the map's Show untrusted view does.
+An empty peer list is `[]`. Presence comes from the cached
 hub directory; no remote requests or status probes run during this read.
 
 Summary responses omit `peer_grants`, `outbox`, and `remote`, and avoid loading
@@ -2649,13 +2695,20 @@ peers cannot call it or chain an attach through another node. It opens the same
 encrypted, incarnation-pinned terminal stream as CLI federation attach, with
 unchanged target-side watch/attach grants, indicators, viewer limits and audit.
 `GET /api/federation/sessions?peer=<instance_id>` returns the existing CLI session
-array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
+array, adding `watch`, `attach` and `takeover` flags; `instance` is the stable peer ID and
 `peer` its display label. Cached catalogs may be stale; the target authorizes
 both initial opens and every ongoing session.
 
-The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`),
-then binary output. Its dimensions come from the pinned target pane. Later JSON
-`size` frames report changes; browser `resize` messages never resize the target.
+The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`,
+`shared`, `others`, `take_over`), then binary output. Its dimensions come from
+the target pane, and later JSON `size` frames report the grid to render. When
+`shared` is true, the browser's `resize` messages report the size its panel
+could show and count toward the shared size; JSON `others` frames update what
+else is attached. Against an older peer `shared` is false and `resize` messages
+are dropped. `take_over` says the peer grants `sessions.takeover`; adding
+`&take_over=1` to the socket path then asks the target to disconnect the other
+clients first, and is refused with `denied` otherwise. The CLI attach socket
+opts into the same sharing with `share_size=1` and gets the same hello.
 Interactive binary input passes through the existing fixed-key/literal-text
 encoder; watch input is discarded. After xterm consumes each output frame,
 the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
@@ -2663,7 +2716,7 @@ Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
 through the browser renderer. Operational refusals use a hello-less JSON
 `closed` frame after upgrade; authentication/origin failures remain HTTP errors.
 Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
-`untrusted`, `kicked`, `offline`, or `error`; initial opens also use `denied` and
+`untrusted`, `kicked`, `taken_over`, `offline`, or `error`; initial opens also use `denied` and
 `limit`. A stalled connection can be aborted without delaying viewer cleanup.
 Detach closes the viewer and never stops the agent.
 

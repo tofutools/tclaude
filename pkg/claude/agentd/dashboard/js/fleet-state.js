@@ -1,6 +1,6 @@
 import { computed, effect, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
-import { mapFleet, normalizeFleet, normalizeNode } from './fleet-model.js';
+import { mapFleet, normalizeFleet, normalizeNode, normalizeStrangers } from './fleet-model.js';
 import { parseFused } from './fleet-scope.js';
 import { dashPrefs } from './prefs.js';
 
@@ -11,6 +11,9 @@ export const SETUP_SEEN_PREF = 'tclaude.dash.fleet.setupSeen';
 // LAST_VIEW_PREF remembers the fleet view (map or Fleet config) the operator
 // used last, which the ⌘ Fleet chip returns to.
 export const LAST_VIEW_PREF = 'tclaude.dash.fleet.lastView';
+
+// SHOW_UNTRUSTED_PREF remembers the map's "show untrusted" checkbox.
+export const SHOW_UNTRUSTED_PREF = 'tclaude.dash.fleet.showUntrusted';
 
 function readLastView(prefs) {
   try { return prefs.getItem(LAST_VIEW_PREF) === 'fleet-admin' ? 'fleet-admin' : 'map'; } catch { return 'map'; }
@@ -40,6 +43,13 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   const noFleet = signal(false);
   // summaries maps instance ID -> { summary, etag, receivedAt, failure, failures }.
   const summaries = signal({});
+  // strangers are the hub-visible instances not trusted here; the status read
+  // asks for them all only while the map's "show untrusted" box is ticked,
+  // and always returns the ones that asked to be trusted.
+  const strangers = signal([]);
+  // showUntrusted is this page's choice; null defers to the pref, read
+  // lazily for the same reason as lastFleet below.
+  const showUntrusted = signal(null);
   const focused = signal('');
   // statusLoaded flips once the first federation status read settles, so the
   // map can tell "no linked nodes" from "not loaded yet".
@@ -77,17 +87,29 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
     fused: fused.value,
     noFleet: noFleet.value,
     setupSeen: setupSeen.value || readSetupSeen(prefs),
+    showUntrusted: untrustedShown(),
+    strangers: untrustedShown() ? strangers.value : strangers.value.filter((s) => s.request),
   }));
+  function untrustedShown() {
+    if (showUntrusted.value != null) return showUntrusted.value;
+    try { return prefs.getItem(SHOW_UNTRUSTED_PREF) === '1'; } catch { return false; }
+  }
+  function setShowUntrusted(on) {
+    showUntrusted.value = !!on;
+    if (!on) strangers.value = strangers.value.filter((s) => s.request);
+    try { prefs.setItem(SHOW_UNTRUSTED_PREF, on ? '1' : ''); } catch { /* best effort */ }
+  }
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
     node.value = normalizeNode(status);
     fleet.value = normalizeFleet(status);
+    strangers.value = normalizeStrangers(status);
     noFleet.value = !fleet.value;
     return fleet.value;
   }
   // clearFleet drops the fleet and this node's hub state, e.g. when the status
   // route is absent on an older daemon: the chip row stays, greyed out.
-  function clearFleet() { fleet.value = null; node.value = null; noFleet.value = true; }
+  function clearFleet() { fleet.value = null; node.value = null; strangers.value = []; noFleet.value = true; }
   function entry(id) { return summaries.value[id] || null; }
   function commitSummary(id, summary, etag) {
     const prev = entry(id);
@@ -106,7 +128,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
   function lastFleetTab() { return lastFleet || readLastView(prefs); }
-  return Object.freeze({ fleet, node, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
+  return Object.freeze({ fleet, node, fused, setFused, strangers, untrustedShown, setShowUntrusted, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
 }
 
 export const fleetState = createFleetState();

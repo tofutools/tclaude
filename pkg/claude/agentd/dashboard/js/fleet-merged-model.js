@@ -54,7 +54,8 @@ export function uniqueNodeNames(nodes) {
 // mergeSnapshots returns a snapshot-shaped object whose groups and agents come
 // from every node. Group names (and parent references) carry @node so names
 // never collide across nodes; each group also carries fleet_node for the
-// renderer's node colour and stale treatment. The page's own snapshot (base,
+// renderer's node colour and stale treatment, and home for the node whose
+// groups this page acts on directly (the Groups actions). The page's own snapshot (base,
 // else this node's) provides the presentation settings (theme, attachments
 // mode, …).
 export function mergeSnapshots(input, now = Date.now(), base = null) {
@@ -76,7 +77,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
         name: suffix(g.name, node),
         key: `${node.id}/${g.key || g.name}`,
         parent: g.parent ? suffix(g.parent, node) : g.parent,
-        fleet_node: { id: node.id, name: node.name, color: node.color, local: !!node.local, stale: st.stale, label: st.label },
+        fleet_node: { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label },
         // Links and attachments describe one node's configuration; the
         // merged overview does not carry them across.
         federation_links: undefined,
@@ -99,4 +100,27 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     peer_view: undefined,
     fleet_nodes: status,
   };
+}
+
+// ownGroupData maps a control in the fused Groups view back to its node's own
+// names: there this page's own groups read group@node, and their controls run
+// the ordinary Groups actions, which take the plain group name. Values naming
+// a group (and the group names inside a JSON prefill) lose the @node suffix.
+export function ownGroupData(dataset, node) {
+  const at = `@${node}`;
+  const own = (v) => (node && typeof v === 'string' && v.endsWith(at) ? v.slice(0, -at.length) : v);
+  const data = {};
+  for (const [key, value] of Object.entries(dataset)) {
+    if (key === 'prefill') {
+      try {
+        const prefill = JSON.parse(value);
+        data[key] = prefill && typeof prefill === 'object'
+          ? JSON.stringify(Object.fromEntries(Object.entries(prefill).map(([k, v]) => [k, own(v)])))
+          : value;
+      } catch (_) { data[key] = value; }
+    } else {
+      data[key] = own(value);
+    }
+  }
+  return data;
 }

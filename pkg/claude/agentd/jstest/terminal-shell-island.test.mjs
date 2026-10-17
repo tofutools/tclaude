@@ -782,10 +782,15 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
   await harness.act(() => { fleetState.setFused(['inst_self', 'inst_forge']); });
   const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
-  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill').textContent), ['⌂ desk', 'forge']);
+  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill')?.textContent ?? null), [null, 'F'],
+    'only a peer\'s tab is labelled, and compactly');
+  assert.equal(shown[1].querySelector('.mux-node-pill').title, 'On forge');
   assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
   assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
-  assert.match(host.querySelector('.mux-pane.active .mux-pane-header').textContent, /forge|desk/);
+  const headerPill = (label) => [...host.querySelectorAll('.mux-pane')].find((pane) => pane.textContent.includes(label))
+    .querySelector('.mux-pane-header .mux-node-pill');
+  assert.equal(headerPill('reviewer-2')?.textContent, 'forge', 'a peer\'s pane header names the peer in full');
+  assert.equal(headerPill('builder-1'), null, 'this node\'s pane header carries no node label');
   // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
   // and forge in one press.
   const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
@@ -836,4 +841,31 @@ test('a widget disconnect asking to close the tab closes only that pane, without
   assert.equal(requests.filter((url) => String(url).includes('/api/hide/')).length, 0,
     'closing an exited pane sends no detach');
   await harness.act(() => cleanup());
+});
+
+test('a shared remote pane names what else is attached, says when the size is limited, and offers a take-over only when granted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RemoteSharedNotice } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const seed = { remote: { peer: 'inst_forge7', peerLabel: 'brain', agent: 'agt_ada1' } };
+  let takeOvers = 0;
+  const others = ['a local terminal', 'another remote viewer'];
+  const mounted = await harness.mount(harness.html`<${RemoteSharedNotice} seed=${seed}
+    remote=${{ shared: true, others, canTakeOver: true, limited: true }} onTakeOver=${() => { takeOvers += 1; }} />`);
+  const notice = () => mounted.container.querySelector('.term-remote-shared');
+  assert.equal(notice().textContent.replace('Take over', '').trim(),
+    'Also attached on brain: a local terminal, another remote viewer · sharing the size · size limited by another viewer');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Take over' }), 'click', { button: 0 }));
+  assert.equal(takeOvers, 1);
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others, canTakeOver: false, limited: false }} onTakeOver=${() => {}} />`);
+  assert.equal(notice().textContent.trim(), 'Also attached on brain: a local terminal, another remote viewer · sharing the size');
+  assertAbsent(mounted.container.querySelector('[data-term-take-over]'), 'no take-over without the grant');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others: [], canTakeOver: true, limited: true }} onTakeOver=${() => {}} />`);
+  assert.equal(notice().textContent.trim(), 'Size limited by another viewer');
+  assertAbsent(mounted.container.querySelector('[data-term-take-over]'), 'nobody to take over from');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: true, others: [], limited: false }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'alone at its own size: nothing to say');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${seed} remote=${{ shared: false, others: ['x'] }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'a pinned view (an older peer) shows none');
+  await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${{}} remote=${{ shared: true, others: ['x'] }} onTakeOver=${() => {}} />`);
+  assertAbsent(notice(), 'a local pane never shows it');
 });

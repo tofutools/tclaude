@@ -174,6 +174,8 @@ type fedRuntime struct {
 	enrollmentPending map[string]fedEnrollmentPending
 	enrollmentRates   map[string][]time.Time
 	enrollmentGlobal  []time.Time
+	trustReqMu        sync.Mutex
+	trustReq          fedTrustRequestState
 
 	agentStatusMu   sync.Mutex
 	agentStatusSent map[string]fedStatusSent
@@ -676,7 +678,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 }
 
 func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
-	if rt.handleEnrollmentInbound(from, sealed) {
+	if rt.handleEnrollmentInbound(from, sealed) || rt.handleTrustRequestInbound(from, sealed) {
 		return
 	}
 

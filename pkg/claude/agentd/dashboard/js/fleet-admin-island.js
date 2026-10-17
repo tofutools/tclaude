@@ -315,7 +315,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
       : html`<table class="fa-table" id="fleet-waiting">
         <thead><tr><th>Reports name</th><th>Instance</th><th>Fingerprint</th><th>Seen</th><th></th></tr></thead>
         <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
-          <td><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> ${r.name || html`<span class="muted">unnamed</span>`}</td>
+          <td><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> ${r.name || html`<span class="muted">unnamed</span>`}${r.asks && html` <span class="fa-asks" title="This instance asked to be trusted; its note is on the map">🤝 asks to be trusted</span>`}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
           <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code></td>
           <td>${r.online ? 'online' : ago(r.lastSeen, now)}</td>

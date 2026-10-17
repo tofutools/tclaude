@@ -3,12 +3,15 @@ package federationcmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -25,6 +28,51 @@ import (
 type attachParams struct {
 	Target   string `pos:"true" help:"Stable agt_…@peer from federation sessions"`
 	ReadOnly bool   `long:"read-only" help:"Watch without pane keyboard access"`
+	TakeOver bool   `long:"take-over" help:"Disconnect the session's other viewers first (needs the peer's sessions.takeover grant)"`
+}
+
+// attachHello is the daemon's first frame for a CLI that asked to share the
+// pane size: whether the peer shares it, what else is attached, and whether
+// this node may take the session over.
+type attachHello struct {
+	Type     string   `json:"type"`
+	Shared   bool     `json:"shared"`
+	Others   []string `json:"others"`
+	TakeOver bool     `json:"take_over"`
+}
+
+// attachHelloText words a hello for the operator, or "" when alone.
+func attachHelloText(h attachHello) string {
+	if h.Type != "hello" || len(h.Others) == 0 {
+		return ""
+	}
+	text := "Also attached: " + strings.Join(h.Others, ", ") + "."
+	if h.Shared {
+		text += " Sharing the size: the smallest terminal sets it."
+	}
+	if h.TakeOver {
+		text += " Rerun with --take-over to disconnect them."
+	}
+	return text
+}
+
+// attachCloseText words the peer's closure reason for the operator.
+func attachCloseText(reason string) string {
+	switch reason {
+	case "taken_over":
+		return "another viewer took over this terminal"
+	case "kicked":
+		return "the peer's operator disconnected this view"
+	case "revoked":
+		return "the peer revoked your access to this terminal"
+	case "untrusted":
+		return "the peer is no longer trusted"
+	case "reincarnated":
+		return "the session restarted on the peer"
+	case "exit":
+		return "the agent exited"
+	}
+	return ""
 }
 
 func attachCmd() *cobra.Command {
@@ -44,9 +92,12 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 	if err != nil {
 		return fail(stderr, err)
 	}
-	query := url.Values{"target": {p.Target}, "cols": {fmt.Sprint(cols)}, "rows": {fmt.Sprint(rows)}}
+	query := url.Values{"target": {p.Target}, "cols": {fmt.Sprint(cols)}, "rows": {fmt.Sprint(rows)}, "share_size": {"1"}}
 	if p.ReadOnly {
 		query.Set("read_only", "1")
+	}
+	if p.TakeOver {
+		query.Set("take_over", "1")
 	}
 	ws, err := agent.DialDaemonWebSocket(ctx, "/v1/federation/attach?"+query.Encode())
 	if err != nil {
@@ -54,14 +105,37 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 	}
 	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(terminal.MaxPayload + 5)
+	// A current daemon opens with a JSON hello; an older one goes straight to
+	// terminal frames, so a binary first message is kept for the reader below.
+	var first []byte
+	kind, msg, err := ws.ReadMessage()
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if kind == websocket.TextMessage {
+		var hello attachHello
+		if json.Unmarshal(msg, &hello) == nil {
+			if text := attachHelloText(hello); text != "" {
+				fmt.Fprintln(stderr, text)
+			}
+		}
+	} else {
+		first = msg
+	}
 	fmt.Fprintf(stderr, "Attached to %s (read-only=%t). Ctrl-] to leave.\n", p.Target, p.ReadOnly)
 	raw, err := term.MakeRaw(int(stdin.Fd()))
 	if err != nil {
 		return fail(stderr, err)
 	}
+	// closedReason is the peer's Closed frame, worded once the terminal is
+	// restored.
+	var closedReason atomic.Value
 	defer func() {
 		_ = term.Restore(int(stdin.Fd()), raw)
 		fmt.Fprint(stdout, "\x1b[?1049l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[0m")
+		if reason, _ := closedReason.Load().(string); attachCloseText(reason) != "" {
+			fmt.Fprintf(stderr, "Closed: %s.\n", attachCloseText(reason))
+		}
 	}()
 	window := terminal.NewWindow()
 	defer window.Close()
@@ -100,7 +174,11 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 	}()
 	go func() {
 		for {
-			kind, b, err := ws.ReadMessage()
+			kind, b, err := websocket.BinaryMessage, first, error(nil)
+			if first == nil {
+				kind, b, err = ws.ReadMessage()
+			}
+			first = nil
 			if err != nil {
 				errs <- err
 				return
@@ -136,8 +214,19 @@ func runAttach(ctx context.Context, p *attachParams, stdin *os.File, stdout, std
 					return
 				}
 			case terminal.Closed:
+				closedReason.Store(string(f.Data))
 				errs <- io.EOF
 				return
+			case terminal.Resize:
+				// The shared size changed. tmux redraws only its new grid, so
+				// clear what the old one left outside it; the peer sends this
+				// frame before that redraw.
+				if _, err := io.WriteString(stdout, "\x1b[H\x1b[2J"); err != nil {
+					errs <- err
+					return
+				}
+			case terminal.Status:
+				// What else is attached: the hello already said so once.
 			default:
 				errs <- terminal.ErrProtocol
 				return

@@ -1,7 +1,8 @@
 // fleet-model.js — DOM-free helpers for the Fleet node chip row and map view.
 //
 // Data comes from two local dashboard endpoints:
-//   GET /api/federation/status?summary=1 — this node plus its federation peers.
+//   GET /api/federation/status?summary=1 — this node plus its federation peers
+//   (&untrusted=1 adds the hub-visible strangers while the map shows them).
 //   GET /api/node-summary (local) and /api/peer/{instance_id}/node-summary — the
 //   lightweight per-node map-card summary (see "Node summaries and polling" in
 //   docs/federation.md).
@@ -100,6 +101,30 @@ export function normalizeFleet(status) {
     peers,
     hub: { state: hubState, ...hubDetails(status) },
   };
+}
+
+// normalizeStrangers lists the hub-visible instances this node has not
+// trusted, for the map's "show untrusted" view (an instance that asked to be
+// trusted is listed without it). Their names are self-reported:
+// the map shows them as claims and trusting one still goes through the
+// fingerprint check of Fleet config's trust dialog.
+export function normalizeStrangers(status) {
+  return (Array.isArray(status?.peers) ? status.peers : [])
+    .filter((p) => p && !p.trusted && p.instance_id)
+    .map((p) => ({
+      id: p.instance_id,
+      name: p.name || '',
+      label: p.name || String(p.instance_id).slice(0, 13),
+      fingerprint: p.fingerprint || '',
+      online: !!p.online,
+      lastSeen: p.last_seen && !String(p.last_seen).startsWith('0001-') ? p.last_seen : null,
+      // request: this instance asked to be trusted (its note is its own words);
+      // requestedAt: when this node last asked it.
+      request: p.trust_request ? { note: String(p.trust_request.note || ''), trustsYou: !!p.trust_request.trusts_you, receivedAt: Date.parse(p.trust_request.received_at || '') || null } : null,
+      requestedAt: Date.parse(p.trust_requested_at || '') || null,
+    }))
+    // Requests first, then by name.
+    .sort((a, b) => (!!b.request - !!a.request) || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
 }
 
 // hubDetails is what the map's hub card shows besides the connection state:
@@ -202,6 +227,12 @@ export function resourceView(resources) {
   return Object.keys(out).length ? out : null;
 }
 
+// trustLevel reads a peer_view trust level: 'unrestricted', 'restricted', or
+// '' when the node did not say (an older daemon).
+function trustLevel(level) {
+  return level === 'unrestricted' || level === 'restricted' ? level : '';
+}
+
 // cardView derives what a node card shows from the node, its last summary
 // entry and the current time. A summary is only ever data the node chose to
 // share with us; the card says "shared" rather than implying totals.
@@ -238,6 +269,9 @@ export function cardView(node, entry, now = Date.now()) {
     latestVersion: summary?.latest_version || '',
     updateAvailable: summary?.update_available === true && !!summary?.latest_version,
     omitted,
+    // The trust the node grants us: the other direction from node.level,
+    // which is the trust we grant it.
+    theirLevel: trustLevel(summary?.peer_view?.level),
   };
 }
 
@@ -321,5 +355,25 @@ export function peerViewSummary(meta) {
     .filter(shownOmission)
     .map((o) => (typeof o === 'string' ? { feature: o, requires: '' } : { feature: o?.feature || '', requires: o?.requires || '', ...(typeof o?.requestable === 'boolean' ? { requestable: o.requestable } : {}) }))
     .filter((o) => o.feature);
-  return { included, omitted, full: !omitted.length && !included.length };
+  return { included, omitted, level: trustLevel(meta.level), full: !omitted.length && !included.length };
+}
+
+// linkView describes both directions of a peer link for the map: what the
+// peer may do on this node (the trust we grant it) and what this node may use
+// on the peer (the trust it grants us). Each direction names its nodes so the
+// operator never has to infer direction from an arrow.
+export function linkView(selfName, peer, card) {
+  const ours = peer.level === 'unrestricted' ? 'unrestricted' : 'restricted';
+  const theirs = card?.theirLevel || '';
+  const hidden = card?.omitted || [];
+  return {
+    // The peer acting on this node.
+    in: { from: peer.name, to: selfName, level: ours, short: ours === 'unrestricted' ? 'full access' : 'limited' },
+    // This node acting on the peer.
+    out: {
+      from: selfName, to: peer.name, level: theirs, hidden,
+      short: theirs === 'unrestricted' ? 'full access' : theirs === 'restricted' ? `limited${hidden.length ? ` · ${hidden.length} hidden` : ''}` : 'not reported',
+    },
+    asymmetric: !!theirs && theirs !== ours,
+  };
 }

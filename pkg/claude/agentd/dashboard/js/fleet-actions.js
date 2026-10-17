@@ -13,7 +13,9 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
 
   async function loadStatus() {
     try {
-      const response = await fetchImpl('/api/federation/status?summary=1', { credentials: 'same-origin' });
+      // The map's "show untrusted" view also wants the hub-visible strangers.
+      const url = `/api/federation/status?summary=1${state.untrustedShown?.() ? '&untrusted=1' : ''}`;
+      const response = await fetchImpl(url, { credentials: 'same-origin' });
       // 404 (no route on this daemon) or 403 (federation not available to the
       // dashboard) mean there is no fleet to show. Other failures are transient:
       // keep the last known fleet so a daemon hiccup does not yank the map.
@@ -45,5 +47,16 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
     }
   }
 
-  return Object.freeze({ loadStatus, loadSummary });
+  // requestTrust asks a hub-visible instance to trust this node (or to trust
+  // it back); dismissTrustRequest drops a request received from one.
+  async function postTrustRequest(path, body) {
+    const response = await fetchImpl(`/api/federation/peers/${path}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const out = await readJSON(response);
+    if (!response.ok) throw Object.assign(new Error(out?.error || `HTTP ${response.status}`), { code: out?.code || '' });
+    return out;
+  }
+  const requestTrust = (instance, note = '') => postTrustRequest('trust-request', note ? { instance, note } : { instance });
+  const dismissTrustRequest = (instance) => postTrustRequest('trust-request/dismiss', { instance });
+
+  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest });
 }
