@@ -1,4 +1,4 @@
-import { SavedPromptPicker } from './saved-prompts.js';
+import { SavedPromptChips } from './saved-prompts.js';
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -105,7 +105,7 @@ const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network 
   + 'filesystem, network, and Unix-socket rules still apply. This choice is not saved and starts '
   + 'unchecked every time.';
 const PROFILE_OWNED_FIELDS = [
-  'profile', 'name', 'role', 'roleRefs', 'descr', 'task', 'initialMessage',
+  'profile', 'name', 'role', 'roleRefs', 'promptRefs', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
@@ -208,7 +208,6 @@ function roleHoverText(role) {
 }
 
 function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
-  const promptBodyRef = useRef(null);
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = useMemo(() => ({
     groups: current.groups,
@@ -949,12 +948,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
-      <textarea ref=${promptBodyRef} id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}
+      <textarea id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}
         onInput=${(event) => update('initialMessage', event.currentTarget.value)}
         placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>
     </label>
-    <${SavedPromptPicker} value=${draft.initialMessage} onChange=${(text) => update('initialMessage', text)}
-      textareaRef=${promptBodyRef} disabled=${busy} confirmDiscard=${confirmDiscard}/>
+    <div class="cron-create-row agent-spawn-prompts-row"
+      title="Saved prompts open the task brief, in order, ahead of the initial message. Pre-filled from the profile, else the group's default prompts.">
+      <span class="cron-create-label">Saved prompts</span>
+      <${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
+        onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}/>
+    </div>
     <div class="cron-create-row" id="agent-spawn-attachments-row"
       title="Attach files or screenshots to hand to the new agent. They're uploaded to a temp dir and listed in the agent's startup briefing.">
       <span class="cron-create-label">Attachments</span>

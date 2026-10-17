@@ -1026,6 +1026,9 @@ type snapshotPayload struct {
 	// a separate request on every two-second poll.
 	SpawnProfileDefault string     `json:"spawn_profile_default"`
 	Roles               []roleJSON `json:"roles"`
+	// SavedPrompts is the saved-prompt library for the dock and the spawn
+	// dialog's prompt picker; same wire shape as /api/saved-prompts.
+	SavedPrompts []db.SavedPrompt `json:"saved_prompts"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -1722,9 +1725,10 @@ type dashboardGroup struct {
 	DefaultSpawnGroup          bool                             `json:"default_spawn_group,omitempty"` // directory auto-join ambiguity tie-breaker
 	DefaultContext             string                           `json:"default_context"`               // shared startup context injected into spawned agents; "" = none
 	Environment                []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-	DefaultProfile             string                           `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile             string                           `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions                []string                         `json:"permissions"`     // live additive grants held by current group members
+	DefaultPrompts             []string                         `json:"default_prompts,omitempty"` // saved prompts composed into this group's spawns when neither spawn nor named profile names any
+	DefaultProfile             string                           `json:"default_profile"`           // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile             string                           `json:"sandbox_profile"`           // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions                []string                         `json:"permissions"`               // live additive grants held by current group members
 	PermissionScopes           map[string]PermissionScope       `json:"permission_scopes,omitempty"`
 	UnreadablePermissionScopes []string                         `json:"unreadable_permission_scopes,omitempty"`
 	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
@@ -3488,7 +3492,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, DefaultPrompts: g.DefaultPrompts, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
@@ -3810,6 +3814,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		profiles         []spawnProfileJSON
 		defaultProfile   *db.SpawnProfile
 		roles            []roleJSON
+		savedPrompts     []db.SavedPrompt
 		messages         []dashboardHumanMessage
 		messagesUnread   int
 		plugins          []dashboardPlugin
@@ -3837,6 +3842,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"profiles", func() { profiles = collectProfilesSnapshot() }},
 		snapshotNamedLoad{"default_profile", func() { defaultProfile = globalDefaultProfile() }},
 		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
+		snapshotNamedLoad{"saved_prompts", func() {
+			if savedPrompts, _ = db.ListSavedPrompts(); savedPrompts == nil {
+				savedPrompts = []db.SavedPrompt{}
+			}
+		}},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
 	)
@@ -3900,6 +3910,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}
 	out.Roles = roles
+	out.SavedPrompts = savedPrompts
 	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
 	// Only the actionable (pending) ones drive the blink/banner/badge — the
@@ -3935,6 +3946,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Templates = nil
 		out.Profiles = nil
 		out.Roles = nil
+		out.SavedPrompts = nil
 		out.PluginsCatalog = nil
 	}
 
@@ -3950,8 +3962,9 @@ func snapshotStaticVersion(out snapshotPayload) string {
 		Templates      []templateJSON     `json:"templates"`
 		Profiles       []spawnProfileJSON `json:"profiles"`
 		Roles          []roleJSON         `json:"roles"`
+		SavedPrompts   []db.SavedPrompt   `json:"saved_prompts"`
 		PluginsCatalog []Plugin           `json:"plugins_catalog"`
-	}{out.Slugs, out.Templates, out.Profiles, out.Roles, out.PluginsCatalog}
+	}{out.Slugs, out.Templates, out.Profiles, out.Roles, out.SavedPrompts, out.PluginsCatalog}
 	b, _ := json.Marshal(static) // all fields are JSON-native wire structs
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

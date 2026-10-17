@@ -3410,6 +3410,9 @@ type groupSummary struct {
 	// the spawn default's single source — the vestigial per-group
 	// default_model was dropped (JOH-220).
 	DefaultProfile string `json:"default_profile,omitempty"`
+	// DefaultPrompts names the saved prompts composed into a spawn's initial
+	// message when neither the spawn nor its named profile names any.
+	DefaultPrompts []string `json:"default_prompts,omitempty"`
 	// DefaultCwd is the working directory blank spawns into this group fall
 	// back to (agent_groups.default_cwd); "" = none. It is a path on the
 	// operator's own filesystem and this listing is readable by every local
@@ -3555,6 +3558,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Online:                  online,
 				MaxMembers:              g.MaxMembers,
 				DefaultProfile:          g.DefaultProfile,
+				DefaultPrompts:          g.DefaultPrompts,
 				DefaultCwd:              defaultCwd,
 				Environment:             environment,
 				DefaultSpawnGroup:       g.DefaultSpawnGroup,
@@ -4027,6 +4031,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// fill blank spawn fields for this group's agents; "" clears it. *string
 		// so a caller can clear it by sending "" — distinct from omitting it.
 		DefaultProfile *string `json:"default_profile,omitempty"`
+		// DefaultPrompts is a complete replacement of the group's saved-prompt
+		// set; [] clears it.
+		DefaultPrompts *[]string `json:"default_prompts,omitempty"`
 		// MaxMembers is the group's hard member cap; 0 = unlimited. A
 		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 		MaxMembers *int `json:"max_members,omitempty"`
@@ -4057,9 +4064,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.ReinjectAfterCompact == nil && body.Permissions == nil && body.OwnerScopes == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.DefaultPrompts == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.ReinjectAfterCompact == nil && body.Permissions == nil && body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, reinject_after_compact, permissions and/or owner_scopes)")
+			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, default_prompts, max_members, notify_enabled, remote_control_policy, reinject_after_compact, permissions and/or owner_scopes)")
 		return
 	}
 	required := make([]string, 0, 10)
@@ -4070,8 +4077,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		required = append(required, PermGroupsSettingsDefaultDir)
 	}
 	// The re-injection mode governs what happens to the startup context after
-	// a compaction, so it shares the startup-context slug.
-	if body.DefaultContext != nil || body.ReinjectAfterCompact != nil {
+	// a compaction, so it shares the startup-context slug, as do the default
+	// prompts: both are text every fresh member receives at spawn.
+	if body.DefaultContext != nil || body.ReinjectAfterCompact != nil || body.DefaultPrompts != nil {
 		required = append(required, PermGroupsSettingsDefaultContext)
 	}
 	if body.Environment != nil {
@@ -4108,6 +4116,16 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	if !requireGroupActive(w, g) {
 		return
+	}
+	var defaultPrompts []string
+	if body.DefaultPrompts != nil {
+		// Validate before any field is written so a bad name cannot leave a
+		// partial settings update behind.
+		var fail *spawnFailure
+		if defaultPrompts, fail = resolveSavedPromptRefs(*body.DefaultPrompts); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
 	}
 	if body.Permissions != nil || body.OwnerScopes != nil {
 		// Authorize the higher-impact fields before applying ANY part of a mixed
@@ -4289,6 +4307,19 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["default_profile"] = profile
+	}
+
+	if body.DefaultPrompts != nil {
+		n, err := db.SetAgentGroupDefaultPrompts(g.Name, defaultPrompts)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["default_prompts"] = defaultPrompts
 	}
 
 	if body.MaxMembers != nil {

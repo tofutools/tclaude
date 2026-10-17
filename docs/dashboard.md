@@ -42,23 +42,46 @@ machine or a phone, see [Operating remotely](remote.md).
 
 ## Saved prompts
 
-The terminal’s **✉ Message** composer and the spawn dialog’s **Initial msg**
-field include an **Insert prompt…** picker. Selecting a saved prompt inserts
-its text at the cursor (or replaces the selected text), leaving the result
-editable. It never sends the message or spawns an agent. An insertion that
-would exceed the message limit is refused without changing your draft.
+Saved prompts are reusable task text, shared globally across groups on this
+daemon and stored in SQLite. They work like roles when starting agents: pick
+one or more as chips, and their bodies open the new agent's task brief, in
+order and separated by blank lines, ahead of anything typed in **Initial msg**.
+A composition over the 16,384-byte initial-message limit is refused.
 
-Choose **Manage prompts…** beside either picker to create, edit, rename, or
-delete prompts. Names use the same short handles as groups (for example,
-`cold-review`); bodies contain up to 16,384 UTF-8 bytes. Prompts are stored in
-SQLite and shared globally across groups on this daemon. They are independent
-of roles: a role supplies agent guidance and permissions, while a saved prompt
-is text copied into an operator’s draft.
+Prompts can be selected at three levels; the highest one that names any
+prompts wins as a whole (nothing merges):
+
+1. The spawn itself — the spawn dialog's **Saved prompts** chips, or
+   `tclaude agent spawn --prompt <name>` (repeatable).
+2. The spawn profile — **Saved prompts** in the profile editor
+   (`prompt_refs`). The named profile beats the group's default profile.
+3. The group — **Saved prompts** in the group settings (`default_prompts`),
+   used when neither profile names any; the global default profile is the
+   last fallback.
+
+The spawn dialog pre-fills its chips in that same order, so what it shows is
+what the agent gets; removing every chip spawns with no saved prompts. A
+non-interactive spawn uses only prompts it names explicitly. Renaming a
+prompt updates every profile and group that uses it; deleting one is refused
+while any still do.
+
+The right-side palette has a **Saved prompts** section: **⧉** opens the
+manager, and each card's ⚙ menu edits, clones or deletes that prompt. The
+manager also creates new prompts and exports or imports them as JSON; an
+import previews which names are new and skips existing ones unless you choose
+to overwrite those that differ. The terminal's **✉ Message** composer keeps
+its **Insert prompt…** picker, which inserts a prompt's text at the cursor
+for editing and never sends the message.
+
+Names use the same short handles as groups (for example, `cold-review`);
+bodies contain up to 16,384 UTF-8 bytes. A saved prompt is task text, while a
+role supplies agent guidance and permissions.
 
 The dashboard manages prompts as the human. The daemon also exposes
 `GET/POST /v1/saved-prompts` and `GET/PATCH/DELETE /v1/saved-prompts/{name}`;
 PATCH replaces the complete name/body pair. Reads are open to agents, and
-mutations require `prompts.manage`, which is not granted by default.
+mutations require `prompts.manage`, which is not granted by default. Setting
+a group's `default_prompts` requires the group startup-context permission.
 
 ## The tabs
 

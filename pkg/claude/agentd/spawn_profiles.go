@@ -109,10 +109,13 @@ type spawnProfileJSON struct {
 	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// Identity / enrollment fields (dialog-side).
-	AgentName      string   `json:"agent_name,omitempty"`
-	Role           string   `json:"role,omitempty"`
-	RoleRef        string   `json:"role_ref,omitempty"`
-	RoleRefs       []string `json:"role_refs,omitempty"`
+	AgentName string   `json:"agent_name,omitempty"`
+	Role      string   `json:"role,omitempty"`
+	RoleRef   string   `json:"role_ref,omitempty"`
+	RoleRefs  []string `json:"role_refs,omitempty"`
+	// PromptRefs names saved prompts, in order, whose bodies compose the
+	// spawned agent's initial message ahead of any typed brief.
+	PromptRefs     []string `json:"prompt_refs,omitempty"`
 	Descr          string   `json:"descr,omitempty"`
 	InitialMessage string   `json:"initial_message,omitempty"`
 	// StartupContext is profile-owned guidance injected into every resolved
@@ -176,6 +179,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Role:                       p.Role,
 		RoleRef:                    p.RoleRef,
 		RoleRefs:                   append([]string{}, p.RoleRefs...),
+		PromptRefs:                 append([]string{}, p.PromptRefs...),
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
@@ -475,6 +479,10 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if len(resolvedRoleRefs) > 0 {
 		roleRef = resolvedRoleRefs[0]
 	}
+	promptRefs, fail := resolveSavedPromptRefs(body.PromptRefs)
+	if fail != nil {
+		return nil, fail
+	}
 
 	return &db.SpawnProfile{
 		Name:                       name,
@@ -506,6 +514,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Role:                       strings.TrimSpace(body.Role),
 		RoleRef:                    roleRef,
 		RoleRefs:                   resolvedRoleRefs,
+		PromptRefs:                 promptRefs,
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
 		StartupContext:             startupContext,
@@ -553,6 +562,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("role_ref")
 	case len(body.RoleRefs) != 0:
 		return nil, reject("role_refs")
+	case len(body.PromptRefs) != 0:
+		return nil, reject("prompt_refs")
 	case strings.TrimSpace(body.Descr) != "":
 		return nil, reject("descr")
 	case strings.TrimSpace(body.InitialMessage) != "":

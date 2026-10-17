@@ -281,6 +281,11 @@ type SpawnRequest struct {
 	// membership/routing label.
 	RoleRef  string   `json:"role_ref,omitempty"`
 	RoleRefs []string `json:"role_refs,omitempty"`
+	// PromptRefs names saved prompts whose bodies, in order, are composed
+	// ahead of InitialMessage into the agent's task brief. Like RoleRefs the
+	// set is resolved whole: an explicit set (even empty) beats the profile
+	// and group defaults.
+	PromptRefs []string `json:"prompt_refs,omitempty"`
 	// Descr is the short, one-line description shown on the dashboard
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
@@ -637,6 +642,7 @@ type SpawnRequest struct {
 	roleSpecified                bool
 	roleRefSpecified             bool
 	roleRefsSpecified            bool
+	promptRefsSpecified          bool
 	descrSpecified               bool
 	initialMessageSpecified      bool
 	autoFocusSpecified           bool
@@ -665,6 +671,7 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	_, r.roleSpecified = fields["role"]
 	_, r.roleRefSpecified = fields["role_ref"]
 	_, r.roleRefsSpecified = fields["role_refs"]
+	_, r.promptRefsSpecified = fields["prompt_refs"]
 	_, r.descrSpecified = fields["descr"]
 	_, r.initialMessageSpecified = fields["initial_message"]
 	_, r.autoFocusSpecified = fields["auto_focus"]
@@ -702,6 +709,13 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 	}
 	if r.roleRefsSpecified {
 		stated["role_refs"] = r.RoleRefs
+	}
+	if r.promptRefsSpecified {
+		refs := r.PromptRefs
+		if refs == nil {
+			refs = []string{}
+		}
+		stated["prompt_refs"] = refs
 	}
 	if r.descrSpecified {
 		stated["descr"] = r.Descr
@@ -776,6 +790,13 @@ func (r SpawnRequest) RoleRefSpecified() bool { return r.roleRefSpecified }
 // RoleRefsSpecified reports whether role_refs appeared in decoded JSON.
 func (r SpawnRequest) RoleRefsSpecified() bool { return r.roleRefsSpecified }
 
+// PromptRefsSpecified reports whether prompt_refs appeared in decoded JSON.
+func (r SpawnRequest) PromptRefsSpecified() bool { return r.promptRefsSpecified }
+
+// StatePromptRefs records an explicit saved-prompt set, so an empty set still
+// overrides the profile and group defaults.
+func (r *SpawnRequest) StatePromptRefs(v []string) { r.PromptRefs, r.promptRefsSpecified = v, true }
+
 // DescrSpecified reports whether descr appeared in decoded JSON.
 func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
 
@@ -801,6 +822,7 @@ type SpawnParams struct {
 	RoleRef        string   `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
 	Descr          string   `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief for an interactive agent; with --non-interactive, the one-shot prompt or shell command"`
+	Prompts        []string `long:"prompt" optional:"true" help:"Saved prompt to compose into the task brief, ahead of --initial-message (see the dashboard's Saved prompts). Repeatable; order is kept. Replaces the profile's and group's default prompts"`
 	File           string   `long:"file" short:"f" optional:"true" help:"Read --initial-message from this file ('-' reads stdin). Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
@@ -1747,6 +1769,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	// An explicit owner choice outranks the profile stack in either direction;
 	// omission leaves the daemon free to resolve group/global defaults.
+	if len(p.Prompts) > 0 {
+		req.StatePromptRefs(p.Prompts)
+	}
 	if p.Owner {
 		req.StateIsOwner(true)
 	} else if p.NoOwner {

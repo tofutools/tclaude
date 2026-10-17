@@ -202,6 +202,7 @@ export function createActionDialogActions({
 			const patch = {
 				descr: values.descr.trim(), default_cwd: values.defaultCwd.trim(),
 				default_context: values.defaultContext, default_profile: values.defaultProfile,
+				default_prompts: values.defaultPrompts || [],
 				environment: values.environment.map((entry) => ({ name: entry.name.trim(), value: entry.value })).filter((entry) => entry.name),
 				max_members: Math.max(0, Number(values.maxMembers) || 0),
 				notify_enabled: !!values.notifyEnabled,

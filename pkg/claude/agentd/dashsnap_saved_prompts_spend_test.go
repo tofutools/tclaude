@@ -76,19 +76,34 @@ func waitForJS(selector string) string {
 `
 }
 
+// savedPromptChipsJS adds a prompt through the spawn dialog's chip picker and
+// fails the shot when the chip does not render or the add control falls back
+// to the browser's white chrome.
+const savedPromptChipsJS = `
+  var add = scope.querySelector('#agent-spawn-prompt-refs select.saved-prompt-chip-add');
+  add.value = 'cold-review';
+  add.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var chip = scope.querySelector('#agent-spawn-prompt-refs .agent-spawn-role-chip');
+  if (!chip || chip.textContent.indexOf('cold-review') < 0) throw new Error('saved prompt chip missing');
+  var bg = getComputedStyle(scope.querySelector('#agent-spawn-prompt-refs .saved-prompt-chip-manage')).backgroundColor;
+  if (bg === 'rgb(239, 239, 239)' || bg === 'rgb(255, 255, 255)') throw new Error('Manage button has browser-default chrome ' + bg);
+  chip.scrollIntoView({ block: 'center' });
+`
+
 func savedPromptAndSpendStates(showGroups, expandGroups string) []dashsnap.State {
 	openSpawn := showGroups + expandGroups + `return (async function(){
   var spawn = document.querySelector('[data-act="spawn-agent"]');
   if (!spawn) throw new Error('no group row offers a spawn button');
   spawn.click();
-  ` + waitForJS(`#agent-spawn-modal .saved-prompts-controls select option[value="cold-review"]`) + `
+  ` + waitForJS(`#agent-spawn-prompt-refs select option[value="cold-review"]`) + `
   var scope = document.querySelector('#agent-spawn-modal');
-  ` + savedPromptRowCheckJS
+  ` + savedPromptChipsJS
 	return []dashsnap.State{
 		{
 			Key:      "quickwin-saved-prompts-spawn",
-			Title:    "Spawn dialog — saved prompts picker",
-			Caption:  "The saved-prompt select and its Manage prompts… button share one dark row under Initial msg.",
+			Title:    "Spawn dialog — saved prompts chips",
+			Caption:  "Saved prompts are added as chips, like roles; their text opens the task brief ahead of Initial msg.",
 			InitJS:   savedPromptFixtureJS,
 			JS:       openSpawn + `})();`,
 			SettleMS: 500,
@@ -99,7 +114,7 @@ func savedPromptAndSpendStates(showGroups, expandGroups string) []dashsnap.State
 			Caption: "The manager opened from the spawn dialog, editing an existing prompt, in the active skin.",
 			InitJS:  savedPromptFixtureJS,
 			JS: openSpawn + `
-  scope.querySelector('.saved-prompts-controls button').click();
+  scope.querySelector('#agent-spawn-prompt-refs .saved-prompt-chip-manage').click();
   ` + waitForJS(`#saved-prompts-manage-modal select`) + `
   var edit = document.querySelector('#saved-prompts-manage-modal select');
   edit.value = 'cold-review';

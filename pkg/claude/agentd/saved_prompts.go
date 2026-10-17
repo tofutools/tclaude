@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -87,6 +90,23 @@ func handleSavedPromptByName(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermPromptsManage); !ok {
 			return
 		}
+		profiles, groups, err := db.SavedPromptReferences(name)
+		if err != nil {
+			writeSavedPromptError(w, err)
+			return
+		}
+		if len(profiles) > 0 || len(groups) > 0 {
+			var users []string
+			if len(profiles) > 0 {
+				users = append(users, "spawn profiles "+strings.Join(profiles, ", "))
+			}
+			if len(groups) > 0 {
+				users = append(users, "groups "+strings.Join(groups, ", "))
+			}
+			writeError(w, http.StatusConflict, "prompt_in_use",
+				fmt.Sprintf("saved prompt %q is still used by %s; remove it there first", name, strings.Join(users, " and ")))
+			return
+		}
 		if err := db.DeleteSavedPrompt(name); err != nil {
 			writeSavedPromptError(w, err)
 			return
@@ -95,4 +115,51 @@ func handleSavedPromptByName(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PATCH or DELETE")
 	}
+}
+
+// resolveSavedPromptRefs validates an ordered saved-prompt reference set and
+// returns it trimmed and de-duplicated. Every name must exist in the library.
+func resolveSavedPromptRefs(refs []string) ([]string, *spawnFailure) {
+	out := cleanRoleRefs(refs)
+	for _, ref := range out {
+		p, err := db.GetSavedPrompt(ref)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if p == nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_prompt",
+				fmt.Sprintf("no saved prompt named %q", ref)}
+		}
+	}
+	return out, nil
+}
+
+// composeSavedPrompts builds an initial message from saved prompts: each
+// prompt's body in order, then the typed brief, separated by blank lines. A
+// missing prompt or a composition over the initial-message cap is refused
+// rather than silently trimmed.
+func composeSavedPrompts(refs []string, brief string) (string, *spawnFailure) {
+	parts := make([]string, 0, len(refs)+1)
+	for _, ref := range refs {
+		p, err := db.GetSavedPrompt(ref)
+		if err != nil {
+			return "", &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if p == nil {
+			return "", &spawnFailure{http.StatusBadRequest, "invalid_prompt",
+				fmt.Sprintf("saved prompt %q does not name a prompt in the library", ref)}
+		}
+		if body := strings.TrimSpace(p.Body); body != "" {
+			parts = append(parts, body)
+		}
+	}
+	if brief = strings.TrimSpace(brief); brief != "" {
+		parts = append(parts, brief)
+	}
+	msg := strings.Join(parts, "\n\n")
+	if !isValidInitialMessage(msg) {
+		return "", &spawnFailure{http.StatusBadRequest, "invalid_initial_message",
+			fmt.Sprintf("the selected saved prompts and initial message together exceed %d bytes", agent.MaxInitialMessageBytes)}
+	}
+	return msg, nil
 }

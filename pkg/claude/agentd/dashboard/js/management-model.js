@@ -155,6 +155,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     agent_name: seed?.agent_name || '', role: seed?.role || '',
     role_refs: Array.isArray(seed?.role_refs) && seed.role_refs.length
       ? [...new Set(seed.role_refs)] : (seed?.role_ref ? [seed.role_ref] : []),
+    prompt_refs: Array.isArray(seed?.prompt_refs) ? [...new Set(seed.prompt_refs)] : [],
     descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
     fetch_latest_worktree: triValue(seed?.fetch_latest_worktree),
@@ -172,6 +173,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     name: draft.name.trim(), harness: draft.harness, model: draft.model.trim(), effort: draft.effort,
     agent_name: draft.agent_name.trim(), role: draft.role.trim(),
     role_refs: [...new Set((draft.role_refs || []).map((value) => value.trim()).filter(Boolean))],
+    prompt_refs: [...new Set((draft.prompt_refs || []).map((value) => value.trim()).filter(Boolean))],
     descr: draft.descr.trim(),
     initial_message: draft.initial_message, disabled: !!draft.disabled,
     startup_context: draft.startup_context,
@@ -242,7 +244,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     body.model_proxy = draft.model_proxy;
   }
   if (local) {
-    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
+    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'prompt_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
   }
   return body;
 }

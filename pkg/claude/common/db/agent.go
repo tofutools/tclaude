@@ -21,6 +21,7 @@ type AgentGroup struct {
 	DefaultSpawnGroup bool                             // operator-selected tie-breaker when directory auto-join matches multiple groups
 	DefaultContext    string                           // shared startup context delivered to the inbox of agents spawned into this group; "" = none
 	DefaultProfile    string                           // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
+	DefaultPrompts    []string                         // ordered saved-prompt names composed into a spawned agent's initial message when the spawn names none
 	Environment       []sandboxpolicy.EnvironmentEntry // common process environment for fresh spawns
 	SandboxProfile    string                           // current name of the stable sandbox-profile assignment; "" = none
 	SandboxProfileID  int64                            `json:"-"`
@@ -1115,13 +1116,13 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
 			 attachment_url, attachment_label, mission, source_template, source_template_id,
-			 parent_id, created_at, owner_scopes_json, environment_json, reinject_after_compact)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 parent_id, created_at, owner_scopes_json, environment_json, reinject_after_compact, default_prompts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
 		src.ParentGroupID,
-		dbTime(time.Now()), src.OwnerScopesJSON, environmentJSON, src.ReinjectAfterCompact)
+		dbTime(time.Now()), src.OwnerScopesJSON, environmentJSON, src.ReinjectAfterCompact, MarshalPromptRefs(src.DefaultPrompts))
 	if err != nil {
 		return 0, err
 	}
@@ -1317,6 +1318,23 @@ func SetAgentGroupDefaultProfile(name, profile string) (int64, error) {
 		return 0, err
 	}
 	res, err := db.Exec(`UPDATE agent_groups SET default_profile = ?, default_profile_id = ? WHERE name = ?`, profile, profileID, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// SetAgentGroupDefaultPrompts replaces (or, with an empty set, clears) the
+// ordered saved-prompt names a group's spawns compose into the initial message
+// when the spawn and its named profile name none. Callers validate the names;
+// a reference that later dangles fails the spawn that resolves it. Returns the
+// number of rows affected — 0 means no group by that name.
+func SetAgentGroupDefaultPrompts(name string, prompts []string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET default_prompts = ? WHERE name = ?`, MarshalPromptRefs(prompts), name)
 	if err != nil {
 		return 0, err
 	}
@@ -1637,7 +1655,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_spawn_gro
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
 	created_at, archived_at, parent_id, route_generation, owner_scopes_json, environment_json,
-	reinject_after_compact FROM agent_groups`
+	reinject_after_compact, default_prompts FROM agent_groups`
 
 const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_spawn_group, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
@@ -1650,7 +1668,7 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
 	g.created_at, g.archived_at, g.parent_id, g.route_generation, g.owner_scopes_json, g.environment_json,
-	g.reinject_after_compact`
+	g.reinject_after_compact, g.default_prompts`
 
 // GetAgentGroupByName returns the group with the given name, or nil if not
 // found.
@@ -4761,12 +4779,12 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt dbTimestamp
 	var remoteControl, parentID sql.NullInt64
-	var environmentJSON string
+	var environmentJSON, defaultPrompts string
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultSpawnGroup, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
 		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,
-		&g.OwnerScopesJSON, &environmentJSON, &g.ReinjectAfterCompact); err != nil {
+		&g.OwnerScopesJSON, &environmentJSON, &g.ReinjectAfterCompact, &defaultPrompts); err != nil {
 		return nil, err
 	}
 	environment, err := unmarshalEnvironmentColumn(environmentJSON)
@@ -4774,6 +4792,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 		return nil, fmt.Errorf("decode group %q environment: %w", g.Name, err)
 	}
 	g.Environment = environment
+	g.DefaultPrompts = UnmarshalPromptRefs(defaultPrompts)
 	g.RemoteControl = nullToBoolPtr(remoteControl)
 	g.ParentGroupID = nullToInt64Ptr(parentID)
 	g.CreatedAt = createdAt.Time()

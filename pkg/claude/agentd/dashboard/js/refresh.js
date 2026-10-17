@@ -213,7 +213,7 @@ export async function refresh(options) {
     // must not blank a section.
     const prevSnap = lastSnapshot || {};
     if (data.static_unchanged && prevSnap.static_version === data.static_version) {
-      for (const key of ['slugs', 'templates', 'profiles', 'roles', 'plugins_catalog']) {
+      for (const key of ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog']) {
         data[key] = prevSnap[key];
       }
     }
