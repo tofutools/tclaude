@@ -2275,3 +2275,10 @@ func SetProcessProgramLayerWrapForTest(fn func(cwd string, snapshot *sandboxpoli
 func JoinCodeForTest(hubURL, caFile, invite, space string, expires time.Time) (string, error) {
 	return joinCodeFor(hubURL, caFile, invite, space, expires)
 }
+
+// SetProfileStoreDirForTest points the daemon profile capture store at dir.
+func SetProfileStoreDirForTest(dir string) func() {
+	prev := profileStoreDir
+	profileStoreDir = func() string { return dir }
+	return func() { profileStoreDir = prev }
+}

@@ -39,6 +39,7 @@ export function createProfilesActions({
   fetchImpl = globalThis.fetch,
   AbortControllerImpl = globalThis.AbortController,
   confirm = async () => true,
+  pickAgent = async () => '',
 } = {}) {
   if (!state?.beginRequest) throw new TypeError('profiles actions require state');
   if (typeof fetchImpl !== 'function') throw new TypeError('profiles actions require fetch');
@@ -129,11 +130,37 @@ export function createProfilesActions({
     }
   }
 
+  // share mails a finished capture's files to an agent picked from the
+  // shared agent picker; they arrive as message attachments.
+  async function share(capture) {
+    if (disposed || !capture?.id) return false;
+    const to = await pickAgent({ title: `Share capture ${capture.id} with`, identity: 'agent' });
+    if (!to || disposed) return false;
+    state.setNotice(`Sharing ${capture.id}…`);
+    try {
+      const response = await fetchImpl(`/api/profiles/${encodeURIComponent(capture.id)}/share`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const skipped = Array.isArray(payload.skipped) && payload.skipped.length
+        ? ` (too large to attach: ${payload.skipped.join(', ')})` : '';
+      state.setNotice(`Sent ${capture.id} to ${payload.title || to} as ${payload.files} attached files${skipped}.`);
+      return true;
+    } catch (err) {
+      state.setNotice(`Could not share ${capture.id}: ${String(err.message || err)}`);
+      return false;
+    }
+  }
+
   function dispose() {
     if (disposed) return;
     disposed = true;
     cancel();
   }
 
-  return Object.freeze({ load, start, remove, cancel, dispose });
+  return Object.freeze({ load, start, remove, share, cancel, dispose });
 }

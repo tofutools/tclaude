@@ -88,10 +88,12 @@ test('Profiles island lists captures with pprof viewer links and submits the dia
 
   let starts = 0;
   const removed = [];
+  const shared = [];
   const actions = {
     load: () => Promise.resolve(true),
     start: () => { starts++; return Promise.resolve(true); },
     remove: (row) => { removed.push(row.id); return Promise.resolve(true); },
+    share: (row) => { shared.push(row.id); return Promise.resolve(true); },
     cancel() {},
   };
   const timers = [];
@@ -106,13 +108,16 @@ test('Profiles island lists captures with pprof viewer links and submits the dia
     '/api/profiles/20261017-100000-abcdef/ui/cpu/',
     '/api/profiles/20261017-100000-abcdef/ui/heap/',
     '/api/profiles/20261017-100000-abcdef/files/trace.out?download=1',
-  ], 'empty profiles get no viewer link');
+    '/api/profiles/20261017-100000-abcdef/archive',
+  ], 'empty profiles get no viewer link; the whole capture downloads as one zip');
   assert.equal(row.querySelector('a[href$="/ui/cpu/"]').getAttribute('target'), '_blank');
   assert.match(row.textContent, /13%.*3\.3%/, "agentd and child CPU render rounded");
   assert.match(row.textContent, /idle fleet/);
 
   await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: /Delete capture/ }), 'click'));
   assert.deepEqual(removed, ['20261017-100000-abcdef']);
+  await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: /Share capture/ }), 'click'));
+  assert.deepEqual(shared, ['20261017-100000-abcdef']);
 
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: /Profile daemon/ }), 'click'));
   const form = mounted.container.querySelector('#profile-modal form');
@@ -122,4 +127,30 @@ test('Profiles island lists captures with pprof viewer links and submits the dia
   assert.equal(starts, 1, 'submitting the form (Enter in any field) starts the capture');
 
   await mounted.unmount();
+});
+
+test('Sharing a capture picks an agent and posts it to the share endpoint', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createProfilesState, createProfilesActions } = await loadModules(harness);
+  const state = createProfilesState({ activeTab: harness.signals.signal('activity') });
+  const calls = [];
+  const picks = [];
+  const actions = createProfilesActions({
+    state,
+    pickAgent: async (options) => { picks.push(options); return picks.length === 1 ? 'agent-123' : ''; },
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      return { ok: true, status: 202, json: async () => ({ title: 'perf-reader', files: 9, skipped: ['trace.out'] }) };
+    },
+  });
+  const row = capture('20261017-100000-abcdef');
+  assert.equal(await actions.share(row), true);
+  assert.equal(picks[0].identity, 'agent');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/profiles/20261017-100000-abcdef/share');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { to: 'agent-123' });
+  assert.match(state.view.value.notice, /Sent 20261017-100000-abcdef to perf-reader as 9 attached files \(too large to attach: trace\.out\)/);
+
+  assert.equal(await actions.share(row), false, 'dismissing the picker sends nothing');
+  assert.equal(calls.length, 1);
 });

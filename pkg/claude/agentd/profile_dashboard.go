@@ -16,6 +16,8 @@ import (
 //	POST   /api/profiles                         start an in-process capture
 //	DELETE /api/profiles/{id}                    delete a finished capture
 //	GET    /api/profiles/{id}/files/{name}       download one artifact
+//	GET    /api/profiles/{id}/archive            every artifact as one zip
+//	POST   /api/profiles/{id}/share              mail the artifacts to an agent
 //	       /api/profiles/{id}/ui/{kind}/...      pprof web UI for one profile
 //
 // Captures run inside this daemon, so they need neither `serve --pprof` nor
@@ -29,6 +31,8 @@ func registerProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/profiles", dashboardAuthed(handleProfileStart))
 	mux.HandleFunc("DELETE /api/profiles/{id}", dashboardAuthed(handleProfileDelete))
 	mux.HandleFunc("GET /api/profiles/{id}/files/{name}", dashboardReadAuthed(handleProfileFile))
+	mux.HandleFunc("GET /api/profiles/{id}/archive", dashboardReadAuthed(handleProfileArchive))
+	mux.HandleFunc("POST /api/profiles/{id}/share", dashboardAuthed(handleProfileShare))
 	viewer := func(w http.ResponseWriter, r *http.Request) {
 		serveProfileViewer(w, r, r.PathValue("id"), r.PathValue("kind"))
 	}
