@@ -18,7 +18,10 @@ test('the model routes reads and actions to the owning node and merges newest fi
   assert.equal(m.ownerRoutes(self).decide('7'), '/api/access-requests/7/decision');
   assert.equal(m.ownerRoutes(forge).decide('7'), '/api/peer/inst_forge/human-inbox/access/7');
   assert.equal(m.ownerRoutes(lab).message, '/api/peer/inst_lab/operator-message');
-  assert.equal(m.canActOnHuman(self), true); assert.equal(m.canActOnHuman(forge), true); assert.equal(m.canActOnHuman(lab), false);
+  assert.equal(m.canActOnHuman(self), true); assert.equal(m.canActOnHuman(forge, { level: 'unrestricted' }), true); assert.equal(m.canActOnHuman(lab), false);
+  // The peer's trust in this node answers, not this node's in the peer (tcl-mqlprj).
+  assert.equal(m.canActOnHuman(forge), false, 'nothing heard from forge yet');
+  assert.equal(m.canActOnHuman(forge, { level: 'restricted' }), false, 'forge does not trust this node unrestricted');
   assert.equal(m.readFailure(403, { code: 'permission' }).kind, 'not_shared');
   assert.equal(m.readFailure(403, { code: 'not_trusted' }).kind, 'gone');
   assert.equal(m.readFailure(502, { code: 'peer_unreachable' }).label, 'offline');
@@ -39,6 +42,8 @@ function fakeTimers() {
 }
 const ok = (data) => ({ ok: true, status: 200, json: async () => data });
 const fail = (status, data) => ({ ok: false, status, json: async () => data });
+// What each peer's replies say of its trust in this node.
+const pv = (url) => url.includes('/peer/inst_forge/') ? { peer_view: { level: 'unrestricted' } } : url.includes('/peer/inst_lab/') ? { peer_view: { level: 'restricted' } } : {};
 
 test('fused Messages lists every ticked node\'s mail, answers on the owning node, and falls back to opening the node', async (t) => {
   const harness = await createPreactHarness(t);
@@ -60,7 +65,7 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
     calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
     if (init.method === 'POST') return url.startsWith('/api/peer/inst_lab/') ? fail(403, { error: 'missing message.direct', code: 'permission' }) : ok({ ok: true });
     const base = Object.keys(messages).sort((a, b) => b.length - a.length).find((b) => url.startsWith(b));
-    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 1, unread: 1 }] });
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ ...pv(url), mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 1, unread: 1 }] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [{ id: 'r2', perm: 'agents.spawn', title: 'forge-agent', created_at: '2026-01-02T00:00:00Z' }] });
     return ok({ messages: messages[base], total: 1 });
   };
@@ -130,7 +135,7 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
     calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
     if (init.method === 'POST') return ok({ ok: true });
     if (url.startsWith('/api/peer/inst_forge/') && !forgeTrusted) return fail(403, { error: 'not trusted', code: 'not_trusted' });
-    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [] });
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ ...pv(url), mailboxes: [] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const human = url.includes('id=human');
     const from = url.startsWith('/api/peer/') ? 'forge' : 'desk';
@@ -260,7 +265,7 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
     calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
     if (init.method === 'POST') return ok({ ok: true });
     const node = url.startsWith('/api/peer/inst_forge/') ? 'forge' : 'desk';
-    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: 30 }, { id: 'human', kind: 'human', title: 'Human notifications', total: 2, unread: node === 'forge' ? 2 : 0 }], agents_total: 0 });
+    if (/\/mailboxes\?/.test(url)) return ok({ ...pv(url), mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: 30 }, { id: 'human', kind: 'human', title: 'Human notifications', total: 2, unread: node === 'forge' ? 2 : 0 }], agents_total: 0 });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const params = new URL(url, 'http://x').searchParams;
     const size = Number(params.get('page_size')); const page = Number(params.get('page'));
@@ -348,7 +353,7 @@ test('on a peer\'s page, this node\'s own notification files keep their local ro
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
   const timers = fakeTimers();
   const respond = async (url) => {
-    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [] });
+    if (/\/mailboxes\?/.test(url)) return ok({ ...pv(url), mailboxes: [] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const peer = url.startsWith('/api/peer/');
     return ok({ messages: [{ id: peer ? 8 : 5, from_agent: 'agt_abcd1234', from_conv: 'c0ffee00-0000-4000-8000-000000000001', subject: 'note', body: 'b', created_at: '2026-01-01T00:00:00Z',
@@ -390,7 +395,7 @@ test('the fused view routes its folder, message, page and search through the URL
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'unrestricted' }] });
   const fetchImpl = async (url) => {
-    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 120, unread: 0 }] });
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ ...pv(url), mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 120, unread: 0 }] });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const node = url.startsWith('/api/peer/inst_lab/') ? 'lab' : 'desk';
     return ok({ messages: [{ id: 7, from_agent: `agt_${node}`, subject: `${node} 7`, created_at: '2026-01-01T00:00:01Z' }], total: 120 });
@@ -487,7 +492,7 @@ test('a merged folder pages every node with its keyset cursor, beside a node on 
   const respond = async (url) => {
     calls.push(url);
     const node = url.startsWith('/api/peer/inst_forge/') ? 'forge' : url.startsWith('/api/peer/inst_lab/') ? 'lab' : 'desk';
-    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: counts[node] }], agents_total: 0 });
+    if (/\/mailboxes\?/.test(url)) return ok({ ...pv(url), mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: counts[node] }], agents_total: 0 });
     if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
     const params = new URL(url, 'http://x').searchParams;
     const size = Number(params.get('page_size')); const page = Number(params.get('page'));

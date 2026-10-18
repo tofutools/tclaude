@@ -5,6 +5,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { remoteNodeID } from './fleet-model.js';
 import { fleetState } from './fleet-state.js';
+import { nodeSnapshot } from './node-api.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -17,29 +18,49 @@ const html = htm.bind(h);
 // text only.
 export const INBOX_EVERY_MS = 60_000;
 export const INBOX_HIDDEN_EVERY_MS = 300_000;
+// A peer that refused the read (it does not trust this node unrestricted) is
+// asked again only this rarely, unless its replies say it now does.
+export const INBOX_REFUSED_RETRY_MS = 30 * 60_000;
 
 // remoteInbox maps a node ID to { label, messages, access_requests, error }.
 export const remoteInbox = signal({});
 
 let lastRead = -Infinity;
+// refusedAt maps a node ID to when it last refused the read.
+let refusedAt = new Map();
 
 export function resetRemoteInboxForTest() {
   lastRead = -Infinity;
+  refusedAt = new Map();
   remoteInbox.value = {};
 }
 
-// inboxPeers are the nodes worth asking: online and trusted unrestricted
-// (anything less is refused by the peer anyway).
-export function inboxPeers(fleet = fleetState.fleet.value) {
-  return (fleet?.peers || []).filter((p) => p.level === 'unrestricted' && p.online);
+// peerTrustInUs is the trust a peer grants this node, from what its replies
+// carry (peer_view.level on the fused view's snapshot or the map's summary),
+// or '' when nothing here has heard yet. p.level is the other direction: the
+// trust this node grants the peer, which the peer's human-inbox ignores.
+export function peerTrustInUs(id) {
+  return nodeSnapshot(id)?.peer_view?.level || fleetState.summaries.value?.[id]?.summary?.peer_view?.level || '';
+}
+
+// inboxPeers are the nodes worth asking: online, and trusting this node
+// unrestricted (the peer refuses anything less). A node whose trust is not
+// known yet is asked, and after a refusal left alone for a while.
+export function inboxPeers(fleet = fleetState.fleet.value, { now = Date.now(), theirLevel = peerTrustInUs } = {}) {
+  return (fleet?.peers || []).filter((p) => {
+    if (!p.online) return false;
+    const level = theirLevel(p.id);
+    if (level) return level === 'unrestricted';
+    return !(now - (refusedAt.get(p.id) ?? -Infinity) < INBOX_REFUSED_RETRY_MS);
+  });
 }
 
 // claimRemoteInboxRead returns the nodes this tick should read, claiming the
 // slot, or [] — only on this node's own dashboard, at most every minute while
 // visible and every five while hidden. Nodes that dropped out are forgotten.
-export function claimRemoteInboxRead(now = Date.now(), { remote = remoteNodeID(), fleet = fleetState.fleet.value, hidden = !!globalThis.document?.hidden } = {}) {
+export function claimRemoteInboxRead(now = Date.now(), { remote = remoteNodeID(), fleet = fleetState.fleet.value, hidden = !!globalThis.document?.hidden, theirLevel } = {}) {
   if (remote) return [];
-  const peers = inboxPeers(fleet);
+  const peers = inboxPeers(fleet, { now, theirLevel });
   const keep = new Set(peers.map((p) => p.id));
   const cur = remoteInbox.value;
   if (Object.keys(cur).some((id) => !keep.has(id))) remoteInbox.value = Object.fromEntries(Object.entries(cur).filter(([id]) => keep.has(id)));
@@ -67,14 +88,16 @@ async function call(fetchImpl, url, body) {
 
 // readRemoteInboxes reads each node without holding the snapshot tick; a
 // failed read keeps that node's previous items and notes the error.
-export async function readRemoteInboxes(peers, fetchImpl = (...a) => globalThis.fetch(...a)) {
+export async function readRemoteInboxes(peers, fetchImpl = (...a) => globalThis.fetch(...a), now = Date.now()) {
   await Promise.all(peers.map(async (p) => {
     try {
       const data = await call(fetchImpl, peerURL(p.id, 'human-inbox'));
       const messages = Array.isArray(data?.messages) ? data.messages.filter((m) => m && !m.read) : [];
       const requests = Array.isArray(data?.access_requests) ? data.access_requests.filter(Boolean) : [];
+      refusedAt.delete(p.id);
       remoteInbox.value = { ...remoteInbox.value, [p.id]: { label: p.name || p.id, messages, access_requests: requests, error: '' } };
     } catch (e) {
+      if (e.code === 'permission') refusedAt.set(p.id, now);
       const prev = remoteInbox.value[p.id] || { messages: [], access_requests: [] };
       // A node that no longer trusts this one unrestricted shows nothing.
       remoteInbox.value = { ...remoteInbox.value, [p.id]: e.code === 'permission'

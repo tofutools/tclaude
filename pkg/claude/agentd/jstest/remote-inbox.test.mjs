@@ -22,7 +22,9 @@ async function load(t) {
 
 test('reads ride the snapshot tick: own dashboard, unrestricted online nodes, every minute (five when hidden)', async (t) => {
   const { m } = await load(t);
-  const opts = { remote: '', fleet, hidden: false };
+  // The peer's trust in this node decides, not this node's trust in it.
+  const theirs = { inst_lab: 'unrestricted', inst_forge: 'restricted' };
+  const opts = { remote: '', fleet, hidden: false, theirLevel: (id) => theirs[id] || '' };
   assert.deepEqual(m.claimRemoteInboxRead(0, { ...opts, remote: 'inst_lab' }), [], 'a peer view never reads');
   assert.deepEqual(m.claimRemoteInboxRead(0, opts).map((p) => p.id), ['inst_lab'], 'restricted and offline nodes are not asked');
   assert.deepEqual(m.claimRemoteInboxRead(30_000, opts), []);
@@ -90,4 +92,17 @@ test('the inbox actions hit the peer proxy routes, one-shot only', async (t) => 
     ['/api/peer/inst_lab/human-inbox/read', { id: 7 }],
     ['/api/peer/inst_lab/human-inbox/access/r%2F1', { decision: 'deny' }],
   ], 'anything but approve is a deny');
+});
+
+test('a peer we trust unrestricted that does not trust us back is not polled (tcl-mqlprj)', async (t) => {
+  const { m } = await load(t);
+  const peers = [{ id: 'inst_mine', name: 'mine', level: 'unrestricted', online: true }];
+  const unknown = { fleet: { peers }, remote: '', hidden: false, theirLevel: () => '' };
+  assert.deepEqual(m.claimRemoteInboxRead(0, { ...unknown, theirLevel: () => 'restricted' }), [], 'its replies say restricted: never asked');
+  assert.equal(m.claimRemoteInboxRead(0, unknown).length, 1, 'trust not known yet: asked once');
+  const refuse = async () => ({ ok: false, status: 403, json: async () => ({ code: 'permission', error: 'requires unrestricted trust (human.inbox.read)' }) });
+  await m.readRemoteInboxes(peers, refuse, 0);
+  assert.deepEqual(m.claimRemoteInboxRead(60_000, unknown), [], 'a refusal is not repeated every minute');
+  assert.equal(m.claimRemoteInboxRead(60_000, { ...unknown, theirLevel: () => 'unrestricted' }).length, 1, 'until it trusts us unrestricted');
+  assert.equal(m.claimRemoteInboxRead(m.INBOX_REFUSED_RETRY_MS + 1, unknown).length, 1, 'or after a long while');
 });

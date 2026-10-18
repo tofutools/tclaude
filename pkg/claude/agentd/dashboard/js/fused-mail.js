@@ -168,7 +168,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
     // this operator may answer from here.
     const readers = folder.node
       ? nodes.filter((n) => n.id === folder.node)
-      : scoped.filter((n) => folder.id !== 'access' || (!n.local && canActOnHuman(n)));
+      : scoped.filter((n) => folder.id !== 'access' || !n.local);
     let ticks = 0;
     async function tick(node) {
       if (disposed || inflight.has(node.id)) return;
@@ -179,7 +179,11 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
       const fetchFn = node.local ? localFetch : fetchImpl;
       let failed = false;
       try {
-        const mode = !readers.includes(node) ? 'roster' : !folder.node && folder.id === 'access' ? 'requests' : 'page';
+        // A peer's requests are read once its trust in this node is known
+        // to be unrestricted (its roster reply says); until then its roster.
+        const accessFolder = !folder.node && folder.id === 'access';
+        const answers = canActOnHuman(node, ref.current[node.id]?.peerView);
+        const mode = !readers.includes(node) || (accessFolder && !answers) ? 'roster' : accessFolder ? 'requests' : 'page';
         if (mode === 'requests') {
           const data = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
           commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, at: now() });
@@ -209,7 +213,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
             });
             // An unrestricted peer's access requests keep the sidebar count
             // current in every folder.
-            if (!node.local && canActOnHuman(node)) {
+            if (!node.local && canActOnHuman(node, roster?.peer_view)) {
               const inbox = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
               commit(node.id, { requests: Array.isArray(inbox?.access_requests) ? inbox.access_requests : [] });
             }
@@ -260,8 +264,8 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
   return { entries, sig, merged, localRequests };
 }
 
-function AccessReader({ item, node, busy, run, actions, confirm, toast, onDone }) {
-  const human = canActOnHuman(node);
+function AccessReader({ item, node, peerView, busy, run, actions, confirm, toast, onDone }) {
+  const human = canActOnHuman(node, peerView);
   const body = html`<div class="mail-reader-head"><div class="mail-subject">🔐 ${item.perm}</div>
       <div class="mail-headers">
         <${HeaderRow} label="Agent">${item.title || item.agent_id || 'an agent'}</${HeaderRow}>
@@ -294,7 +298,7 @@ function senderHarness(message, snapshot) {
 // unrestricted, or one granting node.messages.mark-read (peerView, from its
 // mail reads).
 export function humanMarkable(node, peerView) {
-  return canActOnHuman(node) || humanReadShared(peerView);
+  return canActOnHuman(node, peerView) || humanReadShared(peerView);
 }
 
 function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, toast, openOnNode, onDone, onDelete }) {
@@ -326,7 +330,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
   let body;
   let buttons;
   if (item.kind === 'access') {
-    ({ body, buttons } = AccessReader({ item, node, busy, run, actions, confirm, toast, onDone }));
+    ({ body, buttons } = AccessReader({ item, node, peerView, busy, run, actions, confirm, toast, onDone }));
   } else {
     const target = replyTarget(item);
     const human = item.kind === 'human';
@@ -339,8 +343,8 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
       // route) is answered through the peer's human-inbox; so is this node's
       // on a peer's page, where its data-act buttons are refused.
       const peer = node.local && !remote ? null : {
-        name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node), canMark: humanMarkable(node, peerView),
-        canDelete: canActOnHuman(node), remove: (id) => actions.deleteLocal(node, 'human', [id]),
+        name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node, peerView), canMark: humanMarkable(node, peerView),
+        canDelete: canActOnHuman(node, peerView), remove: (id) => actions.deleteLocal(node, 'human', [id]),
         // A peer's agent opens here through the federation bridge.
         focus: node.local ? null : (m) => openRemote({ instance: node.id, agent: m.from_agent, peerLabel: node.name, label: m.from_title || '', toast }),
         mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
@@ -360,7 +364,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         <button type="button" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
           onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}</button>
         ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>send reply</button>`}`;
-    const deleteLock = canActOnHuman(node) ? '' : `${node.name} keeps deleting its messages to its own operator: it needs unrestricted trust from ${node.name}.`;
+    const deleteLock = canActOnHuman(node, peerView) ? '' : `${node.name} keeps deleting its messages to its own operator: it needs unrestricted trust from ${node.name}.`;
     buttons = html`${buttons}<button type="button" class="danger" data-fused="delete" disabled=${busy || !!deleteLock} title=${deleteLock ? undefined : `Permanently delete this message on ${node.name}`} onClick=${() => onDelete([item])}>delete</button><${LockReason} why=${deleteLock} />`;
   }
   return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
@@ -493,7 +497,7 @@ export function FusedMail({
   const isAccess = !folder.node && folder.id === 'access';
   const isHuman = folder.id === 'human';
   const pageNodes = folder.node ? nodes.filter((n) => n.id === folder.node) : scoped;
-  const nodeRequests = (node) => (node.local ? localRequests : canActOnHuman(node) ? entries[node.id]?.requests : []) || [];
+  const nodeRequests = (node) => (node.local ? localRequests : canActOnHuman(node, entries[node.id]?.peerView) ? entries[node.id]?.requests : []) || [];
   const requestRows = mergeRequests(scoped.map((node) => ({ node, requests: nodeRequests(node) })));
   const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig ? entries[n.id].page : null));
   const total = pages.reduce((s, p) => s + (p?.total || 0), 0);
@@ -540,7 +544,7 @@ export function FusedMail({
     const e = entries[n.id];
     if (e?.status) return `${e.status.label}${e.at && e.status.kind === 'offline' ? ` · data ${fmtAge(Math.max(0, t - e.at))} old` : ''}`;
     if (isAccess && n.local && remote) return 'its requests show on its own page';
-    if (isAccess && !n.local && !canActOnHuman(n)) return 'requests answered on its own dashboard';
+    if (isAccess && !n.local && e?.peerView && !canActOnHuman(n, e.peerView)) return 'requests answered on its own dashboard';
     return e?.at ? '' : 'loading…';
   };
   const folders = (n) => nodeFolders(entries[n.id]?.mailboxes);
@@ -640,7 +644,7 @@ export function FusedMail({
   const checkedRows = rows.filter((r) => checked.has(r.key));
   // Deleting is a node operator's: this node's own, and a peer's that trusts
   // this one unrestricted (it serves its delete routes as for its operator).
-  const deletable = (r) => canActOnHuman(r.node);
+  const deletable = (r) => canActOnHuman(r.node, entries[r.node.id]?.peerView);
   const runBulk = async (verb, groupsOf, fn) => {
     setBusy(true);
     const failures = [];
