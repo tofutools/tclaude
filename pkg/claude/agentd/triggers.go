@@ -292,9 +292,20 @@ type triggerFactObservation struct {
 }
 
 func evaluateTriggerDwell(now time.Time) {
-	rules, err := db.ListTriggerRules()
+	allRules, err := db.ListTriggerRules()
 	if err != nil {
 		slog.Warn("triggers: list dwell rules", "error", err)
+		return
+	}
+	var rules []*db.TriggerRule
+	for _, rule := range allRules {
+		if rule.Enabled && db.IsTriggerStateSource(rule.Source) {
+			rules = append(rules, rule)
+		}
+	}
+	// This runs every scheduler tick; without a dwell rule there is nothing to
+	// observe, so skip the agent, session and tmux reads entirely.
+	if len(rules) == 0 {
 		return
 	}
 	agents, err := db.ListActiveAgents()
@@ -302,16 +313,14 @@ func evaluateTriggerDwell(now time.Time) {
 		slog.Warn("triggers: list dwell targets", "error", err)
 		return
 	}
-	sessions, sessionsErr := db.ListSessions()
-	alive, aliveErr := cachedLiveTmuxSessions()
-	byConv := make(map[string][]*db.SessionRow)
-	for _, row := range sessions {
-		byConv[row.ConvID] = append(byConv[row.ConvID], row)
+	convIDs := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		convIDs = append(convIDs, agent.CurrentConvID)
 	}
+	// Only the active agents' current conversations, not every retained row.
+	byConv, sessionsErr := db.FindSessionsByConvIDs(convIDs)
+	alive, aliveErr := cachedLiveTmuxSessions()
 	for _, rule := range rules {
-		if !rule.Enabled || !db.IsTriggerStateSource(rule.Source) {
-			continue
-		}
 		seen := make(map[string]struct{})
 		for _, agent := range agents {
 			if !triggerDwellAgentInScope(rule, agent.AgentID) {
