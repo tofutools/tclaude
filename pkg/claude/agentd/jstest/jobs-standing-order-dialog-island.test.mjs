@@ -22,6 +22,7 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
   const saves = [];
   let closes = 0;
   const actions = {
+    loadStandingOrderHooks: async () => ({ hooks: [] }),
     saveStandingOrder: (mutation) => {
       saves.push(mutation);
       return new Promise((resolve) => { resolveSave = resolve; });
@@ -60,6 +61,7 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
       timing: 'same-continuation', cadence: 'always',
       cooldown_seconds: 0, debounce_seconds: 0, enabled: true,
     },
+    node: '',
   });
   assert.equal(submit.disabled, true);
   await harness.act(() => resolveSave({ id: 1 }));
@@ -76,6 +78,7 @@ test('standing-order dialog marks guarded dismissal as cancellation', async (t) 
   const mounted = await harness.mount(harness.html`<${StandingOrderDialog}
     descriptor=${{ kind: 'create', prefill: {} }}
     snapshot=${snapshot()} actions=${{
+      loadStandingOrderHooks: async () => ({ hooks: [] }),
       saveStandingOrder: async () => {},
       closeStandingOrderDialog: (options) => closes.push(options),
     }} confirmDiscard=${async () => true} />`);
@@ -102,6 +105,7 @@ test('standing-order dialog authors a prompt RE2 condition', async (t) => {
       },
     }}
     snapshot=${snapshot()} actions=${{
+      loadStandingOrderHooks: async () => ({ hooks: [] }),
       saveStandingOrder: async (mutation) => { saves.push(mutation); },
       closeStandingOrderDialog: () => {},
     }} confirmDiscard=${async () => true} />`);
@@ -151,6 +155,7 @@ test('standing-order edit shows retirement state and sends the stored row versio
   const mounted = await harness.mount(harness.html`<${StandingOrderDialog}
     descriptor=${{ kind: 'edit', id: 4, order, prefill: model.standingOrderToPrefill(order) }}
     snapshot=${snapshot()} actions=${{
+      loadStandingOrderHooks: async () => ({ hooks: [] }),
       saveStandingOrder: async (mutation) => { saves.push(mutation); },
       closeStandingOrderDialog: () => {},
     }} confirmDiscard=${async () => true} />`);

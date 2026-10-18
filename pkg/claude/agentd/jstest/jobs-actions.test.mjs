@@ -269,3 +269,22 @@ test("a cron job for another node's agent is created on that node, not in this n
   assert.deepEqual(mutations, ['/api/cron']);
   assert.equal(upserts.length, 1);
 });
+
+test("a standing order and its hook catalog for another node's group go to that node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const urls = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { urls.push(url); return new Response('{"id":3,"name":"o","hooks":[]}', { status: 200 }); };
+  t.after(() => { globalThis.fetch = original; });
+  const actions = createJobsActions({
+    state: { upsertCron: () => {} },
+    requestMutation: async () => ({}),
+    refresh: async () => {}, confirm: async () => true, notify: () => {}, download: () => {},
+  });
+  const node = 'inst_abcdefghijklmnop';
+  await actions.loadStandingOrderHooks(node);
+  await actions.saveStandingOrder({ path: '/api/standing-orders', method: 'POST', payload: { name: 'o' }, node });
+  await actions.loadStandingOrderHooks();
+  assert.deepEqual(urls, [`/api/peer/${node}/standing-order-hooks`, `/api/peer/${node}/standing-orders`, '/api/standing-order-hooks']);
+});

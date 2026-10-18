@@ -90,7 +90,7 @@ export function createGroupsActions({
       return state.openAddMember(group);
     },
     openStandingOrders(group) {
-      return state.openStandingOrders(group);
+      return state.openStandingOrders(group, node);
     },
     closeStandingOrders() {
       state.closeStandingOrders();
@@ -100,7 +100,8 @@ export function createGroupsActions({
       const opened = openStandingOrderCreateModal({
         targetMode: 'group', groupName: name, scopeGroup: name,
       }, {
-        onCancel: () => state.openStandingOrders({ name }),
+        node,
+        onCancel: () => state.openStandingOrders({ name }, node),
       });
       if (opened) state.closeStandingOrders();
       return opened;

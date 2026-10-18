@@ -6,6 +6,7 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
+import { nodeSnapshot } from './node-api.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import {
   buildStandingOrderMutation, createStandingOrderDraft,
@@ -136,11 +137,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
   };
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/standing-order-hooks', { headers: { Accept: 'application/json' } })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`hook catalog request failed (${response.status})`);
-        return response.json();
-      })
+    actions.loadStandingOrderHooks(descriptor.node || '')
       .then((payload) => {
         if (!cancelled) setHookCatalog(Array.isArray(payload?.hooks) ? payload.hooks : []);
       })
@@ -168,7 +165,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
     busyRef.current = true;
     setBusy(true);
     try {
-      await actions.saveStandingOrder(buildStandingOrderMutation(descriptor, draft));
+      await actions.saveStandingOrder({ ...buildStandingOrderMutation(descriptor, draft), node: descriptor.node || '' });
       actions.closeStandingOrderDialog();
     } catch (saveError) {
       setError(saveError?.message || String(saveError));
@@ -358,6 +355,9 @@ export function JobsStandingOrderDialogRoot({ state, actions, confirmDiscard }) 
   const current = state.view.value;
   const descriptor = current.orderDialog;
   if (!descriptor) return null;
+  // Another node's order reads that node's snapshot, never the page's (a
+  // null means the node is the page's own).
+  const snapshot = (descriptor.node && nodeSnapshot(descriptor.node)) || current.dashboard || {};
   return html`<${StandingOrderDialog} key=${descriptor.launchID} descriptor=${descriptor}
-    snapshot=${current.dashboard || {}} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+    snapshot=${snapshot} actions=${actions} confirmDiscard=${confirmDiscard} />`;
 }

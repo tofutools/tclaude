@@ -34,7 +34,7 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 
 	if !strings.Contains(actions, "openStandingOrderCreateModal({") ||
 		!strings.Contains(actions, "targetMode: 'group', groupName: name, scopeGroup: name") ||
-		!strings.Contains(actions, "onCancel: () => state.openStandingOrders({ name })") {
+		!strings.Contains(actions, "onCancel: () => state.openStandingOrders({ name }, node)") {
 		t.Error("group rulebook create action must launch a group-prefilled standing-order editor")
 	}
 	if !strings.Contains(controller, "openStandingOrderCreateModal") ||
