@@ -43,7 +43,7 @@ import {
   FUSED_FOLDERS, PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderMatches, folderURL, mergeMessages, mergeRequests,
   messageKey, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
 } from './fused-mail-model.js';
-import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, pageCount as mergedPageCount, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
+import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, newWalk, pageCount as mergedPageCount, recordVector, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
 
 const html = htm.bind(h);
 
@@ -391,7 +391,7 @@ export function FusedMail({
   const [pageSize, setPageSizeState] = useState(initialPageSize);
   // vectors are the merged folder's known cursor vectors, vectors[p - 1] for
   // page p, for the folder, search and scope in view (fleet-pager.js).
-  const [vectors, setVectors] = useState(() => ({ key: '', absent: '', list: [{}] }));
+  const [vectors, setVectors] = useState(() => newWalk());
   const [selected, setSelected] = useState('');
   const [checked, setChecked] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -483,20 +483,7 @@ export function FusedMail({
   useEffect(() => {
     const v = pendingVector.current;
     if (!v) return;
-    setVectors((cur) => {
-      // A node that comes back (or drops out) changes every page past the
-      // first, so the walk restarts from page 1.
-      if (cur.key !== v.key || cur.absent !== v.absent) return { key: v.key, absent: v.absent, list: [{}] };
-      const { list } = cur;
-      if (list.length < v.page) return cur;
-      // The page's own merge is the truth for where the next one starts:
-      // polling moves page 1 as mail arrives, and a deletion moves any page.
-      // A changed boundary drops the deeper vectors, which were derived from
-      // the old one.
-      if (!v.more) return list.length > v.page ? { ...cur, list: list.slice(0, v.page) } : cur;
-      if (list.length > v.page && cursorKey(list[v.page]) === cursorKey(v.next)) return cur;
-      return { ...cur, list: [...list.slice(0, v.page), v.next] };
-    });
+    setVectors((cur) => recordVector(cur, v));
   });
   if (!current.fused) return null;
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;

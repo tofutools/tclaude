@@ -269,7 +269,7 @@ and reconnect or animation state.
 ### Lists that span fleet nodes
 
 A fleet view that pages one list across several nodes (the fused Messages
-folders are the reference) queries each node on demand and never copies a
+folders and the fused audit's "all nodes" view are the references) queries each node on demand and never copies a
 peer's rows into this node's database, so revoking a peer cuts its rows off
 at once. The parts:
 
@@ -278,7 +278,7 @@ at once. The parts:
   node's own newest-first order. It reports `total` (the filtered count),
   `has_more`, and `cursor_paging: true`, so a client can tell it from an older
   build that ignores the parameter. See `mailboxWindow` in
-  `pkg/claude/agentd/dashboard_mailbox.go`.
+  `pkg/claude/agentd/dashboard_mailbox.go` and `handleDashboardAudit`.
 - **Client:** `dashboard/js/fleet-pager.js` turns per-node pages into one
   merged page. A page is a cursor vector (one cursor per node). Page p reads
   one page from each node below its cursor, merges the streams by taking the
@@ -288,7 +288,11 @@ at once. The parts:
   re-reads the same vector. Counts are the nodes' summed totals.
 - **Navigation:** Prev uses the vector kept for the earlier page. There is no
   random access, so a deeper page (Last, or a page restored from the URL) is
-  reached by walking forward one read per page (`walkTarget`).
+  reached by walking forward one read per page (`walkTarget`). Fold each
+  merged page into the walk with `recordVector`: it rewrites the next vector
+  when the page's boundary moves (new rows on page 1, deletions), and restarts
+  the walk when the set of unreachable nodes changes, because a node that was
+  down has no cursor in the vectors recorded meanwhile.
 - **Mixed versions:** a node without `cursor_paging` is read newest-first to
   the depth the page needs and cut at the cursor client-side
   (`legacyStream`), which stays exact down to the server's largest page.

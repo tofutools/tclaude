@@ -18,7 +18,8 @@
 // interleave. A page reads at most nodes×pageSize rows, polling re-reads the
 // same vector (new arrivals only move page 1), and Prev is the vector kept
 // for the page before. There is no random access: a later page is reached by
-// walking forward (walkTarget), which is bounded by the page count.
+// walking forward (walkTarget), which is bounded by the page count. The known
+// vectors form a walk, kept current by recordVector.
 //
 // A node on an older build pages by offset only. It is read newest-first to
 // the depth the page needs (legacyDepth) and its rows are cut at the cursor
@@ -33,10 +34,10 @@ function ts(s) {
   return Number.isFinite(t) ? t : 0;
 }
 
-// newer orders two heads newest first: created_at, then node id, then the
-// node's own id (higher is newer), so the merge is a total order.
-function newer(a, b) {
-  const d = ts(b.row.created_at) - ts(a.row.created_at);
+// newer orders two heads newest first: their time (at), then node id, then
+// the node's own id (higher is newer), so the merge is a total order.
+function newer(a, b, at) {
+  const d = ts(at(b.row)) - ts(at(a.row));
   if (d) return d < 0;
   if (a.node !== b.node) return String(a.node) < String(b.node);
   return Number(a.row.id) > Number(b.row.id);
@@ -47,9 +48,10 @@ function newer(a, b) {
 //              hasMore: the node has rows past these }]
 //   cursors: the page's cursor vector ({ [node]: id }), carried into next
 //            for a node that gives up no row on this page.
+//   at:      a row's timestamp (created_at unless the list names it otherwise).
 // It returns the page's rows (each { node, row }), the next page's cursor
 // vector, and whether any node has rows past this page.
-export function mergeCursorPage(streams, pageSize, cursors = {}) {
+export function mergeCursorPage(streams, pageSize, cursors = {}, at = (row) => row.created_at) {
   const heads = streams.map((s) => ({ node: s.node, rows: s.rows || [], at: 0, hasMore: !!s.hasMore }));
   const rows = [];
   const next = { ...cursors };
@@ -58,7 +60,7 @@ export function mergeCursorPage(streams, pageSize, cursors = {}) {
     for (const h of heads) {
       if (h.at >= h.rows.length) continue;
       const cand = { node: h.node, row: h.rows[h.at], h };
-      if (!best || newer(cand, best)) best = cand;
+      if (!best || newer(cand, best, at)) best = cand;
     }
     if (!best) break;
     best.h.at += 1;
@@ -105,4 +107,27 @@ export function cursorKey(cursors) {
 // vector, so the walk advances one read per page.
 export function walkTarget(target, vectors) {
   return Math.max(1, Math.min(target, vectors.length));
+}
+
+// A walk is the known cursor vectors of one merged list: { key, absent,
+// list }, list[p - 1] for page p. key names the list (filters, page size,
+// nodes in view); absent names the nodes that were down while it was walked.
+export const newWalk = (key = '', absent = '') => ({ key, absent, list: [{}] });
+
+// recordVector folds a merged page into its walk once every node has
+// answered or is down. The shown page's merge is the truth for where the next
+// page starts: polling moves page 1 as rows arrive, and a deletion moves any
+// page, so a changed boundary drops the deeper vectors derived from the old
+// one. A down node has no cursor in the vectors, so when the set of down nodes
+// changes every page past the first is stale and the walk restarts. It
+// returns the walk unchanged (the same object) when nothing moved.
+export function recordVector(walk, { key, absent = '', page, next, more }) {
+  if (walk.key !== key || walk.absent !== absent) {
+    return page === 1 && more ? { key, absent, list: [{}, next] } : newWalk(key, absent);
+  }
+  const { list } = walk;
+  if (list.length < page) return walk;
+  if (!more) return list.length > page ? { ...walk, list: list.slice(0, page) } : walk;
+  if (list.length > page && cursorKey(list[page]) === cursorKey(next)) return walk;
+  return { ...walk, list: [...list.slice(0, page), next] };
 }

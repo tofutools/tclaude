@@ -90,14 +90,16 @@ function NodeFilter({ nodes, value, onChange }) {
   if (nodes.length < 2) return null;
   return html`<label class="filter-toggle" title="Which node's audit log to show"><span>node</span><select id="audit-node" value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>
     ${nodes.map((n) => html`<option key=${n.id} value=${n.local ? '' : n.id}>${n.local ? `⌂ ${n.name}` : n.name}</option>`)}
-    <option value="all">all nodes (newest)</option></select></label>`;
+    <option value="all">all nodes</option></select></label>`;
 }
 
 // MergedNote says what the merged view shows, and which nodes withhold theirs.
 function MergedNote({ response }) {
   if (!response?.merged) return null;
-  return html`<div class="audit-merged-note muted">Newest events across the fused nodes; pick one node to page through its log.
-    ${(response.refused || []).map(({ node, why }) => html` <span key=${node.id} class="scope-pill" style=${`--nc:${node.color}`}>${node.name}<${LockReason} why=${why} /></span>`)}</div>`;
+  const deeper = response.deeper || [];
+  const pending = response.pending || [];
+  return html`<div class="audit-merged-note muted">Events across the fused nodes, newest first.${deeper.length ? ` Older events on ${deeper.map((n) => n.name).join(', ')} (an older build) show when you pick that node.` : ''}${pending.length ? ` Waiting for ${pending.map((n) => n.name).join(', ')}…` : ''}
+    ${(response.refused || []).map(({ node, why, offline }) => html` <span key=${node.id} class="scope-pill" style=${`--nc:${node.color}`}>${node.name}${offline ? html` <span class="muted">offline</span>` : html`<${LockReason} why=${why} />`}</span>`)}</div>`;
 }
 
 export function AuditApp({ state, actions }) {

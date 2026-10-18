@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -24,6 +25,8 @@ type auditResp struct {
 	Dir             string           `json:"dir"`
 	RetentionDays   int              `json:"retention_days"`
 	PruningOn       bool             `json:"pruning_on"`
+	HasMore         bool             `json:"has_more"`
+	CursorPaging    bool             `json:"cursor_paging"`
 }
 type auditEntryResp struct {
 	ID          int64  `json:"id"`
@@ -250,6 +253,45 @@ func TestAuditEndpoint_PaginatesAndSorts(t *testing.T) {
 	assert.Equal(t, "verb", byVerb.Sort)
 	assert.Equal(t, "message", byVerb.Entries[0].Verb)
 	assert.Equal(t, "spawn", byVerb.Entries[2].Verb)
+}
+
+// Scenario: a fleet merge pages one node's log with before=<id>. Each read
+// is the page below the cursor, the counts stay the filtered log's, and a
+// row written mid-walk does not shift it.
+func TestAuditEndpoint_BeforeCursorWalksWithoutGaps(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	insert := func(verb string) {
+		_, err := db.InsertAuditLog(db.AuditLogEntry{
+			ActorKind: db.AuditActorHuman, ActorLabel: "operator", Verb: verb,
+			Status: 200, Source: db.AuditSourceCLI,
+		})
+		require.NoError(t, err)
+	}
+	for i := range 7 {
+		insert(fmt.Sprintf("v%d", i))
+	}
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	first := fetchAudit(t, mux, "?page_size=3")
+	assert.True(t, first.CursorPaging)
+	assert.True(t, first.HasMore)
+	var seen []string
+	page := first
+	for {
+		for _, e := range page.Entries {
+			seen = append(seen, e.Verb)
+		}
+		if !page.HasMore {
+			break
+		}
+		insert("late") // newer than every cursor: never in the walk
+		before := page.Entries[len(page.Entries)-1].ID
+		page = fetchAudit(t, mux, fmt.Sprintf("?page_size=3&page=9&before=%d", before))
+		assert.Equal(t, 1, page.Page, "a cursor read ignores the page number")
+	}
+	assert.Equal(t, []string{"v6", "v5", "v4", "v3", "v2", "v1", "v0"}, seen)
+	assert.Equal(t, 9, page.Total, "counts cover the whole log, not the cursor's tail")
 }
 
 // The endpoint refuses an uncookied request — same dashboard-auth gate
