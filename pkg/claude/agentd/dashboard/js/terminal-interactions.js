@@ -2,6 +2,7 @@
 // dashboard xterm surface: selection/copy, safe links, and pasted/dropped files.
 
 import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
+import { trackedUpload } from './transfers.js';
 import {
   isCommandPaletteShortcut,
   requestCommandPalette,
@@ -464,7 +465,7 @@ function uploadName(file, i, stamp, anyFile) {
   return file.name || `pasted-file-${stamp}-${i + 1}`;
 }
 
-async function uploadFiles(files, signal, terminalPath, anyFile, fetchImpl) {
+async function uploadFiles(files, signal, terminalPath, anyFile, uploadImpl) {
   const fd = new FormData();
   const stamp = Date.now();
   files.forEach((file, i) => fd.append('file', file, uploadName(file, i, stamp, anyFile)));
@@ -473,8 +474,10 @@ async function uploadFiles(files, signal, terminalPath, anyFile, fetchImpl) {
   const remote = terminalPath.startsWith('/api/federation/terminal?');
   const base = remote ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
   const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
-  const res = await fetchImpl(endpoint, {
-    method: 'POST', credentials: 'same-origin', body: fd, signal,
+  // Terminal upload routes stay local on a peer's page, so no routedURL.
+  const res = await uploadImpl(endpoint, {
+    body: fd, files, signal, scope: terminalPath,
+    finishing: remote ? 'Sending to the remote node…' : 'Finishing…',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -499,6 +502,9 @@ export function attachTerminalInteractions({
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
+  // uploadImpl posts pasted/dropped files; the default lists the upload for
+  // the pane's progress card (transfer-card.js).
+  uploadImpl = trackedUpload,
   downloadFile = null,
   // A watch-only remote terminal takes no input, so no file upload either;
   // file downloads from a remote node are not offered (a separate grant).
@@ -901,7 +907,7 @@ export function attachTerminalInteractions({
     const noun = files.every(f => IMAGE_TYPES.has(f.type)) ? 'image' : 'file';
     flash(files.length === 1 ? `uploading ${noun}…` : `uploading ${files.length} ${noun}s…`, 30000);
     try {
-      const paths = await uploadFiles(files, controller.signal, terminalPath, acceptsFiles, fetchImpl);
+      const paths = await uploadFiles(files, controller.signal, terminalPath, acceptsFiles, uploadImpl);
       // Session changes invalidate pending uploads, so an old upload cannot
       // paste its path through a replacement session's WebSocket.
       if (controller.signal.aborted || generation !== myGeneration) return;
@@ -909,7 +915,11 @@ export function attachTerminalInteractions({
       term.paste(paths.map(terminalPathToken).join(' ') + ' ');
       flash(paths.length === 1 ? `${noun} pasted` : `${paths.length} ${noun}s pasted`);
     } catch (error) {
-      if (controller.signal.aborted || error && error.name === 'AbortError') return;
+      if (controller.signal.aborted || error && error.name === 'AbortError') {
+        // Cancelled from the progress card: replace the 30s "uploading" status.
+        if (generation === myGeneration) flash('upload cancelled');
+        return;
+      }
       const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 120);
       flash(`${noun} paste failed: ${detail}`, 5000);
     } finally {

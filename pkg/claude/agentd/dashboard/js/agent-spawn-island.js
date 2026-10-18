@@ -1,7 +1,8 @@
 import { SavedPromptChips } from './saved-prompts.js';
-import { h, render } from 'preact';
+import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
@@ -1763,9 +1764,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
 
 export function AgentSpawnApp(props) {
   const current = props.state.dialog.value;
-  if (!current) return null;
-  return html`<${AgentSpawnDialog} key=${current.key} current=${current}
-    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} ...${props.notify ? { notify: props.notify } : {}} />`;
+  // The upload tray outlives the dialog, so an upload stays visible after it closes.
+  if (!current) return html`<${TransferTray} />`;
+  return html`<${Fragment}><${AgentSpawnDialog} key=${current.key} current=${current}
+    state=${props.state} actions=${props.actions} confirmDiscard=${props.confirmDiscard} ...${props.notify ? { notify: props.notify } : {}} /><${TransferTray} /></${Fragment}>`;
 }
 
 export function mountAgentSpawnIsland({ host, state, actions, confirmDiscard, registerCleanup }) {

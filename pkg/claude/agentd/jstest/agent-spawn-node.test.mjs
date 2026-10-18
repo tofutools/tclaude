@@ -120,7 +120,7 @@ test("a node's spawn attachments go to it through this node, in chunks past the 
   nodeApi.setSelfNode('inst_desk0001');
   const calls = [];
   const fetchImpl = async (url, init = {}) => { calls.push([String(url), init.method || 'GET']); return respond({ files: [{ path: '/tmp/x/a.png' }] }); };
-  const actions = createAgentSpawnActions({ fetchImpl }).forNode({ node: NODE, nodeId: NODE, name: 'forge' });
+  const actions = createAgentSpawnActions({ fetchImpl, uploadTransport: fetchImpl }).forNode({ node: NODE, nodeId: NODE, name: 'forge' });
   const paths = await actions.uploadAttachments([{ file: new Blob(['png']), name: 'a.png' }]);
   assert.deepEqual(paths, ['/tmp/x/a.png'], "the node's own staged paths, for its spawn");
   assert.deepEqual(calls, [[`/api/peer-upload/${NODE}?path=${encodeURIComponent('/api/spawn-attachments')}`, 'POST']]);

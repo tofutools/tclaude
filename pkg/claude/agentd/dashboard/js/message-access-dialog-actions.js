@@ -1,4 +1,5 @@
 import { announceNodeChanged, nodeFetch } from './node-api.js';
+import { routedURL, trackedUpload } from './transfers.js';
 
 function errorMessage(body, status) {
   if (body && typeof body === 'object') return body.error || body.message || `HTTP ${status}`;
@@ -6,7 +7,10 @@ function errorMessage(body, status) {
 }
 
 async function requestJSON(fetchImpl, url, options) {
-  const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
+  return readJSON(await fetchImpl(url, { credentials: 'same-origin', ...options }));
+}
+
+async function readJSON(response) {
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch (_) { body = text; }
@@ -22,6 +26,8 @@ async function requestJSON(fetchImpl, url, options) {
 
 export function createMessageAccessDialogActions({
   fetchImpl = fetch,
+  // uploadTransport posts attachments with progress (transfers.js).
+  uploadTransport = trackedUpload,
   refresh = async () => {},
   notify = () => {},
   words = (plain) => plain,
@@ -29,12 +35,12 @@ export function createMessageAccessDialogActions({
   async function uploadOperatorAttachments(files) {
     if (!files?.length) return '';
     const form = new FormData();
-    files.forEach((file, index) => {
-      form.append('file', file, file.name || `pasted-image-${index + 1}.png`);
-    });
-    const uploaded = await requestJSON(fetchImpl, '/api/spawn-attachments', {
-      method: 'POST', body: form,
-    });
+    const names = files.map((file, index) => file.name || `pasted-image-${index + 1}.png`);
+    files.forEach((file, index) => form.append('file', file, names[index]));
+    const uploaded = await readJSON(await uploadTransport(routedURL('/api/spawn-attachments'), {
+      body: form, files: files.map((file, index) => ({ name: names[index], size: file.size })),
+      title: 'Uploading attachments',
+    }));
     return uploaded.token || '';
   }
 

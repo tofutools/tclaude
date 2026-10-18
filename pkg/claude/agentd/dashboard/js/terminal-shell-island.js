@@ -27,6 +27,7 @@ import {
 import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
+import { TransferCards } from './transfer-card.js';
 import { paneNode, paneScope } from './fleet-scope.js';
 import { nodeColor, remoteNodeID } from './fleet-model.js';
 import { remoteSessionAgents, startRemoteSessionStatusPoll } from './remote-session-status.js';
@@ -186,7 +187,9 @@ function OpaqueTerminalHost({
     };
   }, [descriptor.id]);
   useLayoutEffect(() => widgetRef.current?.setActive(active), [active, activationToken]);
-  return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div>${disconnectNotice}</div>`;
+  // Files pasted or dropped into this terminal show their upload progress
+  // over it (transfer-card.js).
+  return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div><${TransferCards} scope=${descriptor.seed.ws} />${disconnectNotice}</div>`;
 }
 
 function CopyButton({ className, id, hasSelection, actions, runtimeID }) {

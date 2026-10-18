@@ -825,7 +825,7 @@ test('dropping files on an agent terminal uploads them and types their paths', a
   const interactions = attachTerminalInteractions({
     term: harness.term, host: harness.host,
     terminalPath: '/api/open-window-ws/agt_1',
-    fetchImpl: async (url, init) => {
+    uploadImpl: async (url, init) => {
       requests.push({ url, names: init.body.getAll('file').map(f => f.name) });
       return { ok: true, json: async () => ({ files: [{ path: '/att/x/notes.md' }, { path: '/att/x/my shot.png' }] }) };
     },
@@ -858,7 +858,7 @@ test('a shell terminal refuses file drops without uploading', () => {
   const interactions = attachTerminalInteractions({
     term: harness.term, host: harness.host,
     terminalPath: '/api/group-term-ws/team',
-    fetchImpl: async () => { fetched = true; },
+    uploadImpl: async () => { fetched = true; },
   });
   try {
     const over = dropEvent({});
@@ -881,7 +881,7 @@ test('a remote node without file paste gets a concise version hint', async () =>
     term: harness.term, host: harness.host,
     setStatus: (s) => statuses.push(s),
     terminalPath: '/api/federation/terminal?peer=bob&agent=agt_1&mode=interactive',
-    fetchImpl: async () => ({
+    uploadImpl: async () => ({
       ok: false, status: 415,
       text: async () => JSON.stringify({ code: 'image', error: 'only PNG, JPEG and WebP images with matching MIME type are accepted' }),
     }),
