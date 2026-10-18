@@ -1484,6 +1484,9 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   useEffect(() => () => { activeRef.current = false; }, []);
   useEffect(() => {
+    // Another node's retire keeps its worktree (that node's route deletes
+    // none), so there is nothing to probe or offer.
+    if (descriptor.node) return undefined;
     const generation = ++probeGeneration.current;
     const controller = new AbortController();
     probeAbort.current = controller;
@@ -1545,6 +1548,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     try {
       const outcome = await actions.retireAgent({
         conv: descriptor.conv,
+        ...(descriptor.node ? { node: descriptor.node } : {}),
         label: descriptor.label,
         ...choice,
       });
@@ -1624,6 +1628,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
     if (busy) return;
     const request = submittedRequest || Object.freeze({
       agent: descriptor.agent,
+      ...(descriptor.node ? { node: descriptor.node } : {}),
       label: descriptor.label,
       force: force === true,
     });

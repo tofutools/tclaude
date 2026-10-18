@@ -16,7 +16,7 @@ func TestDashboardResumeLifecycleErrorsUseErrorToast(t *testing.T) {
 	}
 	source := string(body)
 
-	recovery := "if (out.action === 'error:missing_cwd') {"
+	recovery := "if (out.action === 'error:missing_cwd' && !remote) {"
 	generic := "if (action === 'error' || action.startsWith('error:')) {"
 	for _, required := range []string{
 		"const action = String(out.action || '');",

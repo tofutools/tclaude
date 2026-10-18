@@ -279,6 +279,11 @@ const fleetFederationStubJS = `(function(){
             : window.__dashsnapPeerActions
             ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'spawn', 'lifecycle.stop', 'lifecycle.retire', 'lifecycle.clone', 'lifecycle.move', 'lifecycle.teleport'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
             : { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
+          // A lifecycle grant is named per agent (peer_view.agents).
+          if (window.__dashsnapPeerActions) {
+            snap.peer_view.agents = {};
+            (snap.groups || []).forEach(function(g){ (g.members || []).forEach(function(m){ if (m.agent_id) snap.peer_view.agents[m.agent_id] = ['groups.members.stop', 'groups.members.retire', 'groups.members.clone']; }); });
+          }
           delete snap.assets_version;
           snap.usage = { available: false }; // what filterPeerFields leaves behind
           return new Response(JSON.stringify(snap), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -1473,7 +1478,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-peer-actions",
 			Title:   "Acting on a peer's agent",
-			Caption: "On a peer view where forge granted lifecycle actions, an agent's retire, clone and stop controls open the peer action dialog instead of the local one: the actions forge shares (stop, retire, clone, move here, teleport here), the consequence spelled out, and the CLI equivalent. Move and teleport always bring the agent to a group on this node.",
+			Caption: "On a peer view where forge granted lifecycle actions, an agent's retire, clone and stop controls open the same dialogs as on forge itself, sent to forge. Options forge keeps for its own operator (deleting the worktree on retire) are left out.",
 			InitJS:  "window.__dashsnapPeerActions = true;" + fleetRemoteViewJS + fleetFederationStubJS,
 			JS: showGroups + `return (async function(){
   for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -1481,8 +1486,8 @@ func fleetStates() []dashsnap.State {
   var btn = document.querySelector('[data-act="retire-agent"][data-stable-agent^="agt_"]');
   if (!btn) throw new Error('fleet: no retire control with an agent ID');
   btn.click();
-  for (var k = 0; k < 30 && !document.querySelector('#peer-action-modal'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (document.querySelectorAll('#peer-action-modal .peer-action-choices label').length !== 5) throw new Error('fleet: peer actions missing');
+  for (var k = 0; k < 30 && !document.querySelector('#retire-modal'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#retire-modal #retire-shutdown')) throw new Error('fleet: the retire dialog did not open');
 })();`,
 			SettleMS: 400,
 		},

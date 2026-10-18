@@ -177,13 +177,13 @@ export function createTransactionDialogActions({
       return payload;
     },
 
-    async shutdownAgent({ agent, label, force }) {
+    async shutdownAgent({ agent, node = '', label, force }) {
       // wait: hold the response (and so the dialog's spinner) until the pane
       // process is actually gone, not merely until the exit was dispatched —
       // OpenCode's control-API dispatch returns in milliseconds while the
       // agent is still shutting down, which read as the dialog "not waiting".
       const choice = Object.freeze({ force: !!force, wait: true });
-      const response = await fetchImpl(
+      const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(agent)}/stop`,
         {
           method: 'POST',
@@ -203,6 +203,7 @@ export function createTransactionDialogActions({
         action: String(payload?.action || 'ok'),
         response: payload,
       };
+      announceNodeChanged(node);
       return finishSuccess(
         result,
         `shutdown ${label || agent}: ${result.action}`,
@@ -503,7 +504,7 @@ export function createTransactionDialogActions({
     },
 
     async retireAgent({
-      conv, label, shutdown, deleteWorktree, expectedWorktree, expectedBranch,
+      conv, node = '', label, shutdown, deleteWorktree, expectedWorktree, expectedBranch,
     }) {
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
@@ -534,7 +535,7 @@ export function createTransactionDialogActions({
         params.set('expected_worktree', choice.expectedWorktree);
         params.set('expected_branch', choice.expectedBranch);
       }
-      const response = await fetchImpl(
+      const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(conv)}/retire?${params}`,
         { method: 'POST', credentials: 'same-origin' },
       );
@@ -549,6 +550,7 @@ export function createTransactionDialogActions({
         throw responseError(response, payload);
       }
       const result = { ok: true, response: payload };
+      announceNodeChanged(node);
       state.handoff();
       report(retireNotice(label || conv, choice, payload));
       try { await refresh(); } finally { state.finish(result); }

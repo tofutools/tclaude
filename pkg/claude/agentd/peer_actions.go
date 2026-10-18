@@ -129,11 +129,26 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 	r = r.WithContext(context.WithValue(r.Context(), peerActionKey{}, a))
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/stop"):
+		// The shutdown dialog's own request: {force, wait} (an older peer
+		// page sends force=1 instead).
 		if len(r.URL.Query()) > 0 && (len(r.URL.Query()) != 1 || r.URL.Query().Get("force") != "1") {
 			writeError(w, 400, "invalid_arg", "only force=1 is accepted")
 			return
 		}
-		handleAgentStop(w, r, target.CurrentConvID)
+		var body struct {
+			Force bool `json:"force"`
+			Wait  bool `json:"wait"`
+		}
+		if r.ContentLength != 0 && !decodePeerAction(w, r, &body) {
+			return
+		}
+		body.Force = body.Force || r.URL.Query().Get("force") == "1"
+		if _, ok := requireCrossAgentPermission(w, r, PermAgentStop, target.CurrentConvID); !ok {
+			return
+		}
+		raw, _ := json.Marshal(body)
+		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+		dashboardStopAgent(w, r, target.CurrentConvID)
 	case strings.HasSuffix(r.URL.Path, "/resume"):
 		// A peer's resume is the plain wake: recreating a missing launch
 		// directory and switching a Codex drive stay local-human decisions.
@@ -180,7 +195,9 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		dashboardSandboxRestartAgent(w, r, target.CurrentConvID)
 	case strings.HasSuffix(r.URL.Path, "/retire"):
-		if len(r.URL.Query()) > 0 {
+		// The retire dialog names whether to shut the session down; its
+		// worktree deletion stays local.
+		if q := r.URL.Query(); len(q) > 1 || len(q) == 1 && !q.Has("shutdown") {
 			writeError(w, 400, "invalid_arg", "remote retire does not accept destructive worktree options")
 			return
 		}

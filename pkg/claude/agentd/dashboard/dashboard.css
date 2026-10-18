@@ -20456,13 +20456,10 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 #fleet-job-logs pre { max-height: 50vh; overflow: auto; }
 #fleet-run-job .modal-buttons button, #fleet-repo .modal-buttons button { flex: none; white-space: nowrap; }
 /* Peer actions on a peer view (js/peer-action.js). */
-.peer-action-choices { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 10px; }
 .peer-action-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .peer-action-opt input:not([type]), .peer-action-opt select, .peer-action-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
 .peer-action-brief { align-items: flex-start; }
-.peer-action-consequence { margin: 8px 0; }
 #peer-spawn-status { margin: 6px 0 10px; }
-#peer-action-modal .peer-action-choices, #peer-action-modal .peer-action-opt, #peer-action-modal .peer-action-consequence,
 #peer-spawn-modal .peer-action-opt, #peer-spawn-modal #peer-spawn-status { font-size: 13px; font-weight: normal; }
 #fleet-key-transition > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
 #fleet-key-transition .fa-table th { text-align: left; white-space: nowrap; padding-right: 12px; vertical-align: top; }
@@ -20476,8 +20473,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    the right of this node, and drops the edges (each card already names its
    link level). */
 @media (max-width: 560px) {
-  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal { min-width: 0; padding: 14px; }
-  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal code { overflow-wrap: anywhere; }
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-spawn-modal) .cron-create-modal { min-width: 0; padding: 14px; }
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-spawn-modal) .cron-create-modal code { overflow-wrap: anywhere; }
   .fa-ns-check, .fa-ns-actions, .fa-hp-rows, .fa-jb-nodes, .fa-of-check { margin-left: 0; }
   .fa-ns-actions { flex-wrap: wrap; }
   /* Stack the profile editor's label column, and let each grant row wrap

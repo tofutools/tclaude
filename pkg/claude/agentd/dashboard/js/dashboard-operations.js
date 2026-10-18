@@ -465,7 +465,8 @@ export async function openCleanupModal(options = {}) {
 // OK, retry with ?recreate=1 so the daemon recreates the dir empty first —
 // the recreate opt-in is never automatic. The internal `recreate` flag is
 // set only on that second call.
-export async function resumeAgentReq(conv, label, recreate) {
+// node names another node's agent (the fused Groups view); blank is the page's.
+export async function resumeAgentReq(conv, label, recreate, node = '') {
   // Optimistic waking indicator: record the pending wake (keyed by the same
   // agent_id-or-conv_id handle the dot's data-agent carries, which is what
   // arrives here) and repaint. The render path folds this set into the row's
@@ -478,7 +479,7 @@ export async function resumeAgentReq(conv, label, recreate) {
   let r;
   const q = recreate ? '?recreate=1' : '';
   try {
-    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume${q}`, {
+    r = await nodeFetch(node)(`/api/agents/${encodeURIComponent(conv)}/resume${q}`, {
       method: 'POST', credentials: 'same-origin',
     });
   } catch (e) {
@@ -496,7 +497,10 @@ export async function resumeAgentReq(conv, label, recreate) {
   // like {action: "resumed" | "skipped:already_online" | "error:missing_cwd" | ...}.
   let out = {};
   try { out = await r.json(); } catch (_) { /* non-JSON body: treat as bare ok */ }
-  if (out.action === 'error:missing_cwd') {
+  // Recreating a missing launch directory stays with the agent's own node's
+  // operator: a peer's wake takes no options.
+  const remote = !!node || !!globalThis.__tclaudeRemoteNode?.id;
+  if (out.action === 'error:missing_cwd' && !remote) {
     const dir = out.detail || 'the launch directory';
     const confirmed = await confirmModal({
       title: 'Launch directory missing',
@@ -510,7 +514,7 @@ export async function resumeAgentReq(conv, label, recreate) {
       clearPendingWake(conv);
       return false;
     }
-    return resumeAgentReq(conv, label, true);
+    return resumeAgentReq(conv, label, true, node);
   }
   const action = String(out.action || '');
   if (action === 'error' || action.startsWith('error:')) {
@@ -520,6 +524,7 @@ export async function resumeAgentReq(conv, label, recreate) {
     return false;
   }
   toast(`wake ${label}: ${action || 'ok'}`);
+  announceNodeChanged(node);
   refresh();
   return true;
 }

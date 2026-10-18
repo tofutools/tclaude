@@ -127,21 +127,21 @@ export function createActionDialogActions({
         body: JSON.stringify({ repo, branch, from_branch: fromBranch || '' }),
       });
     },
-    async cloneAgent({ conv, label, followUp, copyConversation, copyOwnership = false, cwd }, owner) {
+    // node names another node's agent (blank is the page's), whose route
+    // takes the follow-up and the history choice only.
+    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
-        const payload = await requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/clone`, {
+        const body = { follow_up: normaliseFollowUp(followUp), no_copy_conv: !copyConversation };
+        if (!node) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
+        const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/clone`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            follow_up: normaliseFollowUp(followUp),
-            no_copy_conv: !copyConversation,
-            copy_ownership: !!copyOwnership,
-            cwd: cwd || '',
-          }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
         state.close(owner);
+        announceNodeChanged(node);
         const target = payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';
         notify(payload.warning
           ? `cloned ${label}${target} (warning: ${payload.warning})`

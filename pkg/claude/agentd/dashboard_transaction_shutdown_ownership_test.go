@@ -62,7 +62,7 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(rowActions, "openShutdownAgentDialog(agent, label)") {
+	if !strings.Contains(rowActions, "openShutdownAgentDialog(agent, label, node)") {
 		t.Error("online status-dot does not launch with the stable agent selector")
 	}
 	if !strings.Contains(palette, "openShutdownAgentDialog(sel, label)") {

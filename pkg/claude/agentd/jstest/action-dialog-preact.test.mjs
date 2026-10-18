@@ -371,6 +371,29 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   assert.equal(state.dialog.value, null);
 });
 
+test("another node's clone sends only what that node's route takes", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const actions = createActionDialogActions({
+    state,
+    fetchImpl: async (url, options) => {
+      requests.push([url, JSON.parse(options.body)]);
+      return new Response('{"new_conv":"c2"}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: () => {},
+    refresh: async () => {},
+  });
+  state.openClone({ conv: 'agt_ada1', node: 'inst_forge7' });
+  assert.equal(state.dialog.value.node, 'inst_forge7');
+  await actions.cloneAgent({ conv: 'agt_ada1', node: 'inst_forge7', label: 'ada', followUp: 'go on', copyConversation: false, copyOwnership: true, cwd: '/x' }, state.dialog.value);
+  assert.deepEqual(requests, [['/api/peer/inst_forge7/agents/agt_ada1/clone', { follow_up: 'go on', no_copy_conv: true }]]);
+});
+
 test('action mutations preserve endpoint payloads, notifications, and refresh boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
