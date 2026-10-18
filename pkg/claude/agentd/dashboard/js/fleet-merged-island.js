@@ -650,12 +650,6 @@ export function MergedGroups({
   const ordersActions = standingOrders?.node ? forNode({ id: standingOrders.node }) : home && groupsActions();
   return html`<div class="fleet-merged">
     <style id="fleet-merged-limits">${limits}</style>
-    <div class="fleet-merged-nodes" aria-label="Nodes in this view">
-      ${merged.fleet_nodes.map((n) => html`<span key=${n.node.id} class=${`fleet-merged-node${n.stale ? ' stale' : ''}`} style=${`--nc:${n.node.color}`}
-        title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
-        <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
-      </span>`)}
-    </div>
     <${BrokerRefusalNotice} snapshot=${snapshot.value} />
     <${GroupsProcessScope} value=${processScope.current}>
       <${GroupsInteractionProvider}>
