@@ -94,7 +94,6 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${pill}${view.text}</span>`;
   const readout = html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
-      ${view.multiline ? null : pill}
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
           <span class="usage-source">
@@ -115,7 +114,7 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
     </span>
   `;
   // Beside the two-line readout, not above it: the header keeps its height.
-  return pill && view.multiline ? html`<span class="usage-with-node">${pill}${readout}</span>` : readout;
+  return pill ? html`<span class="usage-with-node">${pill}${readout}</span>` : readout;
 }
 
 function GlobalActivity({ state, groupsState }) {

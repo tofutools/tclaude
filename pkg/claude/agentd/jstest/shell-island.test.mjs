@@ -121,10 +121,9 @@ test('a fused view picks whose quota the header shows; peers come from their sna
   const c = mounted.container;
   const pill = c.querySelector('.usage-node-pill');
   assert.match(pill.textContent, /⌂ desk/, 'this node by default');
-  if (c.querySelector('#usage.multiline')) {
-    assert.equal(c.querySelector('#usage').contains(pill), false, 'beside the two-row readout, not a row above it');
-    assert.equal(pill.closest('.usage-with-node')?.lastElementChild?.id, 'usage');
-  }
+  assert.ok(c.querySelector('#usage.multiline'));
+  assert.equal(c.querySelector('#usage').contains(pill), false, 'beside the two-row readout, not a row above it');
+  assert.equal(pill.closest('.usage-with-node')?.lastElementChild?.id, 'usage');
   assert.match(c.textContent, /5%/);
   assert.deepEqual(fetched, [], 'no peer read until one is asked for');
   await harness.act(() => pill.click());
