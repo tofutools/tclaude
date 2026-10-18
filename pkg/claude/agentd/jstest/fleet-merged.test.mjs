@@ -206,7 +206,8 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('builders', { members: [{ agent_id: 'agt_b1', conv_id: 'conv_b1', title: 'builder-1' }] }), group('other')], agents: [] });
-  const peerSnap = { forge: { groups: [group('reviewers', { members: [{ agent_id: 'agt_r1', conv_id: 'conv_r1', title: 'reviewer-1' }] })], agents: [] }, lab: { groups: [group('qa')], agents: [] } };
+  const peerSnap = { forge: { groups: [group('reviewers', { members: [{ agent_id: 'agt_r1', conv_id: 'conv_r1', title: 'reviewer-1' }] })], agents: [],
+    peer_view: { level: 'restricted', included: ['agents.status'], agents: { agt_r1: ['agent.move'] } } }, lab: { groups: [group('qa')], agents: [] } };
   const fetchImpl = async (url) => ({ ok: true, status: 200, json: async () => (url.includes('inst_forge') ? peerSnap.forge : peerSnap.lab) });
   const timers = fakeTimers(); const toasts = [];
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
@@ -248,6 +249,8 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   const same = await drag(row('agt_b1'), groupEl('other@desk'));
   assert.equal(same.defaultPrevented, false, "this view leaves a same-node drop to dnd.js");
   assert.equal(toasts.length, before);
+  await drag(row('agt_r1'), groupEl('builders@desk'));
+  assert.match(toasts.at(-1), /forge has not granted this node groups\.members\.retire on reviewer-1/, 'the drop names the missing grant');
   assert.equal(harness.document.querySelector('#launch-target'), null);
   await mounted.unmount(); state.dispose();
 });

@@ -51,6 +51,12 @@ test('modes, targets and what carries over say what is possible and why not', as
     assert.equal(m.modeState(mode, { local: false, pull: true }).ok, true);
   }
   assert.equal(m.modeState('morph', { local: false, pull: true }).ok, false, 'morph stays with the agent\'s own node');
+  const missing = ['groups.members.retire'];
+  for (const mode of ['move', 'teleport', 'clone']) {
+    assert.equal(m.modeState(mode, { local: false, pull: true, source: 'forge', missing }).why, 'forge has not granted this node groups.members.retire on this agent.', `an ungranted ${mode} says which grant is missing`);
+    assert.equal(m.nodeTargets({ mode, fleet, self, source: forge, status: STATUS, pull: true, missing }).find((n) => n.id === 'inst_a').why, 'needs groups.members.retire from forge');
+  }
+  assert.equal(m.modeState('teleport', { local: true, missing }).ok, true, 'a local agent needs no peer grant');
 
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });
@@ -219,6 +225,20 @@ test('a dropped peer agent can be teleported or cloned here through the peer\'s 
   assert.deepEqual(sent, [{ node: 'inst_forge', id: 'agt_b1', body: { group: 'builders', clone: true } }]);
   assert.match(s.toasts[0], /forge offered builder-1's copy to this node/);
   assert.equal(s.closed(), 1);
+});
+
+test('a peer agent without the pull grants opens with move, teleport and clone greyed and the grant named', async (t) => {
+  const s = await mountDialog(t, {
+    agent: { ...AGENT, node: 'inst_forge', nodeName: 'forge' }, initialMode: 'teleport', localGroups: ['builders'],
+    peerView: { level: 'restricted', agents: { agt_b1: ['agent.move'] } },
+    api: { status: async () => ({}) }, peerActions: () => ({}), actions: {},
+  });
+  for (const mode of ['move', 'teleport', 'clone']) {
+    assert.equal(s.q(`[data-lt-mode="${mode}"]`).disabled, true);
+    assert.match(s.q(`[data-lt-mode="${mode}"]`).title, /forge has not granted this node groups\.members\.retire/);
+  }
+  assert.equal(s.q('[data-lt-node="inst_a"]').disabled, true);
+  assert.match(s.q('[data-lt-node="inst_a"]').textContent, /needs groups\.members\.retire from forge/);
 });
 
 test('large morph cut confirms once and waits visibly for the source summary; cancellation leaves the dialog responsive', async (t) => {

@@ -11,6 +11,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
+import { missingPullGrants } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 
@@ -34,9 +35,11 @@ const NOT_YET = 'Needs the operator teleport routes, which this dashboard does n
 // modeState says whether a mode can be used for this agent from this
 // dashboard. local: the agent runs on this node. presence: its presenceKind.
 // pull: a peer's agent can be asked here through that peer's action routes,
-// which teleport or clone it to this node only.
-export function modeState(mode, { local, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES, pull = false }) {
+// which teleport or clone it to this node only. missing: the peer grants
+// that peer withholds on the agent, which every pull needs.
+export function modeState(mode, { local, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES, pull = false, missing = [] }) {
   const there = `Do this from ${source}'s dashboard.`;
+  if (!local && missing.length && (mode === 'move' || ((mode === 'teleport' || mode === 'clone') && pull))) return { ok: false, why: grantWhy(source, missing) };
   switch (mode) {
     case 'move': return { ok: true };
     case 'clone': return local || (pull && teleport) ? { ok: true } : { ok: false, why: there };
@@ -55,6 +58,11 @@ export function modeState(mode, { local, presence = '', homeIsSelf = false, sour
   }
 }
 
+// grantWhy says which grants a peer must give this node for a pull.
+export function grantWhy(source, missing) {
+  return `${source} has not granted this node ${missing.join(' and ')} on this agent.`;
+}
+
 // receivingGroups lists a peer's catalog groups that take agents from this
 // node, from the federation status (status.remote[].groups[].caps).
 export function receivingGroups(status, peer, mode) {
@@ -65,7 +73,7 @@ export function receivingGroups(status, peer, mode) {
 
 // nodeTargets lists every node with whether this mode may send the agent
 // there, and why not. self is this node; source is where the agent runs.
-export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES, pull = false }) {
+export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES, pull = false, missing = [] }) {
   const nodes = [self, ...(fleet?.peers || [])].filter((n) => n?.id);
   return nodes.map((n) => {
     const here = n.id === source.node;
@@ -79,6 +87,7 @@ export function nodeTargets({ mode, fleet, self, source, status, localGroups = [
       // peer's teleport route (a clone too).
       const pulls = mode === 'move' || (pull && teleport && (mode === 'teleport' || mode === 'clone'));
       if (!isSelf || !pulls) return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
+      if (missing.length) return { ...row, ok: false, why: `needs ${missing.join(' and ')} from ${source.name}` };
       return { ...row, groups: localGroups };
     }
     if (mode === 'clone' && !teleport) return { ...row, ok: false, why: 'a peer clone needs the operator teleport routes (not on this dashboard yet)' };
@@ -392,15 +401,17 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
 
 // LaunchTargetDialog: agent {id, conv, name, node, nodeName, group,
 // presence, homeName}; self and fleet describe the nodes; target pre-fills a
-// drop ({node, name, group}).
+// drop ({node, name, group}). peerView is the agent's node's peer_view
+// metadata, which says what that peer lets this node pull.
 export function LaunchTargetDialog({
-  agent, self, fleet, initialMode = 'move', target: initialTarget = null, fromDrop = false,
+  agent, self, fleet, initialMode = 'move', target: initialTarget = null, fromDrop = false, peerView = null,
   api = createLaunchTargetApi(), actions, peerActions, localGroups = [], onClose, onLocalClone,
   timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES, toast = shellToast,
 }) {
   // A peer's agent is pulled here through that peer's action routes.
   const pull = agent.node !== self.id && !!peerActions;
-  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport, pull };
+  const missing = agent.node === self.id ? [] : missingPullGrants(peerView, agent.id);
+  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport, pull, missing };
   // A mode this agent cannot use here never opens: fall back to the first
   // one it can (Move always can).
   const [mode, setMode] = useState(modeState(initialMode, firstCtx).ok ? initialMode : (MODES.find((m) => modeState(m.key, firstCtx).ok)?.key || 'move'));
@@ -415,14 +426,14 @@ export function LaunchTargetDialog({
   const okRef = useRef(null);
   const local = agent.node === self.id;
   const source = { node: agent.node, name: agent.nodeName || self.name, group: agent.group };
-  const ctx = { local, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport, pull };
+  const ctx = { local, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport, pull, missing };
   useEffect(() => {
     let live = true;
     if (local) api.status().then((s) => { if (live) setStatus(s); }).catch(() => { if (live) setStatus({}); });
     return () => { live = false; };
   }, []);
   const needsNode = mode === 'move' || mode === 'teleport' || mode === 'clone';
-  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport, pull }) : [];
+  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport, pull, missing }) : [];
   const picked = targets.find((n) => n.id === node && n.ok) || null;
   const pick = (id) => { setNode(id); if (id !== node) setGroup(''); };
   const switchMode = (key) => { if (locked) return; setMode(key); setCarry(null); };
