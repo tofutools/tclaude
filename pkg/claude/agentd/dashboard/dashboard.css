@@ -8338,7 +8338,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   font-family: inherit; cursor: pointer;
 }
 .cron-create-target .cron-target-input-row button:hover:not(:disabled) { background: #2d333b; }
-.cron-create-target .cron-target-input-row button:disabled { opacity: .5; cursor: not-allowed; }
+.cron-create-target .cron-target-input-row:not(.locked-field) button:disabled { opacity: .5; cursor: not-allowed; }
 /* Saved-prompt picker: one line — the insert select takes the width and the
    Manage button stays its natural size beside it. */
 .saved-prompts-controls > button { flex: 0 0 auto; white-space: nowrap; }
