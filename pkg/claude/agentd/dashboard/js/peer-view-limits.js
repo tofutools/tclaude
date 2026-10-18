@@ -96,6 +96,9 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
   'add-member': ['feature:local_dashboard'],
+  // Unrestricted trust messages a group with the regular dialog; a restricted
+  // peer's messaging grant sends one agent at a time (PEER_ACTS).
+  'message-new': ['feature:local_dashboard'],
   'spawn-harness-policy': ['feature:local_dashboard'],
   // Long operations, which run as peer view jobs (peer_view_jobs.go).
   'pull-repositories-group': ['feature:local_dashboard'],
@@ -523,12 +526,14 @@ export function blockedControl(target, peerView, event = null) {
     return act && OWN_NODE_ACTS.has(act.dataset.act) ? { el: act, state: 'local', what: 'This action' } : null;
   }
   const held = grantHeld(act, peerView);
+  // A control the peer's action routes take (PEER_ACTS: message one member)
+  // opens the peer action dialog when its grant is not held.
+  const pa = act && !held && peerAction(act, peerView);
+  if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
   if (held !== null) {
     return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : 'This action' };
   }
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
-  const pa = act && peerAction(act, peerView);
-  if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
   const ctl = target?.closest?.(GATED_CONTROLS.join(','));
   if (ctl) return { el: ctl, state: 'local', what: 'This action' };

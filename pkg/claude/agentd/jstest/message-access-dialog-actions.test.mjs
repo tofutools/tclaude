@@ -218,7 +218,7 @@ test('group permission saves carry owner_scopes only when the editor touched it'
   ]);
 });
 
-test("sudo and permission saves on another node's row go to that node", async (t) => {
+test("sudo, permission saves and messages on another node's row go to that node", async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const urls = [];
@@ -229,10 +229,14 @@ test("sudo and permission saves on another node's row go to that node", async (t
   await actions.savePermissions({ mode: 'agent', conv: 'c1', node }, {});
   await actions.savePermissions({ mode: 'group', group: 'crew', node }, {});
   await actions.savePermissions({ mode: 'group', group: 'crew' }, {});
+  await actions.sendMessage({ to: 'group:crew', body: 'b' }, node);
+  await actions.sendMessage({ to: 'group:crew', body: 'b' });
   assert.deepEqual(urls, [
     `/api/peer/${node}/sudo`,
     `/api/peer/${node}/permissions`,
     `/api/peer/${node}/groups/crew`,
     '/api/groups/crew',
+    `/api/peer/${node}/message`,
+    '/api/message',
   ]);
 });

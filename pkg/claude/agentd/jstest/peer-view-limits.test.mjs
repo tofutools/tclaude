@@ -247,6 +247,14 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   const refused = mod.blockedControl(el('build-dir'), restricted);
   assert.equal(refused.state, 'omitted');
   assert.equal(mod.limitHint(refused.state, refused.what, 'forge'), "forge does not share this group's settings with you");
+  // A group's message is the regular dialog under unrestricted trust; a
+  // restricted peer sharing messaging takes it one agent at a time.
+  doc.body.innerHTML = `<button id="ops-msg" data-act="message-new" data-group="ops" data-prefill='{"targetMode":"group","groupName":"ops"}'>✉</button>`;
+  const messaging = { ...restricted, included: [...(restricted.included || []), 'messaging'] };
+  assert.deepEqual(mod.blockedControl(el('ops-msg'), messaging).request, { action: 'message', group: 'ops' });
+  const silent = { ...restricted, included: (restricted.included || []).filter((f) => f !== 'messaging') };
+  assert.equal(mod.blockedControl(el('ops-msg'), silent).state, 'omitted');
+  assert.equal(mod.blockedControl(el('ops-msg'), { level: 'unrestricted' }), null);
 
   // The greying is the same rule, with peer-chosen group names escaped.
   const selectors = mod.groupGrantSelectors(restricted);

@@ -56,8 +56,8 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
 
   return Object.freeze({
     dialog, picker, view,
-    openMessage(prefill = {}) {
-      return open({ kind: 'message', prefill: { ...prefill } });
+    openMessage(prefill = {}, node = '') {
+      return open({ kind: 'message', prefill: { ...prefill }, node: String(node || '') });
     },
     openOperatorMessage(context = {}) {
       const allLive = !!context.allLive;

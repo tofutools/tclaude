@@ -75,19 +75,20 @@ function MessageDialog({ req, members, actions, toast, onClose }) {
   };
   return html`<${Overlay} id="peer-message-modal" labelledby="peer-message-title" onClose=${onClose} blocked=${busy}>
     <h3 id="peer-message-title">Message ${req.group} on ${req.node}</h3>
-    ${members.length === 0 ? html`<div class="muted">${req.node} shows no agents in ${req.group} to message.</div>` : html`
-      <label class="peer-action-opt">To <select id="peer-message-to" value=${to} onChange=${(e) => setTo(e.currentTarget.value)}>
+    <p class="modal-hint">Delivers one immediate message to a single agent in “${req.group}”, sent by ${req.node} as you, the operator. ${req.node} grants messaging one agent at a time.</p>
+    ${members.length === 0 ? html`<div class="cleanup-empty">${req.node} shows no agents in ${req.group} to message.</div>` : html`
+      <label class="cron-create-row"><span class="cron-create-label">To</span><select id="peer-message-to" value=${to} onChange=${(e) => setTo(e.currentTarget.value)}>
         <option value="">pick an agent…</option>
         ${members.map((m) => html`<option key=${m.agent} value=${m.agent}>${m.label}</option>`)}
       </select></label>
-      <label class="peer-action-opt">Subject <input id="peer-message-subject" value=${subject} onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
-      <label class="peer-action-opt peer-action-brief">Message <textarea id="peer-message-body" rows="5" value=${body} onInput=${(e) => setBody(e.currentTarget.value)}></textarea></label>
-      <span class=${bytes > MESSAGE_MAX ? 'fa-danger' : 'muted'}>${bytes} / ${MESSAGE_MAX} bytes · one agent at a time, delivered by ${req.node}</span>`}
-    <div class="modal-buttons">
+      <label class="cron-create-row"><span class="cron-create-label">Subject</span><input id="peer-message-subject" type="text" value=${subject}
+        placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck="false" onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
+      <label class="cron-create-row"><span class="cron-create-label">Body</span><textarea id="peer-message-body" rows="4" value=${body}
+        placeholder="message text (required)" spellcheck="false" onInput=${(e) => setBody(e.currentTarget.value)}></textarea></label>
+      <p class=${bytes > MESSAGE_MAX ? 'cleanup-hint fa-danger' : 'cleanup-hint'}>${bytes} / ${MESSAGE_MAX} bytes</p>`}
+    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      ${members.length > 0 && html`<button id="peer-message-send" type="button" class="primary" disabled=${busy || !ok} onClick=${send}>Send</button>`}
-    </div>
+      ${members.length > 0 && html`<button id="peer-message-send" type="button" class="primary" disabled=${busy || !ok} onClick=${send}>${busy ? 'Sending…' : 'Send'}</button>`}</div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation action message --node ${req.nodeId} --agent ${to || 'AGENT'} --body …</code></div>
   </${Overlay}>`;
 }

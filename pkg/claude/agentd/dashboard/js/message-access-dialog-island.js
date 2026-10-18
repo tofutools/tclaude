@@ -359,7 +359,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       if (from.trim()) payload.from = from.trim();
       if (explicit) payload.members = explicit;
       if (isGroup && role.trim()) payload.role = role.trim();
-      await actions.sendMessage(payload);
+      await actions.sendMessage(payload, descriptor.node || '');
       state.close();
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }

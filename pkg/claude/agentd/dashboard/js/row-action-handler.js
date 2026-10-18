@@ -996,7 +996,7 @@ export async function handleRowAction(action) {
         if (raw) {
           try { prefill = JSON.parse(raw); } catch (_) {}
         }
-        openMessageCreateModal(prefill);
+        openMessageCreateModal(prefill, node);
         return;
       }
       case 'view-agent-messages': {
