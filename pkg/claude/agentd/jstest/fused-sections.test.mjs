@@ -98,3 +98,11 @@ test('outside a fused view neither tab adds sections', async (t) => {
   assert.deepEqual(fusedPeers(fused).map((n) => n.name), ['forge', 'mac']);
   fleet.dispose(); fused.dispose();
 });
+
+test('a peer\'s process API is addressed through the peer proxy', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { peerPath } = await harness.importDashboardModule('js/node-api.js');
+  assert.equal(peerPath('inst_forge', '/v1/process/templates?x=1'), '/api/peer/inst_forge/v1/process/templates?x=1');
+  assert.equal(peerPath('inst_forge', '/api/plugins'), '/api/peer/inst_forge/plugins');
+  assert.throws(() => peerPath('inst_forge', '/v1/other'), /not a node API path/);
+});

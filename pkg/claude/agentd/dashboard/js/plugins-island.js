@@ -170,8 +170,9 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
   // A fused view adds a section per ticked peer (fused-sections.js).
   const peers = fusedPeers(fleet);
   const inputRef = useRef(null);
-  // A fused view keeps the tab: a ticked peer may have plugins this node lacks.
-  const visible = current.visible || peers.length > 0;
+  // A fused view keeps the tab (a ticked peer may have plugins this node
+  // lacks), also before the fleet status has named its peers.
+  const visible = current.visible || peers.length > 0 || (!!fleet.fused.value && !globalThis.__tclaudeRemoteNode);
   useEffect(() => {
     if (!current.request.hasLoaded) return;
     document.body.classList.toggle('hide-plugins', !visible);

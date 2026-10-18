@@ -502,7 +502,7 @@ func auditPeerActionProxy(r *http.Request, peer, phase string, status int) {
 		}
 		mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
 	}
-	probe := &http.Request{Method: r.Method, URL: &url.URL{Path: "/api/" + r.PathValue("tail")}, Header: make(http.Header)}
+	probe := &http.Request{Method: r.Method, URL: &url.URL{Path: peerProxyPath(r.PathValue("tail"))}, Header: make(http.Header)}
 	_, pattern := mux.Handler(probe)
 	if pattern == "" {
 		return

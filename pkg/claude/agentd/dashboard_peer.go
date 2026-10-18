@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -97,7 +98,7 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	auditNodeRunProxyRequest(r, peer.InstanceID, body)
 	auditPeerAccessProxy(r, peer.InstanceID, "requested", 202, nil)
 	auditPeerActionProxy(r, peer.InstanceID, "requested", 202)
-	target := url.URL{Path: "/api/" + r.PathValue("tail"), RawQuery: r.URL.RawQuery}
+	target := url.URL{Path: peerProxyPath(r.PathValue("tail")), RawQuery: r.URL.RawQuery}
 	if len(target.RequestURI()) > 4096 {
 		writeError(w, 414, "request_too_large", "peer request URI exceeds limit")
 		return
@@ -211,4 +212,14 @@ func exchangePeerView(parent context.Context, rt *fedRuntime, peer *db.Federatio
 func validPeerViewReply(reply fedPeerViewReply) bool {
 	return reply.Status >= 200 && reply.Status <= 599 && len(reply.Body) <= fedPeerViewResponseBodyLimit &&
 		(len(reply.Body) == 0 || (json.Valid(reply.Body) && reply.Status != http.StatusNoContent && reply.Status != http.StatusNotModified))
+}
+
+// peerProxyPath is the peer path a /api/peer/{node}/{tail...} request reaches:
+// /api/<tail>, or for a v1/process/ tail the process API at /v1/process/
+// (a fused view's Processes section). The peer's own view rules decide either.
+func peerProxyPath(tail string) string {
+	if strings.HasPrefix(tail, "v1/process/") {
+		return "/" + tail
+	}
+	return "/api/" + tail
 }
