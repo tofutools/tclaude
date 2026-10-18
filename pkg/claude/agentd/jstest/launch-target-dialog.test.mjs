@@ -58,7 +58,8 @@ test('modes, targets and what carries over say what is possible and why not', as
   }
   assert.equal(m.modeState('teleport', { local: true, missing }).ok, true, 'a local agent needs no peer grant');
   const limits = await harness.importDashboardModule('js/peer-view-limits.js');
-  assert.deepEqual(limits.missingPullGrants({ level: 'restricted' }, 'agt_b1'), [], 'an older peer without per-agent grants is not second-guessed');
+  assert.deepEqual(limits.missingPullGrants({ level: 'restricted' }, 'agt_b1'), ['agent.move', 'groups.members.retire'], 'a peer granting no agent controls omits the map');
+  assert.deepEqual(limits.missingPullGrants(null, 'agt_b1'), [], 'unknown until the peer\'s snapshot loads');
   assert.deepEqual(limits.missingPullGrants({ level: 'restricted', agents: {} }, 'agt_b1'), ['agent.move', 'groups.members.retire']);
 
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
