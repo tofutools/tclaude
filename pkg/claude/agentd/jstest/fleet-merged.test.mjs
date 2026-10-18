@@ -115,7 +115,7 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const toasts = []; const calls = []; const confirms = [];
-  const spawns = [];
+  const spawns = []; const messages = [];
   const peerSnap = { groups: [group('build', { members: [{ agent_id: 'agt_ada1', title: 'ada' }] })], agents: [], peer_view: { included: ['agents.status', 'lifecycle.resume', 'spawn', 'messaging'], agents: { agt_ada1: ['groups.members.resume'] } } };
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => peerSnap });
   const peerActions = (node) => ({
@@ -124,7 +124,7 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   });
   const confirm = async (o) => { confirms.push(o); return o.action(); };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${() => {}} peerActions=${peerActions} confirm=${confirm} openSpawn=${async (o) => { spawns.push(o); }} />`);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${() => {}} peerActions=${peerActions} confirm=${confirm} openSpawn=${async (o) => { spawns.push(o); }} openMessage=${(...args) => messages.push(args)} />`);
   await harness.act(async () => { await timers.queue.shift().fn(); });
   const doc = harness.document;
   const inGroup = (node, name, inner) => { const d = doc.createElement('div'); d.innerHTML = `<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`; host.appendChild(d); return d.firstElementChild.firstElementChild; };
@@ -143,12 +143,8 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   assert.deepEqual(opened.snapshot.groups.map((g) => g.name), ['build'], 'and on forge\'s snapshot, not this node\'s');
   const msg = inGroup('inst_forge', 'forge', `<button data-act="message-new" data-prefill='{"targetMode":"group","groupName":"build@forge"}'>✉</button>`);
   await harness.act(() => harness.fireEvent(msg, 'click'));
-  const body = doc.querySelector('#peer-message-body');
-  body.value = 'hello';
-  await harness.act(() => harness.fireEvent(body, 'input'));
-  await harness.act(() => doc.querySelector('#peer-message-send').click());
-  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
-  assert.deepEqual(calls.shift(), ['inst_forge', 'message', 'agt_ada1', 'hello']);
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(messages.shift(), [{ targetMode: 'group', groupName: 'build' }, 'inst_forge', 'forge'], "the regular message dialog opens on forge's own group");
   // Unshared (stop) is stopped with a toast; this node's rows reach their own handlers.
   const before = toasts.length;
   const running = inGroup('inst_forge', 'forge', '<span data-act="dot-toggle" data-online="1" data-agent="agt_ada1">●</span>');

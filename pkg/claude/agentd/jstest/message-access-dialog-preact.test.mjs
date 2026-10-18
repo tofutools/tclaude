@@ -571,3 +571,50 @@ test('terminal message saved prompt inserts into the editable draft without send
   assert.equal(sent[0].body, 'Task: Please review the diff.');
   await mounted.unmount();
 });
+
+test("a restricted peer's group gets the regular dialog: what it withholds is locked with the grant, and each ticked member gets its own message", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openMessage({ targetMode: 'group', groupName: 'team' }, '', 'forge');
+  const sent = [];
+  const actions = {
+    sendMessage: async () => { throw new Error('a restricted peer refuses a group send'); },
+    sendDirectMessages: async (recipients, message, node) => {
+      sent.push([recipients, message, node]);
+      return { sent: 1, failed: sent.length === 1 ? [{ to: 'agt_bob', error: 'not shared' }] : [] };
+    },
+  };
+  const peer = { ...snapshot({ members: [member('ada'), member('bob')] }), peer_view: { level: 'restricted', included: ['messaging'] } };
+  const { host, mounted } = await mountDialogs(harness, state, actions, peer);
+  assert.match(host.querySelector('#message-create-title').textContent, /on forge/, 'the title names the node');
+  assert.equal(host.querySelector('#message-create-from').disabled, true);
+  assert.match(host.querySelector('#message-create-from-lock').getAttribute('data-why'), /forge delivers it from you, the operator.*unrestricted trust/);
+  assert.equal(host.querySelector('#message-create-role').disabled, true);
+  assert.match(host.querySelector('#message-create-role-lock').getAttribute('aria-label'), /^Locked: /);
+  await harness.input(host.querySelector('#message-create-body'), 'status?');
+  await harness.act(() => host.querySelector('#message-create-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(sent, [[['agt_ada', 'agt_bob'], { subject: '', body: 'status?' }, '']]);
+  // A refusal keeps the draft, ticked for exactly the member it missed.
+  assert.match(host.querySelector('#message-create-error').textContent, /bob: not shared/);
+  assert.equal(host.querySelector('#message-create-body').value, 'status?');
+  await harness.act(() => host.querySelector('#message-create-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(sent[1][0], ['agt_bob'], 'the retry reaches only who was refused');
+  assert.equal(host.querySelector('#message-create-modal'), null, 'sent and closed');
+  await mounted.unmount();
+});
+
+test('this node and an unrestricted peer keep every field open, with no lock', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openMessage({ targetMode: 'group', groupName: 'team' });
+  const actions = { sendMessage: async () => {} };
+  const unrestricted = { ...snapshot({ members: [member('ada')] }), peer_view: { level: 'unrestricted' } };
+  const { host, mounted } = await mountDialogs(harness, state, actions, unrestricted);
+  assert.equal(host.querySelector('#message-create-from').disabled, false);
+  assert.equal(host.querySelector('.lock-why'), null);
+  await mounted.unmount();
+});

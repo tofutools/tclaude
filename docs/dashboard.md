@@ -1011,6 +1011,12 @@ Turning an agent's sandbox off takes unrestricted trust. With a move grant,
 the ⚙ **move here…** item opens the regular move dialog, to a group on this
 node. CLI: `tclaude federation action <action> --node PEER --agent ID`.
 
+Messaging a peer's group (its ✉, or the palette) opens the regular message
+dialog, titled with the node. Under the peer's `message.direct` grant it
+sends one message per ticked member, from you, the operator. **From** and the
+role filter stay in place, locked with a 🔒 that names what they would need
+(its unrestricted trust); hover or focus the 🔒 to read it.
+
 A group's spawn button (and any other way of opening the spawn dialog on a
 peer view) opens the regular spawn dialog, aimed at the peer. Every control
 stays in place; the ones the peer decides are disabled with the reason on
