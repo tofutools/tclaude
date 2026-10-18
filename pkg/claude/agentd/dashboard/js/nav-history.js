@@ -20,7 +20,7 @@ import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
-import { fleetAdminLocation, setFleetAdminPage } from './fleet-admin-page.js';
+import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
@@ -269,7 +269,10 @@ function activate(loc, { traversal = false } = {}) {
     // Set before the nav click: the Fleet config island mounts lazily on its
     // first showing and reads the section from this signal. A mounted island
     // also hears the restore event, which drops a stale Run preselect.
-    if (loc.tab === 'fleet-admin') setFleetAdminPage(loc.subtab || '');
+    if (loc.tab === 'fleet-admin') {
+      setFleetAdminPage(loc.subtab || '');
+      if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
+    }
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.

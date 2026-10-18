@@ -26,6 +26,8 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.equal(m.modeState('teleport', { local: true }).ok, true);
   assert.equal(m.modeState('morph', { local: true }).ok, true);
   assert.match(m.modeState('morph', { local: false, source: 'forge' }).why, /forge's dashboard/);
+  assert.equal(m.modeState('morph', { local: false, acting: true, source: 'forge' }).ok, true, 'a node trusting this one unrestricted morphs as locally');
+  assert.equal(m.modeState('clone', { local: false, acting: true, source: 'forge' }).ok, false, 'clone there is its own dialog');
   assert.equal(m.modeState('move', { local: false }).ok, true, 'a peer agent can be pulled here');
   assert.equal(m.modeState('home', { local: true, presence: 'visiting', teleport: true }).ok, true, 'send home from where it runs');
   assert.equal(m.modeState('home', { local: false, presence: 'away', teleport: true }).ok, true, 'recall from its home placeholder');
@@ -61,6 +63,12 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.deepEqual(limits.missingPullGrants({ level: 'restricted' }, 'agt_b1'), ['agent.move', 'groups.members.retire'], 'a peer granting no agent controls omits the map');
   assert.deepEqual(limits.missingPullGrants(null, 'agt_b1'), [], 'unknown until the peer\'s snapshot loads');
   assert.deepEqual(limits.missingPullGrants({ level: 'restricted', agents: {} }, 'agt_b1'), ['agent.move', 'groups.members.retire']);
+  const fleet3 = { ...fleet, peers: [...fleet.peers, { id: 'inst_lab', name: 'lab', online: true }] };
+  const fromForge = { node: 'inst_forge', name: 'forge' };
+  assert.match(m.nodeTargets({ mode: 'move', fleet: fleet3, self, source: fromForge, status: STATUS }).find((n) => n.id === 'inst_lab').why, /forge's dashboard/, 'a restricted peer\'s agent goes no further than here');
+  const relayed = m.nodeTargets({ mode: 'move', fleet: fleet3, self, source: fromForge, status: STATUS, relay: true, nodeGroups: { inst_lab: ['qa'] } }).find((n) => n.id === 'inst_lab');
+  assert.deepEqual([relayed.ok, relayed.groups], [true, ['qa']], 'an unrestricted peer sends its agent on to a third node');
+  assert.equal(m.nodeTargets({ mode: 'teleport', fleet: fleet3, self, source: fromForge, status: STATUS, relay: true }).find((n) => n.id === 'inst_lab').ok, false, 'only a move relays');
 
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });

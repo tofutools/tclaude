@@ -2567,3 +2567,31 @@ test('a section chosen on screen becomes a history entry; Back restores it', asy
   assert.equal(page.fleetAdminPage.value, 'moves');
   assert.equal(navigated.length, 1);
 });
+
+test('picking whose grants Peer grants shows is a history entry; Back restores it', async (t) => {
+  const s = await setup(t);
+  const page = await s.harness.importDashboardModule('js/fleet-admin-page.js');
+  const navigated = [];
+  const onNav = (e) => navigated.push(e.detail.location);
+  s.harness.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => s.harness.document.removeEventListener('tclaude:navigated', onNav));
+  await s.show();
+  const tab = (re) => [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => re.test(b.textContent));
+  await s.click(tab(/Peer grants/));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const pick = async (value) => {
+    const sel = s.q('#fleet-grant-target');
+    for (const o of sel.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  };
+  await pick('inst_forge');
+  assert.deepEqual(navigated.at(-1), { tab: 'fleet-admin', subtab: 'grants', selection: 'inst_forge' });
+  await pick('*all');
+  assert.deepEqual(navigated.at(-1), { tab: 'fleet-admin', subtab: 'grants' });
+  const count = navigated.length;
+  await s.harness.act(() => s.harness.document.dispatchEvent(new s.harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'fleet-admin', subtab: 'grants', selection: 'inst_forge' } },
+  })));
+  assert.equal(page.fleetGrantTarget.value, 'inst_forge');
+  assert.equal(navigated.length, count, 'a restore is not a navigation');
+});

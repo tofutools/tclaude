@@ -92,6 +92,13 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   const localWin = inGroup('inst_self', 'desk', '<button data-act="web-open-window" data-agent="agt_me1">web window</button>');
   assert.equal(harness.fireEvent(localWin, 'click').defaultPrevented, false, "this node's rows run as on its own view");
   assert.equal(opened.length, 1);
+  // Ctrl/Cmd opens a peer's terminal in the background, by click or by the
+  // context-menu event macOS turns a Ctrl-click into.
+  harness.fireEvent(peerWin, 'click', { ctrlKey: true });
+  assert.equal(opened[1].background, true);
+  assert.equal(harness.fireEvent(peerWin, 'contextmenu', { ctrlKey: true }).defaultPrevented, true);
+  assert.equal(opened[2]?.background, true, 'a Ctrl-click context menu still opens it');
+  assert.equal(opened[0].background, undefined, 'a plain click reveals it');
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();
@@ -252,6 +259,39 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   await drag(row('agt_r1'), groupEl('builders@desk'));
   assert.match(toasts.at(-1), /forge does not let you bring reviewer-1 here \(needs groups\.members\.retire\)/, 'the drop names the missing grant');
   assert.equal(harness.document.querySelector('#launch-target'), null);
+  await mounted.unmount(); state.dispose();
+});
+
+test('an unrestricted peer\'s agent dropped on a third node opens the move it sends on', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('builders', { members: [{ agent_id: 'agt_b1', conv_id: 'conv_b1', title: 'builder-1' }] }), group('other')], agents: [] });
+  const peerSnap = { forge: { peer_view: { level: 'unrestricted' }, groups: [group('reviewers', { members: [{ agent_id: 'agt_r1', conv_id: 'conv_r1', title: 'reviewer-1' }] })], agents: [] }, lab: { groups: [group('qa')], agents: [] } };
+  const fetchImpl = async (url) => ({ ok: true, status: 200, json: async () => (url.includes('inst_forge') ? peerSnap.forge : peerSnap.lab) });
+  const timers = fakeTimers(); const toasts = [];
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const moveActions = { moveAgent: async () => ({ move_id: 'mv', disposition: 'pending_acceptance' }), moveDetail: async () => ({}) };
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${() => {}} moveActions=${moveActions} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  const q = (s) => mounted.container.querySelector(s);
+  const groupEl = (key) => q(`details[data-group-key="${key}"]`);
+  const row = (agent) => q(`tr.dnd-draggable[data-dnd-agent="${agent}"]`);
+  const drag = async (from, to) => {
+    assert.equal(harness.fireEvent(from, 'dragstart').defaultPrevented, false, 'an agent row drags');
+    const over = harness.fireEvent(to.querySelector('summary'), 'dragover');
+    await harness.act(() => harness.fireEvent(to.querySelector('summary'), 'drop'));
+    return over;
+  };
+  const over = await drag(row('agt_r1'), groupEl('qa@lab'));
+  assert.equal(over.defaultPrevented, true, 'the third node\'s group accepts the drop');
+  const dialog = harness.document.querySelector('#launch-target');
+  assert.ok(dialog, 'the drop opens the launch-target dialog');
+  assert.match(dialog.textContent, /forge sends reviewer-1 .*to group qa on lab/);
+  assert.match(dialog.textContent, /from.*forge · reviewers.*to.*lab · qa/);
+  assert.equal(toasts.length, 0);
   await mounted.unmount(); state.dispose();
 });
 

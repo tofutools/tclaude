@@ -257,6 +257,7 @@ function accessibleName(root, element) {
 const implicitRoleSelectors = {
   button: 'button,input[type="button"],input[type="submit"],input[type="reset"]',
   textbox: 'textarea,input:not([type]),input[type="text"],input[type="search"],input[type="email"]',
+  link: 'a[href]',
 };
 
 function matchesName(actual, expected) {

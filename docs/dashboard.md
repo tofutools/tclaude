@@ -874,8 +874,11 @@ stays the same, with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
 Each ⚙ Fleet config section has its own address (`/fleet-admin/peers`,
 `/fleet-admin/grants`, …) and its own history entry, so Back/Forward step
-between sections and a section can be bookmarked. Bare `/fleet-admin` opens
-the setup guide until setup is done, else Peers.
+between sections and a section can be bookmarked. Peer grants narrowed to
+one peer or pool is `/fleet-admin/grants/<id>`. Bare `/fleet-admin` opens
+the setup guide until setup is done, else Peers. The map's shortcuts into
+Fleet config (⚙, grants…, trust…, Hub page…) are links, so a middle-click
+opens the section in a new browser tab.
 
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and
@@ -1068,8 +1071,12 @@ a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
 the clone dialog), **Morph** into another spawn profile (a dry run previews the
 change and what happens to the history), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
-send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
-onto another node's group opens the same dialog on Move, pre-filled. In the
+send home where it runs: straight to its origin, retaking its home identity). Another
+node's agent offers **move here** and **clone** (on that node), plus **Morph** when that
+node trusts this one unrestricted. Dropping an agent
+onto another node's group opens the same dialog on Move, pre-filled. A peer's
+agent moves here, or, when that peer trusts this node unrestricted, on to a
+third node: the peer sends it, and its own ⚙ Fleet → Moves follows it. In the
 fused view a drop onto a group on the agent's own node works as on that node's
 Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
 open the clone dialog for that group) — for this node always, and for a peer that

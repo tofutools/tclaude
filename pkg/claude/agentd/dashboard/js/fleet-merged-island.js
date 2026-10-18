@@ -299,8 +299,12 @@ export function MergedGroups({
   // The capture handlers below are bound once; they read the latest snapshots.
   // snapOf reads a node's snapshot, the page's own node included.
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
+  const groupNames = (id) => (snapOf(id)?.groups || []).map((g) => g.name).filter(Boolean).sort();
+  // relays: a peer that trusts this node unrestricted sends its agent on to a
+  // third node for it (the peer action's "to").
   const snapRef = useRef(snapOf);
   snapRef.current = snapOf;
+  const relays = (id) => id !== state.view.value.fleet?.self?.id && snapRef.current(id)?.peer_view?.level === 'unrestricted';
   // A dialog on another node's group reads that node's snapshot from here.
   useEffect(() => setNodeSnapshotSource((id) => snapRef.current(id)), []);
   // A fold/unfold persisted by refresh.js moves which header owns subgroup
@@ -407,7 +411,9 @@ export function MergedGroups({
       if (instance && instance === homeRef.current) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
-        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
+        // Ctrl/Cmd opens it without switching to it, as on this node.
+        const background = !!(event.ctrlKey || event.metaKey);
+        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast, ...(background ? { background } : {}) });
         return;
       }
       const name = group?.dataset.fleetNodeName || '';
@@ -432,7 +438,11 @@ export function MergedGroups({
     };
     const onContext = (event) => {
       if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
-      if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+      if (!event.target?.closest?.('[data-act]') || !host.contains(event.target)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      // macOS turns Ctrl-click into this event: a peer row's attach still
+      // opens, in the background (row-actions.js does so on this node).
+      if ((event.ctrlKey || event.metaKey) && ATTACH_ACTS.has(actOf(event.target, event)?.dataset.act)) onClick(event);
     };
     // A member drag is the Groups drag-and-drop (dnd.js) on every node: a
     // drop on a group on the agent's own node moves, adds or clones it there
@@ -485,10 +495,10 @@ export function MergedGroups({
       // dnd.js no longer sees this drag's hover: its clone must not finish.
       dndGesture.cancelClone();
       if (plan.kind === 'none') { unmark(); return; }
-      // Third-node drops and ungranted pulls are accepted only to say
-      // why not.
+      // A third-node drop is accepted only to say why not, unless the agent's
+      // node is unrestricted and relays it on; so is an ungranted pull.
       event.preventDefault();
-      const ok = plan.kind === 'push' || (plan.kind === 'pull' && !pullMissing(dragging).length);
+      const ok = plan.kind === 'push' || (plan.kind === 'pull' && !pullMissing(dragging).length) || (plan.kind === 'third' && relays(dragging.source.node));
       if (event.dataTransfer) event.dataTransfer.dropEffect = ok ? 'move' : 'none';
       mark(target.el, ok);
     };
@@ -501,10 +511,10 @@ export function MergedGroups({
       dndGesture.cancelClone();
       const src = dragging; dragging = null; unmark();
       if (!target) return;
-      if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
+      if (plan.kind === 'third' && !relays(src.source.node)) { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
       const missing = plan.kind === 'pull' ? pullMissing(src) : [];
       if (missing.length) { toast(grantWhy(src.source.name, missing).replace('this agent', src.agent.name), true); return; }
-      if (plan.kind === 'push' || plan.kind === 'pull') {
+      if (plan.kind === 'push' || plan.kind === 'pull' || plan.kind === 'third') {
         setLaunch({ mode: 'move', fromDrop: true, target: { node: target.node, name: target.name, group: target.group },
           agent: { id: src.agent.id, conv: '', name: src.agent.name, node: src.source.node, nodeName: src.source.name, group: src.source.group } });
       }
@@ -560,7 +570,8 @@ export function MergedGroups({
     ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}
       peerView=${snapOf(launch.agent.node)?.peer_view || null}
       self=${fleet.self} fleet=${fleet} api=${launchApi.current} actions=${fleetActions.current} peerActions=${peerActions} timers=${timers} now=${now}
-      localGroups=${(snapOf(fleet.self.id)?.groups || []).map((g) => g.name).filter(Boolean).sort()}
+      localGroups=${groupNames(fleet.self.id)} relay=${relays(launch.agent.node)}
+      nodeGroups=${Object.fromEntries((fleet.peers || []).map((p) => [p.id, groupNames(p.id)]))}
       onClose=${() => setLaunch(null)}
       onLocalClone=${() => { const a = launch.agent; setLaunch(null); openCloneAgentDialog(a.conv || a.id, a.name, a.cwd || ''); }} />`}
   </div>`;
