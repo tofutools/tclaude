@@ -88,3 +88,11 @@ test('Messages request state rejects stale data, retains mailbox roster, and exp
   assert.equal(state.view.value.messageRequest.phase, 'error');
   assert.equal(state.view.value.messageRequest.error, 'broken');
 });
+
+test('a peer page names a peer\'s human-messages routes through its proxy', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { pageHumanRoute } = await harness.importDashboardModule('js/mail-state.js');
+  assert.equal(pageHumanRoute('/api/human-messages/delete', ''), '/api/human-messages/delete', 'this node\'s page: its own');
+  assert.equal(pageHumanRoute('/api/human-messages/clear', 'inst_forge'), '/api/peer/inst_forge/human-messages/clear');
+  assert.equal(pageHumanRoute('/api/mailbox/delete', 'inst_forge'), '/api/mailbox/delete', 'the page\'s fetch already sends the rest there');
+});

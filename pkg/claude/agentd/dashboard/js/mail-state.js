@@ -7,6 +7,15 @@ export function messageDeleteEndpoint(folderID) {
   return folderID === HUMAN_MAILBOX_ID ? '/api/human-messages/delete' : '/api/mailbox/delete';
 }
 
+// pageHumanRoute addresses a /api/human-messages route on the page's node.
+// From a peer's page those routes stay on this node (remote-node.js keeps
+// them local for this node's own notifications), so a peer's are named
+// through its proxy: a delete there would otherwise remove this node's.
+export function pageHumanRoute(path, remote = globalThis.__tclaudeRemoteNode?.id || '') {
+  if (!remote || !path.startsWith('/api/human-messages')) return path;
+  return `/api/peer/${encodeURIComponent(remote)}/${path.slice('/api/'.length)}`;
+}
+
 // nextMessagesAttention picks the item the Messages-tab badge is asking the
 // operator to handle. Access requests outrank notifications because they block
 // an agent in real time. Both snapshot lists have a defined order: pending
