@@ -178,32 +178,62 @@ export function beginGestureClipboardWrite({
   };
 }
 
-// screenText normalizes terminal text for shownOnScreen: box-drawing
-// gutters and runs of whitespace (line breaks, padding, wraps) compare alike.
-function screenText(text) {
-  return String(text).replace(/[\u2500-\u257f]/g, ' ').replace(/\s+/g, ' ').trim();
+// cellAt maps a pointer position to a buffer cell {row, col} of term, whose
+// screen element is in host; null off-screen or before layout.
+export function cellAt(term, host, clientX, clientY) {
+  const screen = host?.querySelector?.('.xterm-screen');
+  const rect = screen?.getBoundingClientRect?.();
+  if (!rect || !rect.width || !rect.height || !term.cols || !term.rows) return null;
+  const clamp = (v, max) => Math.max(0, Math.min(max - 1, v));
+  const col = clamp(Math.floor((clientX - rect.left) / (rect.width / term.cols)), term.cols);
+  const row = clamp(Math.floor((clientY - rect.top) / (rect.height / term.rows)), term.rows);
+  return { row: row + (term.buffer?.active?.viewportY || 0), col };
 }
 
-// shownOnScreen reports whether text, as an application copied it, appears in
-// the terminal's active buffer (the screen and any scrollback it keeps). A
-// peer controls a remote terminal's whole byte stream; holding its clipboard
-// writes to what the operator just selected on screen keeps it from swapping
-// in text they never saw.
-export function shownOnScreen(term, text) {
-  const wanted = screenText(text);
-  if (!wanted) return true;
-  const buffer = term?.buffer?.active;
-  if (!buffer || typeof buffer.getLine !== 'function') return false;
-  const rows = [];
-  for (let i = 0; i < (buffer.length || 0); i++) {
-    const line = buffer.getLine(i);
-    if (!line) continue;
-    const row = line.translateToString(true);
-    // A soft-wrapped row continues the one above without a break.
-    if (line.isWrapped && rows.length) rows[rows.length - 1] += row;
-    else rows.push(row);
+// rowCells is a buffer row's text from start to end (exclusive), as drawn:
+// a concealed (SGR 8) cell reads as a space, a wide character's spacer as
+// nothing.
+function rowCells(line, start, end) {
+  let out = '';
+  for (let x = start; x < end; x++) {
+    const cell = line.getCell(x);
+    if (!cell) break;
+    if (cell.getWidth() === 0) continue;
+    out += cell.isInvisible() ? ' ' : (cell.getChars() || ' ');
   }
-  return screenText(rows.join('\n')).includes(wanted);
+  return out;
+}
+
+// selectedText is the text of the cells a pointer gesture covered on term:
+// rows break with a newline unless the buffer marks the next one as a soft
+// wrap, and each row drops its trailing padding. clicks 2 takes the word
+// under the pointer and 3 its row, as terminal multi-clicks do. null when
+// nothing readable was covered.
+export function selectedText(term, from, to, clicks = 1) {
+  const buffer = term?.buffer?.active;
+  if (!buffer || !from || !to || typeof buffer.getLine !== 'function') return null;
+  const [a, b] = (from.row < to.row || (from.row === to.row && from.col <= to.col)) ? [from, to] : [to, from];
+  const width = term.cols;
+  if (clicks >= 2) {
+    const line = buffer.getLine(b.row);
+    if (!line) return null;
+    const text = rowCells(line, 0, width);
+    if (clicks >= 3) return text.replace(/ +$/, '') || null;
+    if (/\s/.test(text[b.col] || ' ')) return null;
+    let l = b.col; let r = b.col;
+    while (l > 0 && !/\s/.test(text[l - 1])) l--;
+    while (r < text.length - 1 && !/\s/.test(text[r + 1])) r++;
+    return text.slice(l, r + 1);
+  }
+  let out = '';
+  for (let y = a.row; y <= b.row; y++) {
+    const line = buffer.getLine(y);
+    if (!line) return null;
+    const row = rowCells(line, y === a.row ? a.col : 0, y === b.row ? b.col + 1 : width);
+    const next = y < b.row ? buffer.getLine(y + 1) : null;
+    out += next?.isWrapped ? row : row.replace(/ +$/, '') + (y < b.row ? '\n' : '');
+  }
+  return out || null;
 }
 
 export function shouldArmTmuxClipboard(drag, event, mouseTrackingMode) {
@@ -538,10 +568,11 @@ export function attachTerminalInteractions({
   // match its target, and the peer controls the whole byte stream.
   remoteFileViewer = null,
   // OSC 52 clipboard writes are trusted from the local tmux, which filters
-  // pane applications. A peer controls a remote terminal's whole byte
-  // stream, so there ('visible') a write lands only right after a copy
-  // gesture, like locally, and only with text shown on screen; false never
-  // writes the clipboard from the stream.
+  // pane applications. A peer controls a remote terminal's whole byte stream
+  // and sees the pointer, so there ('selection') an OSC 52 is only the
+  // signal that the remote tmux copied after a pointer selection: the
+  // clipboard gets the cells the operator selected, read here at mouseup,
+  // never the peer's text. false never writes from the stream.
   oscClipboard = true,
 }) {
   let statusTimer = null;
@@ -601,8 +632,10 @@ export function attachTerminalInteractions({
     flash(token.result ? 'copied' : 'tmux copied; browser clipboard permission denied');
   }
 
-  function armTmuxClipboardFromGesture() {
+  function armTmuxClipboardFromGesture(selection = null) {
     if (!oscClipboard) return;
+    // A remote copy needs the cells a pointer selected; a key chord has none.
+    if (oscClipboard === 'selection' && !selection) return;
     if (activeTmuxClipboardCopy) activeTmuxClipboardCopy.cancel();
     const deferred = beginGestureClipboardWrite();
     debugCopy('armed', {
@@ -610,7 +643,7 @@ export function attachTerminalInteractions({
       secureContext: globalThis.isSecureContext,
       clipboardAPI: !!globalThis.navigator?.clipboard,
     });
-    const token = { deferred, timer: null, oscReceived: false, result: null };
+    const token = { deferred, selection, timer: null, oscReceived: false, result: null };
     token.cancel = () => {
       debugCopy('canceled', { oscReceived: token.oscReceived });
       if (token.timer) clearTimeout(token.timer);
@@ -647,7 +680,8 @@ export function attachTerminalInteractions({
       tmuxDrag = null;
       return;
     }
-    tmuxDrag = { x: event.clientX, y: event.clientY, moved: false };
+    tmuxDrag = { x: event.clientX, y: event.clientY, moved: false,
+      cell: oscClipboard === 'selection' ? cellAt(term, host, event.clientX, event.clientY) : null };
   };
   const onTmuxMouseMove = (event) => {
     if (!tmuxDrag || tmuxDrag.moved) return;
@@ -668,6 +702,14 @@ export function attachTerminalInteractions({
     if (!arm) return;
     // This document-capture listener runs before xterm forwards mouseup to
     // tmux. Arm the permission-sensitive write now; OSC 52 resolves it later.
+    // A remote selection is read now, as the operator sees it, before the
+    // peer can redraw.
+    if (oscClipboard === 'selection') {
+      const selected = selectedText(term, drag.cell, cellAt(term, host, event.clientX, event.clientY), Number(event.detail) || 1);
+      if (!selected) return;
+      armTmuxClipboardFromGesture(selected);
+      return;
+    }
     armTmuxClipboardFromGesture();
   };
 
@@ -840,26 +882,23 @@ export function attachTerminalInteractions({
     // opted into set-clipboard=on) and prevents background clipboard poisoning.
     if (text !== null && pendingTmuxCopy && activeTmuxClipboardCopy === pendingTmuxCopy) {
       const token = pendingTmuxCopy;
-      if (oscClipboard === 'visible' && !shownOnScreen(term, text)) {
-        debugCopy('offscreen');
-        token.cancel();
-        flash('not copied: the remote text is not on screen; Shift-drag to select it instead', 5000);
-        return true;
-      }
+      // A remote copy writes the cells the operator selected, never the
+      // peer's text: its OSC 52 only says the copy happened.
+      const copied = token.selection ?? text;
       if (token.timer) {
         clearTimeout(token.timer);
         token.timer = null;
       }
       token.oscReceived = true;
       if (token.deferred) {
-        token.deferred.resolve(text);
+        token.deferred.resolve(copied);
         finishPendingTmuxCopy(token);
       } else {
         debugCopy('fallback-write');
         // Older browsers cannot hold a promise-backed ClipboardItem open from
         // mouseup, but still get a best-effort write while the armed gesture's
         // transient activation may remain live.
-        void writeClipboard(text).then((ok) => {
+        void writeClipboard(copied).then((ok) => {
           token.result = ok;
           finishPendingTmuxCopy(token);
         });

