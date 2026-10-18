@@ -18,6 +18,7 @@ import { featureState } from './feature-state-registry.js';
 import { clickNavExactly } from './automations-nav.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
+import { fleetAdminLocation, setFleetAdminPage } from './fleet-admin-page.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -162,6 +163,10 @@ function activeLocationFromDOM() {
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'activity') {
     loc.subtab = activitySubtab.value;
+  } else if (tab === 'fleet-admin') {
+    // The section is a signal set before the tab is shown (a page asked for
+    // from the map or a viewer badge), so the tab click records it.
+    return normalizeLocation(fleetAdminLocation());
   } else if (tab === 'jobs') {
     const island = featureState('jobs');
     if (island) return normalizeLocation(island.location.value);
@@ -244,6 +249,10 @@ function activate(loc, { traversal = false } = {}) {
   }
   applying = true;
   try {
+    // Set before the nav click: the Fleet config island mounts lazily on its
+    // first showing and reads the section from this signal. A mounted island
+    // also hears the restore event, which drops a stale Run preselect.
+    if (loc.tab === 'fleet-admin') setFleetAdminPage(loc.subtab || '');
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
     if (navBtn && !navBtn.classList.contains('active')) clickNavExactly(navBtn);
     if (loc.tab === 'access' && loc.subtab) {
@@ -298,6 +307,10 @@ function activate(loc, { traversal = false } = {}) {
       // section is merely CSS-hidden, so nothing is lost, and that has always
       // been true of tab switches here.
       requestProcessesLocation(loc);
+    } else if (loc.tab === 'fleet-admin') {
+      document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+        detail: { location: normalizeLocation(loc) },
+      }));
     }
   } finally {
     applying = false;

@@ -2472,3 +2472,32 @@ test('a request whose grant lets the peer choose nothing previews typed values a
   assert.deepEqual(requestedSettings(switched, { harness: 'claude' }).map((s) => [s.key, !!s.dropped]), [['harness', false], ['launch:permissions', true]],
     'another harness drops the settings chosen for the requested one');
 });
+
+test('a section chosen on screen becomes a history entry; Back restores it', async (t) => {
+  const s = await setup(t);
+  const [page, core] = await Promise.all([s.harness.importDashboardModule('js/fleet-admin-page.js'), s.harness.importDashboardModule('js/nav-history-core.js')]);
+  const island = await s.harness.importDashboardModule('js/fleet-admin-island.js');
+  assert.deepEqual(new Set(island.SUB_PAGES.map((p) => p.id)),
+    core.KNOWN_SUBTABS['fleet-admin'], 'every section has a route');
+  const navigated = [];
+  const onNav = (e) => navigated.push(e.detail.location);
+  s.harness.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => s.harness.document.removeEventListener('tclaude:navigated', onNav));
+  await s.show();
+  const tab = (re) => [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => re.test(b.textContent));
+  await s.click(tab(/Invites/));
+  assert.deepEqual(navigated, [{ tab: 'fleet-admin', subtab: 'invites' }]);
+  await s.click(tab(/Invites/));
+  assert.equal(navigated.length, 1, 're-selecting the shown section records nothing');
+  await s.harness.act(() => s.harness.document.dispatchEvent(new s.harness.window.CustomEvent('tclaude:restore-location', { detail: { location: { tab: 'fleet-admin', subtab: 'audit' } } })));
+  assert.equal(tab(/^Audit/).getAttribute('aria-selected'), 'true', 'Back/Forward shows the section');
+  assert.equal(navigated.length, 1, 'a restore is not a navigation');
+  await s.harness.act(() => s.harness.document.dispatchEvent(new s.harness.window.CustomEvent('tclaude:restore-location', { detail: { location: { tab: 'fleet-admin' } } })));
+  assert.equal(page.fleetAdminPage.value, '', 'the bare path is the landing');
+  // Off screen, a section asked for waits for the nav click to record it.
+  await s.harness.act(() => { s.activeTab.value = 'groups'; });
+  const drop = await s.harness.importDashboardModule('js/fleet-move-drop.js');
+  await s.harness.act(() => drop.requestFleetPage('moves'));
+  assert.equal(page.fleetAdminPage.value, 'moves');
+  assert.equal(navigated.length, 1);
+});
