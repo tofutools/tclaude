@@ -6,7 +6,7 @@ import {
   COST_COLUMNS, buildAccumulatedCostChart, buildCostChart, costModelLabel, costModels, costModelStats,
   costProviders, costProviderStats,
   costProviderLabel, filterCostData,
-  matchesCostAgent, monthLabel, monthProjection, oldestMonthOffset,
+  matchesCostAgent, monthLabel, monthProjection, monthStart, oldestMonthOffset,
   resolveModelSelection, resolveProviderSelection, sortCostAgents,
 } from './costs-model.js';
 
@@ -194,6 +194,31 @@ export function createCostsState({
     batch(() => { monthOffset.value = next; span.value = next === 0 ? 'month' : 'calmonth'; });
   }
 
+  // period is the span as the URL names it (/usage/costs?period=): '' for
+  // this month to date, a trailing span ('7d'), or a past month ('2026-08').
+  // Months are absolute so a link keeps meaning the same month.
+  const period = computed(() => {
+    if (span.value === 'calmonth' && monthOffset.value > 0) {
+      const start = monthStart(monthOffset.value, now());
+      return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+    }
+    return span.value === 'month' ? '' : span.value;
+  });
+
+  // applyPeriod shows a URL's period; false when it already shows it.
+  function applyPeriod(value) {
+    const want = String(value || '');
+    if (want === period.value) return false;
+    const month = /^(\d{4})-(\d{2})$/.exec(want);
+    if (month) {
+      const today = now();
+      activateMonth((today.getFullYear() * 12 + today.getMonth()) - (Number(month[1]) * 12 + Number(month[2]) - 1));
+    } else {
+      setSpan(['7d', '30d', '90d'].includes(want) ? want : 'month');
+    }
+    return true;
+  }
+
   function setFillEmpty(value) {
     fillEmpty.value = !!value;
     prefs.setItem(FILL_KEY, value ? '1' : '0');
@@ -326,7 +351,7 @@ export function createCostsState({
   return Object.freeze({
     span, monthOffset, fillEmpty, includeWeekends, selectedProviders, selectedModels,
     stackByProvider, stackByModel, query,
-    sort, payload, request, factor, view, initialize, setSpan, activateMonth,
+    sort, payload, request, factor, view, initialize, setSpan, activateMonth, period, applyPeriod,
     setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel,
     setStackByProvider, setStackByModel, cycleSort, setQuery,
     beginRequest, commitRequest, failRequest, editFactor, beginFactor,

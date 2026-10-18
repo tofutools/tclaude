@@ -10,6 +10,8 @@ import {
   fmtCredits, fmtExactUSD, modelRollup, monthProjectionLabel, providerSegmentClass,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
+import { registerFeatureState } from './feature-state-registry.js';
+import { fromPath } from './nav-history-core.js';
 
 const html = htm.bind(h);
 
@@ -97,7 +99,16 @@ function FactorEditor({ state, actions }) {
 }
 
 function Controls({ state, actions, current }) {
-  const loadAfter = (change) => { change(); void actions.load(); };
+  // A span or month picked here is a history step (/usage/costs?period=).
+  const loadAfter = (change) => {
+    const before = state.period.peek();
+    change();
+    void actions.load();
+    if (state.period.peek() !== before) {
+      const params = state.period.peek() ? { period: state.period.peek() } : undefined;
+      document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: { tab: 'usage', subtab: 'costs', ...(params ? { params } : {}) } } }));
+    }
+  };
   const monthView = current.span === 'month' || current.span === 'calmonth';
   // Two rows, always: the controls on top, the totals/projection line under
   // them. Sharing one line only worked while the summary was short — with the
@@ -548,6 +559,20 @@ export function CostsApp({ state, actions }) {
 
 export function mountCostsIsland({ host, state, actions, registerCleanup }) {
   state.initialize();
+  // The router reads the period from here and Back/Forward or a link sets it.
+  // One Costs island reads the period at a time; a second mount (tests) leaves
+  // the first one's registration in place.
+  let unregister = () => {};
+  try { unregister = registerFeatureState('costs', state); } catch { /* already registered */ }
+  // Mounted after the router already restored a /usage/costs?period= link.
+  const shown = fromPath(globalThis.location?.pathname, globalThis.location?.search || '');
+  if (shown.tab === 'usage' && shown.subtab === 'costs') state.applyPeriod(shown.params?.period || '');
+  const restore = (event) => {
+    const loc = event.detail?.location;
+    if (loc?.tab !== 'usage' || loc.subtab !== 'costs') return;
+    if (state.applyPeriod(loc.params?.period || '')) void actions.load();
+  };
+  document.addEventListener('tclaude:restore-location', restore);
   render(html`<${CostsApp} state=${state} actions=${actions} />`, host);
-  registerCleanup(() => render(null, host));
+  registerCleanup(() => { document.removeEventListener('tclaude:restore-location', restore); unregister(); render(null, host); });
 }

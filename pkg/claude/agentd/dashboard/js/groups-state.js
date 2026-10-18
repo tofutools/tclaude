@@ -187,6 +187,8 @@ export function createGroupsState({
   const routeSelection = signal('');
   // The group the Route map shows ('' = the route's, else the first).
   const routeGroup = signal('');
+  // The Route map's view: 'graph' or the exact 'list' (?view=list).
+  const routeView = signal('graph');
   // Both | Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
   const focus = signal('both');
   // The ticked run kinds (running / planned / done) over the Processes
@@ -279,6 +281,10 @@ export function createGroupsState({
 
   function setRouteGroup(value) {
     routeGroup.value = String(value || '');
+  }
+
+  function setRouteView(value) {
+    routeView.value = value === 'list' ? 'list' : 'graph';
   }
 
   function setFocus(value) {
@@ -409,7 +415,7 @@ export function createGroupsState({
 
   return Object.freeze({
     snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, focus, processFilter, focusedRun, renderRevision, listed,
+    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, focus, processFilter, focusedRun, renderRevision, listed,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,

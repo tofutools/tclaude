@@ -131,3 +131,21 @@ test('Saved model selection is normalized against the saved provider scope', asy
   assert.equal(storage.values.has('tclaude.dash.costs.models'), false,
     'the fully restored model set clears the stale explicit preference');
 });
+
+test('the Costs period is what the URL names: this month, a trailing span or a past month', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createCostsState } = await harness.importDashboardModule('js/costs-state.js');
+  const state = createCostsState({ now: () => new Date(2026, 9, 18), prefs: { getItem: () => null, setItem() {}, removeItem() {} } });
+  assert.equal(state.period.value, '');
+  state.setSpan('30d');
+  assert.equal(state.period.value, '30d');
+  state.activateMonth(2);
+  assert.equal(state.period.value, '2026-08');
+  assert.equal(state.applyPeriod('2026-08'), false, 'already shown');
+  assert.equal(state.applyPeriod('2025-12'), true);
+  assert.equal(state.view.value.monthOffset, 10);
+  state.applyPeriod('');
+  assert.equal(state.period.value, '');
+  state.applyPeriod('7d');
+  assert.equal(state.period.value, '7d');
+});

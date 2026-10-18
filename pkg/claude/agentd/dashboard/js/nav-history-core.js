@@ -141,10 +141,12 @@ export const ITEM_SUBTABS = {
 //     box (the folder filter); in the fused (several-node) view also at (the
 //     node whose folder is open, absent for a fused folder) and scope (the
 //     node chip narrowing the view).
-//   - groups: group (the group the Route map shows).
+//   - groups: group (the group the Route map shows), view (its table view).
+//   - usage: period (the Costs span: 7d / 30d / 90d, or a past month YYYY-MM).
 export const TAB_PARAMS = {
+  usage: ['period'],
   messages: ['q', 'from', 'page', 'box', 'at', 'scope'],
-  groups: ['group'],
+  groups: ['group', 'view'],
 };
 
 // OVERLAY_PARAMS are params any tab's location can carry: an overlay that

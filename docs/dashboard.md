@@ -176,7 +176,9 @@ Processes shows each group's runs as live graph cards with *+ start process*
 (template, params, explicit program-profile authorization); *open ›* focuses
 one run with its graph, a node inspector for decisions, a performer dock to
 drag-reassign agent nodes, and pause (⏸) / resume (⏵). The open run has its
-own address, `/groups/runs/<group>/<run-id>`, so Back closes it.
+own address, `/groups/runs/<group>/<run-id>`, so Back closes it. The Route
+map's group and its exact-list view are in its address too
+(`/groups/routes?group=ops&view=list`).
 
 Both, the default, shows each group's members and runs together as an
 **Agents** and a **Processes** section. Each section's header line carries
@@ -726,7 +728,9 @@ back on selects its models again. The accumulated
 and daily graphs use the same date domain and plot width. Hover either the
 solid recorded line or the dashed month-projection line for the day's change
 and accumulated value. Spans are: This month (the only span with a projection),
-7d/30d/90d, and a month browser going 24 months back. Model attribution uses
+7d/30d/90d, and a month browser going 24 months back. The span is in the
+address (`/usage/costs?period=30d`, `?period=2026-08` for a past month), so
+each pick is a history step and a link opens that span. Model attribution uses
 the last model recorded for each agent-day slice; a model switch within the
 same session and calendar day is therefore grouped under the final observed
 model.
