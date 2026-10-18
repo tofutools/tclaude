@@ -1000,7 +1000,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-agent-viewer-badges",
 			Title:   "Agents a peer is watching or typing into",
-			Caption: "While a peer views an agent terminal here, the agent's harness line names it: amber ⌨ forge is typing into fe-dev-forms, 👁 lab is watching infra-lead. Clicking the badge opens Fleet → Peers with the viewers panel filtered to that agent.",
+			Caption: "While a peer views an agent terminal here, the agent's harness line shows a glyph: amber ⌨ on fe-dev-forms (forge is typing), 👁 on infra-lead (lab is watching); hovering names the peer. Clicking the badge opens Fleet → Peers with the viewers panel filtered to that agent.",
 			InitJS:  "window.__dashsnapViewers = true;" + fleetFederationStubJS,
 			JS: `return (async function(){
   for (var i = 0; i < 100 && document.querySelectorAll('.remote-viewers-badge').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
