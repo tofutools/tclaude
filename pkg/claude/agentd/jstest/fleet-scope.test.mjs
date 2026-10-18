@@ -130,14 +130,18 @@ test('machine tabs in a fused view stay on this node and offer each peer\'s own 
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('access');
   const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
-  state.setStatus(status([{ ...peer('inst_forge', 'forge'), level: 'unrestricted' }, peer('inst_lab', 'lab', false), peer('inst_ci00', 'ci')]));
-  const mounted = await harness.mount(harness.html`<${island.ScopeBanner} state=${state} doc=${harness.document} loc=${{ search: '?nodes=all&wizard=1' }} />`);
+  // forge grants this node unrestricted (we grant it restricted: peer.level
+  // is our side); ci grants us restricted.
+  state.setStatus(status([peer('inst_forge', 'forge'), peer('inst_lab', 'lab', false), { ...peer('inst_ci00', 'ci'), level: 'unrestricted' }]));
+  const theirs = { inst_forge: 'unrestricted', inst_ci00: 'restricted' };
+  const mounted = await harness.mount(harness.html`<${island.ScopeBanner} state=${state} doc=${harness.document} loc=${{ search: '?nodes=all&wizard=1' }}
+    peerSnapshot=${(id) => (theirs[id] ? { peer_view: { level: theirs[id] } } : null)} />`);
   const c = mounted.container;
   const link = c.querySelector('.scope-peer-link');
   assert.equal(link.textContent.startsWith('forge'), true);
   assert.equal(link.getAttribute('href'), '/access?wizard=1&node=inst_forge', "an unrestricted peer's Access opens on its own view, leaving the fused set");
   const locks = [...c.querySelectorAll('.scope-peer-locked .lock-why')].map((l) => l.dataset.why);
-  assert.deepEqual(locks.sort(), ['ci does not share its access with you (needs unrestricted trust)', 'lab is offline']);
+  assert.deepEqual(locks.sort(), ['ci does not share its access with you (needs unrestricted trust from ci)', 'lab is offline']);
   await harness.act(() => { activeTab.value = 'config'; });
   assert.equal(c.querySelector('.scope-peer-link'), null, "a peer's Config is never served");
   assert.ok([...c.querySelectorAll('.scope-peer-locked .lock-why')].some((l) => l.dataset.why === "forge's config is set on forge itself"));

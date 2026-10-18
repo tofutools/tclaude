@@ -15,6 +15,7 @@ import { fleetAdminLocation } from './fleet-admin-page.js';
 import { isModifiedClick } from './helpers.js';
 import { toPath } from './nav-history-core.js';
 import { LockReason } from './lock-reason.js';
+import { nodeSnapshot } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -362,11 +363,14 @@ export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNo
 const MACHINE_TABS = Object.freeze({ access: 'unrestricted', config: 'never' });
 
 // peerTabReach is how the strip offers a ticked peer's own copy of a machine
-// tab: { href } to open it, or { why } it cannot be opened from here.
-function peerTabReach(peer, tab, loc) {
+// tab: { href } to open it, or { why } it cannot be opened from here. theirs
+// is the trust the peer grants this node (peer.level is the other direction):
+// a peer known to grant less than unrestricted is locked; one not known yet
+// is offered, and its page says if it refuses.
+function peerTabReach(peer, tab, loc, theirs = '') {
   if (MACHINE_TABS[tab] === 'never') return { why: `${peer.name}'s ${tab} is set on ${peer.name} itself` };
   if (!peer.online) return { why: `${peer.name} is offline` };
-  if (peer.level !== 'unrestricted') return { why: `${peer.name} does not share its ${tab} with you (needs unrestricted trust)` };
+  if (theirs && theirs !== 'unrestricted') return { why: `${peer.name} does not share its ${tab} with you (needs unrestricted trust from ${peer.name})` };
   return { href: nodeHref(peer.id, { pathname: toPath({ tab }), search: withFused(loc?.search || '', null) }) };
 }
 
@@ -374,7 +378,7 @@ function peerTabReach(peer, tab, loc) {
 // this node only (a fused view is always this node's page), and the strip
 // says so. On a machine tab (MACHINE_TABS) it also offers each ticked peer's
 // own; elsewhere a peer's own view opens from its node chip.
-export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis.location }) {
+export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis.location, peerSnapshot = nodeSnapshot }) {
   const current = state.view.value;
   const fleet = current.fleet;
   if (!fleet || !current.fused || current.topLevel || FUSED_TABS.has(current.activeTab)) return null;
@@ -382,10 +386,12 @@ export function ScopeBanner({ state, doc = globalThis.document, loc = globalThis
   const tab = current.activeTab;
   const label = doc?.querySelector?.(`nav [data-tab="${tab}"] .tab-label-regular`)?.textContent?.trim() || 'This tab';
   const peers = MACHINE_TABS[tab] ? tickedNodes(fleet, current.fused).filter((n) => !n.local) : [];
+  // The fused poll's peer snapshot, else the map's node summary, carries it.
+  const theirLevel = (id) => peerSnapshot(id)?.peer_view?.level || current.summaries?.[id]?.summary?.peer_view?.level || '';
   return html`<div class="scope-banner" role="status" style=${`--nc:${self.color}`}>
     <span>${label} shows this node, <span class="scope-pill" style=${`--nc:${self.color}`}>⌂ ${self.name}</span>.${peers.length ? '' : " Open another node's own view from its chip."}</span>
     ${peers.length ? html`<span class="scope-peers">${peers.map((peer) => {
-      const reach = peerTabReach(peer, tab, loc);
+      const reach = peerTabReach(peer, tab, loc, theirLevel(peer.id));
       return reach.href
         ? html`<a key=${peer.id} class="scope-pill scope-peer-link" style=${`--nc:${peer.color}`} href=${reach.href}>${peer.name}'s ${label} ↗</a>`
         : html`<span key=${peer.id} class="scope-pill scope-peer-locked" style=${`--nc:${peer.color}`}>${peer.name}<${LockReason} why=${reach.why} /></span>`;
