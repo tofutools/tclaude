@@ -315,6 +315,8 @@ export function createGroupsState({
       tags: Array.isArray(member.tags) ? [...member.tags] : [],
       owner: !!member.owner,
       focus: ['role', 'descr'].includes(focus) ? focus : 'title',
+      // Rename titles auto-correct under the same toggle as spawn names.
+      normalizeTitles: snapshot.value?.spawn_name_normalize !== false,
       ...(node ? { node: String(node) } : {}),
     };
     return true;

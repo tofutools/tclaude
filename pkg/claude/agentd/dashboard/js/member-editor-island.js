@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { isPageNode } from './node-api.js';
+import { agentTitleHint, resolveAgentTitle, validAgentTitle } from './agent-title.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -9,11 +10,7 @@ import {
 
 const html = htm.bind(h);
 
-export function validMemberTitle(value) {
-  const title = String(value || '');
-  return !!title && title.length <= 64 && !title.includes('  ')
-    && /^[A-Za-z0-9_\-[\]{}() ]+$/.test(title);
-}
+export const validMemberTitle = validAgentTitle;
 
 export function parseMemberTags(value) {
   const seen = new Set();
@@ -34,18 +31,13 @@ function sameTagSet(left, right) {
   return left.every((tag) => expected.has(tag));
 }
 
-export function memberEditorChanges(baseline, draft, auto) {
+export function memberEditorChanges(baseline, draft, auto, normalizeTitles = true) {
   const changes = {};
   if (auto) {
     changes.rename = { auto: true };
-  } else {
-    const title = draft.title.trim();
-    if (title !== baseline.title) {
-      if (!validMemberTitle(title)) {
-        throw new Error('title must be 1-64 chars of letters, digits, space or _ - [ ] { } ( ) — no double spaces');
-      }
-      changes.rename = { title };
-    }
+  } else if (draft.title.trim() !== baseline.title) {
+    const title = resolveAgentTitle(draft.title, normalizeTitles);
+    if (title !== baseline.title) changes.rename = { title };
   }
   if (draft.role !== baseline.role) changes.role = draft.role;
   if (draft.descr !== baseline.descr) changes.descr = draft.descr;
@@ -89,10 +81,12 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
+  const normalizeTitles = descriptor.normalizeTitles !== false;
+  const titleHint = auto ? { text: '', warn: false } : agentTitleHint(draft.title, normalizeTitles);
   const changes = useMemo(() => {
-    try { return memberEditorChanges(baseline, draft, auto); }
+    try { return memberEditorChanges(baseline, draft, auto, normalizeTitles); }
     catch (_) { return { invalid: true }; }
-  }, [baseline, draft, auto]);
+  }, [baseline, draft, auto, normalizeTitles]);
   const dirty = Object.keys(changes).length > 0;
   const update = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -101,7 +95,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     setError('');
     let pending;
     try {
-      pending = memberEditorChanges(baseline, draft, auto);
+      pending = memberEditorChanges(baseline, draft, auto, normalizeTitles);
     } catch (cause) {
       setError((cause && cause.message) || String(cause));
       return;
@@ -162,6 +156,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         autocomplete="off" spellcheck=${false}
         placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only"
         onInput=${(event) => update('title', event.currentTarget.value)} />
+      <div id="edit-member-title-hint" class=${`spawn-field-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
       <label class="edit-member-auto-row" title="Ask this agent / familiar to pick a descriptive title itself via the agent-rename skill / CLI.">
         <input id="edit-member-auto" type="checkbox" checked=${auto} disabled=${busy}
           onChange=${(event) => setAuto(event.currentTarget.checked)} /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the familiar choose its own title</span>

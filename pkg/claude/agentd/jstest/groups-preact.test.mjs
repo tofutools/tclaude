@@ -740,7 +740,11 @@ test('native member and group editors preserve drafts, park DnD and surface busy
   await harness.act(() => harness.fireEvent(row.querySelector('.rowname-text'), 'click'));
   const nameInput = row.querySelector('.rowname-input');
   assert.equal(row.draggable, false);
+  await harness.input(nameInput, 'Member / draft!');
+  assert.equal(row.querySelector('.inline-editor-hint').textContent,
+    'will be renamed to “Member - draft”', 'an invalid draft previews its auto-corrected title');
   await harness.input(nameInput, 'Member draft');
+  assertAbsent(row.querySelector('.inline-editor-hint'));
   await harness.act(() => state.publish(snapshot([{
     ...group, members: [{ ...group.members[0], title: 'Published title' }],
   }])));
@@ -1465,6 +1469,21 @@ test('Groups omits the trigger projection and its API load while the feature is 
   await mounted.unmount();
 });
 
+test('agent titles auto-correct to the rename charset like spawn names', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { normalizeAgentTitle, resolveAgentTitle, agentTitleHint } =
+    await harness.importDashboardModule('js/agent-title.js');
+  assert.equal(normalizeAgentTitle('  [PO] lead / über\tplanner  '), '[PO] lead - -ber planner');
+  assert.equal(normalizeAgentTitle('a'.repeat(63) + ' b c'), 'a'.repeat(63));
+  assert.equal(resolveAgentTitle('[PO] lead'), '[PO] lead', 'a valid title is never rewritten');
+  assert.equal(resolveAgentTitle('code reviewer!'), 'code reviewer');
+  assert.throws(() => resolveAgentTitle('!!!'), /no usable characters/);
+  assert.throws(() => resolveAgentTitle('code reviewer!', false), /title must be/);
+  assert.deepEqual(agentTitleHint('[PO] lead'), { text: '', warn: false });
+  assert.deepEqual(agentTitleHint('code reviewer!'), { text: 'will be renamed to “code reviewer”', warn: false });
+  assert.equal(agentTitleHint('code reviewer!', false).warn, true);
+});
+
 test('member editor actions keep independent endpoint and stable-selector boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ saveMemberEditorRequests }, { memberEditorChanges }] = await Promise.all([
@@ -1480,9 +1499,15 @@ test('member editor actions keep independent endpoint and stable-selector bounda
   assert.deepEqual(memberEditorChanges(baseline, {
     title: 'ignored explicit title', role: 'builder', descr: 'old', tags: 'one', owner: false,
   }, true), { rename: { auto: true } }, 'auto-title wins over an explicit title draft');
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'code reviewer!! (v2)', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, false), { rename: { title: 'code reviewer- (v2)' } }, 'an invalid title auto-corrects like a spawn name');
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'Worker!', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, false), {}, 'a draft that normalizes back to the current title is no change');
   assert.throws(() => memberEditorChanges(baseline, {
     title: 'bad  title', role: 'builder', descr: 'old', tags: 'one', owner: false,
-  }, false), /title must be 1-64 chars/);
+  }, false, false), /title must be 1-64 chars/);
   const requests = [];
   const notices = [];
   let refreshes = 0;

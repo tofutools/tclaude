@@ -231,7 +231,7 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
 
 export function InlineEditor({
   editorKey, value, type = 'text', className, placeholder, inputProps = {},
-  onCommit, children, triggerProps = {}, passModifiedClick = false,
+  onCommit, children, triggerProps = {}, passModifiedClick = false, hint = null,
 }) {
   const interactions = useGroupsInteractions();
   const active = interactions.editorKey === editorKey;
@@ -289,7 +289,10 @@ export function InlineEditor({
       setBusy(false);
     }
   };
-  return html`<input
+  // hint(draft) → { text, warn } renders a live note under the input (e.g.
+  // the auto-corrected rename title); the host must be position: relative.
+  const note = hint ? hint(draft) : null;
+  const input = html`<input
     ref=${inputRef}
     type=${type}
     class=${className}
@@ -308,4 +311,6 @@ export function InlineEditor({
     }}
     onBlur=${() => cancel()}
   />`;
+  if (!note?.text) return input;
+  return html`${input}<div class=${`inline-editor-hint${note.warn ? ' warn' : ''}`} role="status">${note.text}</div>`;
 }

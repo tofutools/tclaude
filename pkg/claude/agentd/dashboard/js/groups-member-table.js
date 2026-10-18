@@ -11,6 +11,7 @@ import {
 import { isWizardActive } from './slop.js';
 import { MemberProcessCell } from './groups-process-indicators.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
+import { agentTitleHint } from './agent-title.js';
 import {
   humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
   openHumanNotificationReader,
@@ -1041,6 +1042,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"
     onCommit=${(value) => actions.renameAgent(member, value)}
+    hint=${(draft) => agentTitleHint(draft, snapshot?.spawn_name_normalize !== false)}
     triggerProps=${{
       class: 'rowname-text', role: 'button', tabindex: '0', 'data-act': 'rename-name',
       ...memberAttrs(member), 'data-current': member.title || '', 'data-editor-key': editorKey,

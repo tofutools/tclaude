@@ -18,6 +18,7 @@ import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { openGroupAttachmentDialog } from './action-dialog-controller.js';
 import { openStandingOrderCreateModal } from './jobs-controller.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
+import { resolveAgentTitle } from './agent-title.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -211,8 +212,10 @@ export function createGroupsActions({
     },
     async renameAgent(member, rawTitle) {
       const oldTitle = member.title || '';
-      const title = String(rawTitle || '').trim();
-      if (!title || title === oldTitle) return false;
+      if (!String(rawTitle || '').trim()) return false;
+      const title = resolveAgentTitle(
+        rawTitle, state.snapshot?.value?.spawn_name_normalize !== false);
+      if (title === oldTitle) return false;
       const selector = member.agent_id || member.conv_id;
       const response = await fetchImpl(`/api/agents/${encodeURIComponent(selector)}/rename`, {
         method: 'POST', credentials: 'same-origin',
