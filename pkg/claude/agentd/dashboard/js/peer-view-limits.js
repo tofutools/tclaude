@@ -728,8 +728,15 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     const blocked = blockedControl(event.target, peerView, event);
     if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs));
   };
-  // Drags spawn, move and reorder on the node: only under unrestricted trust.
-  const onDrag = (event) => { if (!unrestricted(peerView)) event.preventDefault(); };
+  // Drags spawn, move and reorder on the node: under unrestricted trust. A
+  // restricted peer's agent row still drags where its grants cover a drop's
+  // gesture (a Ctrl/Cmd clone, or retire on the bin; dnd-ops.js decides it).
+  const onDrag = (event) => {
+    if (unrestricted(peerView)) return;
+    const agent = event.target?.closest?.('tr.dnd-draggable[data-dnd-agent]')?.getAttribute('data-dnd-agent') || '';
+    if (agent && (agentGrantHeld('clone', agent, peerView) || agentGrantHeld('retire-agent', agent, peerView))) return;
+    event.preventDefault();
+  };
   doc.addEventListener('click', refuse, true);
   doc.addEventListener('keydown', onKey, true);
   doc.addEventListener('pointerover', onOver, true);

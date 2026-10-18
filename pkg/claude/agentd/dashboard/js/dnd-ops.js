@@ -4,6 +4,11 @@
 // boxes name other nodes (data-fleet-node), whose drops go through nodeFetch
 // to that node's own routes, as its own dashboard sends them.
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
+import { agentGrantHeld } from './peer-view-limits.js';
+
+// DRAG_GRANT_ACTS are the drop gestures a restricted peer's grants can cover,
+// as the row control (AGENT_GRANT_ACTS) each stands for.
+export const DRAG_GRANT_ACTS = Object.freeze({ clone: 'clone', retire: 'retire-agent' });
 
 // targetGroupOf is the real group a box stands for, as it is listed.
 export function targetGroupOf(box) {
@@ -78,13 +83,25 @@ export function createDndOps({
     };
   }
 
-  function allowed(ctx) {
-    return nodeAllowsActing(ctx.node);
+  // allowed says whether a drop may act on its node: one that lets this one
+  // act there (this node, or a peer trusting it unrestricted) takes every
+  // gesture; a restricted peer only the clone and the retire (the bin) its
+  // grants on the agent cover, as its ⚙ items do. A peer's own page is the
+  // page's node (ctx.node blank) with the page snapshot's trust.
+  function allowed(ctx, gesture = '', agent = '') {
+    const pv = ctx.snapshot()?.peer_view || null;
+    const restricted = ctx.node ? !nodeAllowsActing(ctx.node) : (!!globalThis.__tclaudeRemoteNode?.id && pv?.level !== 'unrestricted');
+    if (!restricted) return true;
+    const act = DRAG_GRANT_ACTS[gesture];
+    return !!act && agentGrantHeld(act, agent, pv);
   }
 
   // refusedOn tells the operator a drop on another node is not theirs to make.
-  function refusedOn(ctx) {
-    toast(`${ctx.name || 'That node'} trusts this node restricted: move its agents from its own dashboard`, true);
+  function refusedOn(ctx, gesture = '') {
+    const act = DRAG_GRANT_ACTS[gesture];
+    toast(act
+      ? `${ctx.name || 'That node'} does not share this agent's ${gesture} with you (needs ${act === 'clone' ? 'groups.members.clone' : 'groups.members.retire'})`
+      : `${ctx.name || 'That node'} trusts this node restricted: move its agents from its own dashboard`, true);
     void refresh();
   }
 
@@ -315,7 +332,10 @@ export function createDndOps({
     // (JOH-322). See row-actions.js's retire-agent case.
     let result = null;
     try {
-      result = await openRetire(conv, label, ctx.node);
+      // Another node's route (or a peer's own page's) takes the stable
+      // agent_id only.
+      if ((ctx.node || globalThis.__tclaudeRemoteNode?.id) && payload.agent) result = await openRetire(payload.agent, label, ctx.node);
+      else result = await openRetire(conv, label, ctx.node);
     } catch (err) {
       toast(`retire failed: ${err && err.message || err}`, true);
     }

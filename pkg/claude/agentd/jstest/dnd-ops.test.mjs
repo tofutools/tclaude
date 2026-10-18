@@ -5,21 +5,21 @@ import { createPreactHarness } from './preact-harness.mjs';
 const FORGE = 'inst_forge0001';
 const ok = (body = {}) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 
-async function setup(t, { level = 'unrestricted' } = {}) {
+async function setup(t, { level = 'unrestricted', agents } = {}) {
   const harness = await createPreactHarness(t);
   const [ops, nodeApi] = await Promise.all([harness.importDashboardModule('js/dnd-ops.js'), harness.importDashboardModule('js/node-api.js')]);
   nodeApi.setSelfNode('inst_desk0001');
-  const forge = { groups: [{ name: 'build', members: [{ conv_id: 'c_a', agent_id: 'agt_a', cwd: '/srv/a' }] }, { name: 'ops', members: [] }], peer_view: { level } };
+  const forge = { groups: [{ name: 'build', members: [{ conv_id: 'c_a', agent_id: 'agt_a', cwd: '/srv/a' }] }, { name: 'ops', members: [] }], peer_view: { level, ...(agents ? { agents } : {}) } };
   t.after(nodeApi.setNodeSnapshotSource((node) => (node === FORGE ? forge : null)));
   const page = { groups: [{ name: 'build', members: [{ conv_id: 'c_p', agent_id: 'agt_p' }] }, { name: 'ops', members: [] }] };
-  const calls = []; const toasts = []; const clones = []; const announced = []; let renders = 0;
+  const calls = []; const toasts = []; const clones = []; const retires = []; const announced = []; let renders = 0;
   t.after(nodeApi.onNodeChanged((node) => announced.push(node)));
   const fetchImpl = async (url, init = {}) => { calls.push(`${init.method || 'GET'} ${url}`); return ok({}); };
   const dnd = ops.createDndOps({
     confirm: async () => true, toast: (m, err) => toasts.push([m, !!err]), refresh: async () => {}, render: () => { renders += 1; },
-    getSnapshot: () => page, openClone: (...args) => clones.push(args), openRetire: async () => null, fetchImpl,
+    getSnapshot: () => page, openClone: (...args) => clones.push(args), openRetire: async (...args) => { retires.push(args); return null; }, fetchImpl,
   });
-  return { harness, ops, dnd, calls, toasts, clones, announced, page, renders: () => renders };
+  return { harness, ops, dnd, calls, toasts, clones, retires, announced, page, renders: () => renders };
 }
 
 test("a drop on another node's group moves the agent there through that node", async (t) => {
@@ -54,6 +54,21 @@ test('a node trusting this one restricted refuses drops on its groups', async (t
   assert.equal(dnd.allowed(dnd.context()), true, "the page's node always");
   dnd.refused(ctx);
   assert.match(toasts.at(-1)[0], /forge trusts this node restricted/);
+});
+
+test('a restricted peer takes the clone and retire drops its grants on the agent cover', async (t) => {
+  const { dnd, toasts, retires } = await setup(t, { level: 'restricted', agents: { agt_a: ['groups.members.clone'] } });
+  const ctx = dnd.context({ node: FORGE, name: 'forge' });
+  assert.equal(dnd.allowed(ctx, 'clone', 'agt_a'), true, 'clone is granted');
+  assert.equal(dnd.allowed(ctx, 'retire', 'agt_a'), false, 'retire is not');
+  assert.equal(dnd.allowed(ctx, '', 'agt_a'), false, 'a move between its groups never is');
+  dnd.refused(ctx, 'retire');
+  assert.match(toasts.at(-1)[0], /forge does not share this agent's retire with you \(needs groups\.members\.retire\)/);
+  // Another node's retire names the stable agent_id, which its route takes.
+  await dnd.retire({ conv: 'c_a', agent: 'agt_a', label: 'a' }, ctx);
+  assert.deepEqual(retires.at(-1), ['agt_a', 'a', FORGE]);
+  await dnd.retire({ conv: 'c_p', agent: 'agt_p', label: 'p' }, dnd.context());
+  assert.deepEqual(retires.at(-1), ['c_p', 'p', ''], "the page's own stays conv-keyed");
 });
 
 test('a box names its node and the group it lists', async (t) => {
