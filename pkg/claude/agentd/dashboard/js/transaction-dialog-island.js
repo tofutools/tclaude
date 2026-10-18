@@ -1484,9 +1484,9 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   useEffect(() => () => { activeRef.current = false; }, []);
   useEffect(() => {
-    // Another node's retire keeps its worktree (that node's route deletes
-    // none), so there is nothing to probe or offer.
-    if (descriptor.node) return undefined;
+    // Another node's retire (here, or on its own page) keeps its worktree
+    // (that node's route deletes none), so there is nothing to probe or offer.
+    if (descriptor.node || globalThis.__tclaudeRemoteNode?.id) return undefined;
     const generation = ++probeGeneration.current;
     const controller = new AbortController();
     probeAbort.current = controller;

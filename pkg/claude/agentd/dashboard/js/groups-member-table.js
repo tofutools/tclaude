@@ -758,6 +758,9 @@ function menuMemberAttrs(member, selector) {
   const attrs = { 'data-label': member.title || member.conv_id };
   if (selector !== 'label') attrs['data-conv'] = member.conv_id;
   if (selector === 'agent') attrs['data-agent'] = member.agent_id || member.conv_id;
+  // A conv-keyed control names its agent too, which another node's route
+  // takes (the retire icon does the same).
+  else if (selector === 'conv' && member.agent_id) attrs['data-stable-agent'] = member.agent_id;
   return attrs;
 }
 

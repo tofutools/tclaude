@@ -134,7 +134,7 @@ export function createActionDialogActions({
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
         const body = { follow_up: normaliseFollowUp(followUp), no_copy_conv: !copyConversation };
-        if (!node) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
+        if (!node && !globalThis.__tclaudeRemoteNode?.id) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
         const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/clone`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),

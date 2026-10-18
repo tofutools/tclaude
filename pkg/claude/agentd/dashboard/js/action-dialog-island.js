@@ -157,9 +157,10 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const source = descriptor.label || shortID(descriptor.conv);
-  // Another node's agent clones there with its follow-up and history choice
-  // only: ownership and a worktree stay that node's operator's.
-  const here = !descriptor.node;
+  // Another node's agent (here, or on its own page) clones there with its
+  // follow-up and history choice only: ownership and a worktree stay that
+  // node's operator's.
+  const here = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
   const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {

@@ -580,8 +580,9 @@ export async function handleRowAction(action) {
         // (a dangling agent whose conversation is gone); a stable agent_id
         // resolves successfully even then and would silently demote the
         // orphan instead of offering to remove it (JOH-322). Another node's
-        // retire names its stable ID: that node's route takes no other.
-        if (node) await openRetireAgentDialog(data.stableAgent || agent, label, node);
+        // retire (here, or on its own page) names its stable ID: that node's
+        // route takes no other.
+        if (node || globalThis.__tclaudeRemoteNode?.id) await openRetireAgentDialog(data.stableAgent || agent, label, node);
         else await openRetireAgentDialog(conv, label);
         return;
       }
