@@ -1068,7 +1068,9 @@ a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
 the clone dialog), **Morph** into another spawn profile (a dry run previews the
 change and what happens to the history), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
-send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
+send home where it runs: straight to its origin, retaking its home identity). Another
+node's agent offers **move here** and **clone** (on that node), plus **Morph** when that
+node trusts this one unrestricted. Dropping an agent
 onto another node's group opens the same dialog on Move, pre-filled. A peer's
 agent moves here, or, when that peer trusts this node unrestricted, on to a
 third node: the peer sends it, and its own ⚙ Fleet → Moves follows it. In the
