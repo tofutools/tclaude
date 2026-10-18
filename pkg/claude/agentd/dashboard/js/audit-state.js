@@ -6,6 +6,8 @@ import { createRequestLifecycle } from './request-lifecycle.js';
 
 export function createAuditState({ activeTab = dashboardState.activeTab, activitySubtab = currentActivitySubtab, now = () => Date.now() } = {}) {
   const query = signal(''); const outcome = signal(''); const source = signal('');
+  // node: '' this node, 'all' every fused node merged, or a peer's ID.
+  const node = signal('');
   const page = signal(1); const pageSize = signal(100); const sort = signal('time'); const dir = signal('desc');
   const response = signal(null);
   let lastFetchedAt = 0;
@@ -15,6 +17,8 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
     retainPayloadOnError: false,
     onBegin() { lastFetchedAt = now(); },
     onCommit(data) {
+      // The merged view's page is synthetic: keep the operator's sort.
+      if (data.merged) return;
       if (typeof data.page === 'number') page.value = data.page;
       if (typeof data.page_size === 'number') pageSize.value = data.page_size;
       if (data.sort) sort.value = data.sort;
@@ -25,10 +29,10 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
   const view = computed(() => {
     const data = response.value;
     return {
-      active: activityViewActive(activeTab, activitySubtab, 'audit'), query: query.value, outcome: outcome.value, source: source.value,
+      active: activityViewActive(activeTab, activitySubtab, 'audit'), node: node.value, query: query.value, outcome: outcome.value, source: source.value,
       page: page.value, pageSize: pageSize.value, sort: sort.value, dir: dir.value,
       response: data, rows: data?.entries || [], total: data?.total || 0,
-      totalUnfiltered: data?.total_unfiltered || 0, pages: auditPageCount(data?.total || 0, pageSize.value),
+      totalUnfiltered: data?.total_unfiltered || 0, pages: data?.merged ? 1 : auditPageCount(data?.total || 0, pageSize.value),
       request: request.value,
     };
   });
@@ -37,6 +41,7 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
     const target = ({ query, outcome, source })[name]; if (!target) return false;
     target.value = value; resetPage(); return true;
   }
+  function setNode(value) { node.value = String(value || ''); resetPage(); }
   function setPage(value) { page.value = Math.max(1, Math.min(view.value.pages, Number(value) || 1)); }
   function setPageSize(value) { pageSize.value = Number(value) || 100; resetPage(); }
   function cycleSort(key) {
@@ -46,7 +51,7 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
     resetPage(); return true;
   }
   function refreshDue(interval, value = now()) { return value - lastFetchedAt > interval; }
-  return Object.freeze({ query, outcome, source, page, pageSize, sort, dir, response, request, view,
-    setFilter, setPage, setPageSize, cycleSort, beginRequest, commitRequest, failRequest, refreshDue });
+  return Object.freeze({ node, query, outcome, source, page, pageSize, sort, dir, response, request, view,
+    setFilter, setNode, setPage, setPageSize, cycleSort, beginRequest, commitRequest, failRequest, refreshDue });
 }
 export const auditState = createAuditState();

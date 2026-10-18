@@ -2,6 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { LockReason } from './lock-reason.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
@@ -69,8 +70,8 @@ function Rows({ current, state, actions }) {
   if (current.request.phase === 'loading') return html`<div class="empty">Loading audit log…</div>`;
   if (current.request.phase === 'error') return html`<div role="alert" class="island-error">Failed to load audit log: ${current.request.error}</div>`;
   if (!current.rows.length) return html`<div class="empty">${current.totalUnfiltered ? 'No events match the filter.' : 'No audit events recorded yet. Rows are written for coordination commands and managed pane exits.'}</div>`;
-  return html`<table class="audit-table"><${Header} current=${current} state=${state} actions=${actions} /><tbody>${current.rows.map((entry) => { const id = shortAgentId(entry.actor_agent, entry.actor_conv); const status = statusView(entry.status); return html`<tr key=${entry.id} data-key=${`audit-${entry.id}`}>
-    <td class="audit-nowrap"><span class="last-hook" title=${entry.at}>${fmtAuditTime(entry.at)}</span>${relTime(entry.at) && html` <span class="muted">(${relTime(entry.at)})</span>`}</td>
+  return html`<table class="audit-table"><${Header} current=${current} state=${state} actions=${actions} /><tbody>${current.rows.map((entry) => { const id = shortAgentId(entry.actor_agent, entry.actor_conv); const status = statusView(entry.status); const key = entry.node ? `${entry.node.id}-${entry.id}` : entry.id; return html`<tr key=${key} data-key=${`audit-${key}`}>
+    <td class="audit-nowrap">${entry.node && html`<span class="scope-pill audit-node" style=${`--nc:${entry.node.color}`}>${entry.node.local ? '⌂ ' : ''}${entry.node.name}</span> `}<span class="last-hook" title=${entry.at}>${fmtAuditTime(entry.at)}</span>${relTime(entry.at) && html` <span class="muted">(${relTime(entry.at)})</span>`}</td>
     <td class="audit-trunc" title=${actorTitle(entry, id)}><${Actor} entry=${entry} /></td>
     <td class="audit-trunc" title=${entry.verb || ''}><span class=${verbClass(entry.verb)}>${entry.verb}</span>${entry.source === 'dashboard' && html` <span class="id" title="run from the dashboard">⊞</span>`}</td>
     <td class="audit-trunc" title=${targetTitle(entry)}><${Target} entry=${entry} /></td>
@@ -83,8 +84,25 @@ function Pager({ current, state, actions }) {
   const go = (value) => { state.setPage(value); actions.load(); };
   return html`<div id="audit-pager" class="audit-pager">${current.pages > 1 && html`<${Fragment}><button title="First page" disabled=${atStart} onClick=${() => go(1)}>«</button><button title="Previous page" disabled=${atStart} onClick=${() => go(current.page - 1)}>‹</button><span class="audit-pager-pos">Page ${current.page} / ${current.pages}</span><button title="Next page" disabled=${atEnd} onClick=${() => go(current.page + 1)}>›</button><button title="Last page" disabled=${atEnd} onClick=${() => go(current.pages)}>»</button></${Fragment}>`}<span class="grow"></span><label class="audit-pager-size" title="Rows per page"><select id="audit-page-size" value=${current.pageSize} onChange=${(event) => { state.setPageSize(event.currentTarget.value); actions.load(); }}>${AUDIT_PAGE_SIZES.map((size) => html`<option key=${size} value=${size}>${size}</option>`)}</select> / page</label></div>`;
 }
+// NodeFilter picks which fused node's audit log shows: this node, one peer
+// (paged through its routes), or all of them merged newest first.
+function NodeFilter({ nodes, value, onChange }) {
+  if (nodes.length < 2) return null;
+  return html`<label class="filter-toggle" title="Which node's audit log to show"><span>node</span><select id="audit-node" value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>
+    ${nodes.map((n) => html`<option key=${n.id} value=${n.local ? '' : n.id}>${n.local ? `⌂ ${n.name}` : n.name}</option>`)}
+    <option value="all">all nodes (newest)</option></select></label>`;
+}
+
+// MergedNote says what the merged view shows, and which nodes withhold theirs.
+function MergedNote({ response }) {
+  if (!response?.merged) return null;
+  return html`<div class="audit-merged-note muted">Newest events across the fused nodes; pick one node to page through its log.
+    ${(response.refused || []).map(({ node, why }) => html` <span key=${node.id} class="scope-pill" style=${`--nc:${node.color}`}>${node.name}<${LockReason} why=${why} /></span>`)}</div>`;
+}
+
 export function AuditApp({ state, actions }) {
-  const current = state.view.value; const searchTimer = useRef(null); const filterRef = useRef(null);
+  const current = state.view.value;
+  const nodes = actions.nodes ? actions.nodes() : []; const searchTimer = useRef(null); const filterRef = useRef(null);
   useEffect(() => {
     if (!current.active) { clearTimeout(searchTimer.current); return undefined; }
     actions.load();
@@ -100,6 +118,6 @@ export function AuditApp({ state, actions }) {
   useEffect(() => () => clearTimeout(searchTimer.current), []);
   const filter = (name, value, debounce = false) => { state.setFilter(name, value); clearTimeout(searchTimer.current); if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load(); };
   const retention = current.response ? current.response.pruning_on ? `keeping ${current.response.retention_days} day${current.response.retention_days === 1 ? '' : 's'}` : 'kept forever' : '';
-  return html`<${Fragment}><div class="filter-bar"><input ref=${filterRef} id="filter-audit" aria-label="Search audit events" type="text" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} /><span class="filter-count" id="filter-audit-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} event${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span><button class="clear-filter" id="filter-audit-clear" title="Clear search" aria-label="Clear audit search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button><label class="filter-toggle" title="Which audit source or observer to show"><span>source</span><select id="audit-source" value=${current.source} onChange=${(event) => filter('source', event.currentTarget.value)}><option value="">all</option><option value="cli">CLI</option><option value="dashboard">dashboard</option><option value="popup">approval popup</option><option value="tmux">pane bootstrap observer</option><option value="hook">SessionEnd hook</option><option value="reaper">reaper</option><option value="reconcile">startup reconciliation</option></select></label><label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span><select id="audit-outcome" value=${current.outcome} onChange=${(event) => filter('outcome', event.currentTarget.value)}><option value="">all</option><option value="success">success</option><option value="failure">denied / error</option></select></label><span class="spacer"></span><span id="audit-retention" class="muted">${retention}</span></div><div id="audit-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${Rows} current=${current} state=${state} actions=${actions} /></div><${Pager} current=${current} state=${state} actions=${actions} /></${Fragment}>`;
+  return html`<${Fragment}><div class="filter-bar"><input ref=${filterRef} id="filter-audit" aria-label="Search audit events" type="text" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} /><span class="filter-count" id="filter-audit-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} event${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span><button class="clear-filter" id="filter-audit-clear" title="Clear search" aria-label="Clear audit search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button><label class="filter-toggle" title="Which audit source or observer to show"><span>source</span><select id="audit-source" value=${current.source} onChange=${(event) => filter('source', event.currentTarget.value)}><option value="">all</option><option value="cli">CLI</option><option value="dashboard">dashboard</option><option value="popup">approval popup</option><option value="tmux">pane bootstrap observer</option><option value="hook">SessionEnd hook</option><option value="reaper">reaper</option><option value="reconcile">startup reconciliation</option></select></label><label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span><select id="audit-outcome" value=${current.outcome} onChange=${(event) => filter('outcome', event.currentTarget.value)}><option value="">all</option><option value="success">success</option><option value="failure">denied / error</option></select></label><${NodeFilter} nodes=${nodes} value=${current.node} onChange=${(value) => { state.setNode(value); actions.load(); }} /><span class="spacer"></span><span id="audit-retention" class="muted">${current.response?.merged ? '' : retention}</span></div><${MergedNote} response=${current.response} /><div id="audit-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${Rows} current=${current} state=${state} actions=${actions} /></div><${Pager} current=${current} state=${state} actions=${actions} /></${Fragment}>`;
 }
 export function mountAuditIsland({ host, state, actions, registerCleanup }) { render(html`<${AuditApp} state=${state} actions=${actions} />`, host); registerCleanup(() => render(null, host)); }
