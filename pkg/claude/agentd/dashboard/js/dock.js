@@ -180,11 +180,14 @@ async function copyDirect(section, item, to, self) {
   if (!response.ok) throw await failure(response);
 }
 
+// OFFER_CONFIG is this node's route that offers its config to a peer.
+const OFFER_CONFIG = '/api/federation/offer-config';
+
 // offerItem sends this node's item to `to` as a one-item config offer.
 // Suspected credentials stop it until the operator confirms each flag.
 async function offerItem(section, name, to, self) {
   const only = [`${BUNDLE_SECTIONS[section.key]}/${name}`];
-  const send = (allow) => self.fetch('/api/federation/offer-config', {
+  const send = (allow) => self.fetch(OFFER_CONFIG, {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ peer: to.id, only, allow_flagged: allow }),
   });
