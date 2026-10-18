@@ -19,7 +19,7 @@ async function setup(t, { level = 'unrestricted', agents } = {}) {
     confirm: async () => true, toast: (m, err) => toasts.push([m, !!err]), refresh: async () => {}, render: () => { renders += 1; },
     getSnapshot: () => page, openClone: (...args) => clones.push(args), openRetire: async (...args) => { retires.push(args); return null; }, fetchImpl,
   });
-  return { harness, ops, dnd, calls, toasts, clones, retires, announced, page, renders: () => renders };
+  return { harness, ops, dnd, calls, toasts, clones, retires, announced, page, forge, renders: () => renders };
 }
 
 test("a drop on another node's group moves the agent there through that node", async (t) => {
@@ -57,11 +57,14 @@ test('a node trusting this one restricted refuses drops on its groups', async (t
 });
 
 test('a restricted peer takes the clone and retire drops its grants on the agent cover', async (t) => {
-  const { dnd, toasts, retires } = await setup(t, { level: 'restricted', agents: { agt_a: ['groups.members.clone'] } });
+  const { dnd, toasts, retires, forge } = await setup(t, { level: 'restricted', agents: { agt_a: ['groups.members.clone'] } });
   const ctx = dnd.context({ node: FORGE, name: 'forge' });
   assert.equal(dnd.allowed(ctx, 'clone', 'agt_a'), true, 'clone is granted');
   assert.equal(dnd.allowed(ctx, 'retire', 'agt_a'), false, 'retire is not');
   assert.equal(dnd.allowed(ctx, '', 'agt_a'), false, 'a move between its groups never is');
+  assert.equal(dnd.allowed(ctx, 'clone', 'agt_a', 'ops@forge'), false, 'a clone joins a group only with the clone grant there');
+  forge.peer_view.groups = { ops: ['groups.members.clone'] };
+  assert.equal(dnd.allowed(ctx, 'clone', 'agt_a', 'ops@forge'), true);
   dnd.refused(ctx, 'retire');
   assert.match(toasts.at(-1)[0], /forge does not share this agent's retire with you \(needs groups\.members\.retire\)/);
   // Another node's retire names the stable agent_id, which its route takes.

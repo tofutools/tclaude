@@ -86,21 +86,24 @@ export function createDndOps({
   // allowed says whether a drop may act on its node: one that lets this one
   // act there (this node, or a peer trusting it unrestricted) takes every
   // gesture; a restricted peer only the clone and the retire (the bin) its
-  // grants on the agent cover, as its ⚙ items do. A peer's own page is the
-  // page's node (ctx.node blank) with the page snapshot's trust.
-  function allowed(ctx, gesture = '', agent = '') {
+  // grants on the agent cover, as its ⚙ items do; a clone joins the group it
+  // is dropped on only with the clone grant there too. A peer's own page is
+  // the page's node (ctx.node blank) with the page snapshot's trust.
+  function allowed(ctx, gesture = '', agent = '', group = '') {
     const pv = ctx.snapshot()?.peer_view || null;
     const restricted = ctx.node ? !nodeAllowsActing(ctx.node) : (!!globalThis.__tclaudeRemoteNode?.id && pv?.level !== 'unrestricted');
     if (!restricted) return true;
     const act = DRAG_GRANT_ACTS[gesture];
-    return !!act && agentGrantHeld(act, agent, pv);
+    if (!act || !agentGrantHeld(act, agent, pv)) return false;
+    const held = group && gesture === 'clone' ? pv?.groups?.[ctx.group(group)] : null;
+    return !group || gesture !== 'clone' || (Array.isArray(held) && held.includes('groups.members.clone'));
   }
 
   // refusedOn tells the operator a drop on another node is not theirs to make.
   function refusedOn(ctx, gesture = '') {
     const act = DRAG_GRANT_ACTS[gesture];
     toast(act
-      ? `${ctx.name || 'That node'} does not share this agent's ${gesture} with you (needs ${act === 'clone' ? 'groups.members.clone' : 'groups.members.retire'})`
+      ? `${ctx.name || 'That node'} does not share this agent's ${gesture} with you (needs ${act === 'clone' ? 'groups.members.clone on the agent and the group dropped on' : 'groups.members.retire'})`
       : `${ctx.name || 'That node'} trusts this node restricted: move its agents from its own dashboard`, true);
     void refresh();
   }
@@ -325,11 +328,11 @@ export function createDndOps({
   // keyed transaction dialog — checkbox and all — as the per-row retire button.
   async function runDndRetire(payload, ctx = context()) {
     const {conv, label} = payload;
-    // Retire stays conv-keyed (unlike the other runDnd* endpoint calls): the
-    // server's dangling-agent recovery only triggers for a UUID-shaped
-    // selector that fails to resolve, so sending the stable agent_id would
-    // silently demote a dangling orphan instead of offering to remove it
-    // (JOH-322). See row-actions.js's retire-agent case.
+    // This node's retire stays conv-keyed (unlike the other runDnd* endpoint
+    // calls): the server's dangling-agent recovery only triggers for a
+    // UUID-shaped selector that fails to resolve, so sending the stable
+    // agent_id would silently demote a dangling orphan instead of offering to
+    // remove it (JOH-322). See row-actions.js's retire-agent case.
     let result = null;
     try {
       // Another node's route (or a peer's own page's) takes the stable

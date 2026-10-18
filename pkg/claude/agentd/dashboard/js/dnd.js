@@ -249,7 +249,7 @@ function bindDnd() {
     if (cloneTarget && clonePayload) {
       // runDndClone opens the clone dialog and refreshes on every path.
       const ctx = ops.context(cloneTarget.where);
-      if (ops.allowed(ctx, 'clone', clonePayload.agent)) ops.clone(clonePayload, cloneTarget.group, ctx);
+      if (ops.allowed(ctx, 'clone', clonePayload.agent, cloneTarget.group)) ops.clone(clonePayload, cloneTarget.group, ctx);
       else ops.refused(ctx, 'clone');
       return;
     }
@@ -468,7 +468,7 @@ function bindDnd() {
     const isClone = cloneIntent && !targetUngrouped && !targetRetired && !sourceRetired;
     // A restricted peer takes only the gestures its grants on the agent cover.
     const gesture = sourcePending ? '' : isClone ? 'clone' : targetRetired && !sourceRetired && !sourceConversation ? 'retire' : '';
-    if (!ops.allowed(ctx, gesture, payload.agent)) { ops.refused(ctx, gesture); return; }
+    if (!ops.allowed(ctx, gesture, payload.agent, targetGroup)) { ops.refused(ctx, gesture); return; }
 
     // Confirmation gate. Each runDnd* function below opens its own
     // tailored confirmation modal as its first step, BEFORE any
