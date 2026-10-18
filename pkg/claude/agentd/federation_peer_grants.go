@@ -117,6 +117,14 @@ func newFedGrantResolver() *fedGrantResolver {
 	return &fedGrantResolver{groups: map[int64]*db.AgentGroup{}, unrestricted: map[string]bool{}, grants: map[string][]db.FederationPeerGrant{}, grantsErr: map[string]bool{}}
 }
 
+// seedGroups primes the resolver with group rows the pass already listed.
+func (r *fedGrantResolver) seedGroups(groups []*db.AgentGroup) *fedGrantResolver {
+	for _, g := range groups {
+		r.groups[g.ID] = g
+	}
+	return r
+}
+
 func (r *fedGrantResolver) allows(peer string, groupID int64, slug string) bool {
 	return r.grant(peer, groupID, slug) != nil
 }

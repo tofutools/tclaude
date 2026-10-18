@@ -583,7 +583,11 @@ func ReconcileTriggerPREvents() (int64, error) {
 		SELECT p.id,'pr.opened','pr.opened:'||p.agent_id||':'||p.pr_url,p.pr_url,0,p.agent_id,
 		CASE WHEN lower(trim(p.state))='draft' THEN 1 ELSE 0 END,
 		COALESCE((SELECT json_group_array(m.group_id) FROM agent_group_members m WHERE m.agent_id=p.agent_id),'[]'),
-		p.created_at,p.updated_at,'pending' FROM agent_prs p`)
+		p.created_at,p.updated_at,'pending' FROM agent_prs p
+		-- Same rows INSERT OR IGNORE would skip, checked on the event_ref index
+		-- first so the per-PR group subquery runs only for new PRs.
+		WHERE NOT EXISTS (SELECT 1 FROM trigger_pr_events e
+		      WHERE e.event_ref='pr.opened:'||p.agent_id||':'||p.pr_url)`)
 	if err != nil {
 		return 0, err
 	}

@@ -534,7 +534,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 	}
 	caps := map[int64]map[string]bool{}
 	names := map[int64]string{}
-	grants := newFedGrantResolver()
+	grants := newFedGrantResolver().seedGroups(groups)
 	for _, group := range groups {
 		if group.IsArchived() || !grants.allows(peer, group.ID, "") {
 			continue
