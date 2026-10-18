@@ -1005,8 +1005,10 @@ and costs say when they are not shared.
 If the peer granted you lifecycle actions, its agents' status dot (stop or
 wake), restart, sandbox restart, retire and clone controls open the same
 dialogs as on the peer itself, sent to the peer. Options the peer keeps for
-its own operator are left out: deleting the worktree on retire, recreating a
-missing launch directory on wake, and a clone's group ownership and worktree.
+its own operator stay in place, locked with a 🔒 naming what they need (its
+unrestricted trust): deleting the worktree on retire, and a clone's group
+ownership and worktree. Recreating a missing launch directory on wake is left
+out. A peer that trusts you unrestricted offers them all, as on the peer.
 Turning an agent's sandbox off takes unrestricted trust. With a move grant,
 the ⚙ **move here…** item opens the regular move dialog, to a group on this
 node. CLI: `tclaude federation action <action> --node PEER --agent ID`.

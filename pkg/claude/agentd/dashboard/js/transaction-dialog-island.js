@@ -6,6 +6,7 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { relTime } from './helpers.js';
+import { LockReason, trustLock } from './lock-reason.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
 
 const html = htm.bind(h);
@@ -1481,16 +1482,18 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   const probeAbort = useRef(null);
   shutdownRef.current = shutdown;
   submittedRef.current = submittedChoice;
+  const worktreeLock = trustLock(descriptor.node, 'worktree deletion');
 
   useEffect(() => () => { activeRef.current = false; }, []);
   useEffect(() => {
     // Another node's retire (here, or on its own page) keeps its worktree
-    // (that node's route deletes none), so there is nothing to probe or offer.
-    if (descriptor.node || globalThis.__tclaudeRemoteNode?.id) return undefined;
+    // unless that node trusts this one unrestricted: otherwise there is
+    // nothing to probe, and the choice shows locked with the reason.
+    if (worktreeLock) return undefined;
     const generation = ++probeGeneration.current;
     const controller = new AbortController();
     probeAbort.current = controller;
-    actions.loadAgentWorktree(descriptor.conv, { signal: controller.signal, retire: true }).then(
+    actions.loadAgentWorktree(descriptor.conv, { signal: controller.signal, retire: true, node: descriptor.node || '' }).then(
       (next) => {
         if (!activeRef.current || controller.signal.aborted
           || generation !== probeGeneration.current || submittedRef.current) return;
@@ -1511,7 +1514,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
       controller.abort();
       if (probeAbort.current === controller) probeAbort.current = null;
     };
-  }, [descriptor.conv]);
+  }, [descriptor.conv, worktreeLock]);
 
   const locked = !!submittedChoice;
   const changeShutdown = (event) => {
@@ -1523,7 +1526,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
   const submit = async () => {
     if (busy) return;
-    const deleting = !!worktree?.removable && shutdown && deleteWorktree;
+    const deleting = !worktreeLock && !!worktree?.removable && shutdown && deleteWorktree;
     // Freeze the whole probed identity alongside the choice — path AND branch,
     // exactly what this row showed the operator. Retire force-deletes the
     // branch too, and an agent can `git switch` in place without ever leaving
@@ -1604,7 +1607,10 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
           <span class="wt-note">soft-exits the tmux pane (/exit) — the conversation is kept either way</span>
         </span>
       </label>
-      <${RetireWorktreeChoice}
+      ${worktreeLock ? html`<label class="delete-agent-wt disabled locked-field" id="retire-wt-row">
+        <input type="checkbox" id="retire-wt" checked=${false} disabled aria-disabled="true" />
+        <span id="retire-wt-label">Delete the git worktree + branch<${LockReason} id="retire-wt-lock" why=${worktreeLock}/></span>
+      </label>` : html`<${RetireWorktreeChoice}
         worktree=${worktree}
         shutdown=${shutdown}
         checked=${deleteWorktree}
@@ -1612,7 +1618,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
         onChange=${(event) => {
           if (!busy && !locked) setDeleteWorktree(event.currentTarget.checked);
         }}
-      />
+      />`}
     </${TransactionDialogFrame}>
   `;
 }
