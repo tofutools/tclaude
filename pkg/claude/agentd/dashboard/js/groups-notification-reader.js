@@ -7,6 +7,7 @@ import { openHumanNotifications } from './mail-bridge.js';
 import { attachmentHref, bodilessNotice, messageAttachments, withPeerAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
+import { nodeFetch } from './node-api.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -189,7 +190,8 @@ export function GroupsNotificationReader({
     if (!senderKey) return undefined;
     let live = true;
     const params = new URLSearchParams({ id: 'human', sender: senderKey, page_size: String(SENDER_HISTORY_PAGE) });
-    fetch(`/api/mailbox?${params.toString()}`, { credentials: 'same-origin' })
+    // The snapshot is the page node's, so its history comes from the page node.
+    nodeFetch('')(`/api/mailbox?${params.toString()}`, { credentials: 'same-origin' })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
         if (!live || known.current.sender !== senderKey || !Array.isArray(payload?.messages)) return;
