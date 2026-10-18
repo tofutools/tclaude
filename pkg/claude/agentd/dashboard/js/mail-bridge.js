@@ -8,6 +8,20 @@ const pending = [];
 // the newest one matters.
 let pendingRestore = null;
 let suppressAttentionOnce = false;
+// The fused (several-node) Messages view routes its own folder and message
+// (fused-mail.js); while the page is fused, locations go to it instead.
+let fused = null;
+let pendingFusedRestore = null;
+
+function isFusedPage() {
+  return !!globalThis.document?.documentElement?.dataset?.scopeNodes;
+}
+
+export function registerFusedMailRoute(next) {
+  fused = next;
+  if (pendingFusedRestore) { const loc = pendingFusedRestore; pendingFusedRestore = null; next.restoreLocation(loc); }
+  return () => { if (fused === next) fused = null; };
+}
 
 export function registerMailController(next) {
   if (!next || typeof next !== 'object') throw new TypeError('Messages controller is required');
@@ -22,10 +36,18 @@ export function registerMailController(next) {
 
 // mailLocation is the router location for what Messages shows
 // (/messages/<folder>[/<message-id>]), or null until the island is loaded.
-export function mailLocation() { return controller?.mailLocation?.() || null; }
+export function mailLocation() {
+  if (isFusedPage()) return fused?.mailLocation() || null;
+  return controller?.mailLocation?.() || null;
+}
 
 // restoreMailLocation shows a history location (Back/Forward, a deep link).
 export function restoreMailLocation(loc) {
+  if (isFusedPage()) {
+    if (fused) return fused.restoreLocation(loc);
+    pendingFusedRestore = loc;
+    return undefined;
+  }
   if (controller) return controller.restoreLocation?.(loc);
   pendingRestore = loc;
   return undefined;

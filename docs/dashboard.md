@@ -602,8 +602,10 @@ filter are in the query (`/messages/human/42?q=deploy&page=3&box=ops`; a
 Groups notification link adds `from=<agent>`): a page step is a history step,
 and so is a search or folder-filter edit, recorded once when you start typing
 so Back undoes the whole edit. A link opens the folder with that search and
-page, and the message if it is still there. The view of several nodes keeps
-the bare `/messages`.
+page, and the message if it is still there. The view of several nodes routes
+the same way, naming the node that owns an open folder (`at=<node>`) and the
+node chip that narrows the view (`scope=<node>`); its All folder is the bare
+`/messages`.
 
 The image and Markdown attachment viewers zoom with the usual inputs: a
 trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
