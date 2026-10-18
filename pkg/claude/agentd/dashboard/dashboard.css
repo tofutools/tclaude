@@ -20039,6 +20039,9 @@ nav [data-tab="map"].node-chip { display: none; }
   background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
   padding: 6px; font: 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-align: left;
 }
+/* A node popover the pointer has left fades out (usePopover). */
+.node-pop { transition: opacity .2s ease; }
+.node-pop.closing { opacity: 0; }
 .node-pop-head { display: flex; align-items: center; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 4px; }
 .node-pop-link { margin-left: auto; background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .node-pop-filter { display: block; margin: 2px 2px 6px; }

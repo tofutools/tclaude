@@ -191,3 +191,29 @@ test('a failed status read keeps the fused set; a fleet that is gone drops it; /
   legacy.dispose();
 });
 
+
+test('a node popover hides a while after the pointer leaves it, unless it comes back', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  state.setStatus(three);
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="" switchNode=${() => {}} />`);
+  const c = mounted.container;
+  const fuse = c.querySelector('button.node-fuse');
+  const root = fuse.closest('.node-pick');
+  const wait = (ms) => harness.act(() => new Promise((r) => setTimeout(r, ms)));
+  await harness.act(() => harness.fireEvent(fuse, 'click'));
+  assert.ok(c.querySelector('.node-fuse-pop'));
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await wait(island.POPOVER_LEAVE_MS / 2);
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  await wait(island.POPOVER_LEAVE_MS);
+  assert.ok(c.querySelector('.node-fuse-pop:not(.closing)'), 'coming back keeps it open');
+  c.querySelector('.node-fuse-pop input')?.focus();
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await wait(island.POPOVER_LEAVE_MS + 50);
+  assert.ok(c.querySelector('.node-fuse-pop.closing'), 'it fades out, focus or not');
+  await wait(300);
+  assert.equal(c.querySelector('.node-fuse-pop'), null);
+  assert.equal(fuse.getAttribute('aria-expanded'), 'false');
+  await mounted.unmount(); state.dispose?.();
+});
