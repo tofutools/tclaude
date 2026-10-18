@@ -57,7 +57,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"beginGestureClipboardWrite()",
 		"new ClipboardItemCtor({ 'text/plain': content })",
 		"ownerDocument.addEventListener('mouseup', onTmuxMouseUp, true)",
-		"token.deferred.resolve(text)",
+		"token.deferred.resolve(copied)",
 		"activeTmuxClipboardCopy = token",
 		"term.modes.mouseTrackingMode",
 		"Ignore unsolicited OSC 52 completely",
