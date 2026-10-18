@@ -89,7 +89,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 	// Adjacent destructive flows retain their separate contracts.
 	for source, required := range map[string]string{
 		rowActions: "case 'delete-generation'",
-		operations: "function openDeleteGroupModal(group)",
+		operations: "function openDeleteGroupModal(group, node = '')",
 		dnd:        "openRetireAgentDialog",
 		island:     `id="delete-group-modal"`,
 	} {

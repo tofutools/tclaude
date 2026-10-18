@@ -56,8 +56,8 @@ export function openGroupContextModal(groupName, node = '') {
   return managementController().openGroupContext(groupName, node);
 }
 
-export function openGroupCloneModal(groupName, placement = null) {
-  return openUnifiedGroupCloneModal(groupName, placement);
+export function openGroupCloneModal(groupName, placement = null, node = '') {
+  return openUnifiedGroupCloneModal(groupName, placement, node);
 }
 
 export function groupDefaultContext(groupName) {

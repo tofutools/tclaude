@@ -38,6 +38,17 @@ func addPeerNodeManageRules(rules map[string]peerViewRule) {
 	// launch settings: only unrestricted trust holds these.
 	rules["POST /api/templates/{name}/instantiate"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(dashboardTemplatesRoute(handleTemplateInstantiate))}
 	rules["POST /api/groups/{name}/clone"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(groupRoute(handleDashboardGroupClone))}
+	// A group's ⚙ delete (with retiring its members first) and cleanup of its
+	// offline members remove what no peer grant hands out: only unrestricted
+	// trust holds these.
+	manage := func(next http.HandlerFunc) peerViewRule {
+		return peerViewRule{feature: "groups.manage.full", requires: PermGroupsDelete, unrestrictedOnly: true, write: servePeerGrantedWrite(next)}
+	}
+	rules["DELETE /api/groups/{name}"] = manage(groupRoute(func(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
+		dashboardDeleteGroup(w, g)
+	}))
+	rules["POST /api/groups/{name}/retire"] = manage(groupRoute(dashboardGroupRetire))
+	rules["POST /api/cleanup/group"] = manage(handleDashboardCleanup)
 }
 
 // servePeerGrantedWrite runs a local dashboard mutation for a peer holding the

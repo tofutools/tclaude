@@ -31,8 +31,8 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 	}
 	for source, required := range map[string][]string{
 		controller: {
-			"buildDeleteGroupDescriptor(snapshot, groupName)",
-			"openDeleteGroupDialog(snapshot, group)",
+			"buildDeleteGroupDescriptor(snapshot, groupName, node = '')",
+			"openDeleteGroupDialog(snapshot, group, node = '')",
 			"memberships,", "otherGroups,", "defaultRetire: otherGroups.length === 0",
 		},
 		island: {
@@ -46,8 +46,8 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 			"deleteComplete", "memberErrors", "method: 'DELETE'",
 		},
 		operations: {
-			"function openDeleteGroupModal(group)",
-			"return openDeleteGroupDialog(lastSnapshot, group)", "export function openDeleteGroupModal",
+			"function openDeleteGroupModal(group, node = '')",
+			"return openDeleteGroupDialog(nodeSnapshot(node) || lastSnapshot, group, node)", "export function openDeleteGroupModal",
 		},
 	} {
 		for _, needle := range required {
@@ -56,7 +56,7 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(dashboardAssets, "openDeleteGroupModal(group);") {
+	if !strings.Contains(dashboardAssets, "openDeleteGroupModal(group, node);") {
 		t.Error("row-actions delete-group no longer opens the shared snapshot launcher")
 	}
 }

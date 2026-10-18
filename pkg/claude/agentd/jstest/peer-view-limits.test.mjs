@@ -212,6 +212,10 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.groupGrantHeld('set-group-dir', 'anything', { level: 'unrestricted' }), true);
   assert.equal(mod.groupGrantHeld('group-settings', 'ops', restricted), true, "the ⚙ menu's settings items ride on groups.settings");
   assert.equal(mod.groupGrantHeld('nest-group', 'build', restricted), false);
+  for (const act of ['clone-group', 'delete-group', 'cleanup-group']) {
+    assert.equal(mod.groupGrantHeld(act, 'ops', restricted), false, `${act} takes unrestricted trust whatever the group's grants`);
+    assert.equal(mod.groupGrantHeld(act, 'ops', { level: 'unrestricted' }), true);
+  }
   assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', restricted), false, 'the environment is its own grant');
   assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', null), true, "this node's own group holds every field");
 

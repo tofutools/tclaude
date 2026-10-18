@@ -258,3 +258,72 @@ func TestPeerGroupPowerUnderLifecycleGrants(t *testing.T) {
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, []string{agentd.PermGroupsMembersStop, agentd.PermGroupsMembersResume}, out.PeerView.Groups["crew"])
 }
+
+// A group's ⚙ cleanup, its delete and the delete's retiring of members first
+// remove what no peer grant hands out: a restricted peer is refused whatever
+// it holds in the group, and unrestricted trust runs them on this node.
+func TestPeerGroupDeleteAndCleanupUnderUnrestrictedTrust(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	f.HaveGroup("doomed")
+	f.HaveConvWithTitle("cln-off", "offline")
+	f.HaveConvWithTitle("cln-doomed", "doomed member")
+	f.HaveMember("crew", "cln-off")
+	f.HaveMember("doomed", "cln-doomed")
+	for _, group := range []string{"crew", "doomed"} {
+		for _, slug := range []string{agentd.PermGroupsRosterRead, agentd.PermGroupsSettings, agentd.PermGroupsMembersRetire} {
+			rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=" + group})
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+		}
+	}
+	h := agentd.PeerViewHandler(p.id.ID())
+	call := func(method, path string, body any) (int, string) {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+		return rec.Code, rec.Body.String()
+	}
+	cleanup := map[string]any{"group": "crew", "members": []string{"cln-off"}}
+	retire := map[string]any{"convs": []string{"cln-doomed"}, "shutdown": true, "delete_worktree": false}
+
+	for _, req := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", "/api/cleanup/group", cleanup},
+		{"POST", "/api/groups/doomed/retire", retire},
+		{"DELETE", "/api/groups/doomed", nil},
+	} {
+		code, body := call(req.method, req.path, req.body)
+		require.Equal(t, 403, code, "%s %s: %s", req.method, req.path, body)
+	}
+	members := func(group string) int {
+		t.Helper()
+		g, err := db.GetAgentGroupByName(group)
+		require.NoError(t, err)
+		require.NotNil(t, g)
+		rows, err := db.ListAgentGroupMembers(g.ID)
+		require.NoError(t, err)
+		return len(rows)
+	}
+	require.Equal(t, 1, members("crew"))
+	require.Equal(t, 1, members("doomed"))
+
+	peer, err := db.GetFederationPeer(p.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+
+	code, body := call("POST", "/api/cleanup/group", cleanup)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"removed":1`)
+	require.Equal(t, 0, members("crew"))
+	code, body = call("POST", "/api/groups/doomed/retire", retire)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"action":"retired"`)
+	code, body = call("DELETE", "/api/groups/doomed", nil)
+	require.Equal(t, 204, code, body)
+	g, err := db.GetAgentGroupByName("doomed")
+	require.NoError(t, err)
+	require.Nil(t, g)
+}

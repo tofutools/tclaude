@@ -14,6 +14,7 @@ export function openGroupCreateModal(presetTemplate, parentGroup) {
   return requireController().open(presetTemplate, parentGroup);
 }
 
-export function openGroupCloneModal(groupName, placement = null) {
-  return requireController().openClone(groupName, placement);
+// node names another node's group (the fused Groups view); blank is the page's.
+export function openGroupCloneModal(groupName, placement = null, node = '') {
+  return requireController().openClone(groupName, placement, node);
 }

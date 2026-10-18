@@ -1,5 +1,6 @@
 import { groupCreateRequest } from './group-create-model.js';
 import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
+import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
 
 const CLONE_TRANSPORT_PREF = 'tclaude.dash.group-create.clone-transport';
 
@@ -19,9 +20,10 @@ export function createGroupCreateActions({
   prefs,
 } = {}) {
   return Object.freeze({
-    async submit(draft, template, parentGroup = '') {
+    // node is the node the dialog creates on (blank: the page's).
+    async submit(draft, template, parentGroup = '', node = '') {
       const request = groupCreateRequest(draft, template, parentGroup);
-      const response = await fetchImpl(request.url, {
+      const response = await nodeFetch(node, { fetchImpl })(request.url, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -43,8 +45,8 @@ export function createGroupCreateActions({
       return Object.freeze({ ...request, response: payload });
     },
 
-    async loadTemplates() {
-      const response = await fetchImpl('/api/templates', {
+    async loadTemplates(node = '') {
+      const response = await nodeFetch(node, { fetchImpl })('/api/templates', {
         credentials: 'same-origin',
       });
       if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
@@ -69,7 +71,7 @@ export function createGroupCreateActions({
       try { prefs?.setItem(CLONE_TRANSPORT_PREF, transport); } catch (_) {}
     },
 
-    complete(result, parentGroup = '') {
+    complete(result, parentGroup = '', node = '') {
       let { name } = result;
       if (result.kind === 'blank') {
         notify(parentGroup
@@ -91,7 +93,8 @@ export function createGroupCreateActions({
       } else {
         const response = result.response || {};
         name = response.group || name;
-        if (response.group && result.placement?.anchor) {
+        // The board order is the page's own groups'.
+        if (response.group && result.placement?.anchor && isPageNode(node)) {
           const snapshotGroups = getSnapshot()?.groups || [];
           const names = sortGroupsByPref(snapshotGroups.slice()).map((group) => group.name);
           setGroupOrderPref(insertGroupBeside(
@@ -112,8 +115,12 @@ export function createGroupCreateActions({
           failed > 0,
         );
       }
-      try { setExpanded(name); } catch (_) {}
-      recordInteraction(name);
+      // Expansion and recency are keyed by the page's own group names.
+      if (isPageNode(node)) {
+        try { setExpanded(name); } catch (_) {}
+        recordInteraction(name);
+      }
+      announceNodeChanged(node);
       refresh();
     },
   });

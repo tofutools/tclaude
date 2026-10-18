@@ -47,7 +47,7 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 		`targets: Object.freeze(selectedCandidates.map(`,
 		`const request = submittedRequest || Object.freeze({`,
 		`await actions.cleanup(request)`, `setResult(response || {})`,
-		`actions.finishCleanup(result)`,
+		`actions.finishCleanup(result, descriptor.node || '')`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing cleanup contract %q", required)
@@ -72,7 +72,7 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 		"include_online: !!request.includeOnline",
 		"delete_worktrees: !!request.deleteWorktrees",
 		"shutdown: !!request.shutdown",
-		"async finishCleanup(response)",
+		"async finishCleanup(response, node = '')",
 		"async handoffCleanupWorktrees(descriptor = {})",
 	} {
 		if !strings.Contains(actions, required) {
@@ -81,7 +81,7 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		"export async function openCleanupModal(options = {})",
-		"const snapshot = lastSnapshot",
+		"const snapshot = nodeSnapshot(options.node) || lastSnapshot",
 		"fetchListFull('retired')", "fetchListFull('conversations')",
 		"openCleanupDialog(buildCleanupDescriptor(snapshot, options, completeLists))",
 	} {

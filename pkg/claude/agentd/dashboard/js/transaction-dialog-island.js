@@ -472,7 +472,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     if (busy || selectedCandidates.length === 0) return;
     const request = submittedRequest || Object.freeze({
       mode: descriptor.mode,
-      ...(groupMode ? { group: descriptor.group } : {}),
+      ...(groupMode ? { group: descriptor.group, ...(descriptor.node ? { node: descriptor.node } : {}) } : {}),
       tier: effectiveTier,
       targets: Object.freeze(selectedCandidates.map(
         (candidate) => candidate.agent_id || candidate.conv_id,
@@ -497,7 +497,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   const close = () => {
-    if (result) actions.finishCleanup(result);
+    if (result) actions.finishCleanup(result, descriptor.node || '');
     else actions.close();
   };
   const count = selectedCandidates.length;
@@ -749,6 +749,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     if (busy) return;
     const request = submittedRequest || Object.freeze({
       group: descriptor.group,
+      ...(descriptor.node ? { node: descriptor.node } : {}),
       memberCount: members.length,
       retireMembers: Object.freeze(retireTargets.map((member) => Object.freeze({
         selector: member.selector,
