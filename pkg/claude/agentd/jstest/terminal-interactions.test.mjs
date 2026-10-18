@@ -726,6 +726,19 @@ test('a remote terminal links visible paths only while the live view holds the p
     assert.equal(fetches[0][1].method, 'HEAD');
     assert.equal(anchors.length, 1); assert.ok(anchors[0].clicked); assert.equal(anchors[0].href, fetches[0][0]);
 
+    // On a peer's own view every agent terminal is remote, and its files come
+    // through /api/federation/, which that page keeps on this node.
+    globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+    try {
+      link.activate({ metaKey: true }, link.text);
+      await settle();
+      assert.equal(anchors.length, 2, 'a peer view downloads a remote terminal\'s file');
+      assert.equal(new URL(fetches.at(-1)[0], 'http://x').pathname, '/api/federation/terminal-file');
+    } finally {
+      delete globalThis.__tclaudeRemoteNode;
+    }
+    fetches.length = 0; anchors.length = 1;
+
     // An OSC 8 link's label need not match its target: never a remote download.
     links.hover({}, 'file:///srv/proj/.env');
     assert.equal(statuses.at(-1), 'blocked unsafe link');

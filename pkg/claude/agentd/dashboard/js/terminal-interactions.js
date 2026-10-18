@@ -618,10 +618,12 @@ export function attachTerminalInteractions({
   }
 
   async function downloadHostFile(path) {
+    // A remote terminal's file comes through /api/federation/, which a peer's
+    // view keeps on this node (remote-node.js): it downloads there too.
+    if (remoteFileViewer) { await downloadRemoteFile(path); return; }
     // remote-node.js routes fetch only; this anchor download would read this
     // node's agentd under a peer's marker.
     if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
-    if (remoteFileViewer) { await downloadRemoteFile(path); return; }
     if (!fileDownloads) { flash('downloading files from a remote node is not available yet'); return; }
     if (downloadFile) {
       downloadFile(path);
