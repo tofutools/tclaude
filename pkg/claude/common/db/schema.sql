@@ -444,6 +444,9 @@ CREATE TABLE "human_messages" (
 CREATE INDEX idx_human_messages_created
 			ON human_messages(created_at);
 
+CREATE INDEX idx_human_messages_unread
+			ON human_messages(id) WHERE read_at IS NULL;
+
 CREATE TABLE "conv_branch_history" (
 			conv_id    TEXT NOT NULL,
 			repo_dir   TEXT NOT NULL DEFAULT '',
