@@ -97,7 +97,8 @@ function NodeFilter({ nodes, value, onChange }) {
 function MergedNote({ response }) {
   if (!response?.merged) return null;
   const deeper = response.deeper || [];
-  return html`<div class="audit-merged-note muted">Events across the fused nodes, newest first.${deeper.length ? ` Older events on ${deeper.map((n) => n.name).join(', ')} (an older build) show when you pick that node.` : ''}
+  const pending = response.pending || [];
+  return html`<div class="audit-merged-note muted">Events across the fused nodes, newest first.${deeper.length ? ` Older events on ${deeper.map((n) => n.name).join(', ')} (an older build) show when you pick that node.` : ''}${pending.length ? ` Waiting for ${pending.map((n) => n.name).join(', ')}…` : ''}
     ${(response.refused || []).map(({ node, why }) => html` <span key=${node.id} class="scope-pill" style=${`--nc:${node.color}`}>${node.name}<${LockReason} why=${why} /></span>`)}</div>`;
 }
 

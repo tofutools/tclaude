@@ -96,3 +96,40 @@ test('the fused "all nodes" audit pages every node with its keyset cursor, besid
   assert.ok(page2.some((v) => v.startsWith('forge ')), 'forge events are back');
   assert.deepEqual(page2.filter((v) => verbs().includes(v)), [], 'no event on both pages');
 });
+test('a fused audit node that does not answer holds up neither the page nor the walk', async (t) => {
+  const harness = await createPreactHarness(t); const [{ createAuditState }, { createAuditActions }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-actions.js')]);
+  const self = { id: 'inst_self', name: 'desk', local: true }; const forge = { id: 'inst_forge', name: 'forge' };
+  const event = (node, i) => ({ id: i, verb: `${node} ${i}`, at: new Date(Date.UTC(2026, 9, 18, 0, 0, i * 2 + (node === 'forge' ? 1 : 0))).toISOString() });
+  const logs = { desk: Array.from({ length: 30 }, (_, i) => event('desk', 30 - i)), forge: Array.from({ length: 30 }, (_, i) => event('forge', 30 - i)) };
+  const held = []; let hang = false; const forgeCalls = [];
+  const serve = (node) => async (url) => {
+    if (node === 'forge') { forgeCalls.push(url); if (hang) return new Promise((resolve) => held.push(resolve)); }
+    const q = new URL(url, 'http://x').searchParams; const size = Number(q.get('page_size'));
+    const before = Number(q.get('before') || 0); const below = before ? logs[node].filter((e) => e.id < before) : logs[node];
+    return { ok: true, json: async () => ({ entries: below.slice(0, size), total: logs[node].length, total_unfiltered: logs[node].length, has_more: below.length > size, cursor_paging: true }) };
+  };
+  const state = createAuditState({ activeTab: harness.signals.signal('audit') });
+  const actions = createAuditActions({ state, nodes: () => [self, forge], fetchImpl: serve('desk'), fetchFor: (id) => serve(id.slice(5)) });
+  state.setNode('all'); state.setPageSize(10);
+  const verbs = () => state.view.value.rows.map((e) => e.verb);
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  // forge is believed online but silent: desk's events show while it is awaited.
+  hang = true; const first = actions.load(); await settle();
+  assert.deepEqual(verbs().slice(0, 2), ['desk 30', 'desk 29'], "the answering node's page shows at once");
+  assert.deepEqual(state.view.value.response.pending.map((n) => n.name), ['forge']);
+  held.splice(0).forEach((resolve) => resolve({ ok: false, status: 504, text: async () => '' })); await first;
+  assert.deepEqual(state.view.value.response.refused.map((r) => r.node.name), ['forge'], 'its timeout marks it refused');
+
+  // Walking to page 3 steps past it: only the page shown asks it again, and
+  // that page shows without waiting for it.
+  forgeCalls.length = 0; state.setPage(3); const walkTo = actions.load(); await settle();
+  assert.equal(forgeCalls.length, 1, 'one read of the silent node for the whole walk');
+  assert.equal(state.view.value.page, 3); assert.deepEqual(verbs(), logs.desk.slice(20, 30).map((e) => e.verb));
+  held.splice(0).forEach((resolve) => resolve({ ok: false, status: 504, text: async () => '' })); await walkTo;
+
+  // It comes back: the walk restarts so its events slot in without repeats.
+  hang = false; await actions.load();
+  const third = verbs(); state.setPage(1); await actions.load();
+  assert.ok(third.some((v) => v.startsWith('forge ')) && third.every((v) => !verbs().includes(v)), 'forge is back, nothing twice');
+});

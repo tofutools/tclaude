@@ -21,14 +21,17 @@ export function auditRefusal(node, status) {
 // mergeAudits is one page of the fused "all nodes" view (fleet-pager.js):
 // each node's log below its cursor, merged newest first and cut to one page,
 // every entry tagged with its node. results are the nodes' reads ({ node,
-// data, legacy } or { node, why }); a node on an older build (legacy) was
-// read by depth and is cut at its cursor here.
+// data, legacy }, { node, why }, or { node, pending } while it has not
+// answered); a node on an older build (legacy) was read by depth and is cut
+// at its cursor here.
 export function mergeAudits(results, pageSize, page = 1, cursors = {}) {
   const refused = [];
+  const pending = [];
   let total = 0; let totalUnfiltered = 0;
   const streams = [];
-  for (const { node, data, why, legacy } of results) {
+  for (const { node, data, why, legacy, pending: waiting } of results) {
     if (why) { refused.push({ node, why }); continue; }
+    if (waiting) { pending.push(node); continue; }
     total += data?.total || 0; totalUnfiltered += data?.total_unfiltered || 0;
     const rows = data?.entries || [];
     streams.push(legacy ? legacyStream(node.id, rows, cursors[node.id], pageSize, data?.total) : { node: node.id, rows, hasMore: !!data?.has_more });
@@ -39,7 +42,7 @@ export function mergeAudits(results, pageSize, page = 1, cursors = {}) {
   return {
     entries: merged.rows.map(({ node, row }) => ({ ...row, node: byID[node] })), total, total_unfiltered: totalUnfiltered,
     page, pages: merged.more ? Math.max(pageCount(total, pageSize), page + 1) : page, page_size: pageSize, sort: 'time', dir: 'desc',
-    merged: true, refused, deeper, next: merged.next, more: merged.more,
+    merged: true, refused, pending, deeper, next: merged.next, more: merged.more,
   };
 }
 
@@ -53,12 +56,18 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
   }
   // walk holds the merged view's known cursor vectors; walking names the
   // newest merged load, so a superseded walk stops instead of writing them.
+  // down holds the nodes whose last read failed (id -> why): a walk steps
+  // past them without waiting, and only the page shown reads them again, so
+  // a node that does not answer costs one wait, not one per page.
   let walk = newWalk();
   let walking = 0;
-  // readMerged reads page `page` of every fused node below its cursor.
-  function readMerged(fused, view, page, cursors) {
+  let down = new Map();
+  // readMerged reads page `page` of every fused node below its cursor, but
+  // the skipped ones. onAnswer sees the results so far as each node answers.
+  function readMerged(fused, view, page, cursors, { skip = new Map(), onAnswer } = {}) {
     const params = (extra) => { const p = auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' }); for (const [k, v] of Object.entries(extra)) p.set(k, String(v)); return p; };
-    return Promise.all(fused.map(async (node) => {
+    const results = fused.map((node) => (skip.has(node.id) ? { node, why: skip.get(node.id) } : { node, pending: true }));
+    const readNode = async (node) => {
       const fetcher = node.local ? fetchImpl : fetchFor(node.id);
       const before = cursors[node.id];
       try {
@@ -67,19 +76,29 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
         // An older build ignores before=: read it newest first to this page's depth.
         return { node, legacy: true, data: before || page > 1 ? await read(fetcher, params({ page_size: legacyDepth(page, view.pageSize) })) : data };
       } catch (error) { return { node, why: auditRefusal(node, error.status) }; }
-    }));
+    };
+    return Promise.all(fused.map(async (node, i) => {
+      if (skip.has(node.id)) return;
+      results[i] = await readNode(node);
+      onAnswer?.(results.slice());
+    })).then(() => results);
   }
   // loadMerged walks to the requested page one cursor vector at a time,
-  // recording each page's next vector as it goes.
-  async function loadMerged(fused, view) {
+  // recording each page's next vector as it goes. The page shown is passed
+  // to show as its nodes answer.
+  async function loadMerged(fused, view, show) {
     const key = `${auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' })}\n${fused.map((n) => n.id).join(',')}`;
     const id = ++walking;
     let page = walkTarget(view.page, walk.key === key ? walk.list : [{}]);
     for (let restarts = 0; ; ) {
       const cursors = (walk.key === key && walk.list[page - 1]) || {};
-      const results = await readMerged(fused, view, page, cursors);
+      const shown = page >= view.page;
+      const results = await readMerged(fused, view, page, cursors, shown
+        ? { onAnswer: (partial) => { if (id === walking && partial.some((r) => r.pending)) show(mergeAudits(partial, view.pageSize, page, cursors)); } }
+        : { skip: down });
       if (id !== walking) return null;
       const result = mergeAudits(results, view.pageSize, page, cursors);
+      down = new Map(result.refused.map((r) => [r.node.id, r.why]));
       const absent = result.refused.map((r) => r.node.id).join(',');
       walk = recordVector(walk, { key, absent, page, next: result.next, more: result.more });
       // The set of down nodes changed under the walk: restart from page 1
@@ -96,7 +115,7 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
     const target = view.node && fused.find((n) => n.id === view.node && !n.local);
     try {
       if (view.node === 'all' && fused.length > 1) {
-        const result = await loadMerged(fused, view);
+        const result = await loadMerged(fused, view, (partial) => state.commitRequest(token, partial));
         return result ? state.commitRequest(token, result) : false;
       }
       if (target) {
