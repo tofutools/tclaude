@@ -1,14 +1,14 @@
 // fleet-scope.js — DOM-free model of the node scope (tcl-sb4grp): which nodes
 // the dashboard shows. One node is today's per-node view (this node, or a peer
 // through ?node=). Fusing ticks several nodes: Groups and Terminals show them
-// together, every other tab keeps showing one node, the primary (the page's
-// own node), and says so.
+// together, every other tab keeps showing one node, this one (a fused view
+// is always this node's page; remote-node.js), and says so.
 //
 // The fused set is a property of the page like ?node=, carried in ?nodes=:
 // "all" (every linked node, including ones linked later) or a comma-separated
 // list of instance IDs.
 
-// FUSED_TABS show every ticked node; every other per-node tab shows the primary.
+// FUSED_TABS show every ticked node; every other per-node tab shows this node.
 export const FUSED_TABS = new Set(['groups', 'terminals', 'messages']);
 
 // BUTTON_LIMIT is how many nodes (this one included) still get a button each;

@@ -55,7 +55,7 @@ test('up to four nodes get a button each; the fused dropdown ticks nodes and one
   await harness.act(() => harness.fireEvent(box('inst_lab'), 'change'));
   assert.deepEqual(state.fused.value, ['inst_self', 'inst_forge']);
   assert.match(getByRole(c, 'button', { name: /Fused view of 2 of 3 nodes/ }).textContent, /2\/3/);
-  assert.match(c.querySelector('.node-fuse-pop').textContent, /Other tabs show one node, the primary: ⌂ desk/);
+  assert.match(c.querySelector('.node-fuse-pop').textContent, /Other tabs show this node: ⌂ desk/);
   await harness.act(() => harness.fireEvent(box('inst_self'), 'change'));
   assert.equal(state.fused.value, null, 'one ticked node is that node alone');
   assert.deepEqual(switched, ['inst_forge']);
@@ -109,24 +109,32 @@ test('past four nodes one dropdown names the shown node, filters as you type and
   await mounted.unmount(); state.dispose();
 });
 
-test('a per-node tab in a fused view names its node, the primary, and can switch it', async (t) => {
+test('a per-node tab in a fused view names this node, with no primary to switch', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('usage');
   const state = stateMod.createFleetState({ activeTab, search: '?nodes=inst_self,inst_forge' });
   state.setStatus(three);
-  const switched = [];
   const doc = harness.document;
-  const mounted = await harness.mount(harness.html`<${island.ScopeBanner} state=${state} remote="" switchNode=${(id) => switched.push(id)} doc=${doc} />`);
+  const mounted = await harness.mount(harness.html`<${island.ScopeBanner} state=${state} doc=${doc} />`);
   const c = mounted.container;
-  assert.match(c.textContent, /shows one node\. Showing ⌂ desk, the primary of your 2 fused nodes/);
-  const seg = [...c.querySelectorAll('.scope-banner-seg button')];
-  assert.deepEqual(seg.map((b) => b.textContent), ['⌂ desk', 'forge']);
-  await harness.act(() => harness.fireEvent(seg[1], 'click'));
-  assert.deepEqual(switched, ['inst_forge']);
+  assert.match(c.textContent, /shows this node, ⌂ desk\. Open another node's own view from its chip/);
+  assert.equal(c.querySelector('button'), null, 'no primary switcher');
   await harness.act(() => { activeTab.value = 'terminals'; });
   assert.equal(c.textContent, '', 'fused tabs need no banner');
   await harness.act(() => { activeTab.value = 'usage'; state.setFused(null); });
   assert.equal(c.textContent, '');
+  await mounted.unmount(); state.dispose();
+});
+
+test('fusing from a peer\'s page goes to this node\'s page with the set', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '' });
+  state.setStatus(three);
+  const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Show several nodes together' }), 'click'));
+  assert.equal(state.fused.value, 'all');
+  assert.deepEqual(switched, [''], 'the fused view loads as this node\'s page');
   await mounted.unmount(); state.dispose();
 });
 

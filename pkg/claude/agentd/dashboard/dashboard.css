@@ -20020,9 +20020,6 @@ html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="t
 .scope-banner-host:empty { display: none; }
 .scope-banner { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-bottom: 12px; border: 1px solid #30363d; border-left: 3px solid var(--nc); border-radius: 6px; background: #161b22; font-size: 13px; }
 .scope-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 10px; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc; background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117); }
-.scope-banner-seg { display: inline-flex; margin-left: auto; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-.scope-banner-seg button { padding: 3px 10px; border: 0; background: #0d1117; color: #8b949e; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
-.scope-banner-seg button.on { background: #1f6feb33; color: #f0f6fc; cursor: default; }
 
 /* Top-level mode: the map replaces the per-node tab strip with its own view
    switch in the same row, so nothing below moves. */

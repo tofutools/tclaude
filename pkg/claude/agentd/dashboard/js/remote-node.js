@@ -13,8 +13,18 @@
 // which belong to the person at this browser, not to the node on screen.
 (() => {
   const ID_RE = /^inst_[a-z0-9]{4,64}$/;
-  const id = new URLSearchParams(window.location.search).get('node') || '';
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('node') || '';
   if (!ID_RE.test(id)) return;
+  // A fused view (?nodes=) is always this node's page: the peers in it show
+  // what they share with this operator, on this node's own surfaces. A peer's
+  // page with a fused set loads as this node's, keeping the set.
+  if (params.has('nodes')) {
+    params.delete('node');
+    const q = params.toString();
+    window.location.replace(window.location.pathname + (q ? `?${q}` : '') + window.location.hash);
+    return;
+  }
 
   const LOCAL_PREFIXES = [
     '/api/federation/', '/api/peer/', '/api/node-summary', '/api/node/update',

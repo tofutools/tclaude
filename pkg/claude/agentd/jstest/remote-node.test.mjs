@@ -5,10 +5,10 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../dashboard/js/remote-node.js', import.meta.url), 'utf8');
 
 function boot(search) {
-  const calls = []; const events = [];
+  const calls = []; const events = []; const replaced = [];
   const classes = new Set();
   const window = {
-    location: { search, href: `http://127.0.0.1:7777/groups${search}`, origin: 'http://127.0.0.1:7777' },
+    location: { search, pathname: '/groups', hash: '', href: `http://127.0.0.1:7777/groups${search}`, origin: 'http://127.0.0.1:7777', replace: (url) => replaced.push(url) },
     fetch: async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
       calls.push({ url, method: init?.method || 'GET' });
@@ -19,12 +19,19 @@ function boot(search) {
   };
   const document = { documentElement: { classList: { add: (c) => classes.add(c) } } };
   vm.runInNewContext(source, { window, document, URL, URLSearchParams, Request, Response, CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } }, Date, JSON, Set, Object, String });
-  return { window, calls, events, classes };
+  return { window, calls, events, classes, replaced };
 }
 
 test('without ?node= the shim leaves fetch alone', () => {
   const { window, classes } = boot('?wizard=1');
   assert.equal(window.__tclaudeRemoteNode, undefined);
+  assert.equal(classes.size, 0);
+});
+
+test("a fused view is always this node's page: a peer's page with ?nodes= loads as this node's", () => {
+  const { window, classes, replaced } = boot('?node=inst_forge7&nodes=all&wizard=1');
+  assert.deepEqual(replaced, ['/groups?nodes=all&wizard=1']);
+  assert.equal(window.__tclaudeRemoteNode, undefined, 'no peer view is installed while it reloads');
   assert.equal(classes.size, 0);
 });
 
