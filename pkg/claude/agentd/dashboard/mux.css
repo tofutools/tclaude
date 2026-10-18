@@ -229,16 +229,19 @@ body.hide-costs .mux-cost-toggle { display: none; }
    beside a stack (ungrouped), the one placement a drop on a tab cannot express.
    The node is always present but collapses to zero width at rest so it neither
    widens the strip nor changes the DOM when a drag begins; only the `active`
-   class (set while a drag is in flight) gives it a hit lane. */
+   class (set while a drag is in flight) gives it a hit lane. That lane is laid
+   out at a net -4px (10px wide, -7px margins) so it cancels its own flex gap:
+   starting a drag must not widen any row, or the wrapping strip would reflow
+   tabs onto other rows under the pointer. */
 .mux-strip-gap {
   flex: none; align-self: stretch; width: 0; border-radius: 4px;
 }
-.mux-strip-gap.active { width: 10px; margin: 0 -3px; }
+.mux-strip-gap.active { width: 10px; margin: 0 -7px; }
 .mux-strip-gap.armed {
   background: #1f6feb;
   box-shadow: 0 0 8px rgba(88, 166, 255, 0.75);
 }
-/* The trailing end-zone grows to fill the strip's empty right margin while a
+/* The trailing end-zone grows to fill the last row's empty right margin while a
    drag is in flight, so releasing anywhere past the last tab or group lands the
    drag at the very end rather than only on that segment's right edge. It
    collapses to nothing at rest and shrinks to zero when the tabs already fill
@@ -249,16 +252,17 @@ body.hide-costs .mux-cost-toggle { display: none; }
 /* At rest the zero-width end-zone would still draw the strip's 4px flex gap
    before it, widening the content box by 4px and, in the exact-fill case, arming
    a phantom horizontal scrollbar. A -4px left margin cancels that one gap so the
-   idle strip measures exactly as it did without an end-zone; .grow.active
-   restores margin:0 for the grown hit lane during a drag. */
+   idle strip measures exactly as it did without an end-zone. .grow.active keeps
+   that margin so the grown lane never adds width either: with nothing left on
+   the last row it stays zero-wide instead of wrapping onto a row of its own. */
 .mux-strip-gap.grow { margin-left: -4px; }
 .mux-strip-gap.grow.active {
-  position: relative; flex: 1 1 0; min-width: 0; width: auto; margin: 0;
+  position: relative; flex: 1 1 0; min-width: 0; width: auto;
   background: none; box-shadow: none;
 }
 .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
 .mux-strip-gap.grow.armed::before {
-  content: ""; position: absolute; left: 0; top: 2px; bottom: 1px; width: 3px;
+  content: ""; position: absolute; left: 2px; top: 2px; bottom: 1px; width: 3px;
   border-radius: 2px; background: #58a6ff; box-shadow: 0 0 7px rgba(88, 166, 255, 0.75);
 }
 
