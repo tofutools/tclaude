@@ -10,8 +10,8 @@ import {
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
-import { refuseInPeerView } from './peer-view-guard.js';
-import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
+import { announceNodeChanged, isPageNode, nodeDownload, nodeDownloadPath, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
+import { unrestrictedOn } from './node-trust.js';
 import { exportParams, landingParams, queryString } from './paf-model.js';
 import {
   loadSandboxProfiles,
@@ -492,9 +492,9 @@ export function createManagementActions({
     state.openDialog({ kind: 'template-duplicate', source });
   }
   function exportTemplate(name) {
-    if (refuseInPeerView('Template export')) return;
+    if (refuseOnRestrictedPeer('Template export', '', notify)) return;
     const anchor = document.createElement('a');
-    anchor.href = `/api/templates/${encodeURIComponent(name)}/export`;
+    anchor.href = nodeDownloadPath('', `/api/templates/${encodeURIComponent(name)}/export`);
     anchor.download = `${name}.task-force.json`;
     document.body.appendChild(anchor);
     anchor.click();
@@ -673,18 +673,21 @@ export function createManagementActions({
   }
   // exportAgentPAF fetches the agent's PAF. A 422 with code
   // flagged_credentials carries the findings, for the dialog to show.
-  async function exportAgentPAF(choices) {
-    const response = await fetch(`/api/agent-bundle/export${queryString(exportParams(choices))}`, { credentials: 'same-origin' });
+  // An export downloads from the node it names (blank: the page's), another
+  // node's in chunks (nodeDownload); a file in hand is redacted or published
+  // here, on this node.
+  async function exportAgentPAF(choices, node = '') {
+    const response = await nodeDownload(node, `/api/agent-bundle/export${queryString(exportParams(choices))}`);
     if (!response.ok) throw await pafError(response);
     return response.blob();
   }
-  async function exportGroupArchive(group, format, allowFlagged = false) {
-    const response = await fetch(`/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged })}`, { credentials: 'same-origin' });
+  async function exportGroupArchive(group, format, allowFlagged = false, node = '') {
+    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged })}`);
     if (!response.ok) throw await pafError(response);
-    return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || `group-${group}.${format}` };
+    return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || dispositionName(response) || `group-${group}.${format}` };
   }
   async function redactPAF(blob, options, preview) {
-    const response = await fetch(`/api/paf/redact${queryString({ ...options, preview })}`, {
+    const response = await thisNodeFetch(`/api/paf/redact${queryString({ ...options, preview })}`, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob,
     });
     if (!response.ok) throw await pafError(response);
@@ -705,59 +708,92 @@ export function createManagementActions({
     }
     return result;
   }
-  // Snapshot library (4d, tcl-3hjdm1) through the dashboard /api twins.
-  async function snapshotCall(method, path, body) {
-    const response = await fetch(`/api/${path}`, {
+  // Snapshot library (4d, tcl-3hjdm1) through the dashboard /api twins, on
+  // the node the dialog names (blank: the page's).
+  async function snapshotCall(method, path, body, node = '') {
+    const response = await nodeFetch(node)(`/api/${path}`, {
       method, credentials: 'same-origin',
       ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) throw await pafError(response);
     return response.json();
   }
-  const snapshots = {
-    list: async () => (await snapshotCall('GET', 'snapshots')).snapshots || [],
-    create: (body) => snapshotCall('POST', 'snapshots', body),
-    remove: (name) => snapshotCall('DELETE', `snapshots/${encodeURIComponent(name)}`),
-    prune: () => snapshotCall('POST', 'snapshots/prune', {}),
-    spawn: (name, body) => snapshotCall('POST', `snapshots/${encodeURIComponent(name)}/spawn`, body),
-    policies: async () => (await snapshotCall('GET', 'resilience/policies')).policies || [],
-    async exportBlob(name) {
-      const response = await fetch(`/api/snapshots/${encodeURIComponent(name)}/export`, { credentials: 'same-origin' });
-      if (!response.ok) throw await pafError(response);
-      return response.blob();
-    },
-    // share previews (no digest) or publishes (digest) a snapshot on a
-    // board; blob, when given, shares that file (a redacted copy) instead.
-    async share(board, { snapshot = '', name = '', to = [], expires = '', digest = '', blob = null }) {
-      const query = queryString({ snapshot: blob ? '' : snapshot, name, to, expires, content_digest: digest });
-      const response = await fetch(`/api/federation/boards/${encodeURIComponent(board)}/snapshots${query}`, {
-        method: 'POST', credentials: 'same-origin',
-        ...(blob ? { headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob } : {}),
-      });
-      if (!response.ok) throw await pafError(response);
-      return response.json();
-    },
-    // publish previews (no digest) or returns the signed public PAF.
-    async publish(blob, options, digest = '') {
-      const response = await fetch(`/api/paf/publish${queryString({ ...options, content_digest: digest })}`, {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob,
-      });
-      if (!response.ok) throw await pafError(response);
-      return digest ? response.blob() : response.json();
-    },
-  };
+  // snapshotsOn is the library of node (blank: the page's). Another node's
+  // snapshot is shared on a board from here, as the file it downloads.
+  function snapshotsOn(node = '') {
+    const files = new Map();
+    const lib = {
+      list: async () => (await snapshotCall('GET', 'snapshots', undefined, node)).snapshots || [],
+      create: (body) => { files.clear(); return snapshotCall('POST', 'snapshots', body, node); },
+      remove: (name) => { files.delete(name); return snapshotCall('DELETE', `snapshots/${encodeURIComponent(name)}`, undefined, node); },
+      prune: () => snapshotCall('POST', 'snapshots/prune', {}, node),
+      async spawn(name, body) {
+        const result = await snapshotCall('POST', `snapshots/${encodeURIComponent(name)}/spawn`, body, node);
+        announceNodeChanged(node);
+        return result;
+      },
+      policies: async () => (await snapshotCall('GET', 'resilience/policies', undefined, node)).policies || [],
+      async exportBlob(name) {
+        const response = await nodeDownload(node, `/api/snapshots/${encodeURIComponent(name)}/export`);
+        if (!response.ok) throw await pafError(response);
+        return response.blob();
+      },
+      // share previews (no digest) or publishes (digest) a snapshot on a
+      // board; blob, when given, shares that file (a redacted copy) instead.
+      async share(board, { snapshot = '', name = '', to = [], expires = '', digest = '', blob = null }) {
+        if (!blob && !onThisNode(node)) {
+          if (!files.has(snapshot)) files.set(snapshot, await lib.exportBlob(snapshot));
+          blob = files.get(snapshot);
+        }
+        const query = queryString({ snapshot: blob ? '' : snapshot, name, to, expires, content_digest: digest });
+        const response = await thisNodeFetch(`/api/federation/boards/${encodeURIComponent(board)}/snapshots${query}`, {
+          method: 'POST', credentials: 'same-origin',
+          ...(blob ? { headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob } : {}),
+        });
+        if (!response.ok) throw await pafError(response);
+        return response.json();
+      },
+      // publish previews (no digest) or returns the signed public PAF.
+      async publish(blob, options, digest = '') {
+        const response = await thisNodeFetch(`/api/paf/publish${queryString({ ...options, content_digest: digest })}`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob,
+        });
+        if (!response.ok) throw await pafError(response);
+        return digest ? response.blob() : response.json();
+      },
+    };
+    return lib;
+  }
+  const snapshots = snapshotsOn();
+  // actionsOn binds the snapshot and export actions a dialog takes to the
+  // node it names; a blank node is the page's (these very actions).
+  const nodeActions = new Map();
+  function actionsOn(node = '') {
+    if (!node || isPageNode(node)) return controller;
+    if (!nodeActions.has(node)) {
+      nodeActions.set(node, Object.freeze({
+        ...controller,
+        snapshots: snapshotsOn(node),
+        exportAgentPAF: (choices) => exportAgentPAF(choices, node),
+        exportGroupArchive: (group, format, allowFlagged = false) => exportGroupArchive(group, format, allowFlagged, node),
+      }));
+    }
+    return nodeActions.get(node);
+  }
+  // The snapshot and export dialogs take the node they act on (blank: the
+  // page's): this node, or one that trusts it unrestricted.
   function openSnapshots(preset = {}) {
-    if (refuseInPeerView('Snapshots')) return;
+    if (refuseOnRestrictedPeer('Snapshots', preset.node, notify)) return;
     state.openDialog({ kind: 'snapshots', ...preset });
   }
 
-  function openAgentExport({ agent, label }) {
-    if (refuseInPeerView('Agent export')) return;
-    state.openDialog({ kind: 'paf-export', agent, label });
+  function openAgentExport({ agent, label, node = '' }) {
+    if (refuseOnRestrictedPeer('Agent export', node, notify)) return;
+    state.openDialog({ kind: 'paf-export', agent, label, node });
   }
-  function openGroupExport(group) {
-    if (refuseInPeerView('Group export')) return;
-    state.openDialog({ kind: 'group-export', group });
+  function openGroupExport(group, node = '') {
+    if (refuseOnRestrictedPeer('Group export', node, notify)) return;
+    state.openDialog({ kind: 'group-export', group, node });
   }
 
   async function saveGroupContext(name, context, node = '') {
@@ -1134,7 +1170,7 @@ export function createManagementActions({
     });
   }
 
-  return Object.freeze({
+  const controller = Object.freeze({
     load,
     openManager,
     openProfileEditor,
@@ -1193,6 +1229,31 @@ export function createManagementActions({
     createDirectories,
     loadCommonRuleCatalog,
     loadUnsandboxedAutonomy,
+    actionsOn,
   });
+  return controller;
 }
+// thisNodeFetch reaches this node's own daemon, on a peer's page too: a file
+// in hand is redacted, published or shared on a board from here.
+function thisNodeFetch(...args) {
+  return (globalThis.__tclaudeRemoteNode?.localFetch || globalThis.fetch)(...args);
+}
+
+function onThisNode(node) {
+  return node ? node === selfNodeID() : !globalThis.__tclaudeRemoteNode?.id;
+}
+
+// refuseOnRestrictedPeer stops a snapshot or export control on a node that
+// does not let this one act there as its operator does.
+function refuseOnRestrictedPeer(what, node, toast) {
+  if (onThisNode(node) || unrestrictedOn(node)) return false;
+  toast(`${what} on another node takes its unrestricted trust`, true);
+  return true;
+}
+
+function dispositionName(response) {
+  const match = /filename="?([^";]+)"?/.exec(response.headers.get('Content-Disposition') || '');
+  return match ? match[1] : '';
+}
+
 // dashboard-imperative-boundary: browser-io

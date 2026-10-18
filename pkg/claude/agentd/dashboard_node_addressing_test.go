@@ -22,7 +22,7 @@ var bareAPIFetchBaseline = map[string]int{
 	"list-paging.js":                1,
 	"mail-island.js":                1,
 	"mail.js":                       7,
-	"management-actions.js":         17,
+	"management-actions.js":         10,
 	"modal-templates.js":            1,
 	"palette.js":                    2,
 	"pr-checks-hover.js":            1,

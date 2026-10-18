@@ -4992,3 +4992,46 @@ test('sandbox evaluation targets follow the daemon catalog including new harness
   assert.deepEqual(values, ['', ...catalog.map((entry) => entry.name)]);
   unmount();
 });
+
+test("another node's snapshot and export actions reach it, and its files come through this node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, nodeApi] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-actions.js'), harness.importDashboardModule('js/node-api.js'),
+  ]);
+  nodeApi.setSelfNode('inst_desk0001');
+  const FORGE = 'inst_forge0001';
+  let level = 'restricted';
+  t.after(nodeApi.setNodeSnapshotSource((node) => (node === FORGE ? { groups: [], peer_view: { level } } : null)));
+  const calls = [];
+  const previous = globalThis.fetch;
+  t.after(() => { globalThis.fetch = previous; });
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push(`${init.method || 'GET'} ${url}${init.body instanceof Blob ? ' +file' : ''}`);
+    return { ok: true, status: 200, headers: new Map(), json: async () => ({ snapshots: [{ name: 'good' }] }), blob: async () => new Blob(['paf']) };
+  };
+  const toasts = [];
+  const state = createManagementState();
+  const actions = createManagementActions({ state, confirm: async () => true, notify: (m, err) => toasts.push([m, !!err]) });
+  actions.openAgentExport({ agent: 'agt_a', label: 'a', node: FORGE });
+  assert.equal(state.dialog.value, null, 'a restricted node exports nothing');
+  assert.match(toasts.at(-1)[0], /unrestricted trust/);
+  level = 'unrestricted';
+  actions.openSnapshots({ agent: 'agt_a', node: FORGE });
+  assert.equal(state.dialog.value?.node, FORGE);
+
+  const on = actions.actionsOn(FORGE);
+  assert.equal(actions.actionsOn(''), actions, "the page's node is these very actions");
+  assert.deepEqual((await on.snapshots.list()).map((s) => s.name), ['good']);
+  await on.snapshots.exportBlob('good');
+  await on.exportAgentPAF({ agent: 'agt_a' });
+  await on.snapshots.share('team', { snapshot: 'good', to: [] });
+  await on.snapshots.publish(new Blob(['paf']), {});
+  assert.deepEqual(calls, [
+    `GET /api/peer/${FORGE}/snapshots`,
+    `GET /api/peer-download/${FORGE}?path=${encodeURIComponent('/api/snapshots/good/export')}`,
+    `GET /api/peer-download/${FORGE}?path=${encodeURIComponent('/api/agent-bundle/export?agent=agt_a&format=paf&history=true')}`,
+    `GET /api/peer-download/${FORGE}?path=${encodeURIComponent('/api/snapshots/good/export')}`,
+    'POST /api/federation/boards/team/snapshots +file',
+    'POST /api/paf/publish +file',
+  ], "forge's library on forge; its files shared and published from here");
+});

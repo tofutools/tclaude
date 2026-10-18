@@ -289,7 +289,12 @@ agent, harness, size, expiry and credential findings. From a row you can:
 When resilience policies exist, a read-only table shows each policy's agents
 with the last good snapshot, whether it is deferred or failing, and when the
 next one is due. Policies are managed with `tclaude agent snapshot policy`.
-Snapshots and their routes are local-only; peer view hides the menu item.
+Snapshots and their routes are local-only. A peer that trusts this node
+unrestricted shows the 📸 snapshot… and ⤓ export (PAF)… items on its agents
+(on its own page and in the fused Groups view) and the group ⤓ export…: the
+dialog acts on that node's library, its files download through this node
+(see peer downloads in `docs/federation.md`), and a public copy or a Board
+share is made here from the downloaded file. A restricted peer hides them.
 
 ### Badge glossary
 

@@ -2281,11 +2281,11 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'group-import':
       return html`<${GroupImportDialog} key=${descriptor.key || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} initialFile=${descriptor.file || null}/>`;
     case 'paf-export':
-      return html`<${AgentExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${AgentExportDialog} descriptor=${descriptor} state=${state} actions=${actions.actionsOn?.(descriptor.node) || actions} confirmDiscard=${confirmDiscard}/>`;
     case 'snapshots':
-      return html`<${SnapshotsDialog} key=${descriptor.agent || ''} descriptor=${descriptor} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${SnapshotsDialog} key=${`${descriptor.node || ''}/${descriptor.agent || ''}`} descriptor=${descriptor} state=${state} actions=${actions.actionsOn?.(descriptor.node) || actions} confirm=${confirm} confirmDiscard=${confirmDiscard}/>`;
     case 'group-export':
-      return html`<${GroupExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${GroupExportDialog} descriptor=${descriptor} state=${state} actions=${actions.actionsOn?.(descriptor.node) || actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-context':
       return html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-deploy': {

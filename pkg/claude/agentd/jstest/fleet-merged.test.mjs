@@ -257,8 +257,8 @@ test('limitsCSS greys an unrestricted peer\'s controls that only its own dashboa
       <b id="restart" data-act="restart" data-agent="agt_a"></b><b id="export" data-act="export-group" data-group="build@forge"></b><b id="links" data-act="links-manage"></b></summary></details></div></div>`;
   const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
   const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));
-  for (const id of ['sub', 'pend', 'restart']) assert.equal(greyed(id), false, `${id} runs on forge from here`);
-  for (const id of ['export', 'links']) assert.equal(greyed(id), true, `${id} is forge's own dashboard's, and looks it`);
+  for (const id of ['sub', 'pend', 'restart', 'export']) assert.equal(greyed(id), false, `${id} runs on forge from here`);
+  assert.equal(greyed('links'), true, "links are forge's own dashboard's, and look it");
 });
 
 test('dragging an agent onto another node\'s group opens the move; a same-node drop is the Groups drag-and-drop\'s', async (t) => {

@@ -72,6 +72,9 @@ export async function handleRowAction(action) {
     }
   }
   const api = nodeFetch(node);
+  // rowNode is the agent's node for a control outside the fused view (a
+  // Terminals tab's ⚙ names it in data-node).
+  const rowNode = () => node || (data.node && !isPageNode(data.node) ? data.node : '');
   // changed re-reads what an operation changed: the page, and the fused
   // view's copy of node.
   const changed = () => { announceNodeChanged(node); refresh(); };
@@ -698,13 +701,13 @@ export async function handleRowAction(action) {
       case 'export-paf': {
         // Agent ⚙ → export (PAF)…: a dialog with the history choices and
         // the credential scan, then a file download (tcl-jkmitn).
-        openAgentExport({ agent, label });
+        openAgentExport({ agent, label, node: rowNode() });
         return;
       }
       case 'snapshot-agent': {
         // Agent ⚙ → snapshot…: the Snapshots view with this agent preset
         // in its create panel (tcl-3hjdm1).
-        openSnapshots({ agent });
+        openSnapshots({ agent, node: rowNode() });
         return;
       }
       case 'reincarnate': {
@@ -846,7 +849,7 @@ export async function handleRowAction(action) {
       case 'export-group': {
         // The format dialog (.zip or .paf) fetches the archive, so a
         // flagged export shows its findings instead of saving an error.
-        openGroupExport(group);
+        openGroupExport(group, node);
         return;
       }
       case 'cleanup-group': {
