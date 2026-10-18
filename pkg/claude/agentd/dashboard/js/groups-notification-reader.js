@@ -14,6 +14,7 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { remoteNodeID } from './fleet-model.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
+import { refreshPageNotifications } from './peer-notifications.js';
 import { senderOnline } from './message-access-dialog-model.js';
 
 const html = htm.bind(h);
@@ -159,6 +160,9 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
     queue = { tail: Promise.resolve(), confirmed: prior };
     readWrites.set(id, queue);
   }
+  // A restricted peer's page lists its notifications at their own cadence:
+  // the write shows there at once, ahead of any read still in flight.
+  if (peer && !node) refreshPageNotifications(id, read, fallback);
   const request = queue.tail.catch(() => {}).then(async () => {
     const route = readRoute(id, read, peer);
     const response = await fetch(route.url, {
@@ -173,10 +177,12 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
   try {
     await request;
     queue.confirmed = read;
+    if (peer && !node) refreshPageNotifications();
   } catch (error) {
     const current = (state.snapshot.value?.messages || [])
       .find((message) => message.id === id);
     if (current?.read === read) replaceMessageRead(state, id, queue.confirmed);
+    if (peer && !node) refreshPageNotifications(id, queue.confirmed, fallback);
     onError?.(error);
   } finally {
     if (queue.tail === request) readWrites.delete(id);

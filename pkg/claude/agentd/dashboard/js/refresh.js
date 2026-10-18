@@ -30,6 +30,7 @@ import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
 import { claimViewersRead, noteViewersRead } from './remote-viewers.js';
 import { claimRemoteInboxRead, readRemoteInboxes } from './remote-inbox.js';
+import { attachPageNotifications } from './peer-notifications.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
 import {
@@ -218,6 +219,9 @@ export async function refresh(options) {
         data[key] = prevSnap[key];
       }
     }
+    // A restricted peer's page: its unread notifications, which its
+    // snapshot withholds, read at their own cadence.
+    attachPageNotifications(data);
     data.paging = {};
     await stitchListPage(data, 'retired', retiredR, prevSnap);
     await stitchListPage(data, 'conversations', convR, prevSnap);
