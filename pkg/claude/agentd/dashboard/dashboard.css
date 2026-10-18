@@ -5882,6 +5882,12 @@ details.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
+/* A drop the target refuses (the fused view's move onto another node's
+   group, without the grant): the same whole box, in red. */
+details.dnd-drop-over.dnd-drop-refused {
+  background: rgba(72, 31, 31, 0.35);
+  outline-color: #f85149;
+}
 /* Dock drag (dock-dnd.js): dragging a palette profile/role card onto a group
    box — or the groups-list empty space — to open the spawn dialog prefilled.
    A DISTINCT class from .dnd-drop-over so dnd.js's own dragleave/dragend (which
@@ -20251,10 +20257,6 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"]
 .fleet-merged-node.stale { color: #7d8590; }
 .fleet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
 .fleet-merged-note { color: #6e7681; margin-left: auto; }
-/* Drag an agent onto another node's group (fleet-move-drop.js): the group
-   under the pointer says whether the drop can move it from here. */
-.fleet-merged details.fleet-drop-ok > summary { outline: 2px dashed #3fb950; outline-offset: -2px; background: rgba(63, 185, 80, 0.08); }
-.fleet-merged details.fleet-drop-no > summary { outline: 2px dashed #f85149; outline-offset: -2px; }
 .fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
