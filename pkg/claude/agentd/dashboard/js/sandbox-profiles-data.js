@@ -2,8 +2,8 @@ import { CODEX_BUILTIN_FILTERED_NETWORK_SHORT } from './sandbox-network-disclosu
 
 const API = '/api/sandbox-profiles';
 
-async function request(path, options = {}) {
-  const response = await fetch(path, { credentials: 'same-origin', ...options });
+async function request(path, options = {}, fetchImpl = (...args) => fetch(...args)) {
+  const response = await fetchImpl(path, { credentials: 'same-origin', ...options });
   if (!response.ok) {
     // Failures carry the daemon's structured {"error", "code"} body; the
     // status and typed code stay on the thrown Error so callers can key
@@ -21,7 +21,8 @@ async function request(path, options = {}) {
   return response.json().catch(() => ({}));
 }
 
-export async function loadSandboxProfiles() { const value = await request(API); return Array.isArray(value) ? value : []; }
+// loadSandboxProfiles lists the profiles, of another node through its fetch.
+export async function loadSandboxProfiles(fetchImpl = undefined) { const value = await request(API, {}, fetchImpl); return Array.isArray(value) ? value : []; }
 // The filesystem-editor feed: audited deny presets the editor may insert as
 // ordinary rows, plus provenance-rich harness-global rows it renders read-only.
 // The endpoint keeps its historical read-exclusions path.

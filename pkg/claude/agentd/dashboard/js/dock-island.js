@@ -9,6 +9,10 @@ import { dashPrefs } from './prefs.js';
 import {
   LIBRARY_EVENT, menuPlacement, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
 } from './dock-library.js';
+import {
+  catalogWithheld, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes, toggleHiddenNode,
+} from './dock-nodes.js';
+import { LockReason } from './lock-reason.js';
 
 const html = htm.bind(h);
 
@@ -57,9 +61,49 @@ export function DockMenuItem({ act, kind, name, danger = false, onRun, setOpenMe
   >${children}</button>`;
 }
 
+// WHERE_TITLES say what a card's node pill means.
+const WHERE_TITLES = Object.freeze({
+  present: (node) => `On ${node.name}`,
+  differs: (node) => `On ${node.name}, different from the copy shown`,
+  missing: (node) => `Not on ${node.name}`,
+});
+
+// DockWhere is a fused card's node pills: one per listed node, present
+// (solid), differs (amber ≠) or missing (dashed). A held copy's pill picks
+// the node the card shows and its menu acts on.
+function DockWhere({ entry, nodes, pick, onPick }) {
+  return html`<span class="dock-where" role="group" aria-label="Nodes">
+    ${nodes.filter((node) => entry.state[node.id]).map((node) => {
+      const state = entry.state[node.id];
+      const style = node.color ? `--node-color:${node.color}` : null;
+      if (state === 'missing') {
+        return html`<span key=${node.id} class="dock-where-pill is-missing" style=${style} title=${WHERE_TITLES.missing(node)}>${node.name}</span>`;
+      }
+      return html`<button
+        key=${node.id}
+        type="button"
+        class=${`dock-where-pill is-${state}${pick === node.id ? ' is-picked' : ''}`}
+        style=${style}
+        aria-pressed=${pick === node.id ? 'true' : 'false'}
+        title=${WHERE_TITLES[state](node)}
+        data-dock-node=${node.id}
+        onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onPick(node.id); }}
+      >${node.name}${state === 'differs' ? html`<span class="dock-where-differs" aria-hidden="true"> ≠</span>` : null}</button>`;
+    })}
+  </span>`;
+}
+
 function DockCard({
-  section, item, openMenu, setOpenMenu, clipHost, layoutVersion, snapshot, pinned, onTogglePin, notify,
+  section, item: pageItem, entry = null, fused = null, nodeOps = null, openMenu, setOpenMenu, clipHost, layoutVersion, snapshot: pageSnapshot, pinned, onTogglePin, notify,
 }) {
+  // A fused card shows the copy of the node picked from its pills (the ref
+  // copy until one is picked); its menu acts on that node.
+  const [picked, setPicked] = useState('');
+  const pick = entry ? (entry.byNode[picked] ? picked : entry.ref) : '';
+  const item = entry ? entry.byNode[pick] : pageItem;
+  const pickNode = entry ? fused.nodes.find((node) => node.id === pick) : null;
+  const onPage = !entry || pick === fused.page;
+  const snapshot = entry ? fused.snapOf(pick) : pageSnapshot;
   const name = section.name(item);
   const isDefault = !!section.isDefault?.(item, snapshot);
   const compactChips = [
@@ -79,10 +123,13 @@ function DockCard({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState(null);
-  const draggable = section.drag ? 'true' : 'false';
+  // A card drags the page node's copy onto a group (dock-dnd.js), so only
+  // while it shows that copy.
+  const canDrag = section.drag && onPage;
+  const draggable = canDrag ? 'true' : 'false';
   const detailsID = `${useId()}-dock-details`;
   const detailsDescriptionID = `${detailsID}-description`;
-  const gripTitle = section.drag
+  const gripTitle = canDrag
     ? wizWord('drag onto a group to spawn', 'drag onto a party to summon')
     : wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)');
 
@@ -158,7 +205,21 @@ function DockCard({
   // Every kind's menu, in one order; a kind without a hook leaves its row out.
   const menuItem = (act, label, onRun, danger = false) => html`<${DockMenuItem} key=${act} act=${act}
     kind=${section.key} name=${name} danger=${danger} onRun=${onRun} setOpenMenu=${setOpenMenu}>${label}</${DockMenuItem}>`;
-  const menuItems = [
+  // Another node's copy: its editors stay on its own dashboard; renaming
+  // and deleting reach it where it lets this operator act as its own.
+  const remote = pickNode && !onPage ? { id: pickNode.id, name: pickNode.name, fetch: fused.fetchFor(pickNode.id) } : null;
+  const lock = remote ? nodeTrustLock(remote, snapshot, `its ${section.title().toLowerCase()}`) : '';
+  const lockedItem = (act, label, onRun, danger = false) => (lock
+    ? html`<span key=${act} role="menuitem" aria-disabled="true" class=${`dock-card-menu-item is-locked${danger ? ' danger' : ''}`}
+        data-dock-act=${act}>${label} <${LockReason} why=${lock} /></span>`
+    : menuItem(act, label, onRun, danger));
+  const menuItems = remote ? [
+    menuItem('open-node', `Open on ${remote.name}`, () => nodeOps.open(remote)),
+    section.itemPath && lockedItem('rename-item', 'Rename…', () => nodeOps.rename(section, name, remote)),
+    menuItem('pin-item', pinned ? 'Unpin' : 'Pin to top', () => onTogglePin(name)),
+    menuItem('copy-item', 'Copy name', () => copyName(name, notify)),
+    section.itemPath && lockedItem('delete-item', wizWord('Delete', 'Dispel'), () => nodeOps.remove(section, name, remote), true),
+  ].filter(Boolean) : [
     menuItem('edit-item', 'Edit', () => section.onManageItem(item)),
     menuItem('clone-item', wizWord('Clone', 'Mirror'), () => section.onCloneItem(item)),
     section.onRenameItem && menuItem('rename-item', 'Rename…', () => section.onRenameItem(item)),
@@ -185,15 +246,15 @@ function DockCard({
       onFocusOut=${hasDetails ? (event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
       } : null}
-      onDragStart=${section.drag ? () => {
+      onDragStart=${canDrag ? () => {
         setDragging(true);
         setDetailsOpen(false);
       } : null}
-      onDragEnter=${section.drag ? () => { hoveringRef.current = true; } : null}
-      onDragLeave=${section.drag ? (event) => {
+      onDragEnter=${canDrag ? () => { hoveringRef.current = true; } : null}
+      onDragLeave=${canDrag ? (event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) hoveringRef.current = false;
       } : null}
-      onDragEnd=${section.drag ? (event) => {
+      onDragEnd=${canDrag ? (event) => {
         setDragging(false);
         const hasPointerCoordinates = Number.isFinite(event.clientX)
           && Number.isFinite(event.clientY)
@@ -213,6 +274,7 @@ function DockCard({
       <span class="dock-card-body">
         <span class="dock-card-name">${pinned ? html`<span class="dock-card-pin" title="Pinned to the top" aria-label="Pinned">📌</span>` : null}${name}</span>
         <${DockChips} chips=${compactChips} />
+        ${entry ? html`<${DockWhere} entry=${entry} nodes=${fused.nodes} pick=${pick} onPick=${setPicked} />` : null}
       </span>
       <span class="dock-card-actions">
         <button
@@ -290,6 +352,67 @@ function useSectionItems(section, snapshot, wanted) {
   return { items: loaded.items, error: loaded.error };
 }
 
+// useFusedItems is a section's items on every shown node of the fused view
+// (dock-nodes.js): itemsByNode for the nodes that list them, withheld (node
+// ID -> reason) for the ones that keep them, and a self-loading section's
+// load errors. Each node's own snapshot decides; a self-loading section
+// reads each node through its fetch, again when that node's version changes.
+function useFusedItems(section, fused, wanted) {
+  const [loaded, setLoaded] = useState({});
+  const [nonce, setNonce] = useState(0);
+  const nodes = fused?.nodes || [];
+  const withheld = {};
+  const sharing = [];
+  for (const node of nodes) {
+    const why = catalogWithheld(node, fused.snapOf(node.id), fused.failureOf(node.id));
+    if (why) withheld[node.id] = why; else sharing.push(node);
+  }
+  const versions = section.load ? sharing.map((node) => `${node.id}=${section.load.version(fused.snapOf(node.id))}`).join(',') : '';
+  useEffect(() => {
+    if (!section.load) return undefined;
+    const bump = () => setNonce((value) => value + 1);
+    document.addEventListener(LIBRARY_EVENT, bump);
+    return () => document.removeEventListener(LIBRARY_EVENT, bump);
+  }, [section]);
+  useEffect(() => {
+    if (!section.load || !wanted || !fused) return undefined;
+    let live = true;
+    for (const node of sharing) {
+      section.load.fetch(fused.fetchFor(node.id))
+        .then((items) => { if (live) setLoaded((cur) => ({ ...cur, [node.id]: { items, error: '' } })); })
+        .catch((cause) => { if (live) setLoaded((cur) => ({ ...cur, [node.id]: { ...cur[node.id], error: cause?.message || String(cause) } })); });
+    }
+    return () => { live = false; };
+  }, [section, wanted, versions, nonce]);
+  const itemsByNode = {};
+  const errors = [];
+  for (const node of sharing) {
+    if (!section.load) { itemsByNode[node.id] = section.items(fused.snapOf(node.id)); continue; }
+    const got = loaded[node.id];
+    if (got?.items) itemsByNode[node.id] = got.items;
+    if (got?.error) errors.push(`${node.name}: ${got.error}`);
+  }
+  const pending = !!section.load && sharing.some((node) => !loaded[node.id]);
+  return { itemsByNode, withheld, errors, pending };
+}
+
+// DockNodesHead names a fused section's nodes: the ones it lists, and with
+// a 🔒 and the reason, the ones that keep it.
+function DockNodesHead({ nodes, withheld }) {
+  return html`<span class="dock-section-nodes" aria-label="Nodes listed">
+    ${nodes.map((node) => {
+      const why = withheld[node.id];
+      const loading = why === 'loading';
+      return html`<span
+        key=${node.id}
+        class=${`dock-where-pill is-head${why && !loading ? ' is-withheld' : ''}${loading ? ' is-loading' : ''}`}
+        style=${node.color ? `--node-color:${node.color}` : null}
+        title=${loading ? `Reading ${node.name}…` : null}
+      >${node.name}${why && !loading ? html` <${LockReason} why=${why} />` : null}</span>`;
+    })}
+  </span>`;
+}
+
 // searchTitles are the words that keep a whole section for a search: its
 // heading in both vocabularies, and its key.
 function searchTitles(section) {
@@ -297,7 +420,7 @@ function searchTitles(section) {
 }
 
 function DockSection({
-  section, snapshot, openMenu, setOpenMenu, clipHost,
+  section, snapshot, fused = null, nodeOps = null, openMenu, setOpenMenu, clipHost,
   isSectionOpen, setSectionOpen, terms, prefs, notify, onMatches,
 }) {
   const [open, setOpen] = useState(() => isSectionOpen(section.key));
@@ -305,20 +428,31 @@ function DockSection({
   const [dropOver, setDropOver] = useState(false);
   const fileRef = useRef(null);
   const searching = terms.length > 0;
-  const { items: all, error } = useSectionItems(section, snapshot, open || searching);
+  const single = useSectionItems(section, snapshot, !fused && (open || searching));
+  const many = useFusedItems(section, fused, !!fused && (open || searching));
+  // Fused, a card is one name across the shown nodes (its ref copy stands
+  // for it in search and pins); else one of the page node's items.
+  const entries = fused ? mergeCatalog(fused.nodes, many.itemsByNode, section.name, fused.page) : null;
+  const all = fused ? (many.pending && !entries.length ? null : entries) : single.items;
+  const error = fused ? many.errors.join('; ') : single.error;
+  const itemOf = fused ? (entry) => entry.byNode[entry.ref] : (item) => item;
+  const nameOf = (value) => section.name(itemOf(value));
   const known = all || [];
   const { items: matched } = filterSection({
     terms,
     titles: searchTitles(section),
     items: known,
-    textsOf: (item) => [
-      section.name(item),
-      ...(section.chips?.(item) || []).map((chip) => chip.text),
-      ...(section.texts ? section.texts(item) : leafTexts(item)),
-    ],
+    textsOf: (value) => {
+      const item = itemOf(value);
+      return [
+        section.name(item),
+        ...(section.chips?.(item) || []).map((chip) => chip.text),
+        ...(section.texts ? section.texts(item) : leafTexts(item)),
+      ];
+    },
   });
   const pins = pinnedNames(prefs, section.key);
-  const items = orderPinned(matched, section.name, pins);
+  const items = orderPinned(matched, nameOf, pins);
   const hidden = searching && all !== null && !items.length;
   useEffect(() => { onMatches?.(section.key, searching && all === null ? null : items.length); }, [items.length, searching, all === null]);
   const sectionMenuKey = `section:${section.key}`;
@@ -355,6 +489,7 @@ function DockSection({
           ${section.title()}
           <span class="dock-section-count">${all === null ? '' : searching && items.length !== known.length ? `${items.length}/${known.length}` : known.length}</span>
         </span>
+        ${fused ? html`<${DockNodesHead} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
         <span class="dock-section-tools">
           ${section.onNew ? html`<button
             type="button"
@@ -402,17 +537,20 @@ function DockSection({
       <div class="dock-section-items">
         ${error ? html`<div class="dock-empty island-error" role="alert">${error}</div>` : null}
         ${all === null && !error ? html`<div class="dock-empty">Loading…</div>` : null}
-        ${all !== null && (items.length ? items.map((item) => html`
+        ${all !== null && (items.length ? items.map((value) => html`
           <${DockCard}
-            key=${section.name(item)}
+            key=${nameOf(value)}
             section=${section}
-            item=${item}
+            item=${fused ? null : value}
+            entry=${fused ? value : null}
+            fused=${fused}
+            nodeOps=${nodeOps}
             openMenu=${openMenu}
             setOpenMenu=${setOpenMenu}
             clipHost=${clipHost}
             layoutVersion=${snapshot}
             snapshot=${snapshot}
-            pinned=${pins.includes(section.name(item))}
+            pinned=${pins.includes(nameOf(value))}
             onTogglePin=${(name) => { togglePin(prefs, section.key, name); setPinsVersion(pinsVersion + 1); }}
             notify=${notify}
           />
@@ -422,13 +560,45 @@ function DockSection({
   `;
 }
 
+// DockNodeFilter is the fused view's "Nodes" row: which nodes the dock
+// lists, starting from every node the Groups view fuses.
+function DockNodeFilter({ nodes, hidden, onToggle }) {
+  return html`<div key="nodes" class="dock-node-filter" role="group" aria-label="Nodes listed in the panel">
+    <span class="dock-node-filter-label">Nodes</span>
+    ${nodes.map((node) => {
+      const on = !hidden.includes(node.id);
+      return html`<button
+        key=${node.id}
+        type="button"
+        class=${`dock-node-toggle${on ? ' is-on' : ''}`}
+        style=${node.color ? `--node-color:${node.color}` : null}
+        aria-pressed=${on ? 'true' : 'false'}
+        title=${on ? `Hide ${node.name}'s catalogs here` : `List ${node.name}'s catalogs here`}
+        data-dock-node=${node.id}
+        onClick=${() => onToggle(node.id)}
+      ><span class="dock-node-dot" aria-hidden="true"></span>${node.name}</button>`;
+    })}
+  </div>`;
+}
+
 export function Dock({
   host, state, sections, isSectionOpen, setSectionOpen, prefs = dashPrefs, notify = null,
+  fusedState = fusedDock, hiddenState = hiddenNodes, nodeOps = null,
 }) {
   const [openMenu, setOpenMenu] = useState(null);
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState({});
   const snapshot = state.snapshot.value;
+  // On the fused Groups view the dock lists the shown nodes' catalogs.
+  const fusedValue = fusedState.value;
+  const hidden = hiddenState.value;
+  const fused = fusedValue ? {
+    page: fusedValue.page,
+    nodes: shownNodes(fusedValue, hidden),
+    snapOf: (id) => nodeSnap(fusedValue, id, snapshot),
+    fetchFor: fusedValue.fetchFor,
+    failureOf: (id) => fusedValue.failures?.[id] || null,
+  } : null;
   const terms = searchTerms(query);
   const onMatches = useCallback((key, count) => {
     setMatches((current) => (current[key] === count ? current : { ...current, [key]: count }));
@@ -466,6 +636,8 @@ export function Dock({
       key=${section.key}
       section=${section}
       snapshot=${snapshot}
+      fused=${fused}
+      nodeOps=${nodeOps}
       openMenu=${openMenu}
       setOpenMenu=${setOpenMenu}
       clipHost=${host}
@@ -494,6 +666,8 @@ export function Dock({
         onKeyDown=${(event) => { if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); setQuery(''); } }}
       />
     </div>`,
+    fusedValue ? html`<${DockNodeFilter} key="nodes" nodes=${fusedValue.nodes} hidden=${hidden}
+      onToggle=${(id) => toggleHiddenNode(id, hiddenState)} />` : null,
     nothing ? html`<div key="no-match" class="dock-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
     ...sections.filter((section) => !section.afterProcesses).map(renderSection),
     processes ? html`<${DockProcesses} key="processes" groups=${groups}
@@ -504,7 +678,7 @@ export function Dock({
 }
 
 export function mountDockIsland({
-  host, state, sections, isSectionOpen, setSectionOpen, notify, registerCleanup,
+  host, state, sections, isSectionOpen, setSectionOpen, notify, nodeOps, registerCleanup,
 }) {
   render(html`
     <${Dock}
@@ -514,6 +688,7 @@ export function mountDockIsland({
       isSectionOpen=${isSectionOpen}
       setSectionOpen=${setSectionOpen}
       notify=${notify}
+      nodeOps=${nodeOps}
     />
   `, host);
   registerCleanup(() => render(null, host));
