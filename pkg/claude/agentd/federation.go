@@ -534,14 +534,15 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 	}
 	caps := map[int64]map[string]bool{}
 	names := map[int64]string{}
+	grants := newFedGrantResolver()
 	for _, group := range groups {
-		if group.IsArchived() || !fedPeerGroupVisible(peer, group.ID) {
+		if group.IsArchived() || !grants.allows(peer, group.ID, "") {
 			continue
 		}
 		caps[group.ID] = map[string]bool{}
 		names[group.ID] = group.Name
 		for slug, cap := range federationPeerSlugs {
-			if fedPeerAllows(peer, group.ID, slug) {
+			if grants.allows(peer, group.ID, slug) {
 				caps[group.ID][cap] = true
 			}
 		}

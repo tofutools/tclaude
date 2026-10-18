@@ -98,27 +98,75 @@ var fedInstancePeerSlugs = map[string]bool{
 func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }
 
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
+	return newFedGrantResolver().grant(peer, groupID, slug)
+}
+
+// fedGrantResolver answers peer grant checks from one read of their inputs
+// (groups, peer trust, effective grants, config). A single check costs the
+// same as before; a pass asking groups × slugs × peers reads each input once.
+// Use one per pass, never across passes: it does not see later revokes.
+type fedGrantResolver struct {
+	groups       map[int64]*db.AgentGroup
+	unrestricted map[string]bool
+	grants       map[string][]db.FederationPeerGrant
+	grantsErr    map[string]bool
+	maxLive      int
+}
+
+func newFedGrantResolver() *fedGrantResolver {
+	return &fedGrantResolver{groups: map[int64]*db.AgentGroup{}, unrestricted: map[string]bool{}, grants: map[string][]db.FederationPeerGrant{}, grantsErr: map[string]bool{}}
+}
+
+func (r *fedGrantResolver) allows(peer string, groupID int64, slug string) bool {
+	return r.grant(peer, groupID, slug) != nil
+}
+
+func (r *fedGrantResolver) grant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
 	if slug == PermGroupsRosterRead {
-		if grant := fedPeerGroupGrant(peer, groupID, PermGroupsVisibilityRead); grant != nil && grant.SpawnPolicy.IncludeMembers {
+		if grant := r.grant(peer, groupID, PermGroupsVisibilityRead); grant != nil && grant.SpawnPolicy.IncludeMembers {
 			return grant
 		}
 	}
-	g, err := db.GetAgentGroupByID(groupID)
-	if err != nil || g == nil || g.IsArchived() {
+	g, ok := r.groups[groupID]
+	if !ok {
+		g, _ = db.GetAgentGroupByID(groupID)
+		r.groups[groupID] = g
+	}
+	if g == nil || g.IsArchived() {
 		return nil
 	}
-	if db.FederationPeerUnrestricted(peer) {
+	unrestricted, ok := r.unrestricted[peer]
+	if !ok {
+		unrestricted = db.FederationPeerUnrestricted(peer)
+		r.unrestricted[peer] = unrestricted
+	}
+	if unrestricted {
 		if _, known := federationPeerSlugs[slug]; slug != "" && !known {
 			return nil
 		}
-		cap := 8
-		cfg, _ := config.Load()
-		if cfg != nil && cfg.Federation != nil && cfg.Federation.UnrestrictedMaxLive > 0 {
-			cap = cfg.Federation.UnrestrictedMaxLive
+		if r.maxLive == 0 {
+			r.maxLive = 8
+			cfg, _ := config.Load()
+			if cfg != nil && cfg.Federation != nil && cfg.Federation.UnrestrictedMaxLive > 0 {
+				r.maxLive = cfg.Federation.UnrestrictedMaxLive
+			}
 		}
-		return &db.FederationPeerGrant{Peer: peer, Slug: slug, SpawnPolicy: db.FederationSpawnPolicy{MaxLive: cap}}
+		return &db.FederationPeerGrant{Peer: peer, Slug: slug, SpawnPolicy: db.FederationSpawnPolicy{MaxLive: r.maxLive}}
 	}
-	return fedPeerExplicitGroupGrant(peer, groupID, slug)
+	grants, ok := r.grants[peer]
+	if !ok && !r.grantsErr[peer] {
+		var err error
+		grants, err = db.ListEffectiveFederationPeerGrants(peer)
+		if err != nil {
+			r.grantsErr[peer] = true
+		} else {
+			r.grants[peer] = grants
+		}
+	}
+	if r.grantsErr[peer] {
+		return nil
+	}
+	return fedExplicitGroupGrant(grants, groupID, slug)
 }
 
 // fedGrantRank orders grants matching one group: a group scope above an
@@ -139,6 +187,10 @@ func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.Fede
 	if err != nil {
 		return nil
 	}
+	return fedExplicitGroupGrant(grants, groupID, slug)
+}
+
+func fedExplicitGroupGrant(grants []db.FederationPeerGrant, groupID int64, slug string) *db.FederationPeerGrant {
 	var candidates []db.FederationPeerGrant
 	for _, grant := range grants {
 		if _, known := federationPeerSlugs[grant.Slug]; !known {
