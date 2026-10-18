@@ -21,6 +21,7 @@ import {
 } from './terminals-tab.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
+import { remoteSessionAgents } from './remote-session-status.js';
 
 const html = htm.bind(h);
 
@@ -32,6 +33,10 @@ const POLL_MS = 5000;
 const SETTLE_MS = 1200;
 const STALE_SECONDS = 60 * 60;
 const PEER_AGENT_ID = /^agt_[A-Za-z0-9]{4,64}$/;
+// A peer that refuses its listing (it does not trust this node unrestricted)
+// is asked again only after this long: each ask costs it a peer-view stream.
+const PEER_REFUSED_BACKOFF_MS = 5 * 60 * 1000;
+const REFUSED = Symbol('refused');
 
 export const backgroundTerminals = signal([]);
 
@@ -62,11 +67,11 @@ export function peerBackgroundRows(rows, peer) {
 }
 
 // readListing resolves to the listing's rows, null when it could not be read
-// (keep the last good rows), or [] when the node refuses it.
+// (keep the last good rows), or REFUSED when the node refuses it.
 async function readListing(fetchImpl, path) {
   try {
     const response = await fetchImpl(path, { credentials: 'same-origin' });
-    if (response.status === 403 || response.status === 404) return [];
+    if (response.status === 403 || response.status === 404) return REFUSED;
     if (!response.ok) return null;
     const body = await response.json();
     return Array.isArray(body?.terminals) ? body.terminals : [];
@@ -80,26 +85,31 @@ async function readListing(fetchImpl, path) {
 // besides this one (backgroundPeers). Returns the stop function.
 export function startBackgroundTerminalsPoll({
   fetchImpl = globalThis.__tclaudeRemoteNode?.localFetch || ((...args) => fetch(...args)),
-  intervalMs = POLL_MS, doc = globalThis.document, peers = () => [],
+  intervalMs = POLL_MS, doc = globalThis.document, peers = () => [], now = () => Date.now(),
 } = {}) {
   let stopped = false;
   let inflight = false;
+  let again = false;
   let local = [];
   const remote = new Map();
+  const refusedUntil = new Map();
   const read = async () => {
-    if (stopped || inflight || doc?.hidden) return;
+    if (stopped || doc?.hidden) return;
+    // A read asked for mid-poll (a scope change) runs once this one is done.
+    if (inflight) { again = true; return; }
     inflight = true;
     try {
-      const nodes = peers() || [];
+      const nodes = (peers() || []).filter((peer) => !(refusedUntil.get(peer.id) > now()));
       const [own, ...theirs] = await Promise.all([
         readListing(fetchImpl, BACKGROUND_TERMINALS_PATH),
         ...nodes.map((peer) => readListing(fetchImpl, `/api/peer/${encodeURIComponent(peer.id)}/background-terminals`)),
       ]);
       // A failed read keeps that node's last good rows; the next tick retries.
-      if (own) local = own;
+      if (own && own !== REFUSED) local = own;
       const next = new Map();
       nodes.forEach((peer, i) => {
-        const rows = theirs[i] ? peerBackgroundRows(theirs[i], peer) : remote.get(peer.id);
+        if (theirs[i] === REFUSED) refusedUntil.set(peer.id, now() + PEER_REFUSED_BACKOFF_MS);
+        const rows = theirs[i] === REFUSED ? [] : theirs[i] ? peerBackgroundRows(theirs[i], peer) : remote.get(peer.id);
         if (rows) next.set(peer.id, rows);
       });
       remote.clear();
@@ -111,6 +121,7 @@ export function startBackgroundTerminalsPoll({
       }
     } finally {
       inflight = false;
+      if (again) { again = false; void read(); }
     }
   };
   const timer = setInterval(read, intervalMs);
@@ -168,7 +179,8 @@ function selectorOf(row) {
 // before the next listing.
 function rowView(row, snapshotValue) {
   const selector = selectorOf(row);
-  const status = selector ? terminalTabStatus({ label: row.label, seed: { agent: selector } }, snapshotValue) : null;
+  const seed = row.node ? { remote: { peer: row.node.id, agent: row.agent_id } } : { agent: selector };
+  const status = selector ? terminalTabStatus({ label: row.label, seed }, snapshotValue, remoteSessionAgents.value) : null;
   const title = status?.agent?.title || row.label || row.tmux_session;
   let label = title;
   if (row.kind === 'shell') label = `shell · ${title}${row.which && row.which !== 'current' ? ` (${row.which})` : ''}`;

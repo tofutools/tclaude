@@ -177,6 +177,11 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   assert.deepEqual(requests, ['/api/background-terminals', '/api/peer/inst_forge/background-terminals', '/api/peer/inst_lab/background-terminals']);
   assert.deepEqual(bg.backgroundTerminals.value.map((row) => row.key), ['window:agt_bg', 'peer:inst_forge:agt_scout'],
     'this node\'s rows, then the peer\'s agents; a peer that refuses adds none');
+  requests.length = 0;
+  bg.refreshBackgroundTerminals();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(requests, ['/api/background-terminals', '/api/peer/inst_forge/background-terminals'],
+    'a refusing peer is not asked again on the next read');
 
   const opened = [];
   await bg.attachBackgroundTerminal(bg.backgroundTerminals.value[1], null, { openRemote: async (args) => { opened.push(args); return { key: 'remote' }; } });
