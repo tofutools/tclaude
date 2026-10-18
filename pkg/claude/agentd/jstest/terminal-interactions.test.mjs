@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
-	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
+	isAgentTerminalPath, isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
+	terminalPathToken, transferFiles,
 	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
 	visibleLocalFileLinkProvider,
 	visibleLocalFileLinks,
@@ -766,6 +767,130 @@ test('a remote terminal links visible paths only while the live view holds the p
     assert.equal(statuses.at(-1), 'blocked unsafe link', 'a remote path is never percent-decoded');
     viewer = '';
     assert.deepEqual(linksAt(), [], 'the view closed: links go');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('arbitrary files paste only into agent terminals, local or remote', () => {
+  assert.equal(isAgentTerminalPath('/api/open-window-ws/agt_1'), true);
+  assert.equal(isAgentTerminalPath('/api/spawn-focus-ws/label'), true);
+  assert.equal(isAgentTerminalPath('/api/federation/terminal?peer=bob&agent=agt_1&mode=interactive'), true);
+  assert.equal(isAgentTerminalPath('/api/federation/terminal?peer=bob&group=team&shell=group&mode=interactive'), false);
+  assert.equal(isAgentTerminalPath('/api/federation/terminal?peer=bob&group=team&shell=start&agent=agt_1&mode=interactive'), false);
+  assert.equal(isAgentTerminalPath('/api/term-ws/agt_1?which=current'), false);
+  assert.equal(isAgentTerminalPath('/api/group-term-ws/team'), false);
+});
+
+test('pasted paths are quoted only when a name needs it', () => {
+  assert.equal(terminalPathToken('/tmp/a/report-1.md'), '/tmp/a/report-1.md');
+  assert.equal(terminalPathToken('/tmp/a/my file.md'), "'/tmp/a/my file.md'");
+  assert.equal(terminalPathToken("/tmp/a/it's.md"), "'/tmp/a/it'\\''s.md'");
+});
+
+function fakeFile(name, type, size = 3) { return { name, type, size }; }
+function fileItem(file, directory = false) {
+  return { kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => ({ isDirectory: directory }) };
+}
+
+test('a transfer keeps every file for agents, images only for shells, and skips folders', () => {
+  const notes = fakeFile('notes.md', 'text/markdown');
+  const shot = fakeFile('image.png', 'image/png');
+  const gif = fakeFile('anim.gif', 'image/gif');
+  const folder = fakeFile('src', '', 0);
+  const dt = {
+    items: [fileItem(notes), fileItem(shot), fileItem(gif), fileItem(folder, true)],
+    files: [notes, shot, gif, folder],
+  };
+  assert.deepEqual(transferFiles(dt, true), { files: [notes, shot, gif], unsupported: false, folders: true });
+  assert.deepEqual(transferFiles(dt, false), { files: [shot], unsupported: true, folders: true });
+});
+
+function dropEvent(dt) {
+  const event = {
+    dataTransfer: { types: ['Files'], dropEffect: 'none', ...dt },
+    prevented: false,
+    preventDefault() { this.prevented = true; },
+    stopPropagation() {},
+  };
+  return event;
+}
+
+test('dropping files on an agent terminal uploads them and types their paths', async () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const pasted = [];
+  harness.term.paste = (text) => pasted.push(text);
+  const requests = [];
+  const interactions = attachTerminalInteractions({
+    term: harness.term, host: harness.host,
+    terminalPath: '/api/open-window-ws/agt_1',
+    fetchImpl: async (url, init) => {
+      requests.push({ url, names: init.body.getAll('file').map(f => f.name) });
+      return { ok: true, json: async () => ({ files: [{ path: '/att/x/notes.md' }, { path: '/att/x/my shot.png' }] }) };
+    },
+  });
+  try {
+    const over = dropEvent({});
+    harness.host.dispatch('dragover', over);
+    assert.equal(over.prevented, true);
+    assert.equal(over.dataTransfer.dropEffect, 'copy');
+    const notes = new File(['# n'], 'notes.md', { type: 'text/markdown' });
+    const shot = new File(['png'], 'my shot.png', { type: 'image/png' });
+    const drop = dropEvent({ items: [fileItem(notes), fileItem(shot)], files: [notes, shot] });
+    harness.host.dispatch('drop', drop);
+    assert.equal(drop.prevented, true, 'the browser must not open the dropped file');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(requests, [{
+      url: `/api/terminal-attachments?terminal=${encodeURIComponent('/api/open-window-ws/agt_1')}`,
+      names: ['notes.md', 'my shot.png'],
+    }]);
+    assert.deepEqual(pasted, ["/att/x/notes.md '/att/x/my shot.png' "]);
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('a shell terminal refuses file drops without uploading', () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  let fetched = false;
+  const interactions = attachTerminalInteractions({
+    term: harness.term, host: harness.host,
+    terminalPath: '/api/group-term-ws/team',
+    fetchImpl: async () => { fetched = true; },
+  });
+  try {
+    const over = dropEvent({});
+    harness.host.dispatch('dragover', over);
+    assert.equal(over.prevented, true, 'claimed so the browser cannot navigate to the file');
+    assert.equal(over.dataTransfer.dropEffect, 'none');
+    const notes = new File(['# n'], 'notes.md', { type: 'text/markdown' });
+    harness.host.dispatch('drop', dropEvent({ items: [fileItem(notes)], files: [notes] }));
+    assert.equal(fetched, false);
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('a remote node without file paste gets a concise version hint', async () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const statuses = [];
+  const interactions = attachTerminalInteractions({
+    term: harness.term, host: harness.host,
+    setStatus: (s) => statuses.push(s),
+    terminalPath: '/api/federation/terminal?peer=bob&agent=agt_1&mode=interactive',
+    fetchImpl: async () => ({
+      ok: false, status: 415,
+      text: async () => JSON.stringify({ code: 'image', error: 'only PNG, JPEG and WebP images with matching MIME type are accepted' }),
+    }),
+  });
+  try {
+    const notes = new File(['# n'], 'notes.md', { type: 'text/markdown' });
+    harness.host.dispatch('drop', dropEvent({ items: [fileItem(notes)], files: [notes] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(statuses.at(-1), 'file paste failed: remote node accepts images only (it may need a newer tclaude)');
   } finally {
     interactions.dispose();
   }

@@ -3,9 +3,12 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +35,9 @@ type uploadPart struct {
 	field    string // form field name; "" defaults to "file"
 	filename string
 	data     []byte
+	// contentType is the part's declared MIME type; "" leaves the
+	// application/octet-stream default.
+	contentType string
 }
 
 // newSpawnAttachUpload builds an authed multipart POST to the upload endpoint
@@ -46,7 +52,18 @@ func newSpawnAttachUpload(t *testing.T, parts []uploadPart) *http.Request {
 		if field == "" {
 			field = "file"
 		}
-		fw, err := mw.CreateFormFile(field, p.filename)
+		var (
+			fw  io.Writer
+			err error
+		)
+		if p.contentType == "" {
+			fw, err = mw.CreateFormFile(field, p.filename)
+		} else {
+			header := textproto.MIMEHeader{}
+			header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": field, "filename": p.filename}))
+			header.Set("Content-Type", p.contentType)
+			fw, err = mw.CreatePart(header)
+		}
 		require.NoError(t, err)
 		_, err = fw.Write(p.data)
 		require.NoError(t, err)
