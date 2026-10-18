@@ -1043,9 +1043,11 @@ machine. After submit, a toast follows the request until the peer decides.
 Every dialog follows one rule for what another node keeps. Its operator's
 own controls (a member's group ownership and permissions, a clone's ownership
 and worktree, retire's worktree deletion) work where that node trusts you
-unrestricted and are locked with a 🔒 reason elsewhere. Profiles are created on a node's own dashboard: on another node, the spawn
-dialog's **Save as profile…** and a group picker's **＋ new profile…** show
-locked rather than refusing with a toast. In the palette, commands that only
+unrestricted and are locked with a 🔒 reason elsewhere. On another node, the
+spawn dialog's **Save as profile…** opens the profile editor with a **Save on**
+choice: that node (under unrestricted trust or `node.spawn.profiles.create`,
+which saves it operator-only) or this one. A group picker's **＋ new
+profile…** stays locked there. In the palette, commands that only
 unrestricted trust reaches (Snapshots…, Announce to all live agents…) show
 disabled with that reason on any other peer. Controls that only
 work on this machine (the folder picker, the saved prompts picker in group

@@ -5035,3 +5035,37 @@ test("another node's snapshot and export actions reach it, and its files come th
     'POST /api/paf/publish +file',
   ], "forge's library on forge; its files shared and published from here");
 });
+
+test('a profile from another node\'s spawn dialog saves on the node picked in Save on', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-actions.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const posts = []; const saved = []; const notes = [];
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    posts.push([String(url), init.method || 'GET', init.body ? JSON.parse(init.body) : null]);
+    return { ok: true, status: 201, json: async () => ({}), text: async () => '{}' };
+  };
+  t.after(() => { globalThis.fetch = prevFetch; });
+  const state = createManagementState();
+  const actions = createManagementActions({ state, confirm: async () => true, notify: (m) => notes.push(m), profileAPI: { loadProfiles: async () => [], createProfile: async () => { throw new Error('saved on the page node'); } } });
+  state.openDialog({
+    kind: 'profile-editor', seed: { name: 'fast', harness: 'claude' }, catalog, sandboxImpl,
+    options: { editExisting: false, onSaved: (name, node) => saved.push([name, node]), nodes: [{ id: 'inst_forge0001', name: 'forge', operatorOnly: true }, { id: '', name: 'this node', operatorOnly: false }] },
+  });
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  const saveOn = host.querySelector('#profile-editor-save-on');
+  assert.deepEqual([...saveOn.options].map((option) => option.textContent), ['forge', 'this node']);
+  assert.match(host.querySelector('#profile-editor-save-on-hint').textContent, /forge saves it as operator-only/);
+  const name = host.querySelector('#profile-editor-name'); name.value = 'fast'; name.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  await waitForCondition(harness, () => saved.length === 1, `the profile saves: ${state.error.value}`);
+  const post = posts.find(([, method]) => method === 'POST');
+  assert.equal(post[0], '/api/peer/inst_forge0001/spawn-profiles');
+  assert.equal(post[2].name, 'fast');
+  assert.deepEqual(saved, [['fast', 'inst_forge0001']]);
+  assert.match(notes.join('\n'), /profile created on forge: fast/);
+});

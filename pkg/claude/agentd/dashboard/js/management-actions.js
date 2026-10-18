@@ -896,6 +896,16 @@ export function createManagementActions({
       } else if (original && options?.editExisting !== false) {
         await profiles.updateProfile(original.name, payload);
         notify(`profile updated: ${draft.name.trim()}`);
+      } else if (options?.node && !isPageNode(options.node)) {
+        // The spawn dialog's "Save on" another node (profile-save-nodes.js).
+        const response = await nodeFetch(options.node)('/api/spawn-profiles', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+        announceNodeChanged(options.node);
+        notify(`profile created on ${options.nodeName || 'that node'}: ${draft.name.trim()}`);
       } else {
         await profiles.createProfile(payload);
         notify(`profile created: ${draft.name.trim()}`);
@@ -903,7 +913,7 @@ export function createManagementActions({
       const saved = draft.name.trim();
       state.closeDialog();
       if (!options?.local) await load('profiles');
-      options?.onSaved?.(saved);
+      options?.onSaved?.(saved, options?.node || '');
       return true;
     } catch (error) {
       state.error.value = error.message || String(error);

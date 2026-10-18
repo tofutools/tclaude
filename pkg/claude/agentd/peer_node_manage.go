@@ -19,6 +19,11 @@ const (
 	// default spawn profile and global sandbox profile, choosing among the
 	// profiles this node already has. Instance-wide.
 	PermNodeSpawnDefaultsManage = "node.spawn.defaults.manage"
+	// PermNodeSpawnProfilesCreate lets a peer save a new spawn profile on
+	// this node (the spawn dialog's "Save as profile…"). Instance-wide. A
+	// restricted peer's profile is saved operator-only, so it never opens
+	// a launch setting the peer's spawn grants keep closed.
+	PermNodeSpawnProfilesCreate = "node.spawn.profiles.create"
 	// PermNodeGroupsCreate lets a peer create plain groups on this node.
 	// Instance-wide. A restricted peer's group carries no launch settings
 	// (directory, environment, profile, repository clone); unrestricted trust
@@ -33,6 +38,7 @@ func addPeerNodeManageRules(rules map[string]peerViewRule) {
 	for _, pattern := range []string{"PUT /api/sandbox-profile-default", "DELETE /api/sandbox-profile-default"} {
 		rules[pattern] = peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage, write: servePeerGrantedWrite(dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))}
 	}
+	rules["POST /api/spawn-profiles"] = peerViewRule{feature: "spawn.profiles.create", requires: PermNodeSpawnProfilesCreate, write: servePeerProfileCreate}
 	rules["POST /api/groups"] = peerViewRule{feature: "groups.create", requires: PermNodeGroupsCreate, write: servePeerGroupCreate}
 	// A template's team and a clone's members spawn on this node with its
 	// launch settings: only unrestricted trust holds these.
@@ -61,6 +67,31 @@ func servePeerGrantedWrite(next http.HandlerFunc) func(http.ResponseWriter, *htt
 		}
 		next(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 	}
+}
+
+// servePeerProfileCreate saves a new spawn profile for a peer holding
+// node.spawn.profiles.create. A restricted peer's profile is operator-only:
+// a profile carries roles, permissions, environment and sandbox modes, and
+// a peer allowed to pick any profile (groups.members.spawn.profile) must not
+// reach those through one it wrote itself. This node's operator can lift it.
+func servePeerProfileCreate(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !v.allows(rule, 0) {
+		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
+		return
+	}
+	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		var body map[string]json.RawMessage
+		if err != nil || json.Unmarshal(raw, &body) != nil || body == nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "expected a JSON object")
+			return
+		}
+		body["operator_only"] = json.RawMessage("true")
+		raw, _ = json.Marshal(body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		r.ContentLength = int64(len(raw))
+	}
+	dashboardSpawnProfilesRoute(handleSpawnProfiles)(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 }
 
 // peerGroupCreateFields are what a restricted peer may set on a new group:
