@@ -11,7 +11,7 @@ import (
 func TestHumanMessages_InsertListCount(t *testing.T) {
 	setupTestDB(t)
 
-	msgs, err := ListHumanMessages()
+	msgs, err := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs, "no messages to start")
 	n, err := CountUnreadHumanMessages()
@@ -32,7 +32,7 @@ func TestHumanMessages_InsertListCount(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, id1, id2)
 
-	msgs, err = ListHumanMessages()
+	msgs, err = ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 2)
 	// Newest first.
@@ -73,7 +73,7 @@ func TestHumanMessages_WholeSecondBoundaryOrdering(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	msgs, err := ListHumanMessages()
+	msgs, err := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 2)
 	assert.Equal(t, newerID, msgs[0].ID, "newer (fractional) message must come first")
@@ -116,7 +116,7 @@ func TestHumanMessages_MarkRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, changed, "first mark transitions the row")
 
-	msgs, _ := ListHumanMessages()
+	msgs, _ := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	firstReadAt := msgs[0].ReadAt
 	require.False(t, firstReadAt.IsZero(), "read_at is stamped")
@@ -125,7 +125,7 @@ func TestHumanMessages_MarkRead(t *testing.T) {
 	changed, err = MarkHumanMessageRead(id)
 	require.NoError(t, err)
 	assert.False(t, changed, "re-marking an already-read message is a no-op")
-	msgs, _ = ListHumanMessages()
+	msgs, _ = ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	assert.Equal(t, firstReadAt, msgs[0].ReadAt, "read timestamp stays stable")
 
 	// A non-existent id is a no-op, not an error.
@@ -156,7 +156,7 @@ func TestHumanMessages_MarkUnread(t *testing.T) {
 	changed, err = MarkHumanMessageUnread(id)
 	require.NoError(t, err)
 	assert.True(t, changed, "a read message transitions back to unread")
-	msgs, _ := ListHumanMessages()
+	msgs, _ := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	assert.False(t, msgs[0].IsRead(), "read_at is cleared")
 	n, _ = CountUnreadHumanMessages()
@@ -193,7 +193,7 @@ func TestHumanMessages_MarkAllReadAndClear(t *testing.T) {
 	deleted, err := DeleteReadHumanMessages()
 	require.NoError(t, err)
 	assert.Equal(t, 3, deleted)
-	msgs, _ := ListHumanMessages()
+	msgs, _ := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "fresh", msgs[0].Body)
 	assert.False(t, msgs[0].IsRead())
@@ -215,7 +215,7 @@ func TestHumanMessages_DeleteOne(t *testing.T) {
 	removed, err := DeleteHumanMessage(unreadID)
 	require.NoError(t, err)
 	assert.True(t, removed, "an existing message is removed")
-	msgs, _ := ListHumanMessages()
+	msgs, _ := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "read", msgs[0].Body, "only the deleted message is gone")
 
@@ -228,7 +228,7 @@ func TestHumanMessages_DeleteOne(t *testing.T) {
 	removed, err = DeleteHumanMessage(readID)
 	require.NoError(t, err)
 	assert.True(t, removed)
-	msgs, _ = ListHumanMessages()
+	msgs, _ = ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	assert.Empty(t, msgs)
 }
 
@@ -266,4 +266,61 @@ func TestHumanMessages_AttachmentInsertAndClearReturnExactPaths(t *testing.T) {
 	assert.Equal(t, int64(1), sender)
 	assert.Equal(t, 1, totalCount)
 	assert.Equal(t, 1, senderCount)
+}
+
+func TestHumanMessages_PagedFiltersRunInSQL(t *testing.T) {
+	setupTestDB(t)
+	var ids []int64
+	insert := func(m *HumanMessage) {
+		id, err := InsertHumanMessage(m)
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	// Stored before its conversation was linked to an actor: from_agent is
+	// blank and the sender filter must heal it through agent_conversations.
+	insert(&HumanMessage{FromConv: "conv-legacy", FromTitle: "legacy", Subject: "old row"})
+	agentID, _, err := EnsureAgentForConv("conv-legacy", "test")
+	require.NoError(t, err)
+	require.NoError(t, LinkConvToAgent("conv-new", agentID, ConvRoleGeneration, "test"))
+	insert(&HumanMessage{FromConv: "conv-new", Subject: "Deploy DONE"})
+	insert(&HumanMessage{FromAgent: "agt_other", Subject: "help with " + agentID, Body: "mentions"}) // mention only
+	insert(&HumanMessage{GroupName: FederationHumanGroup("peer-1"), Subject: "operator mail"})       // remote operator
+
+	page := func(f HumanMessageFilter) []int64 {
+		rows, err := ListHumanMessagesPage(f, 0, 10)
+		require.NoError(t, err)
+		var out []int64
+		for _, m := range rows {
+			out = append(out, m.ID)
+		}
+		return out
+	}
+	assert.Equal(t, []int64{ids[1], ids[0]}, page(HumanMessageFilter{Sender: agentID}),
+		"sender matches the stable id and heals legacy rows, but not a mention")
+	assert.Equal(t, []int64{ids[1]}, page(HumanMessageFilter{Query: "deploy done"}), "search is case-insensitive")
+	assert.Equal(t, []int64{ids[2], ids[1], ids[0]}, page(HumanMessageFilter{Query: agentID}),
+		"search covers the healed sender id and the body")
+	assert.Equal(t, []int64{ids[3]}, page(HumanMessageFilter{SenderlessGroupPrefix: FederationHumanGroup("")}))
+
+	_, err = MarkHumanMessageRead(ids[1])
+	require.NoError(t, err)
+	assert.Equal(t, []int64{ids[3], ids[2], ids[0]}, page(HumanMessageFilter{Unread: true}))
+
+	n, err := CountHumanMessages(HumanMessageFilter{Sender: agentID})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	pos, err := HumanMessagePosition(HumanMessageFilter{Sender: agentID}, ids[0])
+	require.NoError(t, err)
+	assert.Equal(t, 1, pos, "the legacy row is second newest among the sender's")
+	pos, err = HumanMessagePosition(HumanMessageFilter{Sender: agentID}, ids[2])
+	require.NoError(t, err)
+	assert.Equal(t, -1, pos, "a row outside the filter has no position")
+
+	rows, err := ListHumanMessagesPage(HumanMessageFilter{}, 1, 2)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, ids[2], rows[0].ID, "offset skips the newest")
+	rows, err = ListHumanMessagesPage(HumanMessageFilter{}, 0, 1_000_000)
+	require.NoError(t, err)
+	assert.Len(t, rows, 4, "an oversized limit is clamped, not unbounded")
 }

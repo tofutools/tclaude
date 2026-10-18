@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -724,12 +723,8 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 // humanMailboxMessages maps the human_messages snapshot into the shared
 // mailboxMessage shape so the reading pane renders uniformly. Every row
 // is direction "in" — agents notifying the human.
-func humanMailboxMessages() []mailboxMessage {
-	all, err := db.ListHumanMessages()
-	if err != nil {
-		slog.Warn("mailbox: list human messages failed", "error", err)
-	}
-	rows, _ := humanMessageViews(all)
+func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
+	rows, _ := humanMessageViews(page)
 	out := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, mailboxMessage{
@@ -1069,68 +1064,46 @@ func withRetiredParticipants(members, participants []string, retiredSet map[stri
 	return out
 }
 
-// humanMailboxPage paginates the human_messages folder. The snapshot is
-// small (the operator's own notifications) and lives in a different
-// table with its own builder, so search + paging happen in Go over the
-// already-loaded, newest-first snapshot rather than in SQL.
+// humanMailboxPage paginates the human_messages folder in SQL: the sender
+// filter, search, count and page window all run in the query, so only the
+// served page is read.
 //
 // focus, when it names a row in the filtered list, overrides page with the
 // page holding that row: the snapshot only carries recent and unread
 // notifications, so the browser cannot compute an older row's page itself.
 func humanMailboxPage(q, sender string, page, pageSize int, focus int64) mailboxPage {
-	all := humanMailboxMessages()
-	filtered := all
+	filter := db.HumanMessageFilter{Sender: sender, Query: q}
+	empty := mailboxPage{Messages: []mailboxMessage{}, Page: 1, PageSize: pageSize}
+	total, err := db.CountHumanMessages(filter)
+	if err != nil {
+		slog.Warn("mailbox: count human messages failed", "error", err)
+		return empty
+	}
+	totalUnfiltered := total
 	if sender != "" || q != "" {
-		lq := strings.ToLower(q)
-		filtered = make([]mailboxMessage, 0, len(all))
-		for _, m := range all {
-			if humanMsgMatchesSender(m, sender) && (q == "" || humanMsgMatchesSearch(m, lq)) {
-				filtered = append(filtered, m)
-			}
+		if totalUnfiltered, err = db.CountHumanMessages(db.HumanMessageFilter{}); err != nil {
+			slog.Warn("mailbox: count human messages failed", "error", err)
+			return empty
 		}
 	}
-	total := len(filtered)
 	if focus > 0 {
-		if i := slices.IndexFunc(filtered, func(m mailboxMessage) bool { return m.ID == focus }); i >= 0 {
+		if i, err := db.HumanMessagePosition(filter, focus); err == nil && i >= 0 {
 			page = i/pageSize + 1
 		}
 	}
 	servedPage, offset := clampOffset(page, pageSize, total)
-	end := offset + pageSize
-	if offset > total {
-		offset = total
-	}
-	if end > total {
-		end = total
+	rows, err := db.ListHumanMessagesPage(filter, offset, pageSize)
+	if err != nil {
+		slog.Warn("mailbox: list human messages failed", "error", err)
+		return empty
 	}
 	return mailboxPage{
-		Messages:        filtered[offset:end],
+		Messages:        humanMailboxMessages(rows),
 		Page:            servedPage,
 		PageSize:        pageSize,
 		Total:           total,
-		TotalUnfiltered: len(all),
+		TotalUnfiltered: totalUnfiltered,
 	}
-}
-
-// humanMsgMatchesSender is the structured half of a Groups-row notification
-// deep link. Unlike q, it is exact and sender-only: another agent mentioning
-// this id in a subject/body must never leak into the focused result.
-func humanMsgMatchesSender(m mailboxMessage, sender string) bool {
-	return sender == "" || m.FromAgent == sender || (m.FromAgent == "" && m.FromConv == sender)
-}
-
-// humanMsgMatchesSearch reports whether a human notification matches the
-// (already-lowercased) query, over the same fields the agent-folder
-// search covers that a human message has: sender title / stable agent-id /
-// conv-id, group,
-// subject, body.
-func humanMsgMatchesSearch(m mailboxMessage, lq string) bool {
-	for _, s := range []string{m.FromTitle, m.FromAgent, m.FromConv, m.Group, m.Subject, m.Body} {
-		if s != "" && strings.Contains(strings.ToLower(s), lq) {
-			return true
-		}
-	}
-	return false
 }
 
 // handleDashboardMailboxDelete serves POST /api/mailbox/delete — hard-

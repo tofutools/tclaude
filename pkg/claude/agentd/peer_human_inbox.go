@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -102,23 +101,12 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		writeError(w, 403, "permission", "requires unrestricted trust ("+rule.requires+")")
 		return
 	}
-	all, err := db.ListHumanMessages()
+	// Only unread notifications: the remote inbox is a to-do list, and an
+	// unread one must not drop behind newer read ones.
+	all, err := db.ListHumanMessagesPage(db.HumanMessageFilter{Unread: true}, 0, peerHumanInboxMessages)
 	if err != nil {
 		writeError(w, 500, "io", "list human messages")
 		return
-	}
-	// Only unread notifications: the remote inbox is a to-do list, and an
-	// unread one must not drop behind newer read ones.
-	unread := all[:0]
-	for _, m := range all {
-		if m.ReadAt.IsZero() {
-			unread = append(unread, m)
-		}
-	}
-	all = unread
-	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
-	if len(all) > peerHumanInboxMessages {
-		all = all[:peerHumanInboxMessages]
 	}
 	messages := make([]peerHumanMessage, 0, len(all))
 	for _, m := range all {

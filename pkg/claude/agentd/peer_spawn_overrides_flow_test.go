@@ -101,7 +101,7 @@ func TestPeerSpawnRequestWithoutGrantWaitsForOperator(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, db.FedSpawnPending, req.Status)
 	require.True(t, req.Overrides.Empty())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	found := false
 	for _, m := range msgs {

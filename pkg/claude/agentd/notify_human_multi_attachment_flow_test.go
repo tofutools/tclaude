@@ -80,7 +80,7 @@ func TestNotifyHuman_SeparateAttachmentsEachDownloadable(t *testing.T) {
 	assert.Equal(t, []string{"world.png", "guild.png", "notes.md"}, delivered.Attachments)
 	assert.Equal(t, "world.png", delivered.Attachment, "the legacy field names the first file")
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Len(t, msgs[0].Attachments, 3, "one message carries every published file")
@@ -151,7 +151,7 @@ func TestNotifyHuman_PreviewableIsPerFileAndByteVerified(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Len(t, msgs[0].Attachments, 3)
@@ -198,7 +198,7 @@ func TestNotifyHuman_AttachmentDownloadIsScopedToItsMessage(t *testing.T) {
 	require.Equal(t, http.StatusOK, postNotifyAttachment(t, f.Mux, conv, "first.txt", "one").Code)
 	require.Equal(t, http.StatusOK, postNotifyAttachment(t, f.Mux, conv, "second.txt", "two").Code)
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 2)
 	other := msgs[0].Attachments[0]
@@ -239,7 +239,7 @@ func TestNotifyHuman_MalformedMultipartIsARequestError(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs, "a refused upload publishes no message")
 }

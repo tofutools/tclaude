@@ -30,7 +30,7 @@ func TestSpendLimits_CrossingAndDurableDedup(t *testing.T) {
 		for _, limit := range snap.Usage.SpendLimits {
 			assert.Equal(t, threshold, limit.Threshold)
 		}
-		messages, err := db.ListHumanMessages()
+		messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 		require.NoError(t, err)
 		assert.Len(t, messages, count)
 	}
@@ -43,7 +43,7 @@ func TestSpendLimits_CrossingAndDurableDedup(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 	db.Close() // reopen the same database, as after a daemon restart
 	check(100, 4)
-	messages, err := db.ListHumanMessages()
+	messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	for _, m := range messages {
 		assert.Contains(t, m.Body, "Estimates from the cost ledger")
@@ -70,7 +70,7 @@ func TestSpendLimits_JumpPastLimit(t *testing.T) {
 	snap := fetchSnapshotOnly(t, mux)
 	require.Len(t, snap.Usage.SpendLimits, 1)
 	assert.Equal(t, 100, snap.Usage.SpendLimits[0].Threshold)
-	messages, err := db.ListHumanMessages()
+	messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Len(t, messages, 2) // one for each crossed threshold
 }

@@ -565,7 +565,7 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 
 	// A SUCCESSFUL deferred delete is silent — it matches the optimistic
 	// toast, so it must NOT post a Messages-tab notice (no success noise).
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs, "a successful deferred delete must not post a human notice; got %+v", msgs)
 }
@@ -602,7 +602,7 @@ func TestRetire_DeleteWorktreeDeferredKeepsUnmergedBranchWithNotice(t *testing.T
 
 	assert.True(t, fw.wasRemoved(cwd), "the worktree directory is removed")
 	assert.NotContains(t, fw.branchesRemoved(), "feat", "the unmerged branch is kept")
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.NotEmpty(t, msgs, "the kept branch is reported to the human")
 	assert.Contains(t, msgs[0].Subject, "unmerged branch")
@@ -639,7 +639,7 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 	exitPane()
 	agentd.WaitForBackgroundForTest()
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.NotEmpty(t, msgs, "a FAILED deferred delete must post a human notice")
 	assert.Contains(t, msgs[0].Subject, "failed")
@@ -693,7 +693,7 @@ func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 		"retire must converge: an agent that ignores /exit gets escalated, not waited out")
 	assert.True(t, fw.wasRemoved(cwd),
 		"the promised worktree delete must happen once escalation ends the pane")
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs,
 		"a delete that was kept as promised stays silent; got %+v", msgs)
@@ -761,7 +761,7 @@ func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 
 	assert.False(t, fw.wasRemoved(cwd),
 		"a worktree must never be removed under a still-running agent")
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.NotEmpty(t, msgs, "a kept (agent-never-exited) outcome must post a human notice")
 	assert.Contains(t, msgs[0].Subject, "kept")

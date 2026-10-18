@@ -33,7 +33,7 @@ func TestHumanMessageExport_MarkdownAndZip(t *testing.T) {
 		{"gone.txt", "text/plain", "reclaimed"},
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Len(t, msgs[0].Attachments, 3)

@@ -72,22 +72,3 @@ func TestGroupsNotificationReaderDoesNotMarkReadOnOpen(t *testing.T) {
 		t.Error("the quick reader no longer exposes the operator-driven read toggle")
 	}
 }
-
-func TestHumanNotificationSearchMatchesStableAgentID(t *testing.T) {
-	message := mailboxMessage{
-		FromAgent: "agt_stable_sender",
-		FromConv:  "old-conversation-generation",
-		FromTitle: "old title",
-	}
-	if !humanMsgMatchesSearch(message, "agt_stable_sender") {
-		t.Fatal("human notification search must match the rotation-stable sender id")
-	}
-	other := mailboxMessage{
-		FromAgent: "agt_other",
-		Subject:   "help with agt_stable_sender",
-		Body:      "agt_stable_sender asked for this",
-	}
-	if humanMsgMatchesSender(other, "agt_stable_sender") {
-		t.Fatal("structured sender filter must not match another agent mentioning the id")
-	}
-}

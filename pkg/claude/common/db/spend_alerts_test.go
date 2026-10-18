@@ -24,7 +24,7 @@ func TestSpendAlerts_ConcurrentClaims(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Equal(t, int32(1), inserted.Load())
-	messages, err := ListHumanMessages()
+	messages, err := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Len(t, messages, 1)
 }

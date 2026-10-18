@@ -428,7 +428,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 				"a worktree whose branch moved after confirmation must survive")
 			assert.Empty(t, fw.branchesRemoved(),
 				"feature-b was never confirmed and must never be force-deleted")
-			msgs, err := db.ListHumanMessages()
+			msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 			require.NoError(t, err)
 			require.NotEmpty(t, msgs, "a deferred keep must tell the human the promise was not kept")
 			assert.Contains(t, msgs[0].Subject, "kept")
@@ -475,7 +475,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			assert.False(t, fw.wasRemoved(cwd),
 				"a live agent's cwd must never be removed out from under it")
 			assert.Empty(t, fw.branchesRemoved())
-			msgs, err := db.ListHumanMessages()
+			msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 			require.NoError(t, err)
 			require.NotEmpty(t, msgs)
 			assert.Contains(t, msgs[0].Subject, "kept")
