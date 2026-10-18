@@ -14,8 +14,9 @@ function requireController() {
 }
 
 // node names another node's agent (the fused Groups view); blank is the page's.
-export function openCloneAgentDialog(conv, label, cwd, node = '') {
-  return requireController().openClone({ conv, label, cwd, node });
+// group is the group the clone joins as well (a Ctrl/Cmd drop onto it).
+export function openCloneAgentDialog(conv, label, cwd, node = '', group = '') {
+  return requireController().openClone({ conv, label, cwd, node, group });
 }
 
 // node names another node's agent (the fused Groups view); blank is the page's.

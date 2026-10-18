@@ -722,8 +722,8 @@ tclaude federation grant alice groups.members.spawn.effort --scope group=builder
 tclaude federation grant alice groups.members.spawn.all --scope group=builders
 ```
 
-- An unrestricted peer may choose all of them: its remote spawn dialog works
-  like a local one.
+- An unrestricted peer may choose all of them; its spawn is not a request at
+  all but the regular local dialog run against your node (see below).
 - `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort`, `.profile`,
   `.roles`, `.sandbox`, `.permissions`, `.environment`, `.owner`,
   `.features`, `.prompts` and `.worktree` each open one;
@@ -820,8 +820,16 @@ handlers when it shares them, and stay greyed with the reason otherwise.
 
 #### The remote spawn dialog
 
-Spawning into a peer's group (from its per-node page or the fused Groups view)
-opens the regular spawn dialog with every control in place. Controls the
+Under unrestricted trust a spawn into a peer's group (from its per-node page or
+the fused Groups view) is the local spawn dialog run against that peer: the
+peer's groups, profiles, saved prompts (with **Manage…** editing the peer's
+library), worktrees, queue and spawn route, as on its own dashboard. Only
+what works on this machine stays here: **Browse…** for directories (type the
+path), and saving a profile from the fused view. Auto focus opens the new
+agent in the browser terminal instead of a window on the peer's desktop.
+
+Otherwise spawning into a peer's group sends a spawn request: it opens the
+regular spawn dialog with every control in place. Controls the
 request cannot carry are disabled, and hovering one says why; the spawn still
 works, the peer applying its own value there.
 
@@ -4174,6 +4182,14 @@ text, anything else is an opaque download, and the response is a sandboxed,
 notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
+
+Agent mail's files cross the same way, under the same grant:
+`GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)
+reads the peer's `GET /api/agent-attachment-chunk?message=&attachment=&offset=&length=`.
+An agent-mail attachment id is a stored attachment's row id, or for a file a
+startup briefing lists under "Attached files" the negative of its position in
+that list. The peer serves a briefing file only from inside its own
+spawn-attachment directories.
 
 Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped

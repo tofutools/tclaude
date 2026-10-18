@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import { remoteSpawnContext } from './agent-spawn-remote.js';
+import { nodeSnapshot } from './node-api.js';
 
 export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
   const dialog = signal(null);
@@ -9,10 +10,18 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
     // A remote spawn (agent-spawn-remote.js) opens on the peer's own groups
     // and harnesses, never this node's.
     const remote = options?.remote || null;
-    const snapshot = (remote ? remoteSpawnContext(remote.snapshot, remote.options, remote.catalogs, remote.group) : getSnapshot()) || {};
+    // A spawn on another node (options.target: {node, nodeId, name}) opens on
+    // that node's snapshot: its groups, harnesses, roles and sandboxes.
+    const target = !remote && options?.target ? Object.freeze({
+      node: String(options.target.node || ''), nodeId: String(options.target.nodeId || ''), name: String(options.target.name || ''),
+    }) : null;
+    const snapshot = (remote
+      ? remoteSpawnContext(remote.snapshot, remote.options, remote.catalogs, remote.group)
+      : (target && (options.target.snapshot || nodeSnapshot(target.node))) || getSnapshot()) || {};
     const currentGeneration = ++generation;
     dialog.value = Object.freeze({
       remote,
+      target,
       key: `agent-spawn:${currentGeneration}`,
       generation: currentGeneration,
       options: Object.freeze({

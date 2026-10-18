@@ -36,6 +36,12 @@ import (
 //	    peer's bytes never run on this origin: the type is narrowed to media
 //	    and plain text, and the response is a sandboxed download.
 //
+//	GET /api/agent-attachment-chunk?message=N&attachment=M&offset=O[&length=L]
+//	GET /api/peer-agent-attachments/{node}/{message}/{attachment}
+//	    the same pair for agent mail's files, under the same grant (the one
+//	    that shows the peer its mailboxes). M is an agent-mail attachment id:
+//	    negative for a startup briefing's listed file (briefingFileID).
+//
 //	GET /api/human-message-export-parts?message=N
 //	    the reader's "⤓ download" as JSON: the Markdown the export route would
 //	    serve, alone and as a zip's message.md, with the files the zip holds.
@@ -75,6 +81,8 @@ func registerDashboardPeerAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/human-attachment-chunk", handleDashboardHumanAttachmentChunk)
 	mux.HandleFunc("GET /api/human-message-export-parts", handleDashboardHumanMessageExportParts)
 	mux.HandleFunc("GET /api/peer-attachments/{node}/{message}/{attachment}", handleDashboardPeerAttachment)
+	mux.HandleFunc("GET /api/agent-attachment-chunk", handleDashboardAgentAttachmentChunk)
+	mux.HandleFunc("GET /api/peer-agent-attachments/{node}/{message}/{attachment}", handleDashboardPeerAgentAttachment)
 	mux.HandleFunc("GET /api/peer-message-export/{node}/{message}", handleDashboardPeerMessageExport)
 }
 
@@ -115,6 +123,30 @@ func handleDashboardHumanMessageExportParts(w http.ResponseWriter, r *http.Reque
 }
 
 func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request) {
+	serveAttachmentChunk(w, r, false, func(messageID, attachmentID int64) (*os.File, *db.HumanMessageAttachment, int, error) {
+		a, err := resolveHumanMessageAttachment(messageID, attachmentID)
+		if err != nil {
+			return nil, nil, http.StatusInternalServerError, errors.New("read attachment")
+		}
+		if a == nil {
+			return nil, nil, http.StatusNotFound, errors.New("no such attachment")
+		}
+		f, err := os.Open(a.StoragePath)
+		if err != nil {
+			return nil, nil, http.StatusGone, errors.New("this attachment is no longer available")
+		}
+		return f, a, http.StatusOK, nil
+	})
+}
+
+func handleDashboardAgentAttachmentChunk(w http.ResponseWriter, r *http.Request) {
+	serveAttachmentChunk(w, r, true, openAgentMessageAttachment)
+}
+
+// serveAttachmentChunk answers one chunk request for a file open resolves.
+// negativeIDs admits agent mail's briefing-file ids.
+func serveAttachmentChunk(w http.ResponseWriter, r *http.Request, negativeIDs bool,
+	open func(messageID, attachmentID int64) (*os.File, *db.HumanMessageAttachment, int, error)) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
@@ -122,7 +154,7 @@ func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request)
 	messageID, err1 := strconv.ParseInt(q.Get("message"), 10, 64)
 	attachmentID, err2 := strconv.ParseInt(q.Get("attachment"), 10, 64)
 	offset, err3 := strconv.ParseInt(q.Get("offset"), 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil || messageID <= 0 || attachmentID <= 0 || offset < 0 {
+	if err1 != nil || err2 != nil || err3 != nil || messageID <= 0 || attachmentID == 0 || (attachmentID < 0 && !negativeIDs) || offset < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "message, attachment and offset are required")
 		return
 	}
@@ -135,18 +167,9 @@ func handleDashboardHumanAttachmentChunk(w http.ResponseWriter, r *http.Request)
 		}
 		length = min(length, n)
 	}
-	a, err := resolveHumanMessageAttachment(messageID, attachmentID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "read attachment")
-		return
-	}
-	if a == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no such attachment")
-		return
-	}
-	f, err := os.Open(a.StoragePath)
-	if err != nil {
-		writeError(w, http.StatusGone, "missing", "this attachment is no longer available")
+	f, a, status, err := open(messageID, attachmentID)
+	if f == nil {
+		writeError(w, status, "attachment", err.Error())
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -238,13 +261,23 @@ func (p *peerAttachmentReader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-// fetchPeerAttachmentChunk asks a peer for one chunk over the peer view:
-// up to length bytes from offset (length 0: only the file's metadata).
+// fetchPeerAttachmentChunk asks a peer for one chunk of a notification's file
+// over the peer view: up to length bytes from offset (length 0: only the
+// file's metadata).
 var fetchPeerAttachmentChunk = func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
+	return fetchPeerChunk(ctx, peer, "/api/human-attachment-chunk", messageID, attachmentID, offset, length)
+}
+
+// fetchPeerAgentAttachmentChunk is fetchPeerAttachmentChunk for agent mail.
+var fetchPeerAgentAttachmentChunk = func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
+	return fetchPeerChunk(ctx, peer, "/api/agent-attachment-chunk", messageID, attachmentID, offset, length)
+}
+
+func fetchPeerChunk(ctx context.Context, peer *db.FederationPeer, route string, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
 	q := url.Values{"message": {strconv.FormatInt(messageID, 10)}, "attachment": {strconv.FormatInt(attachmentID, 10)},
 		"offset": {strconv.FormatInt(offset, 10)}, "length": {strconv.FormatInt(length, 10)}}
 	var c humanAttachmentChunk
-	if status, err := peerViewGetJSON(ctx, peer, "/api/human-attachment-chunk?"+q.Encode(), &c); err != nil {
+	if status, err := peerViewGetJSON(ctx, peer, route+"?"+q.Encode(), &c); err != nil {
 		return humanAttachmentChunk{}, status, err
 	}
 	if c.Size < 0 || int64(len(c.Data)) > c.Size-c.Offset {
@@ -388,6 +421,21 @@ func handleDashboardPeerMessageExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDashboardPeerAttachment(w http.ResponseWriter, r *http.Request) {
+	servePeerAttachment(w, r, false, func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
+		return fetchPeerAttachmentChunk(ctx, peer, messageID, attachmentID, offset, length)
+	})
+}
+
+func handleDashboardPeerAgentAttachment(w http.ResponseWriter, r *http.Request) {
+	servePeerAttachment(w, r, true, func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error) {
+		return fetchPeerAgentAttachmentChunk(ctx, peer, messageID, attachmentID, offset, length)
+	})
+}
+
+// servePeerAttachment serves a trusted peer's file read chunk by chunk.
+// negativeIDs admits agent mail's briefing-file ids.
+func servePeerAttachment(w http.ResponseWriter, r *http.Request, negativeIDs bool,
+	fetchChunk func(ctx context.Context, peer *db.FederationPeer, messageID, attachmentID, offset, length int64) (humanAttachmentChunk, int, error)) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
@@ -396,8 +444,8 @@ func handleDashboardPeerAttachment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
 	messageID, err1 := strconv.ParseInt(r.PathValue("message"), 10, 64)
 	attachmentID, err2 := strconv.ParseInt(r.PathValue("attachment"), 10, 64)
-	if err1 != nil || err2 != nil || messageID <= 0 || attachmentID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "message and attachment must be positive IDs")
+	if err1 != nil || err2 != nil || messageID <= 0 || attachmentID == 0 || (attachmentID < 0 && !negativeIDs) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "message and attachment must be valid IDs")
 		return
 	}
 	peer, err := db.GetFederationPeer(r.PathValue("node"))
@@ -414,7 +462,7 @@ func handleDashboardPeerAttachment(w http.ResponseWriter, r *http.Request) {
 	fetch := func(offset, length int64) (humanAttachmentChunk, int, error) {
 		ctx, cancel := context.WithTimeout(r.Context(), fedPeerViewTimeout)
 		defer cancel()
-		return fetchPeerAttachmentChunk(ctx, peer, messageID, attachmentID, offset, length)
+		return fetchChunk(ctx, peer, messageID, attachmentID, offset, length)
 	}
 	// The first exchange carries only the name, type and size: a HEAD or a
 	// Range request then fetches just the chunks it reads.

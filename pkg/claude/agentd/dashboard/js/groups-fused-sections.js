@@ -2,7 +2,8 @@
 // Both lens's Agents and Processes, and the Subgroups section every lens
 // draws. A choice is remembered per group and section; with none, Agents
 // shows, Processes shows only when it has something in it, and Subgroups
-// shows only when the group has no members of its own, so a quiet group
+// shows only when there are some and the group has no members of its own
+// (see groups-list.js), so a quiet group
 // costs one line rather than a block.
 
 import { dashPrefs } from './prefs.js';

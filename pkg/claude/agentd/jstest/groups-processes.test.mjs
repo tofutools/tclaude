@@ -460,10 +460,12 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   const section = (el, name) => el.querySelector(`:scope > .subtable > [data-fused-section="${name}"]`);
   const head = (el, name) => section(el, name).querySelector(':scope > .gf-section-head');
   const lead = section(fe, 'agents').querySelector('table > thead > tr > th:first-child');
-  for (const act of ['spawn-agent', 'create-subgroup', 'power-on-group', 'shutdown-group']) {
+  for (const act of ['spawn-agent', 'power-on-group', 'shutdown-group']) {
     assert.ok(lead.querySelector(`.gf-table-actions [data-act="${act}"]`), `${act} heads the member table's first column`);
     assert.equal(head(fe, 'agents').querySelector(`[data-act="${act}"]`), null, `${act} left the open Agents line`);
   }
+  assert.equal(section(fe, 'agents').querySelector('[data-act="create-subgroup"]'), null, 'create subgroup left the Agents section');
+  assert.ok(head(fe, 'subgroups').querySelector('[data-act="create-subgroup"]'), 'create subgroup heads the Subgroups line');
   const titleRow = section(fe, 'processes').querySelector('[data-process-group] > .gf-title-row');
   assert.ok(titleRow.querySelector('[data-process-start-agent="frontend-squad"]'), 'process controls head the open runs');
   assert.ok(titleRow.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
@@ -514,7 +516,7 @@ for (const status of ['idle', 'unavailable']) {
     const { root, details } = await mountFocus(t, { fused: true, sourceOptions: { status, context: null } });
     assert.ok(details('frontend-squad').querySelector('table'), 'members show');
     assert.ok(details('frontend-squad').querySelector('[data-act="spawn-agent"]'));
-    assert.equal(root.querySelector('[data-fused-section]'), null, 'no sections without runs');
+    assert.equal(root.querySelector('[data-fused-section]:not([data-fused-section="subgroups"])'), null, 'no Agents/Processes sections without runs');
     assert.equal(root.querySelector('.groups-processes-placeholder'), null);
   });
 }

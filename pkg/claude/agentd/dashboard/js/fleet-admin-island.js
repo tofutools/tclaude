@@ -99,6 +99,16 @@ function localAgents(snap) {
   return [...seen.values()].sort((x, y) => x.label.localeCompare(y.label));
 }
 
+// openHolderPermissions opens the permission editor of a peer-reach holder
+// (a local group or agent), where the setup guide sends the operator to add
+// more peer-scoped grants than its messaging default.
+async function openHolderPermissions(holder, snap) {
+  const m = await import('./message-access-dialog-controller.js');
+  if (holder.kind !== 'group') return m.openPermEditModal(holder.conv || holder.agent, holder.label);
+  const g = (snap?.groups || []).find((x) => x.name === holder.group);
+  return m.openGroupPermEditor(holder.group, g?.permissions || [], g?.permission_scopes || {}, g?.unreadable_permission_scopes || [], g?.owner_scopes || {});
+}
+
 // setLevel changes a trusted peer's level. peers/trust by instance ID would
 // also re-trust a peer untrusted elsewhere since the last poll, so the level
 // change re-reads the status first and refuses for a peer no longer trusted.
@@ -471,7 +481,7 @@ export function FleetAdmin({
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
-          onOpenGrants=${openGrants} />`
+          onOpenGrants=${openGrants} onPermissions=${(holder) => openHolderPermissions(holder, snapshot.value).catch((e) => toast(`Permissions: ${errText(e)}`, true))} />`
       : sub.id === 'peers'
       ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} proposable=${proposable} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}

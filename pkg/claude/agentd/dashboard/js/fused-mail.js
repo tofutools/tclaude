@@ -31,7 +31,7 @@ import { enterFirstRow, focusRow, leaveFirstRow, movePaneFocus, moveRowSelection
 import { messageKind, msgPreview } from './mail-labels.js';
 import { messageDeleteEndpoint } from './mail-state.js';
 import {
-  FolderCaret, FolderRow, HeaderRow, HumanAttachment, LoadMore, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
@@ -273,7 +273,7 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
     const target = replyTarget(item);
     const human = item.kind === 'human';
     const headers = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
-      <${MessageBody} message=${item} />`;
+      <${MessageBody} message=${item} agentMail=${!human} />`;
     if (human) {
       // The same buttons as each node's own Messages. This node's are run by
       // the page's action handlers, and the view re-reads once they act. A
@@ -287,12 +287,13 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
       return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
         onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
-        <${HumanAttachment} message=${item} />
+        <${MessageAttachments} message=${item} />
         <${HumanActions} message=${item} senderLive=${peer ? undefined : senderOnline(item.from_agent, item.from_conv, snapshot.value)}
           harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;
     }
     body = html`${headers}
+      <${AgentMailAttachments} message=${item} />
       ${target && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
     buttons = html`
         <button type="button" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
@@ -371,10 +372,10 @@ export function FusedMail({
   const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig ? entries[n.id].page : null));
   const total = pages.reduce((s, p) => s + (p?.total || 0), 0);
   const totalUnfiltered = pages.reduce((s, p) => s + (p?.totalUnfiltered || 0), 0);
-  // A peer's notification files load through this node's peer attachment route.
+  // A peer's message files load through this node's peer attachment routes.
   const pageMessages = (node, i) => {
     const list = pages[i]?.messages || [];
-    return isHuman && !node.local ? list.map((m) => withPeerAttachments(node.id, m)) : list;
+    return node.local ? list : list.map((m) => withPeerAttachments(node.id, m, !isHuman));
   };
   const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pageMessages(node, i) })));
   const pageCount = isAccess ? 1 : merged ? mergedPages(total, pageSize) : Math.max(1, Math.ceil(total / pageSize));
