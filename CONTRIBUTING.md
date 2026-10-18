@@ -266,6 +266,36 @@ and do not participate in island cleanup. Moving one behind a component requires
 an explicit lifecycle adapter and behavioural coverage for cleanup, focus/input,
 and reconnect or animation state.
 
+### Lists that span fleet nodes
+
+A fleet view that pages one list across several nodes (the fused Messages
+folders are the reference) queries each node on demand and never copies a
+peer's rows into this node's database, so revoking a peer cuts its rows off
+at once. The parts:
+
+- **Server:** the node's list endpoint is bounded and paged in SQL and accepts
+  a keyset cursor, `before=<id>`: the page of rows older than that id in the
+  node's own newest-first order. It reports `total` (the filtered count),
+  `has_more`, and `cursor_paging: true`, so a client can tell it from an older
+  build that ignores the parameter. See `mailboxWindow` in
+  `pkg/claude/agentd/dashboard_mailbox.go`.
+- **Client:** `dashboard/js/fleet-pager.js` turns per-node pages into one
+  merged page. A page is a cursor vector (one cursor per node). Page p reads
+  one page from each node below its cursor, merges the streams by taking the
+  newest head each time, and keeps the first page's worth. The last row taken
+  from each node becomes that node's cursor for page p+1. No row is skipped
+  or shown twice, a page reads at most nodes × page size rows, and polling
+  re-reads the same vector. Counts are the nodes' summed totals.
+- **Navigation:** Prev uses the vector kept for the earlier page. There is no
+  random access, so a deeper page (Last, or a page restored from the URL) is
+  reached by walking forward one read per page (`walkTarget`).
+- **Mixed versions:** a node without `cursor_paging` is read newest-first to
+  the depth the page needs and cut at the cursor client-side
+  (`legacyStream`), which stays exact down to the server's largest page.
+
+Reuse `fleet-pager.js` for any other merged list rather than reading every
+node down to the page shown.
+
 ## Writing flow tests
 
 Flow tests in `pkg/claude/agentd/*_flow_test.go` are regular Go tests

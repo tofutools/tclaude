@@ -4289,6 +4289,9 @@ type MailboxFilter struct {
 	ScopeGroupID   int64
 	Text           string
 	ExcludeRetired bool
+	// BeforeID is a keyset cursor: only rows older than it (id < BeforeID).
+	// Zero means no cursor. Callers counting a folder's total leave it unset.
+	BeforeID int64
 }
 
 // HasSearch reports whether f carries a search predicate beyond its folder
@@ -4407,6 +4410,10 @@ func (f MailboxFilter) where() (string, []any) {
 		clauses = append(clauses,
 			"(NOT "+fmt.Sprintf(retiredConvExistsSQL, "from_conv")+" OR id IN ("+handoffIDsSQL+"))",
 			"NOT "+fmt.Sprintf(retiredConvExistsSQL, "to_conv"))
+	}
+	if f.BeforeID > 0 {
+		clauses = append(clauses, "id < ?")
+		args = append(args, f.BeforeID)
 	}
 	if len(clauses) == 0 {
 		return "", nil

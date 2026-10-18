@@ -14,11 +14,7 @@ test('the model routes reads and actions to the owning node and merges newest fi
   assert.equal(m.rosterURL(self), '/api/mailboxes?agents_limit=100&hide_prev_gens=1');
   assert.equal(m.rosterURL(forge, { limit: 200, q: 'bot', retired: true, empty: true, prevGens: true, expand: ['ops', 'qa'], memberLimits: { qa: 200 } }),
     '/api/peer/inst_forge/mailboxes?agents_limit=200&q=bot&include_retired=1&include_empty=1&expand=ops&expand=qa&members_limit=200%3Aqa');
-  assert.equal(m.mergedDepth(2, 50), 100);
-  assert.equal(m.mergedDepth(9, 100), 500, 'never deeper than the largest page a node serves');
-  assert.equal(m.mergedPages(120, 50), 3);
-  assert.equal(m.mergedPages(5000, 200), 2, 'a merge stops where its depth does');
-  assert.equal(m.mergedPages(0, 50), 1);
+  assert.equal(m.folderURL(forge, 'all', { before: 42 }), '/api/peer/inst_forge/mailbox?id=all&page=1&page_size=50&before=42', 'a merged page reads below its cursor');
   assert.equal(m.ownerRoutes(self).decide('7'), '/api/access-requests/7/decision');
   assert.equal(m.ownerRoutes(forge).decide('7'), '/api/peer/inst_forge/human-inbox/access/7');
   assert.equal(m.ownerRoutes(lab).message, '/api/peer/inst_lab/operator-message');
@@ -288,7 +284,7 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   calls.length = 0;
   await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
   await once();
-  assert.ok(calls.includes('/api/peer/inst_forge/mailbox?id=all&page=1&page_size=100'), 'page 2 of a merge reads each node down to it');
+  assert.ok(calls.includes('/api/peer/inst_forge/mailbox?id=all&page=1&page_size=100'), 'a node without cursor paging is read down to page 2 and cut at the cursor');
   assert.deepEqual(subjects(), ['forge 5', 'desk 5', 'forge 4', 'desk 4', 'forge 3', 'desk 3', 'forge 2', 'desk 2', 'forge 1', 'desk 1']);
 
   // forge's chip: only forge's mail, read with forge's own pages.
@@ -471,4 +467,105 @@ test('opening a notification marks it read on its node wherever that node allows
   await open('inst_self/human/5');
   assert.deepEqual(posts.slice(2), ['POST /api/human-messages/read {"id":5}'], 'this node\'s own, through its own route');
   await mounted.unmount(); state.dispose();
+});
+
+test('a merged folder pages every node with its keyset cursor, beside a node on an older build', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'restricted' },
+  ] });
+  const timers = fakeTimers(); const calls = [];
+  // desk 53, forge 41 and lab (an older build: no before=, no cursor_paging)
+  // 31 messages, clocks interleaved.
+  const counts = { desk: 53, forge: 41, lab: 31 };
+  const mail = (node, i) => ({ id: i, from_agent: 'agt_abcd1234', from_title: `${node}-bot`, subject: `${node} ${i}`, body: 'b', read: false,
+    created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i * 3 + { desk: 0, forge: 1, lab: 2 }[node])).toISOString() });
+  const box = Object.fromEntries(Object.entries(counts).map(([n, k]) => [n, Array.from({ length: k }, (_, i) => mail(n, i + 1)).reverse()]));
+  const respond = async (url) => {
+    calls.push(url);
+    const node = url.startsWith('/api/peer/inst_forge/') ? 'forge' : url.startsWith('/api/peer/inst_lab/') ? 'lab' : 'desk';
+    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: counts[node] }], agents_total: 0 });
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    const params = new URL(url, 'http://x').searchParams;
+    const size = Number(params.get('page_size')); const page = Number(params.get('page'));
+    if (node === 'lab') return ok({ messages: box.lab.slice((page - 1) * size, page * size), total: counts.lab, total_unfiltered: counts.lab });
+    const before = Number(params.get('before') || 0);
+    const below = before ? box[node].filter((m) => m.id < before) : box[node];
+    return ok({ messages: below.slice(0, size), total: counts[node], total_unfiltered: counts[node], has_more: below.length > size, cursor_paging: true });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { for (let i = 0; i < 3; i++) { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); } };
+  const click = (el) => harness.act(() => harness.fireEvent(el, 'click'));
+  const subjects = () => [...c.querySelectorAll('.mail-row-subject')].map((s) => s.textContent);
+  const pos = () => c.querySelector('#fused-mail-pager .mail-pager-pos')?.textContent || '';
+  await once();
+
+  assert.equal(c.querySelector('#fused-mail-filter-count').textContent, '125 messages', 'counts are the nodes\' summed totals');
+  assert.match(pos(), /Page 1 \/ 3/);
+  const seen = [...subjects()];
+  for (let i = 0; i < 10 && !c.querySelector('#fused-mail-pager button[title="Next page"]').disabled; i++) {
+    calls.length = 0;
+    await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
+    await once();
+    assert.ok(calls.some((u) => /^\/api\/peer\/inst_forge\/mailbox\?id=all&page=1&page_size=50&before=\d+/.test(u)) || !box.forge.length,
+      'a cursor node reads one page below its cursor');
+    assert.ok(!calls.some((u) => /inst_forge\/mailbox\?.*page_size=(?!50&)/.test(u)), 'never deeper than one page');
+    seen.push(...subjects());
+  }
+  assert.equal(seen.length, 125, 'the walk shows every message');
+  assert.equal(new Set(seen).size, 125, 'none twice');
+  const ts = seen.map((s) => { const [n, i] = s.split(' '); return Date.parse(mail(n, Number(i)).created_at); });
+  assert.deepEqual(ts, [...ts].sort((a, b) => b - a), 'newest first across nodes');
+  assert.match(pos(), /Page 3 \/ 3/);
+
+  // First page, then Last: a walk forward over the known cursor vectors.
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once();
+  assert.match(pos(), /Page 1 \//);
+  await click(c.querySelector('#fused-mail-pager button[title="Last page"]'));
+  await once();
+  assert.match(pos(), /Page 3 \/ 3/);
+  assert.deepEqual(subjects(), seen.slice(100));
+
+  // New mail moves page 1 under a poll; Next starts right below the page as
+  // it now reads, so nothing slips between the pages.
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once();
+  for (let i = 0; i < 3; i++) box.forge.unshift(mail('forge', 100 + i));
+  counts.forge += 3;
+  await once(); await once();
+  const first = subjects();
+  assert.equal(first[0], 'forge 102', 'the poll shows the new mail');
+  await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
+  await once();
+  const all = [...box.desk, ...box.forge, ...box.lab].map((m) => m.subject)
+    .sort((a, b) => { const t = (s) => { const [n, i] = s.split(' '); return Date.parse(mail(n, Number(i)).created_at); }; return t(b) - t(a); });
+  assert.deepEqual([...first, ...subjects()], all.slice(0, 100), 'page 2 follows page 1 as it reads now');
+
+  // A node that was down when the pages were walked has no cursor in them;
+  // when it comes back the walk restarts, so its rows do not repeat.
+  const peers = (labOnline) => state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: labOnline, level: 'restricted' },
+  ] });
+  await harness.act(() => peers(false));
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once(); await once();
+  await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
+  await once();
+  assert.match(pos(), /Page 2 \//);
+  await harness.act(() => peers(true));
+  await once(); await once(); await once();
+  const page2 = subjects();
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once();
+  const page1 = subjects();
+  assert.ok(page2.some((s) => s.startsWith('lab ')), 'lab rows are back');
+  assert.deepEqual(page2.filter((s) => page1.includes(s)), [], 'no row on both pages');
+  await mounted.unmount();
 });

@@ -321,6 +321,9 @@ type HumanMessageFilter struct {
 	Query                 string
 	Unread                bool
 	SenderlessGroupPrefix string
+	// BeforeID is a keyset cursor: only rows older than it (id < BeforeID).
+	// Zero means no cursor. Callers counting a folder's total leave it unset.
+	BeforeID int64
 }
 
 // humanMessageEffectiveAgent is a row's stable sender id, healing a legacy
@@ -355,6 +358,10 @@ func (f HumanMessageFilter) where() (string, []any) {
 	if f.SenderlessGroupPrefix != "" {
 		clauses = append(clauses, `from_conv = '' AND substr(group_name, 1, ?) = ?`)
 		args = append(args, len(f.SenderlessGroupPrefix), f.SenderlessGroupPrefix)
+	}
+	if f.BeforeID > 0 {
+		clauses = append(clauses, `id < ?`)
+		args = append(args, f.BeforeID)
 	}
 	if len(clauses) == 0 {
 		return "", nil

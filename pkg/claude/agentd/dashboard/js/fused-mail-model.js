@@ -34,10 +34,8 @@ export const ROSTER_PAGE = 100;
 // maxRosterAgents); past it a list is narrowed with the filter, not paged.
 export const ROSTER_MAX = 2000;
 
-// MAX_DEPTH is how far back a merged folder reaches on each node: page N
-// of a folder spanning several nodes needs each node's newest N pages, read
-// as one page of up to the server's largest page size (maxMailboxPageSize).
-export const MAX_DEPTH = 500;
+// MAX_PAGE_SIZE is the largest page a node serves (maxMailboxPageSize).
+export const MAX_PAGE_SIZE = 500;
 
 // rosterURL addresses one page of a node's sidebar roster: the filter, the
 // scope toggles, and which groups to embed members for (expand, with a
@@ -58,22 +56,15 @@ export function rosterURL(node, {
   return `${apiBase(node)}mailboxes?${params}`;
 }
 
-// folderURL addresses one node's page of a folder.
-export function folderURL(node, folder, { q = '', page = 1, size = PAGE_SIZE, retired = false } = {}) {
-  const params = new URLSearchParams({ id: folder, page: String(page), page_size: String(Math.min(MAX_DEPTH, size)) });
+// folderURL addresses one node's page of a folder: an offset page, or with
+// before the page of rows older than that message id (a merged folder's
+// keyset cursor, see fleet-pager.js).
+export function folderURL(node, folder, { q = '', page = 1, size = PAGE_SIZE, retired = false, before = 0 } = {}) {
+  const params = new URLSearchParams({ id: folder, page: String(page), page_size: String(Math.min(MAX_PAGE_SIZE, size)) });
+  if (before) params.set('before', String(before));
   if (q) params.set('q', q);
   if (retired) params.set('include_retired', '1');
   return `${apiBase(node)}mailbox?${params}`;
-}
-
-// mergedDepth is how many of each node's newest messages page `page` of a
-// merged folder needs, and mergedPages how many pages the merge can show:
-// the pages the totals add up to, but never deeper than MAX_DEPTH.
-export function mergedDepth(page, pageSize) {
-  return Math.min(MAX_DEPTH, page * pageSize);
-}
-export function mergedPages(total, pageSize) {
-  return Math.max(1, Math.min(Math.ceil(total / pageSize), Math.floor(MAX_DEPTH / pageSize)));
 }
 
 // ownerRoutes are a node's action routes. This node's human notifications

@@ -1909,3 +1909,75 @@ func TestDashboardSnapshot_HumanMessagesBoundedFolderFocus(t *testing.T) {
 	assert.Equal(t, ids[0], page.Messages[0].ID)
 	assert.Equal(t, 1, page.Total)
 }
+
+// Scenario: a fleet client pages a folder with the before=<id> keyset
+// cursor. Pages never overlap or skip a row, has_more ends the walk, and a
+// newer message arriving mid-walk only lands on the first page.
+func TestDashboardMailbox_BeforeCursorWalksFoldersWithoutGaps(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+	for i := range 7 {
+		_, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: mbAlice, Body: fmt.Sprintf("extra %d", i)})
+		require.NoError(t, err)
+		_, err = db.InsertAgentMessage(&db.AgentMessage{FromConv: mbAlice, ToConv: mbBob, Body: fmt.Sprintf("agent extra %d", i)})
+		require.NoError(t, err)
+	}
+	type cursorPage struct {
+		Messages     []mailboxMsg `json:"messages"`
+		Total        int          `json:"total"`
+		HasMore      bool         `json:"has_more"`
+		CursorPaging bool         `json:"cursor_paging"`
+	}
+	read := func(folder string, before int64) cursorPage {
+		u := "/api/mailbox?id=" + url.QueryEscape(folder) + "&page_size=3"
+		if before > 0 {
+			u += "&before=" + strconv.FormatInt(before, 10)
+		}
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, u, nil))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var p cursorPage
+		testharness.DecodeJSON(t, rec, &p)
+		require.True(t, p.CursorPaging)
+		return p
+	}
+	walk := func(folder string) (ids []int64, total int) {
+		var before int64
+		for range 20 {
+			p := read(folder, before)
+			total = p.Total
+			for _, m := range p.Messages {
+				ids = append(ids, m.ID)
+			}
+			if !p.HasMore {
+				return ids, total
+			}
+			before = p.Messages[len(p.Messages)-1].ID
+			if folder == "human" && len(ids) == 3 {
+				// Arrives after the first page was read: it must not shift
+				// the rest of the walk.
+				_, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: mbBob, Body: "late arrival"})
+				require.NoError(t, err)
+			}
+		}
+		t.Fatalf("%s: walk did not terminate", folder)
+		return nil, 0
+	}
+	for _, folder := range []string{"human", "all", mbAlice} {
+		ids, total := walk(folder)
+		seen := map[int64]bool{}
+		for i, id := range ids {
+			require.False(t, seen[id], "%s: id %d served twice", folder, id)
+			seen[id] = true
+			if i > 0 {
+				require.Less(t, id, ids[i-1], "%s: newest first", folder)
+			}
+		}
+		if folder == "human" {
+			assert.Len(t, ids, 9, "the 9 notifications that existed when the walk began")
+			assert.Equal(t, 10, total, "total counts the late arrival")
+		} else {
+			assert.Greater(t, total, 3, "%s: spans several pages", folder)
+			assert.Len(t, ids, total, "%s: the walk covers the folder", folder)
+		}
+	}
+}
