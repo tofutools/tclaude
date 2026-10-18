@@ -694,6 +694,13 @@ test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come
   assert.match(forgeNow.querySelector('.list-pager-count').textContent, /101–120 of 120/);
   assert.match(forgeNow.textContent, /forge-119/);
   assert.equal(fetched.some((u) => u.startsWith('/api/retired')), false, "this node's list is not moved");
+  // A filter starts forge on its first page again, and clearing it does not
+  // bring the old page back.
+  await harness.act(() => groups.setQuery('veteran'));
+  await harness.act(() => groups.setQuery(''));
+  for (const due of timers.queue.splice(0)) await harness.act(async () => { await due.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.match(mounted.container.querySelector('details[data-group-key="inst_forge/ retired-virtual"] .list-pager-count').textContent, /1–50 of 120/);
   const home = mounted.container.querySelector('details[data-group-key="inst_self/ ungrouped-virtual"]');
   assert.equal(home.dataset.dndTargetUngrouped, '1', "this node's Ungrouped takes drops");
   assert.equal(mounted.container.querySelector('details[data-group-key="inst_forge/ ungrouped-virtual"]').dataset.dndTargetUngrouped, undefined);

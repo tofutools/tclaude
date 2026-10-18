@@ -277,9 +277,11 @@ export const PEER_LISTS_POLL_MS = 15000;
 // peer's list. A new filter or page size starts every peer on its first page.
 export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = globalThis }) {
   const [lists, setLists] = useState({});
-  const resetKey = `${query}|${kinds.map((kind) => `${kind}=${listLimit(kind)}`).join(',')}`;
+  const resetKey = `${query}|${PEER_LIST_KINDS.map((kind) => `${kind}=${listLimit(kind)}`).join(',')}`;
   const [offsets, setOffsets] = useState({ key: resetKey, by: {} });
   const by = offsets.key === resetKey ? offsets.by : {};
+  // The reset sticks: undoing the filter does not bring the old pages back.
+  useEffect(() => { if (offsets.key !== resetKey) setOffsets({ key: resetKey, by: {} }); }, [resetKey]);
   const offset = (id, kind) => by[id]?.[kind] || 0;
   const key = `${peers.join(',')}|${resetKey}|${JSON.stringify(by)}`;
   useEffect(() => {
@@ -296,7 +298,7 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
           if (response.ok) {
             const body = await response.json();
             got[kind] = body?.rows || [];
-            paging[kind] = { node: id, offset: body?.offset ?? offset(id, kind), limit, total: body?.total ?? got[kind].length, total_unfiltered: body?.total_unfiltered ?? 0 };
+            paging[kind] = { node: id, key: resetKey, offset: body?.offset ?? offset(id, kind), limit, total: body?.total ?? got[kind].length, total_unfiltered: body?.total_unfiltered ?? 0 };
           }
         } catch (_) { /* keeps the last page */ }
       }));
@@ -311,8 +313,11 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
     return () => { live = false; timers.clearTimeout(timer); };
   }, [active, key]);
   const page = (id, kind, action) => {
-    const next = pagerOffset(action, offset(id, kind), listLimit(kind), lists[id]?.paging?.[kind]?.total || 0);
-    if (next === offset(id, kind)) return false;
+    // Page from the window on screen: the server clamps a stale offset.
+    const shown = lists[id]?.paging?.[kind];
+    const cur = shown?.key === resetKey ? shown.offset : offset(id, kind);
+    const next = pagerOffset(action, cur, listLimit(kind), shown?.total || 0);
+    if (next === cur) return false;
     setOffsets({ key: resetKey, by: { ...by, [id]: { ...by[id], [kind]: next } } });
     return true;
   };
