@@ -6,6 +6,8 @@ import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
 import { AUTO_MEMORY_TRI_OPTIONS, PEER_MESSAGING_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
+import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
+import { effect } from '@preact/signals';
 import { grantListToOverrides, grantOverridesToList } from './permission-grant-list.js';
 import {
   sandboxAccessAxes,
@@ -2300,6 +2302,31 @@ function SandboxDiffSlot({ state }) {
   return html`<${SandboxDiffModal} model=${model} close=${state.cancelSandboxDiff} />`;
 }
 
+// routeManagers puts the open library manager in the URL (?manage=<kind>), so
+// opening one is a history step, Back closes it, and a link opens it. An
+// editor or other dialog open on top keeps the manager open under Back.
+function routeManagers(state, actions) {
+  const shown = () => (state.templateManager.value ? 'templates' : state.manager.value || '');
+  const unregister = registerOverlayRoute('manage', {
+    value: () => shown(),
+    restore: (want) => {
+      if (state.dialog.peek() || state.templateDialog.peek()) return;
+      if (want !== 'templates') state.closeTemplateManager();
+      if (!want || want === 'templates') state.closeManager();
+      if (want === 'templates') actions.openTemplateManager();
+      else if (want) void actions.openManager(want);
+    },
+  });
+  let last = shown();
+  const stop = effect(() => {
+    const next = shown();
+    if (next === last) return;
+    last = next;
+    announceOverlay({ closed: !next });
+  });
+  return () => { stop(); unregister(); };
+}
+
 function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   return html`<${TemplateManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
     <${TemplateEditorSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>
@@ -2330,6 +2357,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openAgentExport: actions.openAgentExport, openGroupExport: actions.openGroupExport, openSnapshots: actions.openSnapshots,
   };
   const unregister = registerManagementController(controller);
+  const stopRoute = routeManagers(state, actions);
   render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>` , host);
-  registerCleanup(() => { state.cancelSandboxDiff(false); unregister(); render(null, host); });
+  registerCleanup(() => { state.cancelSandboxDiff(false); stopRoute(); unregister(); render(null, host); });
 }
