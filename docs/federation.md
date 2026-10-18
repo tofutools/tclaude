@@ -2567,7 +2567,8 @@ off for good, not just for one disconnection. Use the "Offline alerts: notify |
 part-time" switch on its Fleet map card, or `nodes health --peer <name>
 --part-time` (`--always-on` undoes it). This sets only `presence: false` in the
 peer's own policy, copying the rest from the policy it followed; a peer without
-an override therefore gets one. The card then shows a "part-time" tag and a grey
+an override therefore gets one, and switching back to notify keeps that
+override rather than following the defaults again. The card then shows a "part-time" tag and a grey
 "asleep" instead of "offline". Hub-unreachable notices are unaffected. Resource and repeated-failure signals are off by default. Enabled notices use the same operator Messages inbox and desktop
 notification channel as `agent notify-human`. Identity rotation observations and
 acceptances, teleport lease loss requiring recovery, and successful backup
