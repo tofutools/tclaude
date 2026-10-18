@@ -25,8 +25,9 @@ export function openShutdownAgentDialog(agent, label = '') {
   return openTransactionDialog({ kind: 'shutdown-agent', agent, label });
 }
 
-export function openDeleteAgentDialog(agent, label = '') {
-  return openTransactionDialog({ kind: 'delete-agent', agent, label });
+// node names another node's agent (the fused Groups view); blank is the page's.
+export function openDeleteAgentDialog(agent, label = '', node = '') {
+  return openTransactionDialog({ kind: 'delete-agent', agent, label, ...(node ? { node } : {}) });
 }
 
 function deleteGroupMemberKey(member) {

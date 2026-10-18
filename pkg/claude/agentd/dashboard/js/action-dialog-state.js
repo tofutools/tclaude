@@ -58,8 +58,8 @@ export function createActionDialogState() {
     openClone({ conv, label = '', cwd = '' }) {
       return !!open({ kind: 'clone-agent', conv, label, cwd: cwd || '' });
     },
-    openReincarnate({ conv, label = '' }) {
-      return !!open({ kind: 'reincarnate-agent', conv, label });
+    openReincarnate({ conv, label = '', node = '' }) {
+      return !!open({ kind: 'reincarnate-agent', conv, label, ...(node ? { node } : {}) });
     },
     openNest({ group, node = '' }) {
       return !!open({ kind: 'nest-group', group, node });

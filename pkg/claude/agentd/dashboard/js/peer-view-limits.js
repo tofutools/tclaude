@@ -72,6 +72,8 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'clone-group': ['feature:groups.create.full'],
   'delete-group': ['feature:groups.manage.full'],
   'cleanup-group': ['feature:groups.manage.full'],
+  // Removing a member from the group: unrestricted trust only.
+  'remove-member': ['feature:agents.manage.full'],
   // Not listed, so local to their own node: links, standing orders, cron,
   // messages, templates, repositories and worktrees, windows and terminals,
   // member permissions and the auto-join default; and export, whose binary
@@ -102,6 +104,14 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],
+  // Remote access, fast mode, reincarnation and permanent delete reach what
+  // no peer grant hands out: unrestricted trust only (a feature no
+  // restricted peer shares).
+  'toggle-remote-control': ['feature:agents.manage.full'],
+  'fast-mode-set': ['feature:agents.manage.full'],
+  'fast-mode-disable': ['feature:agents.manage.full'],
+  'reincarnate': ['feature:agents.manage.full'],
+  'delete-agent': ['feature:agents.manage.full'],
 });
 
 // agentGrantHeld reports whether the peer lets an agent control act on agent
@@ -110,8 +120,10 @@ export function agentGrantHeld(act, agent, peerView) {
   const need = AGENT_GRANT_ACTS[act];
   if (!need || !agent) return false;
   if (peerView?.level === 'unrestricted') return true;
-  const held = peerView?.agents?.[agent];
-  return Array.isArray(held) && need.every((slug) => held.includes(slug));
+  const held = peerView?.agents?.[agent] || [];
+  return need.every((slug) => (slug.startsWith('feature:')
+    ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
+    : held.includes(slug)));
 }
 
 // grantHeld reports whether the peer lets a granted control run: a group's
