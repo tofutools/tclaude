@@ -136,6 +136,9 @@ test('fusing from a peer\'s page goes to this node\'s page with the set', async 
   assert.equal(state.fused.value, 'all');
   assert.deepEqual(switched, [''], 'the fused view loads as this node\'s page');
   await mounted.unmount(); state.dispose();
+  const opened = [];
+  island.openNodeView('inst_forge', { pathname: '/groups', search: '?nodes=all&wizard=1' }, (url) => opened.push(url));
+  assert.deepEqual(opened, ['/groups?wizard=1&node=inst_forge'], "opening a peer's own view leaves the fused set");
 });
 
 test('the fused URL is written in place, keeping the page\'s other parameters', async (t) => {

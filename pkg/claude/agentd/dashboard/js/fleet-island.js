@@ -52,9 +52,10 @@ function defaultSwitchNode(id, path) {
 }
 
 // openNodeView opens a node's per-node view from elsewhere in the dashboard,
-// e.g. a linked group's federation marker.
-export function openNodeView(id) {
-  defaultSwitchNode(id);
+// e.g. a linked group's federation marker. A node alone leaves any fused view
+// (a fused set is always this node's page; remote-node.js).
+export function openNodeView(id, loc = globalThis.location, assign = (url) => globalThis.location.assign(url)) {
+  assign(nodeHref(id, { pathname: loc.pathname, search: withFused(loc.search, null) }));
 }
 
 const MapGlyph = () => html`<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg>`;
@@ -301,7 +302,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
     state.setFused(value);
     writeScopeURL(value);
     // A fused view is this node's page: from a peer's page, go home with it.
-    if (value && remote) { switchNode(''); return; }
+    if (value && remote) { switchNode('', state.view.value.topLevel ? toPath({ tab: 'groups' }) : undefined); return; }
     if (state.view.value.topLevel) navigate('groups');
   };
   // The shown node's button is current while its per-node view is on screen;
