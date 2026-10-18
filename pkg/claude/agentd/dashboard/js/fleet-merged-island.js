@@ -95,31 +95,18 @@ function ownGroup(name, node) {
   return node && name.endsWith(at) ? name.slice(0, -at.length) : '';
 }
 
-// readOnlyActions stands in for the Groups actions on a peer's groups: they
-// resolve without doing anything (what a peer shares runs through its peer
-// routes instead).
-const readOnlyActions = new Proxy({}, {
-  get: (_, key) => (key === 'reportError' ? () => {} : () => Promise.resolve()),
-});
-
-// NODE_GROUP_ACTIONS are the Groups actions another node's groups run here,
-// bound to that node (createNodeGroupsActions): its group controls'
-// requests (GROUP_GRANT_ACTS) and the reads they need. Every other action on
-// such a group resolves without doing anything.
-const NODE_GROUP_ACTIONS = new Set([
-  'patchGroup', 'renameGroup', 'setGroupProfile', 'groupProfileChoices', 'openGroupAttachment',
-  'pickGroupDirectory', 'openNewGroupProfile', 'reportError',
-  // The agent controls (AGENT_GRANT_ACTS): the inline rename and the member
-  // editor, whose descriptor names the node its save goes to.
-  'renameAgent', 'openMemberEditor',
-  // The standing-orders dialog, whose descriptor names the node.
-  'openStandingOrders', 'closeStandingOrders', 'loadStandingOrders', 'setStandingOrderScope', 'openStandingOrderCreate',
-]);
+// VIEW_ACTIONS change only this browser's view of the listed groups (sort,
+// paging, pins and folds, error reports): a peer's group runs them on this
+// page under the name it is listed by (group@node), which its pins and folds
+// are kept under.
+const VIEW_ACTIONS = new Set(['sort', 'page', 'setPageSize', 'toggleQuickPin', 'toggleForceFold', 'reportError']);
 
 // createNodeGroupsActions builds the Groups actions for one node's groups in
 // this view: requests through nodeFetch (this node's daemon, or the peer
-// proxy), and a refresh that reads that node again now. The actions module
-// loads on first use (it reaches the page's controllers).
+// proxy), dialogs whose descriptors name the node, and a refresh that reads
+// that node again now. The actions module loads on first use (it reaches the
+// page's controllers). Which controls a peer's rows run is the grant table's
+// (peer-view-limits.js), not these actions'.
 export function createNodeGroupsActions({
   node, notify = shellToast, refresh = () => {}, fetchImpl, state = groupsState,
   load = () => import('./groups-actions.js'),
@@ -129,10 +116,16 @@ export function createNodeGroupsActions({
     built ||= load().then(({ createGroupsActions }) => createGroupsActions({
       state, node, notify, fetchImpl: fetchImpl || nodeFetch(node),
       refresh: async () => { announceNodeChanged(node); await refresh(); },
+      openMemberPermissions: (conv, label, target) => import('./message-access-dialog-controller.js')
+        .then(({ openPermEditModal }) => openPermEditModal(conv, label, target || node)),
     }));
     return built;
   };
-  return Object.freeze(Object.fromEntries([...NODE_GROUP_ACTIONS].map((key) => [key, (...args) => actions().then((a) => a[key](...args))])));
+  // Every Groups action, bound to node; never thenable itself.
+  return new Proxy({}, {
+    get: (_, key) => (typeof key !== 'string' || key === 'then' ? undefined
+      : (...args) => actions().then((a) => (typeof a[key] === 'function' ? a[key](...args) : undefined))),
+  });
 }
 
 // isMergedGroup tells a merged group from a merged member: both name their
@@ -142,23 +135,24 @@ const isMergedGroup = (a) => !('agent_id' in a) && !('conv_id' in a);
 // homeActions routes the Groups actions by the group (or agent) they act on: a home
 // group's go to this node's Groups actions with the group as this node names
 // it (ownOf), another node's to forNode(node) with the group under its own
-// name, or resolve without doing anything when that node has no such
-// action. A call naming no group (a sort, an error report) goes to this
-// node's actions.
+// name (its VIEW_ACTIONS to this page's, as listed), or resolve without doing
+// anything when that node cannot be addressed. A call naming no group (a
+// sort, an error report) goes to this node's actions.
 export function homeActions(live, ownOf, forNode = () => null) {
   return new Proxy({}, {
     get: (_, key) => (...args) => {
       const real = live();
       const group = args.find((a) => a && typeof a === 'object' && a.fleet_node);
+      if (group && VIEW_ACTIONS.has(key)) return real?.[key]?.(...args);
       if (group && !group.fleet_node.home) {
         const actions = forNode(group.fleet_node);
-        if (!actions || typeof actions[key] !== 'function') return readOnlyActions[key](...args);
+        if (!actions) return Promise.resolve();
         const own = (a) => (isMergedGroup(a)
           ? { ...a, name: ownGroup(a.name, a.fleet_node.name) || a.name, fleet_node: undefined }
           : { ...a, fleet_node: undefined });
         return actions[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? own(a) : a)));
       }
-      if (!real || typeof real[key] !== 'function') return readOnlyActions[key](...args);
+      if (!real || typeof real[key] !== 'function') return key === 'reportError' ? undefined : Promise.resolve();
       return real[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? (isMergedGroup(a) ? ownOf(a) : { ...a, fleet_node: undefined }) : a)));
     },
   });

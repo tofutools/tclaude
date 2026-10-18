@@ -436,8 +436,13 @@ test("another node's group controls run through actions bound to that node, as f
   assert.deepEqual(changed, ['inst_forge'], 'the fused view reads forge again now');
   assert.deepEqual((await actions.groupProfileChoices('profile', { name: 'build' })).map((c) => c.value), ['fast'], "forge's own profiles");
   assert.equal(requests.pop()[0], '/api/spawn-profiles');
-  assert.equal(actions.openAddMember, undefined, 'only the node-bound group and agent controls exist');
-  assert.equal(typeof actions.openMemberEditor, 'function', "the member editor is an agent control");
+  assert.equal(typeof actions.openAddMember, 'function', "every Groups action is bound to the node; the grant table decides what a peer's rows run");
+  assert.equal(actions.then, undefined, 'the actions are never mistaken for a promise');
+  // A peer's pins and folds are this browser's view: kept under the listed name.
+  const pins = [];
+  const viewRouted = island.homeActions(() => ({ toggleQuickPin: (g) => pins.push(g.name) }), () => null, () => forgeActions);
+  viewRouted.toggleQuickPin({ name: 'build@forge', fleet_node: { id: 'inst_forge', name: 'forge' } });
+  assert.deepEqual(pins, ['build@forge']);
 
   // The click guard lets a granted control through and stops the rest; this node's always pass.
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
