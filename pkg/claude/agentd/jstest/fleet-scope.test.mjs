@@ -42,7 +42,9 @@ test('up to four nodes get a button each; the fused dropdown ticks nodes and one
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
   const c = mounted.container;
   assert.ok(getByRole(c, 'button', { name: 'desk (this node)' }));
-  assert.ok(getByRole(c, 'button', { name: 'lab, offline, restricted peer' }));
+  const lab = getByRole(c, 'button', { name: 'lab, offline, restricted peer' });
+  assert.equal(lab.disabled, true, 'an offline peer cannot be opened');
+  assert.match(lab.title, /lab is offline: its dashboard opens again once it reconnects/);
   const fuse = getByRole(c, 'button', { name: 'Show several nodes together' });
   await harness.act(() => harness.fireEvent(fuse, 'click'));
   assert.equal(state.fused.value, 'all', 'fusing defaults to every node');
@@ -56,6 +58,11 @@ test('up to four nodes get a button each; the fused dropdown ticks nodes and one
   assert.match(c.querySelector('.node-fuse-pop').textContent, /Other tabs show one node, the primary: ⌂ desk/);
   await harness.act(() => harness.fireEvent(box('inst_self'), 'change'));
   assert.equal(state.fused.value, null, 'one ticked node is that node alone');
+  assert.deepEqual(switched, ['inst_forge']);
+  await harness.act(() => { state.setFused(['inst_self', 'inst_lab']); });
+  await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Fused view of 2 of 3 nodes/ }), 'click'));
+  await harness.act(() => harness.fireEvent(box('inst_self'), 'change'));
+  assert.deepEqual(state.fused.value, ['inst_self', 'inst_lab'], 'unticking down to an offline peer keeps the set');
   assert.deepEqual(switched, ['inst_forge']);
   await mounted.unmount(); state.dispose();
 });
@@ -91,11 +98,14 @@ test('past four nodes one dropdown names the shown node, filters as you type and
   await harness.act(() => { input.value = 're'; harness.fireEvent(input, 'input'); });
   const rows = [...c.querySelectorAll('.node-pop-row')].map((r) => r.querySelector('.node-pop-name').textContent);
   assert.deepEqual(rows, ['⌂ desk', 'render', 'review']);
-  assert.match(c.querySelector('.node-pop-row.offline').textContent, /render.*offline/);
+  const render = c.querySelector('.node-pop-row.offline');
+  assert.match(render.textContent, /render.*offline/);
+  assert.equal(render.disabled, true, 'an offline peer cannot be picked');
+  assert.match(render.title, /render is offline: its dashboard opens again/);
   assert.match(c.querySelector('.node-pop-row.sel').textContent, /review.*shown/);
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'ArrowDown' }));
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
-  assert.deepEqual(switched, ['inst_render0000']);
+  assert.deepEqual(switched, [], 'Enter on an offline row does nothing');
   await mounted.unmount(); state.dispose();
 });
 

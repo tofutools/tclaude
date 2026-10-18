@@ -112,6 +112,15 @@ function usePopover(rootRef) {
   return [open, setOpen, pos ? `top:${pos.top}px;right:${pos.right}px` : ''];
 }
 
+// closedNode says why an offline peer cannot be opened, or '' when it can:
+// its dashboard is served through the peer, so there is nothing to show until
+// it reconnects. The node already on screen stays pickable (it only leaves a
+// fused view).
+function closedNode(node, pageNode) {
+  if (node.local || node.online || node.id === pageNode) return '';
+  return `${node.name} is ${nodeMeta(node)}: its dashboard opens again once it reconnects`;
+}
+
 function nodeMeta(node) {
   if (node.local) return 'this node';
   if (node.online) return 'connected';
@@ -130,7 +139,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
   useEffect(() => { if (open) { setQuery(''); setHl(0); inputRef.current?.focus(); } }, [open]);
   const shown = fleetNodes(fleet).find((n) => n.id === pageNode) || fleet.self;
   const list = filterNodes(fleet, query);
-  const pick = (node) => { setOpen(false); onPick(node.id); };
+  const pick = (node) => { if (closedNode(node, pageNode)) return; setOpen(false); onPick(node.id); };
   const onKey = (event) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); setHl((i) => Math.min(list.length - 1, i + 1)); }
     else if (event.key === 'ArrowUp') { event.preventDefault(); setHl((i) => Math.max(0, i - 1)); }
@@ -138,7 +147,8 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
   };
   const row = (node, i) => html`<button type="button" key=${node.id} role="option" aria-selected=${i === hl ? 'true' : 'false'}
     class=${`node-pop-row${node.online || node.local ? '' : ' offline'}${i === hl ? ' hl' : ''}${!fused && node.id === pageNode ? ' sel' : ''}`}
-    style=${`--nc:${node.color}`} onMouseEnter=${() => setHl(i)} onClick=${() => pick(node)}>
+    style=${`--nc:${node.color}`} disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined}
+    onMouseEnter=${() => setHl(i)} onClick=${() => pick(node)}>
     <span class="node-pop-dot" aria-hidden="true"></span><span class="node-pop-name">${node.local ? '⌂ ' : ''}${node.name}</span>
     <span class="node-pop-meta">${nodeMeta(node)}${!fused && node.id === pageNode ? ' · shown' : ''}</span>
   </button>`;
@@ -175,7 +185,12 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const toggle = (id) => {
     if (alone) return;
     const next = toggleNode(fleet, fused || 'all', id);
-    if (next.only !== undefined) { setOpen(false); onPick(next.only); } else onFuse(next);
+    // Unticking down to one offline peer would open it alone: keep the set.
+    if (next.only !== undefined) {
+      const only = nodes.find((n) => n.id === next.only);
+      if (only && closedNode(only, pageNode)) return;
+      setOpen(false); onPick(next.only);
+    } else onFuse(next);
   };
   const onButton = () => {
     if (alone) setOpen(!open);
@@ -195,8 +210,8 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
         <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
         <span class="node-pop-swatch" aria-hidden="true"></span>
-        <button type="button" class="node-pop-name" title=${`Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
-        <button type="button" class="node-pop-only" tabindex="-1" onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
+        <button type="button" class="node-pop-name" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || `Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
+        <button type="button" class="node-pop-only" tabindex="-1" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined} onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
         <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}${node.id === primary.id ? ' · primary' : ''}</span>
       </div>`)}
       ${alone ? html`<div class="node-pop-foot">${NO_PEERS}</div>` : html`<div class="node-pop-foot"><b>Groups</b> and <b>Terminals</b> show the ticked nodes together. Other tabs show one node, the primary: <b>${primary.local ? '⌂ ' : ''}${primary.name}</b>.</div>`}
@@ -295,9 +310,9 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
       title=${`${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span><span class="node-chip-dot"></span>
     </button>
-    ${fleet.peers.map((peer, i) => html`<button key=${peer.id} type="button" class=${cls(peer)} style=${`--nc:${peer.color}`}
+    ${fleet.peers.map((peer, i) => html`<button key=${peer.id} type="button" class=${cls(peer)} style=${`--nc:${peer.color}`} disabled=${!!closedNode(peer, pageNode)}
       aria-current=${isCurrent(peer.id) ? 'page' : undefined} aria-label=${`${peer.name}, ${presenceLabel(peer)}, ${peer.level} peer`}
-      title=${`${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => onPick(peer.id)}>
+      title=${closedNode(peer, pageNode) || `${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => onPick(peer.id)}>
       <span class="node-chip-name">${peer.name}</span><span class="node-chip-dot"></span>
     </button>`)}`
     : html`<${NodeDropdown} state=${state} fleet=${fleet} pageNode=${pageNode} fused=${fused} onPick=${onPick} />`}
@@ -911,7 +926,9 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
       const fleet = state.fleet.value;
       const node = switchOrder(fleet)[Number(event.code.slice(5)) - 1];
       if (!node) return;
+      // Swallow an offline peer's key too, or the browser switches tabs.
       event.preventDefault();
+      if (closedNode(node, remote || fleet.self.id)) return;
       if (node.id === (remote || fleet.self.id) && !state.fused.value) { if (state.view.value.topLevel) navigate(state.lastLocalTab()); return; }
       pickNode(state, node.id, { navigate, remote, switchNode });
     };
