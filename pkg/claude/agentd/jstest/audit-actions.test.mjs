@@ -77,6 +77,16 @@ test('the fused "all nodes" audit pages every node with its keyset cursor, besid
   const everything = [...logs.desk, ...logs.forge, ...logs.lab].map((e) => e.verb).sort((a, b) => at(b) - at(a));
   assert.deepEqual([...first, ...verbs()], everything.slice(0, 20), 'page 2 follows page 1 as it reads now');
 
+  // A walk superseded by a newer load (here a filter change) stops, so it
+  // cannot overwrite the newer walk's vectors.
+  state.setFilter('source', 'hook'); state.setPage(6); const stale = actions.load();
+  state.setFilter('source', 'cli'); state.setPage(4); const fresh = actions.load();
+  assert.equal(await stale, false, 'the superseded walk commits nothing'); await fresh;
+  assert.equal(state.view.value.page, 4, 'the newer walk reaches its page');
+  const fourth = verbs(); state.setPage(1); await actions.load();
+  assert.deepEqual(fourth.filter((v) => verbs().includes(v)), [], 'page 4 is not page 1 again');
+  state.setFilter('source', '');
+
   // A node down while the pages were walked has no cursor in them; when it
   // comes back the walk restarts, so its events do not repeat.
   down = 'forge'; state.setPage(1); await actions.load(); state.setPage(2); await actions.load();

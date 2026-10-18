@@ -51,8 +51,10 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
     if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status, body: await response.text() });
     return response.json();
   }
-  // walk holds the merged view's known cursor vectors.
+  // walk holds the merged view's known cursor vectors; walking names the
+  // newest merged load, so a superseded walk stops instead of writing them.
   let walk = newWalk();
+  let walking = 0;
   // readMerged reads page `page` of every fused node below its cursor.
   function readMerged(fused, view, page, cursors) {
     const params = (extra) => { const p = auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' }); for (const [k, v] of Object.entries(extra)) p.set(k, String(v)); return p; };
@@ -71,10 +73,13 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
   // recording each page's next vector as it goes.
   async function loadMerged(fused, view) {
     const key = `${auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' })}\n${fused.map((n) => n.id).join(',')}`;
+    const id = ++walking;
     let page = walkTarget(view.page, walk.key === key ? walk.list : [{}]);
     for (let restarts = 0; ; ) {
       const cursors = (walk.key === key && walk.list[page - 1]) || {};
-      const result = mergeAudits(await readMerged(fused, view, page, cursors), view.pageSize, page, cursors);
+      const results = await readMerged(fused, view, page, cursors);
+      if (id !== walking) return null;
+      const result = mergeAudits(results, view.pageSize, page, cursors);
       const absent = result.refused.map((r) => r.node.id).join(',');
       walk = recordVector(walk, { key, absent, page, next: result.next, more: result.more });
       // The set of down nodes changed under the walk: restart from page 1
@@ -90,7 +95,10 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
     const fused = nodes();
     const target = view.node && fused.find((n) => n.id === view.node && !n.local);
     try {
-      if (view.node === 'all' && fused.length > 1) return state.commitRequest(token, await loadMerged(fused, view));
+      if (view.node === 'all' && fused.length > 1) {
+        const result = await loadMerged(fused, view);
+        return result ? state.commitRequest(token, result) : false;
+      }
       if (target) {
         try { return state.commitRequest(token, await read(fetchFor(target.id), auditParams(view))); }
         catch (error) { throw Object.assign(new Error(auditRefusal(target, error.status)), { status: error.status }); }
