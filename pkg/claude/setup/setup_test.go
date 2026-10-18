@@ -1,3 +1,6 @@
+//ci:reads docs/sandboxing.md
+//ci:reads docs/index.md
+
 package setup
 
 import (

@@ -1,3 +1,5 @@
+//ci:reads docs/pwf/
+
 package pwf_test
 
 import (

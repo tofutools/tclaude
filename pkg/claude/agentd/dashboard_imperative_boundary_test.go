@@ -1,3 +1,5 @@
+//ci:reads docs/dashboard.md
+
 package agentd
 
 import (

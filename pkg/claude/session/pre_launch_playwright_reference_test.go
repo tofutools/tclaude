@@ -1,3 +1,5 @@
+//ci:reads docs/sandboxing.md
+
 package session
 
 import (

@@ -1,3 +1,5 @@
+//ci:reads docs/learn/
+
 package claude
 
 import (
