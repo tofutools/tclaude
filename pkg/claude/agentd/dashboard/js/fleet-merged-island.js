@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { loadTriggerRules } from './group-triggers.js';
 import htm from 'htm';
 import { GroupsInteractionProvider } from './groups-interactions.js';
@@ -16,6 +16,7 @@ import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
   ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
+  reasonTitles,
 } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { dndGesture, nodeAllowsActing } from './dnd-ops.js';
@@ -404,11 +405,48 @@ export function MergedGroups({
     syncWizardOrbit();
   });
 
+  // Reasons put on refused controls (hover/focus), re-decided after each
+  // render, as polls change what each node shares.
+  const titles = useMemo(() => reasonTitles(), []);
+  const refusalRef = useRef(null);
+  useEffect(() => {
+    titles.sweep((el) => { const why = refusalRef.current?.(el); return why ? [why, true] : null; });
+  });
+
   // Let this node's own groups' controls through to their usual handlers, send
   // a peer's shared controls to its peer routes, stop the rest before their
   // handlers, and open a group's node from its @node suffix.
   useEffect(() => {
     if (!host) return undefined;
+    // refusal says why a control on another node's group does not run from
+    // here, or null when it runs (its own handler, its node's routes, a peer
+    // action or a terminal). The click guard toasts it; hover and focus put
+    // it on the control (reasonTitles), as a peer's own page does.
+    const refusal = (act) => {
+      if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act) || act.dataset.act === 'send-elsewhere') return null;
+      const group = act.closest('details[data-fleet-node]');
+      const instance = group?.dataset.fleetNode || '';
+      const name = group?.dataset.fleetNodeName || '';
+      const self = state.view.value.fleet?.self?.id;
+      if (!instance || instance === homeRef.current) return null;
+      const peerView = snapRef.current(instance)?.peer_view;
+      const held = grantHeld(act, peerView, (g) => ownGroup(g, name));
+      if (held !== null && (instance === self || held)) return null;
+      if (instance !== self) {
+        if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent) return null;
+        if (peerAction(act, peerView, (g) => ownGroup(g, name))) return null;
+        return `${name || 'This node'} does not share this action with you${needsSuffix(grantMissing(act, peerView, (g) => ownGroup(g, name)))}`;
+      }
+      return `Act on this node's groups from ${name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard"}`;
+    };
+    refusalRef.current = refusal;
+    const { setReason, clearReason } = titles;
+    const onOver = (event) => {
+      const act = actOf(event.target, event);
+      if (!act || !host.contains(act)) return;
+      const why = refusal(act);
+      if (why) setReason(act, why); else clearReason(act);
+    };
     const onClick = (event) => {
       const suffix = event.target.closest?.('[data-fleet-open]');
       if (suffix && host.contains(suffix)) {
@@ -451,13 +489,7 @@ export function MergedGroups({
         const req = peerAction(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
-      if (instance && instance !== state.view.value.fleet?.self?.id) {
-        const missing = grantMissing(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
-        toast(`${name || 'This node'} does not share this action with you${needsSuffix(missing)}`, true);
-      } else {
-        const where = name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard";
-        toast(`Act on this node's groups from ${where}`, true);
-      }
+      toast(refusal(act) || `Act on this node's groups from ${name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard"}`, true);
     };
     // Editable chips open on Enter/Space in their own keydown, and the row
     // context menu (Ctrl+right-click) opens terminals: guard both like clicks.
@@ -556,6 +588,8 @@ export function MergedGroups({
     const onDragEnd = () => { dragging = null; unmark(); };
     const pullMissing = (src) => missingPullGrants(snapRef.current(src.source.node)?.peer_view, src.agent.id);
     host.addEventListener('click', onClick, true);
+    host.addEventListener('pointerover', onOver, true);
+    host.addEventListener('focusin', onOver, true);
     host.addEventListener('keydown', onKey, true);
     host.addEventListener('contextmenu', onContext, true);
     host.addEventListener('dragstart', onDragStart, true);
@@ -564,6 +598,8 @@ export function MergedGroups({
     host.addEventListener('dragend', onDragEnd, true);
     return () => {
       host.removeEventListener('click', onClick, true);
+      host.removeEventListener('pointerover', onOver, true);
+      host.removeEventListener('focusin', onOver, true);
       host.removeEventListener('keydown', onKey, true);
       host.removeEventListener('contextmenu', onContext, true);
       host.removeEventListener('dragstart', onDragStart, true);

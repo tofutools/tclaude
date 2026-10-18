@@ -156,6 +156,13 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   const localSpawn = inGroup('inst_self', 'desk', '<button data-act="spawn-agent" data-group="ops@desk">+</button>');
   assert.equal(harness.fireEvent(running, 'click').defaultPrevented, true);
   assert.match(toasts.at(-1), /forge does not share this action with you \(needs groups\.members\.stop\)/);
+  // Hover or focus puts the same reason on it, disabled for assistive tech;
+  // what runs from here keeps its own title.
+  harness.fireEvent(running, 'pointerover');
+  assert.match(running.getAttribute('title'), /forge does not share this action with you \(needs groups\.members\.stop\)/);
+  assert.equal(running.getAttribute('aria-disabled'), 'true');
+  harness.fireEvent(dot, 'focusin');
+  assert.equal(dot.getAttribute('aria-disabled'), null, 'a granted wake is not disabled');
   assert.equal(harness.fireEvent(local, 'click').defaultPrevented, false);
   assert.equal(harness.fireEvent(localSpawn, 'click').defaultPrevented, false);
   assert.equal(doc.querySelector('#peer-action-modal'), null);

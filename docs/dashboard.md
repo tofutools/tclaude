@@ -1113,8 +1113,9 @@ Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
 open the clone dialog for that group) — for this node always, and for a peer that
 trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
 stuck pending spawn, and the rest its grants cover) act on that peer; the few that
-only its own dashboard runs (export, the links manager, its messages, sudo) are
-greyed out. Each node's links show on its own groups there, and its triggers and queued spawns
+only its own dashboard runs (the links manager, its messages, sudo) are
+greyed out; hover or focus one to see why, with the grant it needs, as on the
+peer's own page. Each node's links show on its own groups there, and its triggers and queued spawns
 too for this node and peers that trust it unrestricted (a queued spawn launches,
 edits and discards on its node). Group headers drag the same way there: nest a
 group under another on its node, pull it back out, reorder it (the fused view
