@@ -250,7 +250,7 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   assert.equal(same.defaultPrevented, false, "this view leaves a same-node drop to dnd.js");
   assert.equal(toasts.length, before);
   await drag(row('agt_r1'), groupEl('builders@desk'));
-  assert.match(toasts.at(-1), /forge has not granted this node groups\.members\.retire on reviewer-1/, 'the drop names the missing grant');
+  assert.match(toasts.at(-1), /forge does not let you bring reviewer-1 here \(needs groups\.members\.retire\)/, 'the drop names the missing grant');
   assert.equal(harness.document.querySelector('#launch-target'), null);
   await mounted.unmount(); state.dispose();
 });

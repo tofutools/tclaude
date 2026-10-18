@@ -210,9 +210,8 @@ function agentNeedHeld(need, agent, peerView) {
 // peer that grants no agent controls omits peer_view.agents: none held, as
 // the ⚙ menu's move gating reads it.
 export function missingPullGrants(peerView, agent) {
-  if (!peerView || peerView.level === 'unrestricted') return [];
-  const held = peerView.agents?.[agent] || [];
-  return PULL_GRANTS.filter((slug) => !held.includes(slug));
+  if (!peerView || unrestricted(peerView)) return [];
+  return missingGrants(PULL_GRANTS, peerView.agents?.[agent] || [], peerView);
 }
 
 // agentGrantHeld reports whether the peer lets an agent control act on agent

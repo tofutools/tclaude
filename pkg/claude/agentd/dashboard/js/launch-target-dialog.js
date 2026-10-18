@@ -11,7 +11,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
-import { missingPullGrants } from './peer-view-limits.js';
+import { missingPullGrants, needsSuffix } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 
@@ -60,7 +60,7 @@ export function modeState(mode, { local, presence = '', homeIsSelf = false, sour
 
 // grantWhy says which grants a peer must give this node for a pull.
 export function grantWhy(source, missing) {
-  return `${source} has not granted this node ${missing.join(' and ')} on this agent.`;
+  return `${source} does not let you bring this agent here${needsSuffix(missing)}`;
 }
 
 // receivingGroups lists a peer's catalog groups that take agents from this
@@ -87,7 +87,7 @@ export function nodeTargets({ mode, fleet, self, source, status, localGroups = [
       // peer's teleport route (a clone too).
       const pulls = mode === 'move' || (pull && teleport && (mode === 'teleport' || mode === 'clone'));
       if (!isSelf || !pulls) return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
-      if (missing.length) return { ...row, ok: false, why: `needs ${missing.join(' and ')} from ${source.name}` };
+      if (missing.length) return { ...row, ok: false, why: `not granted by ${source.name}${needsSuffix(missing)}` };
       return { ...row, groups: localGroups };
     }
     if (mode === 'clone' && !teleport) return { ...row, ok: false, why: 'a peer clone needs the operator teleport routes (not on this dashboard yet)' };

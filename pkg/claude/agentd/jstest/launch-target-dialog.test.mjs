@@ -53,8 +53,8 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.equal(m.modeState('morph', { local: false, pull: true }).ok, false, 'morph stays with the agent\'s own node');
   const missing = ['groups.members.retire'];
   for (const mode of ['move', 'teleport', 'clone']) {
-    assert.equal(m.modeState(mode, { local: false, pull: true, source: 'forge', missing }).why, 'forge has not granted this node groups.members.retire on this agent.', `an ungranted ${mode} says which grant is missing`);
-    assert.equal(m.nodeTargets({ mode, fleet, self, source: forge, status: STATUS, pull: true, missing }).find((n) => n.id === 'inst_a').why, 'needs groups.members.retire from forge');
+    assert.equal(m.modeState(mode, { local: false, pull: true, source: 'forge', missing }).why, 'forge does not let you bring this agent here (needs groups.members.retire)', `an ungranted ${mode} says which grant is missing`);
+    assert.equal(m.nodeTargets({ mode, fleet, self, source: forge, status: STATUS, pull: true, missing }).find((n) => n.id === 'inst_a').why, 'not granted by forge (needs groups.members.retire)');
   }
   assert.equal(m.modeState('teleport', { local: true, missing }).ok, true, 'a local agent needs no peer grant');
   const limits = await harness.importDashboardModule('js/peer-view-limits.js');
@@ -239,10 +239,10 @@ test('a peer agent without the pull grants opens with move, teleport and clone g
   });
   for (const mode of ['move', 'teleport', 'clone']) {
     assert.equal(s.q(`[data-lt-mode="${mode}"]`).disabled, true);
-    assert.match(s.q(`[data-lt-mode="${mode}"]`).title, /forge has not granted this node groups\.members\.retire/);
+    assert.match(s.q(`[data-lt-mode="${mode}"]`).title, /forge does not let you bring this agent here \(needs groups\.members\.retire\)/);
   }
   assert.equal(s.q('[data-lt-node="inst_a"]').disabled, true);
-  assert.match(s.q('[data-lt-node="inst_a"]').textContent, /needs groups\.members\.retire from forge/);
+  assert.match(s.q('[data-lt-node="inst_a"]').textContent, /not granted by forge \(needs groups\.members\.retire\)/);
 });
 
 test('large morph cut confirms once and waits visibly for the source summary; cancellation leaves the dialog responsive', async (t) => {
