@@ -13,6 +13,7 @@ import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
   BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, refreshBackgroundTerminals,
@@ -1399,7 +1400,8 @@ function TerminalTabs({
     const activeTab = shellRef.current?.querySelector('.mux-tab[aria-selected="true"]');
     if (activeTab) activeTab.focus();
     // No tab left: the Terminals tab stays selected (it never auto-hides), so
-    // its navigation entry is the natural place for focus to land.
+    // its navigation entry is the natural place for focus to land — unless
+    // the last-close effect below moves on to Groups, which refocuses there.
     else document.querySelector('nav [data-tab="terminals"]')?.focus();
   }, [menuFocusRequest]);
   const focusAfterTabMenuDismiss = (reverse) => {
@@ -1499,6 +1501,23 @@ function TerminalTabs({
       window.removeEventListener('beforeunload', confirmUnload);
     };
   }, [hasPanes]);
+
+  // The last open terminal closing leaves an empty tab behind; move on to
+  // Groups unless config says to stay (terminal-close-nav.js). Only the
+  // has-panes -> no-panes edge counts, so loading with no terminals or
+  // unticking a node in a fused scope never switches tabs. It waits a task and
+  // re-checks: a pop-out reattach closes and reopens the same pane, and must
+  // not bounce through Groups on the way.
+  const hadPanesRef = useRef(hasPanes);
+  useEffect(() => {
+    const had = hadPanesRef.current;
+    hadPanesRef.current = hasPanes;
+    if (solo || !had || hasPanes) return undefined;
+    const timer = setTimeout(() => {
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [hasPanes, solo]);
 
   useEffect(() => {
     if (!hasPanes && manageTitle) document.title = 'tclaude terminals';

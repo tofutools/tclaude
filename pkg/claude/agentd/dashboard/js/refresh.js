@@ -41,6 +41,7 @@ import {
 import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
+import { setStayOnTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
 
@@ -270,6 +271,7 @@ export async function refresh(options) {
     // default follow) — replaces the old per-browser header toggle button.
     setHScrollFollow(data.hscroll_follow !== false);
     setTerminalAttachConfig(data.terminal_attach);
+    setStayOnTerminalsAfterLastClose(data.stay_on_terminals_after_last_close);
     // Group quick-options fold mode (config dashboard.group_quick_options,
     // default "hover"). body.group-quick-fold drives the CSS horizontal
     // accordion: the editable chips in each group <summary> collapse to

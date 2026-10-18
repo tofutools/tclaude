@@ -880,3 +880,62 @@ test('a shared remote pane names what else is attached, says when the size is li
   await mounted.rerender(harness.html`<${RemoteSharedNotice} seed=${{}} remote=${{ shared: true, others: ['x'] }} onTakeOver=${() => {}} />`);
   assertAbsent(notice(), 'a local pane never shows it');
 });
+
+// Closing the last terminal while looking at the Terminals tab moves on to
+// Groups (dashboard.stay_on_terminals_after_last_close opts out); a close seen
+// from another tab never switches tabs.
+test('closing the last terminal moves to Groups unless configured to stay', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { terminals } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { setStayOnTerminalsAfterLastClose } = await harness.importDashboardModule('js/terminal-close-nav.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    confirm: async () => true,
+    fetchImpl: async () => ({ ok: true }),
+  });
+  const groupsTab = harness.document.querySelector('nav [data-tab="groups"]');
+  const corrections = [];
+  harness.document.addEventListener('tclaude:navigated', (event) => {
+    if (event.detail?.correction) corrections.push(event.detail.location);
+  });
+  const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+  const open = (name, options) => harness.act(async () => {
+    controller.openTerminalPane({ ws: `/${name}`, key: name, label: name, agent: `agt_${name}`, hideConv: `agt_${name}` }, options);
+    await Promise.resolve();
+  });
+  const closeButton = (name) => harness.document.querySelector(`[aria-label="Close ${name}"]`);
+
+  await open('one');
+  await open('two');
+  assert.equal(terminals.classList.contains('active'), true);
+  await harness.act(() => harness.fireEvent(closeButton('one'), 'click'));
+  await settle();
+  assert.equal(terminals.classList.contains('active'), true, 'closing a terminal that is not the last one stays put');
+
+  await harness.act(() => harness.fireEvent(closeButton('two'), 'click'));
+  await settle();
+  assert.equal(terminals.classList.contains('active'), false, 'the last close leaves the Terminals tab');
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true);
+  assertSameNode(harness.document.activeElement, groupsTab, 'focus follows to the Groups navigation tab');
+  assert.deepEqual(corrections, [{ tab: 'terminals' }],
+    'the closed terminal\'s deep link is corrected to the bare tab before leaving');
+
+  // A close that happens while another tab is showing never switches tabs.
+  await open('three', { reveal: false });
+  await harness.act(() => controller.closeTerminalsForConvs(['agt_three']));
+  await settle();
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true);
+  assert.equal(corrections.length, 1);
+
+  setStayOnTerminalsAfterLastClose(true);
+  await open('four');
+  assert.equal(terminals.classList.contains('active'), true);
+  await harness.act(() => harness.fireEvent(closeButton('four'), 'click'));
+  await settle();
+  assert.equal(terminals.classList.contains('active'), true, 'the opt-out keeps the empty Terminals tab');
+  assert.equal(corrections.length, 1);
+  cleanup();
+});

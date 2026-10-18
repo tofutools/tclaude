@@ -598,6 +598,9 @@ function populateConfigForm(cfg) {
   // CI pill on merged/closed PRs — hidden unless failing by default
   // (unchecked); only an explicit dashboard.show_final_pr_checks true checks it.
   $('#cfg-dashboard-show-final-pr-checks').checked = !!(cfg.dashboard && cfg.dashboard.show_final_pr_checks);
+  // Closing the last terminal moves to Groups by default (unchecked); only an
+  // explicit dashboard.stay_on_terminals_after_last_close true checks it.
+  $('#cfg-dashboard-stay-on-terminals').checked = !!(cfg.dashboard && cfg.dashboard.stay_on_terminals_after_last_close);
 
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
@@ -956,6 +959,8 @@ function assembleConfig() {
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
   // show_final_pr_checks: false is the default — same store-only-true rule.
   if ($('#cfg-dashboard-show-final-pr-checks').checked) dashboard.show_final_pr_checks = true; else delete dashboard.show_final_pr_checks;
+  // stay_on_terminals_after_last_close: false is the default; store only true.
+  if ($('#cfg-dashboard-stay-on-terminals').checked) dashboard.stay_on_terminals_after_last_close = true; else delete dashboard.stay_on_terminals_after_last_close;
   // show_debug_tab is retired: the poll-performance view (Activity ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;

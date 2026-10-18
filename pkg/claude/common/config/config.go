@@ -610,6 +610,12 @@ type DashboardConfig struct {
 	// each poll and toggles body.show-final-pr-checks. See
 	// (*Config).ShowFinalPRChecks.
 	ShowFinalPRChecks bool `json:"show_final_pr_checks,omitempty"`
+	// StayOnTerminalsAfterLastClose keeps the dashboard on the Terminals tab
+	// when its last open terminal closes. By default the dashboard moves to
+	// the Groups tab instead, since an empty Terminals tab has nothing to act
+	// on. Flip this on to keep the old stay-put behavior. Default false. See
+	// (*Config).StayOnTerminalsAfterLastClose.
+	StayOnTerminalsAfterLastClose bool `json:"stay_on_terminals_after_last_close,omitempty"`
 }
 
 // Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
@@ -1711,6 +1717,14 @@ func (c *Config) ShowGroupDescription() bool {
 // dashboard.show_final_pr_checks. Default false. Nil-safe on the receiver.
 func (c *Config) ShowFinalPRChecks() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowFinalPRChecks
+}
+
+// StayOnTerminalsAfterLastClose reports whether the dashboard should stay on
+// the Terminals tab when its last open terminal closes — config
+// dashboard.stay_on_terminals_after_last_close. Default false: the dashboard
+// moves to the Groups tab. Nil-safe on the receiver.
+func (c *Config) StayOnTerminalsAfterLastClose() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.StayOnTerminalsAfterLastClose
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

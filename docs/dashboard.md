@@ -472,6 +472,13 @@ experimental Copilot API and Codex app-server drives.
 
 ## Terminals
 
+When the last open terminal closes while the Terminals tab is showing, the
+dashboard moves to the Groups tab. That includes a terminal the dashboard
+closes itself because its agent retired. Terminals that close while another
+tab is showing never switch tabs. Set `dashboard.stay_on_terminals_after_last_close: true`
+(Config › Terminals & windows › **Stay after last close**) to stay on the
+empty Terminals tab instead.
+
 The 💲 toggle after the last terminal tab shows or hides session costs next to
 agent names. It is independent of the Groups tab's 💲 (until first used it
 starts from that one's setting). API spend is green; subscription WHAT-IF

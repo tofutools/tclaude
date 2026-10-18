@@ -1118,6 +1118,23 @@ func TestShowFinalPRChecks(t *testing.T) {
 	assert.True(t, (&Config{Dashboard: &DashboardConfig{ShowFinalPRChecks: true}}).ShowFinalPRChecks(), "explicit true → shown")
 }
 
+func TestStayOnTerminalsAfterLastClose(t *testing.T) {
+	assert.False(t, (*Config)(nil).StayOnTerminalsAfterLastClose(), "nil → leave for Groups")
+	assert.False(t, (&Config{}).StayOnTerminalsAfterLastClose(), "no block → leave for Groups")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).StayOnTerminalsAfterLastClose(), "absent key → leave for Groups")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{StayOnTerminalsAfterLastClose: true}}).StayOnTerminalsAfterLastClose(), "explicit true → stay")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "stay_on_terminals_after_last_close")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{StayOnTerminalsAfterLastClose: true}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.StayOnTerminalsAfterLastClose(), "true survives round-trip")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")
