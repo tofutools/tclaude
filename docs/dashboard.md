@@ -990,7 +990,10 @@ sandbox restart, retire, clone, the group's spawn button (the regular spawn
 dialog, aimed at that node, as above), its ✉ message button (one agent at a
 time) and the group settings it grants (`groups.settings`, as above: the
 quick options, rename and the ⚙ menu's settings items), which go to that
-node's own group. This node's groups work as on its own view; on a peer's
+node's own group. Under unrestricted trust a peer's rows also take what no peer
+grant covers: advancing a process, re-briefing or standing down a force, group
+ownership, the auto-join default, promoting, reinstating, hiding a window and
+deleting a past generation. This node's groups work as on its own view; on a peer's
 page their group settings still go straight to this node. Everything else stays an overview: click a group's `@node`
 suffix to act on it in that node's dashboard. An unreachable node keeps its last rows, marked
 stale; a node no longer trusted drops them. The old `/fleet` address opens this

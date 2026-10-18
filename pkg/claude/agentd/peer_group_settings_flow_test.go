@@ -114,7 +114,8 @@ func TestPeerGroupSettingsThroughDashboardHandlers(t *testing.T) {
 	require.Equal(t, 5, group("renamed").MaxMembers)
 
 	// Unrestricted trust holds every peer grant, environment and sandbox
-	// included; member permissions are never a peer's to set.
+	// included, and sets what no grant covers (member permissions) as this
+	// node's operator does.
 	peer, err := db.GetFederationPeer(p.id.ID())
 	require.NoError(t, err)
 	peer.TrustLevel = db.FederationTrustUnrestricted
@@ -125,7 +126,7 @@ func TestPeerGroupSettingsThroughDashboardHandlers(t *testing.T) {
 	code, body = call("PUT", "/api/groups/hidden-group/sandbox-profile", map[string]any{"name": "no-such-profile"})
 	require.Equal(t, 404, code, body, "past the gate: the profile itself is missing")
 	code, body = call("PATCH", "/api/groups/hidden-group", map[string]any{"permissions": []any{}})
-	require.Equal(t, 403, code, body)
+	require.Equal(t, 200, code, body)
 }
 
 // The ⚙ menu's settings run on the same grant: a peer nests a group only
