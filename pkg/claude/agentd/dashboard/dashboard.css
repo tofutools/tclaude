@@ -19942,6 +19942,9 @@ nav [data-tab="map"].node-chip { display: none; }
 .node-pop-row:hover, .node-pop-row.hl { background: #1f6feb33; color: #f0f6fc; }
 .node-pop-row.sel { box-shadow: inset 2px 0 0 #58a6ff; }
 .node-pop-row.offline { color: #7d8590; }
+.node-pop-row:disabled, .node-pop-row button:disabled { cursor: not-allowed; }
+.node-pop-row:disabled:hover { background: none; color: #7d8590; }
+.node-pop-row:hover .node-pop-only:disabled { visibility: hidden; }
 .node-pop-row input[type=checkbox] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
 .node-pop-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex: none; margin-right: 4px; vertical-align: 0; }
 .node-pop-row.offline .node-pop-dot { background: #6e7681; }
