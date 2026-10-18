@@ -118,7 +118,24 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		fail(err)
 		return
 	}
-	if !validPeerViewReply(reply) {
+	// A long operation answers its job: wait on it for its own reply, which
+	// may be a stream's lines rather than one JSON value.
+	job := false
+	if !cachedRead && r.Method == http.MethodPost {
+		reply, job, err = awaitPeerViewJob(r.Context(), rt, peer, reply)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if job {
+			peerReads.invalidate(peer.InstanceID)
+		}
+	}
+	valid := validPeerViewReply(reply)
+	if job {
+		valid = reply.Status >= 200 && reply.Status <= 599 && len(reply.Body) <= fedPeerViewResponseBodyLimit
+	}
+	if !valid {
 		writeError(w, 502, "peer_invalid_response", "peer returned an invalid response")
 		return
 	}
@@ -141,7 +158,12 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	}
 	// A restricted or compromised peer must never serve executable content on
 	// the local operator's authenticated origin, even on direct navigation.
-	w.Header().Set("Content-Type", "application/json")
+	// A job's reply may be a stream's JSON lines, never anything else.
+	contentType := "application/json"
+	if job && reply.Header.Get("Content-Type") == "application/x-ndjson" {
+		contentType = "application/x-ndjson"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(reply.Status)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(reply.Body)
