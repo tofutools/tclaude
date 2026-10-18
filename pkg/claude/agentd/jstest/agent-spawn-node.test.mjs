@@ -104,7 +104,9 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
   nodeApi.setSelfNode('inst_desk0001');
   const snap = { groups: [{ name: 'build' }], peer_view: { level: 'unrestricted' } };
   await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: snap });
-  assert.deepEqual(opened.pop(), { groupName: 'build', target: { node: NODE, nodeId: NODE, name: 'forge', snapshot: snap } });
+  assert.deepEqual(opened.pop(), { groupName: 'build', profileName: '', role: '', fastMode: false, target: { node: NODE, nodeId: NODE, name: 'forge', snapshot: snap } });
+  await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: snap, profileName: 'heavy', role: 'reviewer', fastMode: true });
+  assert.deepEqual([opened.at(-1).profileName, opened.at(-1).role, opened.pop().fastMode], ['heavy', 'reviewer', true], 'a palette or dock spawn keeps its profile and role');
   await controller.openRemoteAgentSpawn({ nodeId: 'inst_desk0001', node: 'desk', groupName: 'ops', snapshot: { groups: [] } });
   assert.equal(opened.pop().target.nodeId, '', "this node's own agent opens no peer terminal");
   const prepared = [];
@@ -112,6 +114,13 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
     prepare: async (o) => { prepared.push(o.group); return { options: { defaults: {} } }; } });
   assert.deepEqual(prepared, ['build']);
   assert.ok(opened.pop().remote, 'a restricted peer opens request mode');
+  const restricted = { peer_view: { level: 'restricted' } };
+  await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, profileName: 'heavy', role: 'reviewer',
+    prepare: async () => ({ options: { defaults: {} } }) });
+  assert.deepEqual([opened.at(-1).profileName, opened.pop().role], ['heavy', 'reviewer'], 'a restricted peer\'s request keeps them too');
+  await controller.openRemoteAgentSpawn({ nodeId: NODE, node: 'forge', groupName: 'build', snapshot: restricted, profileName: 'heavy',
+    prepare: async () => ({ options: { defaults: { profile: 'pinned' } } }) });
+  assert.equal(opened.pop().profileName, 'pinned', 'the grant\'s pinned profile still outranks, as on the peer');
 });
 
 test("a node's spawn attachments go to it through this node, in chunks past the peer view's request limit", async (t) => {
