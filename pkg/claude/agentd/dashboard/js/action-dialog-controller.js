@@ -47,8 +47,8 @@ export function openAgentExportDialog(conv, label) {
   return requireController().openExport({ conv, label });
 }
 
-export function openSandboxImplDialog({ conv, label, harness }) {
-  return requireController().openSandboxImpl({ conv, label, harness });
+export function openSandboxImplDialog({ conv, label, harness, node }) {
+  return requireController().openSandboxImpl({ conv, label, harness, node });
 }
 
 export function chooseTerminalDirectory(label) {

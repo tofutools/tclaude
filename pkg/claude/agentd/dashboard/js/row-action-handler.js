@@ -714,6 +714,7 @@ export async function handleRowAction(action) {
           conv: agent,
           label,
           harness: data.harness || '',
+          node,
         });
         return;
       }
@@ -726,7 +727,7 @@ export async function handleRowAction(action) {
         return;
       }
       case 'debug-export': {
-        const response = await fetch(`/api/agents/${encodeURIComponent(agent)}/debug-export`, {
+        const response = await api(`/api/agents/${encodeURIComponent(agent)}/debug-export`, {
           method: 'GET', credentials: 'same-origin',
         });
         if (!response.ok) {

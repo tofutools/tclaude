@@ -431,8 +431,8 @@ func TestPeerMemberSettingsUnderManageGrant(t *testing.T) {
 }
 
 // An agent's removal from a group, its permanent delete (and the delete
-// dialog's worktree read), its remote access, fast mode and reincarnation
-// reach what no peer grant hands out: a restricted peer is refused whatever
+// dialog's worktree read), its remote access, fast mode, sandbox
+// implementation, debug export and reincarnation reach what no peer grant hands out: a restricted peer is refused whatever
 // it holds, and unrestricted trust runs them on this node.
 func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 	fh := newFedHarness(t)
@@ -463,6 +463,9 @@ func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 		{"POST", "/api/agents/" + keep + "/remote-control"},
 		{"POST", "/api/agents/" + keep + "/fast-mode/enable"},
 		{"POST", "/api/agents/" + keep + "/reincarnate"},
+		{"GET", "/api/agents/" + keep + "/sandbox-impl"},
+		{"POST", "/api/agents/" + keep + "/sandbox-impl"},
+		{"GET", "/api/agents/" + keep + "/debug-export"},
 	} {
 		code, body := call(req.method, req.path, nil)
 		require.Equal(t, 403, code, "%s %s: %s", req.method, req.path, body)
@@ -482,7 +485,14 @@ func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 	peer.TrustLevel = db.FederationTrustUnrestricted
 	require.NoError(t, db.TrustFederationPeer(*peer))
 
-	code, body := call("GET", "/api/agents/"+gone+"/worktree", nil)
+	code, body := call("GET", "/api/agents/"+keep+"/debug-export", nil)
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, "full-keep")
+	// The fixture records no launch profile: this node's own handler answers.
+	code, body = call("GET", "/api/agents/"+keep+"/sandbox-impl", nil)
+	require.Equal(t, 409, code, body)
+	require.Contains(t, body, "relaunch_profile")
+	code, body = call("GET", "/api/agents/"+gone+"/worktree", nil)
 	require.Equal(t, 200, code, body)
 	// An escaped slash names no agent: it never reaches another verb.
 	code, body = call("DELETE", "/api/agents/"+gone+"%2Fexports", nil)

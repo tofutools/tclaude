@@ -104,10 +104,12 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],
-  // Remote access, fast mode, reincarnation and permanent delete reach what
-  // no peer grant hands out: unrestricted trust only (a feature no
-  // restricted peer shares).
+  // Remote access, fast mode, the sandbox implementation, the debug export,
+  // reincarnation and permanent delete reach what no peer grant hands out:
+  // unrestricted trust only (a feature no restricted peer shares).
   'toggle-remote-control': ['feature:agents.manage.full'],
+  'sandbox-impl': ['feature:agents.manage.full'],
+  'debug-export': ['feature:agents.manage.full'],
   'fast-mode-set': ['feature:agents.manage.full'],
   'fast-mode-disable': ['feature:agents.manage.full'],
   'reincarnate': ['feature:agents.manage.full'],

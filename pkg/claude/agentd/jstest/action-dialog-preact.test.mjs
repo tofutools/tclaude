@@ -336,6 +336,41 @@ test("group settings sends only the parts that changed, to the group's own node"
   assert.deepEqual(JSON.parse(requests[0][1].body), { max_members: 5 }, 'an unchanged environment or directory is not sent');
 });
 
+test("another node's sandbox picker reads that node's posture and catalog and assigns there", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const replies = {
+    '/api/peer/inst_forge7/agents/c1/sandbox-impl': { sandbox_implementation: 'harness-builtin', harness: 'codex' },
+    '/api/peer/inst_forge7/spawn-launch-catalog': {
+      harnesses: [{ name: 'codex', display_name: 'Codex', can_sandbox: true, sandbox_modes: ['workspace-write'] }],
+      sandbox_impl: { options: [{ value: 'harness-builtin', label: 'harness' }] },
+    },
+  };
+  const actions = createActionDialogActions({
+    state,
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url, options = {}) => {
+      requests.push([url, options.method || 'GET']);
+      return new Response(JSON.stringify(replies[url] || { sandbox_implementation: 'stacked' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: () => {},
+    refresh: async () => {},
+  });
+  const posture = await actions.loadSandboxImpl('c1', { node: 'inst_forge7' });
+  assert.equal(posture.sandbox_implementation, 'harness-builtin');
+  assert.deepEqual(actions.sandboxModes('codex', posture.catalog), ['workspace-write'], "the node's harness, not the page's");
+  assert.equal(actions.sandboxImplOptions('codex', posture.catalog).length, 1);
+  state.openSandboxImpl({ conv: 'c1', node: 'inst_forge7' });
+  await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_forge7', implementation: 'stacked' }, state.dialog.value);
+  assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox-impl', 'POST']);
+  assert.equal(state.dialog.value, null);
+});
+
 test('action mutations preserve endpoint payloads, notifications, and refresh boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([

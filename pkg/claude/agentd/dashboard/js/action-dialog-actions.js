@@ -296,8 +296,10 @@ export function createActionDialogActions({
     // The implementation catalog the spawn dialog renders, named after the
     // agent's own harness. Shared rather than re-derived so the assignment dialog
     // and the spawn dialog cannot describe the same implementation differently.
-    sandboxImplOptions(harnessName) {
-      const snapshot = getSnapshot() || {};
+    // catalog is another node's launch catalog (loadSandboxImpl); blank reads
+    // the page's snapshot.
+    sandboxImplOptions(harnessName, catalog) {
+      const snapshot = catalog || getSnapshot() || {};
       const harness = findSpawnHarness(snapshot.harnesses, harnessName);
       const label = harness?.display_name || harness?.name || harnessName;
       // canBuiltinOSSandbox is deliberately NOT passed through here. It hides
@@ -312,8 +314,8 @@ export function createActionDialogActions({
     // every implementation — the launch-time refusal is the authority, and a
     // dialog that hid an option would replace it — so this is what keeps the
     // operator from choosing one this box cannot run and learning it from a POST.
-    sandboxImplAvailability(harnessName, implementation) {
-      const snapshot = getSnapshot() || {};
+    sandboxImplAvailability(harnessName, implementation, nodeCatalog) {
+      const snapshot = nodeCatalog || getSnapshot() || {};
       const catalog = snapshot.sandbox_impl || {};
       const harness = findSpawnHarness(snapshot.harnesses, harnessName);
       if (implementation === 'stacked') {
@@ -339,25 +341,36 @@ export function createActionDialogActions({
     },
     // The harness's own sandbox modes, for the optional pin. Empty for a harness
     // whose sandbox is configured out of band, which is what hides the row.
-    sandboxModes(harnessName) {
-      const harness = findSpawnHarness((getSnapshot() || {}).harnesses, harnessName);
+    sandboxModes(harnessName, catalog) {
+      const harness = findSpawnHarness((catalog || getSnapshot() || {}).harnesses, harnessName);
       if (!harness?.can_sandbox) return [];
       return Array.isArray(harness.sandbox_modes) ? harness.sandbox_modes : [];
     },
     // The durable sandbox posture the NEXT launch will use. Read from the server
     // rather than the row snapshot, whose sandbox fields describe the last launch
     // — the two diverge as soon as an assignment is recorded.
-    async loadSandboxImpl(conv, { signal } = {}) {
-      return requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
+    // node names another node's agent (the fused view; blank is the page's).
+    // Another node's harness and implementation catalogs come with the
+    // posture, as catalog, since its snapshot (and a peer page's) carries
+    // neither.
+    async loadSandboxImpl(conv, { signal, node = '' } = {}) {
+      const api = nodeFetch(node, { fetchImpl });
+      const posture = requestJSON(api, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
+      if (!node && !globalThis.__tclaudeRemoteNode?.id) return posture;
+      const [data, catalog] = await Promise.all([posture,
+        // An older node without the catalog route still shows its posture.
+        requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
+      return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
-    async assignSandboxImpl({ conv, label, implementation, sandbox }, owner) {
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox }, owner) {
       const payload = await requestJSON(
-        fetchImpl, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
+        nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ implementation, sandbox: sandbox || '' }),
         },
       );
       state.close(owner);
+      announceNodeChanged(node);
       const name = label || String(conv).slice(0, 8);
       // Name the wake explicitly. The assignment changed nothing about the
       // agent as it stands — it is recorded intent, and an operator who reads

@@ -83,8 +83,8 @@ export function createActionDialogState() {
     // recorded value comes from the last LAUNCH, while what this dialog edits is
     // durable relaunch intent, and those differ the moment an assignment lands.
     // It loads the authoritative posture itself when it opens.
-    openSandboxImpl({ conv, label = '', harness = '' }) {
-      return !!open({ kind: 'sandbox-impl', conv, label, harness });
+    openSandboxImpl({ conv, label = '', harness = '', node = '' }) {
+      return !!open({ kind: 'sandbox-impl', conv, label, harness, ...(node ? { node } : {}) });
     },
     // launch-target carries the agent and the mode the ⚙ menu picked
     // (launch-target-dialog.js); the dialog loads targets itself.
