@@ -8,9 +8,11 @@
 //
 // The listing is always this node's, read past a peer view's fetch routing:
 // the browser's terminals attach through this node's daemon. A fused view, or
-// a peer's per-node view, also lists the shown peers' unattached agents (read
-// through the peer proxy, which serves them only to an unrestricted peer);
-// those open as remote terminals.
+// a peer's per-node view, also lists the shown peers' unattached agents and
+// shells (read through the peer proxy, which serves them only to an
+// unrestricted peer). A peer's agents open as remote terminals; its shells
+// can be ended from here, and attach on that node until the federation
+// stream carries shells.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -22,6 +24,7 @@ import {
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
+import { LockReason } from './lock-reason.js';
 
 const html = htm.bind(h);
 
@@ -57,13 +60,24 @@ export function backgroundPeers(view, remote = '') {
   return fleet.peers.filter((peer) => ids.has(peer.id) && peer.online);
 }
 
-// peerBackgroundRows keeps the peer's agents, the rows a remote terminal can
-// open, each tagged with its node.
+// PEER_SHELL_ATTACH is why a peer's shell has no Attach here yet: the
+// federation terminal stream addresses agents only.
+export const PEER_SHELL_ATTACH = "A peer's shell attaches on that node for now: the federation terminal stream carries agents only";
+
+// peerBackgroundRows keeps the peer's agents (the rows a remote terminal can
+// open) and its tclaude shells (ended from here; attached on that node), each
+// tagged with its node.
 export function peerBackgroundRows(rows, peer) {
   const node = { id: peer.id, name: peer.name, color: peer.color };
-  return (rows || [])
-    .filter((row) => row?.kind === 'agent' && PEER_AGENT_ID.test(row.agent_id || ''))
-    .map((row) => ({ ...row, key: `peer:${peer.id}:${row.agent_id}`, killable: false, node }));
+  return (rows || []).flatMap((row) => {
+    if (row?.kind === 'agent' && PEER_AGENT_ID.test(row.agent_id || '')) {
+      return [{ ...row, key: `peer:${peer.id}:${row.agent_id}`, killable: false, node }];
+    }
+    if ((row?.kind === 'shell' || row?.kind === 'group_shell') && row.tmux_session) {
+      return [{ ...row, key: '', killable: !!row.killable, attachLock: PEER_SHELL_ATTACH, node }];
+    }
+    return [];
+  });
 }
 
 // readListing resolves to the listing's rows, null when it could not be read
@@ -158,17 +172,17 @@ const KIND_SECTIONS = Object.freeze([
   ['other', 'Other tmux sessions'],
 ]);
 
-// backgroundSections groups this node's rows by kind, then each peer's agents
-// under their node.
+// backgroundSections groups this node's rows by kind, then each peer's rows
+// by kind under their node.
 function backgroundSections(rows) {
   const sections = KIND_SECTIONS.map(([kind, title]) => ({ key: kind, title, node: null, items: rows.filter((row) => !row.node && row.kind === kind) }));
   const peers = new Map();
   for (const row of rows) {
     if (!row.node) continue;
-    if (!peers.has(row.node.id)) peers.set(row.node.id, { key: `peer:${row.node.id}`, title: 'Agents', node: row.node, items: [] });
-    peers.get(row.node.id).items.push(row);
+    if (!peers.has(row.node.id)) peers.set(row.node.id, KIND_SECTIONS.map(([kind, title]) => ({ key: `peer:${row.node.id}:${kind}`, kind, title, node: row.node, items: [] })));
+    peers.get(row.node.id).find((section) => section.kind === row.kind)?.items.push(row);
   }
-  return [...sections, ...peers.values()].filter((section) => section.items.length);
+  return [...sections, ...[...peers.values()].flat()].filter((section) => section.items.length);
 }
 
 function selectorOf(row) {
@@ -227,11 +241,16 @@ function openRemoteAgent({ options, ...rest }) {
 }
 
 // killBackgroundTerminal ends a killable row's tmux session (a shell, a
-// superseded generation, an unrecognised session) and re-reads the listing.
-// Resolves to '' on success or the server's error text.
-export async function killBackgroundTerminal(row, { fetchImpl = (...args) => fetch(...args) } = {}) {
+// superseded generation, an unrecognised session) on its node and re-reads
+// the listing. Like the listing, it goes past a peer view's fetch routing: a
+// row of this node's ends here, a peer's through the peer proxy. Resolves to
+// '' on success or the server's error text.
+export async function killBackgroundTerminal(row, {
+  fetchImpl = globalThis.__tclaudeRemoteNode?.localFetch || ((...args) => fetch(...args)),
+} = {}) {
+  const path = row.node ? `/api/peer/${encodeURIComponent(row.node.id)}/background-terminals/kill` : BACKGROUND_TERMINAL_KILL_PATH;
   try {
-    const response = await fetchImpl(BACKGROUND_TERMINAL_KILL_PATH, {
+    const response = await fetchImpl(path, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -385,7 +404,10 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
                       ${row.key
                         ? html`<button type="button" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
                             aria-label=${`Attach ${view.label}`}>Attach</button>`
-                        : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
+                        : row.attachLock
+                          ? html`<button type="button" class="mux-btn mux-bg-attach" disabled aria-disabled="true"
+                              aria-label=${`Attach ${view.label}`}>Attach</button><${LockReason} why=${row.attachLock}/>`
+                          : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
                       ${row.killable ? html`<${KillButton} row=${row} label=${view.label} />` : null}
                     </div>`;
                 })}
