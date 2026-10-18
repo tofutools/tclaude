@@ -7,6 +7,8 @@ import { featureNeeds, featureState } from './peer-view-limits.js';
 import { openRemoteAgentSpawn } from './agent-spawn-controller.js';
 import { openMessageCreateModal } from './message-access-dialog-controller.js';
 
+const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
+
 // ownName is a merged group's name on its own node (group@node → group).
 function ownName(group) {
   const at = `@${group.fleet_node?.name || ''}`;
@@ -24,12 +26,14 @@ function nodeAllows(node, feature, snapshot) {
 
 // buildFusedNodeCommands lists, for each group of the fused listing on
 // another node than the page's, a spawn and a message command bound to that
-// node. Each names its node (node), so the page's own peer-view limits leave
+// node, and an open-terminal command for each of a peer's live agents. Each names its node (node), so the page's own peer-view limits leave
 // it alone: it carries that node's gate instead.
 export function buildFusedNodeCommands(listing, {
   wiz = (regular) => regular, snapshotOf = nodeSnapshot, openSpawn = openRemoteAgentSpawn, openMessage = openMessageCreateModal,
+  openTerminal = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts)),
 } = {}) {
   const cmds = [];
+  const seen = new Set();
   for (const g of listing?.groups || []) {
     const id = g.fleet_node?.id || '';
     if (!id || isPageNode(id)) continue;
@@ -54,6 +58,22 @@ export function buildFusedNodeCommands(listing, {
       run: () => openMessage({ targetMode: 'group', groupName: group }, id, nodeName),
       ...gate('messaging', 'messaging'),
     });
+    // A peer's live agents open here in the browser terminal, as their rows'
+    // jump does; the peer authorises it. (This node's, from a peer's page,
+    // open from its own dashboard.)
+    if (g.fleet_node.local) continue;
+    for (const m of g.members || []) {
+      if (!m?.state?.online || !SAFE_AGENT.test(m.agent_id || '') || seen.has(`${id}/${m.agent_id}`)) continue;
+      seen.add(`${id}/${m.agent_id}`);
+      const label = `${m.title || m.agent_id}@${nodeName}`;
+      cmds.push({
+        id: `agent-focus:${id}/${m.agent_id}`,
+        node: id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal familiar: ${label}`),
+        hint: wiz(`open this agent's terminal on ${nodeName} here`, `conjure this familiar's scrying portal from ${nodeName}`),
+        keywords: `focus show jump open terminal window agent ${label} reveal behold conjure portal scrying familiar`,
+        run: () => openTerminal({ instance: id, agent: m.agent_id, peerLabel: nodeName, label: m.title || '' }),
+      });
+    }
   }
   return cmds;
 }
