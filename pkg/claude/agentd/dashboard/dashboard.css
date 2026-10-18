@@ -20317,6 +20317,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
+.fa-grants-head .fa-grants-revoke-all { margin-left: auto; }
+.fa-table tr.fa-grant-peer td { background: #161b22; border-bottom-color: #30363d; }
 .fa-warn { color: #e3b341; }
 /* Peer operator mail and away cover (js/peer-mail.js). */
 #peer-mail-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
