@@ -298,7 +298,7 @@ function GroupProfileChip({ group, actions, kind }) {
     setBusy(true);
     busyRef.current = true;
     setError('');
-    Promise.resolve(actions.newProfileLock?.()).then((why) => { if (live) setNewLock(why || ''); }, () => {});
+    Promise.resolve(actions.newProfileLock?.(group)).then((why) => { if (live) setNewLock(why || ''); }, () => {});
     actions.groupProfileChoices(kind, group).then((items) => {
       if (live) setChoices(items);
     }).catch((err) => {

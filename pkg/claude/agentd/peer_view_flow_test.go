@@ -243,3 +243,17 @@ func TestPeerUnrestrictedSpawnsThroughTheLocalDialogRoute(t *testing.T) {
 	}
 	require.Contains(t, titles, "from-peer")
 }
+
+// An announcement to every live agent (the palette's Announce) has no peer
+// grant: a restricted peer is refused, an unrestricted one sends it as this
+// node's operator does.
+func TestPeerViewAnnouncesToAllLiveOnlyUnderUnrestrictedTrust(t *testing.T) {
+	fh := newFedHarness(t)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	announce := map[string]any{"all_live": true, "subject": "heads up", "body": "deploy at noon"}
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/operator-message", announce))
+	require.Equal(t, 400, rec.Code, rec.Body.String())
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/operator-message", announce))
+	require.Less(t, rec.Code, 300, rec.Body.String())
+}

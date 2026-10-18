@@ -284,7 +284,11 @@ export function createGroupsActions({
       return node ? "Profiles are created on that node's own dashboard; create it there, then pick it here." : '';
     },
     openNewGroupProfile(kind, onSaved) {
-      if (node) return;
+      // Backstop behind the locked entry (newProfileLock).
+      if (node) {
+        notify("create the profile on that node's own dashboard, then pick it here", true);
+        return;
+      }
       if (kind === 'sandbox') {
         openSandboxProfileEditor(null, { onCreate: onSaved });
       } else {
