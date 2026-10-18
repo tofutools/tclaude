@@ -196,11 +196,11 @@ export function createMergedList({ readPage, refusal, at = (row) => row.created_
     if (!node.local && node.online === false) return { node, why: `${node.name} is offline`, offline: true };
     try {
       const got = await readPage(node, { before }, ctx);
-      if (got.cursorPaging) return { node, page: got };
+      if (got?.cursorPaging) return { node, page: got };
       // An older build ignores the cursor: read it newest first to this
       // page's depth and cut it at the cursor in the merge.
       const deep = before || page > 1 ? await readPage(node, { depth: legacyDepth(page, pageSize) }, ctx) : got;
-      return { node, page: { ...deep, legacy: true } };
+      return { node, page: { rows: [], ...deep, legacy: true } };
     } catch (error) { return { node, why: refusal(node, error) }; }
   }
   // readAll reads page `page` of every node below its cursor, but the
