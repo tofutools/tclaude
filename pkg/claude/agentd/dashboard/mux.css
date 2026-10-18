@@ -15,12 +15,18 @@
  */
 
 /* Tab strip — one tab per open dashboard terminal. The standalone solo shell
-   does not render a tab strip. */
+   does not render a tab strip. Tabs that do not fit wrap onto further rows
+   rather than scrolling sideways; only a strip taller than its cap scrolls,
+   vertically, so a huge tab count cannot push the terminal off screen. */
 .mux-tabs {
-  display: flex; flex: none; gap: 4px;
-  padding: 5px 6px 0; overflow-x: auto;
+  display: flex; flex-wrap: wrap; flex: none; gap: 4px;
+  padding: 5px 6px 0; overflow: hidden auto; max-height: 40vh;
+  scrollbar-width: thin; scrollbar-color: #3d4451 transparent;
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
+.mux-tabs::-webkit-scrollbar { width: 8px; }
+.mux-tabs::-webkit-scrollbar-track { background: transparent; }
+.mux-tabs::-webkit-scrollbar-thumb { background: #3d4451; border-radius: 4px; }
 .mux-tab {
   position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
@@ -89,17 +95,15 @@
   user-select: none;
 }
 /* Match the Groups row's real/WHAT-IF badges. Keep figures intact while
-   long terminal names truncate, and keep the toggle reachable on overflow. */
+   long terminal names truncate. The toggle flows after the last tab, so a
+   wrapping strip carries it onto whichever row that tab lands on. */
 .mux-tab-cost { flex: none; color: #6e9c7d; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mux-tab-cost-whatif { color: #8a8f6e; font-style: italic; display: none; }
 body.cost-whatif .mux-tab-cost-whatif { display: inline; }
 body.terminal-cost-hidden .mux-tab-cost,
 body.hide-costs .mux-tab-cost,
 body.hide-costs .mux-cost-toggle { display: none; }
-.mux-cost-toggle {
-  position: sticky; right: 0; flex: none; align-self: stretch;
-  z-index: 1; background: #161b22; padding: 2px 8px;
-}
+.mux-cost-toggle { flex: none; align-self: stretch; padding: 2px 8px; }
 .mux-tab-cost:focus-visible { outline: 1px solid #58a6ff; outline-offset: 2px; }
 .mux-tab.dragging { opacity: 0.48; cursor: grabbing; }
 .mux-tab.drop-before::before,
@@ -171,7 +175,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
    accents are chosen against the #0d1117 / #161b22 chrome; body.wizard retunes
    the strip around them further down. */
 .mux-tab-group {
-  position: relative; display: flex; align-items: flex-end; gap: 4px; flex: none;
+  position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px;
+  flex: none; max-width: 100%; min-width: 0; box-sizing: border-box;
   padding: 0 5px 0 4px; border-radius: 7px 7px 0 0;
   background: color-mix(in srgb, var(--mux-group-accent) 12%, transparent);
   border-bottom: 2px solid var(--mux-group-accent);
@@ -402,9 +407,6 @@ body.wizard .mux-tabs {
   border-bottom-color: #7a5db0;
   box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.18);
 }
-body.wizard .mux-cost-toggle {
-  background: linear-gradient(180deg, #211832 0%, #171024 100%);
-}
 body.wizard .mux-tab {
   background: #171024; border-color: #4a3a6b; color: #a997ca;
 }
@@ -503,7 +505,7 @@ body.wizard .mux-pane-xterm {
 .mux-node-pill.compact { justify-content: center; min-width: 16px; padding: 0 3px; box-sizing: border-box; }
 .mux-scope-empty { padding: 24px; color: #8b949e; }
 /* A tab's ⚙ (tcl-xy5wkp): the Groups row menu, pinned to the viewport
-   because .mux-tabs scrolls sideways and would clip it. TabGear places it. */
+   because .mux-tabs clips its overflow and would clip it. TabGear places it. */
 /* The wrapper also carries .row-actions, so the menu shares the Groups row
    menu's rules; undo that cluster's hover-to-reveal dimming here. The cog is
    placed like the status light beside it (see .mux-tab-status): a 15px box on
@@ -530,7 +532,7 @@ body.wizard .mux-pane-xterm {
 
 /* Background terminals: tclaude tmux sessions still running with no terminal
    attached (js/background-terminals.js). The counter sits in its own slot to
-   the right of the scrolling tab strip so it neither scrolls away nor has its
+   the right of the wrapping tab strip so it neither scrolls away nor has its
    popover clipped by the strip's overflow. Neutral colours on purpose: it is a
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
