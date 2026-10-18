@@ -215,6 +215,18 @@ var peerViewLocalRoutes = []string{
 	// Reads a peer's attachment for this node's own dashboard.
 	"/api/perf",
 	"/api/perf/reset",
+	// Plugins run shell commands on this machine; unrestricted trust already
+	// opens a shell here, so its fused Plugins section manages them as local.
+	"GET /api/plugins",
+	"POST /api/plugins",
+	"PUT /api/plugins/{name}",
+	"DELETE /api/plugins/{name}",
+	"POST /api/plugins/check",
+	"POST /api/plugins/{name}/check",
+	"POST /api/plugins/{name}/activate",
+	"POST /api/plugins/{name}/deactivate",
+	"POST /api/plugins/{name}/steps/{idx}/run",
+	"POST /api/plugins/{name}/steps/{idx}/stop",
 	"/api/permissions",
 	"/api/power-on",
 	"/api/pr-checks",

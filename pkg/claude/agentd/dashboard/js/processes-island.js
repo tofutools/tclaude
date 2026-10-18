@@ -8,6 +8,9 @@ import { buildProcessEditorCommands } from './process-command-registry.js';
 import { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } from './process-template-dnd.js';
 import { takeProcessDraft } from './process-draft-handoff.js';
 import { WorkflowExportButton, WorkflowImportButton } from './process-workflow-share.js';
+import { fleetState } from './fleet-state.js';
+import { NodeSection, fusedPeers, openOnNode, peerRequestMutation, usePeerSections } from './fused-sections.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -119,8 +122,47 @@ function CreateDialog({ spec, busy, actions }) {
   return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-create-title" onSubmit=${submit}><h3 id="process-create-title">New process template</h3><div class="field process-editor-field process-rename-field"><label for="process-create-input">Display name</label><input ref=${nameRef} id="process-create-input" data-process-create-input type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Release train" value=${name} disabled=${busy} onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(submit)} /></div><p class="muted">Creating the template assigns its permanent id automatically.</p>${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}<div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${busy || !name.trim() || outcomeUnknown}>${busy ? 'Creating…' : 'Create'}</button></div></form></div>`;
 }
 
-export function ProcessesApp({ state, actions, confirmDiscard }) {
+// FusedPeerProcesses is a section per ticked peer after this node's
+// templates: its library, opened on its own view; delete acts on that node.
+function FusedPeerProcesses({ peers, active, describeActor, confirm, notify, fetchFor }) {
+  const { byNode, reload } = usePeerSections({
+    peers, path: '/v1/process/templates', what: 'its processes', active, ...(fetchFor ? { fetchFor } : {}),
+    read: (body) => body?.templates || [],
+  });
+  const remove = async (node, template) => {
+    const label = template.name || template.id;
+    const yes = await confirm({ title: 'Delete process template?', body: `Delete ${label} and all its versions on ${node.name}.`, okLabel: 'Delete' });
+    if (!yes) return;
+    try {
+      await peerRequestMutation(node, { reload: () => reload(node.id), ...(fetchFor ? { fetchFor } : {}) })(`/v1/process/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
+      notify(`deleted process template ${label} on ${node.name}`);
+    } catch (error) {
+      notify(`Delete failed: ${error.body?.message || error.body?.error || error.message}`, true);
+    }
+  };
+  return peers.map((node) => {
+    const entry = byNode[node.id];
+    const templates = entry?.data || [];
+    return html`<${NodeSection} key=${node.id} node=${node} entry=${entry} summary=${`${templates.length} template${templates.length === 1 ? '' : 's'}`}
+      onOpen=${() => openOnNode(node, { tab: 'processes', subtab: 'templates' })}>
+      ${templates.length === 0 ? html`<div class="process-placeholder"><p>No process templates on ${node.name}.</p></div>`
+        : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>${templates.map((template) => {
+          const latest = template.latestVersion || {};
+          const actor = describeActor(latest.actor);
+          return html`<tr key=${template.id} data-process-peer-template=${template.id}><td>${template.name || template.id}<div class="process-secondary" title="Template id (permanent)">${template.id}</div></td>
+            <td class="process-description">${template.description || ''}</td>
+            <td><span class="process-hash" title=${latest.semanticHash || ''}>${(latest.semanticHash || '').slice(0, 10) || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td>
+            <td>${template.versionCount || 0}</td>
+            <td class="process-actions"><button class="process-action" type="button" title=${`Open in the editor on ${node.name}'s own view`} onClick=${() => openOnNode(node, { tab: 'processes', subtab: 'templates', selection: template.id })}>open ↗</button><button class="process-action process-action-danger process-delete-btn" type="button" title=${`Delete this template and all its versions on ${node.name}`} aria-label=${`Delete ${template.name || template.id} on ${node.name}`} onClick=${() => remove(node, template)}><${TrashIcon} /></button></td></tr>`;
+        })}</tbody></table>`}
+    </${NodeSection}>`;
+  });
+}
+
+export function ProcessesApp({ state, actions, confirmDiscard, fleet = fleetState, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = { ...state.view.value, state };
+  // A fused view adds a section per ticked peer (fused-sections.js).
+  const peers = fusedPeers(fleet);
   useEffect(() => { if (current.active) void actions.refreshActive(); }, [current.active]);
   useEffect(() => { const poll = () => { const view = state.view.value; if (view.active && view.canvas?.kind === 'editor') void actions.observeTemplateHeads(); }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   // The dock's process library deletes and pins too; keep this list current.
@@ -130,7 +172,7 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
   // Processes is an Automations subtab: render the shared Automations row with
   // Processes active. Re-picking Processes returns to the template list.
   const selectEntry = (key) => { if (key === PROCESSES_SUBTAB) void actions.activateSubtab('templates'); else openAutomationsEntry(key); };
-  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
+  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />${peers.length ? html`<${FusedPeerProcesses} peers=${peers} active=${current.active} describeActor=${actions.describeActor} confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
 }
 
 export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {

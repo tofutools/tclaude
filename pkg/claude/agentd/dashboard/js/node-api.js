@@ -22,9 +22,11 @@ export function selfNodeID() {
   return selfNode;
 }
 
-// peerPath addresses an /api/ path on a peer through this node's proxy.
+// peerPath addresses an /api/ path (or the /v1/process/ API) on a peer
+// through this node's proxy.
 export function peerPath(node, path) {
   const url = new URL(String(path), 'http://node.invalid');
+  if (url.pathname.startsWith('/v1/process/')) return `/api/peer/${encodeURIComponent(node)}${url.pathname}${url.search}`;
   if (!url.pathname.startsWith('/api/') || url.pathname.startsWith('/api/peer/')) {
     throw new Error(`not a node API path: ${url.pathname}`);
   }
