@@ -120,7 +120,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   assert.equal(activitySubtab.value, 'logs');
 });
 
-test('a peer view lands a Logs deep link on Audit and the URL says so', async (t) => {
+test('a peer view keeps a Logs deep link until the peer answers (unrestricted trust serves it)', async (t) => {
   const harness = await createPreactHarness(t);
   installActivityShell(harness);
   const browsing = installBrowsingContext(t, harness, '/activity/logs');
@@ -132,8 +132,8 @@ test('a peer view lands a Logs deep link on Audit and the URL says so', async (t
     harness.importDashboardModule('js/activity-state.js'),
   ]);
   initNavHistory();
-  assert.equal(activitySubtab.value, 'audit', 'the daemon log has no peer route');
-  assert.equal(browsing.at(), '/activity/audit?node=inst_forge7', 'boot keeps the corrected location');
+  assert.equal(activitySubtab.value, 'logs', 'an unrestricted peer serves the daemon log');
+  assert.equal(browsing.at(), '/activity/logs?node=inst_forge7', 'boot keeps the location');
   assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true);
 });
 
