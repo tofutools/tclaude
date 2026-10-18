@@ -490,6 +490,7 @@ func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 	require.Contains(t, body, "full-keep")
 	// The fixture records no launch profile: this node's own handler answers.
 	code, body = call("GET", "/api/agents/"+keep+"/sandbox-impl", nil)
+	require.Equal(t, 409, code, body)
 	require.Contains(t, body, "relaunch_profile")
 	code, body = call("GET", "/api/agents/"+gone+"/worktree", nil)
 	require.Equal(t, 200, code, body)

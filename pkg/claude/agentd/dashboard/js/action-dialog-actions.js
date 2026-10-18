@@ -357,7 +357,9 @@ export function createActionDialogActions({
       const api = nodeFetch(node, { fetchImpl });
       const posture = requestJSON(api, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
       if (!node && !globalThis.__tclaudeRemoteNode?.id) return posture;
-      const [data, catalog] = await Promise.all([posture, requestJSON(api, '/api/spawn-launch-catalog', { signal })]);
+      const [data, catalog] = await Promise.all([posture,
+        // An older node without the catalog route still shows its posture.
+        requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
       return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
     async assignSandboxImpl({ conv, node = '', label, implementation, sandbox }, owner) {
