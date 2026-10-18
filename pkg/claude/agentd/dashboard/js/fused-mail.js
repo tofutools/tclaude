@@ -360,8 +360,10 @@ export function FusedMail({
   const clientRef = useRef(null);
   const hasClient = !!current.fused && !!fleet;
   useEffect(() => (hasClient && clientRef.current ? initMailResize(clientRef.current) : undefined), [hasClient]);
-  useEffect(() => { const t = timers.setTimeout(() => setQ(query.trim()), SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [query]);
-  useEffect(() => { const t = timers.setTimeout(() => setBq(boxQuery.trim()), SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [boxQuery]);
+  // An edit that settles on the search already shown (a trailing space)
+  // changes no URL, so its intent to record is dropped here (`nav`, below).
+  useEffect(() => { const t = timers.setTimeout(() => { const next = query.trim(); if (next === q && nav.current === 'q') nav.current = null; setQ(next); }, SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [query]);
+  useEffect(() => { const t = timers.setTimeout(() => { const next = boxQuery.trim(); if (next === bq && nav.current === 'box') nav.current = null; setBq(next); }, SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [boxQuery]);
   // restored names the folder/search/scope a history location just set, so
   // the reset below (a new folder starts on page 1 with nothing open) leaves
   // the page and message that location named.
@@ -387,7 +389,7 @@ export function FusedMail({
     const shown = withoutOverlays(fromPath(url?.pathname, url?.search || ''));
     if (shown.tab !== 'messages') return;
     const why = nav.current;
-    if (locEquals(locRef.current, shown)) { if (why === 'push') nav.current = null; return; }
+    if (locEquals(locRef.current, shown)) { nav.current = null; return; }
     nav.current = null;
     let correction = true;
     if (why === 'push') { correction = false; editing.current = null; }
@@ -458,12 +460,14 @@ export function FusedMail({
   const folders = (n) => nodeFolders(entries[n.id]?.mailboxes);
   const humanUnread = (n) => folders(n).human?.unread || 0;
 
-  const pick = (f, { push = true } = {}) => { if (push) nav.current = 'push'; setFolder(f); };
+  // A re-click changes nothing, so it records nothing (and leaves no intent
+  // for a later arrow key to push with).
+  const pick = (f, { push = true } = {}) => { if (push && folderKey(f) !== folderKey(folder)) nav.current = 'push'; setFolder(f); };
   const isOn = (f) => folderKey(folder) === folderKey(f);
   const toggleSet = (setter, key) => setter((cur) => { const next = new Set(cur); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const setToggle = (name, on) => { setPref(PREF[name], on ? '1' : '0'); setToggles((cur) => ({ ...cur, [name]: on })); };
   const setPageSize = (n) => { setPref(PREF.pageSize, String(n)); setPageSizeState(n); setPage(1); };
-  const selectRow = (key, { push = true } = {}) => { if (push) nav.current = 'push'; setSelected(key); };
+  const selectRow = (key, { push = true } = {}) => { if (push && key !== selected) nav.current = 'push'; setSelected(key); };
   const folderRows = new Map();
   const folderRow = (f, { icon, label, title, total: count = null, totalTitle, unread = 0, lead = null, nested = false, className = '', tags = null }) => {
     const key = folderKey(f);
@@ -482,7 +486,7 @@ export function FusedMail({
   // The node chips narrow the whole view: folders, list and counts.
   const chips = html`<div class="fused-mail-scope" role="group" aria-label="Show mail from">
     <button type="button" class=${`fused-mail-chip${scope ? '' : ' active'}`} aria-pressed=${String(!scope)} data-scope=""
-      title="Show every ticked node's mail" onClick=${() => { nav.current = 'push'; setScope(''); }}>All nodes · ${nodes.length}</button>
+      title="Show every ticked node's mail" onClick=${() => { if (scope) nav.current = 'push'; setScope(''); }}>All nodes · ${nodes.length}</button>
     ${nodes.map((n) => {
       const s = status(n);
       const unread = humanUnread(n);
