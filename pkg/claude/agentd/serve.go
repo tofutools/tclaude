@@ -438,6 +438,11 @@ func runServe(p *serveParams) error {
 	if p.Socket == "" {
 		common.MarkPostSplitDaemonServing()
 	}
+	// Hot read-only paths (permission checks, per-request flags) read config
+	// from memory; the watcher picks up external edits within a few seconds.
+	configWatchCtx, stopConfigWatch := context.WithCancel(context.Background())
+	defer stopConfigWatch()
+	config.WatchShared(configWatchCtx, 5*time.Second)
 
 	// Opt-in profiling endpoint. Started before the background loops below so
 	// a capture taken right after startup sees them from their first tick.

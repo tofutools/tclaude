@@ -1195,7 +1195,7 @@ func (s *gitProxySession) gitProbeStrict(ctx context.Context, args ...string) (v
 // keeping "no" and "could not tell" apart so a caller that must fail closed can
 // see the difference.
 func gitProxyActivated() (bool, error) {
-	cfg, err := config.Load()
+	cfg, err := config.LoadShared()
 	if err != nil {
 		return false, err
 	}

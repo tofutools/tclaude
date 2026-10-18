@@ -584,7 +584,7 @@ func resolvePermission(convID, slug string) permResolution {
 // Callers writing an audit record can therefore preserve decision-time
 // provenance without re-querying a grant that may expire or be replaced.
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
-	cfg, _ := config.Load()
+	cfg, _ := config.LoadShared()
 	v := resolveEffectivePermissionVerdict(convID, slug,
 		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 	return contextFreeResolution(v), v.SudoGrantID
@@ -827,7 +827,7 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 	defaultAllowed := false
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
 		defaultAllowed = defaults[slug]
-	} else if cfg, _ := config.Load(); cfg != nil {
+	} else if cfg, _ := config.LoadShared(); cfg != nil {
 		defaultAllowed = cfg.HasDefaultPermission(slug)
 	}
 	return resolvePermissionVerdictFrom(src, slug, defaultAllowed), nil
@@ -1052,7 +1052,7 @@ func resolveRemotePermissionVerdictForActionFrom(r *http.Request, src permSource
 			}
 		}
 	}
-	cfg, _ := config.Load()
+	cfg, _ := config.LoadShared()
 	defaultAllowed := cfg.HasDefaultPermission(slug)
 	if r != nil {
 		if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
