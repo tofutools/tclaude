@@ -590,6 +590,14 @@ markers, attachment counts, and bulk actions; the reader renders Markdown,
 offers downloadable agent-published attachments with image preview, and can
 reply (human folder), focus the sender's terminal, or toggle read state.
 
+The open folder and message are in the address: `/messages/human`,
+`/messages/group:ops/42`, `/messages/<conv-id>`. Clicking a folder or a
+message is a history step, so Back closes the message, then returns to the
+previous folder; moving with the arrow keys, or jumping in from another tab,
+updates the address in place. A link to a message opens it if it is on the
+folder's first page, and otherwise shows just the folder. The view of several
+nodes keeps the bare `/messages`.
+
 The image and Markdown attachment viewers zoom with the usual inputs: a
 trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
 and `0` work too). Images zoom around the pointer and pan by dragging; the
@@ -789,6 +797,10 @@ defaults, the daemon and server (dashboard port and bind, tray,
 operator-token persistence), logging, retention, slop mode, experimental
 features, and the remote-access panel described in
 [Operating remotely](remote.md).
+
+Each section in the left rail has its own address (`/config/notifications`,
+`/config/daemon`, …) and history entry; bare `/config` opens the section
+last shown in this browser tab.
 
 **Ask & scribe defaults** includes an **Ask — sandbox** selector next to the ask
 agent profile. It defaults to the dashboard global sandbox profile, with no

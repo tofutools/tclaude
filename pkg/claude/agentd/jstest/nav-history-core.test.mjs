@@ -285,6 +285,21 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.equal(toPath(fromPath('/debug')), '/activity/performance');
   assert.deepEqual(normalizeLocation({ tab: 'audit' }), { tab: 'activity', subtab: 'audit' });
 
+  // Config sections.
+  assert.equal(toPath({ tab: 'config', subtab: 'daemon' }), '/config/daemon');
+  assert.deepEqual(fromPath('/config/notifications'), { tab: 'config', subtab: 'notifications' });
+  assert.deepEqual(fromPath('/config/bogus'), { tab: 'config' });
+
+  // Messages: the folder, then the open message; a group folder keeps its colon.
+  assert.equal(toPath({ tab: 'messages', selection: 'group:ops', item: 42 }), '/messages/group:ops/42');
+  assert.deepEqual(fromPath('/messages/group:ops/42'), { tab: 'messages', selection: 'group:ops', item: '42' });
+  assert.deepEqual(fromPath('/messages/group%3Aops'), { tab: 'messages', selection: 'group:ops' });
+  assert.deepEqual(fromPath('/messages'), { tab: 'messages' });
+  assert.equal(locEquals({ tab: 'messages', selection: 'human', item: '1' }, { tab: 'messages', selection: 'human', item: '2' }), false);
+  // An item needs a folder, and only Messages has items.
+  assert.deepEqual(normalizeLocation({ tab: 'messages', item: '3' }), { tab: 'messages' });
+  assert.deepEqual(fromPath('/terminals/agt_a/extra'), { tab: 'terminals', selection: 'agt_a' });
+  assert.deepEqual(resolveStale({ tab: 'messages', selection: 'gone', item: '3' }, () => false), { tab: 'messages' });
   // Fleet config sections; the bare tab is its landing.
   assert.equal(toPath({ tab: 'fleet-admin', subtab: 'grants' }), '/fleet-admin/grants');
   assert.deepEqual(fromPath('/fleet-admin'), { tab: 'fleet-admin' });

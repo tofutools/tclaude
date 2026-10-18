@@ -83,7 +83,7 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
     total=${mailbox.total} totalTitle=${countTitle} disabled=${current.busy}
     tags=${html`${mailbox.retired && html`<span class="mailbox-tag" title="This agent has been retired">retired</span>`}
       ${prevGen && html`<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>`}`}
-    onSelect=${() => controller.selectMailbox(mailbox.id)} />`;
+    onSelect=${() => controller.selectMailbox(mailbox.id, { navigate: true })} />`;
 }
 
 function WipeBar({ current, controller }) {
@@ -159,7 +159,7 @@ function AccessRow({ request, current, controller }) {
     data-key=${request.id} data-kind="decree">
     <button class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}
       data-id=${request.id} aria-current=${active ? 'true' : undefined}
-      onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(request.id); }}>
+      onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(request.id, { navigate: true }); }}>
       <span class="mail-row-top">
         ${!handled && html`<span class="mail-row-dot" title="pending">●</span>`}
         <span class="mail-row-party" title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${controller.accessWho(request)}</span>
@@ -176,7 +176,7 @@ function MessageRow({ message, current, aggregate, controller }) {
     preview=${controller.msgPreview(message)} active=${message.id === current.selectedMsgId}
     checked=${current.selectedMsgs.has(message.id)} busy=${current.busy}
     onCheck=${(checked) => controller.toggleMessageSelection(message.id, checked)}
-    onSelect=${() => controller.selectMessage(message.id)}
+    onSelect=${() => controller.selectMessage(message.id, { navigate: true })}
     onDelete=${() => controller.deleteOneMessage(message.id)}
     canDelete=${!remoteNodeID()} deleteTitle=${remoteNodeID() ? 'Only this node’s operator can delete its messages' : 'Delete this message'} />`;
 }

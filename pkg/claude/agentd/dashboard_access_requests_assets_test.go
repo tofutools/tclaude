@@ -25,7 +25,7 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"controller.decideAccess(request.id, 'always')",
 		"controller.decideAccess(request.id, 'extend')",
 		// Preact owns keyed request rows and dispatches selection directly.
-		"controller.selectMessage(request.id)",
+		"controller.selectMessage(request.id, { navigate: true })",
 		"model.pendingAccess.map(request =>",
 		"model.handledAccess.map(request =>",
 		"class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}",

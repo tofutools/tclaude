@@ -4,6 +4,7 @@ import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
 import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
+import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -119,6 +120,8 @@ function ThresholdList({ values = [], onChange }) {
 // field, and an edit in a hidden panel still saves.
 // ===================================================================
 
+// Their ids are the /config/<section> routes: keep KNOWN_SUBTABS in
+// nav-history-core.js in step.
 export const CONFIG_PANELS = Object.freeze([
   { id: 'appearance', icon: '🎨', title: 'Appearance', lede: 'How the dashboard looks: activity bots, which tabs show, and header and row chrome.' },
   { id: 'terminals', icon: '🖥️', title: 'Terminals & windows', lede: 'Which terminal opens, how agent windows are focused and tiled, and how web terminals attach.' },
@@ -132,18 +135,6 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
   { id: 'advanced', icon: '{ }', title: 'Advanced', lede: 'Structures without a dedicated form, edited as raw JSON.' },
 ]);
-const PANEL_STORAGE_KEY = 'tclaude.config.panel';
-
-function initialPanel() {
-  try {
-    const stored = globalThis.sessionStorage?.getItem(PANEL_STORAGE_KEY);
-    if (CONFIG_PANELS.some(panel => panel.id === stored)) return stored;
-  } catch { /* storage unavailable — fall through to the first panel */ }
-  return CONFIG_PANELS[0].id;
-}
-function rememberPanel(id) {
-  try { globalThis.sessionStorage?.setItem(PANEL_STORAGE_KEY, id); } catch { /* best effort */ }
-}
 
 const BADGES = {
   restart: ['cfg-badge-restart', 'agentd restart', 'Takes effect the next time agentd starts'],
@@ -245,8 +236,13 @@ function ConfigRail({ active, select, dirtyPanels }) {
 // and actions are owned by the Config island and adapter; every control keeps
 // its historical id so the adapter's load/save round-trip is unchanged.
 export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEvent = () => {}, dirtyPanels = null }) {
-  const [active, setActive] = useState(initialPanel);
-  const select = (id) => { setActive(id); rememberPanel(id); };
+  // The open section lives in configPanel so the history router can read and
+  // restore it; picking one on the rail is a navigation (a history entry).
+  const active = configPanel.value;
+  const select = (id) => {
+    if (!setConfigPanel(id)) return;
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
+  };
   return html`
     <${ConfigEventContext.Provider} value=${onFormEvent}>
     <div class="config-form">

@@ -18,6 +18,8 @@ import { featureState } from './feature-state-registry.js';
 import { clickNavExactly } from './automations-nav.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
+import { configLocation, setConfigPanel } from './config-panel.js';
+import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage } from './fleet-admin-page.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
@@ -163,6 +165,13 @@ function activeLocationFromDOM() {
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'activity') {
     loc.subtab = activitySubtab.value;
+  } else if (tab === 'config') {
+    return normalizeLocation(configLocation());
+  } else if (tab === 'messages') {
+    // The open folder and message are Messages state the DOM never spells
+    // out. Before the island loads this is the bare tab; the island corrects
+    // the entry once it knows its folder.
+    return normalizeLocation(mailLocation() || loc);
   } else if (tab === 'fleet-admin') {
     // The section is a signal set before the tab is shown (a page asked for
     // from the map or a viewer badge), so the tab click records it.
@@ -254,6 +263,9 @@ function activate(loc, { traversal = false } = {}) {
     // also hears the restore event, which drops a stale Run preselect.
     if (loc.tab === 'fleet-admin') setFleetAdminPage(loc.subtab || '');
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
+    // A plain Messages click jumps to waiting operator work; a location that
+    // names a folder must land there instead.
+    if (loc.tab === 'messages' && loc.selection) suppressNextMessagesAttention();
     if (navBtn && !navBtn.classList.contains('active')) clickNavExactly(navBtn);
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
@@ -267,6 +279,17 @@ function activate(loc, { traversal = false } = {}) {
       // A bare /activity (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.
       setActivitySubtab(loc.subtab || DEFAULT_ACTIVITY_SUBTAB);
+    } else if (loc.tab === 'config') {
+      // A bare /config (hand-typed, or the nav anchor's href) keeps the
+      // remembered section and says so in the URL.
+      if (loc.subtab) setConfigPanel(loc.subtab);
+      else correct(configLocation());
+    } else if (loc.tab === 'messages') {
+      // Opening a folder loads it from the server, so this goes through the
+      // Messages controller, which answers only with a CORRECTION when it
+      // could not land where asked (a folder or message that is gone) or the
+      // URL did not name a folder.
+      restoreMailLocation(loc);
     } else if (loc.tab === 'jobs') {
       requestJobsLocation(loc);
     } else if (loc.tab === 'usage') {
