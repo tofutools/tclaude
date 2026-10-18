@@ -534,6 +534,11 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // (see groups-fused-sections.js), and `force` holds it open while a start
 // or edit form inside needs it. `onToggle` runs after a fold changes, for a
 // section whose state matters outside it (Subgroups moves activity bots).
+// A button on a folded line unfolds the section too, so what it spawns or
+// starts shows up rather than landing out of sight. That re-render waits for
+// a task, not a microtask: a microtask runs between listeners, and opening
+// drops `closedActions`, which would detach the button before the
+// document's row-action handler sees the click.
 export function FusedSection({ group, section, label, count = null, auto = true, force = false, attrs = {}, actions = null, closedActions = null, onToggle = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
@@ -543,6 +548,11 @@ export function FusedSection({ group, section, label, count = null, auto = true,
     bump((n) => n + 1);
     onToggle?.(event);
   };
+  const unfold = (event) => {
+    if (open || !event.target.closest?.('button')) return;
+    setFusedSectionOpen(group, section, true);
+    setTimeout(() => bump((n) => n + 1), 0);
+  };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
     <div class="gf-section-head">
@@ -551,7 +561,7 @@ export function FusedSection({ group, section, label, count = null, auto = true,
         <span class="gf-label">${label}</span>
         ${count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`}
       </button>
-      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions">${!open && closedActions}${actions}</span>`}
+      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions" onClickCapture=${unfold}>${!open && closedActions}${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
     </div>
     ${open && children}
