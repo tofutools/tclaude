@@ -24,6 +24,9 @@ export const INBOX_HIDDEN_EVERY_MS = 300_000;
 // A node that refused the read (it shares neither) is asked again only this
 // rarely, unless what it sends elsewhere says it now shares.
 export const INBOX_REFUSED_RETRY_MS = 30 * 60_000;
+// A refused node whose last known view still says it shares (a fused snapshot
+// or map summary from before the refusal) is asked again sooner.
+export const INBOX_REFUSED_SHARED_RETRY_MS = 5 * 60_000;
 const INBOX_MESSAGES = 50;
 
 // remoteInbox maps a node ID to { label, messages, access_requests, error,
@@ -57,13 +60,15 @@ const sharesInbox = (view) => unrestricted(view) || featureState('node.messages'
 
 // inboxPeers are the nodes worth asking: online, and sharing their
 // notifications with this node. A node not heard from yet is asked, and after
-// a refusal left alone for a while.
+// a refusal left alone for a while, even while an older view says it shares.
 export function inboxPeers(fleet = fleetState.fleet.value, { now = Date.now(), viewOf = peerViewOf } = {}) {
   return (fleet?.peers || []).filter((p) => {
     if (!p.online) return false;
     const view = viewOf(p.id);
-    if (view) return sharesInbox(view);
-    return !(now - (refusedAt.get(p.id) ?? -Infinity) < INBOX_REFUSED_RETRY_MS);
+    if (view && !sharesInbox(view)) return false;
+    // A refusal holds whatever an older view says, for a while.
+    const wait = view ? INBOX_REFUSED_SHARED_RETRY_MS : INBOX_REFUSED_RETRY_MS;
+    return !(now - (refusedAt.get(p.id) ?? -Infinity) < wait);
   });
 }
 

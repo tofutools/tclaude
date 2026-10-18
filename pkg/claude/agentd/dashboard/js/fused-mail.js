@@ -196,6 +196,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
               mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [],
               agentsTotal: Number.isFinite(roster?.agents_total) ? roster.agents_total : null,
               agentsUnread: Number.isFinite(roster?.agents_unread) ? roster.agents_unread : 0,
+              peerView: roster?.peer_view || null,
             });
           }
         } else {
@@ -246,7 +247,9 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
       } catch (e) {
         failed = true;
         const f = readFailure(e.status || 0, e.body);
-        commit(node.id, f.kind === 'gone' || f.kind === 'not_shared' ? { status: f, mailboxes: [], page: null, requests: [] } : { status: f });
+        // What it shares is heard again from its roster (a refusal may be a
+        // trust change), so a refused human-inbox read is not repeated.
+        commit(node.id, f.kind === 'gone' || f.kind === 'not_shared' ? { status: f, mailboxes: [], page: null, requests: [], peerView: null } : { status: f });
       } finally {
         inflight.delete(node.id);
       }

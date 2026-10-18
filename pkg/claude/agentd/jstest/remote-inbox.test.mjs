@@ -107,6 +107,11 @@ test('a peer we trust unrestricted that does not trust us back is not asked for 
   assert.deepEqual(urls, ['/api/peer/inst_mine/mailbox?id=human&unread=1&page=1&page_size=50'], 'its grantable folder first, never human-inbox');
   assert.deepEqual(m.claimRemoteInboxRead(60_000, unknown), [], 'a refusal is not repeated every minute');
   assert.equal(m.claimRemoteInboxRead(m.INBOX_REFUSED_RETRY_MS + 1, unknown).length, 1, 'only after a long while');
+  // A view from before the refusal (a cached map summary) does not undo it.
+  const stale = { ...unknown, viewOf: () => ({ level: 'unrestricted' }) };
+  await m.readRemoteInboxes(peers, refuse, 2e6);
+  assert.deepEqual(m.claimRemoteInboxRead(2e6 + 60_000, stale), [], 'not every minute on a stale view');
+  assert.equal(m.claimRemoteInboxRead(2e6 + m.INBOX_REFUSED_SHARED_RETRY_MS + 1, stale).length, 1, 'sooner than an unknown node');
 });
 
 test('a peer granting node.messages.read shares its notifications through its mailbox; requests and replies stay unrestricted', async (t) => {
