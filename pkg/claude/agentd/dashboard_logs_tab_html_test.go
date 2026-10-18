@@ -42,7 +42,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 	must("page_size", "logs.js sends the page size to the server")
 	must("include_rotated", "logs.js sends the rotated-files flag")
 	must("hide_raw", "logs.js sends the hide-raw flag")
-	must(`title="Next page (older)"`, "the pager's next-page control")
+	must("next: 'Next page (older)'", "the pager's next-page control")
 	must("resetPage()", "a filter change resets to page 1")
 	must("STREAM_MS", "logs.js has a tail-follow poll interval")
 

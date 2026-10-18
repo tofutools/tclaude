@@ -5,6 +5,7 @@ import { relTime } from './helpers.js';
 import { fieldsText, fmtAbsTime, fmtBytes, fmtInt, levelKey, LOG_PAGE_SIZES, logsExportUrl } from './logs-model.js';
 import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 import { nodeDownloadPath } from './node-api.js';
+import { Pager } from './pager.js';
 
 const html = htm.bind(h);
 const STREAM_MS = 2000;
@@ -28,22 +29,12 @@ function Status({ current, state, actions }) {
   return html`<${Fragment}>${bits.map((bit, index) => html`<${Fragment} key=${index}>${index > 0 && ' · '}${bit}</${Fragment}>`)}</${Fragment}>`;
 }
 
-function Pager({ current, state, actions }) {
+function LogsPager({ current, state, actions }) {
   if (!current.totalUnfiltered) return null;
-  const atStart = current.page <= 1; const atEnd = current.page >= current.pages;
-  const go = (page) => { state.setPage(page); actions.load(); };
-  return html`<div id="logs-pager" class="audit-pager">
-    ${current.pages > 1 && html`<${Fragment}>
-      <button title="First page (newest)" disabled=${atStart} onClick=${() => go(1)}>«</button>
-      <button title="Previous page" disabled=${atStart} onClick=${() => go(current.page - 1)}>‹</button>
-      <span class="audit-pager-pos">Page ${current.page} / ${current.pages}</span>
-      <button title="Next page (older)" disabled=${atEnd} onClick=${() => go(current.page + 1)}>›</button>
-      <button title="Last page (oldest)" disabled=${atEnd} onClick=${() => go(current.pages)}>»</button>
-    </${Fragment}>`}
-    <span class="grow"></span><label class="audit-pager-size" title="Rows per page"><select id="logs-page-size" value=${current.pageSize} onChange=${(event) => { state.setPageSize(event.currentTarget.value); actions.load(); }}>
-      ${LOG_PAGE_SIZES.map((size) => html`<option key=${size} value=${size}>${size}</option>`)}
-    </select> / page</label>
-  </div>`;
+  return html`<${Pager} id="logs-pager" prefix="audit-pager" page=${current.page} pages=${current.pages}
+    onPage=${(page) => { state.setPage(page); actions.load(); }} sizes=${LOG_PAGE_SIZES} pageSize=${current.pageSize} sizeId="logs-page-size"
+    onPageSize=${(size) => { state.setPageSize(size); actions.load(); }}
+    titles=${{ first: 'First page (newest)', next: 'Next page (older)', last: 'Last page (oldest)' }} />`;
 }
 
 function LogRows({ current }) {
@@ -98,7 +89,7 @@ export function LogsApp({ state, actions }) {
       <span class="spacer"></span><span id="logs-status" class="muted"><${Status} current=${current} state=${state} actions=${actions} /></span>
     </div>
     <div id="logs-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${LogRows} current=${current} /></div>
-    <${Pager} current=${current} state=${state} actions=${actions} />
+    <${LogsPager} current=${current} state=${state} actions=${actions} />
   </${Fragment}>`;
 }
 

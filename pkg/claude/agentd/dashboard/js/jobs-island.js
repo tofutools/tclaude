@@ -18,6 +18,7 @@ import { tickedNodes } from './fleet-scope.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
+import { Pager } from './pager.js';
 
 const html = htm.bind(h);
 
@@ -341,32 +342,10 @@ function SortHead({ active, onSort }) {
   })}</tr></thead>`;
 }
 
-function Pager({ state, paging, refresh, disabled = false }) {
-  const total = paging.total || 0;
-  const size = state.limit.value;
-  const off = paging.offset || 0;
-  if (total <= size && off === 0) return null;
-  const from = total === 0 ? 0 : off + 1;
-  const to = Math.min(off + size, total);
-  const atFirst = off <= 0;
-  const atLast = off + size >= total;
-  const move = (action) => {
-    if (state.page(action, total)) void refresh();
-  };
-  const button = (action, glyph, title, atBoundary) => html`
-    <button type="button" class="list-pager-btn" disabled=${disabled || atBoundary} title=${title}
-      aria-label=${title} onClick=${() => move(action)}>${glyph}</button>`;
-  return html`<div class="list-pager">
-    ${button('first', '«', 'First page', atFirst)}
-    ${button('prev', '‹', 'Previous page', atFirst)}
-    <span class="list-pager-count">${from}–${to} of ${total}</span>
-    ${button('next', '›', 'Next page', atLast)}
-    ${button('last', '»', 'Last page', atLast)}
-    <select class="list-pager-size" title="Rows per page" aria-label="Rows per page" disabled=${disabled}
-      value=${size} onChange=${(event) => { state.setPageSize(event.currentTarget.value); void refresh(); }}>
-      ${JOBS_PAGE_SIZES.map((value) => html`<option value=${value}>${value}/page</option>`)}
-    </select>
-  </div>`;
+function JobsPager({ state, paging, refresh, disabled = false }) {
+  return html`<${Pager} layout="range" total=${paging.total || 0} offset=${paging.offset || 0} limit=${state.limit.value} disabled=${disabled}
+    onAction=${(action) => { if (state.page(action, paging.total || 0)) void refresh(); }}
+    sizes=${JOBS_PAGE_SIZES} sizeOption=${(size) => `${size}/page`} onPageSize=${(size) => { state.setPageSize(size); void refresh(); }} />`;
 }
 
 function EmptyJobs({ kind }) {
@@ -518,7 +497,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
               <${FusedPeerJobs} state=${state} fleet=${fleet} active=${activeTab.value === 'jobs'} triggersEnabled=${triggersEnabled}
                 confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />
             </table>
-            <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}
+            <${JobsPager} state=${state} paging=${paging} refresh=${actions.refresh}
               disabled=${(paging.offset || 0) !== state.offset.value} />
           </${Fragment}>`}
     </div></${Fragment}>`}
