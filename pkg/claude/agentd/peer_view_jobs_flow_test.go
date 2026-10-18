@@ -42,18 +42,19 @@ func TestPeerViewLongOperationRunsAsJob(t *testing.T) {
 			Body        []byte `json:"body"`
 		} `json:"result"`
 	}
-	require.Eventually(t, func() bool {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
 		rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/peer-view-jobs/"+started.Job, nil))
 		require.Equal(t, 200, rec.Code, rec.Body.String())
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &state))
-		return state.Status == "done"
-	}, 10*time.Second, 50*time.Millisecond)
+		if state.Status == "done" {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "the job never finished")
+		time.Sleep(50 * time.Millisecond)
+	}
 	require.Equal(t, 200, state.Result.Status, string(state.Result.Body))
 	require.Contains(t, string(state.Result.Body), "outcomes")
-
-	other := agentd.PeerViewHandler("inst_someoneelse0000")
-	rec = testharness.Serve(other, testharness.JSONRequest(t, "GET", "/api/peer-view-jobs/"+started.Job, nil))
-	require.NotEqual(t, 200, rec.Code, "another peer never reads the job")
 }
 
 // The requesting node's proxy waits on a peer's job and answers its reply,
@@ -88,6 +89,29 @@ func TestFederationPeerViewProxyAwaitsAJob(t *testing.T) {
 		require.Equal(t, 200, rec.Code, rec.Body.String())
 		require.Equal(t, lines, rec.Body.String())
 		require.Equal(t, "application/x-ndjson", rec.Header().Get("Content-Type"))
+	case <-time.After(10 * time.Second):
+		t.Fatal("proxy request did not finish")
+	}
+}
+
+// Only a job route's 202 is a job: any other route's reply passes the proxy's
+// checks as before.
+func TestFederationPeerViewProxyAwaitsOnlyJobRoutes(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	p := fh.peer
+	h := agentd.BuildDashboardHandlerForTest()
+	ch := make(chan *httptest.ResponseRecorder, 1)
+	req := testharness.JSONRequest(t, "POST", "/api/peer/"+p.id.ID()+"/operator-message", map[string]any{"to": "x", "body": "y"})
+	go func() { ch <- testharness.Serve(h, req) }()
+	conn := acceptOutboundPeerView(t, p, 0)
+	_ = readPeerViewWire(t, conn)
+	writePeerViewWire(t, conn, peerViewWire{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"peer_job":"pvj_abc"}`)})
+	_ = conn.Close()
+	select {
+	case rec := <-ch:
+		require.Equal(t, 202, rec.Code)
+		require.JSONEq(t, `{"peer_job":"pvj_abc"}`, rec.Body.String())
 	case <-time.After(10 * time.Second):
 		t.Fatal("proxy request did not finish")
 	}

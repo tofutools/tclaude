@@ -122,7 +122,7 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	// may be a stream's lines rather than one JSON value.
 	job := false
 	if !cachedRead && r.Method == http.MethodPost {
-		reply, job, err = awaitPeerViewJob(r.Context(), rt, peer, reply)
+		reply, job, err = awaitPeerViewJob(r.Context(), rt, peer, target.Path, reply)
 		if err != nil {
 			fail(err)
 			return
