@@ -17881,6 +17881,7 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
 .dock-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--node-color, #6e7681); opacity: .5; }
 .dock-node-toggle.is-on .dock-node-dot { opacity: 1; }
 .dock-section-withheld { display: inline-flex; align-items: center; font-weight: 400; }
+.dock-section-withheld .lock-why::after { white-space: pre-line; }
 .dock-where { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
 .dock-where-pill {
   font: inherit; font-size: 10px; line-height: 14px; white-space: nowrap;

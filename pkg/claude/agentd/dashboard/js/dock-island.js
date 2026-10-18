@@ -445,7 +445,8 @@ function useFusedItems(section, fused, wanted) {
 function DockWithheld({ nodes, withheld }) {
   const kept = nodes.filter((node) => withheld[node.id] && withheld[node.id] !== 'loading');
   if (!kept.length) return null;
-  const why = kept.map((node) => `${node.name}: ${withheld[node.id]}`).join('\n');
+  // Each reason already names its node.
+  const why = kept.map((node) => withheld[node.id]).join('\n');
   return html`<span class="dock-section-withheld" aria-label=${`Not shared by ${kept.map((node) => node.name).join(', ')}`}><${LockReason} why=${why} /></span>`;
 }
 

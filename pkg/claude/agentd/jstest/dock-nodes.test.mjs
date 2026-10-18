@@ -111,7 +111,7 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   assert.equal(host.querySelector('.dock-section-head .dock-where-pill'), null, 'the heading lists no nodes: the dropdown and the cards do');
   const head = host.querySelector('.dock-section-withheld');
   assert.equal(head.getAttribute('aria-label'), 'Not shared by mac');
-  assert.match(head.querySelector('.lock-why').dataset.why, /^mac: .*node\.spawn\.read/, 'a node keeping its catalogs says why, by name');
+  assert.match(head.querySelector('.lock-why').dataset.why, /^mac .*node\.spawn\.read/, 'a node keeping its catalogs says why, by name');
 
   const opus = host.querySelector('[data-dock-name="opus"]');
   assert.deepEqual([...opus.querySelectorAll('.dock-where-pill')].map((pill) => `${pill.textContent}:${pill.className.match(/is-(present|differs|missing)/)[1]}`),
