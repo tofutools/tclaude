@@ -660,7 +660,12 @@ test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come
   const fetched = [];
   const fetchImpl = async (url) => {
     fetched.push(url);
-    if (url.startsWith('/api/peer/inst_forge/retired?')) return { ok: true, status: 200, json: async () => ({ rows: [{ conv_id: 'cf', title: 'forge-veteran' }], total: 1 }) };
+    if (url.startsWith('/api/peer/inst_forge/retired?')) {
+      // forge has 120 retired agents, served a page at a time.
+      const q = new URL(url, 'http://x').searchParams; const offset = Number(q.get('offset')); const limit = Number(q.get('limit'));
+      const rows = Array.from({ length: 120 }, (_, i) => ({ conv_id: `cf${i}`, title: i ? `forge-${i}` : 'forge-veteran' })).slice(offset, offset + limit);
+      return { ok: true, status: 200, json: async () => ({ rows, offset, limit, total: 120, total_unfiltered: 120 }) };
+    }
     if (url.startsWith('/api/peer/inst_forge/')) return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], ungrouped: [], peer_view: { level: 'unrestricted' } }) };
     return { ok: true, status: 200, json: async () => ({ groups: [group('qa')], agents: [], ungrouped: [], peer_view: { level: 'restricted', included: [] } }) };
   };
@@ -677,6 +682,18 @@ test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come
   assert.match(retiredForge.textContent, /forge-veteran/);
   assert.ok(fetched.some((u) => /^\/api\/peer\/inst_forge\/retired\?offset=0&limit=\d+$/.test(u)), "forge's first page, through its peer route");
   assert.equal(fetched.some((u) => u.startsWith('/api/peer/inst_lab00/retired')), false);
+  // forge's Retired pages on forge: its pager reads the next window there and
+  // leaves this node's own list where it was.
+  assert.match(retiredForge.querySelector('.list-pager-count').textContent, /1–50 of 120/);
+  fetched.length = 0;
+  await harness.act(() => harness.fireEvent(retiredForge.querySelector('button[data-pager="last"]'), 'click'));
+  for (const due of timers.queue.splice(0)) await harness.act(async () => { await due.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.ok(fetched.some((u) => /^\/api\/peer\/inst_forge\/retired\?offset=100&limit=50$/.test(u)), "forge's last page, through its peer route");
+  const forgeNow = mounted.container.querySelector('details[data-group-key="inst_forge/ retired-virtual"]');
+  assert.match(forgeNow.querySelector('.list-pager-count').textContent, /101–120 of 120/);
+  assert.match(forgeNow.textContent, /forge-119/);
+  assert.equal(fetched.some((u) => u.startsWith('/api/retired')), false, "this node's list is not moved");
   const home = mounted.container.querySelector('details[data-group-key="inst_self/ ungrouped-virtual"]');
   assert.equal(home.dataset.dndTargetUngrouped, '1', "this node's Ungrouped takes drops");
   assert.equal(mounted.container.querySelector('details[data-group-key="inst_forge/ ungrouped-virtual"]').dataset.dndTargetUngrouped, undefined);
