@@ -360,3 +360,16 @@ test("a refused control's reason follows what the peer shares, without another h
   assert.equal(button.getAttribute('title'), 'Edit the description', 'its own title is back');
   dispose();
 });
+
+test('palette commands only unrestricted trust reaches are off on a restricted peer, with the reason', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const remote = { id: 'inst_forge7' };
+  harness.document.documentElement.dataset.remoteNodeName = 'forge';
+  const cmds = [{ label: 'Snapshots…', peerView: 'operator', what: 'its snapshot library' }];
+  const restricted = mod.limitPeerViewCommands(cmds, { peer_view: { included: ['messaging'] } }, remote);
+  assert.equal(restricted[0].enabled, false);
+  assert.equal(restricted[0].disabledReason, 'forge does not share its snapshot library with you (needs unrestricted trust)');
+  const full = mod.limitPeerViewCommands(cmds, { peer_view: { level: 'unrestricted' } }, remote);
+  assert.notEqual(full[0].enabled, false, 'unrestricted trust runs it on the peer');
+});

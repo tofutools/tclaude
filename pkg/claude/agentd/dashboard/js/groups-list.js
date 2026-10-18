@@ -288,6 +288,7 @@ function GroupProfileChip({ group, actions, kind }) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
+  const [newLock, setNewLock] = useState('');
   const selectRef = useRef(null);
   const triggerRef = useRef(null);
   const restoreFocusRef = useRef(false);
@@ -297,6 +298,7 @@ function GroupProfileChip({ group, actions, kind }) {
     setBusy(true);
     busyRef.current = true;
     setError('');
+    Promise.resolve(actions.newProfileLock?.()).then((why) => { if (live) setNewLock(why || ''); }, () => {});
     actions.groupProfileChoices(kind, group).then((items) => {
       if (live) setChoices(items);
     }).catch((err) => {
@@ -357,7 +359,7 @@ function GroupProfileChip({ group, actions, kind }) {
         }
       }}
     >
-      <option value=${NEW_PROFILE}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}</option>
+      <option value=${NEW_PROFILE} disabled=${!!newLock} title=${newLock || undefined}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}${newLock ? ' 🔒' : ''}</option>
       ${/* "no group layer", not "global layer only": clearing this control
            removes the GROUP layer, which is all this control owns. A launch
            into the group can still add an explicit sandbox profile on top of

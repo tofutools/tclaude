@@ -1714,3 +1714,20 @@ test("another node's member editor locks ownership and permissions with the reas
     });
   }
 });
+
+test("another node's group profile picker offers no new profile: its editor saves to the page's node", async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const notes = [];
+  const state = { snapshot: { value: snapshot([]) } };
+  const there = createGroupsActions({ state, node: 'inst_forge7', notify: (...args) => notes.push(args), refresh: async () => {}, fetchImpl: async () => ({ ok: true, text: async () => '' }) });
+  assert.match(there.newProfileLock(), /that node's own dashboard/);
+  there.openNewGroupProfile('default', () => {});
+  assert.deepEqual(notes, [], 'no toast: the entry is shown locked instead');
+  const here = createGroupsActions({ state, refresh: async () => {}, fetchImpl: async () => ({ ok: true, text: async () => '' }) });
+  assert.equal(here.newProfileLock(), '');
+});

@@ -277,11 +277,14 @@ export function createGroupsActions({
       }
       return profileChoices(await loadProfiles());
     },
+    // newProfileLock is why the picker's "new profile" entry is off: the
+    // profile editor saves to the page's node, so another node's group picks
+    // only the profiles that node already has.
+    newProfileLock() {
+      return node ? "Profiles are created on that node's own dashboard; create it there, then pick it here." : '';
+    },
     openNewGroupProfile(kind, onSaved) {
-      if (node) {
-        notify("create the profile on that node's own dashboard, then pick it here", true);
-        return;
-      }
+      if (node) return;
       if (kind === 'sandbox') {
         openSandboxProfileEditor(null, { onCreate: onSaved });
       } else {

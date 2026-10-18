@@ -270,7 +270,7 @@ export function buildCommands(snapshot) {
   if (onlineAll) {
     const plural = onlineAll === 1 ? '' : 's';
     cmds.push({
-      peerView: 'messaging', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
+      peerView: 'operator', what: 'announcing to every live agent', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
       hint: wiz(`send one human-authored message to ${onlineAll} currently live agent${plural}`,
         `sound one human proclamation to ${onlineAll} channeling familiar${plural}`),
       keywords: 'announce broadcast message notify all live online agents global everyone'
@@ -358,7 +358,7 @@ export function buildCommands(snapshot) {
     run: () => openGroupImport(),
   });
   cmds.push({
-    peerView: 'own', icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
+    peerView: 'operator', what: 'its snapshot library', icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
     hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
       'the library of captured familiars: capture, summon from, share or publish them'),
     keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',

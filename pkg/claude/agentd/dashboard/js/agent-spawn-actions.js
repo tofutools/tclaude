@@ -471,8 +471,8 @@ function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '
     getDashboardDefaultProfile: () => fallbackProfile,
     pickDirectory: async () => ({ error: `Browse ${where}'s folders from its own dashboard, or type the path` }),
     // The profile editor saves to the page's node: right on that node's own
-    // page, not from another node's.
-    ...(isPageNode(node) ? {} : { openProfileEditor: () => notify(`Save this as a profile from ${where}'s own dashboard`, true) }),
+    // page, not from another node's (its button shows locked).
+    ...(isPageNode(node) ? {} : { openProfileEditor: () => {} }),
     refresh: () => { announceNodeChanged(node); refresh(); },
     getSnapshot: () => nodeSnapshot(node) || getSnapshot(),
   });

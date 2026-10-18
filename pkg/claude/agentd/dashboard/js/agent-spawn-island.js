@@ -2,6 +2,7 @@ import { SavedPromptChips } from './saved-prompts.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { LockReason } from './lock-reason.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -1213,8 +1214,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
           onClick=${() => changeProfile('')}>Clear</button>
         <button id="agent-spawn-save-profile" type="button" disabled=${busy || !actions.canSaveProfile}
-          title=${actions.canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)" : `Save a profile from ${target?.name || 'that node'}'s own dashboard`}
-          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button>
+          aria-disabled=${actions.canSaveProfile ? undefined : 'true'}
+          title=${actions.canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)" : undefined}
+          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button><${LockReason} id="agent-spawn-save-profile-lock" why=${actions.canSaveProfile ? '' : `Profiles are saved on ${target?.name || 'that node'}'s own dashboard.`}/>
       </div></div>
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
