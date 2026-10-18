@@ -26,11 +26,19 @@ const wholeTreeMarker = "//ci:whole-tree"
 
 // readsDirective declares, on its own comment line in a test file, a
 // documentation path that file's tests read: `//ci:reads docs/dashboard.md`
-// for one file, or a trailing slash (`//ci:reads docs/learn/`) for a tree. A
-// changed doc selects exactly the packages that declare it, and a doc nobody
-// declares selects nothing. scripts/ci/affected's doc-reader guard test fails
-// when a test reaches into the docs without the directive.
+// for one file, or a trailing slash (`//ci:reads docs/learn/`) for a tree. It
+// works in a Go test file and in a `.test.mjs` suite, which is credited to the
+// nearest Go package above it (the one whose test runs it). A changed doc
+// selects exactly the packages that declare it, and a doc nobody declares
+// selects nothing. scripts/ci/affected's doc-reader guard test fails when a
+// test reaches into the docs without the directive. Declare it even in a
+// whole-tree package: the package is selected anyway, but its reverse
+// dependents are reached only through the declaration. `//ci:reads none`
+// declares nothing; it silences the guard for a file it misjudges.
 const readsDirective = "//ci:reads "
+
+// readsNothing is the readsDirective target that declares no doc at all.
+const readsNothing = "none"
 
 // goPkg is the slice of `go list -json` output this tool consumes. Deps is the
 // transitive import closure of the non-test package; the Test/XTest imports
@@ -279,6 +287,13 @@ func scanGoDirs(root string) (goScan, error) {
 	dirs := make(map[string]bool)
 	always := make(map[string]bool)
 	readers := make(map[string]map[string]bool)
+	declare := func(target, dir string) {
+		if readers[target] == nil {
+			readers[target] = make(map[string]bool)
+		}
+		readers[target][dir] = true
+	}
+	jsReads := make(map[string][]string) // directory -> targets, credited once dirs is complete
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -286,6 +301,20 @@ func scanGoDirs(root string) (goScan, error) {
 		if d.IsDir() {
 			if name := d.Name(); p != root && (name == ".git" || name == "node_modules") {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".test.mjs") {
+			body, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			if targets := readsTargets(string(body)); len(targets) > 0 {
+				rel, err := filepath.Rel(root, filepath.Dir(p))
+				if err != nil {
+					return err
+				}
+				jsReads[filepath.ToSlash(rel)] = append(jsReads[filepath.ToSlash(rel)], targets...)
 			}
 			return nil
 		}
@@ -307,16 +336,25 @@ func scanGoDirs(root string) (goScan, error) {
 				always[dir] = true
 			}
 			for _, target := range readsTargets(string(body)) {
-				if readers[target] == nil {
-					readers[target] = make(map[string]bool)
-				}
-				readers[target][dir] = true
+				declare(target, dir)
 			}
 		}
 		return nil
 	})
 	if err != nil {
 		return goScan{}, fmt.Errorf("scanning for Go directories: %w", err)
+	}
+	for dir, targets := range jsReads {
+		owner := dir
+		for owner != "." && !dirs[owner] {
+			owner = path.Dir(owner)
+		}
+		if !dirs[owner] {
+			return goScan{}, fmt.Errorf("%s declares %s but no Go package above it runs it", dir, readsDirective)
+		}
+		for _, target := range targets {
+			declare(target, owner)
+		}
 	}
 	docReaders := make(map[string][]string, len(readers))
 	for target, set := range readers {
@@ -328,17 +366,25 @@ func scanGoDirs(root string) (goScan, error) {
 	return goScan{dirs: dirs, always: always, docReaders: docReaders}, nil
 }
 
-// readsTargets returns the readsDirective targets a source file declares.
+// readsTargets returns the readsDirective targets a source file declares,
+// leaving out readsNothing.
 func readsTargets(body string) []string {
-	var out []string
+	targets, _ := parseReads(body)
+	return targets
+}
+
+// parseReads returns the readsDirective targets a source file declares, and
+// whether it carries a directive at all (readsNothing included).
+func parseReads(body string) (targets []string, declared bool) {
 	for _, line := range strings.Split(body, "\n") {
 		if target, ok := strings.CutPrefix(strings.TrimSpace(line), readsDirective); ok {
-			if target = strings.TrimSpace(target); target != "" {
-				out = append(out, target)
+			declared = true
+			if target = strings.TrimSpace(target); target != "" && target != readsNothing {
+				targets = append(targets, target)
 			}
 		}
 	}
-	return out
+	return targets, declared
 }
 
 // resolvePackages expands the caller's package patterns to import paths,

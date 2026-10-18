@@ -1,3 +1,4 @@
+//ci:reads docs/sandboxing.md
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';

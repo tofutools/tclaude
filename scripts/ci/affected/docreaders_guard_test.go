@@ -1,3 +1,7 @@
+//ci:reads none
+//
+// The doc paths in this file are fixtures for the heuristics, not reads.
+
 package main
 
 import (
@@ -6,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,12 +27,8 @@ import (
 // climbing to a sibling package's fixtures, is not flagged.
 func TestDocReadersCarryTheDirective(t *testing.T) {
 	root := moduleRoot(t)
-	s, err := newSelector()
-	if err != nil {
-		t.Fatalf("newSelector: %v", err)
-	}
 	var undeclared []string
-	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -37,7 +38,15 @@ func TestDocReadersCarryTheDirective(t *testing.T) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), "_test.go") {
+		// No exemption for whole-tree packages: they run on every change, but
+		// their reverse dependents are reached only through the declaration.
+		var reads func([]byte) bool
+		switch {
+		case strings.HasSuffix(d.Name(), "_test.go"):
+			reads = readsDocs
+		case strings.HasSuffix(d.Name(), ".test.mjs"):
+			reads = jsReadsDocs
+		default:
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -45,14 +54,11 @@ func TestDocReadersCarryTheDirective(t *testing.T) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if s.alwaysDirs[filepath.ToSlash(filepath.Dir(rel))] {
-			return nil // selected by every change anyway
-		}
 		body, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		if !readsDocs(body) || len(readsTargets(string(body))) > 0 {
+		if _, declared := parseReads(string(body)); declared || !reads(body) {
 			return nil
 		}
 		undeclared = append(undeclared, rel)
@@ -64,8 +70,9 @@ func TestDocReadersCarryTheDirective(t *testing.T) {
 	if len(undeclared) > 0 {
 		t.Errorf("these tests appear to read documentation but declare no %q directive, so PR CI "+
 			"may skip them on a doc change they would have caught — add e.g. `%sdocs/x.md` "+
-			"(or a `docs/dir/` prefix) as a comment line in the file:\n  %s",
-			strings.TrimSpace(readsDirective), readsDirective, strings.Join(undeclared, "\n  "))
+			"(or a `docs/dir/` prefix) as a comment line in the file, or `%s%s` if it reads none:\n  %s",
+			strings.TrimSpace(readsDirective), readsDirective, readsDirective, readsNothing,
+			strings.Join(undeclared, "\n  "))
 	}
 }
 
@@ -89,8 +96,8 @@ func readsDocs(src []byte) bool {
 			continue
 		}
 		v, err := strconv.Unquote(lit)
-		if err != nil {
-			continue
+		if err != nil || strings.Contains(v, "#") {
+			continue // a link anchor names a doc, it does not read one
 		}
 		if v == ".." || strings.HasPrefix(v, "../") {
 			climbs = true
@@ -102,6 +109,24 @@ func readsDocs(src []byte) bool {
 		}
 	}
 	return climbs && namesDocs
+}
+
+// jsTreeClimbToDocs matches a Node suite resolving a path that climbs out of
+// its directory into the docs tree or to a root-level doc, the shape
+// `new URL('../../docs/x.md', import.meta.url)` and its join() spellings use.
+var jsTreeClimbToDocs = regexp.MustCompile(`['"\x60](\.\./)+(docs[/'"\x60]|[A-Za-z0-9_.-]+\.md['"\x60]|mkdocs\.yml)`)
+
+// jsReadsDocs is readsDocs for a `.test.mjs` suite. Comment lines are ignored.
+func jsReadsDocs(src []byte) bool {
+	for _, line := range strings.Split(string(src), "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "*") {
+			continue
+		}
+		if jsTreeClimbToDocs.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // Every directive must name a doc that exists, or it silently declares
@@ -133,6 +158,9 @@ func TestReadsTargetsParsesDirectiveLines(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("readsTargets = %v, want %v", got, want)
 	}
+	if targets, declared := parseReads("package x\n//ci:reads none\n"); len(targets) != 0 || !declared {
+		t.Errorf("parseReads(none) = (%v, %v), want no targets but declared", targets, declared)
+	}
 }
 
 func TestReadsDocsHeuristic(t *testing.T) {
@@ -147,6 +175,8 @@ func TestReadsDocsHeuristic(t *testing.T) {
 		{`package x; var hint = "see docs/sandboxing.md#stacked"`, false},
 		// An absolute fixture path is not the module's docs tree.
 		{`package x; var p = filepath.Join(root, ".."); var m = "/x/docs/providers.md"`, false},
+		// A link anchor is a reference, not a read.
+		{`package x; var p = ".."; var u = "https://x/blob/main/docs/sandboxing.md#stacked"`, false},
 		// Comments do not count.
 		{"package x\n// reads ../../docs/x.md\nvar p = \"..\"", false},
 		// Climbing to a sibling package's fixtures is not a docs read.
@@ -155,6 +185,24 @@ func TestReadsDocsHeuristic(t *testing.T) {
 	for _, c := range cases {
 		if got := readsDocs([]byte(c.src)); got != c.want {
 			t.Errorf("readsDocs(%q) = %v, want %v", c.src, got, c.want)
+		}
+	}
+}
+
+func TestJSReadsDocsHeuristic(t *testing.T) {
+	cases := []struct {
+		src  string
+		want bool
+	}{
+		{"const g = readFileSync(new URL('../../../../docs/sandboxing.md', import.meta.url));", true},
+		{`const p = join(here, "../../README.md");`, true},
+		{"// see ../../docs/x.md", false},
+		{"const hint = 'docs/sandboxing.md#stacked';", false},
+		{"import { x } from '../dashboard/js/x.mjs';", false},
+	}
+	for _, c := range cases {
+		if got := jsReadsDocs([]byte(c.src)); got != c.want {
+			t.Errorf("jsReadsDocs(%q) = %v, want %v", c.src, got, c.want)
 		}
 	}
 }
@@ -170,6 +218,12 @@ func TestDocChangesSelectOnlyDeclaredReaders(t *testing.T) {
 	got, reason := s.mapChangedFiles([]string{"docs/dashboard.md"})
 	if reason != "" || !got[agentd] {
 		t.Errorf("docs/dashboard.md mapped to (%v, %q), want %s selected", got, reason, agentd)
+	}
+	// A Node suite's directive is credited to the Go package that runs it.
+	const jstest = agentd + "/jstest"
+	got, reason = s.mapChangedFiles([]string{"docs/sandboxing.md"})
+	if reason != "" || !got[jstest] {
+		t.Errorf("docs/sandboxing.md mapped to (%v, %q), want %s selected", got, reason, jstest)
 	}
 	// A doc no test reads selects nothing, rather than the full shard.
 	for _, doc := range []string{"docs/federation.md", "README.md", "mkdocs.yml"} {

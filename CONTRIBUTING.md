@@ -51,7 +51,9 @@ the whole shard, as does a change to the selector itself or setting
 `TCLAUDE_CI_FULL_TESTS=1`. Documentation (`docs/`, `mkdocs.yml`, root-level
 Markdown) is the exception: it feeds no build, so a changed doc selects only
 the packages whose tests declare reading it with a `//ci:reads docs/x.md`
-comment line (or a `docs/dir/` prefix), and nothing at all otherwise. A PR
+comment line (or a `docs/dir/` prefix) — in a Go test file or a `.test.mjs`
+suite, which counts for the Go package that runs it — and nothing at all
+otherwise. A PR
 that changes only docs skips the Go jobs entirely. Release and
 manual-release always run every shard in full, so the merge commit is measured
 without selection before anything ships.
