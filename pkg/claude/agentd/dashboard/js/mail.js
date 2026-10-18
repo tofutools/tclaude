@@ -94,7 +94,7 @@ import {
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
-import { normalizeLocation, toPath } from './nav-history-core.js';
+import { fromPath, normalizeLocation, toPath } from './nav-history-core.js';
 
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
@@ -981,9 +981,15 @@ function announceMailLocation(correction) {
 // from the URL.
 let restoring = 0;
 
+// Only an entry that is already Messages' is corrected. A tab click with the
+// badge lit switches folder (the attention jump) before the router has
+// recorded the switch; correcting then would overwrite the previous tab's
+// entry, and the router's push that follows reads the new folder anyway.
 function syncMailUrl() {
   if (restoring || isFused() || !mailTabActive()) return;
-  if (toPath(mailLocation()) !== globalThis.location?.pathname) announceMailLocation(true);
+  const path = globalThis.location?.pathname;
+  if (fromPath(path).tab !== 'messages') return;
+  if (toPath(mailLocation()) !== path) announceMailLocation(true);
 }
 
 // restoreLocation shows a history location: Back/Forward or a deep link. A

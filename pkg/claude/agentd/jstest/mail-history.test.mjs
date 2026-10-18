@@ -60,6 +60,17 @@ test('clicking a folder or message pushes; other selection changes only correct 
   assert.deepEqual(s.events, []);
 });
 
+test('a folder switch before the router records the tab click never rewrites the previous tab', async (t) => {
+  const s = await setup(t);
+  // The Messages tab is already active (bindTabs ran) but the URL is still the
+  // tab the operator left: the attention jump switches folder right here.
+  s.setPath('/groups');
+  s.events.length = 0;
+  await s.mail.selectMailbox('human');
+  s.mail.selectMessage(2);
+  assert.deepEqual(s.events, [], 'the /groups entry is left for the router to push past');
+});
+
 test('a history location opens its folder and message without recording a navigation', async (t) => {
   const s = await setup(t);
   s.setPath('/messages/human/2');
