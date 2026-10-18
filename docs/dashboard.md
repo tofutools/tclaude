@@ -1036,6 +1036,14 @@ approving. The
 directory is typed as a path on the peer — the folder browser reads this
 machine. After submit, a toast follows the request until the peer decides.
 
+Every dialog follows one rule for what another node keeps. Its operator's
+own controls (a member's group ownership and permissions, a clone's ownership
+and worktree, retire's worktree deletion) work where that node trusts you
+unrestricted and are locked with a 🔒 reason elsewhere. Controls that only
+work on this machine (the folder picker, the saved prompts picker in group
+settings) are locked with their reason for any other node and on a peer's
+page; type the path instead.
+
 The Groups toolbar's global default spawn profile, global sandbox profile and
 **+ new group** controls work on a peer view the peer shares them in
 (`node.spawn.defaults.manage`, `node.groups.create`; unrestricted trust holds

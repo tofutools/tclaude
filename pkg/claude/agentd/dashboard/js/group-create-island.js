@@ -25,7 +25,7 @@ import {
   templateRosterRowsHTML,
 } from './template-readback.js';
 import { HelpDisclosure } from './help-field.js';
-import { isPageNode } from './node-api.js';
+import { LockReason, machineLock } from './lock-reason.js';
 
 const html = htm.bind(h);
 const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
@@ -100,8 +100,9 @@ function GroupCreateDialog({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState(false);
-  // Browsing reads the page node's own directories: another node's are typed.
-  const here = isPageNode(current.node);
+  // Browsing opens this machine's folder picker: another node's directories
+  // are typed.
+  const browseLock = machineLock(current.node, "Browsing opens this machine's folder picker; type the other node's path.");
   const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const nameRef = useRef(null);
   const submitLock = useRef(false);
@@ -380,8 +381,8 @@ function GroupCreateDialog({
             placeholder="absolute path (~ OK) pre-filled when spawning agents"
             autocomplete="off" spellcheck="false" />
           <button id="group-create-cwd-browse" type="button" class="dir-browse-btn"
-            disabled=${disabled || browseBusy || !here} title="Browse for a directory"
-            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
+            disabled=${disabled || browseBusy || !!browseLock} title=${browseLock ? undefined : 'Browse for a directory'}
+            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button><${LockReason} why=${browseLock}/>
         </label>
       ` : html`
         <label class="cron-create-row group-create-workspace-row group-create-workspace-simple-row">
@@ -409,8 +410,8 @@ function GroupCreateDialog({
             onKeyDown=${submitOnEnter} placeholder="absolute path (~ OK); missing parent directories are created"
             autocomplete="off" spellcheck="false" />
           <button id="group-create-clone-browse" type="button" class="dir-browse-btn"
-            disabled=${disabled || browseBusy || !here} title="Browse for a clone destination"
-            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
+            disabled=${disabled || browseBusy || !!browseLock} title=${browseLock ? undefined : 'Browse for a clone destination'}
+            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button><${LockReason} why=${browseLock}/>
         </label>
         <label class="group-create-attach-repository">
           <input type="checkbox" checked=${draft.attachRepository} disabled=${disabled}

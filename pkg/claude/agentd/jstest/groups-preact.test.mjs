@@ -1684,3 +1684,33 @@ test("add member on another node's group adds there and leaves the page's same-n
   assert.deepEqual(urls, [`/api/peer/${node}/conversations`, `/api/peer/${node}/groups/crew/members`, 'page:/api/groups/crew/members']);
   assert.equal(optimistic.length, 1, "only the page's own group is updated in place");
 });
+
+test("another node's member editor locks ownership and permissions with the reason, unless that node trusts this one unrestricted", async (t) => {
+  for (const level of ['restricted', 'unrestricted']) {
+    await t.test(level, async (t) => {
+      const harness = await createPreactHarness(t);
+      const [{ createGroupsState }, { GroupsMemberDialog }, { setNodeSnapshotSource }] = await Promise.all([
+        harness.importDashboardModule('js/groups-state.js'),
+        harness.importDashboardModule('js/member-editor-island.js'),
+        harness.importDashboardModule('js/node-api.js'),
+      ]);
+      setNodeSnapshotSource(() => ({ peer_view: { level } }));
+      const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+      state.openMemberEditor({ conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', role: 'builder', owner: false }, { name: 'alpha' }, 'role', 'inst_forge7');
+      const host = harness.document.body.appendChild(harness.document.createElement('div'));
+      const actions = { saveMemberEditor: async () => {}, noMemberChanges: () => {}, openMemberPermissions: () => {} };
+      const mounted = await harness.mount(harness.html`<${GroupsMemberDialog} state=${state} actions=${actions} confirmDiscard=${async () => true} />`, host);
+      const locked = level === 'restricted';
+      assert.equal(host.querySelector('#edit-member-owner').disabled, locked);
+      assert.equal(host.querySelector('#edit-member-perms').disabled, locked);
+      if (locked) {
+        assert.equal(host.querySelector('#edit-member-owner').getAttribute('aria-disabled'), 'true');
+        assert.match(host.querySelector('#edit-member-owner-lock').dataset.why, /ownership and permissions[\s\S]*unrestricted trust/);
+        assert.ok(host.querySelector('#edit-member-perms-lock'));
+      } else {
+        assert.equal(host.querySelector('#edit-member-owner-lock'), null);
+      }
+      await mounted.unmount();
+    });
+  }
+});

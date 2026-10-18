@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { isPageNode } from './node-api.js';
+import { LockReason, trustLock } from './lock-reason.js';
 import { agentTitleHint, resolveAgentTitle, validAgentTitle } from './agent-title.js';
 import {
   ManagementOverlay as Overlay,
@@ -137,9 +137,10 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
   };
 
   const autofocus = (field) => descriptor.focus === field;
-  // Ownership and permissions are administered on the agent's own node: not
-  // from a peer's page, nor for another node's agent in the fused view.
-  const here = isPageNode(descriptor.node) && !globalThis.__tclaudeRemoteNode?.id;
+  // Ownership and permissions are administered by the agent's own node's
+  // operator: here, or from a node that node trusts unrestricted.
+  const adminLock = trustLock(descriptor.node, 'ownership and permissions');
+  const here = !adminLock;
   return html`<${Overlay}
     id="edit-member-modal" dialogClass="modal" labelledby="edit-member-title"
     onClose=${state.closeMemberEditor} onSubmitHotkey=${submit}
@@ -167,10 +168,11 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
       <input id="edit-member-role" type="text" value=${draft.role} disabled=${busy}
         autofocus=${autofocus('role')} data-select-on-focus autocomplete="off" spellcheck=${false}
         onInput=${(event) => update('role', event.currentTarget.value)} />
-      <label class="edit-member-owner-row" title=${here ? 'Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.' : "Ownership is set on the agent's own node"}>
+      <label class=${`edit-member-owner-row${here ? '' : ' locked-field'}`} title=${here ? 'Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.' : undefined}>
         <input id="edit-member-owner" type="checkbox" checked=${draft.owner} disabled=${busy || !here}
+          aria-disabled=${here ? undefined : 'true'}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> <span class="theme-copy-regular">Group owner</span><span class="theme-copy-wizard">Party owner</span>
-      </label>
+      </label><${LockReason} id="edit-member-owner-lock" why=${adminLock}/>
     </div>
     <div class="field">
       <label for="edit-member-descr">Description</label>
@@ -187,7 +189,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     <div class="modal-buttons">
       <button id="edit-member-perms" type="button" disabled=${busy || !here}
         title="Open this agent / familiar's permanent permission grimoire (grant / deny / inherit per slug)"
-        onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
+        onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
       <span class="spacer"></span>
       <button id="edit-member-cancel" type="button" disabled=${busy}
         onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
