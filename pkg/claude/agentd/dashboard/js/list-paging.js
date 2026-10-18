@@ -84,20 +84,24 @@ export function syncServedOffset(kind, served) {
 // server total. Returns true when the offset actually moved (so the caller can
 // re-fetch).
 export function listPagerNav(kind, action, total) {
-  const limit = listLimit(kind);
   const cur = listOffset(kind);
-  const lastOffset = total > 0 ? Math.floor((total - 1) / limit) * limit : 0;
-  let next = cur;
-  switch (action) {
-    case 'first': next = 0; break;
-    case 'prev': next = Math.max(0, cur - limit); break;
-    case 'next': next = Math.min(lastOffset, cur + limit); break;
-    case 'last': next = lastOffset; break;
-    default: return false;
-  }
+  const next = pagerOffset(action, cur, listLimit(kind), total);
   if (next === cur) return false;
-  offsets[kind] = Math.max(0, next);
+  offsets[kind] = next;
   return true;
+}
+
+// pagerOffset is the offset a pager action moves `cur` to, against the
+// list's total (cur when the action is unknown or goes nowhere).
+export function pagerOffset(action, cur, limit, total) {
+  const lastOffset = total > 0 ? Math.floor((total - 1) / limit) * limit : 0;
+  switch (action) {
+    case 'first': return 0;
+    case 'prev': return Math.max(0, cur - limit);
+    case 'next': return Math.max(0, Math.min(lastOffset, cur + limit));
+    case 'last': return lastOffset;
+    default: return cur;
+  }
 }
 
 // setListPageSize changes a list's page size (persisted) and resets it to the

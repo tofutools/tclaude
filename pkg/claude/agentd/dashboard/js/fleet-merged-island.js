@@ -7,7 +7,7 @@ import {
   BrokerRefusalNotice, GroupsLensList, useGroupsHover, useGroupsTableControls, useWizardTheme,
 } from './groups-island.js';
 import { buildGroupsView, groupsState } from './groups-state.js';
-import { listLimit } from './list-paging.js';
+import { listLimit, pagerOffset } from './list-paging.js';
 import { GroupsProcessScope } from './groups-process-scope.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
@@ -271,28 +271,39 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
 const PEER_LIST_KINDS = ['retired', 'conversations', 'replaced'];
 export const PEER_LISTS_POLL_MS = 15000;
 
-// usePeerLists reads each listed peer's shown paged lists (its first page,
-// under the Groups filter) through its peer routes while active. It returns
-// id -> { retired, conversations, replaced }.
+// usePeerLists reads each listed peer's shown paged lists (the page its pager
+// is on, under the Groups filter) through its peer routes while active. It
+// returns the lists (id -> { retired, conversations, replaced, paging }, each
+// paging entry naming its node) and page(id, kind, action), which moves one
+// peer's list. A new filter or page size starts every peer on its first page.
 export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = globalThis }) {
   const [lists, setLists] = useState({});
-  const key = `${peers.join(',')}|${kinds.join(',')}|${query}`;
+  const resetKey = `${query}|${PEER_LIST_KINDS.map((kind) => `${kind}=${listLimit(kind)}`).join(',')}`;
+  const [offsets, setOffsets] = useState({ key: resetKey, by: {} });
+  const by = offsets.key === resetKey ? offsets.by : {};
+  // The reset sticks: undoing the filter does not bring the old pages back.
+  useEffect(() => { if (offsets.key !== resetKey) setOffsets({ key: resetKey, by: {} }); }, [resetKey]);
+  const offset = (id, kind) => by[id]?.[kind] || 0;
+  const key = `${peers.join(',')}|${resetKey}|${JSON.stringify(by)}`;
   useEffect(() => {
     if (!active || !peers.length || !kinds.length) return undefined;
     let live = true;
     const read = async (id) => {
       const got = {};
+      const paging = {};
       await Promise.all(kinds.map(async (kind) => {
         try {
           const q = query ? `&q=${encodeURIComponent(query)}` : '';
-          const response = await fetchFor(id)(`/api/${kind}?offset=0&limit=${listLimit(kind)}${q}`, { headers: { Accept: 'application/json' } });
+          const limit = listLimit(kind);
+          const response = await fetchFor(id)(`/api/${kind}?offset=${offset(id, kind)}&limit=${limit}${q}`, { headers: { Accept: 'application/json' } });
           if (response.ok) {
             const body = await response.json();
             got[kind] = body?.rows || [];
+            paging[kind] = { node: id, key: resetKey, offset: body?.offset ?? offset(id, kind), limit, total: body?.total ?? got[kind].length, total_unfiltered: body?.total_unfiltered ?? 0 };
           }
         } catch (_) { /* keeps the last page */ }
       }));
-      if (live) setLists((current) => ({ ...current, [id]: { ...current[id], ...got } }));
+      if (live) setLists((current) => ({ ...current, [id]: { ...current[id], ...got, paging: { ...current[id]?.paging, ...paging } } }));
     };
     let timer = 0;
     const all = () => {
@@ -302,7 +313,16 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
     all();
     return () => { live = false; timers.clearTimeout(timer); };
   }, [active, key]);
-  return lists;
+  const page = (id, kind, action) => {
+    // Page from the window on screen: the server clamps a stale offset.
+    const shown = lists[id]?.paging?.[kind];
+    const cur = shown?.key === resetKey ? shown.offset : offset(id, kind);
+    const next = pagerOffset(action, cur, listLimit(kind), shown?.total || 0);
+    if (next === cur) return false;
+    setOffsets({ key: resetKey, by: { ...by, [id]: { ...by[id], [kind]: next } } });
+    return true;
+  };
+  return { lists, page };
 }
 
 // PEER_NOTIFICATIONS_POLL_MS paces each peer's unread-notification read;
@@ -498,7 +518,21 @@ export function MergedGroups({
     fetchFor: (id) => nodeFetch(id, { self: fleet?.self?.id || '', fetchImpl, remote: remote ? { id: remote, localFetch } : null }),
     timers,
   });
-  if (merged) merged.virtual_nodes = merged.virtual_nodes.map((v) => (peerLists[v.node.id] ? { ...v, lists: { ...v.lists, ...peerLists[v.node.id] } } : v));
+  if (merged) merged.virtual_nodes = merged.virtual_nodes.map((v) => (peerLists.lists[v.node.id] ? { ...v, lists: { ...v.lists, ...peerLists.lists[v.node.id] } } : v));
+  // A peer's list pager (its paging names the node) moves that peer's page;
+  // this node's own pagers are useGroupsTableControls'.
+  const pagePeer = useRef(peerLists.page);
+  pagePeer.current = peerLists.page;
+  useEffect(() => {
+    if (!host) return undefined;
+    const onClick = (event) => {
+      const pager = event.target.closest('button[data-pager][data-node]');
+      if (!pager || pager.disabled || !host.contains(pager)) return;
+      pagePeer.current(pager.dataset.node, pager.dataset.list, pager.dataset.pager);
+    };
+    host.addEventListener('click', onClick);
+    return () => host.removeEventListener('click', onClick);
+  }, [host]);
   // The toolbar's filter and view menu narrow this listing as they do one
   // node's (renderRevision: a column or order change re-renders).
   groups.renderRevision.value;

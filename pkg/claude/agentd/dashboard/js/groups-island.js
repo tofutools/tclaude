@@ -216,7 +216,8 @@ export function useGroupsTableControls(host, state, actions) {
         return;
       }
       const pager = event.target.closest('button[data-pager]');
-      if (!pager || pager.disabled || !host.contains(pager)) return;
+      // A peer's list pager (data-node) is the fused view's (usePeerLists).
+      if (!pager || pager.disabled || pager.dataset.node || !host.contains(pager)) return;
       const kind = pager.dataset.list;
       const total = state.snapshot.value?.paging?.[kind]?.total || 0;
       actions.page(kind, pager.dataset.pager, total);

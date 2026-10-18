@@ -244,7 +244,7 @@ function Pager({ kind, paging }) {
   const last = offset + limit >= total;
   const button = (action, glyph, title, disabled) => html`<button
     key=${action} type="button" class="list-pager-btn" data-pager=${action}
-    data-list=${kind} disabled=${disabled} title=${title} aria-label=${title}
+    data-list=${kind} data-node=${paging.node || undefined} disabled=${disabled} title=${title} aria-label=${title}
   >${glyph}</button>`;
   return html`<div class="list-pager" data-list=${kind}>
     ${button('first', '«', 'First page', first)}
