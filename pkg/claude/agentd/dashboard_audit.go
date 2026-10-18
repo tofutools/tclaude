@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -107,6 +108,11 @@ type auditResponse struct {
 	Dir             string           `json:"dir"` // "asc" | "desc"
 	RetentionDays   int              `json:"retention_days"`
 	PruningOn       bool             `json:"pruning_on"`
+	// HasMore says rows follow this page. CursorPaging tells a fleet merge
+	// this node honours before=<id> (newest-first time order only); an older
+	// build omits it and pages by offset alone.
+	HasMore      bool `json:"has_more"`
+	CursorPaging bool `json:"cursor_paging"`
 }
 
 // normalizeAuditSort whitelists the sort key to a db.AuditSort* constant,
@@ -166,13 +172,22 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 	listFilter := base
 	listFilter.SortBy = sortBy
 	listFilter.Asc = asc
-	listFilter.Limit = pageSize
+	listFilter.Limit = pageSize + 1 // one past the page answers has_more
 	listFilter.Offset = offset
+	// A keyset cursor reads the page below it; the counts stay the whole
+	// filtered log's.
+	if before, _ := strconv.ParseInt(q.Get("before"), 10, 64); before > 0 && sortBy == db.AuditSortTime && !asc {
+		page, listFilter.Offset, listFilter.BeforeID = 1, 0, before
+	}
 
 	rows, err := db.ListAuditLog(listFilter)
 	if err != nil {
 		http.Error(w, "list audit log: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	hasMore := len(rows) > pageSize
+	if hasMore {
+		rows = rows[:pageSize]
 	}
 
 	entries := make([]auditEntryView, 0, len(rows))
@@ -229,5 +244,7 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 		Dir:             dir,
 		RetentionDays:   days,
 		PruningOn:       prune,
+		HasMore:         hasMore,
+		CursorPaging:    true,
 	})
 }

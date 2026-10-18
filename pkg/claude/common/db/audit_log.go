@@ -154,9 +154,12 @@ type AuditLogFilter struct {
 	Asc    bool   // false (default) → newest/highest first
 
 	// Pagination. Limit <= 0 → DefaultAuditLogLimit. Offset is the number
-	// of rows to skip (1-based page → (page-1)*pageSize).
-	Limit  int
-	Offset int
+	// of rows to skip (1-based page → (page-1)*pageSize). BeforeID > 0 is a
+	// keyset cursor for the default newest-first order: only rows older than
+	// that id (a fleet merge pages each node this way).
+	Limit    int
+	Offset   int
+	BeforeID int64
 }
 
 // DefaultAuditLogLimit caps an unbounded ListAuditLog so a chatty group
@@ -200,6 +203,10 @@ func auditWhere(f AuditLogFilter) (string, []any) {
 			args = append(args, like)
 		}
 		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.BeforeID > 0 {
+		where = append(where, "id < ?")
+		args = append(args, f.BeforeID)
 	}
 	if len(where) == 0 {
 		return "", args

@@ -80,3 +80,16 @@ test('counts and the walk toward a requested page', async (t) => {
   assert.equal(p.walkTarget(2, [{}, { a: 3 }, { a: 1 }]), 2, 'a known page is shown directly');
   assert.equal(p.cursorKey({ b: 2, a: 7 }), 'a<7,b<2');
 });
+
+test('a walk records each page\'s next vector, follows a moved boundary, and restarts when the down nodes change', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { newWalk, recordVector } = await harness.importDashboardModule('js/fleet-pager.js');
+  let w = recordVector(newWalk(), { key: 'k', page: 1, next: { a: 9 }, more: true });
+  assert.deepEqual(w.list, [{}, { a: 9 }], 'a new list records page 1 at once');
+  w = recordVector(w, { key: 'k', page: 2, next: { a: 5 }, more: true });
+  assert.equal(recordVector(w, { key: 'k', page: 1, next: { a: 9 }, more: true }), w, 'an unchanged boundary keeps the walk');
+  assert.deepEqual(recordVector(w, { key: 'k', page: 1, next: { a: 12 }, more: true }).list, [{}, { a: 12 }], 'a moved boundary drops the deeper vectors');
+  assert.deepEqual(recordVector(w, { key: 'k', page: 2, next: {}, more: false }).list, [{}, { a: 9 }], 'the last page ends the walk');
+  assert.deepEqual(recordVector(w, { key: 'k', absent: 'b', page: 3, next: { a: 1 }, more: true }).list, [{}], 'a node going down restarts it');
+  assert.deepEqual(recordVector(w, { key: 'other', page: 2, next: { a: 1 }, more: true }).list, [{}], 'another list starts over');
+});

@@ -17,8 +17,9 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
     retainPayloadOnError: false,
     onBegin() { lastFetchedAt = now(); },
     onCommit(data) {
-      // The merged view's page is synthetic: keep the operator's sort.
-      if (data.merged) return;
+      // The merged view always reads newest first: keep the operator's sort,
+      // and show the page its walk reached.
+      if (data.merged) { page.value = data.page; return; }
       if (typeof data.page === 'number') page.value = data.page;
       if (typeof data.page_size === 'number') pageSize.value = data.page_size;
       if (data.sort) sort.value = data.sort;
@@ -32,7 +33,7 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
       active: activityViewActive(activeTab, activitySubtab, 'audit'), node: node.value, query: query.value, outcome: outcome.value, source: source.value,
       page: page.value, pageSize: pageSize.value, sort: sort.value, dir: dir.value,
       response: data, rows: data?.entries || [], total: data?.total || 0,
-      totalUnfiltered: data?.total_unfiltered || 0, pages: data?.merged ? 1 : auditPageCount(data?.total || 0, pageSize.value),
+      totalUnfiltered: data?.total_unfiltered || 0, pages: data?.merged ? data.pages || 1 : auditPageCount(data?.total || 0, pageSize.value),
       request: request.value,
     };
   });

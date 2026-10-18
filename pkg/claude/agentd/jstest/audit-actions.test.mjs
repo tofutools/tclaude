@@ -27,6 +27,62 @@ test('a fused audit reads one peer through its routes, or merges every node newe
   calls.length = 0; state.setNode('all'); assert.equal(await actions.load(), true);
   const view = state.view.value;
   assert.deepEqual(view.rows.map((e) => `${e.node.name}#${e.id}`), ['desk#1', 'forge#7', 'desk#2'], 'merged newest first, each tagged with its node');
-  assert.equal(view.pages, 1, 'the merged view does not page');
+  assert.equal(view.pages, 1, 'every node fits on the page');
   assert.deepEqual(view.response.refused.map((r) => r.node.name), ['mac']);
+});
+test('the fused "all nodes" audit pages every node with its keyset cursor, beside a node on an older build', async (t) => {
+  const harness = await createPreactHarness(t); const [{ createAuditState }, { createAuditActions }] = await Promise.all([harness.importDashboardModule('js/audit-state.js'), harness.importDashboardModule('js/audit-actions.js')]);
+  const self = { id: 'inst_self', name: 'desk', local: true }; const forge = { id: 'inst_forge', name: 'forge' }; const lab = { id: 'inst_lab', name: 'lab' };
+  // desk 23, forge 17 and lab (an older build: no before=) 12 events, clocks interleaved.
+  const counts = { desk: 23, forge: 17, lab: 12 };
+  const event = (node, i) => ({ id: i, verb: `${node} ${i}`, at: new Date(Date.UTC(2026, 9, 18, 0, 0, i * 3 + { desk: 0, forge: 1, lab: 2 }[node])).toISOString() });
+  const logs = Object.fromEntries(Object.entries(counts).map(([n, k]) => [n, Array.from({ length: k }, (_, i) => event(n, i + 1)).reverse()]));
+  const calls = []; let down = '';
+  const serve = (node) => async (url) => {
+    calls.push([node, url]);
+    if (node === down) return { ok: false, status: 502, text: async () => '' };
+    const q = new URL(url, 'http://x').searchParams; const size = Number(q.get('page_size')); const page = Number(q.get('page'));
+    const all = logs[node]; const total = all.length;
+    if (node === 'lab') return { ok: true, json: async () => ({ entries: all.slice((page - 1) * size, page * size), total, total_unfiltered: total }) };
+    const before = Number(q.get('before') || 0); const below = before ? all.filter((e) => e.id < before) : all;
+    return { ok: true, json: async () => ({ entries: below.slice(0, size), total, total_unfiltered: total, has_more: below.length > size, cursor_paging: true }) };
+  };
+  const state = createAuditState({ activeTab: harness.signals.signal('audit') });
+  const actions = createAuditActions({ state, nodes: () => [self, forge, lab], fetchImpl: serve('desk'), fetchFor: (id) => serve(id.slice(5)) });
+  state.setNode('all'); state.setPageSize(10);
+  const verbs = () => state.view.value.rows.map((e) => e.verb);
+  assert.equal(await actions.load(), true);
+  assert.equal(state.view.value.total, 52, 'counts are the nodes\' summed totals');
+  assert.equal(state.view.value.pages, 6);
+  const seen = [...verbs()];
+  while (state.view.value.page < state.view.value.pages) {
+    calls.length = 0; state.setPage(state.view.value.page + 1); await actions.load();
+    assert.ok(calls.some(([n, u]) => n === 'forge' && /before=\d+/.test(u)) || !calls.some(([n]) => n === 'forge'), 'a cursor node reads below its cursor');
+    assert.ok(!calls.some(([n, u]) => n !== 'lab' && !/page_size=10&/.test(u)), 'a cursor node never reads deeper than one page');
+    seen.push(...verbs());
+  }
+  assert.equal(seen.length, 52, 'the walk shows every event'); assert.equal(new Set(seen).size, 52, 'none twice');
+  const at = (v) => { const [n, i] = v.split(' '); return Date.parse(event(n, Number(i)).at); };
+  assert.deepEqual(seen.map(at), seen.map(at).sort((a, b) => b - a), 'newest first across nodes');
+
+  // Last from page 1 walks forward over the known vectors.
+  state.setPage(1); await actions.load(); state.setPage(6); await actions.load();
+  assert.equal(state.view.value.page, 6); assert.deepEqual(verbs(), seen.slice(50));
+
+  // New events move page 1; Next starts right below it as it now reads.
+  state.setPage(1); await actions.load();
+  for (let i = 0; i < 3; i++) logs.forge.unshift(event('forge', 100 + i));
+  await actions.load(); const first = verbs(); assert.equal(first[0], 'forge 102');
+  state.setPage(2); await actions.load();
+  const everything = [...logs.desk, ...logs.forge, ...logs.lab].map((e) => e.verb).sort((a, b) => at(b) - at(a));
+  assert.deepEqual([...first, ...verbs()], everything.slice(0, 20), 'page 2 follows page 1 as it reads now');
+
+  // A node down while the pages were walked has no cursor in them; when it
+  // comes back the walk restarts, so its events do not repeat.
+  down = 'forge'; state.setPage(1); await actions.load(); state.setPage(2); await actions.load();
+  assert.deepEqual(state.view.value.response.refused.map((r) => r.node.name), ['forge']);
+  down = ''; await actions.load();
+  const page2 = verbs(); state.setPage(1); await actions.load();
+  assert.ok(page2.some((v) => v.startsWith('forge ')), 'forge events are back');
+  assert.deepEqual(page2.filter((v) => verbs().includes(v)), [], 'no event on both pages');
 });
