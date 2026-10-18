@@ -20893,6 +20893,7 @@ body.wizard .group-header-actions.gf-title-row { border-bottom-color: rgba(122, 
 .gf-label { color: #c9d1d9; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 10.5px; }
 .gf-count { color: #6e7681; font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .gf-count.zero { color: #484f58; }
+.gf-section > .gf-empty { margin: 0 0 6px; font-size: 11px; }
 .gf-section > .gp-group { padding: 0; }
 .gf-section > .gp-group .gp-card, .gf-section > .gp-group .gp-planned-list { margin-left: 0; }
 .gf-section > .gp-group .gp-empty { margin: 0 0 4px; }
