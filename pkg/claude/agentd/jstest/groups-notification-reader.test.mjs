@@ -439,14 +439,35 @@ test('on a peer page the reader answers, marks and downloads through that peer',
   assert.deepEqual(calls[1], { url: '/api/human-inbox/reply', body: { id: 51, body: 'on it' } });
   await mounted.unmount();
 
+  // Export, delete and the sender's terminal go to forge too (tcl-qw7591).
+  state.snapshot.value = { ...state.snapshot.value, peer_view: { level: 'unrestricted' }, agents: [{ agent_id: 'agt_sender', conv_id: 'conv-sender', online: true }] };
+  const confirms = []; const toasts = [];
+  mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader} descriptor=${descriptor} snapshot=${state.snapshot.value} state=${state} actions=${{ reportError() {} }}
+      onSelect=${() => {}} onClose=${() => {}} toast=${(m, e) => toasts.push([m, e])}
+      confirm=${async (o) => { confirms.push(o); await o.action(); return true; }} />
+  `);
+  assert.equal(button(mounted.container, 'Terminal').disabled, false, 'forge decides whether it shares the terminal');
+  assert.ok(mounted.container.querySelector('.human-notification-drawer-actions .mail-download-main'), 'the whole message exports');
+  await harness.act(() => button(mounted.container, 'Delete').click());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(confirms[0].body, /on forge/);
+  assert.deepEqual(calls.at(-1), { url: '/api/peer/inst_forge/human-messages/delete', body: { id: 51 } }, 'forge\'s own route, not this node\'s');
+  assert.deepEqual(state.snapshot.value.messages, [], 'gone from the page at once');
+  assert.deepEqual(toasts.at(-1), ['Deleted on forge', false]);
+  await mounted.unmount();
+  state.snapshot.value = { ...state.snapshot.value, messages: [{ ...message, read: true }], agents: [] };
+
   // A peer sharing its notifications for reading only locks both, saying why.
   state.snapshot.value = { ...state.snapshot.value, peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } };
   mounted = await mount();
   assert.equal(button(mounted.container, 'Reply').disabled, true);
   assert.equal(button(mounted.container, 'Mark unread').disabled, true);
   const locks = [...mounted.container.querySelectorAll('.human-notification-drawer-actions .lock-why')].map((l) => l.dataset.why);
-  assert.equal(locks.length, 2);
+  assert.equal(locks.length, 3, 'reply, mark and delete');
   assert.match(locks[1], /node\.messages\.mark-read/);
+  assert.match(locks[2], /deleting its notifications .* unrestricted trust/);
+  assert.equal(button(mounted.container, 'Delete').disabled, true);
   await mounted.unmount();
 });
 
