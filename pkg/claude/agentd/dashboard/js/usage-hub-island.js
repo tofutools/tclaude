@@ -10,6 +10,10 @@ import {
 } from './usage-history-model.js';
 import { usageLocation, withCostsPeriod } from './usage-hub-state.js';
 import { Sparkline, SpendChart, topCostAgents } from './usage-overview-charts.js';
+import { FusedUsageSummary, usePeerUsages } from './usage-nodes.js';
+import { fleetState } from './fleet-state.js';
+import { tickedNodes } from './fleet-scope.js';
+import { dashboardState } from './snapshot-store.js';
 
 export { topCostAgents };
 
@@ -238,7 +242,19 @@ function Subnav({ current, wizard, open, quota, costs }) {
   </nav>`;
 }
 
-export function UsageHubApp({ state, quotaState, costsState }) {
+// FusedUsage is the fused view's per-node summary (usage-nodes.js), read
+// while the Usage tab shows.
+function FusedUsage({ fleet, snapshot, active, fetchImpl }) {
+  const fleetValue = fleet.fleet.value;
+  const fused = fleet.fused.value;
+  const nodes = fleetValue && fused && !globalThis.__tclaudeRemoteNode ? tickedNodes(fleetValue, fused) : [];
+  const peers = nodes.filter((n) => !n.local).map((n) => n.id);
+  const entries = usePeerUsages({ ids: peers, active: active && nodes.length > 1, ...(fetchImpl ? { fetchImpl } : {}) });
+  if (nodes.length < 2) return null;
+  return html`<${FusedUsageSummary} nodes=${nodes} selfUsage=${snapshot.value?.usage} entries=${entries} fmt=${fmtUSD} />`;
+}
+
+export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState, snapshot = dashboardState.snapshot, fetchImpl = undefined }) {
   const current = state.view.value;
   const wizard = useWizardTheme();
   const open = (name) => (event) => {
@@ -265,6 +281,7 @@ export function UsageHubApp({ state, quotaState, costsState }) {
     document.querySelector('#tab-usage')?.setAttribute('data-subview', current.subview);
   }, [current.subview]);
   return html`<div class="usage-hub">
+    <${FusedUsage} fleet=${fleet} snapshot=${snapshot} active=${current.activeTab === 'usage'} fetchImpl=${fetchImpl} />
     ${current.showSubnav && html`<${Subnav} current=${current} wizard=${wizard} open=${open}
       quota=${quotaState.view.value} costs=${costsState.view.value} />`}
     ${current.subview === 'overview' && html`<${Overview} quota=${quotaState.view.value}
