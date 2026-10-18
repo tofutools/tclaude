@@ -35,7 +35,7 @@ func TestDashboardDnDHotPathAvoidsRedundantDOMWork(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(sources["group"], "groupDragGroupsByName = snapshotGroupsByName()") ||
+	if !strings.Contains(sources["group"], "groupDragGroupsByName = snapshotGroupsByName(ctx)") ||
 		!strings.Contains(sources["group"], "const byName = groupDragGroupsByName") {
 		t.Error("group drag does not retain its topology map for the gesture")
 	}

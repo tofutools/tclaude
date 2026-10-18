@@ -1073,7 +1073,9 @@ onto another node's group opens the same dialog on Move, pre-filled. In the
 fused view a drop onto a group on the agent's own node works as on that node's
 Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
 open the clone dialog for that group) — for this node always, and for a peer that
-trusts this one unrestricted. Nodes a
+trusts this one unrestricted. Group headers drag the same way there: nest a
+group under another on its node, pull it back out, reorder it (the fused view
+keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. Until this node is connected to a hub with a linked peer, **move
 to…** and **teleport to…** stay in the menu greyed out, saying why (as the

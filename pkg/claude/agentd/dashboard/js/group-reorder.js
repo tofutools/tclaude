@@ -53,7 +53,9 @@
 // loading.
 
 import { $, $$, isMacChromeZeroReleaseLeave } from './helpers.js';
-import { setGroupOrderPref, sortGroupsByPref } from './group-order.js';
+import { FUSED_GROUP_ORDER_KEY, GROUP_ORDER_KEY, fusedGroupListing, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
+import { dashPrefs } from './prefs.js';
+import { groupDragContext, nodeAllowsActing, sameGroupTree } from './dnd-ops.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast } from './refresh.js';
@@ -87,6 +89,9 @@ let groupDropMarkerClasses = '';
 // successful copy dragend needs enough immutable placement data to open the
 // same dialog. Cleared on every non-clone/invalid hover and during teardown.
 let groupCloneHoverPlan = null;
+// groupDragCtx is the dragged group's node (dragContext).
+let groupDragCtx = null;
+
 
 
 // reorderTarget resolves the real-group <details> under the drag cursor,
@@ -134,9 +139,10 @@ function setDropMarker(details, marker, clone) {
 
 // snapshotGroupsByName returns a name→group map of the current snapshot's real
 // groups, or null when the snapshot isn't ready.
-function snapshotGroupsByName() {
-  if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return null;
-  return new Map(lastSnapshot.groups.map(g => [g.name, g]));
+function snapshotGroupsByName(ctx = groupDragCtx) {
+  const snap = ctx?.fused ? fusedGroupListing() : lastSnapshot;
+  if (!snap || !Array.isArray(snap.groups)) return null;
+  return new Map(snap.groups.map(g => [g.name, g]));
 }
 
 // isDescendantOrSelf reports whether `name` is `ancestor` itself or sits
@@ -244,9 +250,11 @@ function reorderPill(e, text, clone = false) {
 // filter is active never drops the hidden groups out of the saved order. The
 // flat order governs sibling order WITHIN each parent scope at render time
 // (siblings compare by flat index), so this one list serves every depth.
-function persistSiblingOrder(dragName, targetName, before) {
-  if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return;
-  const names = sortGroupsByPref(lastSnapshot.groups.slice()).map(g => g.name);
+function persistSiblingOrder(dragName, targetName, before, ctx = groupDragCtx) {
+  const snap = ctx?.fused ? fusedGroupListing() : lastSnapshot;
+  const key = ctx?.fused ? FUSED_GROUP_ORDER_KEY : GROUP_ORDER_KEY;
+  if (!snap || !Array.isArray(snap.groups)) return;
+  const names = sortGroupsByPref(snap.groups.slice(), dashPrefs, key).map(g => g.name);
   const from = names.indexOf(dragName);
   if (from < 0) return;
   names.splice(from, 1);
@@ -254,7 +262,7 @@ function persistSiblingOrder(dragName, targetName, before) {
   if (to < 0) return; // target vanished between drag and drop
   if (!before) to += 1;
   names.splice(to, 0, dragName);
-  setGroupOrderPref(names);
+  setGroupOrderPref(names, dashPrefs, key);
 }
 
 // applyGroupDrop is the single drop resolver for the group tree. It positions
@@ -263,8 +271,8 @@ function persistSiblingOrder(dragName, targetName, before) {
 // drop beside a top-level group to pull it back out), PUTs the new parent to
 // the server. The parent write is the only server round-trip; sibling order
 // stays a pure browser-view concern.
-function applyGroupDrop(dragName, targetName, zone) {
-  const byName = snapshotGroupsByName();
+function applyGroupDrop(dragName, targetName, zone, ctx = groupDragContext(null, { refresh })) {
+  const byName = snapshotGroupsByName(ctx);
   if (!byName) return;
   const plan = resolveDrop(dragName, targetName, zone, byName);
   if (!plan) return; // no-op or would-be cycle
@@ -273,17 +281,17 @@ function applyGroupDrop(dragName, targetName, zone) {
 
   // Sibling order first (synchronous, client-only) so a subsequent server
   // refresh honours it.
-  persistSiblingOrder(dragName, targetName, plan.before);
+  persistSiblingOrder(dragName, targetName, plan.before, ctx);
 
   if (!parentChanged) {
     renderGroupsTab();
     return;
   }
   // Re-parent on the server; the response-driven refresh re-lays-out the tree.
-  fetch(`/api/groups/${encodeURIComponent(dragName)}/parent`, {
+  ctx.api(`/api/groups/${encodeURIComponent(ctx.own(dragName))}/parent`, {
     method: 'PUT', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parent: plan.desiredParent }),
+    body: JSON.stringify({ parent: ctx.own(plan.desiredParent) }),
   }).then(async (r) => {
     if (!r.ok) {
       toast(`nest failed: ${await r.text()}`, true);
@@ -293,7 +301,7 @@ function applyGroupDrop(dragName, targetName, zone) {
     toast(plan.desiredParent ? `${dragName}: nested under ${plan.desiredParent}` : `${dragName}: moved to top level`);
     // Show the moved group, not a folded Subgroups line.
     if (plan.desiredParent) setFusedSectionOpen(plan.desiredParent, 'subgroups', true);
-    refresh();
+    ctx.done();
   }).catch((err) => {
     toast(`nest failed: ${(err && err.message) || err}`, true);
     renderGroupsTab();
@@ -309,13 +317,22 @@ function applyGroupDrop(dragName, targetName, zone) {
 function finishGroupDrag() {
   const clonePlan = groupCloneHoverPlan;
   const dragName = groupDragName;
+  const ctx = groupDragCtx;
   endGroupDrag();
-  if (!clonePlan || !dragName) return;
-  openGroupCloneModal(dragName, {
-    parent: clonePlan.desiredParent,
-    anchor: clonePlan.anchor,
-    before: clonePlan.before,
-  });
+  if (!clonePlan || !dragName || !ctx) return;
+  openClone(ctx, dragName, clonePlan);
+}
+
+// openClone opens the group clone dialog on the dragged group's node.
+function openClone(ctx, dragName, plan) {
+  openGroupCloneModal(ctx.own(dragName), {
+    parent: ctx.own(plan.desiredParent),
+    anchor: ctx.own(plan.anchor),
+    before: plan.before,
+    // The fused view orders its own listing (group@node): the clone goes
+    // beside the anchor there too.
+    ...(ctx.fused && plan.anchor ? { fused: { anchor: plan.anchor, at: `@${ctx.name}` } } : {}),
+  }, ctx.node);
 }
 
 // endGroupDrag is the single teardown for a reorder drag: clear the active
@@ -328,6 +345,7 @@ function endGroupDrag() {
   groupDragName = null;
   groupDragGroupsByName = null;
   groupCloneHoverPlan = null;
+  groupDragCtx = null;
   groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
   groupDragHandle = null;
   $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
@@ -381,9 +399,13 @@ function bindGroupReorder() {
     if (!handle) return;
     const name = handle.getAttribute('data-group-reorder');
     if (!name) return;
+    const ctx = groupDragContext(handle, { refresh });
+    // Another node's groups move only under its unrestricted trust.
+    if (!nodeAllowsActing(ctx.node)) { e.preventDefault(); return; }
     groupReorderActive = true;
     groupDragName = name;
-    groupDragGroupsByName = snapshotGroupsByName();
+    groupDragCtx = ctx;
+    groupDragGroupsByName = snapshotGroupsByName(ctx);
     groupCloneHoverPlan = null;
     groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
     groupDragHandle = handle;
@@ -419,7 +441,7 @@ function bindGroupReorder() {
       return;
     }
     const details = reorderTarget(e);
-    if (!details) {
+    if (!details || !sameGroupTree(groupDragCtx, details)) {
       groupCloneHoverPlan = null;
       clearDropMarkers();
       reorderPill(e, null);
@@ -511,12 +533,13 @@ function bindGroupReorder() {
     if (trash) {
       e.preventDefault();
       const dragName = groupDragName;
+      const ctx = groupDragCtx;
       endGroupDrag();
-      openDeleteGroupModal(dragName);
+      if (ctx) openDeleteGroupModal(ctx.own(dragName), ctx.node);
       return;
     }
     const details = reorderTarget(e);
-    if (!details) return;
+    if (!details || !sameGroupTree(groupDragCtx, details)) return;
     e.preventDefault();
     // Snapshot everything we need from the live DOM BEFORE teardown and
     // reconciliation: the target name and the drop zone (measured against the
@@ -525,7 +548,8 @@ function bindGroupReorder() {
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
     const clone = isCloneDrop(e, details);
-    const byName = snapshotGroupsByName();
+    const ctx = groupDragCtx;
+    const byName = snapshotGroupsByName(ctx);
     const clonePlan = clone && byName
       ? resolveCloneDrop(dragName, targetName, zone, byName)
       : null;
@@ -535,14 +559,10 @@ function bindGroupReorder() {
     // endGroupDrag is idempotent, so a dragend that does fire is harmless.
     endGroupDrag();
     if (clonePlan) {
-      openGroupCloneModal(dragName, {
-        parent: clonePlan.desiredParent,
-        anchor: clonePlan.anchor,
-        before: clonePlan.before,
-      });
+      openClone(ctx, dragName, clonePlan);
       return;
     }
-    applyGroupDrop(dragName, targetName, zone);
+    applyGroupDrop(dragName, targetName, zone, ctx);
   });
 
   let cleaned = false;

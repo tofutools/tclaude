@@ -274,6 +274,22 @@ test('group-create actions remember clone transport in dashboard preferences', a
   assert.equal(stored.get('tclaude.dash.group-create.clone-transport'), 'ssh');
 });
 
+test('a clone dropped in the fused view lands beside its anchor in the fused order', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupCreateActions }, order] = await Promise.all([
+    harness.importDashboardModule('js/group-create-actions.js'),
+    harness.importDashboardModule('js/group-order.js'),
+  ]);
+  const stored = new Map([[order.FUSED_GROUP_ORDER_KEY, JSON.stringify(['build@forge', 'ops@forge', 'qa@desk'])]]);
+  const prefs = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+  const release = order.setFusedGroupListing(() => ({ groups: [{ name: 'qa@desk' }, { name: 'build@forge' }, { name: 'ops@forge' }] }));
+  t.after(release);
+  const actions = createGroupCreateActions({ prefs });
+  actions.complete({ kind: 'clone', name: 'ops-copy', response: { group: 'ops-copy' },
+    placement: { parent: '', anchor: 'build', before: false, fused: { anchor: 'build@forge', at: '@forge' } } }, '', 'inst_forge');
+  assert.deepEqual(JSON.parse(stored.get(order.FUSED_GROUP_ORDER_KEY)), ['build@forge', 'ops-copy@forge', 'ops@forge', 'qa@desk']);
+});
+
 async function mountGroupCreate(
   t,
   actionOverrides = {},

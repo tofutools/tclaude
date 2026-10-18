@@ -1,5 +1,5 @@
 import { groupCreateRequest } from './group-create-model.js';
-import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
+import { FUSED_GROUP_ORDER_KEY, fusedGroupListing, insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
 
@@ -101,6 +101,14 @@ export function createGroupCreateActions({
           setGroupOrderPref(insertGroupBeside(
             names, response.group, result.placement.anchor, !!result.placement.before,
           ));
+        }
+        const fused = result.placement?.fused;
+        const listing = fused && response.group ? fusedGroupListing() : null;
+        if (listing) {
+          const names = sortGroupsByPref((listing.groups || []).slice(), prefs, FUSED_GROUP_ORDER_KEY).map((group) => group.name);
+          setGroupOrderPref(insertGroupBeside(
+            names, `${response.group}${fused.at}`, fused.anchor, !!result.placement.before,
+          ), prefs, FUSED_GROUP_ORDER_KEY);
         }
         const failed = (response.members || []).filter((member) => member?.error).length;
         const created = response.group ? `"${response.group}"` : 'new group';

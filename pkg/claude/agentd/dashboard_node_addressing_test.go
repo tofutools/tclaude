@@ -17,7 +17,6 @@ import (
 var bareAPIFetchBaseline = map[string]int{
 	"dock-save-dnd.js":              2,
 	"fleet-admin-island.js":         1,
-	"group-reorder.js":              1,
 	"groups-island.js":              1,
 	"groups-notification-reader.js": 1,
 	"helpers.js":                    1,

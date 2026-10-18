@@ -25,6 +25,38 @@ export function dndNode(el) {
 // otherwise finish at dragend: dnd.js registers cancelClone.
 export const dndGesture = { cancelClone: () => {} };
 
+// nodeAllowsActing: the page's node and this node always; another node only
+// under its unrestricted trust, which lets this operator act there as on its
+// own dashboard. (A peer's own page gates its drags itself.)
+export function nodeAllowsActing(node) {
+  return !node || node === selfNodeID() || nodeSnapshot(node)?.peer_view?.level === 'unrestricted';
+}
+
+// groupDragContext reads which node a group header is on and how the drag acts
+// there. In the fused Groups view the tree lists every node's groups as
+// group@node (its merged snapshot, fusedGroupListing), so a drag plans in
+// those names and its requests go to the node (nodeFetch) under the node's
+// own names (own). Its sibling order is the fused view's own.
+export function groupDragContext(el, { refresh = () => {}, fetchImpl = (...args) => globalThis.fetch(...args) } = {}) {
+  const { node, name } = dndNode(el);
+  const fused = !!el?.closest?.('details[data-fleet-node]');
+  const at = fused && name ? `@${name}` : '';
+  return {
+    node, name, fused,
+    own: (g) => (at && typeof g === 'string' && g.endsWith(at) ? g.slice(0, -at.length) : g),
+    api: nodeFetch(node, { fetchImpl }),
+    done: () => { announceNodeChanged(node); refresh(); },
+  };
+}
+
+// sameGroupTree: a drop target in the dragged group's own tree (the same node,
+// and the same view).
+export function sameGroupTree(ctx, details) {
+  if (!ctx) return false;
+  const there = groupDragContext(details);
+  return there.fused === ctx.fused && there.node === ctx.node;
+}
+
 // createDndOps binds the operations to the page: confirm, toast and refresh
 // (refresh.js), render (the Groups tab), the page snapshot, and the clone and
 // retire dialogs.
@@ -46,11 +78,8 @@ export function createDndOps({
     };
   }
 
-  // allowed: the page's node and this node always; another node's agents
-  // only under its unrestricted trust, which lets this operator act there as
-  // on its own dashboard. (A peer's own page gates its drags itself.)
   function allowed(ctx) {
-    return !ctx.node || ctx.node === selfNodeID() || nodeSnapshot(ctx.node)?.peer_view?.level === 'unrestricted';
+    return nodeAllowsActing(ctx.node);
   }
 
   // refusedOn tells the operator a drop on another node is not theirs to make.
