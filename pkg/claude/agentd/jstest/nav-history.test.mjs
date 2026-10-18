@@ -624,3 +624,27 @@ test('Fleet config sections deep-link, push on the tab click, and restore on Bac
   assert.equal(page.fleetAdminPage.value, 'boards', 'Back restores the previous section');
   assert.deepEqual(browsing.calls.map((call) => call.kind), ['replace']);
 });
+
+test('a Messages search survives the deep link next to the page-global theme', async (t) => {
+  const harness = await createPreactHarness(t);
+  installTabsShell(harness, ['groups', 'messages']);
+  harness.document.body.classList.add('slop');
+  const browsing = installBrowsingContext(t, harness, '/messages/human?slop=1&q=deploy&page=2&stray=1');
+  const [{ initNavHistory }, bridge] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/mail-bridge.js'),
+  ]);
+  initNavHistory();
+  const restored = [];
+  const unregister = bridge.registerMailController({ restoreLocation: (loc) => restored.push(loc) });
+  t.after(unregister);
+  const want = { tab: 'messages', selection: 'human', params: { q: 'deploy', page: '2' } };
+  assert.deepEqual(restored, [want]);
+  assert.equal(browsing.at(), '/messages/human?slop=1&q=deploy&page=2');
+  // A later search edit is its own entry; Back returns to the earlier one.
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'messages', selection: 'human', params: { q: 'rollback' } } },
+  }));
+  assert.equal(browsing.calls.at(-1).kind, 'push');
+  assert.equal(browsing.at(), '/messages/human?slop=1&q=rollback');
+});

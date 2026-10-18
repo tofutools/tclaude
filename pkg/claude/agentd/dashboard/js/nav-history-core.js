@@ -17,8 +17,11 @@
 //
 // URL scheme decision (TCL-317): the PATH encodes the location ("where you
 // are") and query params encode view-state ("how it's filtered" — slop/wizard,
-// checkboxes, text filters). So this module maps location <-> pathname only;
-// the DOM layer merges/preserves the query string separately.
+// checkboxes, text filters). Page-global view-state (the theme, a peer or
+// fused node scope) is the DOM layer's to merge onto every URL. View-state
+// that belongs to one location — a tab's search or page, listed in
+// TAB_PARAMS — rides on the location as `params`, so Back/Forward and a deep
+// link restore it with the rest of the location.
 
 // DEFAULT_TAB is the location the dashboard falls back to for an empty/unknown
 // path and the ultimate parent for stale-target resolution. It mirrors the
@@ -116,6 +119,34 @@ export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
 // An item without a selection, or under any other tab, is dropped.
 export const ITEM_TABS = new Set(['messages']);
 
+// TAB_PARAMS enumerates, per tab, the query params that are part of a
+// location rather than of the page: two entries that differ only in them are
+// distinct history steps. Order here is the order they are written in a URL.
+// Any other param on a parsed URL is dropped from the location (the DOM layer
+// keeps the page-global ones).
+//   - messages: q (the message search), from (the exact sender a Groups
+//     notification link narrows to), page (1-based, omitted for page 1),
+//     box (the folder filter).
+export const TAB_PARAMS = {
+  messages: ['q', 'from', 'page', 'box'],
+};
+
+// normalizeParams keeps the tab's known params with a non-empty value, as
+// strings, in TAB_PARAMS order; undefined when none survive.
+function normalizeParams(tab, params) {
+  const keys = TAB_PARAMS[tab];
+  if (!keys || !params || typeof params !== 'object') return undefined;
+  const out = {};
+  for (const key of keys) {
+    const value = params[key];
+    if (value == null) continue;
+    const str = String(value);
+    if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
+    out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
 // new object each call so callers can never alias/mutate a shared default.
 export function defaultLocation() {
@@ -123,7 +154,7 @@ export function defaultLocation() {
 }
 
 // normalizeLocation coerces an arbitrary input into a canonical location shape
-// `{ tab, subtab?, selection?, item? }`, dropping empty/unknown pieces. Optional keys
+// `{ tab, subtab?, selection?, item?, params? }`, dropping empty/unknown pieces. Optional keys
 // are OMITTED (not set to undefined) so structural equality via locEquals and
 // JSON round-trips stay stable. An unknown tab collapses to the default.
 export function normalizeLocation(loc) {
@@ -147,6 +178,8 @@ export function normalizeLocation(loc) {
     out.selection = String(loc.selection);
     if (loc.item != null && loc.item !== '' && ITEM_TABS.has(tab)) out.item = String(loc.item);
   }
+  const params = normalizeParams(tab, loc && loc.params);
+  if (params) out.params = params;
   return out;
 }
 
@@ -157,7 +190,8 @@ export function normalizeLocation(loc) {
 export function locEquals(a, b) {
   const x = normalizeLocation(a);
   const y = normalizeLocation(b);
-  return x.tab === y.tab && x.subtab === y.subtab && x.selection === y.selection && x.item === y.item;
+  return x.tab === y.tab && x.subtab === y.subtab && x.selection === y.selection && x.item === y.item
+    && toQuery(x) === toQuery(y);
 }
 
 // ---- The virtual stack ---------------------------------------------------
@@ -260,7 +294,7 @@ export function resolvePopstate(state, loc, navIndex) {
 // The whole virtual stack is stored in each entry's history.state, not just the
 // current index. history.state survives a reload for the current entry, so on
 // reload we can reconstruct the full stack (depth and all) instead of reseeding
-// to a single entry. Entries are tiny ({tab, subtab?, selection?, item?}), so even a
+// to a single entry. Entries are tiny ({tab, subtab?, selection?, item?, params?}), so even a
 // long history is well within the structured-clone size the History API allows.
 
 // NAV_STATE_VERSION tags the persisted shape. A future schema change bumps it so
@@ -291,6 +325,13 @@ export function reviveState(raw, loc) {
 }
 
 // ---- Path <-> location ---------------------------------------------------
+
+// toQuery serializes a location's params (TAB_PARAMS) as a query string
+// without the leading "?" — "" when it has none.
+export function toQuery(loc) {
+  const l = normalizeLocation(loc);
+  return l.params ? new URLSearchParams(l.params).toString() : '';
+}
 
 // toPath serializes a location to an absolute dashboard pathname. The default
 // location maps to "/" (the bare dashboard root), everything else to
@@ -337,13 +378,18 @@ function decodeSelection(segment) {
   }
 }
 
-// fromPath parses a dashboard pathname back into a canonical location. Unknown
+// fromPath parses a dashboard pathname back into a canonical location, taking
+// the tab's params (TAB_PARAMS) from `search` — or, when that is omitted, from
+// a query string left on `pathname` itself. Unknown
 // tabs / subtabs / stray trailing segments degrade to the nearest valid view
 // via normalizeLocation, so a stale or hand-typed URL never yields an invalid
 // location (AC #5). Both "/" and "/dashboard" mean the default location.
-export function fromPath(pathname) {
-  const clean = String(pathname || '').split('?')[0].split('#')[0];
-  const parts = clean.split('/').filter(Boolean);
+export function fromPath(pathname, search) {
+  const [pathPart, inlineQuery = ''] = String(pathname || '').split('#')[0].split('?');
+  const query = new URLSearchParams(search ?? inlineQuery);
+  const params = {};
+  for (const [key, value] of query) params[key] = value;
+  const parts = pathPart.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
   let [tab, second, third] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
@@ -364,9 +410,9 @@ export function fromPath(pathname) {
   // KNOWN_SUBTABS entry to match against. Segment three is its open item
   // (/messages/<folder>/<message-id>), kept only where ITEM_TABS allows.
   if (SELECTABLE_TABS.has(tab)) {
-    return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third) });
+    return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third), params });
   }
-  return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third) });
+  return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), params });
 }
 
 // ---- Stale-target resolution --------------------------------------------
@@ -388,6 +434,6 @@ export function resolveStale(loc, isValidSelection) {
     ? !!isValidSelection(l.selection, l)
     : true;
   if (ok) return l;
-  const { selection, item, ...parent } = l; // drop the dead selection (and its item), keep tab/subtab
+  const { selection, item, ...parent } = l; // drop the dead selection (and its item), keep tab/subtab/params
   return normalizeLocation(parent);
 }

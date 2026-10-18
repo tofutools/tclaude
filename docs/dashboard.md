@@ -594,9 +594,13 @@ The open folder and message are in the address: `/messages/human`,
 `/messages/group:ops/42`, `/messages/<conv-id>`. Clicking a folder or a
 message is a history step, so Back closes the message, then returns to the
 previous folder; moving with the arrow keys, or jumping in from another tab,
-updates the address in place. A link to a message opens it if it is on the
-folder's first page, and otherwise shows just the folder. The view of several
-nodes keeps the bare `/messages`.
+updates the address in place. The message search, the page and the folder
+filter are in the query (`/messages/human/42?q=deploy&page=3&box=ops`; a
+Groups notification link adds `from=<agent>`): a page step is a history step,
+and so is a search or folder-filter edit, recorded once when you start typing
+so Back undoes the whole edit. A link opens the folder with that search and
+page, and the message if it is still there. The view of several nodes keeps
+the bare `/messages`.
 
 The image and Markdown attachment viewers zoom with the usual inputs: a
 trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
