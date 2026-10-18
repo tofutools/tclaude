@@ -14,5 +14,5 @@ export function LockReason({ why, id = undefined }) {
 
 export function NodeChip({ name }) {
   if (!name) return null;
-  return html`<span class="node-chip" title=${`This acts on ${name}`}>on ${name}</span>`;
+  return html`<span class="dialog-node-chip" title=${`This acts on ${name}`}>on ${name}</span>`;
 }

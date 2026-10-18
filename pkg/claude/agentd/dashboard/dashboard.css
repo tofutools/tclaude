@@ -21447,7 +21447,7 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
   box-shadow: 0 6px 18px rgba(0, 0, 0, .6);
 }
 .locked-field { opacity: .45; cursor: not-allowed; }
-.node-chip {
+.dialog-node-chip {
   display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 10px; vertical-align: 2px;
   border: 1px solid #1f3a5f; background: #0f2135; color: #58a6ff; font-size: 11px; font-weight: 500;
 }
