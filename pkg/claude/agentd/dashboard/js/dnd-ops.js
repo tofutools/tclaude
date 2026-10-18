@@ -30,6 +30,22 @@ export function dndNode(el) {
 // otherwise finish at dragend: dnd.js registers cancelClone.
 export const dndGesture = { cancelClone: () => {} };
 
+// markDropBox paints the one drop-target highlight every Groups view uses:
+// the whole group box (header and body) under a member drag, tinted for a
+// move, a clone, or a drop that is refused there. clearDropBox removes it.
+// dnd.js (a drop on the agent's own node) and the fused view's cross-node
+// move (fleet-merged-island.js) both paint through these.
+export function markDropBox(box, effect = 'move') {
+  if (!box) return;
+  box.classList.add('dnd-drop-over');
+  box.classList.toggle('dnd-effect-clone', effect === 'clone');
+  box.classList.toggle('dnd-drop-refused', effect === 'refused');
+}
+
+export function clearDropBox(box) {
+  box?.classList.remove('dnd-drop-over', 'dnd-effect-clone', 'dnd-drop-refused');
+}
+
 // nodeAllowsActing: the page's node and this node always; another node only
 // under its unrestricted trust, which lets this operator act there as on its
 // own dashboard. (A peer's own page gates its drags itself.)

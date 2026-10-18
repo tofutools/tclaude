@@ -353,6 +353,12 @@ test('an unrestricted peer\'s agent dropped on a third node opens the move it se
     await harness.act(() => harness.fireEvent(to.querySelector('summary'), 'drop'));
     return over;
   };
+  // The drop target lights as on the agent's own node: the whole group box.
+  harness.fireEvent(row('agt_r1'), 'dragstart');
+  harness.fireEvent(groupEl('qa@lab').querySelector('summary'), 'dragover');
+  assert.ok(groupEl('qa@lab').classList.contains('dnd-drop-over'), 'the whole group box is the drop highlight');
+  harness.fireEvent(row('agt_r1'), 'dragend');
+  assert.equal(groupEl('qa@lab').classList.contains('dnd-drop-over'), false, 'dragend clears it');
   const over = await drag(row('agt_r1'), groupEl('qa@lab'));
   assert.equal(over.defaultPrevented, true, 'the third node\'s group accepts the drop');
   const dialog = harness.document.querySelector('#launch-target');

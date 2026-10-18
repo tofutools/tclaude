@@ -19,7 +19,7 @@ import {
   reasonTitles,
 } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
-import { dndGesture, nodeAllowsActing } from './dnd-ops.js';
+import { clearDropBox, dndGesture, markDropBox, nodeAllowsActing } from './dnd-ops.js';
 import { FUSED_GROUP_ORDER_KEY, setFusedGroupListing, sortGroupsByPref } from './group-order.js';
 import { dashPrefs } from './prefs.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -513,13 +513,13 @@ export function MergedGroups({
     // dnd.js never sees it.
     let dragging = null;
     let marked = null;
+    // The same whole-box highlight as a drop on the agent's own node.
     const mark = (el, ok) => {
-      if (marked && marked !== el) marked.classList.remove('fleet-drop-ok', 'fleet-drop-no');
+      if (marked && marked !== el) clearDropBox(marked);
       marked = el;
-      el?.classList.toggle('fleet-drop-ok', ok);
-      el?.classList.toggle('fleet-drop-no', !ok);
+      markDropBox(el, ok ? 'move' : 'refused');
     };
-    const unmark = () => { marked?.classList.remove('fleet-drop-ok', 'fleet-drop-no'); marked = null; };
+    const unmark = () => { clearDropBox(marked); marked = null; };
     const self = () => state.view.value.fleet?.self?.id || '';
     const onDragStart = (event) => {
       if (!host.contains(event.target)) return;

@@ -18,7 +18,7 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
-import { createDndOps, dndGesture, dndNode, targetGroupOf } from './dnd-ops.js';
+import { clearDropBox, createDndOps, dndGesture, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -244,7 +244,7 @@ function bindDnd() {
     activeSourceRow?.removeEventListener('dragend', endDndDrag);
     activeSourceRow = null;
     if (row) row.classList.remove('dnd-source-row');
-    $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
+    $$('.dnd-drop-over').forEach(clearDropBox);
     $('#dnd-pill')?.classList.remove('show', 'clone');
     if (cloneTarget && clonePayload) {
       // runDndClone opens the clone dialog and refreshes on every path.
@@ -335,7 +335,7 @@ function bindDnd() {
     // own group (clone ⇄ no-op) doesn't strand a stale tint on the box.
     if (dndInertOnto(box, isClone)) {
       dndCloneHoverTarget = null;
-      box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
+      clearDropBox(box);
       updateDndPill(e, null);
       return;
     }
@@ -347,9 +347,8 @@ function bindDnd() {
     // which fires no new dragenter — dragover is the only handler that
     // runs, so it must add dnd-drop-over itself. Idempotent on a box
     // dragenter already lit.
-    box.classList.add('dnd-drop-over');
+    markDropBox(box, isClone ? 'clone' : 'move');
     e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
-    box.classList.toggle('dnd-effect-clone', isClone);
     let text;
     if (targetRetired && dndSourcePending) text = dndSourcePayload?.queuedId ? '🗑 discard queued agent' : '🗑 delete stuck spawn';
     else if (targetRetired) text = '↓ retire — demote to conversation';
@@ -397,7 +396,7 @@ function bindDnd() {
     // dragleave fires when the cursor crosses into a child element too;
     // only drop the highlight once the cursor has actually left the box.
     if (box.contains(e.relatedTarget)) return;
-    box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
+    clearDropBox(box);
   });
   listen(document, 'drop', async (e) => {
     // A group-reorder drag (group-reorder.js) carries this custom MIME and
@@ -440,7 +439,7 @@ function bindDnd() {
     dndCloneHoverTarget = null;
     // Read the painted clone tint before clearing it (see isClone below).
     const paintedClone = box.classList.contains('dnd-effect-clone');
-    box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
+    clearDropBox(box);
     $('#dnd-pill').classList.remove('show', 'clone');
     const raw = e.dataTransfer.getData('application/x-tclaude-member')
       || e.dataTransfer.getData('text/plain');
@@ -566,8 +565,7 @@ function bindDnd() {
     dndCloneHoverTarget = null;
     hideDndTrash();
     $$('.dnd-source-row').forEach((row) => row.classList.remove('dnd-source-row'));
-    $$('.dnd-drop-over').forEach((target) =>
-      target.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
+    $$('.dnd-drop-over').forEach(clearDropBox);
     $('#dnd-pill')?.classList.remove('show', 'clone');
   };
 }
