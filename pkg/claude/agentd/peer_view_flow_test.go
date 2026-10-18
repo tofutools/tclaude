@@ -145,31 +145,69 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "private-group")
 	require.Contains(t, rec.Body.String(), `"peer_view"`)
 	require.Contains(t, rec.Body.String(), `"level":"unrestricted"`)
-	// Triggers stay local-only even for unrestricted trust, so the snapshot
-	// must not advertise them or the Groups view fetches a refused route.
+	// A route with no peer grant of its own works for unrestricted trust as
+	// for the local operator: the snapshot advertises triggers and their
+	// route answers.
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
-	// Guard against a vacuous pass: the flag is on, only the peer view hides it.
-	// The local snapshot keeps it (TestDashboardSnapshotDynamicallyGatesTriggers).
-	loaded, err := config.Load()
-	require.NoError(t, err)
-	require.True(t, loaded.TriggersEnabled())
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"triggers_enabled":false`)
+	require.Contains(t, rec.Body.String(), `"triggers_enabled":true`)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/triggers", nil))
-	require.Equal(t, 403, rec.Code)
-	for _, path := range []string{"/api/config", "/api/new-endpoint"} {
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	// This node's configuration, its federation administration, the peer
+	// proxy and unmapped routes stay local even for unrestricted trust.
+	for _, path := range []string{"/api/config", "/api/new-endpoint", "/api/federation/grants", "/api/peer/inst_abcd/snapshot", "/api/node/run/settings"} {
 		rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", path, nil))
-		require.Equal(t, 403, rec.Code)
+		require.Equal(t, 403, rec.Code, path)
 	}
 	setFedTrustLevel(t, fh, db.FederationTrustRestricted)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code)
 	require.NotContains(t, rec.Body.String(), "private-group")
-	_, err = db.UntrustFederationPeer(fh.peer.id.ID())
+	_, err := db.UntrustFederationPeer(fh.peer.id.ID())
 	require.NoError(t, err)
 	req := testharness.JSONRequest(t, "GET", "/api/snapshot", nil)
 	req.Header.Set("X-Tclaude-Peer", "bob")
 	rec = testharness.Serve(h, req)
 	require.Equal(t, 403, rec.Code)
+}
+
+// A dashboard route with no peer grant of its own works for a peer this node
+// trusts unrestricted as it does for the local operator, every option
+// included, and stays refused for a restricted peer.
+func TestPeerUnrestrictedReachesTheLocalDashboard(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("crew")
+	f.HaveConvWithTitle("local-eq", "worker")
+	f.HaveMember("crew", "local-eq")
+	aid, err := db.AgentIDForConv("local-eq")
+	require.NoError(t, err)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	call := func(method, path string, body any) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+		return rec.Code, rec.Body.String()
+	}
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersRetire, "scope": "group=crew"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	code, body := call("PATCH", "/api/groups/crew", map[string]any{"default_spawn_group": true})
+	require.Equal(t, 403, code, body)
+	code, body = call("POST", "/api/agents/"+aid+"/retire?shutdown=0&delete_worktree=1", nil)
+	require.Equal(t, 400, code, "a restricted peer's retire deletes no worktree: %s", body)
+
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	code, body = call("GET", "/api/groups/crew/standing-orders", nil)
+	require.Equal(t, 200, code, body)
+	code, body = call("POST", "/api/agents/"+aid+"/retire?shutdown=0", nil)
+	require.Equal(t, 200, code, body)
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.Contains(t, rec.Body.String(), `"local_dashboard"`, "the metadata includes the local dashboard")
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/terminal-file?path=/etc/hostname"},
+		{"POST", "/api/delete-directory"},
+		{"POST", "/api/config-bundle/import"},
+	} {
+		code, body = call(c.method, c.path, map[string]any{})
+		require.Equal(t, 403, code, "%s %s stays with this node: %s", c.method, c.path, body)
+	}
 }

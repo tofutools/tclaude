@@ -90,5 +90,7 @@ func TestPeerMailboxReadGrantPagingAndLiveRevocation(t *testing.T) {
 	peer.TrustLevel = db.FederationTrustUnrestricted
 	require.NoError(t, db.TrustFederationPeer(*peer))
 	require.Equal(t, 200, serve("GET", "/api/mailbox?id=all", nil).Code)
-	require.Equal(t, 403, serve("POST", "/api/mailbox/delete", body).Code)
+	// Deleting mail has no peer grant: unrestricted trust reaches it as the
+	// local operator does.
+	require.NotEqual(t, 403, serve("POST", "/api/mailbox/delete", body).Code)
 }

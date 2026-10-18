@@ -125,6 +125,13 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	v.targetConv = target.CurrentConvID
+	// Unrestricted trust runs an agent's lifecycle as the local operator
+	// does, every option included; a move or teleport always comes to the
+	// peer, through its own handling below.
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) && !strings.HasSuffix(r.URL.Path, "/move") && !strings.HasSuffix(r.URL.Path, "/teleport") {
+		servePeerAgentAsLocal(w, r, v, target)
+		return
+	}
 	a := &peerActionAuthority{peer: v.peer.InstanceID, sourceConv: target.CurrentConvID, permission: rule.requires}
 	r = r.WithContext(context.WithValue(r.Context(), peerActionKey{}, a))
 	switch {

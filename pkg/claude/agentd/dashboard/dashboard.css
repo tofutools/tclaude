@@ -20172,7 +20172,7 @@ html.remote-node body::before {
    data-act controls are greyed by a rule generated from the peer's peer_view,
    so a control the peer shares (terminal, shared lifecycle actions) is not. */
 html.remote-node nav [data-tab].pv-off { opacity: .4; }
-html.remote-node :is(#group-import-open, #cleanup-all-open, #delete-retired-open, #profiles-manage-open, #templates-manage-open, #roles-manage-open, #sandbox-profiles-manage-open, #spawn-harness-policy-open) {
+html.remote-node:not(.pv-unrestricted) :is(#group-import-open, #cleanup-all-open, #delete-retired-open, #profiles-manage-open, #templates-manage-open, #roles-manage-open, #sandbox-profiles-manage-open, #spawn-harness-policy-open) {
   opacity: .45; cursor: not-allowed;
 }
 html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }

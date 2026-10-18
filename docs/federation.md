@@ -309,17 +309,31 @@ buttons stop or wake every member under `groups.members.stop` and
 `groups.members.resume` for that group. An agent's name, tags, task link and
 notifications change under `groups.members.manage`, held in every group the
 agent is in; its role and description in a group under that group's grant.
-Its ownership and permissions stay with this node's operator. Removing an
-agent from a group, deleting it, reincarnating it, switching its remote
-access or fast mode, assigning its sandbox implementation and downloading its
-debug export take unrestricted trust. Cloning a group, deleting it (with
-retiring its members first) and cleaning up its offline members take
-unrestricted trust: no peer grant covers them. Its export, links, standing
-orders, cron jobs, templates, repositories, worktrees and windows stay on its
-own node. Member permissions, owner scopes and
-the directory auto-join default stay with this node's operator. Unrestricted trust holds every peer grant, so its groups work
-from the peer's dashboard as they do here. Each change is in this node's
-federation audit as `federation.peer_view`.
+Removing an agent from a group, deleting it, reincarnating it, switching its
+remote access or fast mode, assigning its sandbox implementation and
+downloading its debug export take unrestricted trust. Cloning a group,
+deleting it (with retiring its members first) and cleaning up its offline
+members take unrestricted trust: no peer grant covers them.
+
+Unrestricted trust makes a peer's dashboard about equivalent to this node's
+own. It holds every peer grant, and every dashboard route without a peer
+grant of its own reaches this node's handler as the local operator's request
+would, every option included: ownership and permissions, links, standing
+orders, cron jobs, templates, repositories and worktrees, retiring with the
+worktree, and so on. A few things stay with this node even then:
+- its dashboard login and browser-side preferences;
+- its configuration, which holds the remote-script and federation settings
+  that bound every peer, whether edited directly or imported in a config
+  bundle;
+- its remote-script settings (updates have their own `node.update` grant);
+- its files outside an agent's own routes: a terminal's file reads and
+  uploads, and the folder picker;
+- its federation administration;
+- the peer proxy (no peer reaches a third node through this one);
+- terminal streams;
+- its human inbox, which has its own peer routes.
+
+Each change is in this node's federation audit as `federation.peer_view`.
 
 Catalogs go directly to each trusted peer and are never published to the hub.
 They refresh when grants change, when the peer connects, and every few minutes
@@ -2659,9 +2673,11 @@ all-live broadcast is accepted. Mail is persisted with federation sender
 identity and the attempt is recorded in `federation audit` as the calling peer's
 operator.
 
-Every dashboard route is classified in the peer mapping. Other routes and
-methods are local-only and return the default-deny 403, including for
-unrestricted peers. Local-only features cannot be enabled by a grant through
+Every dashboard route is classified in the peer mapping. A route without a
+peer grant of its own serves an unrestricted peer through this node's own
+handler and returns the default-deny 403 to any other peer. The routes that
+stay with this node (see "Changing a peer's groups" above), and any unmapped route,
+return 403 even for unrestricted peers. Local-only features cannot be enabled by a grant through
 this handler; their `omitted.requires` identifies the related federation grant
 where one exists, or `local_only`. A route guard test requires an explicit
 classification when a dashboard route is added.
