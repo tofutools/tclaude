@@ -352,6 +352,7 @@ export function MergedGroups({
       page: pageNode,
       nodes: ticked.map((n) => ({ id: n.id, name: names.get(n.id), color: n.color })),
       snapshots: Object.fromEntries(polled.map((n) => [n.id, entries[n.id]?.snapshot || null])),
+      failures: Object.fromEntries(polled.map((n) => [n.id, entries[n.id]?.failure || null])),
       fetchFor,
     });
   }, [active, tickedKey, pageNode, entries]);

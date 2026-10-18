@@ -13,14 +13,19 @@
 import { signal } from '@preact/signals';
 import { featureNeeds, featureState } from './peer-view-limits.js';
 
-// fusedDock is null off the fused view; else { nodes, snapshots, page }:
+// fusedDock is null off the fused view; else { nodes, snapshots, failures,
+// page, fetchFor }: failures maps a node to its last failed read,
 // nodes are the ticked nodes in fleet order ({ id, name, color }), snapshots
 // maps a polled node's ID to its latest snapshot, and page is the page's own
 // node, whose snapshot is the page's.
 export const fusedDock = signal(null);
 
-export function publishFusedDock(value) {
+export function publishFusedDock(value, hidden = hiddenNodes) {
   fusedDock.value = value || null;
+  // A node leaving the fused set comes back shown, as the default is.
+  if (value && hidden.value.some((id) => !value.nodes.some((n) => n.id === id))) {
+    hidden.value = hidden.value.filter((id) => value.nodes.some((n) => n.id === id));
+  }
 }
 
 // hiddenNodes are the nodes the dock's filter row leaves out, on this page.
@@ -48,9 +53,12 @@ const CATALOG_FEATURE = 'spawn.catalog';
 
 // catalogWithheld is why a node lists no catalogs here: '' when it shares
 // them (this node, an unrestricted peer, or a peer granting the read), a
-// reason otherwise. A node not read yet is 'loading'.
-export function catalogWithheld(node, snapshot) {
-  if (!snapshot) return 'loading';
+// reason otherwise. A node not read yet is 'loading', unless its read failed.
+export function catalogWithheld(node, snapshot, failure = null) {
+  if (!snapshot) {
+    if (!failure) return 'loading';
+    return failure.code === 'not_trusted' ? `${node.name} no longer trusts this node.` : `${node.name} is not answering, so its catalogs are not listed.`;
+  }
   const pv = snapshot.peer_view;
   if (!pv || pv.level === 'unrestricted') return '';
   if (featureState(CATALOG_FEATURE, pv) === 'shared') return '';

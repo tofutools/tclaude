@@ -123,8 +123,9 @@ function DockCard({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [detailsPosition, setDetailsPosition] = useState(null);
-  // A card drags the page node's copy onto a group (dock-dnd.js).
-  const canDrag = section.drag && (!entry || !!entry.byNode[fused.page]);
+  // A card drags the page node's copy onto a group (dock-dnd.js), so only
+  // while it shows that copy.
+  const canDrag = section.drag && onPage;
   const draggable = canDrag ? 'true' : 'false';
   const detailsID = `${useId()}-dock-details`;
   const detailsDescriptionID = `${detailsID}-description`;
@@ -363,7 +364,7 @@ function useFusedItems(section, fused, wanted) {
   const withheld = {};
   const sharing = [];
   for (const node of nodes) {
-    const why = catalogWithheld(node, fused.snapOf(node.id));
+    const why = catalogWithheld(node, fused.snapOf(node.id), fused.failureOf(node.id));
     if (why) withheld[node.id] = why; else sharing.push(node);
   }
   const versions = section.load ? sharing.map((node) => `${node.id}=${section.load.version(fused.snapOf(node.id))}`).join(',') : '';
@@ -596,6 +597,7 @@ export function Dock({
     nodes: shownNodes(fusedValue, hidden),
     snapOf: (id) => nodeSnap(fusedValue, id, snapshot),
     fetchFor: fusedValue.fetchFor,
+    failureOf: (id) => fusedValue.failures?.[id] || null,
   } : null;
   const terms = searchTerms(query);
   const onMatches = useCallback((key, count) => {

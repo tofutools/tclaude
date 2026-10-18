@@ -40,6 +40,19 @@ test('catalogWithheld names the grant a restricted peer needs for its catalogs',
   assert.equal(catalogWithheld(mac, { peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'] } }), '');
   const why = catalogWithheld(mac, { peer_view: { level: 'restricted', included: ['groups'], omitted: [{ feature: 'spawn.catalog', requires: 'node.spawn.read' }] } });
   assert.match(why, /mac keeps its catalogs.*node\.spawn\.read/);
+  assert.match(catalogWithheld(mac, null, { status: 0, code: 'network' }), /mac is not answering/);
+  assert.match(catalogWithheld(mac, null, { status: 403, code: 'not_trusted' }), /no longer trusts/);
+});
+
+test('publishFusedDock shows again a node that left the fused set', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { publishFusedDock, hiddenNodes, toggleHiddenNode } = await harness.importDashboardModule('js/dock-nodes.js');
+  toggleHiddenNode('inst_mac111');
+  toggleHiddenNode('inst_herc31');
+  publishFusedDock({ nodes: NODES.slice(0, 2), snapshots: {}, page: 'inst_brain1' });
+  assert.deepEqual(hiddenNodes.value, ['inst_herc31']);
+  publishFusedDock(null);
+  assert.deepEqual(hiddenNodes.value, ['inst_herc31'], 'leaving the fused view keeps the filter');
 });
 
 function section(calls) {
