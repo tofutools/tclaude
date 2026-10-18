@@ -80,8 +80,10 @@ export function ownerRoutes(node) {
 // canActOnHuman reports whether this operator answers a node's human
 // notifications and access requests from here: always on this node, and on a
 // peer that trusts it unrestricted (the human-inbox routes refuse the rest).
-export function canActOnHuman(node) {
-  return !!node.local || node.level === 'unrestricted';
+// That is the peer's trust in this node, which its replies carry
+// (peerView.level), not node.level: the trust this node grants the peer.
+export function canActOnHuman(node, peerView = null) {
+  return !!node.local || peerView?.level === 'unrestricted';
 }
 
 // readFailure turns a failed read into what the node's status says: not
