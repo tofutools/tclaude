@@ -452,17 +452,33 @@ export function peerViewSubtabUsable(tab, subtab, { remote = globalThis.__tclaud
 }
 
 // limitPeerViewCommands disables the command palette's node-changing commands
-// on a peer view: only view commands, tabs the peer offers, and messaging when
-// the peer shares it stay runnable.
+// on a peer view. Under unrestricted trust every command runs on the peer as
+// on its own dashboard, except the ones that act on this machine's own
+// windows, terminals or files (peerView 'own'). Otherwise only view commands,
+// tabs the peer offers, messaging and spawning when it shares them, and an
+// agent's lifecycle its grants cover (grant: the act, as its row's control)
+// stay runnable.
 export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeRemoteNode) {
   if (!remote?.id) return cmds;
   const pv = snap?.peer_view || null;
   const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.id.slice(0, 13);
+  if (unrestricted(pv)) {
+    return cmds.map((cmd) => (cmd.peerView === 'own'
+      ? { ...cmd, enabled: false, disabledReason: `${name}'s windows, terminals and files stay on ${name}: use its own dashboard` }
+      : cmd));
+  }
   return cmds.map((cmd) => {
     let state = 'local';
     let what = 'This command';
     let needs = '';
-    if (cmd.peerView === 'view') state = 'shared';
+    if (cmd.grant) {
+      const { act, agent, dataset = {} } = cmd.grant;
+      state = agentGrantHeld(act, agent, pv, dataset) ? 'shared' : 'omitted';
+      what = "this agent's lifecycle";
+      const need = AGENT_GRANT_ACTS[act] || AGENT_GRANT_VARIANTS[act]?.find(([, test]) => test(dataset))?.[2] || [];
+      needs = state === 'shared' ? '' : missingGrants(need, pv?.agents?.[agent] || [], pv).join(' + ');
+    } else if (cmd.peerView === 'spawn') { state = featureState('spawn.request', pv); what = 'spawning'; needs = featureNeeds('spawn.request', pv); }
+    else if (cmd.peerView === 'view') state = 'shared';
     else if (cmd.peerView === 'tab') { state = tabState(cmd.tab, pv); what = tabLabel(cmd.tab); needs = tabNeeds(cmd.tab, pv); }
     else if (cmd.peerView === 'messaging') { state = featureState('messaging', pv); what = 'messaging'; needs = featureNeeds('messaging', pv); }
     if (state === 'shared') return cmd;
