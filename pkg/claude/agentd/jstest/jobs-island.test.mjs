@@ -671,3 +671,50 @@ test('creating a trigger invalidates and reloads the visible list', async (t) =>
     'successful POST refreshes the still-mounted trigger list');
   await mounted.unmount();
 });
+
+test('a fused view lists the other nodes\' automations under their node pills and runs them there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }, { createFleetState }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+    harness.importDashboardModule('js/fleet-state.js'),
+  ]);
+  const snapshot = harness.signals.signal(null);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  snapshot.value = page();
+  state.beginRequest(1);
+  state.commitRequest(1);
+  const fleet = createFleetState({ search: '?nodes=all' });
+  const peer = (id, label) => ({ instance_id: id, label, trusted: true, online: true, level: 'restricted' });
+  fleet.setStatus({ enabled: true, instance_id: 'inst_self', name: 'desk', hub: { state: 'connected' }, peers: [peer('inst_forge', 'forge'), peer('inst_mac0', 'mac')] });
+  const calls = [];
+  const fetchFor = (id) => async (path, init = {}) => {
+    calls.push([id, init.method || 'GET', path]);
+    if (id === 'inst_mac0') return { ok: false, status: 403, json: async () => ({}), text: async () => '' };
+    if (path.startsWith('/api/jobs?')) {
+      return { ok: true, json: async () => ({ rows: [
+        { kind: 'cron', cron: { id: 7, name: 'ci-sweep', enabled: true, action_kind: 'message' } },
+        { kind: 'export', export: { id: 3 } },
+      ] }) };
+    }
+    return { ok: true, status: 200, text: async () => '{}' };
+  };
+  const actions = { refresh: async () => {} };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} fleet=${fleet}
+    activeTab=${harness.signals.signal('jobs')} confirm=${async () => true} notify=${() => {}} fetchFor=${fetchFor} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  const c = mounted.container;
+  const heads = [...c.querySelectorAll('.fused-jobs-head')].map((h) => h.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(heads, ['forge 1 automation', 'mac not shared 🔒'], "a peer's exports stay on that node; a peer without unrestricted trust is locked");
+  assert.match([...c.querySelectorAll('.fused-jobs-head .lock-why')].at(-1).dataset.why, /needs unrestricted trust from mac/);
+  assert.ok(calls.some(([id, , path]) => id === 'inst_forge' && path === `/api/jobs?${state.params.value}`), 'the same filter and page as this node');
+  const forgeRow = c.querySelector('.fused-jobs-node tr:not(.fused-jobs-head)');
+  const disable = [...forgeRow.querySelectorAll('button')].find((b) => b.textContent.trim() === 'disable');
+  calls.length = 0;
+  await harness.act(() => disable.click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.deepEqual(calls.slice(0, 2).map(([id, method, path]) => `${id} ${method} ${path.split('?')[0]}`),
+    ['inst_forge POST /api/cron/7/disable', 'inst_forge GET /api/jobs'], "it runs on forge's routes, then re-reads forge's list");
+  await mounted.unmount(); fleet.dispose();
+});

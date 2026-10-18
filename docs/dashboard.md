@@ -925,6 +925,12 @@ each ticked node's peak quota. A node that does not share usage
 ticked node's spend today and this month, and its peak quota. The spend is
 totalled across the nodes that share it; quota is shown per node only. The
 views below it show this node.
+**Automations** lists this node's jobs, then each ticked peer's under its
+node pill, with the same filter, kind and page. A peer that trusts you
+unrestricted shares its list, and its cron jobs and standing orders run,
+pause and delete in place through its routes. Editing one opens on that
+node's own view. A peer's exports stay on that node, and a peer that shares
+less is locked, with the reason.
 **Activity › Audit** gets a **node** filter: this node, one ticked peer
 (paged through its routes, under `federation.audit.read`), or **all nodes**,
 which merges each node's newest page newest first, with a node pill on each

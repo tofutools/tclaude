@@ -12,6 +12,12 @@ import { JobsCronDialogRoot } from './jobs-dialog-island.js';
 import { JobsStandingOrderDialogRoot } from './jobs-standing-order-dialog-island.js';
 import { TriggerDialogRoot, TriggerWorkspace } from './jobs-triggers.js';
 import { registerJobsController } from './jobs-controller.js';
+import { createPeerJobsActions, usePeerJobs } from './fused-jobs.js';
+import { fleetState } from './fleet-state.js';
+import { tickedNodes } from './fleet-scope.js';
+import { dashboardState } from './snapshot-store.js';
+import { shellConfirm, shellToast } from './shell-state.js';
+import { LockReason } from './lock-reason.js';
 
 const html = htm.bind(h);
 
@@ -392,12 +398,43 @@ const JOB_KIND_COUNT_LABELS = {
   'standing-order': ['standing order', 'standing orders'],
 };
 
-export function JobsApp({ state, actions }) {
+// FusedPeerJobs lists the other ticked nodes' automations under this node's
+// (fused-jobs.js): one tbody per peer, headed by its node pill, its rows run
+// through that node's routes. A peer that does not share them is locked.
+function FusedPeerJobs({ state, fleet, active, triggersEnabled, confirm, notify, fetchFor }) {
+  const fleetValue = fleet.fleet.value;
+  const fused = fleet.fused.value;
+  const peers = fleetValue && fused && !globalThis.__tclaudeRemoteNode ? tickedNodes(fleetValue, fused).filter((n) => !n.local) : [];
+  const { byNode, reload } = usePeerJobs({ peers, params: state.params.value, active, ...(fetchFor ? { fetchFor } : {}) });
+  const bound = useRef({});
+  if (!peers.length) return null;
+  const actionsFor = (node) => {
+    if (!bound.current[node.id]) bound.current[node.id] = createPeerJobsActions(node, { confirm, notify, reload: () => reload(node.id), ...(fetchFor ? { fetchFor } : {}) });
+    return bound.current[node.id];
+  };
+  return peers.map((node) => {
+    const entry = byNode[node.id];
+    return html`<tbody key=${node.id} class="fused-jobs-node" style=${`--nc:${node.color}`}>
+      <tr class="fused-jobs-head"><td colspan="9"><span class="scope-pill" style=${`--nc:${node.color}`}>${node.name}</span>
+        ${!entry ? html` <span class="muted">loading…</span>`
+          : entry.why ? html` <span class="muted">not shared</span> <${LockReason} why=${entry.why} />`
+          : html` <span class="muted">${entry.rows.length} ${entry.rows.length === 1 ? 'automation' : 'automations'}</span>`}</td></tr>
+      ${(entry?.rows || []).map((row) => row.kind === 'cron'
+        ? html`<${CronRow} key=${`cron-${node.id}-${row.cron?.id}`} job=${row.cron || {}} actions=${actionsFor(node)} triggersEnabled=${triggersEnabled} />`
+        : html`<${StandingOrderRow} key=${`standing-order-${node.id}-${row.order?.id}`} order=${row.order || {}} actions=${actionsFor(node)} />`)}
+    </tbody>`;
+  });
+}
+
+export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashboardState.activeTab, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = state.view.value;
   const triggersKnown = current.dashboard != null;
   const triggersEnabled = current.dashboard?.triggers_enabled === true;
   const subnavEntries = automationsSubnavEntries(current.dashboard);
   const displayKind = triggersKnown && !triggersEnabled && current.kind === 'trigger' ? 'all' : current.kind;
+  // A fused view lists the other ticked nodes' automations after this node's.
+  const fusedPeers = !!(fleet.fused.value && fleet.fleet.value && !globalThis.__tclaudeRemoteNode
+    && tickedNodes(fleet.fleet.value, fleet.fused.value).some((n) => !n.local));
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
@@ -465,7 +502,7 @@ export function JobsApp({ state, actions }) {
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
         ? null
-        : current.rows.length === 0
+        : current.rows.length === 0 && !fusedPeers
           ? html`<${EmptyJobs} kind=${displayKind} />`
           : html`<${Fragment}>
             <table>
@@ -478,6 +515,8 @@ export function JobsApp({ state, actions }) {
                     order=${row.order || {}} actions=${actions} />`
                   : html`<${ExportRow} key=${`export-${row.export?.id}`} job=${row.export || {}} actions=${actions} />`
               )}</tbody>
+              <${FusedPeerJobs} state=${state} fleet=${fleet} active=${activeTab.value === 'jobs'} triggersEnabled=${triggersEnabled}
+                confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />
             </table>
             <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}
               disabled=${(paging.offset || 0) !== state.offset.value} />
