@@ -73,3 +73,51 @@ export function usePeerNotifications({ active, peers, fetchFor, timers = globalT
   // A peer that stopped sharing (or left the view) shows none of its last.
   return Object.fromEntries(peers.filter((id) => lists[id]).map((id) => [id, lists[id]]));
 }
+
+// A restricted peer's page: its snapshot withholds human notifications (a
+// peer snapshot never carries them; unrestricted trust reads its own full
+// one), so a member's ! and a terminal tab's have nothing to show. Under
+// node.messages.read the snapshot poll (refresh.js) attaches the peer's unread
+// ones, read from its mailbox through the page's fetch at the notification
+// cadence, never per tick.
+const pageRead = { at: -Infinity, inflight: false, list: null, total: 0 };
+
+export function resetPageNotificationsForTest() {
+  Object.assign(pageRead, { at: -Infinity, inflight: false, list: null, total: 0 });
+}
+
+// refreshPageNotifications has the next snapshot tick read them again: a
+// notification was just marked read (id, which leaves the list at once) or
+// unread from here.
+export function refreshPageNotifications(id = null, read = false) {
+  pageRead.at = -Infinity;
+  if (read && pageRead.list?.some((m) => m.id === id)) {
+    pageRead.list = pageRead.list.filter((m) => m.id !== id);
+    pageRead.total = Math.max(0, pageRead.total - 1);
+  }
+}
+
+export function attachPageNotifications(data, {
+  remote = globalThis.__tclaudeRemoteNode?.id || '', now = Date.now(), hidden = !!globalThis.document?.hidden,
+  fetchImpl = (...a) => globalThis.fetch(...a),
+} = {}) {
+  if (!remote || !data || Array.isArray(data.messages) || !peerSharesNotifications(data)) return data;
+  if (!pageRead.inflight && !hidden && now - pageRead.at >= PEER_NOTIFICATIONS_POLL_MS) {
+    pageRead.at = now;
+    pageRead.inflight = true;
+    void fetchImpl(`/api/mailbox?id=human&unread=1&page=1&page_size=${PEER_NOTIFICATIONS_PAGE}`, { credentials: 'same-origin', cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!Array.isArray(body?.messages)) return;
+        pageRead.list = body.messages.filter((m) => m && !m.read);
+        pageRead.total = Number.isFinite(body.total) ? body.total : pageRead.list.length;
+      })
+      .catch(() => {})
+      .finally(() => { pageRead.inflight = false; });
+  }
+  if (pageRead.list) {
+    data.messages = pageRead.list;
+    data.messages_unread = pageRead.total;
+  }
+  return data;
+}

@@ -14,6 +14,7 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { remoteNodeID } from './fleet-model.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
+import { refreshPageNotifications } from './peer-notifications.js';
 import { senderOnline } from './message-access-dialog-model.js';
 
 const html = htm.bind(h);
@@ -173,6 +174,9 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
   try {
     await request;
     queue.confirmed = read;
+    // A restricted peer's page reads its notifications at their own cadence:
+    // the next snapshot tick reads them anew.
+    if (peer && !node) refreshPageNotifications(id, read);
   } catch (error) {
     const current = (state.snapshot.value?.messages || [])
       .find((message) => message.id === id);
