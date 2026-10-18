@@ -23,6 +23,7 @@ import { dashPrefs } from './prefs.js';
 import { relTime } from './helpers.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
+import { NodeSelect, pickedNodes } from './node-select.js';
 import { approveConsequence } from './remote-inbox.js';
 import { replySubject } from './peer-mail.js';
 import { hasShownOverlay } from './overlay-stack.js';
@@ -381,7 +382,9 @@ export function FusedMail({
   const active = current.activeTab === 'messages' && !!current.fused && !!fleet;
   const nodes = fleet && current.fused ? tickedNodes(fleet, current.fused) : [];
   const nodeIDs = nodes.map((n) => n.id).join(',');
+  // scope names the picked nodes, comma-joined; '' is every ticked node.
   const [scope, setScope] = useState('');
+  const scopeIDs = scope ? scope.split(',').filter(Boolean) : [];
   const [folder, setFolder] = useState({ node: '', id: 'all' });
   const [boxQuery, setBoxQuery] = useState('');
   const [bq, setBq] = useState('');
@@ -463,10 +466,13 @@ export function FusedMail({
   // A node no longer ticked drops out of the scope and its folders fall back
   // to the fused All folder.
   useEffect(() => {
-    if (scope && !nodes.some((n) => n.id === scope)) setScope('');
+    const kept = scopeIDs.filter((id) => nodes.some((n) => n.id === id));
+    if (kept.length !== scopeIDs.length) setScope(kept.length === nodes.length ? '' : kept.join(','));
     if (folder.node && !nodes.some((n) => n.id === folder.node)) setFolder({ node: '', id: 'all' });
   }, [nodeIDs]);
-  const scoped = scope ? nodes.filter((n) => n.id === scope) : nodes;
+  const scoped = pickedNodes(nodes, scopeIDs, { multiple: true });
+  // solo is a scope of one node: its fused folders are that node's own.
+  const solo = !!scope && scoped.length === 1;
   const rosters = {};
   for (const n of nodes) rosters[n.id] = rosterOptions(n, { inView: scoped.includes(n), bq, toggles, limits, agentsOpen, expanded, memberLimits });
   // A merged folder walks to the requested page one known vector at a time.
@@ -570,24 +576,24 @@ export function FusedMail({
   });
 
   // The node chips narrow the whole view: folders, list and counts.
-  const chips = html`<div class="fused-mail-scope" role="group" aria-label="Show mail from">
-    <button type="button" class=${`fused-mail-chip${scope ? '' : ' active'}`} aria-pressed=${String(!scope)} data-scope=""
-      title="Show every ticked node's mail" onClick=${() => { if (scope) nav.current = 'push'; setScope(''); }}>All nodes · ${nodes.length}</button>
-    ${nodes.map((n) => {
-      const s = status(n);
-      const unread = humanUnread(n);
-      return html`<button type="button" key=${n.id} class=${`fused-mail-chip fused-mail-node${scope === n.id ? ' active' : ''}${s && s !== 'loading…' ? ' degraded' : ''}`}
-        data-node=${n.id} aria-pressed=${String(scope === n.id)} title=${`Show only ${n.name}'s mail${s ? ` (${s})` : ''}`}
-        onClick=${() => { nav.current = 'push'; setScope(scope === n.id ? '' : n.id); if (folder.node && folder.node !== n.id) setFolder({ node: '', id: folder.id === 'access' || folder.id === 'human' ? folder.id : 'all' }); }}>
-        <${NodePill} node=${n} />${unread ? html`<span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : null}${s && html`<span class="muted fused-mail-chip-status">${s}</span>`}</button>`;
-    })}
-  </div>`;
+  // The node selector narrows the whole view to the picked nodes: folders,
+  // list and counts.
+  const pickScope = (ids) => {
+    const next = ids.join(',');
+    if (next === scope) return;
+    nav.current = 'push'; setScope(next);
+    if (ids.length && folder.node && !ids.includes(folder.node)) setFolder({ node: '', id: folder.id === 'access' || folder.id === 'human' ? folder.id : 'all' });
+  };
+  const chips = html`<div class="fused-mail-scope"><${NodeSelect} id="fused-mail-nodes" multiple label="Mail from" nodes=${nodes} value=${scopeIDs}
+    onChange=${pickScope} badge=${humanUnread} note=${(n) => { const s = status(n); return s === 'loading…' ? '' : s; }}
+    title="Which ticked nodes' mail to show" /></div>`;
 
-  const fusedLabel = scope ? ` · ${scoped[0]?.name || ''}` : '';
+  const scopeName = solo ? scoped[0]?.name || '' : `${scoped.length} nodes`;
+  const fusedLabel = scope ? ` · ${scopeName}` : '';
   const fusedRows = FUSED_FOLDERS.map((f) => {
     const count = f.id === 'access' ? requestRows.length : f.id === 'human' ? scoped.reduce((s, n) => s + (folders(n).human?.total || 0), 0) : scoped.reduce((s, n) => s + (folders(n).all?.total || 0), 0);
     const unread = f.id === 'access' ? requestRows.length : f.id === 'human' ? scoped.reduce((s, n) => s + humanUnread(n), 0) : 0;
-    return folderRow({ node: '', id: f.id }, { icon: f.icon, label: `${f.title}${fusedLabel}`, title: `${f.title} on ${scope ? scoped[0]?.name : 'every ticked node'}`, total: count, unread });
+    return folderRow({ node: '', id: f.id }, { icon: f.icon, label: `${f.title}${fusedLabel}`, title: `${f.title} on ${scope ? scopeName : 'every ticked node'}`, total: count, unread });
   });
 
   const sections = scoped.map((n) => {
@@ -603,8 +609,8 @@ export function FusedMail({
         title=${open ? `Fold ${n.name}'s folders` : `Show ${n.name}'s folders`} onClick=${() => toggleSet(setCollapsed, n.id)}>
         <span class="mailbox-section-caret">${open ? '▾' : '▸'}</span><${NodePill} node=${n} />${s && html` <span class="muted">${s}</span>`}</button>
       ${open && html`<${Fragment}>
-        ${!scope && all && folderMatches(all, bq) && folderRow({ node: n.id, id: 'all' }, { icon: '🗂', label: 'All agent messages', title: `All agent messages on ${n.name}`, total: all.total })}
-        ${!scope && human && folderMatches(human, bq) && folderRow({ node: n.id, id: 'human' }, { icon: '📬', label: 'Human notifications', title: `Human notifications on ${n.name}`, total: human.total, unread: human.unread })}
+        ${!solo && all && folderMatches(all, bq) && folderRow({ node: n.id, id: 'all' }, { icon: '🗂', label: 'All agent messages', title: `All agent messages on ${n.name}`, total: all.total })}
+        ${!solo && human && folderMatches(human, bq) && folderRow({ node: n.id, id: 'human' }, { icon: '📬', label: 'Human notifications', title: `Human notifications on ${n.name}`, total: human.total, unread: human.unread })}
         ${shownGroups.length > 0 && html`<div class="mailbox-section">${wizard ? 'Parties' : 'Groups'}</div>`}
         ${shownGroups.map((g) => {
           const gk = groupKey(n.id, g.title);
@@ -714,7 +720,7 @@ export function FusedMail({
     <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
       boxValue=${boxQuery} onBoxInput=${(value) => { nav.current = 'box'; setBoxQuery(value); }}
       onBoxKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-sidebar'), ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f); } })}
-      id="fused-mail-filter" placeholder=${scope ? `Filter ${scoped[0]?.name}'s messages` : 'Filter messages on every ticked node'}
+      id="fused-mail-filter" placeholder=${solo ? `Filter ${scopeName}'s messages` : scope ? `Filter messages on ${scopeName}` : 'Filter messages on every ticked node'}
       value=${query} onInput=${(value) => { nav.current = 'q'; setQuery(value); }}
       onKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-list'), ...LIST_ROWS, select: (row) => selectRow(row.dataset.id) })}
       countId="fused-mail-filter-count" countText=${countText} clearId="fused-mail-filter-clear" onClear=${() => { nav.current = 'q'; setQuery(''); setQ(''); }} />

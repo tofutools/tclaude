@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { LockReason } from './lock-reason.js';
+import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 
@@ -86,13 +87,15 @@ function AuditPager({ current, state, actions }) {
     onPage=${(value) => { state.setPage(value); actions.load(); }} sizes=${AUDIT_PAGE_SIZES} pageSize=${current.pageSize} sizeId="audit-page-size"
     onPageSize=${(value) => { state.setPageSize(value); actions.load(); }} />`;
 }
-// NodeFilter picks which fused node's audit log shows: this node, one peer
-// (paged through its routes), or all of them merged newest first.
+// NodeFilter picks which fused node's audit log shows (node-select.js): this
+// node (''), one peer (paged through its routes), or all of them merged newest
+// first ('all').
 function NodeFilter({ nodes, value, onChange }) {
   if (nodes.length < 2) return null;
-  return html`<label class="filter-toggle" title="Which node's audit log to show"><span>node</span><select id="audit-node" value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>
-    ${nodes.map((n) => html`<option key=${n.id} value=${n.local ? '' : n.id}>${n.local ? `⌂ ${n.name}` : n.name}</option>`)}
-    <option value="all">all nodes</option></select></label>`;
+  const local = nodes.find((n) => n.local);
+  const picked = value === 'all' ? '' : value || local?.id || '';
+  return html`<${NodeSelect} id="audit-node" label="node" allLabel="all nodes" nodes=${nodes} value=${picked} title="Which node's audit log to show"
+    onChange=${(id) => onChange(!id ? 'all' : id === local?.id ? '' : id)} />`;
 }
 
 // MergedNote says what the merged view shows, and which nodes withhold theirs.

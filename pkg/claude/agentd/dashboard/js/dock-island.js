@@ -10,9 +10,10 @@ import {
   LIBRARY_EVENT, menuPlacement, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
 } from './dock-library.js';
 import {
-  catalogWithheld, copyRoute, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes, toggleHiddenNode,
+  catalogWithheld, copyRoute, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes,
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
+import { NodeSelect } from './node-select.js';
 
 const html = htm.bind(h);
 
@@ -599,44 +600,13 @@ function DockSection({
   `;
 }
 
-// DockNodeFilter is the fused view's Nodes dropdown: which nodes the dock
-// lists, starting from every node the Groups view fuses.
-function DockNodeFilter({ nodes, hidden, onToggle }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === 'Escape') setOpen(false); };
-    globalThis.document?.addEventListener('pointerdown', close, true);
-    globalThis.document?.addEventListener('keydown', key);
-    return () => {
-      globalThis.document?.removeEventListener('pointerdown', close, true);
-      globalThis.document?.removeEventListener('keydown', key);
-    };
-  }, [open]);
-  const shown = nodes.filter((node) => !hidden.includes(node.id));
-  const label = shown.length === nodes.length ? 'all nodes' : shown.length ? shown.map((node) => node.name).join(', ') : 'no nodes';
-  return html`<div key="nodes" class="dock-node-filter" ref=${root}>
-    <button type="button" class="dock-node-filter-button" aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
-      title="Which nodes' catalogs the panel lists" onClick=${() => setOpen(!open)}>
-      <span class="dock-node-filter-label">Nodes</span><span class="dock-node-filter-value">${label}</span> ▾
-    </button>
-    ${open ? html`<div class="dock-node-filter-menu" role="group" aria-label="Nodes listed in the panel">
-      ${nodes.map((node) => {
-        const on = !hidden.includes(node.id);
-        return html`<button
-          key=${node.id}
-          type="button"
-          class=${`dock-node-toggle${on ? ' is-on' : ''}`}
-          style=${node.color ? `--node-color:${node.color}` : null}
-          aria-pressed=${on ? 'true' : 'false'}
-          title=${on ? `Hide ${node.name}'s catalogs here` : `List ${node.name}'s catalogs here`}
-          data-dock-node=${node.id}
-          onClick=${() => onToggle(node.id)}
-        ><span class="dock-node-check" aria-hidden="true">${on ? '☑' : '☐'}</span><span class="dock-node-dot" aria-hidden="true"></span>${node.name}</button>`;
-      })}
-    </div>` : null}
+// DockNodeFilter is the fused view's Nodes dropdown (node-select.js): which
+// nodes the dock lists, starting from every node the Groups view fuses.
+function DockNodeFilter({ nodes, hidden, onHide }) {
+  const value = hidden.some((id) => nodes.some((n) => n.id === id)) ? nodes.filter((n) => !hidden.includes(n.id)).map((n) => n.id) : [];
+  return html`<div key="nodes" class="dock-node-filter">
+    <${NodeSelect} multiple label="Nodes" allLabel="all nodes" nodes=${nodes} value=${value} title="Which nodes' catalogs the panel lists" menuLabel="Nodes listed in the panel"
+      onChange=${(ids) => onHide([...hidden.filter((id) => !nodes.some((n) => n.id === id)), ...(ids.length ? nodes.filter((n) => !ids.includes(n.id)).map((n) => n.id) : [])])} />
   </div>`;
 }
 
@@ -728,7 +698,7 @@ export function Dock({
       />
     </div>`,
     fusedValue ? html`<${DockNodeFilter} key="nodes" nodes=${fusedValue.nodes} hidden=${hidden}
-      onToggle=${(id) => toggleHiddenNode(id, hiddenState)} />` : null,
+      onHide=${(ids) => { hiddenState.value = ids; }} />` : null,
     nothing ? html`<div key="no-match" class="dock-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
     ...sections.filter((section) => !section.afterProcesses).map(renderSection),
     processes ? html`<${DockProcesses} key="processes" groups=${groups}

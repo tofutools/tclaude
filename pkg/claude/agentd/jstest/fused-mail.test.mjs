@@ -190,7 +190,8 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   forgeTrusted = false;
   await once();
   assert.deepEqual(subjects(), ['desk human note'], 'a node that withdrew trust keeps nothing on screen');
-  assert.match(c.querySelector('.fused-mail-node[data-node="inst_forge"]').textContent, /no longer trusted/);
+  await harness.act(() => harness.fireEvent(c.querySelector('#fused-mail-nodes .node-select-button'), 'click'));
+  assert.match(c.querySelector('#fused-mail-nodes [data-node-option="inst_forge"]').textContent, /no longer trusted/);
   await mounted.unmount(); state.dispose();
 });
 
@@ -280,16 +281,23 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   assert.deepEqual(subjects().slice(0, 3), ['forge 30', 'desk 30', 'forge 29']);
   assert.match(c.querySelector('#fused-mail-pager .mail-pager-pos').textContent, /Page 1 \/ 2/);
   assert.equal(c.querySelector('#fused-mail-filter-count').textContent, '60 messages');
-  assert.match(c.querySelector('.fused-mail-node[data-node="inst_forge"]').textContent, /forge\s*2/, 'the chip carries the node\'s unread notifications');
+  // The node selector (tcl-vwuc0b): its button sums the picked nodes' unread
+  // notifications, each node's row carries its own.
+  assert.match(c.querySelector('#fused-mail-nodes .node-select-button').textContent, /Mail fromAll nodes · 2\s*2/);
+  await click(c.querySelector('#fused-mail-nodes .node-select-button'));
+  assert.match(c.querySelector('#fused-mail-nodes [data-node-option="inst_forge"]').textContent, /forge(only)?2/, 'a node\'s row carries its unread notifications');
+  await click(c.querySelector('#fused-mail-nodes .node-select-button'));
+  assert.equal(c.querySelector('#fused-mail-nodes .node-select-menu'), null, 'the button closes it again');
   calls.length = 0;
   await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
   await once();
   assert.ok(calls.includes('/api/peer/inst_forge/mailbox?id=all&page=1&page_size=100'), 'a node without cursor paging is read down to page 2 and cut at the cursor');
   assert.deepEqual(subjects(), ['forge 5', 'desk 5', 'forge 4', 'desk 4', 'forge 3', 'desk 3', 'forge 2', 'desk 2', 'forge 1', 'desk 1']);
 
-  // forge's chip: only forge's mail, read with forge's own pages.
+  // forge only: only forge's mail, read with forge's own pages.
   calls.length = 0;
-  await click(c.querySelector('.fused-mail-chip[data-node="inst_forge"]'));
+  await click(c.querySelector('#fused-mail-nodes .node-select-button'));
+  await click(c.querySelector('#fused-mail-nodes [data-node-option="inst_forge"] .node-pop-only'));
   await once();
   assert.equal(c.querySelectorAll('.fused-mail-section').length, 1, 'only forge\'s folders');
   assert.ok(subjects().every((s) => s.startsWith('forge')), 'only forge\'s messages');
@@ -314,7 +322,8 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   assert.equal(c.querySelector('.mail-row-wrap[data-key="inst_forge/agent/30"] .mail-row-del').disabled, false, 'an unrestricted peer\'s row is deleted from here');
 
   // Back to all nodes: a mixed selection is deleted on each owning node.
-  await click(c.querySelector('.fused-mail-chip[data-scope=""]'));
+  assert.match(c.querySelector('#fused-mail-nodes .node-select-button').textContent, /forge/);
+  await click(c.querySelector('#fused-mail-nodes [data-node-option=""] .node-pop-name'));
   await once();
   for (const key of ['inst_self/agent/30', 'inst_forge/agent/30']) {
     const box = c.querySelector(`.mail-row-wrap[data-key="${key}"] .mail-msg-check`);

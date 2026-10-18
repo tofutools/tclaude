@@ -550,7 +550,7 @@ func fleetStates() []dashsnap.State {
   for (var i = 0; i < 80 && !document.querySelector('#fused-mail-list .mail-row'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   var row = document.querySelector('#fused-mail-list .mail-row');
   if (!row) throw new Error('fleet: no rows in fused Messages');
-  if (!document.querySelector('.fused-mail-chip[data-node="inst_hn3cxq7a"]')) throw new Error('fleet: no forge chip in fused Messages');
+  if (!document.querySelector('#fused-mail-nodes .node-select-button')) throw new Error('fleet: no node selector in fused Messages');
   row.click();
   for (var j = 0; j < 30 && !document.querySelector('#fused-mail-reader .mail-headers'); j++) await new Promise(function(r){ setTimeout(r, 100); });
 })();`,
