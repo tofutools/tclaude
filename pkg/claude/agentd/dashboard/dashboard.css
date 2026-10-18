@@ -20508,12 +20508,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-jb-row .fa-jb-nodes { margin: 0; }
 #fleet-job-logs pre { max-height: 50vh; overflow: auto; }
 #fleet-run-job .modal-buttons button, #fleet-repo .modal-buttons button { flex: none; white-space: nowrap; }
-/* Peer actions on a peer view (js/peer-action.js). */
-.peer-action-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-.peer-action-opt input:not([type]), .peer-action-opt select, .peer-action-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
-.peer-action-brief { align-items: flex-start; }
-#peer-spawn-status { margin: 6px 0 10px; }
-#peer-spawn-modal .peer-action-opt, #peer-spawn-modal #peer-spawn-status { font-size: 13px; font-weight: normal; }
 #fleet-key-transition > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
 #fleet-key-transition .fa-table th { text-align: left; white-space: nowrap; padding-right: 12px; vertical-align: top; }
 .fa-kt-cmd { margin: 6px 0; }

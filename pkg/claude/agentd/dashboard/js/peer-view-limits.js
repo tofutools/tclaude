@@ -96,6 +96,9 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
   'add-member': ['feature:local_dashboard'],
+  // Unrestricted trust messages a group with the regular dialog; a restricted
+  // peer's messaging grant sends one agent at a time (PEER_ACTS).
+  'message-new': ['feature:local_dashboard'],
   'spawn-harness-policy': ['feature:local_dashboard'],
   // Long operations, which run as peer view jobs (peer_view_jobs.go).
   'pull-repositories-group': ['feature:local_dashboard'],
