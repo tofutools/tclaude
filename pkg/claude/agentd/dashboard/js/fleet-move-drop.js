@@ -24,11 +24,23 @@ export const FLEET_PAGE_EVENT = 'tclaude:fleet-admin-page';
 
 // The page waits here too, for a ⚙ Fleet island that mounts only once its
 // tab is first shown.
+// A page can carry a target, e.g. the peer whose grants Peer grants opens on.
 let pendingFleetPage = '';
+let pendingFleetTarget = '';
 export function takeFleetPage() { const p = pendingFleetPage; pendingFleetPage = ''; return p; }
+export function takeFleetTarget() { const t = pendingFleetTarget; pendingFleetTarget = ''; return t; }
+
+// requestFleetPage asks for a section without showing the ⚙ Fleet tab; the
+// caller navigates there itself.
+export function requestFleetPage(page, target = '', doc = globalThis.document) {
+  pendingFleetPage = page;
+  pendingFleetTarget = target;
+  doc?.dispatchEvent?.(new CustomEvent(FLEET_PAGE_EVENT, { detail: page }));
+}
 
 export function openFleetPage(page, doc = globalThis.document) {
   pendingFleetPage = page;
+  pendingFleetTarget = '';
   doc?.querySelector?.('nav [data-tab="fleet-admin"]')?.click();
   doc?.dispatchEvent?.(new CustomEvent(FLEET_PAGE_EVENT, { detail: page }));
 }

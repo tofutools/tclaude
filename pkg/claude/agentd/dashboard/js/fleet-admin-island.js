@@ -22,7 +22,7 @@ import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
-import { FLEET_PAGE_EVENT, takeFleetPage } from './fleet-move-drop.js';
+import { FLEET_PAGE_EVENT, takeFleetPage, takeFleetTarget } from './fleet-move-drop.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -350,7 +350,7 @@ export function FleetAdmin({
   const [page, setPage] = useState(() => takeFleetPage() || '');
   const landing = useRef('');
   const [dialog, setDialog] = useState(null);
-  const [grantTarget, setGrantTarget] = useState('');
+  const [grantTarget, setGrantTarget] = useState(() => takeFleetTarget());
   // runPreselect is the Run target another page sent the operator to (the hub).
   const [runPreselect, setRunPreselect] = useState('');
   const [tick, setTick] = useState(0);
@@ -397,7 +397,12 @@ export function FleetAdmin({
   useEffect(() => { if (focus) setPage('peers'); }, [focus, opened]);
   // Other views (a dropped move's progress) can ask for a section.
   useEffect(() => {
-    const on = (e) => { takeFleetPage(); if (SUB_PAGES.some((p) => p.id === e.detail)) setPage(e.detail); };
+    const on = (e) => {
+      takeFleetPage();
+      const target = takeFleetTarget();
+      if (target && e.detail === 'grants') setGrantTarget(target);
+      if (SUB_PAGES.some((p) => p.id === e.detail)) setPage(e.detail);
+    };
     document.addEventListener(FLEET_PAGE_EVENT, on);
     return () => document.removeEventListener(FLEET_PAGE_EVENT, on);
   }, []);

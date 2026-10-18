@@ -384,7 +384,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-map",
 			Title:   "Fleet map",
-			Caption: "The top-level map: this node's card, a reachable restricted peer with omitted concepts, and an unreachable unrestricted peer, joined by measured link edges. The tab strip becomes the top-level view switch in the same row.",
+			Caption: "The top-level map: this node's card, the hub with its admin link, a reachable restricted peer with its omitted-concept count and grants/trust links, and an unreachable unrestricted peer, joined by measured link edges. A toolbar above the map toggles the hub and zooms. The tab strip becomes the top-level view switch in the same row.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -398,12 +398,12 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-map-link",
 			Title:   "Fleet map: a link's trust",
-			Caption: "Each peer link's label names both directions of trust (peer → this node, this node → peer); clicking it spells out who can do what and who set it. Cards say \"You trust it\" / \"It trusts you\" instead of a bare level badge. lab is unreachable, so its trust in this node is not reported.",
+			Caption: "Each peer link's label shows both directions of trust on one line (→ this node on the peer, ← the peer on this node); clicking it spells out who can do what and who set it. Cards say \"You trust it\" / \"It trusts you\" instead of a bare level badge. lab is unreachable, so its trust in this node is not reported.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && !/hidden/.test((document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]') || {}).textContent || ''); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var i = 0; i < 80 && !document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"] [title*="hidden"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   var badge = document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]');
   if (!badge) throw new Error('fleet: no link label for forge');
   badge.click();
@@ -611,8 +611,8 @@ func fleetStates() []dashsnap.State {
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var s = 0; s < 30 && !document.querySelectorAll('.fleet-seg-btn')[2]; s++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelectorAll('.fleet-seg-btn')[2].click();
+  for (var s = 0; s < 30 && !document.querySelectorAll('.fleet-seg-btn')[1]; s++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelectorAll('.fleet-seg-btn')[1].click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-waiting'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-trusted tbody tr').length !== 2) throw new Error('fleet: trusted peers missing');
   if (!document.querySelector('#fleet-waiting [data-fa="trust"]')) throw new Error('fleet: no Trust action for the waiting instance');
