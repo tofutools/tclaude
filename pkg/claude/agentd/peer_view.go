@@ -106,9 +106,15 @@ type peerViewRule struct {
 func peerViewRules() map[string]peerViewRule {
 	rules := map[string]peerViewRule{}
 	for _, pattern := range peerViewLocalRoutes {
-		rules[pattern] = peerViewRule{feature: "local_dashboard", requires: "local_only"}
+		if peerViewOwnNodeRoute(pattern) {
+			rules[pattern] = peerViewRule{feature: "own_node", requires: "local_only"}
+			continue
+		}
+		rules[pattern] = peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true, serve: servePeerAsLocal, write: servePeerAsLocal}
 	}
-	rules["/"] = peerViewRule{feature: "local_dashboard", requires: "local_only"}
+	for _, pattern := range peerViewOwnNodeRoutes {
+		rules[pattern] = peerViewRule{feature: "own_node", requires: "local_only"}
+	}
 	for _, pattern := range []string{"POST /api/peer-access-requests", "GET /api/peer-access-requests/{id}"} {
 		rule := peerViewRule{feature: "permissions.requests", requires: "peer_access", accessRequest: true}
 		if strings.HasPrefix(pattern, "GET ") {
@@ -376,6 +382,17 @@ func servePeerNode(w http.ResponseWriter, _ *http.Request, v *peerView, rule pee
 		out["node"] = localNodeMetadata()
 	}
 	writeJSON(w, 200, out)
+}
+
+// servePeerAsLocal runs a dashboard route with no peer grant of its own for a
+// peer this node trusts unrestricted, through this node's own handler as the
+// local operator's request would; any other peer is refused.
+func servePeerAsLocal(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !v.allows(rule, 0) {
+		writeError(w, 403, "peer_view_local_only", "endpoint is local-only")
+		return
+	}
+	peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 }
 
 func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {

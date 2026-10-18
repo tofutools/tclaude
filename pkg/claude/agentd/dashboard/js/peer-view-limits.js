@@ -18,13 +18,16 @@ import { shellToast } from './shell-state.js';
 // Costs view and its Quota history under that one grant.
 // Messages is the peer's mail, read under node.messages.read; what the
 // reader may do there follows the peer's further grants (mail-island.js).
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+// Jobs (cron, standing orders, triggers) and Access (this node's pending
+// approvals) have no peer grant of their own: unrestricted trust reaches them
+// as the local operator does (local_dashboard).
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
-// route, so those subtabs stay greyed there.
+// grant, so only unrestricted trust reaches them.
 const SUBTAB_FEATURES = Object.freeze({
-  activity: Object.freeze({ audit: 'audit', logs: '', performance: '' }),
+  activity: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard' }),
 });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
@@ -287,10 +290,14 @@ export function managedControlsRule(peerView) {
 // (the peer could share it with a grant), or 'local' (not offered to any peer).
 export function featureState(feature, peerView) {
   if (feature === 'local') return 'shared';
+  // The routes without a peer grant answer only unrestricted trust.
+  if (feature === 'local_dashboard') return unrestricted(peerView) ? 'shared' : 'local';
   if (!feature) return 'local';
   const included = Array.isArray(peerView?.included) ? peerView.included : null;
-  const omitted = (Array.isArray(peerView?.omitted) ? peerView.omitted : []).map((o) => (typeof o === 'string' ? o : o?.feature));
-  if (omitted.includes(feature)) return 'omitted';
+  const omissions = Array.isArray(peerView?.omitted) ? peerView.omitted : [];
+  const omission = omissions.find((o) => (typeof o === 'string' ? o : o?.feature) === feature);
+  // A feature no grant opens (only unrestricted trust) is not requestable.
+  if (omission) return omission?.requires === 'local_only' ? 'local' : 'omitted';
   // Without metadata (an unrestricted peer's full snapshot still carries it;
   // before the first answer there is none) assume the snapshot-backed view.
   if (!included) return feature === 'agents.status' ? 'shared' : 'omitted';
@@ -372,6 +379,16 @@ export function limitHint(state, what, node) {
 // one of its options a peer can serve.
 const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 
+// OWN_NODE_ACTS work on the node's own machine (a shell or window there, its
+// desktop folder picker): never from a peer view, even under unrestricted
+// trust, where every other control runs as on the node itself.
+const OWN_NODE_ACTS = new Set(['term', 'term-dir', 'web-term', 'open-window', 'group-web-term', 'window-modal-group', 'window-modal-all', 'pick-group-dir']);
+
+// unrestricted reports a peer that trusts this operator unrestricted: its
+// dashboard routes all answer as they do for its own operator.
+function unrestricted(peerView) {
+  return peerView?.level === 'unrestricted';
+}
 // SAFE_AGENT_ID admits only a plain agent ID into a command the operator will
 // paste into a shell: the ID comes from the peer's snapshot, and a hostile
 // peer must not be able to smuggle shell syntax into it.
@@ -417,6 +434,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 // (grantSelectors) and the PEER_ACTS the peer shares. The
 // greying below is built from it, so it can never disagree with the guard.
 export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
+  if (unrestricted(peerView)) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   out.push(...grantSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';
@@ -469,6 +487,10 @@ export function blockedControl(target, peerView, event = null) {
   const managed = managedControl(target, peerView);
   if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what };
   const act = actOf(target, event);
+  if (unrestricted(peerView)) {
+    if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
+    return act && OWN_NODE_ACTS.has(act.dataset.act) ? { el: act, state: 'local', what: 'This action' } : null;
+  }
   const held = grantHeld(act, peerView);
   if (held !== null) {
     return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : 'This action' };
@@ -514,6 +536,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // (and so once the marker has named the node).
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
+    root.classList.toggle('pv-unrestricted', unrestricted(peerView));
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, refusedActsRule('html.remote-node', usableActSelectors(peerView), `[data-act]:not(${FUSED_ROOT} [data-act])`));
     setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, managedControlsRule(peerView));
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
@@ -557,14 +580,15 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     const blocked = blockedControl(event.target, peerView, event);
     if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
   };
-  // Drags spawn, move and reorder on the node — never on a peer view.
-  const onDrag = (event) => { event.preventDefault(); };
+  // Drags spawn, move and reorder on the node: only under unrestricted trust.
+  const onDrag = (event) => { if (!unrestricted(peerView)) event.preventDefault(); };
   doc.addEventListener('click', refuse, true);
   doc.addEventListener('keydown', onKey, true);
   doc.addEventListener('pointerover', onOver, true);
   doc.addEventListener('dragstart', onDrag, true);
   return () => {
     stop();
+    root.classList.remove('pv-unrestricted');
     setLimitStyle(doc, PEER_VIEW_STYLE_ID, '');
     setLimitStyle(doc, PEER_VIEW_MANAGED_STYLE_ID, '');
     doc.removeEventListener('click', refuse, true);

@@ -1,7 +1,15 @@
 package agentd
 
-// Dashboard routes deliberately left local-only. The route guard test requires
-// an explicit decision here whenever a dashboard route is added.
+import (
+	"slices"
+	"strings"
+)
+
+// Dashboard routes with no peer grant of their own. A peer this node trusts
+// unrestricted reaches them through this node's own handlers, as the local
+// operator does (servePeerAsLocal); any other peer is refused. The route
+// guard test requires an explicit decision here, or in peerViewOwnNodeRoutes,
+// whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
 	// Daemon profiling captures this node's own process.
 	"GET /api/profiles",
@@ -60,27 +68,19 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/terminal-file",
 	"GET /api/federation/terminal",
 	"GET /api/federation/sessions",
-	"/",
 	"/api/agent-generations/",
 	"/api/agent-windows",
 	"/api/background-terminals",
 	"/api/background-terminals/kill",
 	"/api/agents/",
 	"/api/audit",
-	"/api/auth/session",
 	"/api/browse-directories",
-	"/api/browser-notifications",
 	"/api/claude-settings/default-model",
 	"/api/cleanup/",
-	"GET /api/node/update",
 	"GET /api/node/run",
 	"POST /api/node/run",
 	"GET /api/node/run/jobs/{id}",
 	"GET /api/node/run/jobs/{id}/logs",
-	"GET /api/node/run/settings",
-	"PUT /api/node/run/settings",
-	"POST /api/node/update",
-	"GET /api/node/update/jobs/{id}",
 	"GET /api/harnesses/availability",
 	"GET /api/harnesses/operations",
 	"POST /api/harnesses/operations",
@@ -90,14 +90,12 @@ var peerViewLocalRoutes = []string{
 	"POST /api/harnesses/credentials/backup",
 	"POST /api/harnesses/credentials/restore",
 	"GET /api/harnesses/operations/jobs/{id}",
-	"/api/config",
 	"/api/conversations",
 	"/api/cost-factor",
 	"/api/costs",
 	"/api/create-directory",
 	"/api/cron",
 	"/api/cron/",
-	"/api/dashboard/prefs",
 	"/api/delete-directory",
 	"/api/export-jobs/",
 	"POST /api/federation/offer-config",
@@ -193,16 +191,10 @@ var peerViewLocalRoutes = []string{
 	"DELETE /api/federation/nodes/groups/{name}/members",
 	"/api/git-repositories",
 	"/api/git-repositories/batch",
-	"/api/group-term-ws/",
 	"/api/groups/{group}/sandbox-profile",
 	"/api/groups/{name}/attachment",
 	"/api/groups/{name}/spawn-harness-policy",
 	"/api/hide/",
-	"/api/human-messages/",
-	"/api/human-messages/clear",
-	"/api/human-messages/delete",
-	"/api/human-messages/read",
-	"/api/human-messages/reply",
 	"/api/instance",
 	"/api/jobs",
 	"/api/jump/",
@@ -211,18 +203,10 @@ var peerViewLocalRoutes = []string{
 	"/api/mailbox",
 	"/api/mailboxes",
 	"/api/notifications",
-	"/api/open-window-ws/",
 	"/api/open-window/",
 	"/api/pending/delete/",
 	"/api/pending/focus/",
-	"GET /api/peer/{node}/{tail...}",
 	// Reads a peer's attachment for this node's own dashboard.
-	"GET /api/peer-attachments/{node}/{message}/{attachment}",
-	"GET /api/peer-message-export/{node}/{message}",
-	"POST /api/peer/{node}/{tail...}",
-	"PATCH /api/peer/{node}/{tail...}",
-	"PUT /api/peer/{node}/{tail...}",
-	"DELETE /api/peer/{node}/{tail...}",
 	"/api/perf",
 	"/api/perf/reset",
 	"/api/permissions",
@@ -250,12 +234,8 @@ var peerViewLocalRoutes = []string{
 	"/api/scribe",
 	"GET /api/scribe/{agent}/chat",
 	"/api/shutdown",
-	"/api/slop/channel",
-	"/api/slop/nowplaying",
-	"/api/slop/volumes",
 	"/api/snapshot",
 	"/api/spawn-attachments",
-	"/api/spawn-focus-ws/",
 	"/api/spawn-harness-policy",
 	"/api/spawn-profile-default",
 	"/api/spawn-profiles",
@@ -269,23 +249,17 @@ var peerViewLocalRoutes = []string{
 	"/api/sudo/",
 	"/api/templates",
 	"/api/templates/{name}",
-	"/api/term-ws/",
 	"/api/term/",
 	"/api/terminal-attachments",
 	"/api/terminal-file",
 	"/api/triggers",
 	"/api/triggers/",
 	"/api/tui/",
-	"/api/tui/attach-ws/",
 	"/api/usage-history",
 	"/api/usage-history/point",
 	"/api/worktrees",
 	"/api/worktrees/cleanup",
 	"/api/worktrees/progress",
-	"/dashboard/login",
-	"/static/",
-	"/terminals",
-	"/terminals/",
 	"DELETE /api/groups/{name}/links/{id}",
 	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
@@ -342,4 +316,54 @@ var peerViewLocalRoutes = []string{
 	"POST /v1/process/templates",
 	"POST /v1/process/templates/{id}",
 	"POST /v1/process/validate",
+}
+
+// peerViewOwnNodeRoutes stay with this node even for unrestricted trust: its
+// dashboard login and browser-side preferences, its configuration (which
+// holds the remote-script and federation settings that bound every peer),
+// its own updates, the peer proxy (a peer never reaches a third node through
+// this one), the terminal streams (no websocket crosses the peer view) and
+// this node's human inbox, which has its own peer routes. Every federation
+// administration route is also kept here (peerViewOwnNodeRoute).
+var peerViewOwnNodeRoutes = []string{
+	"/",
+	"/api/auth/session",
+	"/api/browser-notifications",
+	"/api/config",
+	"/api/dashboard/prefs",
+	"GET /api/node/update",
+	"POST /api/node/update",
+	"GET /api/node/update/jobs/{id}",
+	"GET /api/node/run/settings",
+	"PUT /api/node/run/settings",
+	"GET /api/peer/{node}/{tail...}",
+	"POST /api/peer/{node}/{tail...}",
+	"PATCH /api/peer/{node}/{tail...}",
+	"PUT /api/peer/{node}/{tail...}",
+	"DELETE /api/peer/{node}/{tail...}",
+	"GET /api/peer-attachments/{node}/{message}/{attachment}",
+	"GET /api/peer-message-export/{node}/{message}",
+	"/api/human-messages/",
+	"/api/human-messages/clear",
+	"/api/human-messages/delete",
+	"/api/human-messages/read",
+	"/api/human-messages/reply",
+	"/api/slop/channel",
+	"/api/slop/nowplaying",
+	"/api/slop/volumes",
+	"/api/term-ws/",
+	"/api/open-window-ws/",
+	"/api/group-term-ws/",
+	"/api/spawn-focus-ws/",
+	"/api/tui/attach-ws/",
+	"/dashboard/login",
+	"/static/",
+	"/terminals",
+	"/terminals/",
+}
+
+// peerViewOwnNodeRoute reports a route that stays with this node even for
+// unrestricted trust.
+func peerViewOwnNodeRoute(pattern string) bool {
+	return strings.Contains(pattern, "/api/federation/") || slices.Contains(peerViewOwnNodeRoutes, pattern)
 }

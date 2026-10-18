@@ -84,15 +84,20 @@ func servePeerFullAgent(w http.ResponseWriter, r *http.Request, v *peerView, rul
 		writeError(w, http.StatusForbidden, "permission", "requires unrestricted trust")
 		return
 	}
-	id := r.PathValue("id")
-	target, err := db.GetAgent(id)
+	target, err := db.GetAgent(r.PathValue("id"))
 	if err != nil || target == nil || target.CurrentConvID == "" {
 		writeError(w, http.StatusNotFound, "not_found", "object not found")
 		return
 	}
+	servePeerAgentAsLocal(w, r, v, target)
+}
+
+// servePeerAgentAsLocal runs an agent route through this node's own handler
+// as the local operator's request would, on exactly the agent target.
+func servePeerAgentAsLocal(w http.ResponseWriter, r *http.Request, v *peerView, target *db.Agent) {
 	v.targetConv = target.CurrentConvID
 	req := r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
-	req.URL.Path = "/api/agents/" + url.PathEscape(target.CurrentConvID) + strings.TrimPrefix(r.URL.Path, "/api/agents/"+id)
+	req.URL.Path = "/api/agents/" + url.PathEscape(target.CurrentConvID) + strings.TrimPrefix(r.URL.Path, "/api/agents/"+r.PathValue("id"))
 	req.URL.RawPath = ""
 	handleDashboardAgentsAPI(w, req)
 }

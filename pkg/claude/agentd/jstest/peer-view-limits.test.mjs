@@ -106,7 +106,7 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.equal(mod.peerViewTabUsable('activity', { remote, peerView: pv }), true);
   assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: pv }), true);
   assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote, peerView: pv }), false);
-  assert.equal(mod.peerViewSubtabUsable('activity', 'performance', { remote, peerView: null }), false, 'no peer route at all');
+  assert.equal(mod.peerViewSubtabUsable('activity', 'performance', { remote, peerView: null }), true, 'unrestricted trust may serve it: a deep link waits');
   assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote: undefined }), true);
   assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
@@ -254,4 +254,35 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.ok(!selectors.some((s) => s.includes('set-group-sandbox-profile"][data-group="ops"')));
   assert.ok(mod.groupGrantSelectors({ level: 'unrestricted' }).includes('[data-act="rename-group"]'), 'unrestricted needs no per-group rule');
   assert.ok(mod.groupGrantSelectors(restricted, (g) => `${g}@forge`).includes('[data-act="set-group-dir"][data-group="ops@forge"]'));
+});
+
+test('under unrestricted trust a peer page runs every control as the node itself does, except its own machine\'s terminals and pickers', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button id="links" data-act="link-new" data-from="ops">+</button>'
+    + '<button id="perm" data-act="perm-edit" data-conv="c1">perm</button>'
+    + '<button id="import" id2="x"></button><button id="group-import-open">import</button>'
+    + '<button id="shell" data-act="term-dir" data-agent="agt_abc123">sh</button>'
+    + '<button id="attach" data-act="jump" data-agent="agt_abc123">⤢</button>'
+    + '<nav><button data-tab="jobs">jobs</button><button data-tab="config">config</button></nav>';
+  const pv = { peer: 'desk', level: 'unrestricted', included: ['agents.status', 'local_dashboard'], omitted: [{ feature: 'own_node', requires: 'local_only' }] };
+  const toasts = [];
+  const opened = [];
+  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, openTerminal: async (o) => { opened.push(o); } });
+  assert.ok(doc.documentElement.classList.contains('pv-unrestricted'));
+  for (const id of ['links', 'perm', 'group-import-open']) assert.equal(harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented, false, id);
+  assert.equal(harness.fireEvent(doc.getElementById('shell'), 'click').defaultPrevented, true, 'a shell on the node stays there');
+  harness.fireEvent(doc.getElementById('attach'), 'click');
+  assert.equal(opened.length, 1, 'an agent terminal still opens through the attach');
+  assert.equal(mod.tabState('jobs', pv), 'shared');
+  assert.equal(mod.tabState('config', pv), 'local');
+  const sel = doc.getElementById('peer-view-limits-style').textContent.replace(/ \{[^}]*\}$/, '');
+  doc.documentElement.classList.add('remote-node');
+  assert.equal(doc.getElementById('links').matches(sel), false);
+  assert.equal(doc.getElementById('shell').matches(sel), true);
+  // A restricted peer: the local dashboard reads as not offered, never as requestable.
+  assert.equal(mod.tabState('jobs', { included: ['agents.status'], omitted: [{ feature: 'local_dashboard', requires: 'local_only' }] }), 'local');
+  dispose();
+  assert.ok(!doc.documentElement.classList.contains('pv-unrestricted'));
 });

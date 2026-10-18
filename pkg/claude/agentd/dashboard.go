@@ -3019,10 +3019,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(defaults)
 	groupsRouteMapEnabled := cfg.GroupsRouteMapEnabled()
-	// Triggers are local-only in the peer view (peerViewLocalRoutes), so even
-	// an unrestricted peer's full snapshot must not advertise them: the Groups
-	// view would fetch /api/triggers and surface the refusal as an error.
-	triggersEnabled := cfg.TriggersEnabled() && !isPeerSnapshot(r)
+	// Only an unrestricted peer gets this snapshot, and it reaches the trigger
+	// routes as the local operator does (servePeerAsLocal).
+	triggersEnabled := cfg.TriggersEnabled()
 
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
@@ -3930,12 +3929,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Roles = roles
 	out.SavedPrompts = savedPrompts
-	// Queued drafts are this operator's unlaunched plans (briefs, env values,
-	// permission overrides) and the routes acting on them are local-only, so a
-	// federation peer's snapshot carries an empty queue.
-	if isPeerSnapshot(r) {
-		queuedSpawns = []queuedSpawnJSON{}
-	}
 	out.QueuedSpawns = queuedSpawns
 	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
