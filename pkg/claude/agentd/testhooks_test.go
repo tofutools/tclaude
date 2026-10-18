@@ -2282,3 +2282,8 @@ func SetProfileStoreDirForTest(dir string) func() {
 	profileStoreDir = func() string { return dir }
 	return func() { profileStoreDir = prev }
 }
+
+// TermSessionNameForTest exposes the per-agent web shell's tmux session name.
+func TermSessionNameForTest(convID, which string) string {
+	return termSessionName(convID, which)
+}

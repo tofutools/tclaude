@@ -101,4 +101,21 @@ func TestGroupTermWSRequestsHyperlinks(t *testing.T) {
 
 	command := captureTermCommand(t, handleDashboardGroupTermWS, "/api/group-term-ws/squad")
 	assertHyperlinkFlagsPrecedeCommand(t, command, "new-session")
+	assertWebShellEnablesMouse(t, command, groupTermSessionName("squad"))
+}
+
+// assertWebShellEnablesMouse pins the tmux mouse-mode command chained after a
+// web shell's new-session. Without it the browser turns wheel and two-finger
+// scrolls into arrow keys that cycle the shell's command history instead of
+// scrolling the pane.
+func assertWebShellEnablesMouse(t *testing.T, command, sessionName string) {
+	t.Helper()
+	want := ` \; set-option -t '=` + sessionName + `:' mouse on`
+	if !strings.HasSuffix(command, want) {
+		t.Fatalf("web shell must chain tmux mouse mode for %s (want suffix %q): %s", sessionName, want, command)
+	}
+}
+
+func TestWebShellMouseScrollbackTargetsTheSessionExactly(t *testing.T) {
+	assertWebShellEnablesMouse(t, "tmux new-session -A -s x"+webShellMouseScrollback("x"), "x")
 }
