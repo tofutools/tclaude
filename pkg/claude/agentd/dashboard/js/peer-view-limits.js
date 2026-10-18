@@ -63,6 +63,9 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // prompts every spawn's brief.
   'set-group-environment': ['groups.settings.environment'],
   'set-group-prompts': ['groups.settings', 'groups.members.spawn.prompts'],
+  // A member's role belongs to the group (its description cell also edits
+  // the agent's tags: an agent control).
+  'edit-role': ['groups.members.manage'],
   // A clone's members spawn with the node's launch settings, and delete and
   // cleanup remove what no peer grant hands out: unrestricted trust only (a
   // feature no restricted peer shares).
@@ -96,7 +99,6 @@ export function groupGrantHeld(act, group, peerView) {
 export const AGENT_GRANT_ACTS = Object.freeze({
   'rename-name': ['groups.members.manage'],
   'edit-member': ['groups.members.manage'],
-  'edit-role': ['groups.members.manage'],
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],

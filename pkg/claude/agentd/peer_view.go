@@ -194,6 +194,9 @@ type peerView struct {
 	// auditDetail is a validated closed value (never request text) that
 	// distinguishes otherwise identical audit labels, e.g. sandbox direction.
 	auditDetail string
+	// agentGrantsValue memoizes agentGrants for the request.
+	agentGrantsValue map[string][]string
+	agentGrantsDone  bool
 }
 type peerViewOmission struct {
 	Requestable bool   `json:"requestable"`
@@ -289,7 +292,7 @@ func (v *peerView) metadata() peerViewMetadata {
 		}
 	}
 	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)
-	out.Agents = peerAgentGrants(v.peer.InstanceID, groups)
+	out.Agents = v.agentGrants(groups)
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })
 	return out

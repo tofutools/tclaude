@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"slices"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 )
 
 // An agent's own controls on the Groups view over the peer view: a peer page
@@ -54,7 +57,13 @@ func servePeerAgentInvoke(w http.ResponseWriter, r *http.Request, v *peerView, r
 	v.targetConv = target.CurrentConvID
 	a := &peerActionAuthority{peer: v.peer.InstanceID, sourceConv: target.CurrentConvID, permission: rule.requires}
 	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerActionKey{}, a)
-	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
+	// The handler resolves its target from the path again: name the
+	// authorized agent's conversation exactly, never a selector that another
+	// handle could answer to.
+	req := r.Clone(ctx)
+	req.URL.Path = "/api/agents/" + url.PathEscape(target.CurrentConvID) + "/" + path.Base(r.URL.Path)
+	req.URL.RawPath = ""
+	peerDashboardMux().ServeHTTP(w, req)
 }
 
 // visibleAgent resolves an agent ID to an agent in a group the peer can see,
@@ -75,6 +84,40 @@ func (v *peerView) visibleAgent(id string) (*db.Agent, bool) {
 		}
 	}
 	return nil, false
+}
+
+// agentGrants is peerAgentGrants for this request's peer, computed once per
+// request (the snapshot rows and the metadata both read it).
+func (v *peerView) agentGrants(groups []*db.AgentGroup) map[string][]string {
+	if v == nil {
+		return nil
+	}
+	if !v.agentGrantsDone {
+		v.agentGrantsValue, v.agentGrantsDone = peerAgentGrants(v.peer.InstanceID, groups), true
+	}
+	return v.agentGrantsValue
+}
+
+// projectPeerMemberSettings fills a member row with the settings its editors
+// change, which the peer projection otherwise withholds, where the peer may
+// change them: an editor that started blank would replace values the peer
+// never saw (tags are a replace-set). The description is the group's
+// (groupHeld), the tags and notification override the agent's own
+// (agentHeld).
+func projectPeerMemberSettings(row *dashboardMember, descr string, groupHeld, agentHeld []string) {
+	if slices.Contains(groupHeld, PermGroupsMembersManage) {
+		row.Descr = descr
+	}
+	if !slices.Contains(agentHeld, PermGroupsMembersManage) {
+		return
+	}
+	if tags, err := db.ListAgentTags(row.AgentID); err == nil {
+		row.Tags = tags
+	}
+	if mode, err := db.GetAgentNotifyPref(row.AgentID); err == nil {
+		row.Notify = mode
+	}
+	row.NotifyEffective = notify.AllowedForConv(row.ConvID)
 }
 
 // peerAgentGrants names, per agent in a group the peer can see, the grants of
@@ -109,50 +152,45 @@ func peerAgentGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 	if err != nil {
 		return nil
 	}
-	// held[agent][slug] counts the agent's groups holding slug; groupsOf
-	// counts its groups, and seen marks an agent the peer can see.
+	// The batch names each member by its agent's current conversation:
+	// count, per conversation, its groups and those holding each grant, and
+	// resolve agent IDs only for the ones that qualify.
 	held := map[string]map[string]int{}
 	groupsOf := map[string]int{}
 	seen := map[string]bool{}
-	agentOf := map[string]string{}
 	for _, g := range groups {
 		if g.IsArchived() {
 			continue
 		}
 		visible := fedPeerGroupVisible(peer, g.ID)
 		for _, m := range members[g.ID] {
-			aid, ok := agentOf[m.ConvID]
-			if !ok {
-				aid, _ = db.AgentIDForConv(m.ConvID)
-				agentOf[m.ConvID] = aid
-			}
-			if aid == "" {
-				continue
-			}
-			groupsOf[aid]++
-			seen[aid] = seen[aid] || visible
+			groupsOf[m.ConvID]++
+			seen[m.ConvID] = seen[m.ConvID] || visible
 			for _, slug := range peerAgentControlGrants {
 				if holds(g.ID, slug) {
-					if held[aid] == nil {
-						held[aid] = map[string]int{}
+					if held[m.ConvID] == nil {
+						held[m.ConvID] = map[string]int{}
 					}
-					held[aid][slug]++
+					held[m.ConvID][slug]++
 				}
 			}
 		}
 	}
 	out := map[string][]string{}
-	for aid, counts := range held {
-		if !seen[aid] {
+	for conv, counts := range held {
+		if !seen[conv] {
 			continue
 		}
 		var all []string
 		for _, slug := range peerAgentControlGrants {
-			if counts[slug] == groupsOf[aid] {
+			if counts[slug] == groupsOf[conv] {
 				all = append(all, slug)
 			}
 		}
-		if len(all) > 0 {
+		if len(all) == 0 {
+			continue
+		}
+		if aid, err := db.AgentIDForConv(conv); err == nil && aid != "" {
 			out[aid] = all
 		}
 	}

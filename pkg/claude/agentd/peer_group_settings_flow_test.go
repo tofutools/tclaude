@@ -392,12 +392,40 @@ func TestPeerMemberSettingsUnderManageGrant(t *testing.T) {
 	code, body = call("PATCH", "/api/groups/secret/members/"+shared, map[string]any{"role": "reviewer"})
 	require.Equal(t, 404, code, "secret is not visible: %s", body)
 
+	code, body = call("PATCH", "/api/groups/crew/members/"+shared, map[string]any{"descr": "reviews"})
+	require.Equal(t, 200, code, body)
+	require.NoError(t, db.ReplaceAgentTags(shared, []string{"private"}))
+
 	snap := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	var out struct {
+		Groups []struct {
+			Name    string `json:"name"`
+			Members []struct {
+				AgentID string   `json:"agent_id"`
+				Descr   string   `json:"descr"`
+				Tags    []string `json:"tags"`
+				Notify  string   `json:"notify"`
+			} `json:"members"`
+		} `json:"groups"`
 		PeerView struct {
+			Groups map[string][]string `json:"groups"`
 			Agents map[string][]string `json:"agents"`
 		} `json:"peer_view"`
 	}
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, map[string][]string{solo: {agentd.PermGroupsMembersManage}}, out.PeerView.Agents)
+	require.Contains(t, out.PeerView.Groups["crew"], agentd.PermGroupsMembersManage)
+	// The editors start from what they change: the description where the
+	// group's grant reaches, the tags and notification override where the
+	// agent's does; another agent's tags stay withheld.
+	require.Len(t, out.Groups, 1)
+	byAgent := map[string]int{}
+	for i, m := range out.Groups[0].Members {
+		byAgent[m.AgentID] = i
+	}
+	soloRow, sharedRow := out.Groups[0].Members[byAgent[solo]], out.Groups[0].Members[byAgent[shared]]
+	require.Equal(t, []string{"remote"}, soloRow.Tags)
+	require.Equal(t, "off", soloRow.Notify)
+	require.Equal(t, "reviews", sharedRow.Descr)
+	require.Empty(t, sharedRow.Tags)
 }
