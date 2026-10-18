@@ -2223,9 +2223,18 @@ function TemplateManagerSlot({ state, actions, confirmDiscard }) {
   return html`<${TemplateManager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
 }
 
-function TemplateEditorSlot({ state, actions, confirmDiscard, confirm }) {
-  const descriptor = state.templateDialog.value;
+// catalogFor is the actions an editor dialog takes: another node's
+// (management-actions.js catalogOn) when it was opened on that node's item,
+// else the page's.
+function catalogFor(actions, descriptor) {
+  return (descriptor?.node && actions.catalogOn?.(descriptor.node)) || actions;
+}
+
+function TemplateEditorSlot({ state: pageState, actions: pageActions, confirmDiscard, confirm }) {
+  const descriptor = pageState.templateDialog.value;
   if (descriptor?.kind !== 'template-editor') return null;
+  const actions = catalogFor(pageActions, descriptor);
+  const state = actions.catalogState || pageState;
   const current = {
     busy: state.busy.value,
     error: state.error.value,
@@ -2256,11 +2265,14 @@ function contextFeatureSummary(features) {
 
 function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const descriptor = state.dialog.value;
+  // An editor opened on another node's item edits it there.
+  const on = catalogFor(actions, descriptor);
+  const onState = on.catalogState || state;
   switch (descriptor?.kind) {
     case 'profile-editor':
-      return html`<${ProfileEditor} descriptor=${descriptor} roles=${state.roles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
+      return html`<${ProfileEditor} descriptor=${descriptor} roles=${onState.roles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
     case 'role-editor':
-      return html`<${RoleEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
+      return html`<${RoleEditor} descriptor=${descriptor} state=${onState} actions=${on} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
     case 'profile-export':
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':
@@ -2268,13 +2280,13 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'saved-prompts':
       return html`<${SavedPromptsDialog} key=${`${descriptor.initial || ''}:${descriptor.clone ? 1 : 0}`} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-editor':
-      return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${state.sandboxProfiles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${onState.sandboxProfiles.value || []} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-export':
       return html`<${SandboxExport} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'sandbox-import':
       return html`<${SandboxImport} initialRaw=${descriptor.raw || ''} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-duplicate':
-      return html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${onState} actions=${on} confirmDiscard=${confirmDiscard}/>`;
     case 'template-import':
       return html`<${TemplateImportDialog} initialRaw=${descriptor.raw || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'library-name':
@@ -2346,7 +2358,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
   const controller = {
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
-    openSavedPrompts: ({ initial = '', clone = false } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone }),
+    openSavedPrompts: ({ initial = '', clone = false, node = '' } = {}) => state.openDialog({ kind: 'saved-prompts', initial, clone, node }),
     openSandboxProfilesManageModal: () => actions.openManager('sandbox'), openSandboxProfileEditor: actions.openSandboxEditor, removeSandboxProfile: actions.removeSandbox,
     openSandboxProfileClone: actions.openSandboxClone,
     // The right panel library: a kind's own importer opened on a file the
@@ -2362,6 +2374,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openTemplateDeploy: actions.openTemplateDeploy,
     openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext,
     openAgentExport: actions.openAgentExport, openGroupExport: actions.openGroupExport, openSnapshots: actions.openSnapshots,
+    catalogOn: actions.catalogOn,
   };
   const unregister = registerManagementController(controller);
   const stopRoute = routeManagers(state, actions);

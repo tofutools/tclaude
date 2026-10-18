@@ -5069,3 +5069,57 @@ test('a profile from another node\'s spawn dialog saves on the node picked in Sa
   assert.deepEqual(saved, [['fast', 'inst_forge0001']]);
   assert.match(notes.join('\n'), /profile created on forge: fast/);
 });
+
+test('catalogOn edits another node\'s catalogs in place: its fetch, its snapshot, its lists, the page\'s dialogs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { mountManagementIsland }, nodeAPI] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/management-island.js'), harness.importDashboardModule('js/node-api.js'),
+  ]);
+  const calls = [];
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init = {}) => {
+    calls.push([String(path), init.method || 'GET']);
+    const list = /\/(roles|spawn-profiles)$/.test(String(path)) && (init.method || 'GET') === 'GET';
+    return { ok: true, status: 200, json: async () => (list ? [{ name: 'r1' }] : {}), text: async () => '' };
+  };
+  const herc = { harnesses: catalog, slugs: ['message.direct'], templates: [{ name: 'squad', agents: [] }] };
+  const unsource = nodeAPI.setNodeSnapshotSource((node) => (node === 'inst_herc31' ? herc : null));
+  const changed = [];
+  const unlisten = nodeAPI.onNodeChanged((node) => changed.push(node));
+  t.after(() => { globalThis.fetch = oldFetch; unsource(); unlisten(); });
+
+  const state = createManagementState();
+  state.profilesRequest.commitRequest(state.profilesRequest.beginRequest(), [{ name: 'page-only' }]);
+  const actions = createManagementActions({ state, confirm: async () => true, notify() {} });
+  assert.equal(actions.catalogOn(''), actions, 'a blank node is the page\'s own actions');
+  const on = actions.catalogOn('inst_herc31');
+  assert.equal(actions.catalogOn('inst_herc31'), on, 'one controller per node');
+
+  on.openProfileEditor({ name: 'opus', model: 'sonnet' });
+  assert.equal(state.dialog.value.node, 'inst_herc31', 'the page\'s dialog, stamped with the node');
+  assert.equal(state.dialog.value.catalog, catalog, 'the node\'s harness catalog');
+  assert.equal(await on.saveProfile({ draft: { name: 'opus' }, original: { name: 'opus' }, options: {}, payload: { name: 'opus' } }), true);
+  assert.deepEqual(calls.slice(-2), [['/api/peer/inst_herc31/spawn-profiles/opus', 'PATCH'], ['/api/peer/inst_herc31/spawn-profiles', 'GET']]);
+  assert.deepEqual(state.profiles.value, [{ name: 'page-only' }], 'the page\'s list is untouched');
+  assert.deepEqual(on.catalogState.profiles.value, [{ name: 'r1' }]);
+  assert.ok(changed.includes('inst_herc31'), 'the node is re-read so its dock card follows');
+
+  on.openTemplateDuplicate('squad');
+  assert.equal(state.dialog.value.kind, 'template-duplicate', 'the node\'s template is found in its own snapshot');
+  await on.duplicateTemplate({ name: 'squad', agents: [] }, 'squad-2');
+  assert.deepEqual(calls.at(-1), ['/api/peer/inst_herc31/templates', 'POST']);
+  state.closeDialog();
+
+  // The island renders a stamped editor with the node's actions.
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  on.openRoleEditor({ name: 'r1', brief: 'b' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.dialog.value.slugs[0], 'message.direct', 'the node\'s permission slugs');
+  host.querySelector('#role-editor-submit').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  assert.ok(calls.some(([path, method]) => path === '/api/peer/inst_herc31/roles/r1' && method === 'PATCH'), 'the role saves on that node');
+  cleanups.reverse().forEach((fn) => fn());
+  host.remove();
+});

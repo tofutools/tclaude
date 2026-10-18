@@ -91,7 +91,28 @@ function roleSummary(rl) {
   return parts.join(' · ');
 }
 
+// rolesVia is this module's role operations through another node's
+// fetch (node-api.js nodeFetch): uncached, since the cache above is the page
+// node's list.
+function rolesVia(fetchImpl) {
+  const send = async (path, method, body) => {
+    const r = await fetchImpl(path, {
+      method, credentials: 'same-origin',
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    });
+    if (!r.ok && r.status !== 204) throw new Error((await r.text()) || `HTTP ${r.status}`);
+    return r;
+  };
+  return {
+    async loadRoles() { const list = await (await send(API, 'GET')).json(); return Array.isArray(list) ? list : []; },
+    createRole: async (body) => (await send(API, 'POST', body)).json().catch(() => ({})),
+    updateRole: async (name, body) => (await send(`${API}/${encodeURIComponent(name)}`, 'PATCH', body)).json().catch(() => ({})),
+    deleteRole: async (name) => { await send(`${API}/${encodeURIComponent(name)}`, 'DELETE'); },
+  };
+}
+
 export {
+  rolesVia,
   loadRoles, cachedRoles, invalidateRoles,
   createRole, updateRole, deleteRole, roleSummary,
 };

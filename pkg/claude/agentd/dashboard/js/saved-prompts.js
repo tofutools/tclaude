@@ -8,7 +8,7 @@ import {
 } from './saved-prompts-actions.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { downloadBlob } from './paf-model.js';
-import { nodeFetch } from './node-api.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 const html = htm.bind(h);
 const blank = () => ({ name: '', body: '' });
@@ -186,11 +186,15 @@ function useSavedPrompts(enabled = true, node = '') {
 // Saved prompts section — rather than from a composer. initial preselects a
 // prompt; clone starts a copy of it. The dock refreshes off the snapshot poll.
 export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
-  const { prompts, error, reload, loaded } = useSavedPrompts();
+  // descriptor.node: another node's library, edited in place (blank: the
+  // page's); its dock card follows once that node's snapshot is re-read.
+  const node = descriptor?.node || '';
+  const { prompts, error, reload, loaded } = useSavedPrompts(true, node);
+  const changed = () => { if (node) announceNodeChanged(node); return reload(); };
   useEffect(() => { if (error) shellToast(error, true); }, [error]);
   if (!loaded) return null;
   return html`<${SavedPromptManager} prompts=${prompts} initial=${descriptor?.initial || ''} clone=${!!descriptor?.clone}
-    onClose=${onClose} onChanged=${reload} confirmDiscard=${confirmDiscard}/>`;
+    node=${node} onClose=${onClose} onChanged=${changed} confirmDiscard=${confirmDiscard}/>`;
 }
 
 // SavedPromptChips selects an ordered set of saved prompts with the same chip

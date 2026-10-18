@@ -67,8 +67,8 @@ function section(calls) {
     drag: true,
     itemPath: (name) => `/api/spawn-profiles/${name}`,
     listPath: '/api/spawn-profiles',
-    onManageItem: (item) => calls.push(['edit', item.name]),
-    onCloneItem: (item) => calls.push(['clone', item.name]),
+    onManageItem: (item, node) => calls.push(['edit', item.name, ...(node ? [node.id] : [])]),
+    onCloneItem: (item, node) => calls.push(['clone', item.name, ...(node ? [node.id] : [])]),
     onDeleteItem: (item) => calls.push(['delete', item.name]),
     onManageAll: () => calls.push(['manage']),
   };
@@ -131,6 +131,12 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   await harness.act(() => harness.fireEvent(opus.querySelector('[data-dock-node="inst_herc31"]'), 'click'));
   assert.equal(opus.querySelector('[data-dock-node="inst_herc31"]').getAttribute('aria-pressed'), 'true');
   await harness.act(() => harness.fireEvent(opusCog, 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(opus, 'menuitem', { name: 'Edit' }), 'click'));
+  assert.deepEqual(calls.at(-1), ['edit', 'opus', 'inst_herc31'], 'herc3 trusts this node: its copy is edited in place');
+  await harness.act(() => harness.fireEvent(opusCog, 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(opus, 'menuitem', { name: 'Clone' }), 'click'));
+  assert.deepEqual(calls.at(-1), ['clone', 'opus', 'inst_herc31']);
+  await harness.act(() => harness.fireEvent(opusCog, 'click'));
   await harness.act(() => harness.fireEvent(getByRole(opus, 'menuitem', { name: 'Open on herc3' }), 'click'));
   assert.deepEqual(calls.at(-1), ['open', 'inst_herc31']);
   await harness.act(() => harness.fireEvent(opusCog, 'click'));
@@ -143,6 +149,8 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   const sol = host.querySelector('[data-dock-name="sol"]');
   await harness.act(() => harness.fireEvent(sol.querySelector('[data-dock-node="inst_mac111"]'), 'click'));
   await harness.act(() => harness.fireEvent(getByRole(sol, 'button', { name: 'Actions for sol' }), 'click'));
+  assert.ok(sol.querySelector('.dock-card-menu-item.is-locked[data-dock-act="edit-item"]'), 'a restricted node\'s copy is not edited in place');
+  assert.ok(sol.querySelector('.dock-card-menu-item.is-locked[data-dock-act="clone-item"]'));
   const locked = sol.querySelector('.dock-card-menu-item.is-locked[data-dock-act="delete-item"]');
   assert.match(locked.querySelector('.lock-why').dataset.why, /mac keeps .* unrestricted trust/);
   await harness.act(() => harness.fireEvent(locked, 'click'));

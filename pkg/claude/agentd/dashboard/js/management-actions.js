@@ -6,8 +6,11 @@ import {
   exportProfiles,
   inspectProfileImport,
   importProfiles,
+  profilesVia,
 } from './profiles.js';
-import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
+import { loadRoles, createRole, updateRole, deleteRole, rolesVia } from './roles.js';
+import { signal } from '@preact/signals';
+import { createRequestLifecycle } from './request-lifecycle.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import { announceNodeChanged, isPageNode, nodeDownload, nodeDownloadPath, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
@@ -26,6 +29,7 @@ import {
   importSandboxProfiles,
   inspectSandboxDirectories,
   createSandboxDirectories,
+  sandboxVia,
 } from './sandbox-profiles-data.js';
 
 const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
@@ -68,7 +72,8 @@ function downloadJSON(name, value) {
   URL.revokeObjectURL(url);
 }
 
-export function createManagementActions({
+export function createManagementActions(deps) {
+  const {
   state,
   confirm,
   notify,
@@ -85,7 +90,10 @@ export function createManagementActions({
   sandboxAPI = {},
   templateAPI = {},
   groupAPI = {},
-}) {
+  // fetchImpl reaches the node whose catalogs these actions edit: the page's
+  // own, or another node's for catalogOn.
+  fetchImpl = (...args) => fetch(...args),
+  } = deps;
   let starterRequest = 0;
   const profiles = {
     loadProfiles,
@@ -114,7 +122,7 @@ export function createManagementActions({
   };
   const templates = {
     async saveTemplate(originalName, payload) {
-      const response = await fetch(
+      const response = await fetchImpl(
         originalName
           ? `/api/templates/${encodeURIComponent(originalName)}`
           : '/api/templates',
@@ -130,7 +138,7 @@ export function createManagementActions({
       return response.json().catch(() => ({}));
     },
     async deleteTemplate(name) {
-      const response = await fetch(
+      const response = await fetchImpl(
         `/api/templates/${encodeURIComponent(name)}`,
         { method: 'DELETE', credentials: 'same-origin' },
       );
@@ -765,6 +773,66 @@ export function createManagementActions({
     return lib;
   }
   const snapshots = snapshotsOn();
+  // catalogOn is these actions over another node's catalogs (profiles,
+  // roles, sandbox profiles, templates), for editing its items in place:
+  // reads and writes go through that node's fetch, its snapshot supplies the
+  // harness and permission catalogs, and the lists are its own. Dialogs still
+  // open in this page's slots, stamped with the node so they render with
+  // these actions (management-island.js catalogFor). A blank node is the
+  // page's (these very actions).
+  const catalogs = new Map();
+  function catalogOn(node = '') {
+    if (!node || isPageNode(node)) return controller;
+    if (!catalogs.has(node)) catalogs.set(node, nodeCatalog(node));
+    const child = catalogs.get(node);
+    const snap = nodeSnapshot(node) || {};
+    child.catalogState.updateTemplates(snap.templates || [], snap.groups || []);
+    return child;
+  }
+  function nodeCatalog(node) {
+    const via = nodeFetch(node);
+    const lists = { profiles: signal([]), roles: signal([]), sandboxProfiles: signal([]), templates: signal([]), templateGroups: signal([]) };
+    const nodeState = Object.freeze({
+      ...state,
+      ...lists,
+      profilesRequest: createRequestLifecycle({ payload: lists.profiles, retainPayloadOnRefresh: true, retainPayloadOnError: true }),
+      rolesRequest: createRequestLifecycle({ payload: lists.roles, retainPayloadOnRefresh: true, retainPayloadOnError: true }),
+      sandboxRequest: createRequestLifecycle({ payload: lists.sandboxProfiles, retainPayloadOnRefresh: true, retainPayloadOnError: true }),
+      openDialog: (value) => state.openDialog({ ...value, node }),
+      openTemplateDialog: (value) => state.openTemplateDialog({ ...value, node }),
+      updateTemplates(value, groups = []) {
+        lists.templates.value = Array.isArray(value) ? value : [];
+        lists.templateGroups.value = Array.isArray(groups) ? groups : [];
+      },
+    });
+    const changed = async () => { announceNodeChanged(node); };
+    const base = createManagementActions({
+      ...deps,
+      state: nodeState,
+      getSnapshot: () => nodeSnapshot(node) || {},
+      refresh: changed,
+      refreshSandboxSpawn: changed,
+      profileAPI: profilesVia(via),
+      roleAPI: rolesVia(via),
+      sandboxAPI: sandboxVia(via),
+      fetchImpl: via,
+    });
+    // A saved item shows on that node's dock card once its snapshot is
+    // re-read.
+    const announced = (fn) => async (...args) => {
+      const result = await fn(...args);
+      if (result) announceNodeChanged(node);
+      return result;
+    };
+    return Object.freeze({
+      ...base,
+      saveProfile: announced(base.saveProfile),
+      saveRole: announced(base.saveRole),
+      saveSandbox: announced(base.saveSandbox),
+      catalogNode: node,
+      catalogState: nodeState,
+    });
+  }
   // actionsOn binds the snapshot and export actions a dialog takes to the
   // node it names; a blank node is the page's (these very actions).
   const nodeActions = new Map();
@@ -1175,7 +1243,7 @@ export function createManagementActions({
   function loadUnsandboxedAutonomy({
     harness = '', sandbox: harnessBuiltinMode = '', sandboxImplementation = '', approval = '',
   } = {}) {
-    return fetchUnsandboxedAutonomy(fetch, {
+    return fetchUnsandboxedAutonomy(fetchImpl, {
       harness, sandbox: harnessBuiltinMode, sandboxImplementation, approval, dir: '',
     });
   }
@@ -1240,6 +1308,9 @@ export function createManagementActions({
     loadCommonRuleCatalog,
     loadUnsandboxedAutonomy,
     actionsOn,
+    catalogOn,
+    catalogNode: '',
+    catalogState: state,
   });
   return controller;
 }

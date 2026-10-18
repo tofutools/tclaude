@@ -1226,6 +1226,13 @@ to…** and **teleport to…** stay in the menu greyed out, saying why (as the
 node chips do); connect under ⚙ Fleet config → Hub. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
 `tclaude agent morph`, `tclaude agent teleport`.
 
+The right-hand panel lists the shown nodes' profiles, roles, saved prompts,
+templates and sandbox profiles, one card per name. Picking another node's copy
+on a card acts on that node: **Edit** and **Clone** open the same editors and
+save there, and **Rename…** and **Delete** reach it too, while that node trusts
+this one unrestricted (locked with the reason otherwise). **Open on NODE**
+goes to that node's own dashboard.
+
 Cloning on this node has one entry: **send elsewhere → clone…**, whose
 **Clone** mode continues in the clone dialog. The dialog can start the clone in
 another worktree, skip the conversation copy, and also copy the source's group
