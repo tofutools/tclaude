@@ -600,7 +600,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-setup-join",
 			Title:   "Fleet setup guide: join a hub",
-			Caption: "A node that has never been set up: the ⌘ Fleet chip stays clickable and says set up, and opens Fleet config on the setup guide. Step 1 takes a pasted join code and shows what the daemon read from it — hub, space, invite expiry and the self-signed certificate's SHA-256 to compare with the admin — before one Join confirmation. A hub address and a bare invite still work below it, and the instance ID and fingerprint are there for an admin who admits by ID.",
+			Caption: "A node that has never been set up: the ⌘ Fleet chip stays clickable and says set up, and opens Fleet config on the setup guide. Join a hub (step 3, after the optional hub steps) takes a pasted join code and shows what the daemon read from it — hub, space, invite expiry and the self-signed certificate's SHA-256 to compare with the admin — before one Join confirmation. A hub address and a bare invite still work below it, and the instance ID and fingerprint are there for an admin who admits by ID.",
 			InitJS:  "window.__dashsnapSetupFresh = true;" + fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('[data-fleet-entry] .node-chip-hint'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -640,9 +640,9 @@ func fleetStates() []dashsnap.State {
   for (var i = 0; i < 50 && !document.querySelector('.fs-step[data-step="agents"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('.fs-step[data-step="agents"]').click();
   for (var j = 0; j < 30 && !document.querySelector('[data-remote-group="builders"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('[data-remote-group="builders"]')) throw new Error('setup: no shared group on step 4');
+  if (!document.querySelector('[data-remote-group="builders"]')) throw new Error('setup: no shared group on step 6');
   for (var k = 0; k < 30 && !document.querySelector('[data-remote-group="builders"] [data-holder]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('[data-remote-group="builders"] [data-holder]')) throw new Error('setup: step 4 shows no holder');
+  if (!document.querySelector('[data-remote-group="builders"] [data-holder]')) throw new Error('setup: step 6 shows no holder');
 })();`,
 			SettleMS: 400,
 		},

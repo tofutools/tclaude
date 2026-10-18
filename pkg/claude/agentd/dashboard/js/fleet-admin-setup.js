@@ -249,8 +249,11 @@ function HubAdminStep({ view, status, actions, confirm, toast, onHub, onClaimed 
     : !status ? html`<p class="muted">Reading the hub's admin status…</p>`
     : status.error ? html`<div class="fs-error" role="note">${status.error}</div>`
     : status.admin ? html`<p class="fs-ok" id="fleet-setup-hub-admin">✓ This node is a hub admin <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>. <button type="button" class="fa-link" onClick=${onHub}>Hub…</button> admits nodes, makes invites and adds admins.</p>`
-    : html`<p>${status.bootstrap_claimable ? 'This hub has no admin yet. Claim it with the one-time token from the private claim file on the hub host.' : 'This hub already has an admin. An existing admin can add this node from their Fleet → Hub, or you can redeem a fresh claim token if one was issued.'}</p>
-      <div class="fs-actions"><button type="button" class="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…</button></div>`;
+    : status.bootstrap_claimable ? html`<p>This hub has no admin yet. Claim it with the one-time token from the private claim file on the hub host.</p>
+      <div class="fs-actions"><button type="button" class="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…</button></div>`
+    // A hub with admins issues no claim token (rotate-claim refuses);
+    // only an existing admin can add this node.
+    : html`<p id="fleet-setup-hub-admin-other">This hub already has ${status.admin_count || 'an'} admin${status.admin_count > 1 ? 's' : ''}. An existing admin adds this node from their ⚙ Fleet → Hub. Only on the hub host, as a break-glass, <code>tclaude hub admin reset</code> removes every admin and issues a new claim token.</p>`;
   return html`<div class="fs-body" data-setup-step="hubadmin">
     <h3>Become hub admin <span class="muted">(optional)</span></h3>
     <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>

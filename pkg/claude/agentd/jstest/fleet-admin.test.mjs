@@ -6,6 +6,8 @@ const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
 let s_hubGenFails = 0;
+// s_hubOthers: the hub has admins, none of them this node.
+let s_hubOthers = false;
 // s_hubRun is the hub's script status: off by default, like a fresh hub.
 let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
@@ -148,7 +150,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     nodeLabels: async () => ['gpu', 'ci'],
     hubStatus: async () => {
       if (s_hubGenFails > 0) { s_hubGenFails -= 1; const e = new Error('admin generation changed; retry explicitly'); e.code = 'admin_generation'; e.status = 409; throw e; }
-      return ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin })
+      return ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : s_hubOthers ? 1 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin && !s_hubOthers })
     },
     hubClaim: async (token) => { log.push(['hubClaim', token]); s_hubAdmin = true; return { ok: true }; },
     hubHealth: async () => ({ connected_instances: 3, streams: 7, goroutines: 140, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:00:00Z', code: 'stream_reset', message: 'peer inst_lab reset stream 4' }] }),
@@ -2514,6 +2516,18 @@ test('setup guide: claiming hub admin waits for the join', async (t) => {
   await s.click(s.q('.fs-step[data-step="hubadmin"]'));
   assert.match(s.q('[data-setup-step="hubadmin"]').textContent, /Join the hub first/);
   assert.equal(s.q('#fleet-setup-claim'), null);
+});
+
+test('setup guide: a hub that already has admins offers no claim, only who can add this node', async (t) => {
+  s_hubAdmin = false; s_hubOthers = true;
+  t.after(() => { s_hubAdmin = true; s_hubOthers = false; });
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Setup guide/.test(b.textContent)));
+  await s.click(s.q('.fs-step[data-step="hubadmin"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(s.q('#fleet-setup-claim'), null, 'no claim token exists while the hub has admins');
+  assert.match(s.q('#fleet-setup-hub-admin-other').textContent, /already has 1 admin\. An existing admin adds this node.*hub admin reset/);
 });
 
 test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done', async (t) => {
