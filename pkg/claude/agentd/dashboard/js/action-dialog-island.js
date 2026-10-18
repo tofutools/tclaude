@@ -641,7 +641,7 @@ function LaunchTargetGate({ descriptor, actions, snapshot }) {
     return () => { live = false; };
   }, []);
   const localGroups = remote?.localFetch ? ownGroups || [] : (snapshot?.value?.groups || []).map((g) => g.name).filter(Boolean).sort();
-  return html`<${LaunchTargetDialog} agent=${descriptor.agent} self=${self} fleet=${fleet} initialMode=${descriptor.mode}
+  return html`<${LaunchTargetDialog} agent=${descriptor.agent} self=${self} fleet=${fleet} initialMode=${descriptor.mode} peerView=${snapshot?.value?.peer_view || null}
     actions=${fleetActions} peerActions=${(node) => createPeerActionActions({ node })} localGroups=${localGroups}
     onClose=${close}
     onLocalClone=${() => { close(); actions.openClone({ conv: descriptor.agent.conv, label: descriptor.agent.name, cwd: descriptor.agent.cwd || '' }); }} />`;
