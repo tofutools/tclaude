@@ -350,6 +350,7 @@ export function MergedGroups({
     const fetchFor = (id) => nodeFetch(id, { self, fetchImpl, remote: remote ? { id: remote, localFetch } : null });
     publishFusedDock({
       page: pageNode,
+      self,
       nodes: ticked.map((n) => ({ id: n.id, name: names.get(n.id), color: n.color })),
       snapshots: Object.fromEntries(polled.map((n) => [n.id, entries[n.id]?.snapshot || null])),
       failures: Object.fromEntries(polled.map((n) => [n.id, entries[n.id]?.failure || null])),

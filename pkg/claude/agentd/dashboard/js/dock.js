@@ -58,13 +58,13 @@ import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, delet
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
 import { managementController } from './management-controller.js';
-import { loadSandboxProfiles, sandboxProfileSummary } from './sandbox-profiles-data.js';
+import { loadSandboxProfiles, sandboxProfileForWire, sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { downloadBlob } from './paf-model.js';
 import { announceNodeChanged, selfNodeID } from './node-api.js';
 import { nodeHref } from './fleet-model.js';
 import { withFused } from './fleet-scope.js';
 import {
-  LIBRARY_EVENT, detectImport, dropPin, exportBundle, renameItem, renamePin,
+  BUNDLE_SECTIONS, LIBRARY_EVENT, detectImport, dropPin, exportBundle, renameItem, renamePin,
 } from './dock-library.js';
 
 // dockNotify is the island's toast, for the card menu's own feedback.
@@ -148,6 +148,53 @@ export async function importLibraryFile(file) {
   toast(`${file.name} is not a tclaude export (${found.reason})`, true);
 }
 
+// COPY_DROPPED are an item's fields that belong to its node: the store's
+// identity and timestamps.
+const COPY_DROPPED = ['id', 'created_at', 'updated_at'];
+
+async function failure(response) {
+  let body = null;
+  try { body = await response.json(); } catch { body = null; }
+  const error = new Error(body?.message || body?.error || `HTTP ${response.status}`);
+  error.status = response.status;
+  error.body = body;
+  return error;
+}
+
+// copyDirect creates the item on `to` through its kind's create route.
+async function copyDirect(section, item, to) {
+  let body = Object.fromEntries(Object.entries(item).filter(([key]) => !COPY_DROPPED.includes(key)));
+  if (section.key === 'sandbox_profiles') body = sandboxProfileForWire(body);
+  const response = await to.fetch(section.listPath, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await failure(response);
+}
+
+// offerItem sends this node's item to `to` as a one-item config offer.
+// Suspected credentials stop it until the operator confirms each flag.
+async function offerItem(section, name, to, self) {
+  const only = [`${BUNDLE_SECTIONS[section.key]}/${name}`];
+  const send = (allow) => self.fetch('/api/federation/offer-config', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ peer: to.id, only, allow_flagged: allow }),
+  });
+  let response = await send(false);
+  if (response.status === 422) {
+    const flags = (await failure(response)).body?.flags || [];
+    const ok = await confirmModal({
+      title: 'Send anyway?',
+      body: `These fields look like credentials:\n${flags.map((flag) => `• ${flag.item} ${flag.field}: ${flag.hint}`).join('\n')}\n\nThey would leave this node in the offer.`,
+      preformatted: true,
+      okLabel: 'Send anyway',
+    });
+    if (!ok) return false;
+    response = await send(true);
+  }
+  if (!response.ok) throw await failure(response);
+  return true;
+}
+
 // dockNodeOps act on another node's copy of an item in the fused view
 // (dock-nodes.js). node is { id, name, fetch }: fetch reaches that node.
 // Its editors stay on its own dashboard, which open() shows.
@@ -173,6 +220,37 @@ export const dockNodeOps = Object.freeze({
       announceNodeChanged(node.id);
     } catch (error) {
       toast(`delete failed on ${node.name}: ${error.message || String(error)}`, true);
+    }
+  },
+  // copy creates the item on node `to`: through its own create route where
+  // it trusts this node unrestricted (direct), else as a one-item config
+  // offer from this node that its operator reviews (offer, through this
+  // node's own fetch, `self`).
+  async copy(section, item, { to, direct, self }) {
+    const name = section.name(item);
+    const kind = KIND_NAMES[section.key]();
+    const ok = await confirmModal(direct ? {
+      title: `Copy ${kind} to ${to.name}?`,
+      body: `Create "${name}" on ${to.name} as this copy. Anything it names (profiles, prompts, includes) must exist there too.`,
+      meta: name,
+      okLabel: 'Copy',
+    } : {
+      title: `Offer ${kind} to ${to.name}?`,
+      body: `Send "${name}" to ${to.name}'s operator as a config offer. They preview it and decide whether to import it; nothing changes there until they do. Free text is sent as written.`,
+      meta: name,
+      okLabel: 'Send offer',
+    });
+    if (!ok) return false;
+    try {
+      if (direct) await copyDirect(section, item, to);
+      else if (!await offerItem(section, name, to, self)) return false;
+      toast(direct ? `copied ${name} to ${to.name}` : `offered ${name} to ${to.name}; its operator decides`);
+      libraryChanged();
+      announceNodeChanged(to.id);
+      return true;
+    } catch (error) {
+      toast(`copy to ${to.name} failed: ${error.message || String(error)}`, true);
+      return false;
     }
   },
   open(node) {
@@ -278,6 +356,8 @@ function summaryChips(summary, max = 4) {
 //   onManageAll()       jump to the whole-kind manager overlay
 //   itemPath(name)      the item's own route, which deletes it on another
 //                       node of the fused view (dock-nodes.js)
+//   listPath            the kind's route, which creates a copied item on
+//                       another node (dockNodeOps.copy)
 //   afterProcesses      render after the Processes section, which the dock
 //                       draws itself between the snapshot sections
 //
@@ -326,6 +406,7 @@ export const dockSections = Object.freeze([
     isDefault: (p, snap) => !!snap?.spawn_profile_default && snap.spawn_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('profile', isDefault ? '' : p.name),
     itemPath: (name) => `/api/spawn-profiles/${encodeURIComponent(name)}`,
+    listPath: '/api/spawn-profiles',
     ...libraryOps('profiles'),
   },
   {
@@ -347,6 +428,7 @@ export const dockSections = Object.freeze([
     onNew: () => openRoleEditor(),
     searchWords: ['roles', 'classes'],
     itemPath: (name) => `/api/roles/${encodeURIComponent(name)}`,
+    listPath: '/api/roles',
     ...libraryOps('roles'),
   },
   {
@@ -367,6 +449,7 @@ export const dockSections = Object.freeze([
     onNew: () => openSavedPrompts(),
     searchWords: ['saved prompts', 'incantations'],
     itemPath: (name) => `/api/saved-prompts/${encodeURIComponent(name)}`,
+    listPath: '/api/saved-prompts',
     ...libraryOps('saved_prompts'),
   },
   {
@@ -399,6 +482,7 @@ export const dockSections = Object.freeze([
     searchWords: ['group templates', 'summoning circles'],
     extraActions: [{ act: 'deploy-item', label: () => wizWord('Deploy…', 'Summon…'), run: (t) => managementController().openTemplateDeploy(t.name) }],
     itemPath: (name) => `/api/templates/${encodeURIComponent(name)}`,
+    listPath: '/api/templates',
     ...libraryOps('templates'),
   },
   {
@@ -429,6 +513,7 @@ export const dockSections = Object.freeze([
     isDefault: (p, snap) => !!snap?.sandbox_profile_default && snap.sandbox_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('sandbox', isDefault ? '' : p.name),
     itemPath: (name) => `/api/sandbox-profiles/${encodeURIComponent(name)}`,
+    listPath: '/api/sandbox-profiles',
     ...libraryOps('sandbox_profiles'),
   },
 ]);

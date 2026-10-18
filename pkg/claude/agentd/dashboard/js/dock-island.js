@@ -10,7 +10,7 @@ import {
   LIBRARY_EVENT, menuPlacement, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
 } from './dock-library.js';
 import {
-  catalogWithheld, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes, toggleHiddenNode,
+  catalogWithheld, copyRoute, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes, toggleHiddenNode,
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
 
@@ -70,14 +70,29 @@ const WHERE_TITLES = Object.freeze({
 
 // DockWhere is a fused card's node pills: one per listed node, present
 // (solid), differs (amber ≠) or missing (dashed). A held copy's pill picks
-// the node the card shows and its menu acts on.
-function DockWhere({ entry, nodes, pick, onPick }) {
+// the node the card shows and its menu acts on; a missing one copies the
+// shown copy there (copyOf: its route), or says why it cannot.
+function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
   return html`<span class="dock-where" role="group" aria-label="Nodes">
     ${nodes.filter((node) => entry.state[node.id]).map((node) => {
       const state = entry.state[node.id];
       const style = node.color ? `--node-color:${node.color}` : null;
       if (state === 'missing') {
-        return html`<span key=${node.id} class="dock-where-pill is-missing" style=${style} title=${WHERE_TITLES.missing(node)}>${node.name}</span>`;
+        const route = copyOf(node);
+        if (!route.mode) {
+          return html`<span key=${node.id} class="dock-where-pill is-missing is-locked" style=${style}
+            title=${WHERE_TITLES.missing(node)} data-dock-node=${node.id}>${node.name}<${LockReason} why=${route.why} /></span>`;
+        }
+        return html`<button
+          key=${node.id}
+          type="button"
+          class="dock-where-pill is-missing"
+          style=${style}
+          title=${`${WHERE_TITLES.missing(node)}: ${route.mode === 'direct' ? 'copy it there' : 'offer it to its operator'}`}
+          data-dock-node=${node.id}
+          data-dock-act="copy-to-node"
+          onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onCopy(node, route); }}
+        >+ ${node.name}</button>`;
       }
       return html`<button
         key=${node.id}
@@ -213,11 +228,31 @@ function DockCard({
     ? html`<span key=${act} role="menuitem" aria-disabled="true" class=${`dock-card-menu-item is-locked${danger ? ' danger' : ''}`}
         data-dock-act=${act}>${label} <${LockReason} why=${lock} /></span>`
     : menuItem(act, label, onRun, danger));
+  // Copying: to every node of the fused view that does not list this name
+  // (a node keeping its catalogs may hold it unseen; an offer still asks).
+  const what = section.title().toLowerCase();
+  const copyOf = (node) => copyRoute(entry, node, fused.snapOf(node.id), fused.self, what);
+  const runCopy = (node, route) => nodeOps.copy(section, item, {
+    to: { id: node.id, name: node.name, fetch: fused.fetchFor(node.id) },
+    direct: route.mode === 'direct',
+    self: { id: fused.self, fetch: fused.fetchFor(fused.self) },
+  });
+  const copyItems = entry && section.listPath ? fused.allNodes
+    .filter((node) => !entry.byNode[node.id] && fused.snapOf(node.id))
+    .map((node) => {
+      const route = copyOf(node);
+      const label = route.mode === 'offer' ? `Offer to ${node.name}…` : `Copy to ${node.name}…`;
+      return route.mode
+        ? menuItem(`copy-to:${node.id}`, label, () => runCopy(node, route))
+        : html`<span key=${`copy-to:${node.id}`} role="menuitem" aria-disabled="true" class="dock-card-menu-item is-locked"
+            data-dock-act="copy-to-node">${label} <${LockReason} why=${route.why} /></span>`;
+    }) : [];
   const menuItems = remote ? [
     menuItem('open-node', `Open on ${remote.name}`, () => nodeOps.open(remote)),
     section.itemPath && lockedItem('rename-item', 'Rename…', () => nodeOps.rename(section, name, remote)),
     menuItem('pin-item', pinned ? 'Unpin' : 'Pin to top', () => onTogglePin(name)),
     menuItem('copy-item', 'Copy name', () => copyName(name, notify)),
+    ...copyItems,
     section.itemPath && lockedItem('delete-item', wizWord('Delete', 'Dispel'), () => nodeOps.remove(section, name, remote), true),
   ].filter(Boolean) : [
     menuItem('edit-item', 'Edit', () => section.onManageItem(item)),
@@ -227,6 +262,7 @@ function DockCard({
     section.onToggleDefault && menuItem('default-item', isDefault ? 'Clear default' : 'Set as default', () => section.onToggleDefault(item, isDefault)),
     menuItem('pin-item', pinned ? 'Unpin' : 'Pin to top', () => onTogglePin(name)),
     menuItem('copy-item', 'Copy name', () => copyName(name, notify)),
+    ...copyItems,
     section.onExportItem && menuItem('export-item', 'Export', () => section.onExportItem(item)),
     menuItem('delete-item', wizWord('Delete', 'Dispel'), () => section.onDeleteItem(item), true),
   ].filter(Boolean);
@@ -274,7 +310,7 @@ function DockCard({
       <span class="dock-card-body">
         <span class="dock-card-name">${pinned ? html`<span class="dock-card-pin" title="Pinned to the top" aria-label="Pinned">📌</span>` : null}${name}</span>
         <${DockChips} chips=${compactChips} />
-        ${entry ? html`<${DockWhere} entry=${entry} nodes=${fused.nodes} pick=${pick} onPick=${setPicked} />` : null}
+        ${entry ? html`<${DockWhere} entry=${entry} nodes=${fused.nodes} pick=${pick} onPick=${setPicked} copyOf=${copyOf} onCopy=${runCopy} />` : null}
       </span>
       <span class="dock-card-actions">
         <button
@@ -597,6 +633,8 @@ export function Dock({
     nodes: shownNodes(fusedValue, hidden),
     snapOf: (id) => nodeSnap(fusedValue, id, snapshot),
     fetchFor: fusedValue.fetchFor,
+    self: fusedValue.self || '',
+    allNodes: fusedValue.nodes,
     failureOf: (id) => fusedValue.failures?.[id] || null,
   } : null;
   const terms = searchTerms(query);
