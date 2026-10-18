@@ -86,19 +86,23 @@ const (
 	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes                   = "routes"
-	CapSessions                 = "sessions"
-	CapSessionsWatch            = "sessions_watch"
-	CapSessionsAttach           = "sessions_attach"
-	CapSessionsFilesRead        = "sessions_files_read"
-	CapSessionsTakeover         = "sessions_takeover" // disconnect a session's other clients
+	CapRoutes            = "routes"
+	CapSessions          = "sessions"
+	CapSessionsWatch     = "sessions_watch"
+	CapSessionsAttach    = "sessions_attach"
+	CapSessionsFilesRead = "sessions_files_read"
+	CapSessionsTakeover  = "sessions_takeover" // disconnect a session's other clients
+	// CapSessionsShell opens (or attaches) a raw tclaude shell on the peer: a
+	// group's shell in its default directory, or a member agent's directory
+	// shell. Host shell access, so a grant of its own (not sessions_attach).
+	CapSessionsShell            = "sessions_shell"
 	CapAgentsReceivePermissions = "agents_receive_permissions"
 	CapAgentsReceive            = "agents_receive"
 	CapTeleportReceive          = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapGroupVisibility, CapGroupLinkAccept, CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsTakeover, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
+var AllCaps = []string{CapGroupVisibility, CapGroupLinkAccept, CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsTakeover, CapSessionsFilesRead, CapSessionsShell, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -489,7 +493,14 @@ func (e *Envelope) DecodePayload(v any) error {
 // TakeOver first disconnects the other clients, so the viewer is the only
 // one; it needs the sessions.takeover grant. Receivers that predate both
 // ignore them and pin the viewer.
+//
+// Shell, when set, asks for a tclaude shell instead of the agent's pane
+// (CapSessionsShell): ShellGroup for the group's shell in its default
+// directory (Agent empty), or ShellStart/ShellCurrent/ShellWorktree for that
+// member agent's directory shell. The receiver creates it if it is not
+// running, as a local click does. Session and Incarnation stay empty.
 type SessionOpenPayload struct {
+	Shell       string `json:"shell,omitempty"`
 	FixedSize   bool   `json:"fixed_size,omitempty"`
 	ShareSize   bool   `json:"share_size,omitempty"`
 	TakeOver    bool   `json:"take_over,omitempty"`
@@ -502,6 +513,23 @@ type SessionOpenPayload struct {
 	ReadOnly    bool   `json:"read_only"`
 	Cols        int    `json:"cols"`
 	Rows        int    `json:"rows"`
+}
+
+// The shells a SessionOpenPayload may name.
+const (
+	ShellGroup    = "group"
+	ShellStart    = "start"
+	ShellCurrent  = "current"
+	ShellWorktree = "worktree"
+)
+
+// ValidShell reports whether s names a shell (blank: the agent's own pane).
+func ValidShell(s string) bool {
+	switch s {
+	case ShellGroup, ShellStart, ShellCurrent, ShellWorktree:
+		return true
+	}
+	return false
 }
 
 // SessionAnswerPayload accepts or refuses a SessionOpenPayload. SharedSize

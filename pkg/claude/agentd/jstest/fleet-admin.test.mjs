@@ -523,7 +523,7 @@ test('the grants page opens on All; the add dialog searches, plans per group and
   await s.click(s.q('[data-cat="Messaging"]'));
   assert.ok(!s.q('#fleet-grant-list [data-grant-slug="routes.consume"]'), 'routes are not messaging');
   await s.click(s.q('[data-cat="Terminals"]'));
-  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch', 'sessions.attach', 'sessions.takeover']);
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch', 'sessions.attach', 'sessions.takeover', 'sessions.shell']);
   await s.check(s.q('#fleet-grant-hide-sensitive'));
   assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch']);
   await s.click(s.q('[data-cat=""]'));

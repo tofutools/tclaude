@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -408,4 +409,42 @@ func TestDashboardFederationTerminalRejectsForgedCredit(t *testing.T) {
 	var closed map[string]any
 	require.NoError(t, ws.ReadJSON(&closed))
 	require.Equal(t, "error", closed["reason"])
+}
+
+// A browser opens a peer's shell only while the peer's catalog grants this
+// node sessions.shell on the group; terminal caps alone do not reach it.
+func TestDashboardFederationTerminalShellNeedsShellCap(t *testing.T) {
+	for _, granted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("granted=%v", granted), func(t *testing.T) {
+			fh := newFedHarness(t)
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+			caps := []string{proto.CapSessionsWatch, proto.CapSessionsAttach}
+			if granted {
+				caps = append(caps, proto.CapSessionsShell)
+			}
+			dashboardRemoteTerminalCatalog(t, fh, caps...)
+			server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+			t.Cleanup(server.Close)
+			ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&group=builders&shell=group&mode=interactive", nil)
+			require.NoError(t, err)
+			defer ws.Close()
+			if !granted {
+				require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+				var closed map[string]any
+				require.NoError(t, ws.ReadJSON(&closed))
+				require.Equal(t, "denied", closed["reason"])
+				require.Empty(t, fh.peer.envelopes(proto.KindSessionOpen))
+				return
+			}
+			fedEventually(t, "shell open sent", func() bool {
+				for _, e := range fh.peer.envelopes(proto.KindSessionOpen) {
+					var p proto.SessionOpenPayload
+					if e.DecodePayload(&p) == nil && p.Shell == proto.ShellGroup && p.Group == "builders" && p.Agent == "" {
+						return true
+					}
+				}
+				return false
+			})
+		})
+	}
 }

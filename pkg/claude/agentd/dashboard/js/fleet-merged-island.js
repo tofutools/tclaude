@@ -15,7 +15,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
+  ATTACH_ACTS, SHELL_ACTS, shellControl, limitHint, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
   reasonTitles,
 } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
@@ -40,8 +40,10 @@ const html = htm.bind(h);
 // node (node-api.js); without it, a spawn or message the peer's action routes
 // take (peerAction) opens the peer action dialog; anything else stays out of
 // reach, as on its per-node view. ATTACH_ACTS on a peer's row open the peer's
-// agent in the browser terminal (remote-terminal.js).
+// agent in the browser terminal (remote-terminal.js), and SHELL_ACTS its
+// shells under its sessions.shell grant.
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+const openRemoteShell = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteShell(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
 const MOVE_MIME = 'application/x-tclaude-fleet-move';
 const PROCESS_DRAGS = '[data-saved-process-drag], [data-run-dock-agent]';
@@ -276,7 +278,7 @@ const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER
 // page's snapshot; every other ticked node is read here.
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
-  timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
+  timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote, openShell = openRemoteShell,
   peerActions = peerRoutes, confirm, openSpawn, openMessage, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
   groupsActions = () => featureState('groups-actions'), groupsFeature = () => featureState('groups'), groups = groupsState, processSource = undefined,
 }) {
@@ -450,6 +452,10 @@ export function MergedGroups({
       const held = grantHeld(act, peerView, (g) => ownGroup(g, name));
       if (held !== null && (instance === self || held)) return null;
       if (instance !== self) {
+        if (SHELL_ACTS.has(act.dataset.act)) {
+          const shell = shellControl(act, peerView, (g) => ownGroup(g, name));
+          return shell.state === 'shell' ? null : limitHint(shell.state, shell.what, name || 'This node', shell.needs);
+        }
         if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent) return null;
         if (peerAction(act, peerView, (g) => ownGroup(g, name))) return null;
         return `${name || 'This node'} does not share this action with you${needsSuffix(grantMissing(act, peerView, (g) => ownGroup(g, name)))}`;
@@ -500,6 +506,14 @@ export function MergedGroups({
         const background = !!(event.ctrlKey || event.metaKey);
         void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast, ...(background ? { background } : {}) });
         return;
+      }
+      if (SHELL_ACTS.has(act.dataset.act) && instance && instance !== state.view.value.fleet?.self?.id) {
+        const name = group.dataset.fleetNodeName || '';
+        const shell = shellControl(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
+        if (shell.state === 'shell') {
+          void openShell({ instance, ...shell.shell, peerLabel: name, toast });
+          return;
+        }
       }
       const name = group?.dataset.fleetNodeName || '';
       if (instance && instance !== state.view.value.fleet?.self?.id) {

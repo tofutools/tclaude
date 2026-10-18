@@ -113,6 +113,14 @@ export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
   return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
 }
 
+// remoteShellPath is the bridge to one of a peer's tclaude shells: its
+// group's shell (shell 'group') or a member agent's directory shell (shell
+// 'start' | 'current' | 'worktree', with agent). Always interactive: the
+// peer's sessions.shell grant is to type into it.
+export function remoteShellPath({ peer, group, shell, agent = '' }) {
+  return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, group, shell, ...(agent ? { agent } : {}), mode: 'interactive' })}`;
+}
+
 export function isRemoteTerminalPath(path) {
   return typeof path === 'string' && path.startsWith(`${REMOTE_TERMINAL_PATH}?`);
 }

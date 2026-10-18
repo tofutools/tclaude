@@ -285,7 +285,22 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		return
 	}
 	readOnly := r.URL.Query().Get("read_only") == "1"
-	peer, p, err := resolveFedTerminalTarget(r.URL.Query().Get("target"), readOnly)
+	shell := r.URL.Query().Get("shell")
+	var peer *db.FederationPeer
+	var p proto.SessionOpenPayload
+	var err error
+	if shell != "" {
+		// A peer's shell is host shell access: the operator opens it, from
+		// the dashboard, never an agent.
+		if !human || !browser {
+			writeError(w, 403, "permission_denied", "a peer's shell opens from the dashboard only")
+			return
+		}
+		q := r.URL.Query()
+		peer, p, err = resolveFedShellTarget(q.Get("peer"), q.Get("group"), shell, q.Get("agent"), readOnly)
+	} else {
+		peer, p, err = resolveFedTerminalTarget(r.URL.Query().Get("target"), readOnly)
+	}
 	if err != nil {
 		writeError(w, 400, "invalid_arg", err.Error())
 		return
@@ -412,20 +427,7 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 			}
 		}
 		cat, _, _ := fedCatalogFor(peer.InstanceID)
-		if cat == nil {
-			return false
-		}
-		for _, g := range cat.Groups {
-			if g.Name != p.Group || !g.HasCap(fedTerminalCap(readOnly)) {
-				continue
-			}
-			for _, s := range g.Sessions {
-				if s.Agent == p.Agent && s.Session == p.Session && s.Incarnation == p.Incarnation {
-					return true
-				}
-			}
-		}
-		return false
+		return fedViewerTargetStatus(cat, p) == ""
 	}
 	// Frames rely on the cached verdict; the ticker below refreshes it.
 	gate := newFedAuthGateBool(check)
@@ -515,7 +517,7 @@ func queryInt(r *http.Request, name string, fallback int) int {
 
 func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Envelope) {
 	var p proto.SessionOpenPayload
-	if env.DecodePayload(&p) != nil || !proto.ValidStreamID(p.Stream) || !proto.ValidAgentRef(p.Agent) || len(p.Key) != 32 {
+	if env.DecodePayload(&p) != nil || !proto.ValidStreamID(p.Stream) || !validFedOpenTarget(p) || len(p.Key) != 32 {
 		return
 	}
 	var v *fedTerminalView
@@ -547,13 +549,25 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 }
 func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.SessionOpenPayload, v *fedTerminalView, answer func(bool, []byte, string)) {
 	defer v.close()
-	pin, err := resolveFedPane(peer.InstanceID, p)
+	var pin *fedPanePin
+	var err error
+	if p.Shell != "" {
+		pin, err = resolveFedShell(peer.InstanceID, p, true)
+	} else {
+		pin, err = resolveFedPane(peer.InstanceID, p)
+	}
 	if err != nil {
 		answer(false, nil, err.Error())
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: "+err.Error(), 403)
 		return
 	}
-	root, rootPath, rootErr := openTerminalFileRoot(pin.cwd)
+	// A shell shares no files: only an agent pane has a project root.
+	var root *os.File
+	var rootPath string
+	rootErr := errors.New("a shell shares no files")
+	if p.Shell == "" {
+		root, rootPath, rootErr = openTerminalFileRoot(pin.cwd)
+	}
 	v.mu.Lock()
 	v.pin, v.fileRoot, v.fileRootPath, v.fileRootErr = pin, root, rootPath, rootErr
 	v.files = rootErr == nil && fedPeerAllows(peer.InstanceID, pin.group, PermSessionsFilesRead)

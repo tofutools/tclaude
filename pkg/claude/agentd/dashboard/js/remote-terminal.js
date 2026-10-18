@@ -13,7 +13,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { openTerminalPane } from './terminals-tab.js';
-import { remoteTerminalPath } from './terminals-core.js';
+import { remoteShellPath, remoteTerminalPath } from './terminals-core.js';
 import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -91,6 +91,35 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
     label: name,
     remote: { peer: instance, peerLabel: peer, agent },
+    ...(background ? { reveal: false } : {}),
+  });
+  if (!opened) toast('The terminal could not open here (the terminal runtime did not load)', true);
+  return opened || null;
+}
+
+const SHELLS = new Set(['group', 'start', 'current', 'worktree']);
+// A group name as a peer's snapshot carries it (no group@node suffix).
+const SAFE_GROUP_NAME = /^[A-Za-z0-9._:-]{1,128}$/;
+
+// openRemoteShell opens one of instance's tclaude shells in the Terminals tab:
+// its group's shell in the group's default directory (shell 'group'), or a
+// member agent's directory shell (shell 'start' | 'current' | 'worktree',
+// with agent), started there if it is not running, as a click on that node
+// does. The peer decides: its sessions.shell grant on the group, which
+// unrestricted trust holds; a refusal comes back with its reason.
+export async function openRemoteShell({ instance, group, shell, agent = '', peerLabel = '', label = '', toast = shellToast, open = openRemotePane, background = false } = {}) {
+  const valid = SAFE_ID.test(instance || '') && SHELLS.has(shell) && SAFE_GROUP_NAME.test(group || '')
+    && (shell === 'group' ? !agent : SAFE_ID.test(agent || ''));
+  if (!valid) {
+    toast('This shell cannot be opened on the peer', true);
+    return null;
+  }
+  const peer = peerLabel || instance.slice(0, 13);
+  const name = shell === 'group' ? `group shell · ${group}` : `shell · ${label || agent}${shell === 'current' ? '' : ` (${shell})`}`;
+  const opened = await open({
+    wsPath: remoteShellPath({ peer: instance, group, shell, agent }),
+    label: name,
+    remote: { peer: instance, peerLabel: peer, agent: '' },
     ...(background ? { reveal: false } : {}),
   });
   if (!opened) toast('The terminal could not open here (the terminal runtime did not load)', true);

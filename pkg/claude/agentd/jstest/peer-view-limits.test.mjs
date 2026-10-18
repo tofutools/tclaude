@@ -286,7 +286,12 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   const el = (id) => doc.getElementById(id);
   assert.equal(mod.blockedControl(el('ops-dir'), restricted), null, 'a granted control runs its own handler');
   assert.equal(mod.blockedControl(el('ops-text'), restricted, { ctrlKey: false }), null, "a plain click on the chip's text opens its editor");
-  assert.equal(mod.blockedControl(el('ops-text'), restricted, { ctrlKey: true }).state, 'local', 'Ctrl-click opens a terminal: never on a peer');
+  const shellRefused = mod.blockedControl(el('ops-text'), restricted, { ctrlKey: true });
+  assert.equal(shellRefused.state, 'omitted', "Ctrl-click opens the group's shell: under sessions.shell");
+  assert.deepEqual(shellRefused.needs, ['sessions.shell']);
+  const shellGranted = mod.blockedControl(el('ops-text'), { ...restricted, groups: { ...restricted.groups, ops: [...(restricted.groups?.ops || []), 'sessions.shell'] } }, { ctrlKey: true });
+  assert.equal(shellGranted.state, 'shell');
+  assert.deepEqual(shellGranted.shell, { group: 'ops', shell: 'group', label: 'ops' });
   const refused = mod.blockedControl(el('build-dir'), restricted);
   assert.equal(refused.state, 'omitted');
   assert.equal(mod.limitHint(refused.state, refused.what, 'forge', refused.needs), "forge does not share this group's settings with you (needs groups.settings + groups.members.spawn.cwd)");
@@ -319,24 +324,28 @@ test('under unrestricted trust a peer page runs every control as the node itself
   doc.body.innerHTML = '<button id="links" data-act="link-new" data-from="ops">+</button>'
     + '<button id="perm" data-act="perm-edit" data-conv="c1">perm</button>'
     + '<button id="import" id2="x"></button><button id="group-import-open">import</button>'
-    + '<button id="shell" data-act="term-dir" data-agent="agt_abc123">sh</button>'
+    + '<button id="shell" data-act="term-dir" data-agent="agt_abc123" data-group="ops" data-which="start" data-label="scout">sh</button>'
+    + '<button id="term" data-act="term" data-agent="agt_abc123">term</button>'
     + '<button id="attach" data-act="jump" data-agent="agt_abc123">⤢</button>'
     + '<nav><button data-tab="jobs">jobs</button><button data-tab="config">config</button></nav>';
   const pv = { peer: 'desk', level: 'unrestricted', included: ['agents.status', 'local_dashboard'], omitted: [{ feature: 'own_node', requires: 'local_only' }] };
   const toasts = [];
   const opened = [];
-  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, openTerminal: async (o) => { opened.push(o); } });
+  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, openTerminal: async (o) => { opened.push(o); }, openShell: async (o) => { opened.push(o); } });
   assert.ok(doc.documentElement.classList.contains('pv-unrestricted'));
   for (const id of ['links', 'perm', 'group-import-open']) assert.equal(harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented, false, id);
-  assert.equal(harness.fireEvent(doc.getElementById('shell'), 'click').defaultPrevented, true, 'a shell on the node stays there');
+  assert.equal(harness.fireEvent(doc.getElementById('term'), 'click').defaultPrevented, true, 'a native terminal on the node stays there');
+  harness.fireEvent(doc.getElementById('shell'), 'click');
+  assert.deepEqual(opened.map(({ group, shell, agent }) => ({ group, shell, agent })), [{ group: 'ops', shell: 'start', agent: 'agt_abc123' }], "a directory shell opens the node's shell here");
   harness.fireEvent(doc.getElementById('attach'), 'click');
-  assert.equal(opened.length, 1, 'an agent terminal still opens through the attach');
+  assert.equal(opened.length, 2, 'an agent terminal still opens through the attach');
   assert.equal(mod.tabState('jobs', pv), 'shared');
   assert.equal(mod.tabState('config', pv), 'local');
   const sel = doc.getElementById('peer-view-limits-style').textContent.replace(/ \{[^}]*\}$/, '');
   doc.documentElement.classList.add('remote-node');
   assert.equal(doc.getElementById('links').matches(sel), false);
-  assert.equal(doc.getElementById('shell').matches(sel), true);
+  assert.equal(doc.getElementById('shell').matches(sel), false);
+  assert.equal(doc.getElementById('term').matches(sel), true);
   // A restricted peer: the local dashboard reads as not offered, never as requestable.
   assert.equal(mod.tabState('jobs', { included: ['agents.status'], omitted: [{ feature: 'local_dashboard', requires: 'local_only' }] }), 'local');
   dispose();

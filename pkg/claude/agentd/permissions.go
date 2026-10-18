@@ -665,6 +665,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
 	{Slug: PermNodeExec, Description: nodeExecWarning},
 	{Slug: PermNodeMessagesRead, Description: "Read private human notifications and agent message bodies across this node. Default off; instance-wide peer grant. No reply or approval authority."},
+	{Slug: PermSessionsShell, Description: "Federation peer grant (group-scoped): open this node's tclaude shells from the peer's dashboard (the group's default-directory shell and its member agents' directory shells). Host shell access as the tclaude user; default off."},
 	{Slug: PermGroupsMembersSpawnCwd, Description: "Federation peer grant (group-scoped): choose the launch directory of a remote spawn into the group, with a groups.members.spawn grant. Broad: any existing directory on this machine, and the worker's sandbox usually grants its launch directory write access; overrides the grant's pinned --cwd."},
 	{Slug: PermGroupsMembersSpawnHarness, Description: "Federation peer grant (group-scoped): choose the harness of a remote spawn into the group, with a groups.members.spawn grant."},
 	{Slug: PermGroupsMembersSpawnModel, Description: "Federation peer grant (group-scoped): choose the model of a remote spawn into the group, with a groups.members.spawn grant."},

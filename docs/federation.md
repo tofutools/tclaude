@@ -260,6 +260,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
 | `sessions.takeover` | take over a member agent's terminal: disconnect its other viewers, including this node's local terminals; used with `sessions.watch` or `sessions.attach`; default off |
+| `sessions.shell` | open this node's tclaude shells from the peer's dashboard: the group's default-directory shell and its member agents' directory shells, attached in the browser over the federation terminal stream. This is host shell access as the tclaude user; default off |
 | `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `node.spawn.read` | the spawn dialog's catalogs, read-only: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model, the harness and sandbox implementation catalogs; group templates, in full (a template snapshotted from a group carries that group's context and briefs, even one the peer cannot see); the fused Groups view's right panel lists them; shares profile environment values and paths (unscoped only; see "The remote spawn dialog") |

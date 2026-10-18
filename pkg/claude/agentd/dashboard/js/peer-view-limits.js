@@ -515,8 +515,13 @@ function subtabLabel(subtab) {
 // limitHint words why a peer view refuses something. needs names what the
 // peer would have to grant (featureNeeds, grantMissing); a refusal that only
 // unrestricted trust lifts reads as not shared rather than unavailable.
+// OPENS_HERE are the states whose control opens a terminal here, not a
+// refusal: they keep their hover hint without being greyed.
+const OPENS_HERE = new Set(['attach', 'shell']);
+
 export function limitHint(state, what, node, needs = []) {
   if (state === 'attach') return `${node}'s agent terminal — opens here, watch-only or interactive as ${node} shares it`;
+  if (state === 'shell') return `A shell on ${node} — opens here, in the browser`;
   const named = [...new Set((needs || []).filter(Boolean))];
   if (state === 'omitted' || named.length) {
     const subject = what.replace(/^(The|This) /, (m) => m.toLowerCase());
@@ -534,15 +539,56 @@ export function needsSuffix(needs) {
 // ATTACH_ACTS open an agent's terminal. On a peer view they open the peer's
 // agent in the browser terminal, bridged by this node's daemon over the
 // federation terminal stream (remote-terminal.js); the peer authorises it.
-// (term-dir opens a shell in a directory, not the agent: never on a peer.)
+// (term-dir opens a shell in a directory, not the agent: see SHELL_ACTS.)
 // The ⚙ "terminals & windows…" chooser goes straight to that attach, the only
 // one of its options a peer can serve.
 export const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 
-// OWN_NODE_ACTS work on the node's own machine (a shell or window there, its
-// desktop folder picker): never from a peer view, even under unrestricted
-// trust, where every other control runs as on the node itself.
-const OWN_NODE_ACTS = new Set(['term', 'term-dir', 'web-term', 'open-window', 'group-web-term', 'window-modal-group', 'window-modal-all', 'pick-group-dir']);
+// OWN_NODE_ACTS work on the node's own machine (a native window there, its
+// desktop folder picker, a shell behind a directory picker): never from a
+// peer view, even under unrestricted trust, where every other control runs
+// as on the node itself.
+const OWN_NODE_ACTS = new Set(['term', 'web-term', 'open-window', 'window-modal-group', 'window-modal-all', 'pick-group-dir']);
+
+// SHELL_ACTS open a tclaude shell: a member's directory (its cwd path) or the
+// group's default directory. On a peer view they open the peer's shell in the
+// browser over the federation terminal stream (remote-terminal.js
+// openRemoteShell), under the peer's sessions.shell grant on the group: host
+// shell access, a grant of its own, which unrestricted trust holds.
+export const SHELL_ACTS = new Set(['term-dir', 'group-web-term']);
+const SHELL_WHICH = new Set(['start', 'current', 'worktree']);
+export const SHELL_GRANT = 'sessions.shell';
+
+// shellControl is how a peer view takes a SHELL_ACTS click: state 'shell'
+// opens the peer's shell (shell: {group, shell, agent?, label}), 'omitted'
+// says which grant it lacks, 'local' a control naming no usable target.
+// groupOf maps a listed group name to the peer's own (fused group@node).
+export function shellControl(act, peerView, groupOf = (g) => g) {
+  const d = act.dataset;
+  const group = groupOf(d.group || '');
+  let shell = null;
+  if (SAFE_GROUP.test(group) && !group.includes('@')) {
+    if (d.act === 'group-web-term') shell = { group, shell: 'group', label: group };
+    else if (SAFE_AGENT_ID.test(d.agent || '')) shell = { group, shell: SHELL_WHICH.has(d.which) ? d.which : 'current', agent: d.agent, label: d.label || d.agent };
+  }
+  if (!shell) return { el: act, state: 'local', what: 'This action' };
+  const held = unrestricted(peerView) || (peerView?.groups?.[group] || []).includes(SHELL_GRANT);
+  return held ? { el: act, state: 'shell', what: 'This terminal', shell } : { el: act, state: 'omitted', what: "this group's shells", needs: [SHELL_GRANT] };
+}
+
+// shellSelectors are the SHELL_ACTS controls a peer view runs: every one
+// under unrestricted trust, else those of the groups granting sessions.shell.
+// groupName maps the peer's group name to the listed one.
+export function shellSelectors(peerView, groupName = (g) => g) {
+  const acts = [...SHELL_ACTS];
+  if (unrestricted(peerView)) return acts.map((a) => `[data-act="${a}"]`);
+  const out = [];
+  for (const [group, grants] of Object.entries(peerView?.groups || {})) {
+    if (!grants.includes(SHELL_GRANT)) continue;
+    for (const a of acts) out.push(`[data-act="${a}"][data-group=${cssString(groupName(group))}]`);
+  }
+  return out;
+}
 
 // unrestricted reports a peer that trusts this operator unrestricted: its
 // dashboard routes all answer as they do for its own operator.
@@ -599,7 +645,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 export function usableActSelectors(peerView, extra = [], groupName = (g) => g, { fused = false } = {}) {
   if (unrestricted(peerView) && !fused) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
-  out.push(...grantSelectors(peerView, groupName));
+  out.push(...grantSelectors(peerView, groupName), ...shellSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
@@ -650,6 +696,7 @@ export function blockedControl(target, peerView, event = null) {
   const managed = managedControl(target, peerView);
   if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
   const act = actOf(target, event);
+  if (act && SHELL_ACTS.has(act.dataset.act)) return shellControl(act, peerView);
   if (unrestricted(peerView)) {
     if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
     return act && OWN_NODE_ACTS.has(act.dataset.act) ? { el: act, state: 'local', what: 'This action' } : null;
@@ -716,8 +763,9 @@ export function reasonTitles() {
 const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
 const PEER_VIEW_MANAGED_STYLE_ID = 'peer-view-managed-style';
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+const openRemoteShell = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteShell(opts));
 
-export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote } = {}) {
+export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote, openShell = openRemoteShell } = {}) {
   if (!remote?.id) return () => {};
   const root = doc.documentElement;
   let peerView = snapshot.value?.peer_view || null;
@@ -730,7 +778,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     if (!blocked || blocked.state === 'peer-action' || blocked.el !== el) return null;
     // Tabs keep their title only: the palette still lists them, and says why
     // on use.
-    return [limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), blocked.state !== 'attach' && !el.matches(TAB_CONTROLS)];
+    return [limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), !OPENS_HERE.has(blocked.state) && !el.matches(TAB_CONTROLS)];
   };
 
   // Tabs carry their state as a class so CSS greys them, with the reason as
@@ -770,6 +818,10 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       void openTerminal({ instance: remote.id, agent: blocked.agent, peerLabel: nodeName(), toast });
       return;
     }
+    if (blocked.state === 'shell') {
+      void openShell({ instance: remote.id, ...blocked.shell, peerLabel: nodeName(), toast });
+      return;
+    }
     toast(limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), true);
   };
   // role=button chips open their editors on Enter/Space in their own keydown,
@@ -783,7 +835,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView, event);
-    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), blocked.state !== 'attach');
+    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), !OPENS_HERE.has(blocked.state));
     // One the peer now shares drops a reason it showed before.
     else if (!blocked) { const el = event.target?.closest?.(REASON_CONTROLS); if (el) clearReason(el); }
   };
