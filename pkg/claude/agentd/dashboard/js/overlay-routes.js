@@ -53,8 +53,9 @@ export function restoreOverlays(params) {
   }
 }
 
-// announceOverlay tells the router an overlay opened, changed or closed
-// (closed: true), so it records or rewinds a history entry.
-export function announceOverlay({ closed = false, doc = globalThis.document } = {}) {
-  doc?.dispatchEvent?.(new CustomEvent(OVERLAY_EVENT, { detail: { closed } }));
+// announceOverlay tells the router an overlay opened, closed (closed: true)
+// or now shows something else in place (replace: true), so it records,
+// rewinds or rewrites a history entry.
+export function announceOverlay({ closed = false, replace = false, doc = globalThis.document } = {}) {
+  doc?.dispatchEvent?.(new CustomEvent(OVERLAY_EVENT, { detail: { closed, replace } }));
 }

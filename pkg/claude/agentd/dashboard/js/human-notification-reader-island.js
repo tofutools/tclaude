@@ -39,12 +39,12 @@ export function HumanNotificationReader({
   // (?notification=<sender>:<message-id>): state updates land a render later.
   const shown = useRef('');
   const closeRef = useRef(null);
-  const show = (next) => {
+  const show = (next, { replace = false } = {}) => {
     const id = next && (typeof next.sender === 'string' ? next.sender : next.sender?.agent || next.sender?.conv);
     const value = id ? `${id}:${next.messageId}` : '';
     if (value === shown.current) return;
     shown.current = value;
-    announceOverlay({ closed: !value });
+    announceOverlay({ closed: !value, replace: replace && !!value });
   };
 
   useEffect(() => {
@@ -138,7 +138,7 @@ export function HumanNotificationReader({
     snapshot=${state.snapshot.value}
     state=${state}
     actions=${actions}
-    onSelect=${(messageId) => { setDescriptor({ ...descriptor, messageId }); show({ sender: descriptor.sender, messageId }); }}
+    onSelect=${(messageId) => { setDescriptor({ ...descriptor, messageId }); show({ sender: descriptor.sender, messageId }, { replace: true }); }}
     onClose=${close}
   />`;
 }

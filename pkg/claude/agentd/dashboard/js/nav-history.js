@@ -352,8 +352,8 @@ function activate(loc, { traversal = false } = {}) {
     // refuses to close (an editor open on top of a manager) keeps its value
     // in the URL.
     restoreOverlays(loc.params);
-    const shown = withOverlays(loc);
-    if (!locEquals(shown, loc)) correct(shown);
+    const shown = withOverlays(current(stack));
+    if (!locEquals(shown, current(stack))) correct(shown);
   } finally {
     applying = false;
   }
@@ -368,17 +368,36 @@ function withOverlays(loc) {
   return normalizeLocation({ ...loc, params: { ...params, ...overlayParams() } });
 }
 
-// onOverlay records an overlay opening or changing as a history step. A
-// close that leaves exactly the entry before this one is a step back, so the
-// close and Back are one gesture rather than two entries; any other close
-// rewrites the current entry.
+// steppingBack holds the navigations recorded while an overlay close's
+// history.back() is on its way (it lands asynchronously, as a popstate): a
+// push made meanwhile would be undone by the traversal, so it waits for it.
+let steppingBack = null;
+
+// onOverlay records an overlay opening as a history step, and a change of
+// what it shows (another message in the reader) in place. A close that
+// leaves exactly the entry before this one is a step back, so the close and
+// Back are one gesture rather than two entries; any other close rewrites
+// the current entry.
 function onOverlay(event) {
   if (!ready || applying) return;
   const loc = withOverlays(current(stack));
   if (locEquals(loc, current(stack))) return;
+  if (event?.detail?.replace) { correct(loc); return; }
   if (!event?.detail?.closed) { record(loc); return; }
-  if (stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) { history.back(); return; }
+  if (!steppingBack && stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) {
+    steppingBack = [];
+    history.back();
+    // Should the traversal never arrive, stop holding navigations.
+    setTimeout(() => { if (steppingBack) flushSteppingBack(); }, 1000);
+    return;
+  }
   correct(loc);
+}
+
+function flushSteppingBack() {
+  const queued = steppingBack || [];
+  steppingBack = null;
+  for (const loc of queued) record(withOverlays(loc));
 }
 
 // preservedQuery is the view-state query carried across a path push. Theme is
@@ -416,6 +435,7 @@ function urlFor(loc) {
 // repeated clicks and passive re-renders never grow history (AC #4).
 function record(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
+  if (steppingBack) { steppingBack.push(loc); return; }
   const before = stack;
   stack = push(stack, loc);
   if (stack === before) return; // duplicate — no new entry
@@ -497,6 +517,13 @@ function onPopstate(e) {
   const loc = fromPath(window.location.pathname, window.location.search);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
+  // Our own step back off a closed overlay: the screen already shows this
+  // entry (or whatever was navigated to since, which is recorded now).
+  if (steppingBack) {
+    history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
+    flushSteppingBack();
+    return;
+  }
   // Stale target: a popped tab may have been hidden while it sat in the
   // back-stack (e.g. terminals closed while you were on another tab), so
   // activating it would strand the user on a blank hidden section. Fall back to

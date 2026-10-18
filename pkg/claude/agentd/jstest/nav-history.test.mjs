@@ -699,11 +699,43 @@ test('an overlay over any tab is in the URL: opening pushes, closing steps back,
   open = '';
   overlays.announceOverlay({ closed: true, doc: harness.document });
   assert.equal(browsing.calls.at(-1).kind, 'back');
-  // Back onto an entry with the overlay reopens it; one without closes it.
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  // Forward onto an entry with the overlay reopens it; Back off it closes it.
   restored.length = 0;
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?manage=templates');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
   assert.deepEqual(restored, ['templates', '']);
+});
+
+test('a navigation right after an overlay close waits for the step back to land', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/automations');
+  const [{ initNavHistory }, overlays] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/overlay-routes.js'),
+  ]);
+  initNavHistory();
+  let open = '';
+  t.after(overlays.registerOverlayRoute('notification', { value: () => open, restore: (want) => { open = want; } }));
+  open = 'agt_a:5';
+  overlays.announceOverlay({ doc: harness.document });
+  assert.equal(browsing.at(), '/automations?notification=agt_a%3A5');
+  // Another message in the reader rewrites the entry rather than adding one.
+  open = 'agt_a:6';
+  overlays.announceOverlay({ replace: true, doc: harness.document });
+  assert.equal(browsing.calls.at(-1).kind, 'replace');
+  // "Open in Messages": the reader closes, then a tab navigation follows at once.
+  browsing.calls.length = 0;
+  open = '';
+  overlays.announceOverlay({ closed: true, doc: harness.document });
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: { tab: 'groups', subtab: 'processes' } } }));
+  assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'the push waits for the traversal');
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.equal(browsing.calls.at(-1).kind, 'push');
+  assert.equal(browsing.at(), '/groups/processes');
 });

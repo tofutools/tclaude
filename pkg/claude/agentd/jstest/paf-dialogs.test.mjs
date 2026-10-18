@@ -235,7 +235,7 @@ test('a library manager is in the URL (?manage=): opening announces it, Back clo
   t.after(() => harness.document.removeEventListener(overlays.OVERLAY_EVENT, on));
   await harness.act(() => state.openManager('roles'));
   assert.equal(overlays.overlayParams().manage, 'roles');
-  assert.deepEqual(announced, [{ closed: false }]);
+  assert.deepEqual(announced, [{ closed: false, replace: false }]);
   await harness.act(() => overlays.restoreOverlays({ manage: 'templates' }));
   assert.equal(state.manager.value, '');
   assert.equal(state.templateManager.value, true);
