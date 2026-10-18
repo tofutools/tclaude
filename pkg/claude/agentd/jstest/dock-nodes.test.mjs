@@ -174,7 +174,7 @@ test('copyRoute copies directly to a trusting node, offers this node own item to
   const mac = NODES[2];
   assert.equal(copyRoute(entry, herc, { peer_view: { level: 'unrestricted' } }, 'inst_brain1', 'roles').mode, 'direct');
   assert.equal(copyRoute(entry, mac, { peer_view: { level: 'restricted' } }, 'inst_brain1', 'roles').mode, 'offer');
-  const none = copyRoute({ byNode: { inst_herc31: {} } }, mac, { peer_view: { level: 'restricted' } }, 'inst_brain1', 'roles');
+  const none = copyRoute({ byNode: { inst_herc31: {} } }, mac, { peer_view: { level: 'restricted' } }, '', 'roles');
   assert.equal(none.mode, '');
   assert.match(none.why, /only this node's own roles can be offered/);
 });
@@ -224,6 +224,16 @@ test('A dashed pill and the card menu copy an item to another node', async (t) =
   assert.deepEqual([...luna.querySelectorAll('.dock-where-pill')].map((pill) => pill.textContent.replace('🔒', '').trim()), ['+ brain', 'herc3', 'mac']);
   await harness.act(() => harness.fireEvent(luna.querySelector('[data-dock-node="inst_brain1"]'), 'click'));
   assert.deepEqual(calls.at(-1), ['luna', 'inst_brain1', 'inst_brain1', true, 'inst_brain1'], 'this node takes it directly');
+
+  // A node the filter hides is not offered a copy it may already hold.
+  await mounted.rerender(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[section([])]} isSectionOpen=${() => true} setSectionOpen=${() => {}}
+      fusedState=${fused} hiddenState=${signal(['inst_herc31'])} nodeOps=${ops} />
+  `);
+  const shown = host.querySelector('[data-dock-name="opus"]');
+  await harness.act(() => harness.fireEvent(getByRole(shown, 'button', { name: 'Actions for opus' }), 'click'));
+  assert.equal([...shown.querySelectorAll('[role="menuitem"]')].some((el) => /herc3/.test(el.textContent)), false);
+  assert.ok(getByRole(shown, 'menuitem', { name: 'Offer to mac…' }));
   await mounted.unmount();
   host.remove();
 });

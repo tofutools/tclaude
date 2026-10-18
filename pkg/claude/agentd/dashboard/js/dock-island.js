@@ -108,6 +108,10 @@ function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
   </span>`;
 }
 
+// isWithheld: a node keeping its catalogs (not one still loading or
+// unreachable, which cannot take a copy either).
+const isWithheld = (why) => !!why && why !== 'loading' && !/not answering|no longer trusts/.test(why);
+
 function DockCard({
   section, item: pageItem, entry = null, fused = null, nodeOps = null, openMenu, setOpenMenu, clipHost, layoutVersion, snapshot: pageSnapshot, pinned, onTogglePin, notify,
 }) {
@@ -231,14 +235,17 @@ function DockCard({
   // Copying: to every node of the fused view that does not list this name
   // (a node keeping its catalogs may hold it unseen; an offer still asks).
   const what = section.title().toLowerCase();
-  const copyOf = (node) => copyRoute(entry, node, fused.snapOf(node.id), fused.self, what);
+  // This node's own copy is offered; the Nodes filter may hide it here.
+  const selfHolds = !!entry && (!!entry.byNode[fused.self]
+    || (!section.load && section.items(fused.snapOf(fused.self)).some((it) => section.name(it) === entry.name)));
+  const copyOf = (node) => copyRoute(entry, node, fused.snapOf(node.id), selfHolds ? fused.self : '', what);
   const runCopy = (node, route) => nodeOps.copy(section, item, {
     to: { id: node.id, name: node.name, fetch: fused.fetchFor(node.id) },
     direct: route.mode === 'direct',
     self: { id: fused.self, fetch: fused.fetchFor(fused.self) },
   });
-  const copyItems = entry && section.listPath ? fused.allNodes
-    .filter((node) => !entry.byNode[node.id] && fused.snapOf(node.id))
+  const copyItems = entry && section.listPath ? fused.nodes
+    .filter((node) => entry.state[node.id] === 'missing' || isWithheld(fused.withheld?.[node.id]))
     .map((node) => {
       const route = copyOf(node);
       const label = route.mode === 'offer' ? `Offer to ${node.name}…` : `Copy to ${node.name}…`;
@@ -579,7 +586,7 @@ function DockSection({
             section=${section}
             item=${fused ? null : value}
             entry=${fused ? value : null}
-            fused=${fused}
+            fused=${fused ? { ...fused, withheld: many.withheld } : null}
             nodeOps=${nodeOps}
             openMenu=${openMenu}
             setOpenMenu=${setOpenMenu}

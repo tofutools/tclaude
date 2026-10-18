@@ -162,11 +162,20 @@ async function failure(response) {
 }
 
 // copyDirect creates the item on `to` through its kind's create route.
-async function copyDirect(section, item, to) {
+// A peer's routes carry requests up to 32 KiB (fedPeerViewBodyLimit); this
+// node's own carry more.
+const PEER_BODY_LIMIT = 32 << 10;
+
+async function copyDirect(section, item, to, self) {
   let body = Object.fromEntries(Object.entries(item).filter(([key]) => !COPY_DROPPED.includes(key)));
   if (section.key === 'sandbox_profiles') body = sandboxProfileForWire(body);
+  const raw = JSON.stringify(body);
+  const size = new TextEncoder().encode(raw).length;
+  if (to.id !== self.id && size > PEER_BODY_LIMIT) {
+    throw new Error(`it is ${Math.ceil(size / 1024)} KiB, and a request to another node carries at most 32 KiB. Offer it from the node holding it instead.`);
+  }
   const response = await to.fetch(section.listPath, {
-    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: raw,
   });
   if (!response.ok) throw await failure(response);
 }
@@ -236,13 +245,13 @@ export const dockNodeOps = Object.freeze({
       okLabel: 'Copy',
     } : {
       title: `Offer ${kind} to ${to.name}?`,
-      body: `Send "${name}" to ${to.name}'s operator as a config offer. They preview it and decide whether to import it; nothing changes there until they do. Free text is sent as written.`,
+      body: `Send this node's copy of "${name}" to ${to.name}'s operator as a config offer. They preview it and decide whether to import it; nothing changes there until they do. Free text is sent as written.`,
       meta: name,
       okLabel: 'Send offer',
     });
     if (!ok) return false;
     try {
-      if (direct) await copyDirect(section, item, to);
+      if (direct) await copyDirect(section, item, to, self);
       else if (!await offerItem(section, name, to, self)) return false;
       toast(direct ? `copied ${name} to ${to.name}` : `offered ${name} to ${to.name}; its operator decides`);
       libraryChanged();

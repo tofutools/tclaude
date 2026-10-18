@@ -124,8 +124,9 @@ export function mergeCatalog(nodes, itemsByNode, nameOf, page = '') {
 // lets this operator act as its own (its create route), 'offer' where this
 // node holds the item (a one-item config offer `to`'s operator reviews), or
 // '' with why it cannot.
+// self is this node's ID when it holds the item ('' otherwise).
 export function copyRoute(entry, to, toSnapshot, self, what) {
   if (!nodeTrustLock(to, toSnapshot, what)) return { mode: 'direct', why: '' };
-  if (self && entry.byNode[self]) return { mode: 'offer', why: '' };
+  if (self) return { mode: 'offer', why: '' };
   return { mode: '', why: `${to.name} does not trust this node unrestricted, and only this node's own ${what} can be offered to it.` };
 }
