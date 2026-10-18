@@ -17,8 +17,9 @@ export function openCloneAgentDialog(conv, label, cwd) {
   return requireController().openClone({ conv, label, cwd });
 }
 
-export function openReincarnateAgentDialog(conv, label) {
-  return requireController().openReincarnate({ conv, label });
+// node names another node's agent (the fused Groups view); blank is the page's.
+export function openReincarnateAgentDialog(conv, label, node = '') {
+  return requireController().openReincarnate({ conv, label, ...(node ? { node } : {}) });
 }
 
 export function openNestGroupDialog({ group, node = '' }) {

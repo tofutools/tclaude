@@ -48,8 +48,9 @@ export function createTransactionDialogActions({
   // accidentally replay a completed retire/detach phase after a final DELETE
   // failure. Weak keys release the bookkeeping with the finished dialog.
   const deleteGroupProgress = new WeakMap();
-  // A group's delete and cleanup go to the node whose group it is (the fused
-  // Groups view's other nodes; blank is the page's).
+  // A group's delete and cleanup, and an agent's delete, go to the node whose
+  // group or agent it is (the fused Groups view's other nodes; blank is the
+  // page's).
   const fetchOn = (node) => nodeFetch(node, { fetchImpl });
 
   const report = (message, isError = false) => {
@@ -166,8 +167,8 @@ export function createTransactionDialogActions({
       return result;
     },
 
-    async loadAgentWorktree(conv, { signal, retire = false } = {}) {
-      const response = await fetchImpl(
+    async loadAgentWorktree(conv, { signal, retire = false, node = '' } = {}) {
+      const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(conv)}/worktree${retire ? '?retire=1' : ''}`,
         { credentials: 'same-origin', signal },
       );
@@ -208,7 +209,7 @@ export function createTransactionDialogActions({
       );
     },
 
-    async deleteAgent({ agent, label, deleteWorktree, expectedWorktree }) {
+    async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree }) {
       // Only the exact frozen opt-in boolean adds the destructive worktree
       // query. Freeze the exact probed path into a server-authoritative
       // precondition so a moved agent cannot redirect deletion to another
@@ -227,7 +228,7 @@ export function createTransactionDialogActions({
         params.set('expected_worktree', choice.expectedWorktree);
       }
       const query = params.size ? `?${params}` : '';
-      const response = await fetchImpl(
+      const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(agent)}${query}`,
         { method: 'DELETE', credentials: 'same-origin' },
       );
@@ -238,6 +239,7 @@ export function createTransactionDialogActions({
       const notice = worktree
         ? `deleted ${label || agent} · ${worktree}`
         : `deleted ${label || agent}`;
+      announceNodeChanged(node);
       return finishSuccess(result, notice);
     },
 

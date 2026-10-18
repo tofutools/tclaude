@@ -67,3 +67,21 @@ func TestPeerViewDashboardRouteClassification(t *testing.T) {
 	// Constructing the real mux also checks for overlapping route patterns.
 	_ = PeerViewHandler("test-peer")
 }
+
+// The peer metadata reports one rule per feature: every rule of a feature must
+// name the same slug and trust level, or the reported one (and the snapshot's
+// ETag) would depend on map order.
+func TestPeerViewFeaturesNameOneRequirement(t *testing.T) {
+	type need struct {
+		requires         string
+		unrestrictedOnly bool
+	}
+	seen := map[string]need{}
+	for pattern, rule := range peerViewRules() {
+		got := need{rule.requires, rule.unrestrictedOnly}
+		if prior, ok := seen[rule.feature]; ok && prior != got {
+			t.Errorf("feature %q: %s needs %+v, another rule %+v", rule.feature, pattern, got, prior)
+		}
+		seen[rule.feature] = got
+	}
+}

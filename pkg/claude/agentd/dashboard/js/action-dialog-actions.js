@@ -155,15 +155,17 @@ export function createActionDialogActions({
         throw error;
       } finally { clearTimeout(timer); }
     },
-    async reincarnateAgent({ conv, label, mode, focusHint, followUp }, owner) {
+    async reincarnateAgent({ conv, node = '', label, mode, focusHint, followUp }, owner) {
       const body = mode === 'force'
         ? { mode: 'force', follow_up: normaliseFollowUp(followUp) }
         : { mode: 'self', ...(focusHint.trim() ? { focus_hint: focusHint.trim() } : {}) };
       if (mode === 'force' && !body.follow_up) throw new Error('follow-up is required for force reincarnate');
-      const payload = await requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
+      // node names another node's agent (the fused view); blank is the page's.
+      const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       state.close(owner);
+      announceNodeChanged(node);
       if (mode === 'force') {
         const suffix = payload.new_title ? ` → ${payload.new_title}`
           : payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';

@@ -236,3 +236,19 @@ test('delete failures preserve descriptor and retry ownership', async (t) => {
   state.close();
   assert.equal(await pending, null);
 });
+
+test("another node's agent: the delete dialog's worktree read and delete go to that node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const urls = [];
+  const actions = createTransactionDialogActions({
+    state: createTransactionDialogState(),
+    fetchImpl: async (url) => { urls.push(url); return new Response('{}', { status: 200 }); },
+  });
+  await actions.loadAgentWorktree('agt_remote', { node: 'inst_forge1234' });
+  await actions.deleteAgent({ agent: 'agt_remote', node: 'inst_forge1234', label: 'remote' });
+  assert.deepEqual(urls, ['/api/peer/inst_forge1234/agents/agt_remote/worktree', '/api/peer/inst_forge1234/agents/agt_remote']);
+});

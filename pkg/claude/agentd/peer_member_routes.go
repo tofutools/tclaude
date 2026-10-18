@@ -38,6 +38,22 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// A member's role and description belong to the one group.
 	pattern := "PATCH /api/groups/{name}/members/{conv}"
 	rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: "members.manage", requires: PermGroupsMembersManage, group: true, invoke: &peerInvokeSpec{param: "name"}})
+	// An agent's remote access and fast mode, its reincarnation, its removal
+	// from a group and its permanent delete reach what no peer grant hands
+	// out: only unrestricted trust holds these, through this node's own
+	// handlers. One feature names one slug, so the metadata is stable.
+	full := func(next http.HandlerFunc) peerViewRule {
+		return peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerGrantedWrite(next)}
+	}
+	rules["POST /api/agents/{id}/remote-control"] = full(handleDashboardAgentsAPI)
+	rules["POST /api/agents/{id}/fast-mode/{direction}"] = full(handleDashboardAgentsAPI)
+	rules["POST /api/agents/{id}/reincarnate"] = full(handleDashboardAgentsAPI)
+	rules["DELETE /api/agents/{id}"] = full(handleDashboardAgentsAPI)
+	rules["DELETE /api/groups/{name}/members/{conv}"] = full(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardRemoveMember(w, g, r.PathValue("conv"))
+	}))
+	// The delete dialog reads the agent's worktree first.
+	rules["GET /api/agents/{id}/worktree"] = peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardAgentsAPI)}
 }
 
 // servePeerAgentInvoke runs an agent-scoped dashboard route for a peer that

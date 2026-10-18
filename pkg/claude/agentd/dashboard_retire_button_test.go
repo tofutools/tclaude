@@ -39,7 +39,7 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 			t.Errorf("MemberMenu: missing %q", needle)
 		}
 	}
-	if !strings.Contains(dashboardAssets, "await openDeleteAgentDialog(agent, label)") {
+	if !strings.Contains(dashboardAssets, "await openDeleteAgentDialog(agent, label, node)") {
 		t.Error("ungrouped permanent delete does not launch the stable-agent transaction")
 	}
 

@@ -1712,7 +1712,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
     setProbeError('');
     setWorktree(null);
     setDeleteWorktree(false);
-    actions.loadAgentWorktree(descriptor.agent, { signal: controller.signal }).then(
+    actions.loadAgentWorktree(descriptor.agent, { signal: controller.signal, ...(descriptor.node ? { node: descriptor.node } : {}) }).then(
       (next) => {
         if (!activeRef.current || controller.signal.aborted
           || generation !== probeGeneration.current || submittedRef.current) return;
@@ -1745,6 +1745,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
     if (busy) return;
     const request = submittedRequest || Object.freeze({
       agent: descriptor.agent,
+      ...(descriptor.node ? { node: descriptor.node } : {}),
       label: descriptor.label,
       deleteWorktree: worktree?.removable === true && deleteWorktree === true,
       ...(worktree?.removable === true && deleteWorktree === true

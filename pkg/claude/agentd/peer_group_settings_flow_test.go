@@ -429,3 +429,65 @@ func TestPeerMemberSettingsUnderManageGrant(t *testing.T) {
 	require.Equal(t, "reviews", sharedRow.Descr)
 	require.Empty(t, sharedRow.Tags)
 }
+
+// An agent's removal from a group, its permanent delete (and the delete
+// dialog's worktree read), its remote access, fast mode and reincarnation
+// reach what no peer grant hands out: a restricted peer is refused whatever
+// it holds, and unrestricted trust runs them on this node.
+func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	f.HaveConvWithTitle("full-keep", "keep")
+	f.HaveConvWithTitle("full-gone", "gone")
+	f.HaveMember("crew", "full-keep")
+	f.HaveMember("crew", "full-gone")
+	keep, err := db.AgentIDForConv("full-keep")
+	require.NoError(t, err)
+	gone, err := db.AgentIDForConv("full-gone")
+	require.NoError(t, err)
+	for _, slug := range []string{agentd.PermGroupsRosterRead, agentd.PermGroupsMembersManage, agentd.PermGroupsMembersRetire} {
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=crew"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	h := agentd.PeerViewHandler(p.id.ID())
+	call := func(method, path string, body any) (int, string) {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+		return rec.Code, rec.Body.String()
+	}
+	for _, req := range []struct{ method, path string }{
+		{"DELETE", "/api/groups/crew/members/" + keep},
+		{"DELETE", "/api/agents/" + gone},
+		{"GET", "/api/agents/" + gone + "/worktree"},
+		{"POST", "/api/agents/" + keep + "/remote-control"},
+		{"POST", "/api/agents/" + keep + "/fast-mode/enable"},
+		{"POST", "/api/agents/" + keep + "/reincarnate"},
+	} {
+		code, body := call(req.method, req.path, nil)
+		require.Equal(t, 403, code, "%s %s: %s", req.method, req.path, body)
+	}
+	crew, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	members := func() int {
+		t.Helper()
+		rows, err := db.ListAgentGroupMembers(crew.ID)
+		require.NoError(t, err)
+		return len(rows)
+	}
+	require.Equal(t, 2, members())
+
+	peer, err := db.GetFederationPeer(p.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+
+	code, body := call("GET", "/api/agents/"+gone+"/worktree", nil)
+	require.Equal(t, 200, code, body)
+	code, body = call("DELETE", "/api/agents/"+gone, nil)
+	require.Less(t, code, 300, body)
+	require.Equal(t, 1, members())
+	code, body = call("DELETE", "/api/groups/crew/members/"+keep, nil)
+	require.Less(t, code, 300, body)
+	require.Equal(t, 0, members())
+}

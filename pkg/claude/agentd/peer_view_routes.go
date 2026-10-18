@@ -287,7 +287,6 @@ var peerViewLocalRoutes = []string{
 	"/terminals",
 	"/terminals/",
 	"DELETE /api/groups/{name}/links/{id}",
-	"DELETE /api/groups/{name}/members/{conv}",
 	"DELETE /api/groups/{name}/owners/{conv}",
 	"DELETE /api/groups/{name}/standing-orders/{id}",
 	"DELETE /v1/process/templates/{id}",

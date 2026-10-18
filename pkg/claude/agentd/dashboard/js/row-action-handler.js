@@ -186,7 +186,7 @@ export async function handleRowAction(action) {
           okLabel: wizWord('Remove', 'Dismiss'),
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         ok = r.ok;
@@ -243,7 +243,7 @@ export async function handleRowAction(action) {
         // refresh below — the harness has no readback, so the state is
         // best-known, not authoritative. (JOH-259)
         const intent = data.intent || 'toggle';
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/remote-control`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/remote-control`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ intent }),
@@ -253,7 +253,7 @@ export async function handleRowAction(action) {
         try { resp = await r.json(); } catch (_) { /* tolerate a bodyless 200 */ }
         const on = !!resp.remote_control;
         toast(`${label}: remote access ${on ? 'ON — reachable from the Claude app' : 'OFF'}`);
-        refresh();
+        changed();
         return;
       }
       case 'sandbox-restart': {
@@ -298,7 +298,7 @@ export async function handleRowAction(action) {
           okLabel: `${enabling ? 'Enable' : 'Disable'} Fast mode`,
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/${enabling ? 'enable' : 'disable'}`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/fast-mode/${enabling ? 'enable' : 'disable'}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
@@ -312,7 +312,7 @@ export async function handleRowAction(action) {
           return;
         }
         toast(`${label}: Fast mode ${intent} requested`);
-        refresh();
+        changed();
         return;
       }
       case 'sandbox-details': {
@@ -593,7 +593,7 @@ export async function handleRowAction(action) {
         break;
       }
       case 'delete-agent': {
-        await openDeleteAgentDialog(agent, label);
+        await openDeleteAgentDialog(agent, label, node);
         return;
       }
       case 'copy-generation-id': {
@@ -701,7 +701,7 @@ export async function handleRowAction(action) {
         // Open the reincarnate modal pre-populated with this
         // agent. The modal enforces the required follow_up and
         // handles the POST + refresh.
-        openReincarnateAgentDialog(agent, label);
+        openReincarnateAgentDialog(agent, label, node);
         return;
       }
       case 'sandbox-impl': {
@@ -1163,7 +1163,7 @@ export async function handleRowAction(action) {
     }
     if (ok) {
       toast(`${act.replace('-', ' ')}: ${label}`);
-      refresh();
+      changed();
     }
   } catch (err) {
     toast(`Request failed: ${err && err.message || err}`, true);

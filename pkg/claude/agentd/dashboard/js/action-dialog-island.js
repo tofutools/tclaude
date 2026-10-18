@@ -270,7 +270,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
     if (busy || (force && !normaliseFollowUp(followUp))) return;
     setError('');
     setBusy(true);
-    try { await actions.reincarnateAgent({ conv: descriptor.conv, label: target, mode, focusHint, followUp }, descriptor); }
+    try { await actions.reincarnateAgent({ conv: descriptor.conv, node: descriptor.node || '', label: target, mode, focusHint, followUp }, descriptor); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };

@@ -47,7 +47,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		t.Error("transaction controller is missing stable-agent permanent delete launcher")
 	}
 	for _, required := range []string{
-		"async deleteAgent({ agent, label, deleteWorktree, expectedWorktree })",
+		"async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree })",
 		"deleteWorktree === true",
 		"params.set('delete_worktree', '1')",
 		"params.set('expected_worktree', choice.expectedWorktree)",
@@ -66,7 +66,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 	if strings.Count(memberTable, `act="delete-agent"`) != 1 {
 		t.Error("permanent-delete menu launcher must remain ungrouped-only")
 	}
-	if !strings.Contains(rowActions, "await openDeleteAgentDialog(agent, label)") {
+	if !strings.Contains(rowActions, "await openDeleteAgentDialog(agent, label, node)") {
 		t.Error("delegated permanent delete does not pass the stable agent selector")
 	}
 	if strings.Contains(rowActions, "deleteAgentModal") {
