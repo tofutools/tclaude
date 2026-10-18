@@ -660,24 +660,44 @@ export function blockedControl(target, peerView, event = null) {
 
 // reasonTitles puts why a greyed control is refused on it: its title (hover)
 // and aria-disabled, so a keyboard or screen-reader user gets the same
-// reason. It remembers the control's own title, to prefix, refresh and
-// restore it. The peer page's limits and the fused view share it.
+// reason. It remembers the control's own title and aria-disabled, to prefix,
+// refresh and restore them (re-reading the title when its component changed
+// it since). sweep re-decides every marked control after what a node shares
+// changed, and forgets ones no longer on the page. The peer page's limits
+// and the fused view share it.
+const TAB_CONTROLS = 'nav [data-tab], .activity-subtab';
+// REASON_CONTROLS are the controls a reason may sit on.
+const REASON_CONTROLS = ['[data-act]', TAB_CONTROLS, ...GATED_CONTROLS, ...Object.keys(MANAGED_CONTROLS)].join(', ');
+
 export function reasonTitles() {
-  const titled = new Map();
+  const marked = new Map();
   const setReason = (el, reason, disabled = true) => {
-    if (!titled.has(el)) titled.set(el, el.getAttribute('title'));
-    const own = titled.get(el);
-    el.setAttribute('title', `${reason}${own ? `\n\n${own}` : ''}`);
+    let mark = marked.get(el);
+    if (!mark || el.getAttribute('title') !== mark.written) {
+      mark = { own: el.getAttribute('title'), aria: mark ? mark.aria : el.getAttribute('aria-disabled') };
+      marked.set(el, mark);
+    }
+    mark.written = `${reason}${mark.own ? `\n\n${mark.own}` : ''}`;
+    el.setAttribute('title', mark.written);
     if (disabled) el.setAttribute('aria-disabled', 'true');
   };
   const clearReason = (el) => {
-    if (!titled.has(el)) return;
-    const own = titled.get(el);
-    titled.delete(el);
+    const mark = marked.get(el);
+    if (!mark) return;
+    marked.delete(el);
+    const own = el.getAttribute('title') === mark.written ? mark.own : el.getAttribute('title');
     if (own == null) el.removeAttribute('title'); else el.setAttribute('title', own);
-    el.removeAttribute('aria-disabled');
+    if (mark.aria == null) el.removeAttribute('aria-disabled'); else el.setAttribute('aria-disabled', mark.aria);
   };
-  return { setReason, clearReason };
+  // reasonFor(el) is [reason, disabled] while el is refused, or null.
+  const sweep = (reasonFor) => {
+    for (const el of [...marked.keys()]) {
+      if (!el.isConnected) { marked.delete(el); continue; }
+      const why = reasonFor(el);
+      if (why) setReason(el, why[0], why[1]); else clearReason(el);
+    }
+  };
+  return { setReason, clearReason, sweep };
 }
 
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
@@ -692,7 +712,15 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   let peerView = snapshot.value?.peer_view || null;
   const nodeName = () => root.dataset.remoteNodeName || remote.id.slice(0, 13);
 
-  const { setReason, clearReason } = reasonTitles();
+  const { setReason, clearReason, sweep } = reasonTitles();
+  // A control's reason, as hover and focus give it ([reason, disabled]).
+  const reasonOf = (el) => {
+    const blocked = blockedControl(el, peerView);
+    if (!blocked || blocked.state === 'peer-action' || blocked.el !== el) return null;
+    // Tabs keep their title only: the palette still lists them, and says why
+    // on use.
+    return [limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), blocked.state !== 'attach' && !el.matches(TAB_CONTROLS)];
+  };
 
   // Tabs carry their state as a class so CSS greys them, with the reason as
   // their title; recomputed whenever a snapshot changes what the peer shares
@@ -706,14 +734,16 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(tab);
-      else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName(), [tabNeeds(tab.dataset.tab, peerView)]));
+      else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName(), [tabNeeds(tab.dataset.tab, peerView)]), false);
     }
     for (const sub of doc.querySelectorAll('.activity-subtab')) {
       const state = subtabState('activity', sub.dataset.subtab, peerView);
       sub.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(sub);
-      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('activity', sub.dataset.subtab, peerView)]));
+      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('activity', sub.dataset.subtab, peerView)]), false);
     }
+    // Controls hovered or focused before keep up with what the peer shares.
+    sweep(reasonOf);
   });
 
   const refuse = (event) => {
@@ -744,7 +774,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     const blocked = blockedControl(event.target, peerView, event);
     if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), blocked.state !== 'attach');
     // One the peer now shares drops a reason it showed before.
-    else if (!blocked) { const act = actOf(event.target, event); if (act) clearReason(act); }
+    else if (!blocked) { const el = event.target?.closest?.(REASON_CONTROLS); if (el) clearReason(el); }
   };
   // Drags spawn, move and reorder on the node: under unrestricted trust. A
   // restricted peer's agent row still drags where its grants cover a drop's

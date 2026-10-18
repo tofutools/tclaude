@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { loadTriggerRules } from './group-triggers.js';
 import htm from 'htm';
 import { GroupsInteractionProvider } from './groups-interactions.js';
@@ -405,6 +405,14 @@ export function MergedGroups({
     syncWizardOrbit();
   });
 
+  // Reasons put on refused controls (hover/focus), re-decided after each
+  // render, as polls change what each node shares.
+  const titles = useMemo(() => reasonTitles(), []);
+  const refusalRef = useRef(null);
+  useEffect(() => {
+    titles.sweep((el) => { const why = refusalRef.current?.(el); return why ? [why, true] : null; });
+  });
+
   // Let this node's own groups' controls through to their usual handlers, send
   // a peer's shared controls to its peer routes, stop the rest before their
   // handlers, and open a group's node from its @node suffix.
@@ -431,7 +439,8 @@ export function MergedGroups({
       }
       return `Act on this node's groups from ${name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard"}`;
     };
-    const { setReason, clearReason } = reasonTitles();
+    refusalRef.current = refusal;
+    const { setReason, clearReason } = titles;
     const onOver = (event) => {
       const act = actOf(event.target, event);
       if (!act || !host.contains(act)) return;

@@ -83,8 +83,7 @@ test('on a peer view, Activity subtabs without a peer route are greyed and refus
   assert.equal(sub('audit').getAttribute('title'), 'Audit log');
   assert.equal(sub('logs').classList.contains('pv-off'), true);
   assert.equal(sub('logs').getAttribute('title'), 'forge does not share the daemon log with you (needs unrestricted trust)');
-  assert.equal(sub('logs').getAttribute('aria-disabled'), 'true', 'a refused control says so to assistive tech');
-  assert.equal(sub('audit').getAttribute('aria-disabled'), null);
+  assert.equal(sub('logs').getAttribute('aria-disabled'), null, 'a tab keeps its title only: the palette still lists it');
   assert.equal(sub('performance').classList.contains('pv-off'), true);
   assert.equal(harness.fireEvent(sub('audit'), 'click').defaultPrevented, false);
   assert.equal(harness.fireEvent(sub('logs'), 'click').defaultPrevented, true);
@@ -342,4 +341,22 @@ test('under unrestricted trust a peer page runs every control as the node itself
   assert.equal(mod.tabState('jobs', { included: ['agents.status'], omitted: [{ feature: 'local_dashboard', requires: 'local_only' }] }), 'local');
   dispose();
   assert.ok(!doc.documentElement.classList.contains('pv-unrestricted'));
+});
+
+test("a refused control's reason follows what the peer shares, without another hover", async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button data-act="set-group-descr" data-group="ops" title="Edit the description">✎</button>';
+  doc.documentElement.dataset.remoteNodeName = 'forge';
+  const snapshot = harness.signals.signal({ peer_view: { level: 'restricted', included: ['groups'], groups: {} } });
+  const dispose = mod.installPeerViewLimits({ doc, snapshot, toast: () => {}, remote: { id: 'inst_forge7' } });
+  const button = doc.querySelector('button');
+  harness.fireEvent(button, 'pointerover');
+  assert.equal(button.getAttribute('aria-disabled'), 'true');
+  assert.match(button.getAttribute('title'), /groups\.settings[\s\S]*Edit the description/);
+  snapshot.value = { peer_view: { level: 'restricted', included: ['groups'], groups: { ops: ['groups.settings'] } } };
+  assert.equal(button.getAttribute('aria-disabled'), null, 'granted since: no longer disabled');
+  assert.equal(button.getAttribute('title'), 'Edit the description', 'its own title is back');
+  dispose();
 });
