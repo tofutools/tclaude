@@ -17,7 +17,7 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	// The cog-menu trigger + its dispatch.
 	must(`data-act="clone-group"`, "the group cog menu carries a clone button")
 	must("case 'clone-group':", "row-actions.js dispatches the clone-group action")
-	must("openGroupCloneModal(group)", "the dispatcher opens the clone modal")
+	must("openGroupCloneModal(group, null, node)", "the dispatcher opens the clone modal")
 
 	// The shared modal shell + clone-only controls.
 	must(`id="group-create-modal"`, "the shared group creation overlay exists")

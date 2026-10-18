@@ -101,7 +101,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, adjacent := range []string{
-		"function openDeleteGroupModal(group)",
+		"function openDeleteGroupModal(group, node = '')",
 		"export async function openCleanupModal(options = {})",
 		"function openWorktreeCleanup(group = '')",
 	} {

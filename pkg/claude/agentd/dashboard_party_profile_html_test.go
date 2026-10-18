@@ -62,7 +62,7 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	// edited context copy, and the blank-default option in both vocab modes.
 	must("selectGroupCreateTemplate", "the pure selection-prefill transition is wired")
 	must("TemplatePreview", "the Preact roster preview is wired")
-	must("actions.submit(draft, template, current.parentGroup)", "the shared action boundary owns create/instantiate routing")
+	must("actions.submit(draft, template, current.parentGroup, current.node)", "the shared action boundary owns create/instantiate routing")
 	must("combineGroupAndTemplateContext(", "mirrored template creates combine source-group and template context")
 	must("## Mirrored group context", "the combined context labels the mirrored group portion")
 	must("## Template context", "the combined context labels the template portion")
