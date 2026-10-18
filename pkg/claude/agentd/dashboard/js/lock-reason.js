@@ -9,9 +9,11 @@ import { unrestrictedOn } from './node-trust.js';
 
 const html = htm.bind(h);
 
-export function LockReason({ why, id = undefined }) {
+// align="end" opens the reason leftward, for a 🔒 at the right edge of a
+// dialog whose scroll box would otherwise clip it.
+export function LockReason({ why, id = undefined, align = undefined }) {
   if (!why) return null;
-  return html`<span class="lock-why" id=${id} tabindex="0" role="img" aria-label=${`Locked: ${why}`} data-why=${why}>🔒</span>`;
+  return html`<span class=${align === 'end' ? 'lock-why lock-why-end' : 'lock-why'} id=${id} tabindex="0" role="img" aria-label=${`Locked: ${why}`} data-why=${why}>🔒</span>`;
 }
 
 export function NodeChip({ name }) {
