@@ -20014,10 +20014,29 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 
 /* Fleet map: node cards with measured link edges. */
 #tab-map.active { margin: -16px -24px; }
-.fleet-map {
-  position: relative; min-height: calc(100vh - 99px - var(--footer-h)); box-sizing: border-box; padding: 32px 40px 56px;
-  display: grid; grid-template-columns: minmax(280px, 340px) minmax(120px, 1fr) auto; align-items: center; column-gap: 0;
+/* The frame holds a toolbar, the zoomable stage and the legend, one above the
+   other, so none of them covers the map. */
+.fleet-map-frame {
+  display: flex; flex-direction: column; height: calc(100vh - 115px - var(--footer-h));
   background: radial-gradient(circle at 1px 1px, #21262d 1px, transparent 1.2px) 0 0 / 22px 22px, #0d1117;
+}
+.fleet-map-tools { display: flex; align-items: center; gap: 10px; padding: 10px 16px 0; font-size: 12px; color: #c9d1d9; }
+.fleet-map-check { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; cursor: pointer; }
+.fleet-map-check input { margin: 0; }
+.fleet-map-hubstate { display: inline-flex; align-items: center; gap: 5px; color: #8b949e; }
+.fleet-map-hubstate i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.fleet-map-hubstate.online i { background: #3fb950; }
+.fleet-zoom { display: inline-flex; align-items: center; gap: 3px; padding: 2px 4px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; }
+.fleet-zoom button { min-width: 24px; height: 22px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #c9d1d9; font: 13px system-ui, sans-serif; cursor: pointer; }
+.fleet-zoom button:disabled { opacity: .45; cursor: default; }
+.fleet-zoom .fleet-zoom-level { min-width: 46px; border-color: transparent; background: transparent; color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fleet-map-hint { margin-left: auto; color: #6e7681; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fleet-map-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; }
+.fleet-map-stage.panning { cursor: grabbing; user-select: none; }
+.fleet-map-stage .fleet-card { cursor: auto; }
+.fleet-map {
+  position: relative; min-height: 100%; box-sizing: border-box; padding: 24px 40px 32px; transform-origin: 0 0;
+  display: grid; grid-template-columns: minmax(280px, 340px) minmax(120px, 1fr) auto; align-items: center; column-gap: 0;
 }
 .fleet-map-local { grid-column: 1; z-index: 1; }
 /* The hub sits between this node and its peers, narrower than a node card,
@@ -20037,10 +20056,10 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
    popover that spells out who can do what. */
 .fleet-edge-link { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
 .fleet-edge-link.open { z-index: 6; }
-.fleet-edge-label { display: grid; gap: 1px; text-align: left; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 3px 9px; font: 11px/1.5 system-ui, sans-serif; color: #c9d1d9; white-space: nowrap; cursor: pointer; }
+.fleet-edge-label { display: inline-flex; gap: 10px; text-align: left; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 3px 9px; font: 11px/1.5 system-ui, sans-serif; color: #c9d1d9; white-space: nowrap; cursor: pointer; }
 .fleet-edge-label:hover, .fleet-edge-label[aria-expanded="true"] { border-color: #58a6ff; }
 .fleet-edge-label.asymmetric { border-color: #6e5a1f; }
-.fleet-link-dir { color: #58a6ff; margin-right: 4px; }
+.fleet-link-dir { color: #58a6ff; margin-right: 4px; font-size: 14px; line-height: 1; }
 .fleet-link-row.unrestricted .fleet-link-dir { color: #e3b341; }
 .fleet-link-row.unknown { color: #7d8590; }
 .fleet-link-pop { position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 340px; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 9px 12px; font-size: 12px; line-height: 1.5; color: #c9d1d9; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 5; }
@@ -20099,6 +20118,15 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-meter-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
 .fleet-meter-bar b { display: block; height: 100%; background: var(--nc, #58a6ff); }
 .fleet-card-foot { display: flex; gap: 6px; padding: 0 12px 10px; }
+/* Links from a card to where its settings live in Fleet config. */
+.fleet-card-cfg { width: 22px; height: 22px; padding: 0; border: 1px solid #30363d; border-radius: 4px; background: transparent; color: #8b949e; font-size: 12px; line-height: 1; cursor: pointer; flex: none; }
+.fleet-card-cfg:hover, .fleet-chip-link:hover { color: #58a6ff; border-color: #58a6ff; }
+.fleet-card-trust dd { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fleet-card-acts { display: inline-flex; gap: 5px; margin-left: auto; }
+.fleet-chip-link { padding: 0 7px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #58a6ff; font: 11px/1.6 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+.fleet-card-hub-admin { display: flex; align-items: center; gap: 6px; padding: 7px 12px 9px; border-top: 1px solid #21262d; font-size: 11.5px; }
+.fleet-card-hub-admin .fleet-chip-link { margin-left: auto; }
+.fleet-hub-admin.yes { color: #3fb950; }
 .fleet-card-key { padding: 0 12px 8px; font-size: 12px; }
 .fleet-card-key.pending { color: #e3b341; }
 .fleet-card-key.conflict { color: #f85149; }
@@ -20112,7 +20140,7 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-kind.part-time { color: #a5d6ff; border-color: rgba(31, 111, 235, .4); }
 .fleet-card.part-time.stale { opacity: .65; }
 .fleet-card-presence.asleep i { background: none; border: 1.5px solid currentColor; width: 6px; height: 6px; }
-.fleet-legend { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: #7d8590; font-size: 11px; }
+.fleet-legend { padding: 6px 16px 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: #7d8590; font-size: 11px; }
 .fleet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
 .fleet-legend i.stale { border-top: 2px dashed #6e7681; }
 .fleet-legend i.untrusted { border-top: 2px dotted #484f58; }
@@ -20500,6 +20528,11 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
   .fleet-map-hub { justify-self: stretch; width: auto; }
   .fleet-map-peers, .fleet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
   .fleet-edges, .fleet-edge-link { display: none; }
+  /* A stacked phone layout scrolls with the page: no zoom or pan. */
+  .fleet-map-frame { height: auto; min-height: calc(100vh - 99px - var(--footer-h)); }
+  .fleet-map-stage { overflow: visible; touch-action: auto; cursor: auto; }
+  .fleet-map { transform: none !important; }
+  .fleet-zoom, .fleet-map-hint { display: none; }
 }
 
 
@@ -20618,7 +20651,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .term-remote-shared .mux-btn { margin-left: auto; }
 .remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
 .remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
-.fleet-card-terms { margin-left: 6px; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
 #remote-sessions button[data-open]:hover { border-color: #58a6ff; }
 #remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }

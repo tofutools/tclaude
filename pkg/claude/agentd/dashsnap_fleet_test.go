@@ -305,30 +305,6 @@ const fleetFederationStubJS = `(function(){
   };
 })();`
 
-// fleetRemoteTerminalJS stands in for the federation terminal socket: the
-// hello names the mode (from the URL) and the target's pinned size, then a
-// screen of agent output arrives as binary frames, as the bridge sends them.
-const fleetRemoteTerminalJS = `(function(){
-  var Real = window.WebSocket;
-  function Fake(url) {
-    if (String(url).indexOf('/api/federation/terminal?') < 0) return new Real(url);
-    var self = this; this.readyState = 0; this.binaryType = 'blob';
-    var mode = /mode=interactive/.test(url) ? 'interactive' : 'watch';
-    var enc = new TextEncoder();
-    setTimeout(function(){
-      self.readyState = 1; self.onopen && self.onopen();
-      self.onmessage && self.onmessage({ data: JSON.stringify({ type: 'hello', mode: mode, cols: 96, rows: 20 }) });
-      var lines = ['\x1b[1;36m● ada\x1b[0m  (forge · ops)', '', '> Run the federation tests and fix the relay backpressure failure', '',
-        '\x1b[2m  Bash(go test ./pkg/federation/...)\x1b[0m', '  ok   pkg/federation/relay   3.112s', '  \x1b[31mFAIL\x1b[0m pkg/federation/hub  TestHubRelayBackpressure', '',
-        '  The credit window is not refilled after a slow reader drains; patching hub/stream.go …', '', '\x1b[7m REMOTE ' + (mode === 'interactive' ? 'INPUT' : 'WATCH') + ' · desk \x1b[0m'];
-      self.onmessage && self.onmessage({ data: enc.encode(lines.join('\r\n')).buffer });
-    }, 50);
-  }
-  Fake.OPEN = 1; Fake.CLOSED = 3; Fake.CONNECTING = 0; Fake.CLOSING = 2;
-  Fake.prototype.send = function(){}; Fake.prototype.close = function(){ this.readyState = 3; };
-  window.WebSocket = Fake;
-})();`
-
 // fleetGroupLinksJS decorates the first group's snapshot with federation
 // links, as dashboard_group_federation_links.go reports them.
 const fleetGroupLinksJS = `window.__fleetGroupLinks = [
@@ -384,7 +360,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-map",
 			Title:   "Fleet map",
-			Caption: "The top-level map: this node's card, a reachable restricted peer with omitted concepts, and an unreachable unrestricted peer, joined by measured link edges. The tab strip becomes the top-level view switch in the same row.",
+			Caption: "The top-level map: this node's card, the hub with its admin link, a reachable restricted peer with its omitted-concept count and grants/trust links, and an unreachable unrestricted peer, joined by measured link edges. A toolbar above the map toggles the hub and zooms. The tab strip becomes the top-level view switch in the same row.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -398,12 +374,12 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-map-link",
 			Title:   "Fleet map: a link's trust",
-			Caption: "Each peer link's label names both directions of trust (peer → this node, this node → peer); clicking it spells out who can do what and who set it. Cards say \"You trust it\" / \"It trusts you\" instead of a bare level badge. lab is unreachable, so its trust in this node is not reported.",
+			Caption: "Each peer link's label shows both directions of trust on one line (→ this node on the peer, ← the peer on this node); clicking it spells out who can do what and who set it. Cards say \"You trust it\" / \"It trusts you\" instead of a bare level badge. lab is unreachable, so its trust in this node is not reported.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && !/hidden/.test((document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]') || {}).textContent || ''); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var i = 0; i < 80 && !document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"] [title*="hidden"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   var badge = document.querySelector('.fleet-edge-label[aria-label^="Trust between forge"]');
   if (!badge) throw new Error('fleet: no link label for forge');
   badge.click();
@@ -611,8 +587,8 @@ func fleetStates() []dashsnap.State {
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
-  for (var s = 0; s < 30 && !document.querySelectorAll('.fleet-seg-btn')[2]; s++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelectorAll('.fleet-seg-btn')[2].click();
+  for (var s = 0; s < 30 && !document.querySelectorAll('.fleet-seg-btn')[1]; s++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelectorAll('.fleet-seg-btn')[1].click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-waiting'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-trusted tbody tr').length !== 2) throw new Error('fleet: trusted peers missing');
   if (!document.querySelector('#fleet-waiting [data-fa="trust"]')) throw new Error('fleet: no Trust action for the waiting instance');
@@ -1003,55 +979,6 @@ func fleetStates() []dashsnap.State {
   if (!/release-captain/.test((document.querySelector('#fleet-bundle-text') || {}).textContent || '')) throw new Error('fleet: bundle entry not shown');
 })();`,
 			SettleMS: 300,
-		},
-		{
-			Key:     "fleet-remote-terminals-picker",
-			Title:   "A peer's terminals from the map",
-			Caption: "Map → a peer card → Terminals…: that peer's sessions from the cached catalog, each opening interactive (sessions.attach) or watch-only (sessions.watch) as the peer shares it, unshared ones marked, and the CLI attach command kept as the native-terminal option.",
-			InitJS:  fleetRemoteTerminalJS + fleetFederationStubJS,
-			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && !document.querySelector('.fleet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('.fleet-card-terms').click();
-  for (var j = 0; j < 30 && document.querySelectorAll('#remote-sessions tr').length < 3; j++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('#remote-sessions [data-open="watch"]')) throw new Error('fleet: terminal picker missing');
-})();`,
-			SettleMS: 300,
-		},
-		{
-			Key:     "fleet-remote-terminal-watch",
-			Title:   "A peer's agent terminal, watch-only",
-			Caption: "Opening a watch-only session: the same browser terminal as a local one, rendered at the peer's pinned size, with a watch-only badge naming the peer; keystrokes and image paste are not sent.",
-			InitJS:  fleetRemoteTerminalJS + fleetFederationStubJS,
-			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && !document.querySelector('.fleet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('.fleet-card-terms').click();
-  for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="watch"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('#remote-sessions [data-open="watch"]').click();
-  for (var k = 0; k < 60 && !document.querySelector('.mux-pane.active .term-remote-badge.watch'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('.mux-pane.active .term-remote-badge.watch')) throw new Error('fleet: watch-only badge missing');
-})();`,
-			SettleMS: 600,
-		},
-		{
-			Key:     "fleet-remote-terminal-interactive",
-			Title:   "A peer's agent terminal, interactive",
-			Caption: "Opening a session the peer lets this node type into (sessions.attach): the badge turns amber, keystrokes and image paste reach the peer's agent, and the peer shows REMOTE INPUT on its pane.",
-			InitJS:  fleetRemoteTerminalJS + fleetFederationStubJS,
-			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('nav [data-tab="map"]').click();
-  for (var i = 0; i < 80 && !document.querySelector('.fleet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('.fleet-card-terms').click();
-  for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="interactive"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('#remote-sessions [data-open="interactive"]').click();
-  for (var k = 0; k < 60 && !document.querySelector('.mux-pane.active .term-remote-badge.interactive'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('.mux-pane.active .term-remote-badge.interactive')) throw new Error('fleet: interactive badge missing');
-})();`,
-			SettleMS: 600,
 		},
 		{
 			Key:     "fleet-viewers",

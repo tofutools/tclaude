@@ -298,6 +298,7 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
 
 test('a link names its trust in each direction; the popover spells out who can do what', async (t) => {
   const { harness, stateMod, island, model } = await load(t);
+  const drop = await harness.importDashboardModule('js/fleet-move-drop.js');
   const link = model.linkView('desk', { name: 'lab', level: 'unrestricted' }, { theirLevel: 'restricted', omitted: ['costs', 'spawn'] });
   assert.deepEqual([link.in.from, link.in.to, link.in.short], ['lab', 'desk', 'full access']);
   assert.deepEqual([link.out.from, link.out.to, link.out.short], ['desk', 'lab', 'limited · 2 hidden']);
@@ -315,10 +316,12 @@ test('a link names its trust in each direction; the popover spells out who can d
   assert.doesNotMatch(lab.textContent, /unrestricted peer/, 'no bare level badge on the card');
   assert.match(lab.textContent, /You trust it⚠ unrestricted/);
   assert.match(lab.textContent, /It trusts yourestricted/);
-  assert.match(lab.textContent, /Hidden from youcosts/);
+  assert.match(lab.textContent, /Not shared1 feature/, 'the hidden list is a count');
+  assert.equal(lab.querySelector('[title="costs"]')?.textContent, '1 feature', 'its tooltip names them');
+  assert.equal(lab.querySelector('[data-fleet="grants"]'), null, 'unrestricted: no grants to edit');
   const badge = getByRole(mounted.container, 'button', { name: 'Trust between lab and desk' });
-  assert.match(badge.textContent, /⚠ lab → desk full access/);
-  assert.match(badge.textContent, /desk → lab limited · 1 hidden/);
+  assert.match(badge.textContent, /→limited\s*←⚠ full access/, 'one line: → what desk may do on lab, ← what lab may do here');
+  assert.ok(badge.querySelector('[title="desk → lab: limited · 1 hidden"]'), 'each direction names its nodes in its tooltip');
   assert.ok(badge.classList.contains('asymmetric'));
   await harness.act(() => harness.fireEvent(badge, 'click'));
   const pop = mounted.container.querySelector('.fleet-link-pop');
@@ -331,7 +334,18 @@ test('a link names its trust in each direction; the popover spells out who can d
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Change in Fleet config…' }), 'click'));
   assert.deepEqual(nav, ['fleet-admin']);
   const forge = getByRole(mounted.container, 'button', { name: 'Trust between forge and desk' });
-  assert.match(forge.textContent, /desk → forge not reported/, 'no summary yet: the other direction is unknown');
+  assert.match(forge.textContent, /→not reported/, 'no summary yet: the other direction is unknown');
+  // A restricted peer's card links to its grants, preselected, and its trust level.
+  const pages = [];
+  const onPage = (e) => pages.push([e.detail, drop.takeFleetTarget()]);
+  harness.document.addEventListener(drop.FLEET_PAGE_EVENT, onPage);
+  const forgeCard = mounted.container.querySelector('[aria-label="forge node"]');
+  await harness.act(() => harness.fireEvent(forgeCard.querySelector('[data-fleet="grants"]'), 'click'));
+  await harness.act(() => harness.fireEvent(forgeCard.querySelector('[data-fleet="trust-level"]'), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(forgeCard, 'button', { name: 'forge in Fleet config' }), 'click'));
+  harness.document.removeEventListener(drop.FLEET_PAGE_EVENT, onPage);
+  assert.deepEqual(pages, [['grants', 'inst_forge'], ['peers', ''], ['peers', '']]);
+  assert.deepEqual(nav, ['fleet-admin', 'fleet-admin', 'fleet-admin', 'fleet-admin']);
   await mounted.unmount(); state.dispose();
 });
 
@@ -359,7 +373,7 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   state.setStatus({ ...status([]), peers: [], hub: { state: 'connected', hub_id: 'hub_123', spaces: ['space-a'], since: '2026-10-17T10:00:00Z' } });
   state.markStatusLoaded();
   const nav = []; const timers = fakeTimers();
-  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} loadHubStatus=${async () => ({ admin: true })} />`);
   assert.deepEqual(nav, [], 'the map stays open');
   assert.ok(mounted.container.querySelector('[aria-label="desk node"]'), 'this node has its card');
   assert.match(mounted.container.textContent, /No linked nodes yet/);
@@ -368,9 +382,22 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   assert.match(hub.textContent, /connected/);
   assert.match(hub.textContent, /wss:\/\/hub/);
   assert.match(hub.textContent, /space-a/);
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.match(hub.textContent, /★ hub admin/);
+  await harness.act(() => harness.fireEvent(getByRole(hub, 'button', { name: 'Manage hub…' }), 'click'));
+  assert.deepEqual(nav, ['fleet-admin'], 'Manage hub opens Fleet config');
+  nav.length = 0;
+  const showHub = mounted.container.querySelector('[data-fleet="show-hub"]');
+  assert.equal(showHub.hasAttribute('checked'), true, 'the hub shows by default');
+  await harness.act(() => { showHub.checked = false; harness.fireEvent(showHub, 'change'); });
+  assert.equal(mounted.container.querySelector('[aria-label="federation hub"]'), null, 'unticked: no hub card');
+  assert.match(mounted.container.querySelector('.fleet-map-tools').textContent, /hub connected/, 'its state moves to the toolbar');
+  assert.equal(state.hubShown(), false);
+  await harness.act(() => { showHub.checked = true; harness.fireEvent(showHub, 'change'); });
+  assert.ok(mounted.container.querySelector('[aria-label="federation hub"]'));
   assert.equal(timers.queue.length, 1, 'only this node is polled');
   const bar = await harness.mount(harness.html`<${island.TopLevelBar} state=${state} navigate=${(tab) => nav.push(tab)} />`);
-  assert.deepEqual([...bar.container.querySelectorAll('.fleet-seg-btn')].map((b) => b.textContent.trim()), ['▦ Groups · all nodes', 'Map', '⚙ Fleet config']);
+  assert.deepEqual([...bar.container.querySelectorAll('.fleet-seg-btn')].map((b) => b.textContent.trim()), ['Map', '⚙ Fleet config']);
   assert.match(bar.container.textContent, /1 node · hub connected/);
   assert.doesNotMatch(bar.container.textContent, /pick ⌂/);
   await harness.act(() => { state.setStatus({ ...status([]), peers: [], hub: { state: 'disconnected' } }); });
@@ -650,4 +677,24 @@ test('an offline peer card shows its offline notices and silences this disconnec
   const remote = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} remote="inst_forge" />`);
   assert.equal(remote.container.querySelector('[data-fleet="silence-offline"]'), null, 'a peer view never silences');
   await remote.unmount(); state.dispose();
+});
+
+test('a card opens its node on Groups, not on the map; zoom keeps the cursor point and fits', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map') });
+  state.setStatus(status([]));
+  const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${fakeTimers()} switchNode=${(id, path) => switched.push([id, path])} loadHubStatus=${async () => null} />`);
+  const forge = mounted.container.querySelector('[aria-label="forge node"]');
+  await harness.act(() => harness.fireEvent(getByRole(forge, 'button', { name: 'Open dashboard' }), 'click'));
+  assert.deepEqual(switched, [['inst_forge', '/']], 'from the map a peer opens on its Groups page');
+  assert.equal(forge.textContent.includes('Terminals'), false, 'no Terminals shortcut on the card');
+  await mounted.unmount(); state.dispose();
+
+  const z = island.zoomAt({ s: 1, x: 0, y: 0 }, 2, 100, 50);
+  assert.deepEqual(z, { s: 2, x: -100, y: -50 }, 'the point under the cursor stays put');
+  assert.equal(island.zoomAt({ s: 1, x: 0, y: 0 }, 100, 0, 0).s, 2, 'zoom is capped');
+  assert.equal(island.zoomAt({ s: 1, x: 0, y: 0 }, 0.01, 0, 0).s, 0.25, 'and floored');
+  assert.deepEqual(island.fitView(2000, 500, 1000, 500), { s: 0.5, x: 0, y: 125 }, 'a wide map fits and centres');
+  assert.deepEqual(island.fitView(500, 300, 1000, 600), { s: 1, x: 250, y: 150 }, 'a small one never grows past 100%');
 });

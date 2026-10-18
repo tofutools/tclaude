@@ -118,7 +118,7 @@ In order across the top:
 | Config | Visual editor for `~/.tclaude/config.json` |
 
 With trusted federation peers, node chips and **⌘ Fleet** join the tab bar,
-and ⌘ Fleet opens the Groups · all nodes / Map / ⚙ Fleet config views; see
+and ⌘ Fleet opens the Map / ⚙ Fleet config views; see
 [Fleet UI](#fleet-ui-linked-nodes).
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
@@ -848,24 +848,37 @@ address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 ### The map
 
 **⌘ Fleet** at the end of the node row opens the fleet views, and the tab
-strip turns into their switch: **Groups · all nodes** (the fused Groups view
-of every node), **Map** and **⚙ Fleet config**. The right end stays the same,
-with ⌘ Fleet lit.
+strip turns into their switch: **Map** and **⚙ Fleet config**. The right end
+stays the same, with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
 
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and
 how many are online, agents waiting for input, cpu/mem/disk, the tclaude
-version (↑ when a newer release is known), health, and what the peer hides
-from you. **Open dashboard** opens that node's view. Cards are polled only while
-the map is on screen; an unreachable peer keeps its last data, marked with its
-age.
+version (↑ when a newer release is known) with its health, and how many
+features the peer does not share with you (hover for the list). **Open
+dashboard** opens that node's Groups page. Cards are polled only while the map
+is on screen; an unreachable peer keeps its last data, marked with its age.
+
+The toolbar above the map holds **Show hub** (remembered per browser; off, the
+hub card goes and links run node to node, with the hub's state in the toolbar)
+and zoom: scroll or pinch to zoom around the pointer, drag the background to
+pan, or use −, the percentage (back to 100%), + and fit. A map larger than the
+window fits itself until you zoom or pan. Phone-width screens keep the stacked
+layout without zoom.
+
+Cards link to where their settings live: ⚙ opens the peer in Fleet config →
+Peers, and beside **You trust it** `trust…` opens Peers and, while the peer is
+restricted, `grants…` opens Peer grants on that peer. The hub card says whether
+this node is a hub admin and opens Fleet config → Hub. A peer view of the map
+shows no such links: Fleet config lives on this node's own page.
 
 Trust between two nodes can differ by direction, so the map always names both.
 A peer card shows **You trust it** (what the peer may do on this node; you set
 it) and **It trusts you** (what this node may do on the peer; its operator sets
-it). Each link's label has one row per direction, such as `forge → desk full
-access` and `desk → forge limited · 3 hidden`. Click it for a plain-language
+it). Each link's label shows both directions on one line, such as `→ limited
+← ⚠ full access`: → is what this node may do on the peer, ← what the peer may
+do here (hover a direction for the node names). Click it for a plain-language
 explanation and a shortcut to Fleet config. A peer on an older tclaude does not
 report its side ("not reported").
 

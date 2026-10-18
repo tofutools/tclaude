@@ -3027,7 +3027,7 @@ nonzero.
 For a how-to tour of the dashboard side, see
 [Fleet UI](dashboard.md#fleet-ui-linked-nodes).
 
-The dashboard's **⚙ Fleet config** view (beside Map and Groups · all nodes, or
+The dashboard's **⚙ Fleet config** view (beside Map, or
 "Fleet administration" in the command palette before any peer is trusted)
 covers `federation status`, `peers`, `trust`, `untrust` and `disconnect`:
 this node's identity and hub connection, the trusted peers with their level,

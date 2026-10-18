@@ -3,7 +3,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
 import { RequestAccessDialog } from './peer-access.js';
-import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, linkView, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './fleet-model.js';
@@ -11,6 +10,8 @@ import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind
 import { shortFingerprint, shortID } from './fleet-admin-model.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './fleet-state.js';
+import { requestFleetPage } from './fleet-move-drop.js';
+import { toPath } from './nav-history-core.js';
 
 const html = htm.bind(h);
 
@@ -39,11 +40,13 @@ function defaultNavigate(tab) {
   anchor?.click();
 }
 
-// defaultSwitchNode shows node id's per-node view ('' = this node). It is a
-// page navigation: remote-node.js routes the per-node API only from page load,
-// so one node's data can never be painted under another node's marker.
-function defaultSwitchNode(id) {
-  globalThis.location.assign(nodeHref(id));
+// defaultSwitchNode shows node id's per-node view ('' = this node), on path
+// when given, else on the page's own path. It is a page navigation:
+// remote-node.js routes the per-node API only from page load, so one node's
+// data can never be painted under another node's marker.
+function defaultSwitchNode(id, path) {
+  const loc = globalThis.location;
+  globalThis.location.assign(nodeHref(id, path ? { pathname: path, search: loc.search } : loc));
 }
 
 // openNodeView opens a node's per-node view from elsewhere in the dashboard,
@@ -72,8 +75,10 @@ export function writeScopeURL(fused, win = globalThis) {
 // pickNode shows one node on its own: it leaves any fused view, then shows
 // that node's per-node view (a page load for another node, as before).
 // Without a fleet only this node can be picked: ⌂ still leaves a top-level
-// view or a peer's view.
-function pickNode(state, id, { navigate, remote, switchNode }) {
+// view or a peer's view. From a top-level view (the map, Fleet config) the
+// other node opens on tab, by default the per-node tab the operator left:
+// keeping the page's path would load that node's map instead.
+function pickNode(state, id, { navigate, remote, switchNode, tab }) {
   const fleet = state.fleet.value;
   const selfID = fleet?.self.id ?? state.node.value?.self.id ?? '';
   if (!fleet && id !== selfID) return;
@@ -82,7 +87,8 @@ function pickNode(state, id, { navigate, remote, switchNode }) {
   writeScopeURL(null);
   if (id === (remote || selfID)) {
     if (state.view.value.topLevel || !wasFused) navigate(state.lastLocalTab());
-  } else switchNode(id === selfID ? '' : id);
+  } else if (state.view.value.topLevel) switchNode(id === selfID ? '' : id, toPath({ tab: tab || state.lastLocalTab() }));
+  else switchNode(id === selfID ? '' : id);
 }
 
 // usePopover closes a popover on a click outside it or Escape. The popover is
@@ -347,7 +353,7 @@ export function ScopeBanner({ state, remote = remoteNodeID(), switchNode = defau
 }
 
 // TopLevelBar replaces the tab strip while a top-level, multi-node view (the
-// map or the merged Groups view) is active, and switches between the two. CSS
+// map or Fleet config) is active, and switches between the two. CSS
 // hides the per-node tabs in that mode; the row keeps the same height so
 // nothing below moves.
 export function TopLevelBar({ state, navigate = defaultNavigate }) {
@@ -357,14 +363,9 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const n = fleet.peers.length + 1;
   const hub = fleet.hub.state;
   const asks = remoteNodeID() ? 0 : current.strangers.filter((s) => s.request).length;
-  // "Groups · all nodes" is the fused Groups view of every node.
-  const go = (tab) => {
-    if (tab !== 'groups-fused') { navigate(tab); return; }
-    state.setFused('all'); writeScopeURL('all'); navigate('groups');
-  };
-  const seg = (tab, on, label) => html`<button type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
+  const seg = (tab, on, label) => html`<button type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
   return html`<span class="fleet-toplevel-bar">
-    <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('groups-fused', false, '▦ Groups · all nodes')}${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet-admin', current.adminActive, '⚙ Fleet config')}</span>
+    <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet-admin', current.adminActive, '⚙ Fleet config')}</span>
     <span class="fleet-toplevel-note">${n} node${n === 1 ? '' : 's'} · hub ${hub}${asks > 0 && html` · <span class="fleet-map-asking">🤝 ${asks} asking to be trusted</span>`}</span>
   </span>`;
 }
@@ -388,20 +389,23 @@ function CardRows({ card, node, onUpdate }) {
     <dt>Agents</dt><dd>${card.onlineAgents ?? '?'} of ${card.sharedAgents} online · ${card.sharedGroups} group${card.sharedGroups === 1 ? '' : 's'}${node.local ? '' : html` <span class="muted">shared</span>`}</dd>
     <dt>Attention</dt><dd>${card.waiting ? html`<span class="fleet-attn">❓ ${card.waiting} waiting for input</span>` : html`<span class="muted">none</span>`}</dd>
     <dt>Resources</dt><dd>${r ? html`${r.cpu != null && html`<${Meter} label="cpu" value=${r.cpu} />`}${r.mem != null && html`<${Meter} label="mem" value=${r.mem} />`}${r.disk != null && html`<${Meter} label="disk" value=${r.disk} />`}` : html`<span class="muted">not shared</span>`}</dd>
-    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
-    ${card.health && html`<dt>Health</dt><dd class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
-    ${card.omitted.length > 0 && html`<dt>Hidden from you</dt><dd class="muted">${card.omitted.join(', ')}</dd>`}
+    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.health && html` <span class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</span>`}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
+    ${!card.version && card.health && html`<dt>Health</dt><dd class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
+    ${card.omitted.length > 0 && html`<dt>Not shared</dt><dd class="muted" title=${card.omitted.join(', ')}>${card.omitted.length} feature${card.omitted.length === 1 ? '' : 's'}</dd>`}
   </dl>`;
 }
 
 // TrustRows names both directions of a peer's trust on its card. The card's
 // other rows (and "Hidden from you") are what the peer shares with this node,
 // so its own trust level is never shown as a bare "unrestricted peer" badge.
-function TrustRows({ node, card, selfName }) {
+// Your side links to where it is set: the trust level in Fleet config →
+// Peers, and while restricted the grants that say what the peer may use.
+function TrustRows({ node, card, selfName, onConfigure }) {
   const link = linkView(selfName, node, card);
   const theirs = link.out.level;
+  const restricted = link.in.level !== 'unrestricted';
   return html`<dl class="fleet-card-body fleet-card-trust">
-    <dt>You trust it</dt><dd class=${`fleet-trust ${link.in.level}`} title=${`What ${node.name} may do on ${selfName}. You set this in Fleet config.`}>${link.in.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'}</dd>
+    <dt>You trust it</dt><dd><span class=${`fleet-trust ${link.in.level}`} title=${`What ${node.name} may do on ${selfName}. You set this in Fleet config.`}>${restricted ? 'restricted' : '⚠ unrestricted'}</span>${onConfigure && html`<span class="fleet-card-acts">${restricted && html`<button type="button" class="fleet-chip-link" data-fleet="grants" title=${`Edit what ${node.name} may use on ${selfName} (Fleet config → Peer grants)`} onClick=${onConfigure('grants', node.id)}>grants…</button>`}<button type="button" class="fleet-chip-link" data-fleet="trust-level" title=${`Change how ${selfName} trusts ${node.name} (Fleet config → Peers)`} onClick=${onConfigure('peers')}>trust…</button></span>`}</dd>
     <dt>It trusts you</dt><dd class=${`fleet-trust ${theirs || 'unknown'}`} title=${`What ${selfName} may do on ${node.name}. ${node.name}'s operator sets this.`}>${theirs || 'not reported'}</dd>
   </dl>`;
 }
@@ -428,7 +432,7 @@ function OfflineAlertsRow({ node, onOfflineAlerts }) {
   </dl>`;
 }
 
-function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, onSilence, onOfflineAlerts, now, cardRef, shown }) {
+function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, onOfflineAlerts, onConfigure, now, cardRef, shown }) {
   const kind = node.local ? 'this node' : 'peer';
   const asleep = node.partTime && card.presence === 'offline';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : asleep ? 'asleep' : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
@@ -436,19 +440,22 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
       <span class="fleet-card-kind">${kind}</span>${node.partTime && html`<span class="fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
-      <span class=${`fleet-card-presence ${asleep ? 'asleep' : card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
+      <span class=${`fleet-card-presence ${asleep ? 'asleep' : card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span>
+      ${onConfigure && html`<button type="button" class="fleet-card-cfg" data-fleet="node-config" aria-label=${node.local ? 'This node in Fleet config' : `${node.name} in Fleet config`} title=${node.local ? 'Fleet config' : `${node.name} in Fleet config → Peers`} onClick=${onConfigure(node.local ? '' : 'peers')}>⚙</button>`}</div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
-    ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} />`}
+    ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} onConfigure=${onConfigure} />`}
     ${!node.local && onOfflineAlerts && html`<${OfflineAlertsRow} node=${node} onOfflineAlerts=${onOfflineAlerts} />`}
     ${!node.local && !node.partTime && node.offlineNotice && !node.online && html`<${OfflineNoticeRow} notice=${node.offlineNotice} now=${now ?? Date.now()} onSilence=${onSilence} />`}
     ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
-    ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
+    ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button></div>`}
   </article>`;
 }
 
 // HubCard is the federation hub between this node and its peers: every link
 // to a peer is relayed through it.
-function HubCard({ hub, now }) {
+// admin is whether this node holds hub admin (null while unknown); Manage
+// opens Fleet config → Hub either way, where a non-admin can claim.
+function HubCard({ hub, now, admin, onConfigure }) {
   const connected = hub.state === 'connected';
   const shortID = hub.id.length > 16 ? `${hub.id.slice(0, 16)}…` : hub.id;
   return html`<article class=${`fleet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
@@ -460,11 +467,17 @@ function HubCard({ hub, now }) {
       ${hub.spaces?.length > 0 && html`<dt>Spaces</dt><dd>${hub.spaces.join(', ')}</dd>`}
       ${hub.since != null && html`<dt>${connected ? 'Up' : 'Since'}</dt><dd>${fmtAge(Math.max(0, now - hub.since))}</dd>`}
     </dl>
+    ${onConfigure && html`<div class="fleet-card-hub-admin">${admin === true ? html`<span class="fleet-hub-admin yes">★ hub admin</span>` : admin === false ? html`<span class="muted">not a hub admin</span>` : ''}
+      <button type="button" class="fleet-chip-link" data-fleet="hub-config" title="Fleet config → Hub" onClick=${onConfigure('hub')}>${admin === true ? 'Manage hub…' : 'Hub page…'}</button></div>`}
   </article>`;
 }
 
-// LinkBadge labels a peer's link with both directions of trust, each naming
-// its nodes, and opens a popover that spells out who can do what.
+// terse drops a label's hidden count: the peer's card shows it.
+const terse = (short) => short.split(' · ')[0];
+
+// LinkBadge labels a peer's link on one line with both directions of trust:
+// → what this node may do on the peer, ← what the peer may do here. Each
+// names its nodes in its tooltip, and the popover spells out who can do what.
 function LinkBadge({ link, at, open, onToggle, onConfigure }) {
   const sentence = (dir, ours) => {
     if (dir.level === 'unrestricted') return html`<b>${dir.from} has full peer access to ${dir.to}</b>: every permission a peer can be granted. Administration stays local.`;
@@ -475,8 +488,8 @@ function LinkBadge({ link, at, open, onToggle, onConfigure }) {
   return html`<span class=${`fleet-edge-link${open ? ' open' : ''}`} style=${`left:${at.x}px;top:${at.y}px`}>
     <button type="button" class=${`fleet-edge-label${link.asymmetric ? ' asymmetric' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${`Trust between ${link.in.from} and ${link.in.to}`} onClick=${onToggle}>
-      <span class=${`fleet-link-row ${link.in.level}`}><span class="fleet-link-dir">${link.in.level === 'unrestricted' ? '⚠ ' : ''}${link.in.from} → ${link.in.to}</span> ${link.in.short}</span>
-      <span class=${`fleet-link-row ${link.out.level || 'unknown'}`}><span class="fleet-link-dir">${link.out.level === 'unrestricted' ? '⚠ ' : ''}${link.out.from} → ${link.out.to}</span> ${link.out.short}</span>
+      <span class=${`fleet-link-row ${link.out.level || 'unknown'}`} title=${`${link.out.from} → ${link.out.to}: ${link.out.short}`}><span class="fleet-link-dir">→</span>${link.out.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.out.short)}</span>
+      <span class=${`fleet-link-row ${link.in.level}`} title=${`${link.in.from} → ${link.in.to}: ${link.in.short}`}><span class="fleet-link-dir">←</span>${link.in.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.in.short)}</span>
     </button>
     ${open && html`<div class="fleet-link-pop" role="dialog" aria-label=${`Trust between ${link.in.from} and ${link.in.to}`}>
       <div class="fleet-link-pop-head">${link.asymmetric ? '⇄ Asymmetric link: each side trusts the other differently' : `Trust between ${link.in.from} and ${link.in.to}`}</div>
@@ -553,12 +566,14 @@ function edgePath(a, b) {
 // measureEdges routes the links as they run: this node to the hub, and the
 // hub to each peer. Without a hub card every peer links to this node directly.
 // Untrusted instances share one link to the section that encloses them.
-export function measureEdges(mapEl) {
+// scale is the map's zoom: rects are measured on screen, the edges drawn in
+// the map's own coordinates.
+export function measureEdges(mapEl, scale = 1) {
   if (!mapEl) return [];
   const box = mapEl.getBoundingClientRect();
   const local = mapEl.querySelector('.fleet-card.local');
   if (!local) return [];
-  const side = (el, right) => { const r = el.getBoundingClientRect(); return { x: (right ? r.right : r.left) - box.left, y: r.top - box.top + r.height / 2 }; };
+  const side = (el, right) => { const r = el.getBoundingClientRect(); return { x: ((right ? r.right : r.left) - box.left) / scale, y: (r.top - box.top + r.height / 2) / scale }; };
   const edge = (id, from, to) => ({ id, d: edgePath(from, to), mid: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } });
   const hub = mapEl.querySelector('.fleet-card.hub');
   const from = hub ? side(hub, true) : side(local, true);
@@ -568,13 +583,139 @@ export function measureEdges(mapEl) {
   return hub ? [edge(':hub', side(local, true), side(hub, false)), ...peers] : peers;
 }
 
-export function FleetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions, loadTrust = defaultLoadTrust }) {
+// defaultLoadHubStatus reads whether this node is a hub admin, through Fleet
+// config's actions, loaded on first use like the trust dialog.
+async function defaultLoadHubStatus() {
+  const { createFleetAdminActions } = await import('./fleet-admin-actions.js');
+  return createFleetAdminActions().hubStatus();
+}
+
+// The map zooms between ZOOM_MIN and ZOOM_MAX; buttons step by ZOOM_STEP.
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 2;
+const ZOOM_STEP = 1.2;
+const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+// zoomAt scales view by k about the stage point (px, py), keeping that point
+// under the cursor.
+export function zoomAt(view, k, px, py) {
+  const s = clampZoom(view.s * k);
+  const r = s / view.s;
+  return { s, x: px - (px - view.x) * r, y: py - (py - view.y) * r };
+}
+
+// fitView scales content of size (w, h) to fit a (sw, sh) stage, never past
+// 100%, centred.
+export function fitView(w, h, sw, sh) {
+  if (!w || !h || !sw || !sh) return { s: 1, x: 0, y: 0 };
+  const s = clampZoom(Math.min(1, sw / w, sh / h));
+  return { s, x: Math.max(0, (sw - w * s) / 2), y: Math.max(0, (sh - h * s) / 2) };
+}
+
+// PAN_EXEMPT are the targets a press on starts no pan: cards (their text stays
+// selectable) and controls.
+const PAN_EXEMPT = '.fleet-card, .fleet-edge-link, button, a, input, label, select, textarea';
+
+// useZoomPan zooms the map with the wheel (a trackpad pinch arrives as a
+// ctrl+wheel), a two-finger pinch, or the toolbar; a drag on the background
+// pans. touched flips on the first gesture, so an automatic fit never undoes
+// the operator's own view. ready says the stage is rendered.
+function useZoomPan(stageRef, mapRef, ready) {
+  const [view, setViewRaw] = useState({ s: 1, x: 0, y: 0 });
+  const viewRef = useRef(view);
+  const touched = useRef(false);
+  const setView = (next, byUser = true) => { if (byUser) touched.current = true; viewRef.current = next; setViewRaw(next); };
+  const center = () => { const el = stageRef.current; return [(el?.clientWidth || 0) / 2, (el?.clientHeight || 0) / 2]; };
+  const zoomBy = (k) => { const [cx, cy] = center(); setView(zoomAt(viewRef.current, k, cx, cy)); };
+  const fit = (byUser = true) => {
+    const map = mapRef.current; const stage = stageRef.current;
+    if (!map || !stage) return;
+    setView(fitView(map.scrollWidth, map.scrollHeight, stage.clientWidth, stage.clientHeight), byUser);
+  };
+  const reset = () => setView({ s: 1, x: 0, y: 0 });
+  // fitIfOverflowing fits a map that outgrows its stage until the operator
+  // zooms or pans themselves.
+  const fitIfOverflowing = () => {
+    const map = mapRef.current; const stage = stageRef.current;
+    if (touched.current || !map || !stage || globalThis.matchMedia?.('(max-width: 720px)').matches) return;
+    if (map.scrollWidth > stage.clientWidth + 1 || map.scrollHeight > stage.clientHeight + 1) fit(false);
+  };
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const local = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    // The stacked phone layout (dashboard.css, max-width 720px) scrolls with the page.
+    const stacked = () => !!globalThis.matchMedia?.('(max-width: 720px)').matches;
+    const onWheel = (e) => {
+      if (stacked()) return;
+      e.preventDefault();
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      const [px, py] = local(e);
+      setView(zoomAt(viewRef.current, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015)), px, py));
+    };
+    // pointers holds each active pointer's last stage position.
+    const pointers = new Map();
+    let pinch = 0;
+    const spread = () => { const [a, b] = [...pointers.values()]; return [Math.hypot(a[0] - b[0], a[1] - b[1]), (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
+    const onDown = (e) => {
+      if ((e.button !== 0 && e.pointerType === 'mouse') || stacked()) return;
+      if (!pointers.size && e.target?.closest?.(PAN_EXEMPT)) return;
+      if (pointers.size >= 2) return;
+      pointers.set(e.pointerId, local(e));
+      stage.setPointerCapture?.(e.pointerId);
+      if (pointers.size === 2) pinch = spread()[0];
+      stage.classList.add('panning');
+    };
+    const onMove = (e) => {
+      const last = pointers.get(e.pointerId);
+      if (!last) return;
+      const p = local(e);
+      if (pointers.size === 2) {
+        const [, mx0, my0] = spread();
+        pointers.set(e.pointerId, p);
+        const [d, mx, my] = spread();
+        const v = viewRef.current;
+        const zoomed = pinch > 0 ? zoomAt(v, d / pinch, mx, my) : v;
+        pinch = d;
+        setView({ ...zoomed, x: zoomed.x + mx - mx0, y: zoomed.y + my - my0 });
+        return;
+      }
+      pointers.set(e.pointerId, p);
+      const v = viewRef.current;
+      setView({ ...v, x: v.x + p[0] - last[0], y: v.y + p[1] - last[1] });
+    };
+    const onUp = (e) => {
+      if (!pointers.delete(e.pointerId)) return;
+      pinch = pointers.size === 2 ? spread()[0] : 0;
+      if (!pointers.size) stage.classList.remove('panning');
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    stage.addEventListener('pointerdown', onDown);
+    stage.addEventListener('pointermove', onMove);
+    stage.addEventListener('pointerup', onUp);
+    stage.addEventListener('pointercancel', onUp);
+    return () => {
+      stage.removeEventListener('wheel', onWheel);
+      stage.removeEventListener('pointerdown', onDown);
+      stage.removeEventListener('pointermove', onMove);
+      stage.removeEventListener('pointerup', onUp);
+      stage.removeEventListener('pointercancel', onUp);
+    };
+  }, [ready]);
+  return { view, viewRef, zoomBy, fit, reset, fitIfOverflowing };
+}
+
+export function FleetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode, confirm = shellConfirm, toast = shellToast, updateActions, loadTrust = defaultLoadTrust, loadHubStatus = defaultLoadHubStatus }) {
   const current = state.view.value;
   const fleet = current.mapFleet;
   const mapRef = useRef(null);
+  const stageRef = useRef(null);
+  const frameRef = useRef(null);
+  const zoom = useZoomPan(stageRef, mapRef, !!fleet);
+  const showHub = current.showHub;
+  const [hubAdmin, setHubAdmin] = useState(null);
   const [edges, setEdges] = useState([]);
   const [updating, setUpdating] = useState(null);
-  const [terminals, setTerminals] = useState(null);
   const [linkOpen, setLinkOpen] = useState('');
   // trusting is { row, TrustDialog, actions } once the dialog has loaded.
   const [trusting, setTrusting] = useState(null);
@@ -622,13 +763,42 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   // card contents change height.
   useLayoutEffect(() => {
     if (!current.mapActive || !fleet) return undefined;
-    const update = () => setEdges(measureEdges(mapRef.current));
+    const update = () => { setEdges(measureEdges(mapRef.current, zoom.viewRef.current.s)); zoom.fitIfOverflowing(); };
     update();
     if (typeof ResizeObserver !== 'function' || !mapRef.current) return undefined;
     const ro = new ResizeObserver(update);
     ro.observe(mapRef.current);
     return () => ro.disconnect();
-  }, [current.mapActive, fleetKey, current.summaries, fleet?.hub.state, current.strangers]);
+  }, [current.mapActive, fleetKey, current.summaries, fleet?.hub.state, current.strangers, showHub]);
+
+  // The frame fills the window below the top bar and above the footer, so the
+  // toolbar and legend stay on screen while the map zooms inside.
+  useLayoutEffect(() => {
+    if (!current.mapActive || !fleet) return undefined;
+    const win = document.defaultView || globalThis;
+    const fit = () => {
+      const el = frameRef.current;
+      if (!el || !win.innerHeight || win.matchMedia?.('(max-width: 720px)').matches) { if (el) el.style.height = ''; return; }
+      const footer = document.querySelector('footer')?.offsetHeight || 0;
+      el.style.height = `${Math.max(320, Math.floor(win.innerHeight - el.getBoundingClientRect().top - (win.scrollY || 0) - footer))}px`;
+    };
+    fit();
+    win.addEventListener?.('resize', fit);
+    return () => win.removeEventListener?.('resize', fit);
+  }, [current.mapActive, !!fleet]);
+
+  // The hub card says whether this node is a hub admin: read once per
+  // connection while the card is shown. A peer view's map is this node's,
+  // and its Fleet config lives on this node's page, so it does not ask.
+  useEffect(() => {
+    if (fleet?.hub.state !== 'connected') setHubAdmin(null);
+    if (!current.mapActive || !fleet || remote || !showHub || fleet.hub.state !== 'connected') return undefined;
+    let off = false;
+    Promise.resolve().then(loadHubStatus)
+      .then((s) => { if (!off) setHubAdmin(typeof s?.admin === 'boolean' ? s.admin : null); })
+      .catch(() => { if (!off) setHubAdmin(null); });
+    return () => { off = true; };
+  }, [current.mapActive, fleet?.hub.state, showHub, remote]);
 
   // A link popover closes on Escape or a press anywhere outside it.
   useEffect(() => {
@@ -644,9 +814,9 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
   const card = (node) => cardView(node, current.summaries[node.id], t);
-  // Each card opens its node's per-node view; the node already shown returns
+  // Each card opens its node's Groups page; the node already shown returns
   // to the tab the operator left for the map.
-  const open = (node) => () => pickNode(state, node.id, { navigate: () => navigate(state.lastLocalTab()), remote, switchNode });
+  const open = (node) => () => pickNode(state, node.id, { navigate: () => navigate(state.lastLocalTab()), remote, switchNode, tab: 'groups' });
   // Trusting is this node's own decision, made on this node's page only.
   const strangers = remote ? [] : current.strangers;
   const toggleUntrusted = (e) => { state.setShowUntrusted(e.currentTarget.checked); actions.loadStatus?.(); };
@@ -679,24 +849,45 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const offlineAlerts = (peer) => (remote || !actions.setOfflineAlerts ? undefined : async (on) => {
     try { await actions.setOfflineAlerts(peer.id, on); toast(on ? `Offline alerts for ${peer.name} on` : `${peer.name} is part-time: no offline or back-online messages`, false); actions.loadStatus?.(); } catch (e) { toast(`Offline alerts for ${peer.name}: ${e?.message || e}`, true); }
   });
+  // configure opens a Fleet config section ('' = its landing page), with
+  // the peer a section should open on. A peer view reaches Fleet config only
+  // through a page load home, which drops the section, so it shows no links.
+  const configure = remote ? undefined : (page, target = '') => () => { setLinkOpen(''); if (page) requestFleetPage(page, target); navigate('fleet-admin'); };
+  const configurePeers = configure ? configure('peers') : () => { setLinkOpen(''); navigate('fleet-admin'); };
   const asking = strangers.filter((s) => s.request).length;
-  return html`<div class="fleet-map" ref=${mapRef}>
+  const hubState = fleet.hub.state;
+  const pct = Math.round(zoom.view.s * 100);
+  return html`<div class="fleet-map-frame" ref=${frameRef}>
+    <div class="fleet-map-tools">
+      <label class="fleet-map-check" title="Show the hub between the nodes; hidden, links run node to node"><input type="checkbox" data-fleet="show-hub" checked=${showHub} onChange=${(e) => state.setShowHub(e.currentTarget.checked)} /> Show hub</label>
+      ${!showHub && html`<span class=${`fleet-map-hubstate ${hubState === 'connected' ? 'online' : ''}`}><i aria-hidden="true"></i>hub ${hubState}</span>`}
+      <span class="fleet-zoom" role="group" aria-label="Zoom">
+        <button type="button" aria-label="Zoom out" disabled=${zoom.view.s <= ZOOM_MIN} onClick=${() => zoom.zoomBy(1 / ZOOM_STEP)}>−</button>
+        <button type="button" class="fleet-zoom-level" title="Reset to 100%" onClick=${zoom.reset}>${pct}%</button>
+        <button type="button" aria-label="Zoom in" disabled=${zoom.view.s >= ZOOM_MAX} onClick=${() => zoom.zoomBy(ZOOM_STEP)}>+</button>
+        <button type="button" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢</button>
+      </span>
+      <span class="fleet-map-hint">scroll or pinch to zoom · drag the background to pan</span>
+    </div>
+    <div class="fleet-map-stage" ref=${stageRef}>
+    <div class="fleet-map" ref=${mapRef} style=${`transform:translate(${zoom.view.x}px,${zoom.view.y}px) scale(${zoom.view.s})`}>
     <svg class="fleet-edges" aria-hidden="true">
       ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`fleet-edge${e.id !== ':hub' && !p ? ' untrusted' : live ? ' live' : ' stale'}`} />`; })}
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<${LinkBadge} key=${`l-${e.id}`} link=${linkView(fleet.self.name, p, card(p))} at=${e.mid} open=${linkOpen === e.id}
-      onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${() => { setLinkOpen(''); navigate('fleet-admin'); }} />`; })}
-    <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
-    <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} onSilence=${silence(peer)} onOfflineAlerts=${offlineAlerts(peer)} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
+      onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${configurePeers} />`; })}
+    <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} onConfigure=${configure} /></div>
+    <div class="fleet-map-hub">${showHub && html`<${HubCard} hub=${fleet.hub} now=${t} admin=${remote ? null : hubAdmin} onConfigure=${configure} />`}</div>
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onSilence=${silence(peer)} onOfflineAlerts=${offlineAlerts(peer)} onConfigure=${configure} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
       <h4>On the hub, not trusted <span class="muted">${strangers.length}</span>${asking > 0 && html` <span class="fleet-map-asking">· ${asking} asking to be trusted</span>`}</h4>
       <div class="fleet-map-strangers-cards">${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} onAsk=${ask(row)} onDismiss=${dismiss(row)} />`)}</div>
     </div>`}</div>
+    </div>
+    </div>
     ${trusting && html`<${trusting.TrustDialog} row=${trusting.row} actions=${trusting.actions} onClose=${() => setTrusting(null)} onDone=${trusted} />`}
-    ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
-    <div class="fleet-legend"><span aria-hidden="true"><i class="live"></i>linked, reachable</span><span aria-hidden="true"><i class="stale"></i>unreachable or stale</span>${strangers.length > 0 && html`<span aria-hidden="true"><i class="untrusted"></i>on the hub, not trusted</span>`}<span aria-hidden="true">Counts show only what each node shares with you. A link's label shows its trust in each direction; click it for details.</span>
+    <div class="fleet-legend"><span aria-hidden="true"><i class="live"></i>linked, reachable</span><span aria-hidden="true"><i class="stale"></i>unreachable or stale</span>${strangers.length > 0 && html`<span aria-hidden="true"><i class="untrusted"></i>on the hub, not trusted</span>`}<span aria-hidden="true">Counts show only what each node shares with you. A link's label shows its trust in each direction (→ what you may do there, ← what it may do here); click it for details.</span>
       ${!remote && html`<label class="fleet-untrusted-toggle" title="Also show instances on the hub that this node has not trusted, to trust them from here"><input type="checkbox" data-fleet="show-untrusted" checked=${current.showUntrusted} onChange=${toggleUntrusted} /> Show untrusted</label>`}</div>
   </div>`;
 }

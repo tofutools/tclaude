@@ -16,6 +16,9 @@ export const LAST_VIEW_PREF = 'tclaude.dash.fleet.lastView';
 // SHOW_UNTRUSTED_PREF remembers the map's "show untrusted" checkbox.
 export const SHOW_UNTRUSTED_PREF = 'tclaude.dash.fleet.showUntrusted';
 
+// SHOW_HUB_PREF remembers the map's "show hub" checkbox (shown by default).
+export const SHOW_HUB_PREF = 'tclaude.dash.fleet.showHub';
+
 function readLastView(prefs) {
   try { return prefs.getItem(LAST_VIEW_PREF) === 'fleet-admin' ? 'fleet-admin' : 'map'; } catch { return 'map'; }
 }
@@ -51,6 +54,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   // showUntrusted is this page's choice; null defers to the pref, read
   // lazily for the same reason as lastFleet below.
   const showUntrusted = signal(null);
+  const showHub = signal(null);
   const focused = signal('');
   // statusLoaded flips once the first federation status read settles, so the
   // map can tell "no linked nodes" from "not loaded yet".
@@ -89,6 +93,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
     noFleet: noFleet.value,
     setupSeen: setupSeen.value || readSetupSeen(prefs),
     showUntrusted: untrustedShown(),
+    showHub: hubShown(),
     strangers: untrustedShown() ? strangers.value : strangers.value.filter((s) => s.request),
   }));
   function untrustedShown() {
@@ -99,6 +104,14 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
     showUntrusted.value = !!on;
     if (!on) strangers.value = strangers.value.filter((s) => s.request);
     try { prefs.setItem(SHOW_UNTRUSTED_PREF, on ? '1' : ''); } catch { /* best effort */ }
+  }
+  function hubShown() {
+    if (showHub.value != null) return showHub.value;
+    try { return prefs.getItem(SHOW_HUB_PREF) !== '0'; } catch { return true; }
+  }
+  function setShowHub(on) {
+    showHub.value = !!on;
+    try { prefs.setItem(SHOW_HUB_PREF, on ? '' : '0'); } catch { /* best effort */ }
   }
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
@@ -130,7 +143,7 @@ export function createFleetState({ activeTab = dashboardState.activeTab, now = (
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
   function lastFleetTab() { return lastFleet || readLastView(prefs); }
-  return Object.freeze({ fleet, node, fused, setFused, strangers, untrustedShown, setShowUntrusted, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
+  return Object.freeze({ fleet, node, fused, setFused, strangers, untrustedShown, setShowUntrusted, hubShown, setShowHub, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, markSetupSeen, entry, commitSummary, failSummary, setFocused, lastLocalTab, lastFleetTab, dispose: stopTracking });
 }
 
 export const fleetState = createFleetState();
