@@ -288,6 +288,16 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   assert.ok(row('agt_b1') && groupEl('reviewers@forge'), 'rows and groups render');
   assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, false, "this node's group headers drag (group-reorder.js)");
   assert.equal(harness.fireEvent(groupEl('reviewers@forge').querySelector('summary'), 'dragstart').defaultPrevented, true, 'a peer trusting this node restricted keeps its groups');
+  // A pending or queued spawn row drags to the bin (dnd.js) on a node this
+  // one acts on.
+  const spawnRow = (key) => {
+    const table = harness.document.createElement('table');
+    table.innerHTML = '<tbody><tr class="dnd-draggable" data-dnd-pending="1" data-dnd-queued="7"><td>q</td></tr></tbody>';
+    groupEl(key).appendChild(table);
+    return table.querySelector('tr');
+  };
+  assert.equal(harness.fireEvent(spawnRow('builders@desk'), 'dragstart').defaultPrevented, false, "this node's queued spawn drags to the bin");
+  assert.equal(harness.fireEvent(spawnRow('reviewers@forge'), 'dragstart').defaultPrevented, true, 'a restricted peer\'s does not');
   // dnd.js's pending Ctrl/Cmd clone hover must not finish under a move
   // between nodes this view takes.
   const dndOps = await harness.importDashboardModule('js/dnd-ops.js');
