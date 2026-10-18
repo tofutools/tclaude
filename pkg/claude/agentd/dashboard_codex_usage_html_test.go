@@ -29,7 +29,7 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	must("const codexUsage = usage?.codex", "usageView reads the Codex sub-object")
 	must("subscriptionLine('claude', 'Claude:', claude, 'anthropic')", "the Claude line is labelled, keyed, and attributed")
 	must("subscriptionLine('codex', 'Codex:', codex, 'openai')", "the Codex line is labelled, keyed, and attributed")
-	must("const usage = state.snapshot.value?.usage", "the Preact shell reads accepted snapshot usage")
+	must("const usage = peerShown ? peerShown.usage : state.snapshot.value?.usage", "the Preact shell reads accepted snapshot usage (or the fused view's chosen node)")
 	must("usageView(usage, { ...savedModes, ...modes })", "the Preact shell applies persisted and current display modes")
 	must("key=${line.key}", "Preact preserves usage-line identity across polls")
 	must("key=${token.key}", "Preact preserves usage-token identity across polls")

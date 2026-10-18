@@ -39,7 +39,7 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 	present("function DebugApp(", "Debug has a Preact owner")
 	present("function CreditsLeaderboard(", "Vegas leaderboard has a Preact owner")
 	present("key=${entry.conv}", "leaderboard rows carry stable Preact keys")
-	present("function Usage({ state })", "usage has a Preact owner")
+	present("function Usage({ state, fleet = fleetState, fetchImpl = undefined })", "usage has a Preact owner")
 	present("function FooterMeta({ state })", "footer metadata has a Preact owner")
 	present("function JobsApp(", "Jobs has a Preact owner")
 	present("function AccessApp(", "Access has a Preact owner")
