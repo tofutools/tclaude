@@ -872,3 +872,26 @@ test('a shell terminal refuses file drops without uploading', () => {
     interactions.dispose();
   }
 });
+
+test('a remote node without file paste gets a concise version hint', async () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const statuses = [];
+  const interactions = attachTerminalInteractions({
+    term: harness.term, host: harness.host,
+    setStatus: (s) => statuses.push(s),
+    terminalPath: '/api/federation/terminal?peer=bob&agent=agt_1&mode=interactive',
+    fetchImpl: async () => ({
+      ok: false, status: 415,
+      text: async () => JSON.stringify({ code: 'image', error: 'only PNG, JPEG and WebP images with matching MIME type are accepted' }),
+    }),
+  });
+  try {
+    const notes = new File(['# n'], 'notes.md', { type: 'text/markdown' });
+    harness.host.dispatch('drop', dropEvent({ items: [fileItem(notes)], files: [notes] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(statuses.at(-1), 'file paste failed: remote node accepts images only — update both nodes to the same version');
+  } finally {
+    interactions.dispose();
+  }
+});

@@ -470,12 +470,22 @@ async function uploadFiles(files, signal, terminalPath, anyFile, fetchImpl) {
   files.forEach((file, i) => fd.append('file', file, uploadName(file, i, stamp, anyFile)));
   // A remote terminal's upload is proxied to the peer under /api/federation/,
   // which a peer-view page keeps local (remote-node.js rewrites other /api/).
-  const base = terminalPath.startsWith('/api/federation/terminal?') ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
+  const remote = terminalPath.startsWith('/api/federation/terminal?');
+  const base = remote ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
   const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
   const res = await fetchImpl(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
-  if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let error = null;
+    try { error = JSON.parse(text); } catch (_) { /* plain-text error */ }
+    // A node from before arbitrary file paste refuses non-images this way.
+    if (remote && res.status === 415 && error?.code === 'image') {
+      throw new Error('remote node accepts images only — update both nodes to the same version');
+    }
+    throw new Error(error?.error || text || `HTTP ${res.status}`);
+  }
   const payload = await res.json();
   return (payload.files || []).map(f => f.path).filter(Boolean);
 }
