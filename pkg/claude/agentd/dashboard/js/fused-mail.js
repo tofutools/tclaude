@@ -751,7 +751,7 @@ export function FusedMail({
       </div>
       <${MailPager} id="fused-mail-pager" hidden=${isAccess || !totalUnfiltered} page=${shown} pages=${pageCount} pageSize=${pageSize}
         onPage=${(n) => { nav.current = 'push'; setPage(n); setSelected(''); }} onPageSize=${setPageSize}
-        note=${deeper ? 'pick one node for older mail' : ''} />
+        stepping=${page} note=${deeper ? 'pick one node for older mail' : ''} />
     </div>
     <${Reader} item=${item} remote=${remote} snapshot=${snapshot} peerView=${item ? entries[item.node.id]?.peerView : null} timers=${timers} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
       onDone=${() => setReload((r) => r + 1)} onDelete=${deleteRows} />

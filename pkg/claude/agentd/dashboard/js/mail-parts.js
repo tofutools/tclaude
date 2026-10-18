@@ -17,6 +17,7 @@ import { ROSTER_MAX } from './fused-mail-model.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { LockReason } from './lock-reason.js';
+import { Pager } from './pager.js';
 import { shellConfirm } from './shell-state.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
 
@@ -250,22 +251,9 @@ export const PAGE_SIZES = [25, 50, 100, 200];
 
 // MailPager steps through a folder's pages and picks the page size. note
 // follows the page position (the fused view says where its pages end).
-export function MailPager({ id, hidden = false, page, pages, pageSize, onPage, onPageSize, note = '' }) {
-  if (hidden) return html`<div id=${id} class="mail-pager" hidden></div>`;
-  page = Math.min(page, pages);
-  const atStart = page <= 1;
-  const atEnd = page >= pages;
-  return html`<div id=${id} class="mail-pager">
-    ${pages > 1 && html`<${Fragment}><button title="First page" disabled=${atStart} onClick=${() => onPage(1)}>«</button>
-      <button title="Previous page" disabled=${atStart} onClick=${() => onPage(page - 1)}>‹</button>
-      <span class="mail-pager-pos">Page ${page} / ${pages}</span>
-      <button title="Next page" disabled=${atEnd} onClick=${() => onPage(page + 1)}>›</button>
-      <button title="Last page" disabled=${atEnd} onClick=${() => onPage(pages)}>»</button></${Fragment}>`}
-    ${note && html`<span class="mail-pager-note muted">${note}</span>`}
-    <span class="grow"></span><label class="mail-pager-size" title="Messages per page">
-      <select class="mail-page-size" value=${pageSize} onChange=${(event) => onPageSize(Number(event.currentTarget.value))}>
-        ${PAGE_SIZES.map(size => html`<option value=${size}>${size}</option>`)}</select> / page</label>
-  </div>`;
+export function MailPager({ id, hidden = false, page, pages, pageSize, onPage, onPageSize, note = '', stepping = 0 }) {
+  return html`<${Pager} id=${id} prefix="mail-pager" hidden=${hidden} page=${page} pages=${pages} onPage=${onPage} note=${note} stepping=${stepping}
+    sizes=${PAGE_SIZES} pageSize=${pageSize} onPageSize=${onPageSize} sizeClass="mail-page-size" sizeTitle="Messages per page" />`;
 }
 
 // MailFilters is the folder filter above the sidebar and the message filter

@@ -8,8 +8,8 @@
 // the snapshot while the corresponding virtual group is visible, then stitches
 // the page back onto the snapshot object (so downstream renderers keep reading
 // data.retired / data.conversations / data.replaced unchanged). This module
-// owns the per-list offset/limit those fetches send and renders the pager footer
-// the virtual groups show.
+// owns the per-list offset/limit those fetches send; the virtual groups' pager
+// footer is pager.js's.
 //
 // Modals + cross-tab filters that need the COMPLETE list (bulk delete-retired,
 // the cleanup tool, the add-member promote picker, the Messages-tab prev-gen
@@ -110,39 +110,6 @@ export function setListPageSize(kind, size) {
   if (!PAGE_SIZES.includes(size)) size = DEFAULT_PAGE_SIZE;
   dashPrefs.setItem(sizeKey(kind), String(size));
   offsets[kind] = 0;
-}
-
-// listPagerHTML renders the pager footer for a virtual group, or '' when the
-// list fits on one page. paging is the {offset,limit,total,total_unfiltered}
-// envelope refresh.js stitched in for this list.
-export function listPagerHTML(kind, paging) {
-  if (!paging) return '';
-  const limit = listLimit(kind);
-  const total = paging.total || 0;
-  const off = paging.offset || 0;
-  if (total <= limit && off === 0) return ''; // single page — no pager chrome
-  const from = total === 0 ? 0 : off + 1;
-  const to = Math.min(off + limit, total);
-  const atFirst = off <= 0;
-  const atLast = off + limit >= total;
-  const sizeOpts = PAGE_SIZES
-    .map(s => `<option value="${s}"${s === limit ? ' selected' : ''}>${s}/page</option>`)
-    .join('');
-  // Pager controls use data-pager (NOT data-act) so the global row-action
-  // click handler ignores them; refresh.js binds a dedicated delegated
-  // listener on #groups-list. They stay <button>/<select> so the drag/menu
-  // suppression checks (closest('button, …')) treat them as interactive.
-  const btn = (act, glyph, title, disabled) =>
-    `<button type="button" class="list-pager-btn" data-pager="${act}" data-list="${kind}"`
-    + `${disabled ? ' disabled' : ''} title="${title}" aria-label="${title}">${glyph}</button>`;
-  return `<div class="list-pager" data-list="${kind}">`
-    + btn('first', '«', 'First page', atFirst)
-    + btn('prev', '‹', 'Previous page', atFirst)
-    + `<span class="list-pager-count">${from}–${to} of ${total}</span>`
-    + btn('next', '›', 'Next page', atLast)
-    + btn('last', '»', 'Last page', atLast)
-    + `<select class="list-pager-size" data-pager="size" data-list="${kind}" title="Rows per page">${sizeOpts}</select>`
-    + `</div>`;
 }
 
 // fetchListFull pulls the COMPLETE list from one of the three endpoints (no

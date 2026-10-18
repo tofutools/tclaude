@@ -12,6 +12,7 @@ import { isWizardActive } from './slop.js';
 import { PAGE_SIZES, listLimit } from './list-paging.js';
 import { activityModeViews, activitySummary } from './group-activity.js';
 import { ActivityModes } from './activity-bots.js';
+import { Pager } from './pager.js';
 import {
   GROUP_DEFAULT_PROFILE_ROLE, GROUP_SANDBOX_PROFILE_ROLE, RESOLVED_DEFAULTS_LABEL,
 } from './resolved-defaults.js';
@@ -234,28 +235,12 @@ function SortHead({ table, columns, lead = null }) {
   })}</tr></thead>`;
 }
 
-function Pager({ kind, paging }) {
+// ListPager is a virtual list's pager; groups-island.js (this node's lists)
+// and fleet-merged-island.js (a peer's, data-node) handle its controls.
+function ListPager({ kind, paging }) {
   if (!paging) return null;
-  const limit = listLimit(kind);
-  const total = paging.total || 0;
-  const offset = paging.offset || 0;
-  if (total <= limit && offset === 0) return null;
-  const first = offset <= 0;
-  const last = offset + limit >= total;
-  const button = (action, glyph, title, disabled) => html`<button
-    key=${action} type="button" class="list-pager-btn" data-pager=${action}
-    data-list=${kind} data-node=${paging.node || undefined} disabled=${disabled} title=${title} aria-label=${title}
-  >${glyph}</button>`;
-  return html`<div class="list-pager" data-list=${kind}>
-    ${button('first', '«', 'First page', first)}
-    ${button('prev', '‹', 'Previous page', first)}
-    <span class="list-pager-count">${total ? offset + 1 : 0}–${Math.min(offset + limit, total)} of ${total}</span>
-    ${button('next', '›', 'Next page', last)}
-    ${button('last', '»', 'Last page', last)}
-    <select class="list-pager-size" data-pager="size" data-list=${kind} title="Rows per page" value=${String(limit)}>
-      ${PAGE_SIZES.map((size) => html`<option key=${size} value=${size}>${size}/page</option>`)}
-    </select>
-  </div>`;
+  return html`<${Pager} layout="range" total=${paging.total || 0} offset=${paging.offset || 0} limit=${listLimit(kind)}
+    sizes=${PAGE_SIZES} sizeOption=${(size) => `${size}/page`} delegated data=${{ 'data-list': kind, 'data-node': paging.node || undefined }} />`;
 }
 
 function EditableGroupChip({ group, actions, field, value, className, action, title, children, type = 'text', inputClass, placeholder, inputProps, normalize = (next) => next.trim(), message, passModifiedClick = false }) {
@@ -789,7 +774,7 @@ function VirtualList({ group, kind, Table, names, target }) {
   const empty = html`<div class="muted"><${ThemeText} regular=${names.regularEmpty} wizard=${names.wizardEmpty} /></div>`;
   return html`<${VirtualShell} group=${group} target=${target} summary=${summary}>
     ${rows.length ? html`<${Table} rows=${rows} />` : empty}
-    <${Pager} kind=${kind} paging=${group.paging} />
+    <${ListPager} kind=${kind} paging=${group.paging} />
   <//>`;
 }
 
