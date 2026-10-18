@@ -434,6 +434,7 @@ test('on a peer page the reader answers, marks and downloads through that peer',
   await harness.act(() => button(mounted.container, 'Reply').click());
   assert.equal(opened.length, 1);
   assert.equal(opened[0].nodeName, 'forge');
+  assert.equal(opened[0].online, false, 'the sender is not in the peer snapshot');
   await opened[0].send('on it');
   assert.deepEqual(calls[1], { url: '/api/human-inbox/reply', body: { id: 51, body: 'on it' } });
   await mounted.unmount();

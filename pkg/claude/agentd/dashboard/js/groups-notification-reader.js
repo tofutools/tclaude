@@ -13,6 +13,7 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { remoteNodeID } from './fleet-model.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
+import { senderOnline } from './message-access-dialog-model.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -268,6 +269,8 @@ export function GroupsNotificationReader({
           // A peer's notification is answered through that peer, text only.
           ...(remote ? {
             nodeName: peerName,
+            // The page's snapshot is the peer's, so it knows the sender's liveness.
+            online: senderOnline(snapshot, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || ''),
             send: (body) => postPeerJSON('/api/human-inbox/reply', { id: message.id, body }),
           } : {}),
         });
