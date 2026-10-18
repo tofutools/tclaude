@@ -8,7 +8,7 @@ import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import {
-  GroupsFocusSwitch, effectiveGroupsFocus, useGroupsFocusRestore,
+  GroupsFocusSwitch, effectiveGroupsFocus, focusRun, useGroupsFocusRestore,
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
@@ -288,7 +288,7 @@ export function GroupsLensList({
   if (focus === 'agents') return tree;
   return html`<${GroupsProcessesFocus} groups=${groups} allGroups=${rosters} wizard=${wizard}
     filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
-    focusedRun=${state.focusedRun.value} onFocusRun=${state.setFocusedRun}>${tree}<//>`;
+    focusedRun=${state.focusedRun.value} onFocusRun=${(run, options) => focusRun(state, run, options)}>${tree}<//>`;
 }
 
 export function GroupsList({ host, state, actions, processSource = undefined }) {

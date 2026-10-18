@@ -300,6 +300,12 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(normalizeLocation({ tab: 'messages', item: '3' }), { tab: 'messages' });
   assert.deepEqual(fromPath('/terminals/agt_a/extra'), { tab: 'terminals', selection: 'agt_a' });
   assert.deepEqual(resolveStale({ tab: 'messages', selection: 'gone', item: '3' }, () => false), { tab: 'messages' });
+  // The Groups single-run focus: a group and a run under the runs subtab.
+  const runFocus = { tab: 'groups', subtab: 'runs', selection: 'ops team', item: 'run_1' };
+  assert.equal(toPath(runFocus), '/groups/runs/ops%20team/run_1');
+  assert.deepEqual(fromPath('/groups/runs/ops%20team/run_1'), runFocus);
+  assert.deepEqual(fromPath('/groups/routes/rte_1/stray'), { tab: 'groups', subtab: 'routes', selection: 'rte_1' });
+  assert.deepEqual(fromPath('/groups/routes', '?group=ops'), { tab: 'groups', subtab: 'routes', params: { group: 'ops' } });
   // A search, sender, page and folder filter ride on the location as params.
   const searched = { tab: 'messages', selection: 'human', params: { q: 'deploy failed', from: 'agt_1', page: '3', box: 'ops' } };
   assert.equal(toPath(searched), '/messages/human');

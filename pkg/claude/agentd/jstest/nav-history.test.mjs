@@ -388,8 +388,9 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     harness.importDashboardModule('js/nav-history.js'),
   ]);
   const groupsFocus = harness.signals.signal(focus);
+  const focusedRun = harness.signals.signal(null);
   const unregister = registerFeatureState('groups', {
-    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focus: groupsFocus,
+    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focus: groupsFocus, focusedRun,
   });
   t.after(unregister);
   const restores = [];
@@ -397,11 +398,16 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     restores.push(event.detail.location);
     if (event.detail.location.tab === 'groups') {
       const { subtab } = event.detail.location;
+      if (subtab === 'runs') {
+        focusedRun.value = { group: event.detail.location.selection, runId: event.detail.location.item };
+        return;
+      }
+      focusedRun.value = null;
       groupsFocus.value = subtab === 'processes' || subtab === 'agents' ? subtab : 'both';
     }
   });
   initNavHistory();
-  return { harness, browsing, restores, groupsFocus };
+  return { harness, browsing, restores, groupsFocus, focusedRun };
 }
 
 test('a /groups/processes deep link restores the Processes focus', async (t) => {
@@ -647,4 +653,18 @@ test('a Messages search survives the deep link next to the page-global theme', a
   }));
   assert.equal(browsing.calls.at(-1).kind, 'push');
   assert.equal(browsing.at(), '/messages/human?slop=1&q=rollback');
+});
+
+test('Back from a run opened in Both closes it on bare Groups', async (t) => {
+  const { harness, browsing, restores, focusedRun } = await bootGroupsFocus(t, '/');
+  focusedRun.value = { group: 'ops', runId: 'run_1' };
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
+    detail: { location: { tab: 'groups', subtab: 'runs', selection: 'ops', item: 'run_1' } },
+  }));
+  assert.equal(browsing.at(), '/groups/runs/ops/run_1');
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
+  restores.length = 0;
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.deepEqual(restores, [{ tab: 'groups' }]);
+  assert.equal(focusedRun.value, null);
 });

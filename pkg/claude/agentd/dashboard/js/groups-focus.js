@@ -53,6 +53,31 @@ export function groupsFocusLocation(focus) {
   return lens === 'both' ? { tab: 'groups' } : { tab: 'groups', subtab: lens };
 }
 
+// groupsRunLocation is the single-run focus: /groups/runs/<group>/<run-id>.
+// Both and Processes show it alike, so the lens is not part of it.
+export function groupsRunLocation(run) {
+  return { tab: 'groups', subtab: 'runs', selection: run.group, item: run.runId };
+}
+
+// shownGroupsLocation is the location for what `focus` shows: the open run
+// when that lens shows the single-run focus, else the lens itself.
+function shownGroupsLocation(state, focus) {
+  const run = state.focusedRun?.value;
+  return run && normalizeGroupsFocus(focus) !== 'agents' ? groupsRunLocation(run) : groupsFocusLocation(focus);
+}
+
+// focusRun opens the single-run focus on `run` (null closes it) as a user
+// gesture, announcing the new location so nav-history pushes one entry. A
+// correction (the run's group is gone) rewrites the current entry instead.
+export function focusRun(state, run, { correction = false, doc = document } = {}) {
+  const before = state.focusedRun.value;
+  state.setFocusedRun(run);
+  if (state.focusedRun.value === before) return false;
+  const location = shownGroupsLocation(state, effectiveGroupsFocus(state));
+  doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location, correction } }));
+  return true;
+}
+
 // focusFromLocation is the lens a Groups location names: its subtab, or Both.
 export function focusFromLocation(location) {
   return normalizeGroupsFocus(location?.subtab);
@@ -68,7 +93,7 @@ export function chooseGroupsFocus(state, next, { doc = document } = {}) {
   if (state.focus.value === focus && !onRoutes) return false;
   if (onRoutes) state.setSubview('members', '');
   state.setFocus(focus);
-  doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: groupsFocusLocation(focus) } }));
+  doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: shownGroupsLocation(state, focus) } }));
   return true;
 }
 
@@ -104,13 +129,20 @@ export function agentCount(groups) {
 }
 
 // useGroupsFocusRestore applies history traversal: a Groups location carries
-// the focus in its subtab (none = Both). Route map locations leave the
-// remembered focus alone.
+// the focus in its subtab (none = Both), or the open run (runs), which keeps
+// a lens that shows it and otherwise opens in Processes. Route map locations
+// leave the remembered focus alone.
 export function useGroupsFocusRestore(state, doc = document) {
   useEffect(() => {
     const restore = (event) => {
       const location = event.detail?.location;
       if (location?.tab !== 'groups' || location.subtab === 'routes') return;
+      if (location.subtab === 'runs') {
+        showRunsLens(state);
+        state.setFocusedRun(location.selection && location.item ? { group: location.selection, runId: location.item } : null);
+        return;
+      }
+      state.setFocusedRun?.(null);
       state.setFocus(focusFromLocation(location));
     };
     doc.addEventListener('tclaude:restore-location', restore);

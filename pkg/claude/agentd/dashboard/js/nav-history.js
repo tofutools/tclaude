@@ -110,7 +110,8 @@ function defaultGroupsLocation() {
   return normalizeLocation({ tab: DEFAULT_TAB });
 }
 
-// The Groups lenses (/groups/agents, /groups/processes) exist only while the
+// The Groups lenses (/groups/agents, /groups/processes) and the single-run
+// focus (/groups/runs/...) exist only while the
 // processes feature is on; processes.js mirrors that onto body.hide-processes.
 // Without it there is one lens, and it lives at bare /groups.
 function groupsProcessesFocusAvailable() {
@@ -120,7 +121,7 @@ function groupsProcessesFocusAvailable() {
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
-    && !(loc.tab === 'groups' && (loc.subtab === 'processes' || loc.subtab === 'agents') && !groupsProcessesFocusAvailable())
+    && !(loc.tab === 'groups' && ['processes', 'agents', 'runs'].includes(loc.subtab) && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
@@ -157,6 +158,13 @@ function activeLocationFromDOM() {
     if (island?.subview?.value === 'routes') {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
+      loc.params = { group: island.routeGroup?.value };
+    } else if (island?.focusedRun?.value && island.focus?.value !== 'agents' && groupsProcessesFocusAvailable()) {
+      // The single-run focus shows in Both and Processes alike, so the lens
+      // stays out of its URL (groups-focus.js groupsRunLocation).
+      loc.subtab = 'runs';
+      loc.selection = island.focusedRun.value.group;
+      loc.item = island.focusedRun.value.runId;
     } else if ((island?.focus?.value === 'processes' || island?.focus?.value === 'agents') && groupsProcessesFocusAvailable()) {
       loc.subtab = island.focus.value;
     }
@@ -307,8 +315,9 @@ function activate(loc, { traversal = false } = {}) {
       // fallback must not turn the remembered lens into Both.
       const groups = featureState('groups');
       const singleLens = groups?.focus?.value === 'processes' || groups?.focus?.value === 'agents';
+      // Back from an open run onto bare Groups (Both) must close the run.
       if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
-        || (traversal && singleLens && groupsProcessesFocusAvailable())) {
+        || (traversal && (singleLens || groups?.focusedRun?.value) && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );

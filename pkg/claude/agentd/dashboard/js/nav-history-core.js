@@ -50,7 +50,8 @@ export const KNOWN_TABS = new Set([
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
 // sub-navigation. These tabs have one today:
-//   - Groups: Members (bare), the Route map, and the Processes focus.
+//   - Groups: Members (bare), the Route map, the Agents and Processes
+//     lenses, and the single-run focus (runs).
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor. Processes renders as a subtab
@@ -68,7 +69,7 @@ export const KNOWN_TABS = new Set([
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
-  groups: new Set(['members', 'routes', 'agents', 'processes']),
+  groups: new Set(['members', 'routes', 'agents', 'processes', 'runs']),
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
@@ -99,9 +100,11 @@ export const LEGACY_TAB_LOCATIONS = Object.freeze({
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
 // SINGLE entity, so a third path segment carries meaning there:
 //   - processes/templates/<template-id> — the template editor is open on it.
+//   - groups/routes/<route-id> — the Route map has that route selected.
+//   - groups/runs/<group> — the single-run focus, on a run of that group.
 // A selection parsed under any other tab/subtab is dropped.
 export const SELECTABLE_SUBTABS = {
-  groups: new Set(['routes']),
+  groups: new Set(['routes', 'runs']),
   processes: new Set(['templates']),
 };
 
@@ -119,6 +122,13 @@ export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
 // An item without a selection, or under any other tab, is dropped.
 export const ITEM_TABS = new Set(['messages']);
 
+// ITEM_SUBTABS is ITEM_TABS for selections under a subtab, the item riding
+// in the FOURTH path segment:
+//   - groups/runs/<group>/<run-id> — the single-run focus on that run.
+export const ITEM_SUBTABS = {
+  groups: new Set(['runs']),
+};
+
 // TAB_PARAMS enumerates, per tab, the query params that are part of a
 // location rather than of the page: two entries that differ only in them are
 // distinct history steps. Order here is the order they are written in a URL.
@@ -127,8 +137,10 @@ export const ITEM_TABS = new Set(['messages']);
 //   - messages: q (the message search), from (the exact sender a Groups
 //     notification link narrows to), page (1-based, omitted for page 1),
 //     box (the folder filter).
+//   - groups: group (the group the Route map shows).
 export const TAB_PARAMS = {
   messages: ['q', 'from', 'page', 'box'],
+  groups: ['group'],
 };
 
 // normalizeParams keeps the tab's known params with a non-empty value, as
@@ -176,7 +188,8 @@ export function normalizeLocation(loc) {
     : SELECTABLE_TABS.has(tab);
   if (loc && loc.selection && selectable) {
     out.selection = String(loc.selection);
-    if (loc.item != null && loc.item !== '' && ITEM_TABS.has(tab)) out.item = String(loc.item);
+    const itemable = out.subtab ? !!ITEM_SUBTABS[tab]?.has(out.subtab) : ITEM_TABS.has(tab);
+    if (loc.item != null && loc.item !== '' && itemable) out.item = String(loc.item);
   }
   const params = normalizeParams(tab, loc && loc.params);
   if (params) out.params = params;
@@ -391,14 +404,14 @@ export function fromPath(pathname, search) {
   for (const [key, value] of query) params[key] = value;
   const parts = pathPart.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
-  let [tab, second, third] = parts;
+  let [tab, second, third, fourth] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
   // /automations/processes/... is the Processes view nested under
   // Automations. The pre-nesting /processes/... route parses the same way and
   // is healed in place to the canonical form.
   if (tab === 'automations' && second === 'processes') {
-    [tab, second, third] = ['processes', third, parts[3]];
+    [tab, second, third, fourth] = ['processes', third, parts[3], parts[4]];
   } else if (tab === 'automations') tab = 'jobs';
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (fleet-state.js reads the path for that), healed in place.
@@ -412,7 +425,7 @@ export function fromPath(pathname, search) {
   if (SELECTABLE_TABS.has(tab)) {
     return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third), params });
   }
-  return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), params });
+  return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), item: decodeSelection(fourth), params });
 }
 
 // ---- Stale-target resolution --------------------------------------------
