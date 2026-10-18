@@ -16,9 +16,9 @@ function requireController() {
 }
 
 // node names another node's group (blank: the page's): the dialog lists
-// that node's groups and members and sends there.
-export function openMessageCreateModal(prefill = {}, node = '') {
-  return requireController().openMessage(prefill, node);
+// that node's groups and members and sends there; nodeName titles it.
+export function openMessageCreateModal(prefill = {}, node = '', nodeName = '') {
+  return requireController().openMessage(prefill, node, nodeName);
 }
 
 export function openOperatorMessageDialog(context = {}) {

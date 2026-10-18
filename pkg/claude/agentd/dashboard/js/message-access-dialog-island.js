@@ -7,7 +7,8 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
-import { nodeSnapshot } from './node-api.js';
+import { isPageNode, nodeSnapshot } from './node-api.js';
+import { LockReason, NodeChip } from './lock-reason.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
@@ -185,7 +186,7 @@ function useLiveTheme() {
   }, []);
 }
 
-export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent }) {
+export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, groupLocked = '' }) {
   useLiveTheme();
   const scope = value.scopeGroup || '';
   const groups = groupsForPicker(snapshot, scope);
@@ -204,8 +205,8 @@ export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent }) {
     <div class="cron-target-modes">
       <label><input type="radio" name=${modeName} value="solo" checked=${value.mode === 'solo'}
         onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo familiar"/></label>
-      <label><input type="radio" name=${modeName} value="group" checked=${value.mode === 'group'}
-        onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label>
+      <label class=${groupLocked ? 'locked-field' : ''}><input type="radio" name=${modeName} value="group" checked=${value.mode === 'group'}
+        disabled=${!!groupLocked} onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label><${LockReason} why=${groupLocked}/>
     </div>
     ${value.mode === 'solo' && !scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-solo`}>
       <input id=${`${prefix}-target`} type="text" value=${value.target}
@@ -309,6 +310,18 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   const bodyRef = useRef(null);
   const [error, setError] = useState('');
   const members = scopedGroup ? groupMembers(snapshot, scopedGroup) : [];
+  // On a peer that does not trust this node unrestricted, its messaging
+  // grant delivers one agent at a time, from this node's operator: the same
+  // dialog, with what it withholds locked and the reason on the 🔒.
+  const remotePage = globalThis.__tclaudeRemoteNode?.id && !descriptor.node;
+  const nodeName = descriptor.nodeName || (descriptor.node && !isPageNode(descriptor.node) ? descriptor.node.slice(0, 13) : '')
+    || (remotePage ? globalThis.document?.documentElement?.dataset?.remoteNodeName || 'this peer' : '');
+  const restricted = !!snapshot?.peer_view && snapshot.peer_view.level !== 'unrestricted';
+  const lock = restricted ? {
+    from: `${nodeName || 'This peer'} delivers it from you, the operator. Sending as one of its agents needs its unrestricted trust.`,
+    role: `${nodeName || 'This peer'} delivers to each ticked member under its messaging grant; a role filter needs its unrestricted trust.`,
+    group: `Multicast to a whole group needs ${nodeName || 'this peer'}'s unrestricted trust. Its group's ✉ button messages the members it shares.`,
+  } : {};
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
   const selectedMembers = customized ? members.filter((member) => memberIsSelected(selected, member)) : members;
   const initialMode = initial.targetMode === 'group' ? 'group' : 'solo';
@@ -346,6 +359,18 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       to = target.target.trim();
       if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a familiar or use 🔍 to pick.')); return; }
     }
+    if (restricted) {
+      if (!scopedGroup && target.mode === 'group') { setError(lock.group); return; }
+      const recipients = scopedGroup ? selectedMembers.map((member) => member.agent_id || member.conv_id) : [to];
+      busyRef.current = true;
+      setBusy(true);
+      try {
+        await actions.sendDirectMessages(recipients, { subject: subject.trim(), body }, descriptor.node || '');
+        state.close();
+      } catch (cause) { setError(errorText(cause)); }
+      finally { busyRef.current = false; setBusy(false); }
+      return;
+    }
     // A blank From multicasts AS THE OPERATOR (tagged "human operator"); a solo
     // send still needs a sender agent to attribute and reply to.
     const isGroup = to.startsWith('group:');
@@ -370,17 +395,17 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     initialFocusRef=${bodyRef} registerClose=${registerClose}>
     <h3 id="message-create-title"><${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
-      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/></h3>
+      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
     <p id="message-create-desc" class="modal-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
       wizard=${scopedGroup ? `Delivers one immediate missive to the familiars of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
-    <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class="cron-target-input-row">
-      <input id="message-create-from" type="text" value=${from} placeholder="blank = you (the operator) · or a sender: agt_ id / title / conv-id"
-        autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
-      <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list" onClick=${chooseFrom}>🔍</button>
-    </div></div></label>
+    <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
+      <input id="message-create-from" type="text" value=${lock.from ? '' : from} placeholder=${lock.from ? 'you (the operator)' : 'blank = you (the operator) · or a sender: agt_ id / title / conv-id'}
+        disabled=${!!lock.from} autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
+      <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍</button>
+    </div><${LockReason} id="message-create-from-lock" why=${lock.from}/></div></label>
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
-      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent}/>
+      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
       <p class="cleanup-hint" id="message-create-group-hint">${groupExists
         ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${customized ? 'custom selection is retained across live updates.' : 'all selected follows live membership.'}`
@@ -397,8 +422,8 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
-      <input id="message-create-role" type="text" value=${role} placeholder="optional — blank / all = entire target (e.g. dev)"
-        autocomplete="off" spellcheck="false" onInput=${(event) => setRole(event.currentTarget.value)} /></label>`}
+      <span class="cron-create-target"><input id="message-create-role" type="text" value=${lock.role ? '' : role} placeholder="optional — blank / all = entire target (e.g. dev)"
+        class=${lock.role ? 'locked-field' : ''} disabled=${!!lock.role} autocomplete="off" spellcheck="false" onInput=${(event) => setRole(event.currentTarget.value)} /><${LockReason} id="message-create-role-lock" why=${lock.role}/></span></label>`}
     <label class="cron-create-row"><span class="cron-create-label">Subject</span><input id="message-create-subject" type="text" maxlength="100"
       value=${subject} placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck="false" onInput=${(event) => setSubject(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea ref=${bodyRef} id="message-create-body" rows="4"

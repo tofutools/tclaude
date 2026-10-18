@@ -240,3 +240,20 @@ test("sudo, permission saves and messages on another node's row go to that node"
     '/api/message',
   ]);
 });
+
+test('direct messages go one per recipient to the node, and a partial refusal is reported', async () => {
+  const { createMessageAccessDialogActions } = await import('../dashboard/js/message-access-dialog-actions.js');
+  const sent = []; const notes = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body); sent.push([url, body.to]);
+    return body.to === 'agt_bob'
+      ? { ok: false, status: 403, text: async () => JSON.stringify({ error: 'not shared' }) }
+      : { ok: true, status: 200, text: async () => '{}' };
+  };
+  const actions = createMessageAccessDialogActions({ fetchImpl, notify: (m, err) => notes.push([m, !!err]) });
+  const result = await actions.sendDirectMessages(['agt_ada', 'agt_bob'], { body: 'hi' }, '');
+  assert.deepEqual(sent, [['/api/operator-message', 'agt_ada'], ['/api/operator-message', 'agt_bob']]);
+  assert.equal(result.sent, 1);
+  assert.match(notes[0][0], /message saved for 1 recipient; 1 refused \(agt_bob: not shared\)/);
+  assert.equal(notes[0][1], true);
+});

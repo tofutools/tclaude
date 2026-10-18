@@ -86,6 +86,28 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
+  // sendDirectMessages delivers one operator message per recipient on node,
+  // as a peer that grants messaging (but not its unrestricted trust) takes
+  // them: one agent at a time, from this node's operator.
+  async function sendDirectMessages(recipients, { subject = '', body }, node = '') {
+    const failed = [];
+    for (const to of recipients) {
+      try {
+        await requestJSON(on(node), '/api/operator-message', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, subject, body }),
+        });
+      } catch (cause) {
+        failed.push(`${to}: ${cause?.message || cause}`);
+      }
+    }
+    announceNodeChanged(node);
+    const sent = recipients.length - failed.length;
+    if (!sent) throw new Error(failed.join('; ') || 'nothing sent');
+    notify(`message saved for ${sent} recipient${sent === 1 ? '' : 's'}${failed.length ? `; ${failed.length} refused (${failed.join('; ')})` : ''}`, failed.length > 0);
+    return { sent, failed };
+  }
+
   async function replyHuman({ id, body, files, label }) {
     const attachmentToken = await uploadOperatorAttachments(files);
     const payload = { id, body };
@@ -172,5 +194,5 @@ export function createMessageAccessDialogActions({
     return { overrides: kept };
   }
 
-  return Object.freeze({ sendMessage, sendOperatorMessage, replyHuman, grantSudo, savePermissions });
+  return Object.freeze({ sendMessage, sendDirectMessages, sendOperatorMessage, replyHuman, grantSudo, savePermissions });
 }

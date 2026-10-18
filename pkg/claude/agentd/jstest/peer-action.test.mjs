@@ -108,10 +108,9 @@ test('a node-scoped client addresses the peer routes itself; messages go to one 
     ['POST', '/api/peer/inst_forge7/agents/agt_1/move', { group: 'alpha' }],
     ['POST', '/api/peer/inst_forge7/operator-message', { to: 'agt_1', subject: 's', body: 'hi' }],
   ]);
-  assert.deepEqual(mod.groupMembers([{ name: 'ops', members: [{ agent_id: 'agt_ada1', title: 'ada' }, { agent_id: 'agt_x;rm' }, { conv_id: 'c1' }] }], 'ops'), [{ agent: 'agt_ada1', label: 'ada' }]);
 });
 
-test('the group message button on a peer view opens a one-agent message dialog', async (t) => {
+test('the group message button on a peer view opens the regular message dialog for that group', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-action.js');
   const limits = await harness.importDashboardModule('js/peer-view-limits.js');
@@ -123,22 +122,12 @@ test('the group message button on a peer view opens a one-agent message dialog',
   assert.equal(limits.peerAction(msg('{"groupName":"ops"}'), pv), null, 'unshared messaging');
   assert.equal(limits.peerAction(msg('{"groupName":"o ps<"}'), shared), null);
   assert.equal(limits.peerAction(msg('not json'), shared), null);
-  const sent = []; const toasts = [];
-  const actions = { message: async (to, o) => { sent.push([to, o]); return {}; } };
+  const opened = [];
   const snapshot = harness.signals.signal({ peer_view: shared, groups: [{ name: 'ops', members: [{ agent_id: 'agt_ada1', title: 'ada' }] }] });
-  const mounted = await harness.mount(harness.html`<${mod.PeerActionHost} snapshot=${snapshot} remote=${{ id: 'inst_forge7' }} actions=${actions} toast=${(m) => toasts.push(m)} doc=${doc} />`);
+  const mounted = await harness.mount(harness.html`<${mod.PeerActionHost} snapshot=${snapshot} remote=${{ id: 'inst_forge7' }} openMessage=${(...args) => opened.push(args)} doc=${doc} />`);
   await harness.act(() => doc.dispatchEvent(new harness.window.CustomEvent(limits.PEER_ACTION_EVENT, { detail: { action: 'message', group: 'ops' } })));
-  assert.match(doc.querySelector('#peer-message-title').textContent, /Message ops on forge/);
-  assert.equal(doc.querySelector('#peer-message-send').disabled, true, 'nothing to send yet');
-  const body = doc.querySelector('#peer-message-body');
   await harness.act(() => Promise.resolve());
-  assert.equal(doc.activeElement, body, 'the body owns initial focus');
-  body.value = 'status?';
-  await harness.act(() => harness.fireEvent(body, 'input'));
-  await harness.act(() => doc.querySelector('#peer-message-send').click());
-  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
-  assert.deepEqual(sent, [['agt_ada1', { subject: '', body: 'status?' }]], 'the only member is preselected');
-  assert.match(toasts[0], /Message sent to ada on forge/);
-  assert.equal(doc.querySelector('#peer-message-modal'), null);
+  assert.deepEqual(opened, [[{ targetMode: 'group', groupName: 'ops' }, '', 'forge']], "the page's own node, by name");
+  assert.equal(doc.querySelector('#peer-message-modal'), null, 'no separate peer dialog');
   await mounted.unmount();
 });
