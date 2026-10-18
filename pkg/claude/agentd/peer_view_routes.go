@@ -41,6 +41,8 @@ var peerViewLocalRoutes = []string{
 	// A download staged for the peer to read chunk by chunk
 	// (dashboard_peer_downloads.go).
 	"/api/peer-downloads", "GET /api/peer-downloads/{id}",
+	// An upload staged in chunks (dashboard_peer_uploads.go).
+	"POST /api/peer-uploads", "POST /api/peer-uploads/chunk", "/api/peer-uploads/finish",
 	"POST /api/paf/publish", "GET /api/snapshots", "POST /api/snapshots", "POST /api/snapshots/prune", "GET /api/snapshots/{name}", "DELETE /api/snapshots/{name}", "GET /api/snapshots/{name}/export", "POST /api/snapshots/{name}/spawn", "GET /api/resilience/policies",
 	"GET /api/federation/hub/run",
 	"POST /api/federation/hub/run",
@@ -353,6 +355,7 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /api/peer-agent-attachments/{node}/{message}/{attachment}",
 	"GET /api/peer-message-export/{node}/{message}",
 	"GET /api/peer-download/{node}",
+	"POST /api/peer-upload/{node}",
 	"/api/human-messages/",
 	"/api/human-messages/clear",
 	"/api/human-messages/delete",

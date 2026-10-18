@@ -110,3 +110,15 @@ test('a spawn on an unrestricted peer or on this node opens the local dialog the
   assert.deepEqual(prepared, ['build']);
   assert.ok(opened.pop().remote, 'a restricted peer opens request mode');
 });
+
+test("a node's spawn attachments go to it through this node, in chunks past the peer view's request limit", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createAgentSpawnActions }, nodeApi] = await Promise.all([harness.importDashboardModule('js/agent-spawn-actions.js'), harness.importDashboardModule('js/node-api.js')]);
+  nodeApi.setSelfNode('inst_desk0001');
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => { calls.push([String(url), init.method || 'GET']); return respond({ files: [{ path: '/tmp/x/a.png' }] }); };
+  const actions = createAgentSpawnActions({ fetchImpl }).forNode({ node: NODE, nodeId: NODE, name: 'forge' });
+  const paths = await actions.uploadAttachments([{ file: new Blob(['png']), name: 'a.png' }]);
+  assert.deepEqual(paths, ['/tmp/x/a.png'], "the node's own staged paths, for its spawn");
+  assert.deepEqual(calls, [[`/api/peer-upload/${NODE}?path=${encodeURIComponent('/api/spawn-attachments')}`, 'POST']]);
+});

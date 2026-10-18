@@ -320,6 +320,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardPeerRoutes(mux)
 	registerDashboardPeerAttachmentRoutes(mux)
 	registerDashboardPeerDownloadRoutes(mux)
+	registerDashboardPeerUploadRoutes(mux)
 	registerDashboardEditRoutes(mux)
 }
 
