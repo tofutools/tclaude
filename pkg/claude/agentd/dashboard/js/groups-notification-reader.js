@@ -160,6 +160,9 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
     queue = { tail: Promise.resolve(), confirmed: prior };
     readWrites.set(id, queue);
   }
+  // A restricted peer's page lists its notifications at their own cadence:
+  // the write shows there at once, ahead of any read still in flight.
+  if (peer && !node) refreshPageNotifications(id, read, fallback);
   const request = queue.tail.catch(() => {}).then(async () => {
     const route = readRoute(id, read, peer);
     const response = await fetch(route.url, {
@@ -174,13 +177,12 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
   try {
     await request;
     queue.confirmed = read;
-    // A restricted peer's page reads its notifications at their own cadence:
-    // the next snapshot tick reads them anew.
-    if (peer && !node) refreshPageNotifications(id, read);
+    if (peer && !node) refreshPageNotifications();
   } catch (error) {
     const current = (state.snapshot.value?.messages || [])
       .find((message) => message.id === id);
     if (current?.read === read) replaceMessageRead(state, id, queue.confirmed);
+    if (peer && !node) refreshPageNotifications(id, queue.confirmed, fallback);
     onError?.(error);
   } finally {
     if (queue.tail === request) readWrites.delete(id);

@@ -80,21 +80,29 @@ export function usePeerNotifications({ active, peers, fetchFor, timers = globalT
 // node.messages.read the snapshot poll (refresh.js) attaches the peer's unread
 // ones, read from its mailbox through the page's fetch at the notification
 // cadence, never per tick.
-const pageRead = { at: -Infinity, inflight: false, list: null, total: 0 };
+const pageRead = { at: -Infinity, inflight: false, list: null, total: 0, gen: 0 };
 
 export function resetPageNotificationsForTest() {
-  Object.assign(pageRead, { at: -Infinity, inflight: false, list: null, total: 0 });
+  Object.assign(pageRead, { at: -Infinity, inflight: false, list: null, total: 0, gen: 0 });
 }
 
-// refreshPageNotifications has the next snapshot tick read them again: a
-// notification was just marked read (id, which leaves the list at once) or
-// unread from here.
-export function refreshPageNotifications(id = null, read = false) {
+// refreshPageNotifications records a read or unread written from here (row:
+// the notification as shown) and has the next snapshot tick read them anew.
+// The row stays listed with its new state, so a reader holding it sees the
+// change, and a read already in flight, answered from before the write, is
+// dropped.
+export function refreshPageNotifications(id = null, read = false, row = null) {
   pageRead.at = -Infinity;
-  if (read && pageRead.list?.some((m) => m.id === id)) {
-    pageRead.list = pageRead.list.filter((m) => m.id !== id);
-    pageRead.total = Math.max(0, pageRead.total - 1);
-  }
+  pageRead.gen += 1;
+  if (id == null || !pageRead.list) return;
+  const current = pageRead.list.find((m) => m.id === id);
+  if (current) {
+    if (current.read === read) return;
+    pageRead.list = pageRead.list.map((m) => (m.id === id ? { ...m, read } : m));
+  } else if (!read && row) {
+    pageRead.list = [...pageRead.list, { ...row, read }].sort((a, b) => b.id - a.id);
+  } else return;
+  pageRead.total = Math.max(0, pageRead.total + (read ? -1 : 1));
 }
 
 export function attachPageNotifications(data, {
@@ -105,10 +113,13 @@ export function attachPageNotifications(data, {
   if (!pageRead.inflight && !hidden && now - pageRead.at >= PEER_NOTIFICATIONS_POLL_MS) {
     pageRead.at = now;
     pageRead.inflight = true;
+    const gen = pageRead.gen;
     void fetchImpl(`/api/mailbox?id=human&unread=1&page=1&page_size=${PEER_NOTIFICATIONS_PAGE}`, { credentials: 'same-origin', cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       .then((body) => {
         if (!Array.isArray(body?.messages)) return;
+        // A write from here since this read began: its answer is older.
+        if (gen !== pageRead.gen) { pageRead.at = -Infinity; return; }
         pageRead.list = body.messages.filter((m) => m && !m.read);
         pageRead.total = Number.isFinite(body.total) ? body.total : pageRead.list.length;
       })
@@ -116,7 +127,8 @@ export function attachPageNotifications(data, {
       .finally(() => { pageRead.inflight = false; });
   }
   if (pageRead.list) {
-    data.messages = pageRead.list;
+    // Copies: a consumer flipping a row's read state must not write the cache.
+    data.messages = pageRead.list.map((m) => ({ ...m }));
     data.messages_unread = pageRead.total;
   }
   return data;
