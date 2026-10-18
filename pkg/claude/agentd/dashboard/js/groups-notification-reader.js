@@ -1,5 +1,5 @@
 import { Fragment, h } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortAgentId } from './helpers.js';
 import { humanNotificationMatchesSender } from './human-notification-attention.js';
@@ -88,21 +88,38 @@ function senderMessages(sender, snapshot) {
     .filter((message) => humanNotificationMatchesSender(message, sender));
 }
 
-function replaceMessageRead(state, id, read) {
+// The snapshot carries only unread and recent notifications. The reader
+// therefore loads the sender's history once and keeps every row it has
+// shown, so a notification marked read stays open (and can be marked unread
+// again) after the next snapshot drops it. Snapshot rows win: they carry the
+// live read state.
+const SENDER_HISTORY_PAGE = 50;
+
+function mergedSenderMessages(sender, snapshot, known) {
+  const byID = new Map(known);
+  for (const message of senderMessages(sender, snapshot)) byID.set(message.id, message);
+  for (const [id, message] of byID) known.set(id, message);
+  return [...byID.values()].sort((a, b) => b.id - a.id);
+}
+
+function replaceMessageRead(state, id, read, fallback = null) {
   const snapshot = state.snapshot.value;
-  const current = (snapshot?.messages || []).find((message) => message.id === id);
+  const current = (snapshot?.messages || []).find((message) => message.id === id) || fallback;
   if (!snapshot || !current || current.read === read) return null;
+  const inSnapshot = (snapshot.messages || []).some((message) => message.id === id);
+  const messages = inSnapshot
+    ? snapshot.messages.map((message) => (message.id === id ? { ...message, read } : message))
+    : [...(snapshot.messages || []), { ...current, read }].sort((a, b) => b.id - a.id);
   state.publish({
     ...snapshot,
-    messages: snapshot.messages.map((message) =>
-      message.id === id ? { ...message, read } : message),
+    messages,
     messages_unread: Math.max(0, Number(snapshot.messages_unread || 0) + (read ? -1 : 1)),
   });
   return current.read;
 }
 
-export async function persistHumanMessageRead(state, id, read, onError) {
-  const prior = replaceMessageRead(state, id, read);
+export async function persistHumanMessageRead(state, id, read, onError, fallback = null) {
+  const prior = replaceMessageRead(state, id, read, fallback);
   if (prior === null) return;
   let queue = readWrites.get(id);
   if (!queue) {
@@ -164,7 +181,27 @@ export function GroupsNotificationReader({
 }) {
   const closeRef = useRef(null);
   const remote = remoteNodeID();
-  const messages = senderMessages(descriptor.sender, snapshot);
+  const senderKey = descriptor.sender.agent || descriptor.sender.conv || '';
+  const known = useRef({ sender: null, rows: new Map() });
+  if (known.current.sender !== senderKey) known.current = { sender: senderKey, rows: new Map() };
+  const [, setHistoryLoaded] = useState(0);
+  useEffect(() => {
+    if (!senderKey) return undefined;
+    let live = true;
+    const params = new URLSearchParams({ id: 'human', sender: senderKey, page_size: String(SENDER_HISTORY_PAGE) });
+    fetch(`/api/mailbox?${params.toString()}`, { credentials: 'same-origin' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (!live || known.current.sender !== senderKey || !Array.isArray(payload?.messages)) return;
+        for (const row of payload.messages) {
+          if (!known.current.rows.has(row.id)) known.current.rows.set(row.id, row);
+        }
+        setHistoryLoaded((n) => n + 1);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [senderKey]);
+  const messages = mergedSenderMessages(descriptor.sender, snapshot, known.current.rows);
   const found = messages.find((item) => item.id === descriptor.messageId) || messages[0];
   // A peer's files are read through this node's peer attachment routes; the
   // URLs it sends name its own, which on this origin would read this node's.
@@ -280,7 +317,7 @@ export function GroupsNotificationReader({
         openHumanNotifications(senderID, message.id);
       }}>Open in Messages ↗</button>
       <button type="button" disabled=${!!markLock} onClick=${() =>
-        persistHumanMessageRead(state, message.id, !message.read, actions.reportError)}>
+        persistHumanMessageRead(state, message.id, !message.read, actions.reportError, found)}>
         ${message.read ? 'Mark unread' : 'Mark read'}
       </button><${LockReason} why=${markLock} />
       <span class="grow"></span>

@@ -446,9 +446,13 @@ async function loadMailboxes() {
 
 // focus names a human notification whose page the server should serve: the
 // snapshot only carries recent and unread notifications, so the page of an
-// arbitrary one is the server's to compute.
+// arbitrary one is the server's to compute. It stays pending until a response
+// that carried it commits, so a background refresh that supersedes the
+// focused request asks for the same page instead of page 1.
 async function loadMessages({ focus = 0 } = {}) {
   const id = mail.selected;
+  if (focus) mail.pendingFocus = focus;
+  const focusID = id === HUMAN_ID ? mail.pendingFocus : 0;
   // The access-requests folder renders from the live snapshot, not from
   // /api/mailbox — there are no stored rows to page. Skip the fetch so it
   // doesn't 404 on a mailbox that doesn't exist server-side.
@@ -465,7 +469,7 @@ async function loadMessages({ focus = 0 } = {}) {
     page_size: String(mail.pageSize),
   });
   if (id === HUMAN_ID && mail.senderFilter) params.set('sender', mail.senderFilter);
-  if (id === HUMAN_ID && focus) params.set('focus', String(focus));
+  if (focusID) params.set('focus', String(focusID));
   // The "all" firehose and group folders honour include_retired
   // server-side — a group folder hides retired members' traffic by
   // default, like the firehose. Sending it for a specific agent folder is
@@ -484,7 +488,9 @@ async function loadMessages({ focus = 0 } = {}) {
     // attachment routes; the URLs the peer sends name its own routes.
     const remote = remoteNodeID();
     if (remote && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m, id !== HUMAN_ID));
-    mailState.messageRequest.commitRequest(token, data);
+    if (mailState.messageRequest.commitRequest(token, data) && focusID && mail.pendingFocus === focusID) {
+      mail.pendingFocus = 0;
+    }
   } catch (error) {
     if (mailState.messageRequest.failRequest(token, error)) clearMessages();
   }
@@ -1104,6 +1110,7 @@ function selectMailbox(id, options = {}) {
     });
   }
   mail.selected = id;
+  mail.pendingFocus = 0;
   mail.selectedMsgId = null;
   mail.selectedMsgs.clear();  // message selection is per-folder
   mail.messages = [];
@@ -1232,6 +1239,8 @@ async function openHumanNotifications(sender, messageID) {
     focus: messageID,
   });
   if (!selected) return;
+  // A refresh superseded the focused load before it committed; finish it.
+  if (mail.pendingFocus) await loadMessages();
   const exact = messageID
     ? mail.messages.find((message) => message.id === messageID)
     : null;
@@ -1592,6 +1601,7 @@ async function focusNextAttention(snapshot) {
 
   const selected = await selectMailbox(HUMAN_ID, { focus: target.id });
   if (!selected || mail.selected !== HUMAN_ID) return false;
+  if (mail.pendingFocus) await loadMessages();
   if (!mail.messages.some((message) => message.id === target.id)) {
     paintMail();
     return false;
