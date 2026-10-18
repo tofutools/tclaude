@@ -170,7 +170,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       interactions.closeMenu(true);
       actions.openStandingOrders(group);
     }} />
-    <${MenuButton} data-act="message-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every familiar, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
+    <${MenuButton} data-act="message-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every familiar, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
     <${MenuButton} ...${shared} data-act="view-group-messages" title=${wizardMode ? "Open this party's missives in the Messages tab" : "Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts"} regular="🗂 view messages" wizard="🗂 view missives" />
     <${MenuButton} ...${shared} data-act="set-group-context"
       title=${contextTitle}

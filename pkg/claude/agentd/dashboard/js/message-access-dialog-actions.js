@@ -60,8 +60,8 @@ export function createMessageAccessDialogActions({
     });
   }
 
-  async function sendMessage(payload) {
-    const response = await requestJSON(fetchImpl, '/api/message', {
+  async function sendMessage(payload, node = '') {
+    const response = await requestJSON(on(node), '/api/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
