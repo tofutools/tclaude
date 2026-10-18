@@ -88,7 +88,7 @@ import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, 
 import { humanNotificationTargetPage } from './human-notification-attention.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { remoteNodeID } from './fleet-model.js';
-import { featureState } from './peer-view-limits.js';
+import { humanReadShared } from './peer-view-limits.js';
 import {
   adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
@@ -1145,10 +1145,10 @@ function markOpenedHumanRead(id) {
   const m = mail.messages.find(x => x.id === id);
   if (!m || m.read) return;
   // On a peer's page the notification is the peer's: it is marked read
-  // through its human-inbox route, and only where the peer lets this
-  // operator answer (/api/human-messages is this node's own).
+  // through its human-inbox route, and only where the peer grants this
+  // operator node.messages.mark-read (/api/human-messages is this node's own).
   const remote = remoteNodeID();
-  if (remote && featureState('human.inbox.answer', lastSnapshot?.peer_view) !== 'shared') return;
+  if (remote && !humanReadShared(lastSnapshot?.peer_view)) return;
   m.read = true;  // optimistic — selectMessage repaints immediately after
   (async () => {
     try {

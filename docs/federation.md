@@ -3449,11 +3449,15 @@ The action command never retries mutations automatically.
 An operator running several nodes of their own can read and answer each node's
 human inbox from one dashboard. A node serves `GET /api/human-inbox` (the
 newest 50 unread human notifications and the pending ask-human requests of its own
-agents) and the answers `POST /api/human-inbox/reply {id, body}`,
-`POST /api/human-inbox/read {id[, read:false]} | {all:true}` and
+agents) and the answers `POST /api/human-inbox/reply {id, body}` and
 `POST /api/human-inbox/access/{id} {decision: approve|deny}` only to a peer it
 trusts unrestricted (`human.inbox.read` / `human.inbox.answer`); these slugs
-cannot be granted or requested. Decisions are one-shot: "always allow" and
+cannot be granted or requested. Read state,
+`POST /api/human-inbox/read {id[, read:false]} | {all:true}`, has its own
+grantable instance-wide slug `node.messages.mark-read` (off by default;
+unrestricted trust holds it): with it and `node.messages.read`, opening a
+notification on the peer's page or in fused Messages marks it read there, as
+it does locally. It carries no reply, delete or approval authority. Decisions are one-shot: "always allow" and
 extending a deadline stay with the node's own operator, as do peer access
 requests, away-cover forwards, process obligations and attachments. An
 approval lets the blocked call run with all its effects (a `sudo.*` request
@@ -4171,7 +4175,8 @@ Reading a page does not change any message's read state.
 `POST /api/peer/INSTANCE/mailbox/mark-read` accepts `{ids:[ID],read:true|false}`
 or `{conv:CONV,read:true}` under the separate, off-by-default instance-wide
 `node.messages.manage` grant. It changes agent mail read state only. Delete,
-wipe and human message mutations are not shared through these routes.
+wipe and human message mutations are not shared through these routes; a
+human notification's read state is `node.messages.mark-read`'s (above).
 
 A human notification's files are part of the mail `node.messages.read` shows.
 `GET /api/peer-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only) reads one

@@ -35,6 +35,7 @@ import {
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
+import { humanReadShared } from './peer-view-limits.js';
 import { registerFusedMailRoute, senderOnline } from './mail-bridge.js';
 import { fromPath, locEquals, normalizeLocation, toPath, toQuery, withoutOverlays } from './nav-history-core.js';
 import {
@@ -198,6 +199,8 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, roster
               mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [],
               agentsTotal: Number.isFinite(roster?.agents_total) ? roster.agents_total : null,
               agentsUnread: Number.isFinite(roster?.agents_unread) ? roster.agents_unread : 0,
+              // What a peer shares from here rides on its reads.
+              peerView: roster?.peer_view || null,
               ...(mode === 'roster' ? { status: null, at: now() } : {}),
             });
             // An unrestricted peer's access requests keep the sidebar count
@@ -268,10 +271,25 @@ function senderHarness(message, snapshot) {
   return sender?.state?.harness || '';
 }
 
-function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openOnNode, onDone, onDelete }) {
+// humanMarkable reports whether this operator marks a node's human
+// notifications read from here: this node, a peer that trusts it
+// unrestricted, or one granting node.messages.mark-read (peerView, from its
+// mail reads).
+export function humanMarkable(node, peerView) {
+  return canActOnHuman(node) || humanReadShared(peerView);
+}
+
+function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, toast, openOnNode, onDone, onDelete }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { setText(''); setBusy(false); }, [item?.key]);
+  // Opening a human notification marks it read on its node, as each node's
+  // own Messages does, wherever that node lets this operator. Once per open:
+  // a later "mark unread" sticks.
+  const autoMark = item?.kind === 'human' && !item.read && humanMarkable(item.node, peerView) ? item.key : '';
+  useEffect(() => {
+    if (autoMark) actions.humanRead(item.node, item.id, true).then(onDone, () => {});
+  }, [autoMark]);
   if (!item) {
     return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
       <div class="empty">Select a message to read.</div></div>`;
@@ -298,7 +316,7 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
       // route) is answered through the peer's human-inbox; so is this node's
       // on a peer's page, where its data-act buttons are refused.
       const peer = node.local && !remote ? null : {
-        name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node),
+        name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node), canMark: humanMarkable(node, peerView),
         mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
       };
       return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
@@ -664,7 +682,7 @@ export function FusedMail({
         onPage=${(n) => { nav.current = 'push'; setPage(n); setSelected(''); }} onPageSize=${setPageSize}
         note=${deeper ? 'pick one node for older mail' : ''} />
     </div>
-    <${Reader} item=${item} remote=${remote} snapshot=${snapshot} timers=${timers} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
+    <${Reader} item=${item} remote=${remote} snapshot=${snapshot} peerView=${item ? entries[item.node.id]?.peerView : null} timers=${timers} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
       onDone=${() => setReload((r) => r + 1)} onDelete=${deleteRows} />
     <${MailGutters} />
   </div>`;

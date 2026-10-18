@@ -608,6 +608,12 @@ test('on a peer\'s page, Messages answers notifications through the peer and lea
   await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } }); });
   assert.ok(c.querySelector('[data-human="reply"]').disabled && c.querySelector('[data-human="mark"]').disabled);
   assert.match(c.querySelector('[data-human="reply"]').title, /for reading only/);
+  // node.messages.mark-read lets this operator mark them read (as opening one
+  // does), without answering.
+  await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages', 'node.messages.mark-read'], omitted: [] } }); });
+  assert.ok(c.querySelector('[data-human="reply"]').disabled);
+  assert.equal(c.querySelector('[data-human="mark"]').disabled, false);
+  assert.equal(c.querySelector('#mail-mark-all').disabled, false);
 
   // Agent mail: read state goes to the peer; deleting stays its operator's.
   await harness.act(() => { state.value = { ...state.value, selected: 'conv-a' }; });

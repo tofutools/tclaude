@@ -369,7 +369,7 @@ export function MessageBody({ message, agentMail = false }) {
 //
 // On this node row-action-handler.js runs them (data-act): reply opens the
 // reply dialog, focus raises the sender's terminal. A notification that lives
-// on another node (peer = { name, exportNode, canAnswer, mark(id, read),
+// on another node (peer = { name, exportNode, canAnswer, canMark, mark(id, read),
 // reply(id, body) }, each action a promise) is answered through that node's
 // human-inbox routes, reply in the same dialog. What the node does not take
 // from here stays in place, greyed, with the reason on hover.
@@ -397,7 +397,10 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
     </div>`;
   }
   const { name } = peer;
+  // An older caller names one answer gate for both.
+  const canMark = peer.canMark ?? peer.canAnswer;
   const readOnly = `${name} shares its notifications for reading only — answering them from here needs its unrestricted trust`;
+  const markLocked = `${name} shares its notifications for reading only — marking them read from here needs its node.messages.mark-read`;
   const mark = () => {
     setBusy(true);
     const read = !message.read;
@@ -428,8 +431,8 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
       title=${peer.canAnswer ? `Reply to this agent on ${name} — opens a dialog to send your answer back` : readOnly} onClick=${reply}>reply</button>
       <button type="button" data-human="focus" disabled
         title=${`Focus raises a terminal window on this node; ${name}'s agent opens from its Groups tab`}>focus</button></${Fragment}>`}
-    <button type="button" data-human="mark" disabled=${busy || !peer.canAnswer}
-      title=${peer.canAnswer ? `${markTitle} on ${name}` : readOnly} onClick=${mark}>${markLabel}</button>
+    <button type="button" data-human="mark" disabled=${busy || !canMark}
+      title=${canMark ? `${markTitle} on ${name}` : markLocked} onClick=${mark}>${markLabel}</button>
     <span class="spacer"></span>
     <${MessageDownloadMenu} message=${message} node=${peer.exportNode || ''} toast=${toast} />
     <button type="button" class="danger" data-human="delete" disabled title=${`Only ${name}'s own operator deletes its notifications`}>delete</button>

@@ -398,6 +398,14 @@ export function featureState(feature, peerView) {
   return included.includes(feature) ? 'shared' : 'omitted';
 }
 
+// humanReadShared reports whether the peer lets this operator mark its human
+// notifications read or unread (node.messages.mark-read; unrestricted trust
+// holds it), which opening one does as it does locally. A peer on an older
+// build served that under human.inbox.answer.
+export function humanReadShared(peerView) {
+  return featureState('node.messages.mark-read', peerView) === 'shared' || featureState('human.inbox.answer', peerView) === 'shared';
+}
+
 // UNRESTRICTED_TRUST names what a feature no peer grant opens takes.
 const UNRESTRICTED_TRUST = 'unrestricted trust';
 

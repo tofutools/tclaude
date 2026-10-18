@@ -166,6 +166,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'node.groups.create', kind: 'node', sensitive: true, what: 'create plain groups here (no directory, environment, profile or clone; templates and clones take unrestricted trust)' },
   { slug: 'node.messages.read', kind: 'node', what: 'private human notifications and agent mailbox history across this node', warning: 'Exposes private message bodies across this node, including human notifications and agent-to-agent mail. Default off. Does not allow replies or approval decisions.' },
   { slug: 'node.messages.manage', kind: 'node', sensitive: true, what: 'explicitly mark agent mailbox messages read or unread across this node; no delete, reply or approval authority' },
+  { slug: 'node.messages.mark-read', kind: 'node', what: 'mark your human notifications read or unread from its dashboard (opening one there marks it read, as it does here); no reply, delete or approval authority' },
   { slug: 'node.harnesses.read', kind: 'node', what: 'harness availability and versions' },
   { slug: 'costs.read', kind: 'node', what: 'the complete node-wide cost collection' },
   { slug: 'federation.audit.read', kind: 'node', what: 'the complete node-wide dashboard audit log' },

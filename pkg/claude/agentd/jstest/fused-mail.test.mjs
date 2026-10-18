@@ -417,3 +417,40 @@ test('the fused view routes its folder, message, page and search through the URL
   assert.deepEqual(events, [], 'a restore records nothing');
   await mounted.unmount(); state.dispose();
 });
+
+test('opening a notification marks it read on its node wherever that node allows it (node.messages.mark-read)', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'restricted' },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'restricted' },
+  ] });
+  const timers = fakeTimers(); const posts = [];
+  // forge grants this operator node.messages.mark-read; lab only reading.
+  const peerView = (url) => ({ peer: 'desk', level: 'restricted', included: url.includes('inst_forge') ? ['node.messages', 'node.messages.mark-read'] : ['node.messages'], omitted: [] });
+  const respond = async (url, init = {}) => {
+    if (init.method === 'POST') { posts.push(`POST ${url} ${init.body}`); return ok({ ok: true }); }
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [], ...(url.startsWith('/api/peer/') ? { peer_view: peerView(url) } : {}) });
+    const from = url.match(/^\/api\/peer\/inst_(\w+)/)?.[1] || 'desk';
+    return ok({ messages: [{ id: 5, from_agent: 'agt_abcd1234', subject: `${from} note`, body: 'b', created_at: '2026-01-01T00:00:00Z', read: false }], total: 1 });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
+  await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Human notifications/ }), 'click'));
+  await once();
+  const open = async (key) => harness.act(async () => { harness.fireEvent(c.querySelector(`.mail-row-wrap[data-key="${key}"] .mail-row`), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+
+  await open('inst_forge/human/5');
+  assert.deepEqual(posts, ['POST /api/peer/inst_forge/human-inbox/read {"id":5}']);
+  assert.equal(c.querySelector('[data-human="mark"]').disabled, false, 'forge grants marking');
+  assert.equal(c.querySelector('[data-human="reply"]').disabled, true, 'replying still needs unrestricted trust');
+  await open('inst_lab/human/5');
+  assert.equal(posts.length, 1, 'lab shares its notifications for reading only');
+  assert.equal(c.querySelector('[data-human="mark"]').disabled, true);
+  await open('inst_self/human/5');
+  assert.deepEqual(posts.slice(1), ['POST /api/human-messages/read {"id":5}'], 'this node\'s own, through its own route');
+  await mounted.unmount(); state.dispose();
+});
