@@ -1,7 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ActivityNodeSwitch, activityNode } from './activity-node.js';
+import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 
 const html = htm.bind(h);
 export const DEBUG_POLL_MS = 10_000;
@@ -126,7 +126,6 @@ function EndpointCard({ endpoint }) {
     <div class="debug-card-head">
       <span class="rowname">${endpoint.endpoint}</span>
       <span class="muted">${endpoint.count} sample${endpoint.count === 1 ? '' : 's'}</span>
-      <${ActivityNodeSwitch} />
       <span class="spacer"></span>
       <span class="debug-stat">latest <strong>${fmtMs(latest)}</strong></span>
       <span class="debug-stat">p50 <strong>${fmtMs(endpoint.p50_ms)}</strong></span>
@@ -169,7 +168,7 @@ export function DebugApp({
 }) {
   const current = state.view.value;
   // The fused node switch (activity-node.js) re-reads the chosen daemon.
-  const node = activityNode.value;
+  const node = activityTarget()?.id || '';
   useEffect(() => {
     if (!current.active) {
       actions.cancel();
@@ -191,6 +190,7 @@ export function DebugApp({
         <span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (reset on daemon restart).</span>
         <span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (the readings vanish when the daemon restarts).</span>
       </span>
+      <${ActivityNodeSwitch} />
       <span class="spacer"></span>
       <span id="debug-updated" class="muted" aria-live="polite">${updatedLabel(current.response)}</span>
       <button class="tool" id="debug-reset" disabled=${current.resetting}
