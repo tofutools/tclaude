@@ -322,6 +322,7 @@ func (idx prStateIndex) add(rawURL, state string, updatedAt time.Time) {
 func (idx prStateIndex) addRepoLinks(v repoLinksView) {
 	idx.add(v.BranchPRURL, v.BranchPRState, v.branchPRUpdated)
 	idx.add(v.StartupPRURL, v.StartupPRState, v.startupPRUpdated)
+	idx.add(v.statuslinePR.URL, v.statuslinePR.State, v.statuslinePR.updatedAt)
 }
 
 // withFreshestPRStates gives every badge for the same PR the same state,
