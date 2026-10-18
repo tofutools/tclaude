@@ -599,3 +599,7 @@ body.wizard .mux-bg-slot {
 }
 body.wizard .mux-bg-trigger { background: #171024; border-color: #4a3a6b; color: #a997ca; }
 body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
+/* A 🔒 reason in the popover (a peer shell's locked Attach) sits near the
+   row's right edge of a scrolling box: open it leftward and upward so it
+   stays inside the popover instead of widening or scrolling it. */
+.mux-bg-pop .lock-why::after { left: auto; right: -6px; top: auto; bottom: calc(100% + 6px); max-width: 240px; }
