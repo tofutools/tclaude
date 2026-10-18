@@ -3,6 +3,10 @@
 // Preact asset remains isolated to #messages-root.
 let controller = null;
 const pending = [];
+// pendingRestore is the latest history location for Messages that arrived
+// before the island registered (a /messages/<folder> deep link at boot); only
+// the newest one matters.
+let pendingRestore = null;
 let suppressAttentionOnce = false;
 
 export function registerMailController(next) {
@@ -10,9 +14,21 @@ export function registerMailController(next) {
   if (controller) throw new Error('Messages controller is already registered');
   controller = next;
   for (const invoke of pending.splice(0)) invoke(next);
+  if (pendingRestore) { const loc = pendingRestore; pendingRestore = null; next.restoreLocation?.(loc); }
   return () => {
     if (controller === next) controller = null;
   };
+}
+
+// mailLocation is the router location for what Messages shows
+// (/messages/<folder>[/<message-id>]), or null until the island is loaded.
+export function mailLocation() { return controller?.mailLocation?.() || null; }
+
+// restoreMailLocation shows a history location (Back/Forward, a deep link).
+export function restoreMailLocation(loc) {
+  if (controller) return controller.restoreLocation?.(loc);
+  pendingRestore = loc;
+  return undefined;
 }
 
 export function renderMailTab() { return controller?.renderMailTab?.(); }

@@ -57,6 +57,8 @@ export const KNOWN_TABS = new Set([
 //   - Usage: the quota forecasts and the costs views; the bare tab is the
 //     Overview that summarises both.
 //   - Activity: audit / logs / performance (formerly three top-level tabs).
+//   - Config: the settings rail's sections. Keep in step with CONFIG_PANELS
+//     in config-form-markup.js.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -66,6 +68,10 @@ export const KNOWN_SUBTABS = {
   processes: new Set(['templates']),
   usage: new Set(['quota', 'costs']),
   activity: new Set(['audit', 'logs', 'performance']),
+  config: new Set([
+    'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
+    'assistants', 'daemon', 'logs', 'experimental', 'advanced',
+  ]),
 };
 
 // LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now
@@ -92,9 +98,16 @@ export const SELECTABLE_SUBTABS = {
 // SELECTABLE_TABS enumerates tabs whose selection hangs directly off the TAB,
 // with no subtab in between — so the entity lives in the SECOND path segment:
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
+//   - messages/<folder> — the Messages tab has that folder open.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
-export const SELECTABLE_TABS = new Set(['terminals']);
+export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
+
+// ITEM_TABS enumerates tab-level-selection tabs whose selection can itself
+// have one entry open, carried as `item` in the THIRD path segment:
+//   - messages/<folder>/<message-id> — that message is open in the reader.
+// An item without a selection, or under any other tab, is dropped.
+export const ITEM_TABS = new Set(['messages']);
 
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
 // new object each call so callers can never alias/mutate a shared default.
@@ -103,7 +116,7 @@ export function defaultLocation() {
 }
 
 // normalizeLocation coerces an arbitrary input into a canonical location shape
-// `{ tab, subtab?, selection? }`, dropping empty/unknown pieces. Optional keys
+// `{ tab, subtab?, selection?, item? }`, dropping empty/unknown pieces. Optional keys
 // are OMITTED (not set to undefined) so structural equality via locEquals and
 // JSON round-trips stay stable. An unknown tab collapses to the default.
 export function normalizeLocation(loc) {
@@ -125,6 +138,7 @@ export function normalizeLocation(loc) {
     : SELECTABLE_TABS.has(tab);
   if (loc && loc.selection && selectable) {
     out.selection = String(loc.selection);
+    if (loc.item != null && loc.item !== '' && ITEM_TABS.has(tab)) out.item = String(loc.item);
   }
   return out;
 }
@@ -136,7 +150,7 @@ export function normalizeLocation(loc) {
 export function locEquals(a, b) {
   const x = normalizeLocation(a);
   const y = normalizeLocation(b);
-  return x.tab === y.tab && x.subtab === y.subtab && x.selection === y.selection;
+  return x.tab === y.tab && x.subtab === y.subtab && x.selection === y.selection && x.item === y.item;
 }
 
 // ---- The virtual stack ---------------------------------------------------
@@ -239,7 +253,7 @@ export function resolvePopstate(state, loc, navIndex) {
 // The whole virtual stack is stored in each entry's history.state, not just the
 // current index. history.state survives a reload for the current entry, so on
 // reload we can reconstruct the full stack (depth and all) instead of reseeding
-// to a single entry. Entries are tiny ({tab, subtab?, selection?}), so even a
+// to a single entry. Entries are tiny ({tab, subtab?, selection?, item?}), so even a
 // long history is well within the structured-clone size the History API allows.
 
 // NAV_STATE_VERSION tags the persisted shape. A future schema change bumps it so
@@ -273,7 +287,7 @@ export function reviveState(raw, loc) {
 
 // toPath serializes a location to an absolute dashboard pathname. The default
 // location maps to "/" (the bare dashboard root), everything else to
-// "/tab[/subtab[/selection]]". Query params (view-state) are NOT this module's
+// "/tab[/subtab][/selection[/item]]". Query params (view-state) are NOT this module's
 // concern — the DOM layer merges them onto the result.
 export function toPath(loc) {
   const l = normalizeLocation(loc);
@@ -286,10 +300,18 @@ export function toPath(loc) {
   // nests under /automations; the internal tab id stays "processes".
   const segs = l.tab === 'processes' ? ['automations', 'processes'] : [l.tab];
   if (l.subtab) segs.push(l.subtab);
-  if (l.selection) segs.push(encodeURIComponent(l.selection));
+  if (l.selection) segs.push(encodeSegment(l.selection));
+  if (l.item) segs.push(encodeSegment(l.item));
   // The default bare view reads best as "/" rather than "/groups".
   if (segs.length === 1 && l.tab === DEFAULT_TAB) return '/';
   return '/' + segs.join('/');
+}
+
+// encodeSegment percent-encodes an entity id for one path segment. A colon is
+// legal in a path segment and reads better left alone (Messages group folders
+// are "group:<name>").
+function encodeSegment(value) {
+  return encodeURIComponent(value).replace(/%3A/gi, ':');
 }
 
 // decodeSelection percent-decodes a path segment, tolerating a malformed one.
@@ -332,9 +354,10 @@ export function fromPath(pathname) {
   // On a tab-level-selection tab there is no subtab, so segment two IS the
   // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it
   // as a subtab would drop it on the floor, since terminals has no
-  // KNOWN_SUBTABS entry to match against.
+  // KNOWN_SUBTABS entry to match against. Segment three is its open item
+  // (/messages/<folder>/<message-id>), kept only where ITEM_TABS allows.
   if (SELECTABLE_TABS.has(tab)) {
-    return normalizeLocation({ tab, selection: decodeSelection(second) });
+    return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third) });
   }
   return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third) });
 }
@@ -358,6 +381,6 @@ export function resolveStale(loc, isValidSelection) {
     ? !!isValidSelection(l.selection, l)
     : true;
   if (ok) return l;
-  const { selection, ...parent } = l; // drop the dead selection, keep tab/subtab
+  const { selection, item, ...parent } = l; // drop the dead selection (and its item), keep tab/subtab
   return normalizeLocation(parent);
 }

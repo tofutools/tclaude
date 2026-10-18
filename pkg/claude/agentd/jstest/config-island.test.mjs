@@ -901,3 +901,31 @@ test('Config ask sandbox defaults to global and round-trips modes and exact libr
   assert.equal(adapter.assembleConfig().ask.model, 'haiku');
   await mounted.unmount();
 });
+
+test('picking a Config section is a navigation; a history location shows it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, { CONFIG_PANELS }, core, panel] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-markup.js'), harness.importDashboardModule('js/nav-history-core.js'),
+    harness.importDashboardModule('js/config-panel.js'),
+  ]);
+  assert.deepEqual(new Set(CONFIG_PANELS.map((p) => p.id)), core.KNOWN_SUBTABS.config, 'every section has a route');
+  const navigated = [];
+  const onNav = (e) => navigated.push(e.detail.location);
+  harness.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => harness.document.removeEventListener('tclaude:navigated', onNav));
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const link = (id) => mounted.container.querySelector(`[data-cfg-panel-link="${id}"]`);
+  await harness.act(() => link('daemon').click());
+  assert.deepEqual(navigated, [{ tab: 'config', subtab: 'daemon' }]);
+  assert.equal(link('daemon').getAttribute('aria-current'), 'page');
+  await harness.act(() => link('daemon').click());
+  assert.equal(navigated.length, 1, 're-picking the shown section records nothing');
+  // The router restores a section by setting it directly.
+  await harness.act(() => { panel.setConfigPanel('logs'); });
+  assert.equal(link('logs').getAttribute('aria-current'), 'page');
+  assert.equal(mounted.container.querySelector('[data-cfg-panel="logs"]').getAttribute('data-cfg-current'), 'true');
+  assert.equal(navigated.length, 1);
+  await mounted.unmount();
+});

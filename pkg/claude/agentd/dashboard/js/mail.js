@@ -93,6 +93,8 @@ import {
   adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
+import { effect } from '@preact/signals';
+import { normalizeLocation, toPath } from './nav-history-core.js';
 
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
@@ -950,6 +952,71 @@ function paintReader() { mailState.touch(); }
 
 // --- selection ------------------------------------------------------
 
+// --- history (/messages/<folder>[/<message-id>]) --------------------
+//
+// A folder or message the operator CLICKS is a navigation: it pushes a
+// history entry (options.navigate). Everything else that moves the selection
+// — arrow keys, a jump from another tab (openMailbox, the attention badge,
+// an access-request link), a folder snapped away because it vanished, a
+// deleted message — only corrects the current entry, via syncMailUrl after
+// each repaint. So a jump from Groups is one Back step, not three.
+
+// The fused (several-node) Messages view keeps its own selection; its URL is
+// the bare tab.
+function isFused() {
+  return !!document.documentElement.dataset.scopeNodes;
+}
+
+function mailLocation() {
+  if (isFused()) return { tab: 'messages' };
+  return normalizeLocation({ tab: 'messages', selection: mail.selected, item: mail.selectedMsgId ?? undefined });
+}
+
+function announceMailLocation(correction) {
+  document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: mailLocation(), correction } }));
+}
+
+// restoring holds syncMailUrl off while a history location is being loaded,
+// so a folder shown before its message arrives does not strip the message
+// from the URL.
+let restoring = 0;
+
+function syncMailUrl() {
+  if (restoring || isFused() || !mailTabActive()) return;
+  if (toPath(mailLocation()) !== globalThis.location?.pathname) announceMailLocation(true);
+}
+
+// restoreLocation shows a history location: Back/Forward or a deep link. A
+// bare /messages keeps the open folder; a folder without a message closes the
+// reader. A message is looked for on the folder's loaded page — a message
+// that is gone (or on another page after a reload) leaves just the folder,
+// and the URL is corrected to say so.
+async function restoreLocation(loc) {
+  if (isFused() || !loc?.selection) { syncMailUrl(); return; }
+  restoring++;
+  try {
+    if (loc.selection !== mail.selected) {
+      await loadMailboxes();
+      if (!await selectMailbox(loc.selection)) return;
+    } else if (!mail.messages.length && loc.selection !== ACCESS_ID) {
+      await loadMessages();
+    }
+    if (!loc.item) {
+      mail.selectedMsgId = null;
+    } else if (mail.selected === ACCESS_ID) {
+      mail.selectedMsgId = String(loc.item);
+    } else {
+      const message = mail.messages.find((m) => String(m.id) === String(loc.item));
+      if (message) selectMessage(message.id);
+      else mail.selectedMsgId = null;
+    }
+  } finally {
+    restoring--;
+    paintMail();
+    syncMailUrl();
+  }
+}
+
 function selectMailbox(id, options = {}) {
   if (mail.busy) return Promise.resolve(false);
   if (!options.preserveSenderFilter) mail.senderFilter = '';
@@ -971,6 +1038,7 @@ function selectMailbox(id, options = {}) {
   mail.totalUnfiltered = 0;
   if (mail.searchTimer) { clearTimeout(mail.searchTimer); mail.searchTimer = null; }
   dashPrefs.setItem(SELECTED_KEY, id);
+  if (options.navigate) announceMailLocation(false);
   paintMail();        // immediate feedback (active folder, empty list)
   return loadMessages().then(() => {
     pruneSelections();
@@ -979,10 +1047,11 @@ function selectMailbox(id, options = {}) {
   });
 }
 
-function selectMessage(id) {
+function selectMessage(id, options = {}) {
   // An explicit pick outranks a jump still waiting for its request to arrive.
   disarmAccessAutoSelect();
   mail.selectedMsgId = mail.selected === ACCESS_ID ? String(id || '') : Number(id);
+  if (options.navigate) announceMailLocation(false);
   // Opening a human notification marks it read, the way a mail client
   // does — the human is now looking at it. Scoped to the human folder:
   // its read-state means "the human has seen this". Agent + "all" folders
@@ -1735,7 +1804,10 @@ function initMail() {
   const disposeResize = initMailResize();
   $('#access-banner-review')?.addEventListener('click', () => { void focusAccessRequest(); }, { signal });
   document.addEventListener('tclaude:wizard', paintMail, { signal });
+  // Every repaint brings the URL in line with the open folder and message.
+  const stopUrlSync = effect(() => { void mailState.revision.value; syncMailUrl(); });
   return () => {
+    stopUrlSync();
     controller.abort();
     disposeResize();
     if (mail.searchTimer) {
@@ -1747,7 +1819,7 @@ function initMail() {
 
 export const mailController = Object.freeze({
   state: mailState,
-  renderMailTab, initMail, renderAccessRequests,
+  renderMailTab, initMail, renderAccessRequests, mailLocation, restoreLocation,
   focusAccessRequest, openMailbox, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
   openHumanNotifications,
   setShowRetired, setShowEmpty, setShowPrevGens,

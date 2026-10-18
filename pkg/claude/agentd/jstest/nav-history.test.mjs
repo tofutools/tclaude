@@ -508,3 +508,76 @@ test('the Agents lens keeps its URL across tabs, and Back onto bare Groups retur
   assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Agents is an explicit restore');
   assert.equal(groupsFocus.value, 'both');
 });
+
+// installTabsShell is a nav whose buttons switch the active tab on click, the
+// way bindTabs does, so a tab click reads back as a location.
+function installTabsShell(harness, tabs) {
+  harness.document.body.innerHTML = `<nav>${tabs.map((tab) => `<button data-tab="${tab}"></button>`).join('')}</nav>
+    <main>${tabs.map((tab) => `<section id="tab-${tab}"></section>`).join('')}</main>`;
+  const buttons = [...harness.document.querySelectorAll('nav [data-tab]')];
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      for (const o of buttons) o.classList.toggle('active', o === b);
+      for (const s of harness.document.querySelectorAll('main section')) s.classList.toggle('active', s.id === `tab-${b.dataset.tab}`);
+    });
+  }
+  buttons[0].classList.add('active');
+  return buttons;
+}
+
+test('Config sections deep-link, push when picked, and a bare /config names the remembered one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [, config] = installTabsShell(harness, ['groups', 'config']);
+  const browsing = installBrowsingContext(t, harness, '/config/daemon');
+  const [{ initNavHistory }, panel] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/config-panel.js'),
+  ]);
+  initNavHistory();
+  assert.equal(panel.configPanel.value, 'daemon');
+  assert.equal(config.classList.contains('active'), true);
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/config/daemon' }]);
+  browsing.calls.length = 0;
+
+  // The rail picks a section: a navigation.
+  panel.setConfigPanel('logs');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: panel.configLocation() } }));
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/config/logs' }]);
+  const atLogs = browsing.history.state;
+
+  browsing.history.replaceState({ ...atLogs, navIndex: 0 }, '', '/config/daemon');
+  const back = new harness.window.Event('popstate');
+  back.state = browsing.history.state;
+  harness.window.dispatchEvent(back);
+  assert.equal(panel.configPanel.value, 'daemon', 'Back restores the previous section');
+
+  // A bare /config (the nav anchor's href) keeps the open section and says so.
+  browsing.history.replaceState({ ...atLogs, navIndex: 0 }, '', '/config');
+  browsing.calls.length = 0;
+  const bare = new harness.window.Event('popstate');
+  bare.state = null;
+  harness.window.dispatchEvent(bare);
+  assert.equal(panel.configPanel.value, 'daemon');
+  assert.equal(browsing.calls.at(-1).url, '/config/daemon');
+});
+
+test('a Messages deep link reaches the controller once it registers, and wins over the attention jump', async (t) => {
+  const harness = await createPreactHarness(t);
+  installTabsShell(harness, ['groups', 'messages']);
+  installBrowsingContext(t, harness, '/messages/group:ops/42');
+  const [{ initNavHistory }, bridge] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/mail-bridge.js'),
+  ]);
+  initNavHistory();
+  const restored = []; const jumps = [];
+  const unregister = bridge.registerMailController({
+    restoreLocation: (loc) => restored.push(loc),
+    focusNextAttention: () => jumps.push(1),
+    mailLocation: () => ({ tab: 'messages', selection: 'group:ops', item: '42' }),
+  });
+  t.after(unregister);
+  assert.deepEqual(restored, [{ tab: 'messages', selection: 'group:ops', item: '42' }]);
+  assert.equal(bridge.focusNextMessagesAttention({}), undefined, 'the jump is suppressed for the deep link');
+  assert.deepEqual(jumps, []);
+});
