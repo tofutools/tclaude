@@ -306,6 +306,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   ));
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const bodyRef = useRef(null);
   const [error, setError] = useState('');
   const members = scopedGroup ? groupMembers(snapshot, scopedGroup) : [];
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
@@ -366,7 +367,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   };
   return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
+    initialFocusRef=${bodyRef} registerClose=${registerClose}>
     <h3 id="message-create-title"><${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
       wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/></h3>
@@ -400,7 +401,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         autocomplete="off" spellcheck="false" onInput=${(event) => setRole(event.currentTarget.value)} /></label>`}
     <label class="cron-create-row"><span class="cron-create-label">Subject</span><input id="message-create-subject" type="text" maxlength="100"
       value=${subject} placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck="false" onInput=${(event) => setSubject(event.currentTarget.value)} /></label>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea id="message-create-body" rows="4"
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea ref=${bodyRef} id="message-create-body" rows="4"
       value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
     <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
@@ -417,6 +418,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const fileInputRef = useRef(null);
+  const bodyRef = useRef(null);
   const [error, setError] = useState('');
   const [serverOffline, setServerOffline] = useState(false);
   useEffect(() => { setServerOffline(false); }, [snapshot]);
@@ -451,7 +453,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   };
   return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
     onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose} guardBackdropDrag=${true}
+    initialFocusRef=${bodyRef} registerClose=${registerClose} guardBackdropDrag=${true}
     onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
@@ -476,7 +478,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     </div><div id="human-reply-status" class=${`human-reply-status ${online ? 'online' : 'offline'}`}>${online
       ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
-    <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea id="human-reply-body" rows="4" value=${body}
+    <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea ref=${bodyRef} id="human-reply-body" rows="4" value=${body}
       placeholder="your reply — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     ${!remote && html`<div class="cron-create-row"><span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">

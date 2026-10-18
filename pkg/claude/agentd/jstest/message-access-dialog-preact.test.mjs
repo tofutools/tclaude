@@ -196,6 +196,8 @@ test('scoped message follows live-all membership and sends exact group role payl
   const first = snapshot({ members: [member('a'), member('b')] });
   const { host, mounted, rerender } = await mountDialogs(harness, state, actions, first);
   const body = host.querySelector('#message-create-body');
+  await harness.act(() => Promise.resolve());
+  assertSameNode(harness.document.activeElement, body, 'the group message body owns initial focus');
   await harness.input(body, 'hello live roster');
   await harness.input(host.querySelector('#message-create-subject'), 'status');
   await harness.input(host.querySelector('#message-create-role'), ' reviewer ');
@@ -303,6 +305,8 @@ test('human reply follows live online state and trusts server offline until a ne
   };
   const offline = snapshot({ online: false, groups: [] });
   const { host, mounted, rerender } = await mountDialogs(harness, state, actions, offline);
+  await harness.act(() => Promise.resolve());
+  assertSameNode(harness.document.activeElement, host.querySelector('#human-reply-body'), 'the reply body owns initial focus');
   await harness.input(host.querySelector('#human-reply-body'), 'answer');
   assert.equal(host.querySelector('#human-reply-submit').disabled, true);
   await rerender(snapshot({ online: true, groups: [] }));

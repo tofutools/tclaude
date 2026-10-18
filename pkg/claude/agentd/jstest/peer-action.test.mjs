@@ -131,6 +131,8 @@ test('the group message button on a peer view opens a one-agent message dialog',
   assert.match(doc.querySelector('#peer-message-title').textContent, /Message ops on forge/);
   assert.equal(doc.querySelector('#peer-message-send').disabled, true, 'nothing to send yet');
   const body = doc.querySelector('#peer-message-body');
+  await harness.act(() => Promise.resolve());
+  assert.equal(doc.activeElement, body, 'the body owns initial focus');
   body.value = 'status?';
   await harness.act(() => harness.fireEvent(body, 'input'));
   await harness.act(() => doc.querySelector('#peer-message-send').click());
