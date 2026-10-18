@@ -297,8 +297,25 @@ at once. The parts:
   the depth the page needs and cut at the cursor client-side
   (`legacyStream`), which stays exact down to the server's largest page.
 
-Reuse `fleet-pager.js` for any other merged list rather than reading every
-node down to the page shown.
+- **Engine:** `createMergedList` in `fleet-pager.js` does all of the above
+  for a list read imperatively (the fused audit view uses it). Give it
+  `readPage(node, { before, depth }, ctx)` for one node's page and a refusal
+  wording, and it walks, merges, and applies the fleet's liveness rules:
+  - A node reported offline is not asked, and it shows as offline, not as
+    an error.
+  - A node that checks in as online is asked on every refresh. It is only
+    given up on when its read fails (a peer read times out after 15s), and
+    the message says so.
+  - A slow node does not hold up a newly opened page: after
+    `SLOW_NODE_MS` the page shows the nodes that answered and names the
+    ones still awaited. A refresh keeps the page on screen whole.
+  - A walk steps past nodes that just failed, so a silent node costs one
+    wait rather than one per page.
+- **Pager:** render the footer with `Pager` from `pager.js` (the `pages`
+  layout); `stepping` names the page a forward walk is heading for.
+
+Reuse these for any other merged list rather than reading every node down
+to the page shown.
 
 ## Writing flow tests
 

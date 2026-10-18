@@ -131,3 +131,125 @@ export function recordVector(walk, { key, absent = '', page, next, more }) {
   if (list.length > page && cursorKey(list[page]) === cursorKey(next)) return walk;
   return { ...walk, list: [...list.slice(0, page), next] };
 }
+
+// mergeNodePages merges one page from the nodes' reads. results are, per
+// node, { node, page } (page: { rows, total, totalUnfiltered, hasMore,
+// legacy }), { node, why, offline } when it was refused or is down, or
+// { node, pending } while it has not answered. It returns the merged page:
+// rows ({ node, row }, node being the node object), the summed counts, the
+// page count, the refused / pending nodes, the older-build nodes whose rows
+// run past LEGACY_MAX_DEPTH (deeper), and the next cursor vector.
+export function mergeNodePages(results, pageSize, page = 1, cursors = {}, at = (row) => row.created_at) {
+  const refused = [];
+  const pending = [];
+  const streams = [];
+  let total = 0; let totalUnfiltered = 0;
+  for (const r of results) {
+    if (r.why) { refused.push({ node: r.node, why: r.why, offline: !!r.offline }); continue; }
+    if (r.pending) { pending.push(r.node); continue; }
+    const p = r.page;
+    total += p.total || 0; totalUnfiltered += p.totalUnfiltered || 0;
+    streams.push(p.legacy ? legacyStream(r.node.id, p.rows, cursors[r.node.id], pageSize, p.total) : { node: r.node.id, rows: p.rows || [], hasMore: !!p.hasMore });
+  }
+  const merged = mergeCursorPage(streams, pageSize, cursors, at);
+  const byID = Object.fromEntries(results.map(({ node }) => [node.id, node]));
+  return {
+    rows: merged.rows.map(({ node, row }) => ({ node: byID[node], row })), total, totalUnfiltered,
+    page, pages: merged.more ? Math.max(pageCount(total, pageSize), page + 1) : page,
+    refused, pending, deeper: results.filter((r) => r.page?.legacy && (r.page.total || 0) > LEGACY_MAX_DEPTH).map((r) => r.node),
+    next: merged.next, more: merged.more,
+  };
+}
+
+// SLOW_NODE_MS is how long a newly opened merged page waits for every node
+// before it shows the ones that answered. Reads of a large list take a second
+// or more, so this is well past a busy node's answer; a refresh of the page on
+// screen keeps it until every node has answered.
+export const SLOW_NODE_MS = 2500;
+
+// createMergedList is the engine of one fused list merged from several nodes:
+// it walks the cursor vectors to the page asked for, and applies the fleet's
+// liveness rules, so every merged view behaves alike:
+//   - A node the fleet reports offline is not asked, and shows as offline
+//     rather than as an error.
+//   - A node that checks in as online is asked on every read; it is given up
+//     on only when its read fails (a peer read times out after 15s), and is
+//     asked again on the next refresh.
+//   - A slow node does not hold up the page: a newly opened page shows the
+//     nodes that answered after slowMs, naming the ones still awaited; a
+//     refresh of the page on screen keeps it whole until all have answered.
+//   - A walk steps past the nodes whose last read failed (only the page shown
+//     asks them again), so a silent node costs one wait, not one per page.
+//   - A load superseded by a newer one stops without touching the vectors.
+//
+// readPage(node, { before, depth }, ctx) reads one node's newest-first page:
+// below the cursor `before`, or (for an older build, depth set) its newest
+// `depth` rows; ctx is what the load was given (its filters). It returns { rows, total, totalUnfiltered, hasMore, cursorPaging } or
+// throws an error with .status; refusal(node, error) words that failure. at is
+// a row's timestamp.
+export function createMergedList({ readPage, refusal, at = (row) => row.created_at, timers = globalThis, slowMs = SLOW_NODE_MS }) {
+  let walk = newWalk();
+  let walking = 0;
+  let down = new Map();
+  let shownKey = '';
+  async function readNode(node, page, pageSize, before, ctx) {
+    if (!node.local && node.online === false) return { node, why: `${node.name} is offline`, offline: true };
+    try {
+      const got = await readPage(node, { before }, ctx);
+      if (got?.cursorPaging) return { node, page: got };
+      // An older build ignores the cursor: read it newest first to this
+      // page's depth and cut it at the cursor in the merge.
+      const deep = before || page > 1 ? await readPage(node, { depth: legacyDepth(page, pageSize) }, ctx) : got;
+      return { node, page: { rows: [], ...deep, legacy: true } };
+    } catch (error) { return { node, why: refusal(node, error) }; }
+  }
+  // readAll reads page `page` of every node below its cursor, but the
+  // skipped ones. onAnswer hears the results so far once a node is slow.
+  function readAll(nodes, page, pageSize, cursors, ctx, { skip = new Map(), onAnswer } = {}) {
+    const results = nodes.map((node) => (skip.has(node.id) ? { node, why: skip.get(node.id) } : { node, pending: true }));
+    let slow = false;
+    const timer = onAnswer ? timers.setTimeout(() => { slow = true; if (results.some((r) => r.pending)) onAnswer(results.slice()); }, slowMs) : 0;
+    return Promise.all(nodes.map(async (node, i) => {
+      if (skip.has(node.id)) return;
+      results[i] = await readNode(node, page, pageSize, cursors[node.id], ctx);
+      if (slow) onAnswer(results.slice());
+    })).then(() => { timers.clearTimeout(timer); return results; });
+  }
+  // load walks to page `target` of the list named `key` (its filters; the
+  // nodes and page size are added here) and returns the merged page, or null
+  // when a newer load superseded it. show(page) hears a partial page; ctx is
+  // passed to readPage.
+  async function load({ nodes, key: listKey, target, pageSize, show = () => {}, ctx }) {
+    const key = `${listKey}\n${pageSize}\n${nodes.map((n) => n.id).join(',')}`;
+    const id = ++walking;
+    let page = walkTarget(target, walk.key === key ? walk.list : [{}]);
+    // failed are the nodes this load already waited on in vain: a restart's
+    // shown page does not wait on them again.
+    const failed = new Map();
+    for (let restarts = 0; ; ) {
+      const cursors = (walk.key === key && walk.list[page - 1]) || {};
+      const shown = page >= target;
+      // A node that was down when the vectors were walked has no cursor in
+      // them: its rows wait for the restart rather than show on a later page.
+      const uncursored = new Set(page > 1 && walk.key === key ? walk.absent.split(',').filter(Boolean) : []);
+      const partial = (results) => {
+        if (id !== walking || !results.some((r) => r.pending)) return;
+        show(mergeNodePages(results.map((r) => (uncursored.has(r.node.id) && !r.why ? { node: r.node, pending: true } : r)), pageSize, page, cursors, at));
+      };
+      const pageKey = `${key}\n${page}`;
+      const results = await readAll(nodes, page, pageSize, cursors, ctx, shown ? { skip: failed, onAnswer: pageKey === shownKey ? undefined : partial } : { skip: down });
+      if (id !== walking) return null;
+      const result = mergeNodePages(results, pageSize, page, cursors, at);
+      down = new Map(result.refused.map((r) => [r.node.id, r.why]));
+      if (shown) for (const [node, why] of down) failed.set(node, why);
+      walk = recordVector(walk, { key, absent: result.refused.map((r) => r.node.id).join(','), page, next: result.next, more: result.more });
+      // The set of down nodes changed under the walk: restart from page 1
+      // (once; a node flapping between reads gets the page as read).
+      if (walk.list.length < page && restarts++ < 1) { page = 1; continue; }
+      if (page < target && walk.list.length > page) { page += 1; continue; }
+      shownKey = pageKey;
+      return result;
+    }
+  }
+  return Object.freeze({ load });
+}

@@ -93,3 +93,50 @@ test('a walk records each page\'s next vector, follows a moved boundary, and res
   assert.deepEqual(recordVector(w, { key: 'k', absent: 'b', page: 3, next: { a: 1 }, more: true }).list, [{}], 'a node going down restarts it');
   assert.deepEqual(recordVector(w, { key: 'other', page: 2, next: { a: 1 }, more: true }).list, [{}], 'another list starts over');
 });
+
+test('the merged-list engine applies the fleet liveness rules', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMergedList } = await harness.importDashboardModule('js/fleet-pager.js');
+  // Two nodes of 30 rows each, served below a cursor; b can be slowed, held or
+  // failed; c is reported offline.
+  const a = { id: 'a', name: 'a', local: true }; const b = { id: 'b', name: 'b' }; const c = { id: 'c', name: 'c', online: false };
+  const rows = (n) => Array.from({ length: 30 }, (_, i) => ({ id: 30 - i, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, (30 - i) * 2 + (n === 'b' ? 1 : 0))).toISOString(), n }));
+  const data = { a: rows('a'), b: rows('b') };
+  const calls = []; let mode = 'ok'; const held = [];
+  const readPage = async (node, { before }) => {
+    calls.push(node.id);
+    if (node.id === 'b' && mode === 'fail') throw Object.assign(new Error('x'), { status: 504 });
+    if (node.id === 'b' && mode === 'hold') await new Promise((r) => held.push(r));
+    const below = before ? data[node.id].filter((r) => r.id < before) : data[node.id];
+    return { rows: below.slice(0, 10), total: 30, totalUnfiltered: 30, hasMore: below.length > 10, cursorPaging: true };
+  };
+  const timers = { queue: [], setTimeout(fn) { this.queue.push(fn); return this.queue.length; }, clearTimeout() {} };
+  const list = createMergedList({ readPage, refusal: (node, e) => `${node.name} ${e.status}`, timers, slowMs: 1 });
+  const load = (target, show) => list.load({ nodes: [a, b, c], key: 'k', target, pageSize: 10, show });
+
+  let page = await load(1);
+  assert.deepEqual(page.refused.map((r) => [r.node.id, r.offline]), [['c', true]], 'an offline node is not asked, and is no error');
+  assert.ok(!calls.includes('c'));
+  assert.equal(page.total, 60);
+
+  // A slow node: a new page shows the rest once it is slow; a refresh does not.
+  mode = 'hold'; const partials = [];
+  const p2 = load(2, (p) => partials.push(p)); await new Promise((r) => setTimeout(r, 0));
+  timers.queue.splice(0).forEach((fn) => fn());
+  assert.deepEqual(partials.at(-1).pending.map((n) => n.id), ['b'], 'the new page shows without the slow node');
+  held.splice(0).forEach((r) => r()); await p2;
+  partials.length = 0; const again = load(2, (p) => partials.push(p)); await new Promise((r) => setTimeout(r, 0));
+  timers.queue.splice(0).forEach((fn) => fn()); held.splice(0).forEach((r) => r()); await again;
+  assert.deepEqual(partials, [], 'a refresh of the page on screen stays whole');
+
+  // A failing node is asked on the page shown, and walked past elsewhere.
+  mode = 'fail'; calls.length = 0; page = await load(1);
+  assert.equal(page.refused.find((r) => r.node.id === 'b').why, 'b 504');
+  calls.length = 0; page = await load(3);
+  assert.deepEqual(calls.filter((id) => id === 'b').length, 1, 'only the page shown asks the failing node');
+
+  // A superseded load returns null.
+  mode = 'hold'; const stale = load(1); mode = 'ok'; const fresh = load(1);
+  held.splice(0).forEach((r) => r());
+  assert.equal(await stale, null); assert.ok(await fresh);
+});
