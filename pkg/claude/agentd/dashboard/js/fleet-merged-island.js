@@ -679,6 +679,10 @@ export function MergedGroups({
       const target = dropTarget(event.target);
       const plan = target ? dropPlan({ source: dragging.source, target, self: self() }) : { kind: 'none' };
       if (plan.kind === 'same') { dragging = null; unmark(); return; }
+      // A home member dropped on a home virtual group (remove from its group,
+      // retire) is dnd.js's, as on this node's own view.
+      const virt = event.target.closest?.('details.group-virtual[data-fleet-node]');
+      if (virt && homeRef.current && virt.dataset.fleetNode === homeRef.current && dragging.source.node === homeRef.current) { dragging = null; unmark(); return; }
       event.preventDefault(); event.stopPropagation();
       dndGesture.cancelClone();
       const src = dragging; dragging = null; unmark();

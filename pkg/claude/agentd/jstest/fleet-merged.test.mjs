@@ -327,6 +327,16 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   await drag(row('agt_r1'), groupEl('builders@desk'));
   assert.match(toasts.at(-1), /forge does not let you bring reviewer-1 here \(needs groups\.members\.retire\)/, 'the drop names the missing grant');
   assert.equal(harness.document.querySelector('#launch-target'), null);
+  // A home member dropped on this node's Ungrouped is the Groups drag-and-drop's
+  // (remove from its group), as on this node's own view.
+  const homeUngrouped = groupEl('inst_self/ ungrouped-virtual');
+  assert.ok(homeUngrouped, "this node's Ungrouped is listed");
+  const seen = [];
+  const listen = (event) => seen.push(event.type);
+  harness.document.addEventListener('drop', listen);
+  await drag(row('agt_b1'), homeUngrouped);
+  harness.document.removeEventListener('drop', listen);
+  assert.deepEqual(seen, ['drop'], 'the drop reaches dnd.js');
   await mounted.unmount(); state.dispose();
 });
 
