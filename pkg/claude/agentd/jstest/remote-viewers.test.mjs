@@ -86,8 +86,10 @@ test('an online agent row carries the badge on its harness line', async (t) => {
   let m = await row(true);
   const b = m.container.querySelector('.agent-harness .remote-viewers-badge.typing');
   assert.ok(b, 'shown even with no model yet');
-  assert.match(b.textContent, /⌨ inst_x<img/, 'hub-relayed label is text, not HTML');
-  assert.equal(m.container.querySelector('img'), null);
+  assert.equal(b.textContent, '⌨', 'the row shows the glyph alone: a long peer name would widen it');
+  assert.match(b.title, /^Remote typing: inst_x<img src=x onerror=alert\(1\)> typing \(interactive\)\./, 'the hover names the peer, as text');
+  assert.equal(b.getAttribute('aria-label'), b.title);
+  assert.equal(m.container.querySelector('img'), null, 'hub-relayed label is text, not HTML');
   await m.unmount();
   m = await row(true, { harness: 'claude', model: 'Opus 4.8' });
   assert.ok(m.container.querySelector('.agent-harness .remote-viewers-badge'));
