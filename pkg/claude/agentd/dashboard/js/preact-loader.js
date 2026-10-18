@@ -260,14 +260,14 @@ const dockDescriptor = createIslandDescriptor({
     const controllerModule = import('./dock.js');
     const [
       { mountDockIsland }, { dockState },
-      { dockSections, isDockSectionOpen, setDockSectionOpen, dockNotify },
+      { dockSections, isDockSectionOpen, setDockSectionOpen, dockNotify, dockNodeOps },
     ] = await Promise.all([islandModule, stateModule, controllerModule]);
     return {
       state: dockState,
       mount: (registerCleanup) => mountDockIsland({
         host, state: dockState, sections: dockSections,
         isSectionOpen: isDockSectionOpen, setSectionOpen: setDockSectionOpen,
-        notify: dockNotify, registerCleanup,
+        notify: dockNotify, nodeOps: dockNodeOps, registerCleanup,
       }),
     };
   },

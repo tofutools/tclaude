@@ -145,9 +145,9 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("title=${hasDetails ? null : name}", "rich details replace the card's native title tooltip")
 	must("title=${hasDetails ? null : gripTitle}", "profile drag grips do not add a second native tooltip")
 	must("title=${hasDetails ? null : 'More actions'}", "profile action buttons do not add a second native tooltip")
-	must("onDragStart=${section.drag ? () => {", "starting a card drag closes rich profile details")
+	must("onDragStart=${canDrag ? () => {", "starting a card drag closes rich profile details")
 	must("detailsOpen && !menuOpen && !dragging", "rich details remain hidden throughout a card drag")
-	must("onDragLeave=${section.drag ? (event) => {", "native drag events track whether the pointer leaves its source card")
+	must("onDragLeave=${canDrag ? (event) => {", "native drag events track whether the pointer leaves its source card")
 	must("const endedOverCard = hit ? event.currentTarget.contains(hit) : hoveringRef.current", "dragend restores details only over the source card")
 
 	// The dock reads its data off the live snapshot (the profile + role

@@ -29,6 +29,7 @@ import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { featureState } from './feature-state-registry.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
+import { publishFusedDock } from './dock-nodes.js';
 
 const html = htm.bind(h);
 
@@ -340,6 +341,21 @@ export function MergedGroups({
     }
     return nodeActions.current.get(node.id);
   };
+  // The right panel lists the ticked nodes' catalogs (dock-nodes.js).
+  const tickedKey = ticked.map((n) => n.id).join(',');
+  useEffect(() => {
+    if (!active) { publishFusedDock(null); return; }
+    const names = uniqueNodeNames(ticked.map((node) => ({ node })));
+    const self = state.view.value.fleet?.self?.id || '';
+    const fetchFor = (id) => nodeFetch(id, { self, fetchImpl, remote: remote ? { id: remote, localFetch } : null });
+    publishFusedDock({
+      page: pageNode,
+      nodes: ticked.map((n) => ({ id: n.id, name: names.get(n.id), color: n.color })),
+      snapshots: Object.fromEntries(polled.map((n) => [n.id, entries[n.id]?.snapshot || null])),
+      fetchFor,
+    });
+  }, [active, tickedKey, pageNode, entries]);
+  useEffect(() => () => publishFusedDock(null), []);
   const routed = useRef(null);
   if (!routed.current) routed.current = homeActions(() => groupsActions(), (g) => ownOfRef.current(g), forNode);
   // processScope resolves a listed group to the group the run context names:

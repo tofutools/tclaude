@@ -60,6 +60,9 @@ import { openPresetCloneDialog } from './action-dialog-controller.js';
 import { managementController } from './management-controller.js';
 import { loadSandboxProfiles, sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { downloadBlob } from './paf-model.js';
+import { announceNodeChanged, selfNodeID } from './node-api.js';
+import { nodeHref } from './fleet-model.js';
+import { withFused } from './fleet-scope.js';
 import {
   LIBRARY_EVENT, detectImport, dropPin, exportBundle, renameItem, renamePin,
 } from './dock-library.js';
@@ -85,9 +88,9 @@ const KIND_NAMES = Object.freeze({
 
 // openRename asks for the new name, renames through the daemon, and carries
 // a pin along. A refusal (name taken) stays in the dialog.
-export function openRename(section, name, { label = name } = {}) {
+export function openRename(section, name, { label = name, node = null } = {}) {
   managementController().openLibraryName({
-    title: `Rename ${KIND_NAMES[section]()}: ${label}`,
+    title: `Rename ${KIND_NAMES[section]()}: ${label}${node ? ` on ${node.name}` : ''}`,
     blurb: section === 'processes'
       ? 'Saved as a new version; the history and the groups it is pinned to stay.'
       : 'Everything that uses it (profiles, templates, groups, includes) follows the new name.',
@@ -95,6 +98,13 @@ export function openRename(section, name, { label = name } = {}) {
     okLabel: 'Rename',
     submit: async (to) => {
       if (to === label) return;
+      if (node) {
+        await renameItem({ section, name, to, fetchImpl: node.fetch });
+        toast(`renamed ${label} → ${to} on ${node.name}`);
+        libraryChanged();
+        announceNodeChanged(node.id);
+        return;
+      }
       await renameItem({ section, name, to });
       if (section !== 'processes') renamePin(dashPrefs, section, name, to);
       toast(`renamed ${label} → ${to}`);
@@ -137,6 +147,39 @@ export async function importLibraryFile(file) {
   }
   toast(`${file.name} is not a tclaude export (${found.reason})`, true);
 }
+
+// dockNodeOps act on another node's copy of an item in the fused view
+// (dock-nodes.js). node is { id, name, fetch }: fetch reaches that node.
+// Its editors stay on its own dashboard, which open() shows.
+export const dockNodeOps = Object.freeze({
+  rename: (section, name, node) => openRename(section.key, name, { node }),
+  async remove(section, name, node) {
+    const ok = await confirmModal({
+      title: `Delete ${KIND_NAMES[section.key]()} on ${node.name}?`,
+      body: `Delete "${name}" on ${node.name}? The other nodes keep their copies.`,
+      meta: name,
+      okLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      const response = await node.fetch(section.itemPath(name), { method: 'DELETE', credentials: 'same-origin' });
+      if (!response.ok) {
+        let body = null;
+        try { body = await response.json(); } catch { body = null; }
+        throw new Error(body?.message || body?.error || `HTTP ${response.status}`);
+      }
+      toast(`deleted ${name} on ${node.name}`);
+      libraryChanged();
+      announceNodeChanged(node.id);
+    } catch (error) {
+      toast(`delete failed on ${node.name}: ${error.message || String(error)}`, true);
+    }
+  },
+  open(node) {
+    const self = selfNodeID();
+    globalThis.location.assign(nodeHref(node.id === self ? '' : node.id, { pathname: '/groups', search: withFused(globalThis.location.search, null) }));
+  },
+});
 
 // setDefault goes through the 🧠/🛡 toolbar pickers' own commit, loaded on
 // first use like the pickers themselves.
@@ -233,6 +276,8 @@ function summaryChips(summary, max = 4) {
 //   onCloneItem(item)   open the "clone under a new name" dialog (⚙ → Clone)
 //   onDeleteItem(item)  confirm + delete the item (⚙ → Delete), then refresh
 //   onManageAll()       jump to the whole-kind manager overlay
+//   itemPath(name)      the item's own route, which deletes it on another
+//                       node of the fused view (dock-nodes.js)
 //   afterProcesses      render after the Processes section, which the dock
 //                       draws itself between the snapshot sections
 //
@@ -280,6 +325,7 @@ export const dockSections = Object.freeze([
     searchWords: ['agent profiles', 'familiar patterns', 'spawn profiles'],
     isDefault: (p, snap) => !!snap?.spawn_profile_default && snap.spawn_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('profile', isDefault ? '' : p.name),
+    itemPath: (name) => `/api/spawn-profiles/${encodeURIComponent(name)}`,
     ...libraryOps('profiles'),
   },
   {
@@ -300,6 +346,7 @@ export const dockSections = Object.freeze([
     onManageAll: () => openRolesManageModal(),
     onNew: () => openRoleEditor(),
     searchWords: ['roles', 'classes'],
+    itemPath: (name) => `/api/roles/${encodeURIComponent(name)}`,
     ...libraryOps('roles'),
   },
   {
@@ -319,6 +366,7 @@ export const dockSections = Object.freeze([
     onManageAll: () => openSavedPrompts(),
     onNew: () => openSavedPrompts(),
     searchWords: ['saved prompts', 'incantations'],
+    itemPath: (name) => `/api/saved-prompts/${encodeURIComponent(name)}`,
     ...libraryOps('saved_prompts'),
   },
   {
@@ -350,6 +398,7 @@ export const dockSections = Object.freeze([
     onNew: () => openTemplateEditor(null),
     searchWords: ['group templates', 'summoning circles'],
     extraActions: [{ act: 'deploy-item', label: () => wizWord('Deploy…', 'Summon…'), run: (t) => managementController().openTemplateDeploy(t.name) }],
+    itemPath: (name) => `/api/templates/${encodeURIComponent(name)}`,
     ...libraryOps('templates'),
   },
   {
@@ -363,7 +412,7 @@ export const dockSections = Object.freeze([
     // the management API), so the section loads the profiles itself, again
     // whenever the snapshot's revision says one changed.
     load: {
-      fetch: () => loadSandboxProfiles(),
+      fetch: (fetchImpl) => loadSandboxProfiles(fetchImpl),
       version: (snap) => snap?.sandbox_profiles_rev ?? (snap?.sandbox_profiles || []).join('\n'),
     },
     name: (p) => p.name,
@@ -379,6 +428,7 @@ export const dockSections = Object.freeze([
     searchWords: ['sandbox profiles', 'wards'],
     isDefault: (p, snap) => !!snap?.sandbox_profile_default && snap.sandbox_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('sandbox', isDefault ? '' : p.name),
+    itemPath: (name) => `/api/sandbox-profiles/${encodeURIComponent(name)}`,
     ...libraryOps('sandbox_profiles'),
   },
 ]);
