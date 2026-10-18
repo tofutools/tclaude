@@ -24,11 +24,13 @@ import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { usePeerNotifications } from './peer-notifications.js';
+import { isPageNode, nodeFetch } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
 import { TransferCards } from './transfer-card.js';
-import { paneNode, paneScope } from './fleet-scope.js';
+import { fleetNodes, paneNode, paneScope } from './fleet-scope.js';
 import { nodeColor, remoteNodeID } from './fleet-model.js';
 import { remoteSessionAgents, startRemoteSessionStatusPoll } from './remote-session-status.js';
 import { AgentGearMenu } from './groups-member-table.js';
@@ -405,11 +407,27 @@ function PaneProcessOverlay({ agentId, snapshot, onComposeMessage }) {
 // paneUnreadNotifications returns the unread human notifications sent by the
 // agent behind one terminal pane, newest first. A pane seed carries a single
 // agent selector, which is the stable agent id where one exists and the conv id
-// otherwise — the same both-identities match the Groups rows use.
-export function paneUnreadNotifications(pane, snapshotValue) {
-  const selector = pane?.seed?.agent || '';
+// otherwise — the same both-identities match the Groups rows use. A peer's
+// pane names its agent in seed.remote; its notifications are that peer's
+// (peerLists, read from its mailbox), or the page's on that peer's own page.
+export function paneUnreadNotifications(pane, snapshotValue, peerLists = {}) {
+  const remote = paneRemoteNode(pane);
+  const selector = pane?.seed?.agent || pane?.seed?.remote?.agent || '';
+  if (remote) {
+    const list = peerLists[remote];
+    return selector && list ? memberHumanMessages(selector, { messages: list }, true) : [];
+  }
   if (!selector || !snapshotValue) return [];
   return memberHumanMessages(selector, snapshotValue, true);
+}
+
+const PANE_NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
+
+// paneRemoteNode is the peer a pane's agent lives on when that is not the
+// page's own node, else ''.
+export function paneRemoteNode(pane) {
+  const peer = pane?.seed?.remote?.peer || '';
+  return PANE_NODE_ID.test(peer) && !isPageNode(peer) ? peer : '';
 }
 
 function unreadNotificationLabel(pane, count) {
@@ -424,6 +442,7 @@ function unreadNotificationLabel(pane, count) {
 // in the tooltip instead of hovering a preview card.
 function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
   const messages = suppliedMessages ?? paneUnreadNotifications(pane, snapshot?.value);
+  const node = paneRemoteNode(pane);
   if (!messages.length) return null;
   const message = messages[0];
   const label = pane.label || 'this agent';
@@ -440,6 +459,8 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
         agent: message.from_agent || '',
         conv: message.from_conv || '',
         label: message.from_title || label,
+        // A peer's agent: its notification lives there.
+        ...(node ? { node, nodeName: pane.seed.remote.peerLabel || '' } : {}),
       },
       messageID: message.id,
       launcher: event.currentTarget,
@@ -571,9 +592,10 @@ function NodePill({ node, compact = false }) {
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
+  peerNotifications = {},
 }) {
   const agentStatus = terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
-  const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
+  const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
   const costLine = costTooltip(agentStatus.agent);
@@ -683,7 +705,7 @@ function PaneTab({
 function GroupStack({
   group, panes, activeKey, actions, renaming, onRenameStart, onRenameCommit, onRenameCancel,
   openMenu, menuOpen, dropActive, dragging, onPillDragOver, onPillDragLeave, onPillDrop,
-  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null,
+  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null, peerNotifications = {},
 }) {
   const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
@@ -755,7 +777,7 @@ function GroupStack({
   const hiddenUnread = group.collapsed
     ? panes
       .filter((pane) => !visible.includes(pane))
-      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value).length, 0)
+      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value, peerNotifications).length, 0)
     : 0;
   const openMenuAt = (event) => {
     const keyboard = event.type === 'keydown';
@@ -998,6 +1020,12 @@ function TerminalTabs({
     return { ...scoped, node: paneNode(scopeView?.fleet || { peers: [] }, pane.seed, nodeColor) };
   };
   const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
+  // A peer's agent panes raise their ! from that peer's unread notifications,
+  // read while the strip is on screen from each peer the hub reports online.
+  const offline = new Set((scopeView?.fleet ? fleetNodes(scopeView.fleet) : []).filter((n) => n?.online === false).map((n) => n.id));
+  const notifyPeers = [...new Set(current.panes.map(paneRemoteNode).filter((id) => id && !offline.has(id)))].sort();
+  const stripShown = solo || dashboardState.activeTab.value === 'terminals';
+  const peerNotifications = usePeerNotifications({ active: stripShown, peers: notifyPeers, fetchFor: (id) => nodeFetch(id) });
   const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
   // Quietly: unticking a node must not pull the operator into this tab.
   useEffect(() => {
@@ -1577,6 +1605,7 @@ function TerminalTabs({
               <${PaneTab}
                 key=${pane.key}
                 pane=${pane}
+                peerNotifications=${peerNotifications}
                 active=${current.activeKey === pane.key}
                 menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}
                 groupId=${segment.type === 'group' ? segment.group.id : null}
@@ -1621,6 +1650,7 @@ function TerminalTabs({
                 key=${segment.key}
                 group=${segment.group}
                 panes=${segment.panes}
+                peerNotifications=${peerNotifications}
                 activeKey=${current.activeKey}
                 actions=${actions}
                 renaming=${renamingGroup === gid}

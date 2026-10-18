@@ -578,3 +578,28 @@ test('this node\'s notification read from a peer\'s fused view stays on this nod
   assert.deepEqual(local[1].body, { id: 5, read: true });
   await mounted.unmount();
 });
+
+test('a peer notification opened without that peer\'s snapshot reads its sharing from its mailbox reply', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ GroupsNotificationReader }, nodeApi] = await Promise.all([
+    harness.importDashboardModule('js/groups-notification-reader.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  nodeApi.setSelfNode('inst_self');
+  const message = { id: 8, from_agent: 'agt_forgeworker1', from_title: 'worker', subject: 'from a tab', body: 'x', read: false };
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ messages: [message], peer_view: { level: 'restricted', included: ['node.messages', 'node.messages.mark-read'], omitted: [] } }) });
+  t.after(() => { nodeApi.setSelfNode(''); globalThis.fetch = savedFetch; });
+  const state = { snapshot: { value: { messages: [] } }, publish() {} };
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{ sender: { agent: 'agt_forgeworker1', conv: '', label: 'worker', node: 'inst_forge', nodeName: 'forge' }, messageId: 8 }}
+      snapshot=${state.snapshot.value} state=${state} actions=${{ reportError() {} }} onSelect=${() => {}} onClose=${() => {}} />
+  `);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const button = (label) => [...mounted.container.querySelectorAll('.human-notification-drawer-actions button')].find((b) => b.textContent.trim() === label);
+  assert.ok(button('Mark read'), 'the history brings the message');
+  assert.equal(button('Mark read').disabled, false, 'forge shares marking read');
+  assert.equal(button('Reply').disabled, true, 'answering stays forge\'s operator\'s');
+  await mounted.unmount();
+});

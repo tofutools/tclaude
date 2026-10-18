@@ -327,3 +327,69 @@ test('a link or Back opens the quick reader on the notification the URL names, a
   await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
   assertAbsent(mounted.container.querySelector('.human-notification-drawer'));
 });
+
+test('a peer agent\'s terminal tab raises its ! from that peer\'s notifications and opens them there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [island, attention] = await Promise.all([
+    harness.importDashboardModule('js/terminal-shell-island.js'),
+    harness.importDashboardModule('js/human-notification-attention.js'),
+  ]);
+  const pane = { key: 'p1', label: 'builder', seed: { remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_one' } } };
+  const lists = { inst_forge: [notification, { ...older, read: true }] };
+  assert.equal(island.paneRemoteNode(pane), 'inst_forge');
+  assert.deepEqual(island.paneUnreadNotifications(pane, { messages: [] }, lists).map((m) => m.id), [42], 'forge\'s unread ones, not the page\'s');
+  assert.deepEqual(island.paneUnreadNotifications(pane, { messages: [notification] }, {}), [], 'none before forge answers');
+  const opened = [];
+  const listen = (e) => opened.push(e.detail);
+  harness.document.addEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen);
+  t.after(() => harness.document.removeEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen));
+  const mounted = await harness.mount(harness.html`<${island.TabAttention} pane=${pane} snapshot=${{ value: {} }} messages=${island.paneUnreadNotifications(pane, {}, lists)} />`);
+  await harness.act(() => mounted.container.querySelector('.mux-tab-attention').click());
+  assert.equal(opened[0].messageId, 42);
+  assert.deepEqual({ node: opened[0].sender.node, nodeName: opened[0].sender.nodeName }, { node: 'inst_forge', nodeName: 'forge' });
+  await mounted.unmount();
+});
+
+test('the Terminals strip reads a peer pane\'s notifications while shown, and a folded stack carries them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const asked = [];
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/mailbox?')) asked.push(String(url));
+    if (String(url).includes('inst_labnode')) return { ok: false, status: 403, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ messages: [notification] }) };
+  };
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { terminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  dashboardState.activeTab.value = 'groups';
+  const cleanup = await mountTerminalsFeature({ widgetFactory: widgetFactory(), confirm: async () => true, fetchImpl: async () => ({ ok: true }) });
+  let cleaned = false;
+  t.after(async () => { if (!cleaned) await harness.act(() => cleanup()); dashboardState.activeTab.value = 'groups'; });
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/peer', key: 'peer', label: 'builder', initialRetry: true, remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_one' } });
+    controller.openTerminalPane({ ws: '/lab', key: 'lab', label: 'tester', initialRetry: true, remote: { peer: 'inst_labnode', peerLabel: 'lab', agent: 'agt_two' } });
+    controller.openTerminalPane({ ws: '/local', key: 'local', label: 'local', agent: 'agt_local' });
+    dashboardState.snapshot.value = { messages: [] };
+    await Promise.resolve();
+  });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  assert.deepEqual(asked, [], 'nothing is read while the Terminals tab is not shown');
+  await harness.act(() => { dashboardState.activeTab.value = 'terminals'; });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  assert.deepEqual(asked.sort(), [
+    '/api/peer/inst_forge/mailbox?id=human&unread=1&page=1&page_size=100',
+    '/api/peer/inst_labnode/mailbox?id=human&unread=1&page=1&page_size=100',
+  ], 'each peer a pane is on, once');
+  const glyphs = host.querySelectorAll('.mux-tab-attention');
+  assert.equal(glyphs.length, 1);
+  assert.equal(glyphs[0].closest('[role="tab"]').dataset.paneKey, 'peer');
+  const group = terminalShellState.createGroup({ name: 'work', keys: ['peer', 'local'] });
+  await harness.act(() => { terminalShellState.activatePane('local'); terminalShellState.toggleGroupCollapsed(group.id); });
+  assert.equal(host.querySelectorAll('.mux-group-attention').length, 1, 'the folded stack carries the peer tab\'s alert');
+  cleaned = true;
+  await harness.act(() => cleanup());
+});
