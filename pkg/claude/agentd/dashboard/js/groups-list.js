@@ -163,7 +163,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       interactions.closeMenu(true);
       actions.openAddMember(group);
     }} />
-    <${MenuButton} data-act="cron-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
+    <${MenuButton} data-act="cron-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
     <${MenuButton} title=${wizardMode ? `Choose which durable decrees apply to party ${name}` : `Choose which standing orders apply to ${name}`} regular="📋 standing orders…" wizard="📜 standing orders…" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -571,9 +571,9 @@ function GroupLinksSection({ group, snapshot }) {
   return html`<div class="group-links-section">
     ${rows.length ? html`<strong style="font-size:11px"><${ThemeText} regular="Links" wizard="Arcane channels" /></strong><table><thead><tr><th></th><th><${ThemeText} regular="Other group" wizard="Other party" /></th><th>Mode</th><th></th></tr></thead><tbody>${rows.map(({ link, direction }) => {
       const other = direction === 'out' ? link.to : link.from;
-      return html`<tr key=${`${direction}-${link.id}`}><td><span class="muted">${direction === 'out' ? '→' : '←'}</span></td><td><span class="rowname">${other || '(deleted)'}</span></td><td><span class="id">${link.mode}</span></td><td><div class="row-actions"><button data-act="link-edit" data-id=${link.id} data-from=${link.from} data-to=${link.to} data-mode=${link.mode} title=${isWizardActive() ? 'Rebind this arcane channel' : "Change this link's mode"}><${ThemeText} regular="edit" wizard="rebind" /></button><button class="danger" data-act="link-delete" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} title=${isWizardActive() ? 'Sever this arcane channel' : 'Remove this link'}>×</button></div></td></tr>`;
+      return html`<tr key=${`${direction}-${link.id}`}><td><span class="muted">${direction === 'out' ? '→' : '←'}</span></td><td><span class="rowname">${other || '(deleted)'}</span></td><td><span class="id">${link.mode}</span></td><td><div class="row-actions"><button data-act="link-edit" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} data-mode=${link.mode} title=${isWizardActive() ? 'Rebind this arcane channel' : "Change this link's mode"}><${ThemeText} regular="edit" wizard="rebind" /></button><button class="danger" data-act="link-delete" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} title=${isWizardActive() ? 'Sever this arcane channel' : 'Remove this link'}>×</button></div></td></tr>`;
     })}</tbody></table>` : html`<span class="muted" style="font-size:11px"><${ThemeText} regular="No links involving this group." wizard="No arcane channels are woven to or from this party." /></span>`}
-    <button data-act="link-new" data-from=${group.name} data-label=${group.name} title=${isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group'}><${ThemeText} regular="+ link" wizard="+ weave channel" /></button>
+    <button data-act="link-new" data-group=${group.name} data-from=${group.name} data-label=${group.name} title=${isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group'}><${ThemeText} regular="+ link" wizard="+ weave channel" /></button>
   </div>`;
 }
 

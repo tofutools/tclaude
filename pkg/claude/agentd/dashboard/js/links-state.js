@@ -90,11 +90,11 @@ export function createLinksState({
     return true;
   }
 
-  function openCreate({ preset = {} } = {}) {
+  function openCreate({ preset = {}, node = '' } = {}) {
     // Preserve an in-progress draft if a delegated launcher fires twice.
     if (editor.value) return false;
     editor.value = {
-      kind: 'create', key: ++editorKey,
+      kind: 'create', key: ++editorKey, node: String(node || ''),
       preset: {
         from: preset.from || '',
         to: preset.to || '',
@@ -104,10 +104,10 @@ export function createLinksState({
     return true;
   }
 
-  function openEdit({ id, from = '', to = '', mode = '' }) {
+  function openEdit({ id, from = '', to = '', mode = '', node = '' }) {
     if (editor.value) return false;
     editor.value = {
-      kind: 'edit', key: ++editorKey, id: String(id || ''),
+      kind: 'edit', key: ++editorKey, id: String(id || ''), node: String(node || ''),
       from, to, linkMode: mode || 'members->members',
     };
     return true;

@@ -255,8 +255,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     return true;
   }
 
-  function openCronCreate(prefill = {}) {
-    return openCronDialog({ kind: 'create', prefill: { ...prefill }, originalExpr: '', originalTarget: '' });
+  function openCronCreate(prefill = {}, node = '') {
+    return openCronDialog({ kind: 'create', prefill: { ...prefill }, originalExpr: '', originalTarget: '', node: String(node || '') });
   }
 
   function openCronEdit(job = {}) {

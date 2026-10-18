@@ -246,3 +246,26 @@ test('Trigger actions use the frozen REST contract and row-version CAS', async (
   ]);
   assert.match(notices.at(-1)[0], /trigger delete/);
 });
+
+test("a cron job for another node's agent is created on that node, not in this node's list", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const urls = [];
+  const upserts = [];
+  const mutations = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { urls.push(url); return new Response('{"id":9,"name":"nudge"}', { status: 200 }); };
+  t.after(() => { globalThis.fetch = original; });
+  const actions = createJobsActions({
+    state: { upsertCron: (cron) => upserts.push(cron) },
+    requestMutation: async (path) => { mutations.push(path); return { id: 1 }; },
+    refresh: async () => {}, confirm: async () => true, notify: () => {}, download: () => {},
+  });
+  const node = 'inst_abcdefghijklmnop';
+  await actions.saveCron({ path: '/api/cron', method: 'POST', payload: { name: 'nudge' }, node });
+  assert.deepEqual(urls, [`/api/peer/${node}/cron`]);
+  assert.deepEqual(upserts, [], "this node's Jobs list is not touched");
+  await actions.saveCron({ path: '/api/cron', method: 'POST', payload: { name: 'here' } });
+  assert.deepEqual(mutations, ['/api/cron']);
+  assert.equal(upserts.length, 1);
+});

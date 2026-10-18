@@ -79,16 +79,22 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'remove-member': ['feature:agents.manage.full'],
   // What no peer grant covers, which unrestricted trust reaches as this
   // node's operator does (the local_dashboard routes): its process, force
-  // and ownership controls and the auto-join default.
+  // and ownership controls, the auto-join default, its member permissions, its
+  // links within its node and new cron jobs.
   'advance-phase': ['feature:local_dashboard'],
   'rebrief-force': ['feature:local_dashboard'],
   'stand-down-force': ['feature:local_dashboard'],
   'grant-owner': ['feature:local_dashboard'],
   'revoke-owner': ['feature:local_dashboard'],
   'set-default-spawn-group': ['feature:local_dashboard'],
-  // Not listed, so local to their own node: links, standing orders, cron,
+  'set-group-permissions': ['feature:local_dashboard'],
+  'link-new': ['feature:local_dashboard'],
+  'link-edit': ['feature:local_dashboard'],
+  'link-delete': ['feature:local_dashboard'],
+  'cron-new': ['feature:local_dashboard'],
+  // Not listed, so local to their own node: the links manager, standing orders,
   // messages, templates, repositories and worktrees, terminals and showing a
-  // window (hiding one is an agent control), and member permissions; and export, whose binary archive the JSON peer
+  // window (hiding one is an agent control); and export, whose binary archive the JSON peer
   // view does not carry.
 });
 
@@ -136,6 +142,8 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'reinstate-agent': ['feature:local_dashboard'],
   'delete-generation': ['feature:local_dashboard'],
   'hide': ['feature:local_dashboard'],
+  'perm-edit': ['feature:local_dashboard'],
+  'sudo-grant': ['feature:local_dashboard'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way
