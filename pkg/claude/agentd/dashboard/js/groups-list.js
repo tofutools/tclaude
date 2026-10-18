@@ -595,7 +595,9 @@ function compactTriggerState(rule) {
 }
 
 function GroupTriggersSection({ group, triggers }) {
-  const rows = (triggers || []).filter((rule) => rule.scope === 'global' ||
+  // In the fused view each rule is its node's (fleet_node): a global rule
+  // covers that node's groups only.
+  const rows = (triggers || []).filter((rule) => (!group.fleet_node || rule.fleet_node === group.fleet_node.id)).filter((rule) => rule.scope === 'global' ||
     (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
