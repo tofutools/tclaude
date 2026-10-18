@@ -215,10 +215,46 @@ export function footerMetaView(snapshot) {
 
 const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/;
 
-export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false) {
+// prKey folds a GitHub PR URL to owner/repo#number, case-insensitively, so a
+// /files suffix or a differently-cased owner still names the same PR.
+function prKey(raw) {
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)(?:[/?#].*)?$/i.exec(String(raw || '').trim());
+  return m ? `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : '';
+}
+
+// peerPRAgents indexes the PRs the fused view's peer nodes show next to their
+// agents (branch, startup, presented and statusline PRs). The page's daemon
+// associates the footer's PRs with its own agents only, so a PR an agent works
+// on from another node would otherwise read "no active agent". A restricted
+// peer's projection carries no PR links and simply contributes nothing.
+export function peerPRAgents(peers) {
+  const byPR = new Map();
+  for (const { name, snapshot } of peers || []) {
+    const rows = [...(snapshot?.agents || []), ...(snapshot?.groups || []).flatMap((g) => g?.members || [])];
+    for (const row of rows) {
+      const id = row?.agent_id || row?.conv_id;
+      if (!id) continue;
+      const ref = { agent_id: id, agent_title: `${row.title || id}${name ? `@${name}` : ''}` };
+      const urls = [row.branch_pr_url, row.startup_pr_url, ...(row.presented_prs || []).map((pr) => pr?.url)];
+      for (const url of urls) {
+        const key = prKey(url);
+        if (key && !byPR.has(key)) byPR.set(key, ref);
+      }
+    }
+  }
+  return byPR;
+}
+
+export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false, peers = []) {
   const source = snapshot?.authored_open_prs;
   if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0 };
-  const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || ''));
+  const peerAgents = peerPRAgents(peers);
+  const attach = (pr) => {
+    if (pr?.agent_id || !peerAgents.size) return pr;
+    const ref = peerAgents.get(prKey(pr?.url));
+    return ref ? { ...pr, ...ref } : pr;
+  };
+  const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || '')).map(attach);
   const all = sane(source.items);
   // The recent list is deliberately kept out of `all`: the trigger count, the
   // attention/unattached tallies and their filters are about OPEN work, and a
