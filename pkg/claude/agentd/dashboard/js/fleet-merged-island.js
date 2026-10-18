@@ -411,7 +411,9 @@ export function MergedGroups({
       if (instance && instance === homeRef.current) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
-        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
+        // Ctrl/Cmd opens it without switching to it, as on this node.
+        const background = !!(event.ctrlKey || event.metaKey);
+        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast, ...(background ? { background } : {}) });
         return;
       }
       const name = group?.dataset.fleetNodeName || '';
@@ -436,7 +438,11 @@ export function MergedGroups({
     };
     const onContext = (event) => {
       if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
-      if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+      if (!event.target?.closest?.('[data-act]') || !host.contains(event.target)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      // macOS turns Ctrl-click into this event: a peer row's attach still
+      // opens, in the background (row-actions.js does so on this node).
+      if ((event.ctrlKey || event.metaKey) && ATTACH_ACTS.has(actOf(event.target, event)?.dataset.act)) onClick(event);
     };
     // A member drag is the Groups drag-and-drop (dnd.js) on every node: a
     // drop on a group on the agent's own node moves, adds or clones it there

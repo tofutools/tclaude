@@ -10,6 +10,8 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
+import { nodeFetch } from './node-api.js';
+import { unrestrictedOn } from './node-trust.js';
 
 const html = htm.bind(h);
 
@@ -31,12 +33,14 @@ const NOT_YET = 'Needs the operator teleport routes, which this dashboard does n
 
 // modeState says whether a mode can be used for this agent from this
 // dashboard. local: the agent runs on this node. presence: its presenceKind.
-export function modeState(mode, { local, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES }) {
+// acting: the agent's node trusts this one unrestricted, so a morph runs on
+// it as on that node's own dashboard.
+export function modeState(mode, { local, acting = false, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES }) {
   const there = `Do this from ${source}'s dashboard.`;
   switch (mode) {
     case 'move': return { ok: true };
-    case 'clone':
-    case 'morph': return local ? { ok: true } : { ok: false, why: there };
+    case 'clone': return local ? { ok: true } : { ok: false, why: there };
+    case 'morph': return local || acting ? { ok: true } : { ok: false, why: there };
     case 'teleport':
       if (!teleport) return { ok: false, why: NOT_YET };
       return local ? { ok: true } : { ok: false, why: there };
@@ -138,6 +142,9 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
 }
 
 function errText(e) { return e?.body?.error || e?.message || String(e); }
+
+// nodeApi is the dialog's I/O on another node (nodeFetch).
+function nodeApi(node) { return createLaunchTargetApi({ fetchImpl: nodeFetch(node) }); }
 
 // createLaunchTargetApi is the dialog's I/O. Errors carry status, code and
 // the parsed body, as the federation actions' errors do.
@@ -390,7 +397,13 @@ export function LaunchTargetDialog({
   api = createLaunchTargetApi(), actions, peerActions, localGroups = [], relay = false, nodeGroups = {}, onClose, onLocalClone,
   timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES, toast = shellToast,
 }) {
-  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
+  const acting = agent.node !== self.id && unrestrictedOn(agent.node);
+  // A morph on another node runs through that node's routes.
+  // (Built once acting holds: before the node's snapshot loads, Morph stays
+  // disabled, and nothing goes to this node under the agent's ID.)
+  const morphApi = useRef(null);
+  if (acting && !morphApi.current) morphApi.current = nodeApi(agent.node);
+  const firstCtx = { local: agent.node === self.id, acting, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
   // A mode this agent cannot use here never opens: fall back to the first
   // one it can (Move always can).
   const [mode, setMode] = useState(modeState(initialMode, firstCtx).ok ? initialMode : (MODES.find((m) => modeState(m.key, firstCtx).ok)?.key || 'move'));
@@ -405,7 +418,7 @@ export function LaunchTargetDialog({
   const okRef = useRef(null);
   const local = agent.node === self.id;
   const source = { node: agent.node, name: agent.nodeName || self.name, group: agent.group };
-  const ctx = { local, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport };
+  const ctx = { local, acting, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport };
   useEffect(() => {
     let live = true;
     if (local) api.status().then((s) => { if (live) setStatus(s); }).catch(() => { if (live) setStatus({}); });
@@ -424,7 +437,7 @@ export function LaunchTargetDialog({
   const cloneHere = mode === 'clone' && picked?.id === source.node;
 
   let body;
-  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
+  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${acting ? morphApi.current : api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
   else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>

@@ -92,6 +92,13 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   const localWin = inGroup('inst_self', 'desk', '<button data-act="web-open-window" data-agent="agt_me1">web window</button>');
   assert.equal(harness.fireEvent(localWin, 'click').defaultPrevented, false, "this node's rows run as on its own view");
   assert.equal(opened.length, 1);
+  // Ctrl/Cmd opens a peer's terminal in the background, by click or by the
+  // context-menu event macOS turns a Ctrl-click into.
+  harness.fireEvent(peerWin, 'click', { ctrlKey: true });
+  assert.equal(opened[1].background, true);
+  assert.equal(harness.fireEvent(peerWin, 'contextmenu', { ctrlKey: true }).defaultPrevented, true);
+  assert.equal(opened[2]?.background, true, 'a Ctrl-click context menu still opens it');
+  assert.equal(opened[0].background, undefined, 'a plain click reveals it');
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();

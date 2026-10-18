@@ -14,8 +14,8 @@ import { createPeerActionActions } from './peer-action.js';
 import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
-import { nodeSnapshot, selfNodeID } from './node-api.js';
-import { dashboardState } from './snapshot-store.js';
+import { nodeSnapshot } from './node-api.js';
+import { unrestrictedOn } from './node-trust.js';
 import { groupFieldHeld, groupFieldMissing, needsSuffix } from './peer-view-limits.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog, TerminalChooserDialog,
@@ -57,14 +57,6 @@ function ErrorBanner({ id, error, onDismiss }) {
   `;
 }
 
-// unrestrictedOn reports whether node (blank: the page's, on a peer's page)
-// trusts this node unrestricted, so a dialog acts there as locally.
-function unrestrictedOn(node) {
-  // This node's own agent, from a peer's page, is this operator's own.
-  if (node && node === selfNodeID()) return true;
-  const snap = node ? nodeSnapshot(node) : globalThis.__tclaudeRemoteNode?.id ? dashboardState.snapshot.value : null;
-  return snap?.peer_view?.level === 'unrestricted';
-}
 
 function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, base, setBase, node = '' }) {
   const [request, setRequest] = useState({ phase: 'loading', data: null, error: '' });
