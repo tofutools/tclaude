@@ -915,7 +915,11 @@ export function attachTerminalInteractions({
       term.paste(paths.map(terminalPathToken).join(' ') + ' ');
       flash(paths.length === 1 ? `${noun} pasted` : `${paths.length} ${noun}s pasted`);
     } catch (error) {
-      if (controller.signal.aborted || error && error.name === 'AbortError') return;
+      if (controller.signal.aborted || error && error.name === 'AbortError') {
+        // Cancelled from the progress card: replace the 30s "uploading" status.
+        if (generation === myGeneration) flash('upload cancelled');
+        return;
+      }
       const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 120);
       flash(`${noun} paste failed: ${detail}`, 5000);
     } finally {

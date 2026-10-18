@@ -6,8 +6,9 @@
   const nativeFetch = window.fetch.bind(window);
   let reloading = false;
 
-  window.fetch = async (...args) => {
-    const response = await nativeFetch(...args);
+  // noteResponse is also called for XMLHttpRequest uploads (transfers.js),
+  // which bypass this wrapper.
+  const noteResponse = (response) => {
     if (!reloading && response.headers.get('X-Tclaude-Login-Required') === '1') {
       reloading = true;
       // Let terminal views disarm beforeunload prompts, then move to the
@@ -21,4 +22,7 @@
     }
     return response;
   };
+  window.__tclaudeNoteResponse = noteResponse;
+
+  window.fetch = async (...args) => noteResponse(await nativeFetch(...args));
 })();

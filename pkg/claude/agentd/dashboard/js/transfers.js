@@ -87,10 +87,17 @@ export function xhrUpload(url, { body, signal, onProgress, XHR = globalThis.XMLH
     };
     xhr.onload = () => {
       settle();
-      const empty = [101, 204, 205, 304].includes(xhr.status);
-      resolve(new Response(empty ? null : xhr.responseText, {
-        status: xhr.status, headers: responseHeaders(xhr.getAllResponseHeaders()),
-      }));
+      try {
+        const empty = [101, 204, 205, 304].includes(xhr.status);
+        const response = new Response(empty ? null : xhr.responseText, {
+          status: xhr.status, headers: responseHeaders(xhr.getAllResponseHeaders()),
+        });
+        // An expired session signs in again, as for fetch (auth-session.js).
+        globalThis.__tclaudeNoteResponse?.(response);
+        resolve(response);
+      } catch (error) {
+        reject(error); // e.g. a status Response refuses
+      }
     };
     xhr.onerror = () => { settle(); reject(new TypeError('upload failed: network error')); };
     xhr.onabort = () => { settle(); reject(abortError()); };
