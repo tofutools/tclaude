@@ -607,7 +607,7 @@ type mailboxPage struct {
 }
 
 // handleDashboardMailbox serves
-// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&focus= — one
+// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&focus=&unread= — one
 // newest-first page of the selected mailbox's messages, server-filtered
 // by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
@@ -629,7 +629,8 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 
 	if id == humanMailboxID {
 		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
-		p := humanMailboxPage(q, sender, page, pageSize, focus)
+		unread := r.URL.Query().Get("unread") == "1"
+		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, page, pageSize, focus)
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -1071,8 +1072,7 @@ func withRetiredParticipants(members, participants []string, retiredSet map[stri
 // focus, when it names a row in the filtered list, overrides page with the
 // page holding that row: the snapshot only carries recent and unread
 // notifications, so the browser cannot compute an older row's page itself.
-func humanMailboxPage(q, sender string, page, pageSize int, focus int64) mailboxPage {
-	filter := db.HumanMessageFilter{Sender: sender, Query: q}
+func humanMailboxPage(filter db.HumanMessageFilter, page, pageSize int, focus int64) mailboxPage {
 	empty := mailboxPage{Messages: []mailboxMessage{}, Page: 1, PageSize: pageSize}
 	total, err := db.CountHumanMessages(filter)
 	if err != nil {
@@ -1080,7 +1080,7 @@ func humanMailboxPage(q, sender string, page, pageSize int, focus int64) mailbox
 		return empty
 	}
 	totalUnfiltered := total
-	if sender != "" || q != "" {
+	if filter != (db.HumanMessageFilter{}) {
 		if totalUnfiltered, err = db.CountHumanMessages(db.HumanMessageFilter{}); err != nil {
 			slog.Warn("mailbox: count human messages failed", "error", err)
 			return empty

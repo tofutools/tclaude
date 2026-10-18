@@ -1901,4 +1901,11 @@ func TestDashboardSnapshot_HumanMessagesBoundedFolderFocus(t *testing.T) {
 	assert.Equal(t, 60, page.Total)
 	require.NotEmpty(t, page.Messages)
 	assert.Equal(t, ids[0], page.Messages[len(page.Messages)-1].ID)
+
+	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/mailbox?id=human&unread=1", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &page)
+	require.Len(t, page.Messages, 1, "unread=1 keeps only unread notifications")
+	assert.Equal(t, ids[0], page.Messages[0].ID)
+	assert.Equal(t, 1, page.Total)
 }
