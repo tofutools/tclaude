@@ -331,7 +331,9 @@ export function GroupsNotificationReader({
       void import('./remote-terminal.js').then((m) => m.openRemoteTerminal({ instance: peer, agent: senderAgent, peerLabel: peerName, label: senderLabel, toast }));
       return;
     }
-    void import('./agent-jump.js').then((m) => m.jumpAgent(senderAgent || senderConv, senderLabel, nodeSnap?.default_terminal === 'web', '', toast));
+    const row = [...(nodeSnap?.agents || []), ...(nodeSnap?.ungrouped || [])]
+      .find((a) => (senderAgent ? a.agent_id === senderAgent : a.conv_id === senderConv));
+    void import('./agent-jump.js').then((m) => m.jumpAgent(senderAgent || senderConv, senderLabel, nodeSnap?.default_terminal === 'web', row?.state?.harness || '', toast));
   };
   // A deleted notification leaves the reader on its neighbour, else closes it.
   const dropDeleted = () => {
