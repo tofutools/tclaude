@@ -93,6 +93,7 @@ import {
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
+import { refreshPageNotifications } from './peer-notifications.js';
 import { fromPath, locEquals, normalizeLocation, withoutOverlays } from './nav-history-core.js';
 
 const ALL_ID = 'all';
@@ -1168,6 +1169,8 @@ function markOpenedHumanRead(id) {
         body: JSON.stringify({ id }),
       });
       if (!r.ok) throw new Error(await r.text());
+      // A restricted peer's page lists its unread ones at their own cadence.
+      if (remote) refreshPageNotifications(id, true, m);
       // The unread badge lives on the roster — refresh that alone, leaving
       // the open message + list page undisturbed.
       await loadMailboxes();

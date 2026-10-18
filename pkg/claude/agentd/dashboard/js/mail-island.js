@@ -17,6 +17,7 @@ import {
   MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
+import { refreshPageNotifications } from './peer-notifications.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './fleet-model.js';
@@ -534,7 +535,9 @@ function peerHumanActions(remote, peerView) {
     canDelete: operatorHere(),
     remove: (id) => postPeerJSON('/api/human-messages/delete', { id }),
     focus: (m) => openRemote({ instance: remote, agent: m.from_agent, peerLabel: name, label: m.from_title || '', toast: shellToast }),
-    mark: (id, read) => postPeerJSON('/api/human-inbox/read', read ? { id } : { id, read: false }),
+    // The page's own list of its unread ones (a restricted peer's) follows.
+    mark: (id, read) => postPeerJSON('/api/human-inbox/read', read ? { id } : { id, read: false })
+      .then((res) => { refreshPageNotifications(id, read); return res; }),
     reply: (id, body) => postPeerJSON('/api/human-inbox/reply', { id, body }),
   };
 }
