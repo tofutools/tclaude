@@ -20360,7 +20360,42 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
-.fa-grants-head .fa-grants-revoke-all { margin-left: auto; }
+.fa-grants-head .fa-grants-add { margin-left: auto; }
+.fa-grants-filter { flex: 1 1 16em; max-width: 420px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-grants-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 8px 0; }
+.fa-grants-foot .fa-grants-revoke-all { margin-left: auto; }
+/* Add-grants dialog (js/fleet-admin-grant-dialog.js). */
+.cron-create-modal.fa-grant-dialog { width: min(1040px, 96vw); max-width: none; }
+#fleet-grant-dialog > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-gd { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .fa-gd { grid-template-columns: minmax(0, 1fr); } }
+.fa-gd input[type=text], .fa-gd input[type=number], .fa-gd select { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; box-sizing: border-box; }
+#fleet-grant-search { width: 100%; padding: 6px 9px; }
+.fa-gd-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.fa-gd-chip { font: inherit; font-size: 12px; padding: 1px 9px; border: 1px solid #30363d; border-radius: 12px; background: none; color: #8b949e; cursor: pointer; }
+.fa-gd-chip.on { background: #1f6feb33; border-color: #1f6feb; color: #c9d1d9; }
+.fa-gd-hide { margin-left: auto; font-size: 12px; }
+.fa-gd-list { border: 1px solid #30363d; border-radius: 6px; max-height: 52vh; overflow: auto; }
+.fa-gd-cat { position: sticky; top: 0; z-index: 1; background: #161b22; color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 4px 10px; border-bottom: 1px solid #21262d; }
+.fa-gd-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; padding: 6px 10px; border-bottom: 1px solid #21262d; cursor: pointer; }
+.fa-gd-item:hover { background: rgba(110, 118, 129, 0.08); }
+.fa-gd-item.on { background: rgba(56, 139, 253, 0.12); }
+.fa-gd-item > code { overflow-wrap: anywhere; }
+.fa-gd-what { grid-column: 2 / 4; font-size: 12px; }
+.fa-gd-badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.fa-gd-badge { font-size: 10px; padding: 0 6px; border-radius: 8px; border: 1px solid #30363d; color: #7d8590; white-space: nowrap; }
+.fa-gd-badge.sens { border-color: #f0883e66; color: #f0883e; }
+.fa-gd-badge.held { border-color: #3fb95066; color: #3fb950; }
+.fa-gd-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; align-items: center; margin: 6px 0; }
+.fa-gd-top { align-items: start; }
+.fa-gd-radio { display: block; margin: 2px 0; }
+.fa-gd-groups { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 0 20px; }
+.fa-gd-group { font-size: 12px; padding: 1px 8px 1px 4px; border: 1px solid #30363d; border-radius: 10px; cursor: pointer; }
+.fa-gd-group.on { border-color: #1f6feb; background: #1f6feb22; }
+.fa-gd-note { font-size: 12px; margin: 2px 0 4px 78px; }
+.fa-gd-plan { margin-top: 10px; padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; font-size: 12px; max-height: 30vh; overflow: auto; }
+.fa-gd-plan ul { margin: 4px 0 0; padding-left: 18px; }
+.fa-gd-side .fa-grant-launch { margin: 6px 0; }
 .fa-table tr.fa-grant-peer td { background: #161b22; border-bottom-color: #30363d; }
 .fa-warn { color: #e3b341; }
 /* Peer operator mail and away cover (js/peer-mail.js). */
