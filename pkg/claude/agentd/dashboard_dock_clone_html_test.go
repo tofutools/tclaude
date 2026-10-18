@@ -55,7 +55,7 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must("onCloneItem:", "the sections carry a clone hook")
 	must("openPresetCloneDialog({ kind: 'profile'", "profiles clone via the generic name dialog")
 	must("openPresetCloneDialog({ kind: 'role'", "roles clone via the generic name dialog")
-	must("onCloneItem: (t) => openDuplicateModal(t.name)", "templates reuse their own duplicate dialog")
+	must("onCloneItem: (t, node) => (node ? catalogOn(node).openTemplateDuplicate(t.name) : openDuplicateModal(t.name))", "templates reuse their own duplicate dialog, on the card's node")
 
 	// Delete reuses each kind's existing manager delete flow (confirm + delete +
 	// toast). Profiles/roles get a dashboard refresh after (their removes only

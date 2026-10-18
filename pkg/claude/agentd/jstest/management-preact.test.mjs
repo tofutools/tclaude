@@ -5113,10 +5113,13 @@ test('catalogOn edits another node\'s catalogs in place: its fetch, its snapshot
 
   // The island renders a stamped editor with the node's actions.
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  const permissions = [];
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions(options) { permissions.push(options); }, registerCleanup(fn) { cleanups.push(fn); } });
   on.openRoleEditor({ name: 'r1', brief: 'b' });
   await harness.act(() => Promise.resolve());
   assert.equal(state.dialog.value.slugs[0], 'message.direct', 'the node\'s permission slugs');
+  host.querySelector('#role-editor-perms').click();
+  assert.equal(permissions.at(-1).node, 'inst_herc31', 'Permissions… reads the node\'s catalog and grants');
   host.querySelector('#role-editor-submit').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
   assert.ok(calls.some(([path, method]) => path === '/api/peer/inst_herc31/roles/r1' && method === 'PATCH'), 'the role saves on that node');
