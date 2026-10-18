@@ -286,10 +286,15 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
   // Opening a human notification marks it read on its node, as each node's
   // own Messages does, wherever that node lets this operator. Once per open:
   // a later "mark unread" sticks.
-  const autoMark = item?.kind === 'human' && !item.read && humanMarkable(item.node, peerView) ? item.key : '';
+  // opened is the open already handled: polls rebuild item, and its read
+  // state flipping back must not mark it again.
+  const opened = useRef('');
   useEffect(() => {
-    if (autoMark) actions.humanRead(item.node, item.id, true).then(onDone, () => {});
-  }, [autoMark]);
+    const key = item?.key || '';
+    if (key === opened.current) return;
+    opened.current = key;
+    if (key && item.kind === 'human' && !item.read && humanMarkable(item.node, peerView)) actions.humanRead(item.node, item.id, true).then(onDone, () => {});
+  }, [item?.key]);
   if (!item) {
     return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
       <div class="empty">Select a message to read.</div></div>`;

@@ -426,14 +426,18 @@ test('opening a notification marks it read on its node wherever that node allows
     { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'restricted' },
     { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'restricted' },
   ] });
-  const timers = fakeTimers(); const posts = [];
+  const timers = fakeTimers(); const posts = []; const read = {};
   // forge grants this operator node.messages.mark-read; lab only reading.
   const peerView = (url) => ({ peer: 'desk', level: 'restricted', included: url.includes('inst_forge') ? ['node.messages', 'node.messages.mark-read'] : ['node.messages'], omitted: [] });
   const respond = async (url, init = {}) => {
-    if (init.method === 'POST') { posts.push(`POST ${url} ${init.body}`); return ok({ ok: true }); }
-    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [], ...(url.startsWith('/api/peer/') ? { peer_view: peerView(url) } : {}) });
     const from = url.match(/^\/api\/peer\/inst_(\w+)/)?.[1] || 'desk';
-    return ok({ messages: [{ id: 5, from_agent: 'agt_abcd1234', subject: `${from} note`, body: 'b', created_at: '2026-01-01T00:00:00Z', read: false }], total: 1 });
+    if (init.method === 'POST') {
+      posts.push(`POST ${url} ${init.body}`);
+      read[from] = JSON.parse(init.body).read !== false;
+      return ok({ ok: true });
+    }
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [], ...(url.startsWith('/api/peer/') ? { peer_view: peerView(url) } : {}) });
+    return ok({ messages: [{ id: 5, from_agent: 'agt_abcd1234', subject: `${from} note`, body: 'b', created_at: '2026-01-01T00:00:00Z', read: !!read[from] }], total: 1 });
   };
   const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
     timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
@@ -445,12 +449,19 @@ test('opening a notification marks it read on its node wherever that node allows
 
   await open('inst_forge/human/5');
   assert.deepEqual(posts, ['POST /api/peer/inst_forge/human-inbox/read {"id":5}']);
+  // Polls keep rebuilding the open message: it is marked once per open, so
+  // marking it unread sticks.
+  await once();
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="mark"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(posts[1], 'POST /api/peer/inst_forge/human-inbox/read {"id":5,"read":false}');
+  await once();
+  assert.equal(posts.length, 2, 'mark unread sticks while the message stays open');
   assert.equal(c.querySelector('[data-human="mark"]').disabled, false, 'forge grants marking');
   assert.equal(c.querySelector('[data-human="reply"]').disabled, true, 'replying still needs unrestricted trust');
   await open('inst_lab/human/5');
-  assert.equal(posts.length, 1, 'lab shares its notifications for reading only');
+  assert.equal(posts.length, 2, 'lab shares its notifications for reading only');
   assert.equal(c.querySelector('[data-human="mark"]').disabled, true);
   await open('inst_self/human/5');
-  assert.deepEqual(posts.slice(1), ['POST /api/human-messages/read {"id":5}'], 'this node\'s own, through its own route');
+  assert.deepEqual(posts.slice(2), ['POST /api/human-messages/read {"id":5}'], 'this node\'s own, through its own route');
   await mounted.unmount(); state.dispose();
 });
