@@ -2579,6 +2579,15 @@ body.slop .human-notification-drawer-actions button.primary {
   color: #d4d4d4; padding: 0 4px; font: inherit; font-weight: 600;
   min-width: 12em;
 }
+/* Live note under an inline editor (the auto-corrected rename title). It
+   floats over the next row rather than growing this one. */
+.inline-editor-hint {
+  position: absolute; left: 0; top: 100%; margin-top: 3px; z-index: 5;
+  white-space: nowrap; font-size: 11px; font-weight: 400; color: #7d8590;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 2px 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); pointer-events: none;
+}
+.inline-editor-hint.warn { color: #f0883e; }
 .title { color: #d4d4d4; }
 .slug { font-family: ui-monospace, monospace; font-size: 12px; }
 .muted { color: #7d8590; }
