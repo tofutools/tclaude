@@ -75,7 +75,9 @@ import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
 import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
-import { limitPeerViewCommands } from './peer-view-limits.js';
+import { limitHint, limitPeerViewCommands, shellControl } from './peer-view-limits.js';
+import { buildFusedNodeCommands } from './palette-fused.js';
+import { fusedGroupListing } from './group-order.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -162,6 +164,16 @@ function openGroupsFocus(focus) {
     return;
   }
   chooseGroupsFocus(groups, focus);
+}
+
+// openRemote opens a peer's agent terminal or shell here, through the
+// federation bridge (remote-terminal.js), loaded on first use.
+const openRemote = (fn, opts) => import('./remote-terminal.js').then((m) => m[fn](opts));
+const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
+
+// pageNodeName is how a peer's page names the peer it shows.
+function pageNodeName(remote) {
+  return document.documentElement.dataset.remoteNodeName || remote.id.slice(0, 13);
 }
 
 function setGroupOpen(name, open) {
@@ -317,7 +329,23 @@ export function buildCommands(snapshot) {
     // (row action group-web-term). Like that menu item it is only offered
     // when the group HAS a default dir, so the server resolve has a target.
     const home = (g.default_cwd || '').trim();
-    if (home) {
+    const page = globalThis.__tclaudeRemoteNode;
+    if (home && page?.id) {
+      // On a peer's page the group's shell is the peer's, opened here in the
+      // browser under its sessions.shell grant on the group, as the ⚙ item.
+      const control = shellControl({ dataset: { act: 'group-web-term', group: g.name } }, snap.peer_view);
+      const name = pageNodeName(page);
+      cmds.push({
+        node: page.id, icon: wiz('🖥', '🔮'),
+        label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
+        hint: wiz(`web shell in ${home} on ${name}`, `browser scrying portal in ${home} on ${name}`),
+        keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
+          + ' portal scrying party',
+        ...(control.state === 'shell'
+          ? { run: () => { recordGroupInteraction(g.name); void openRemote('openRemoteShell', { instance: page.id, peerLabel: name, ...control.shell }); } }
+          : { enabled: false, disabledReason: limitHint(control.state, control.what, name, control.needs), run: () => {} }),
+      });
+    } else if (home) {
       cmds.push({
         peerView: 'own', icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
@@ -535,6 +563,10 @@ export function buildCommands(snapshot) {
       },
     });
   }
+  // The fused Groups view's other nodes' groups (group@node) take theirs on
+  // their node.
+  const fused = fusedGroupListing();
+  cmds.push(...buildFusedNodeCommands(fused, { wiz }));
 
   // 3) Theme toggles — regular, slop (🎰) and wizard (🧙). Each command
   //    toggles ONE re-skin on or off (the header icon cycles only
@@ -743,7 +775,8 @@ export function buildCommands(snapshot) {
       + ' unfurl unseal unroll scroll parties',
     run: () => setAllGroupsOpen(true),
   });
-  for (const g of groups) {
+  // The fused view lists every node's groups, by their merged names.
+  for (const g of fused ? (fused.groups || []).filter((x) => scribeGroupVisible(x, showOfflineScribes)) : groups) {
     cmds.push({
       peerView: 'view', icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl party: ${g.name}`),
       hint: wiz('fold this group', 'roll up this party'),
@@ -801,6 +834,7 @@ export function buildCommands(snapshot) {
     if (onlineG) {
       const plural = onlineG === 1 ? '' : 's';
       cmds.push({
+        groupGrant: { act: 'shutdown-group', group: g.name },
         icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`),
         hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
           `lull ${onlineG} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
@@ -813,6 +847,7 @@ export function buildCommands(snapshot) {
     if (offlineG) {
       const plural = offlineG === 1 ? '' : 's';
       cmds.push({
+        groupGrant: { act: 'power-on-group', group: g.name },
         icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`),
         hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
           `rouse ${offlineG} slumbering familiar${plural} back onto their scrolls`),
@@ -830,6 +865,22 @@ export function buildCommands(snapshot) {
     // Route by the rotation-immune stable agent_id (conv-id fallback for a
     // pre-identity row); the server resolves it via agent.ResolveSelector.
     const sel = a.agent_id || a.conv_id;
+    const page = globalThis.__tclaudeRemoteNode;
+    if (page?.id) {
+      // On a peer's page an agent's terminal is the peer's, opened here in the
+      // browser terminal, as its row's jump does; the peer authorises it.
+      if (!SAFE_AGENT.test(a.agent_id || '')) continue;
+      const name = pageNodeName(page);
+      cmds.push({
+        id: `agent-focus:${sel}`,
+        node: page.id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal familiar: ${label}`),
+        hint: wiz(`open this agent's terminal on ${name} here`, `conjure this familiar's scrying portal from ${name}`),
+        keywords: 'focus show jump open terminal window agent ' + label + ' ' + (a.conv_id || '')
+          + ' reveal behold conjure portal scrying familiar',
+        run: () => void openRemote('openRemoteTerminal', { instance: page.id, agent: a.agent_id, peerLabel: name, label }),
+      });
+      continue;
+    }
     cmds.push({
       id: `agent-focus:${sel}`,
       peerView: 'own',
