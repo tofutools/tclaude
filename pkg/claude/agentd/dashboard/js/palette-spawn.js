@@ -11,7 +11,8 @@ export function buildProfileSpawnCommands(snapshot, {
       const fast = savedFast || fastOverride;
       const suffix = fast ? ' (fast)' : '';
       commands.push({
-        icon: wiz('＋', '🔮'),
+        // The spawn dialog sends a spawn request on a peer that shares it.
+        peerView: 'spawn', icon: wiz('＋', '🔮'),
         label: wiz(`Spawn ${profile.name}${suffix}…`, `Summon ${profile.name}${suffix}…`),
         hint: wiz('open the spawn dialog with this profile', 'open the summoning circle with this pattern')
           + (defaultGroup ? ` · ${defaultGroup}` : '')
