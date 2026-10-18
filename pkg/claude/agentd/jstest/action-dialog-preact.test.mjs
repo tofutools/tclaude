@@ -186,7 +186,7 @@ test("another node's group settings lock this machine's pickers with the reason"
   const { host } = mounted;
   assert.equal(host.querySelector('#group-settings-default-cwd-browse').disabled, true);
   assert.match(host.querySelector('#group-settings-default-cwd-browse-lock').dataset.why, /this machine's folder picker/);
-  assert.match(host.querySelector('#group-settings-prompts-lock').dataset.why, /this machine's library/);
+  assert.match(host.querySelector('#group-settings-prompts-lock').dataset.why, /its own node's dashboard/);
   await mounted.cleanup();
 });
 

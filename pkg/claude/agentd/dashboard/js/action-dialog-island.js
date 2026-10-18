@@ -15,7 +15,7 @@ import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { nodeSnapshot } from './node-api.js';
-import { LockReason, trustLock } from './lock-reason.js';
+import { LockReason, machineLock, trustLock } from './lock-reason.js';
 import { groupFieldHeld, groupFieldMissing, needsSuffix } from './peer-view-limits.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog, TerminalChooserDialog,
@@ -560,10 +560,9 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   const snap = useMemo(() => nodeSnapshot(node) || snapshot?.value || null, [descriptor.launchID]);
   const group = (snap?.groups || []).find((item) => item.name === descriptor.group);
   const peerView = snap?.peer_view || null;
-  const here = !node && !peerView;
   // The folder picker and the saved prompts picker work on this machine.
-  const browseLock = here ? '' : "Browsing opens this machine's folder picker; type the other node's path.";
-  const promptsLock = here ? '' : "Saved prompts are picked from this machine's library, so they are set on the group's own node.";
+  const browseLock = machineLock(node, "Browsing opens this machine's folder picker; type the other node's path.");
+  const promptsLock = machineLock(node, "A group's saved prompts are set from its own node's dashboard.");
   const can = (act) => groupFieldHeld(act, descriptor.group, peerView);
   const off = (act) => (can(act) ? {} : { disabled: true, title: `This node does not share this setting with you${needsSuffix(groupFieldMissing(act, descriptor.group, peerView))}` });
   const withCurrent = (names, current) => (current && !names.includes(current) ? [current, ...names] : names);
