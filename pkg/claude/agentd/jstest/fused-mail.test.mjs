@@ -139,7 +139,8 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
     const human = url.includes('id=human');
     const from = url.startsWith('/api/peer/') ? 'forge' : 'desk';
     return ok({ messages: [{ id: 5, from_agent: 'agt_abcd1234', from_conv: 'c0ffee00-0000-4000-8000-000000000001', subject: `${from} ${human ? 'human' : 'agent'} note`, body: 'b', created_at: '2026-01-01T00:00:00Z', replyable: true,
-      attachments: human ? [{ id: 7, filename: 'notes.txt', content_type: 'text/plain', size_bytes: 10, url: '/api/human-messages/5/attachments/7' }] : undefined }], total: 1 });
+      attachments: human ? [{ id: 7, filename: 'notes.txt', content_type: 'text/plain', size_bytes: 10, url: '/api/human-messages/5/attachments/7' }]
+        : [{ id: -1, filename: 'shot.png', content_type: 'image/png', size_bytes: 10, url: '/api/agent-messages/5/files/0' }] }], total: 1 });
   };
   const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
     timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
@@ -148,6 +149,13 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   const subjects = () => [...c.querySelectorAll('.mail-row-subject')].map((s) => s.textContent).sort();
   await once();
   assert.deepEqual(subjects(), ['desk agent note', 'forge agent note']);
+  // Agent mail shows its files with the same card as a notification; a
+  // peer's are left out, having no route on this node.
+  await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_self/agent/5"] .mail-row'), 'click'));
+  assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/agent-messages/5/files/0');
+  assert.equal(c.querySelector('#fused-mail-reader .mail-attachment-label').textContent, 'Attached file');
+  await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_forge/agent/5"] .mail-row'), 'click'));
+  assert.equal(c.querySelector('#fused-mail-reader .mail-attachment'), null, 'a peer\'s agent mail files are not linked to this node');
   await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Human notifications/ }), 'click'));
   assert.deepEqual(subjects(), [], 'the agent pages are not relabelled as human notifications');
   assert.match(c.querySelector('#fused-mail-list').textContent, /Loading/);
