@@ -583,3 +583,61 @@ test('a merged folder pages every node with its keyset cursor, beside a node on 
   assert.deepEqual(page2.filter((s) => page1.includes(s)), [], 'no row on both pages');
   await mounted.unmount();
 });
+
+test('a merged folder keeps its counts through a slow or missed read, and drops a node after three misses in a row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  const peers = (forgeOnline) => state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: forgeOnline, level: 'unrestricted' }] });
+  peers(true);
+  const timers = fakeTimers();
+  const counts = { desk: 60, forge: 90 };
+  const mail = (node, i) => ({ id: i, from_agent: 'agt_abcd1234', from_title: `${node}-bot`, subject: `${node} ${i}`, body: 'b', read: false,
+    created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i * 2 + (node === 'forge' ? 1 : 0))).toISOString() });
+  const box = Object.fromEntries(Object.entries(counts).map(([n, k]) => [n, Array.from({ length: k }, (_, i) => mail(n, i + 1)).reverse()]));
+  let forge = 'ok'; const held = [];
+  const respond = async (url) => {
+    const node = url.startsWith('/api/peer/inst_forge/') ? 'forge' : 'desk';
+    if (/\/mailboxes\?/.test(url)) return ok({ mailboxes: [{ id: 'all', kind: 'all', title: 'All agent messages', total: counts[node] }], agents_total: 0 });
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    if (node === 'forge' && forge === 'hold') await new Promise((r) => held.push(r));
+    if (node === 'forge' && forge === 'fail') return { ok: false, status: 504, json: async () => ({ code: 'peer_unreachable', reason: 'peer_timeout' }) };
+    const params = new URL(url, 'http://x').searchParams; const size = Number(params.get('page_size'));
+    const before = Number(params.get('before') || 0); const below = before ? box[node].filter((m) => m.id < before) : box[node];
+    return ok({ messages: below.slice(0, size), total: counts[node], total_unfiltered: counts[node], has_more: below.length > size, cursor_paging: true });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { for (let i = 0; i < 3; i++) { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); } };
+  const count = () => c.querySelector('#fused-mail-filter-count').textContent;
+  const pos = () => c.querySelector('#fused-mail-pager .mail-pager-pos')?.textContent || '';
+  await once();
+  assert.equal(count(), '150 messages'); assert.match(pos(), /Page 1 \/ 3/);
+
+  // forge is slow to answer page 2: the count and page count hold meanwhile.
+  forge = 'hold';
+  // Fire due timers without waiting on the held read.
+  const fire = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) void x.fn(); await new Promise((r) => setTimeout(r, 0)); }); };
+  await harness.act(() => harness.fireEvent(c.querySelector('#fused-mail-pager button[title="Next page"]'), 'click'));
+  await fire(); await fire();
+  assert.equal(count(), '150 messages', 'the count holds while a node is slow');
+  assert.match(pos(), /Page 2 \/ 3/);
+  await harness.act(async () => { held.splice(0).forEach((r) => r()); await new Promise((r) => setTimeout(r, 0)); });
+
+  // Two missed reads in a row keep it counted; the third drops it.
+  forge = 'fail';
+  const tick = async () => { for (const x of timers.queue.splice(0)) await harness.act(async () => { await x.fn(); }); };
+  await tick(); await tick();
+  assert.equal(count(), '150 messages', 'two misses in a row are not enough');
+  for (let i = 0; i < 4 && count() !== '60 messages'; i++) await tick();
+  assert.equal(count(), '60 messages', 'three misses in a row drop the node from the count');
+
+  // It answers again: counted again. Reported offline: dropped at once.
+  forge = 'ok'; for (let i = 0; i < 4 && count() !== '150 messages'; i++) await tick();
+  assert.equal(count(), '150 messages');
+  await harness.act(() => peers(false)); await tick();
+  assert.equal(count(), '60 messages', 'a node reported offline is not counted');
+  await mounted.unmount();
+});
