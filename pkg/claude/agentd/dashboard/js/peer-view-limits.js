@@ -69,6 +69,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'clone-group': ['feature:groups.create.full'],
   'delete-group': ['feature:groups.manage.full'],
   'cleanup-group': ['feature:groups.manage.full'],
+  // Not listed, so local to their own node: links, standing orders, cron,
+  // messages, templates, repositories and worktrees, windows and terminals,
+  // member permissions and the auto-join default; and export, whose binary
+  // archive the JSON peer view does not carry.
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group

@@ -307,7 +307,9 @@ node's profiles under `node.spawn.read`. A group's shut down and power on
 buttons stop or wake every member under `groups.members.stop` and
 `groups.members.resume` for that group. Cloning a group, deleting it (with
 retiring its members first) and cleaning up its offline members take
-unrestricted trust: no peer grant covers them. Member permissions, owner scopes and
+unrestricted trust: no peer grant covers them. Its export, links, standing
+orders, cron jobs, templates, repositories, worktrees and windows stay on its
+own node. Member permissions, owner scopes and
 the directory auto-join default stay with this node's operator. Unrestricted trust holds every peer grant, so its groups work
 from the peer's dashboard as they do here. Each change is in this node's
 federation audit as `federation.peer_view`.
