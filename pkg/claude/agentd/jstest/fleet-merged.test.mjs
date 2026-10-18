@@ -49,6 +49,29 @@ test('node names that collide (self-reported or containing @) never merge two no
   assert.deepEqual(names, ['ops@a@b', 'ops@desk~forge', 'ops@desk~impost', 'ops@a_b']);
 });
 
+test('merge joins each node\'s unread notifications, naming the node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-merged-model.js');
+  const page = { groups: [], messages: [{ id: 1, from_agent: 'agt_here', read: false }] };
+  const merged = m.mergeSnapshots([
+    { node: self, entry: { snapshot: page, receivedAt: 0 } },
+    // A peer's snapshot carries none; its mailbox read (notifications) does.
+    { node: forge, entry: { snapshot: { groups: [], peer_view: { included: ['node.messages'] } }, receivedAt: 0 } },
+    { node: lab, entry: { snapshot: { groups: [], peer_view: { included: [] } }, receivedAt: 0 } },
+  ], 0, page, { inst_forge: [{ id: 1, from_agent: 'agt_there', read: false }] });
+  assert.deepEqual(merged.messages, [
+    { id: 1, from_agent: 'agt_here', read: false },
+    { id: 1, from_agent: 'agt_there', read: false, fleet_node: 'inst_forge' },
+  ], 'the page\'s own stay as they are; a peer\'s name their node, a peer sharing none adds none');
+  // This node read from a peer's page sends its own in its snapshot.
+  const peerPage = { groups: [], messages: [] };
+  const fromPeer = m.mergeSnapshots([
+    { node: forge, entry: { snapshot: peerPage, receivedAt: 0 } },
+    { node: self, entry: { snapshot: { groups: [], messages: [{ id: 4, from_agent: 'agt_home', read: false }] }, receivedAt: 0 } },
+  ], 0, peerPage);
+  assert.deepEqual(fromPeer.messages, [{ id: 4, from_agent: 'agt_home', read: false, fleet_node: 'inst_self' }]);
+});
+
 function fakeTimers() {
   const queue = []; let seq = 0;
   return { queue, setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; }, clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); } };
@@ -682,4 +705,58 @@ test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come
   assert.equal(mounted.container.querySelector('details[data-group-key="inst_forge/ ungrouped-virtual"]').dataset.dndTargetUngrouped, undefined);
   assert.match(home.textContent, /loose/);
   await mounted.unmount(); fleet.dispose();
+});
+
+test('a peer agent\'s unread notification raises its ! here and opens the reader on its node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, attention] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'),
+    harness.importDashboardModule('js/fleet-merged-island.js'),
+    harness.importDashboardModule('js/human-notification-attention.js'),
+  ]);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
+  const member = (id) => ({ agent_id: id, conv_id: `conv-${id}`, title: id, state: { online: true } });
+  const peers = {
+    forge: { groups: [group('build', { members: [member('agt_forgeworker1')] })], agents: [], peer_view: { included: ['node.messages'] } },
+    lab: { groups: [group('qa', { members: [member('agt_labworker01')] })], agents: [], peer_view: { included: [] } },
+  };
+  const asked = [];
+  const fetchImpl = async (url) => {
+    const node = url.includes('inst_forge') ? 'forge' : 'lab';
+    if (url.includes('/mailbox?')) {
+      asked.push(url);
+      return { ok: true, status: 200, json: async () => ({ messages: [{ id: 9, from_agent: 'agt_forgeworker1', subject: 'look', read: false }] }) };
+    }
+    return { ok: true, status: 200, json: async () => peers[node] };
+  };
+  const timers = fakeTimers();
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const opened = [];
+  const listen = (e) => opened.push(e.detail);
+  harness.document.addEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen);
+  t.after(() => harness.document.removeEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen));
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${() => {}} switchNode=${() => {}} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  assert.deepEqual(asked, ['/api/peer/inst_forge/mailbox?id=human&unread=1&page=1&page_size=100'], 'only the peer sharing its messages is read');
+  for (const d of mounted.container.querySelectorAll('details')) d.open = true;
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  const glyphs = [...mounted.container.querySelectorAll('.human-notification-attention')];
+  assert.equal(glyphs.length, 1, 'forge\'s agent shows its !; lab\'s shares none');
+  await harness.act(() => glyphs[0].click());
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].messageId, 9);
+  assert.equal(opened[0].sender.node, 'inst_forge');
+  assert.equal(opened[0].sender.agent, 'agt_forgeworker1');
+  // forge stops sharing its messages: its ! goes with them.
+  peers.forge = { ...peers.forge, peer_view: { included: [] } };
+  for (const next of timers.queue.splice(0)) await harness.act(async () => { await next.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  for (const d of mounted.container.querySelectorAll('details')) d.open = true;
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(mounted.container.querySelectorAll('.human-notification-attention').length, 0);
+  await mounted.unmount(); state.dispose();
 });

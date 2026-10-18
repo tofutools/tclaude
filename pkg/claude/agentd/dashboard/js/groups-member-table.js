@@ -29,6 +29,7 @@ import { presenceView } from './agent-presence.js';
 import { hubOffReason } from './fleet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 import { unrestrictedOn } from './node-trust.js';
+import { isPageNode } from './node-api.js';
 import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
 
 const html = htm.bind(h);
@@ -1010,6 +1011,9 @@ function HumanNotificationAttention({ member, snapshot }) {
         agent: member.agent_id || '',
         conv: member.conv_id || '',
         label,
+        // Another node's agent (the fused view): its notification lives there.
+        ...(member.fleet_node?.id && !isPageNode(member.fleet_node.id)
+          ? { node: member.fleet_node.id, nodeName: member.fleet_node.name || '' } : {}),
       },
       messageID: message?.id || null,
       launcher: event.currentTarget,

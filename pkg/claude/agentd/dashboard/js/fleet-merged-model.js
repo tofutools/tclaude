@@ -58,7 +58,12 @@ export function uniqueNodeNames(nodes) {
 // groups this page acts on directly (the Groups actions). The page's own snapshot (base,
 // else this node's) provides the presentation settings (theme, attachments
 // mode, …).
-export function mergeSnapshots(input, now = Date.now(), base = null) {
+//
+// notifications maps a node id to its unread human notifications (read from
+// its mailbox, fleet-merged-island.js): a peer's snapshot never carries them.
+// Every node's join the page's own, each naming its node (fleet_node), so a
+// member's amber ! and the quick reader find another node's agents' too.
+export function mergeSnapshots(input, now = Date.now(), base = null, notifications = {}) {
   const names = uniqueNodeNames(input);
   const nodes = input.map(({ node, entry }) => ({ node: { ...node, name: names.get(node.id) }, entry }));
   const local = base || nodes.find((n) => n.node.local)?.entry?.snapshot || {};
@@ -70,8 +75,12 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
   const seenAgents = new Set();
   const status = [];
   const virtualNodes = [];
+  const messages = [...(local.messages || [])];
   for (const { node, entry } of nodes) {
     const snap = entry?.snapshot;
+    // This node read from a peer's page sends its own in its snapshot.
+    const own = snap && snap !== local ? (notifications[node.id] || (node.local ? snap.messages : null)) : null;
+    for (const m of own || []) if (m && m.id != null) messages.push({ ...m, fleet_node: node.id });
     const st = nodeState(node, entry, now);
     status.push({ node, ...st, failure: entry?.failure || null });
     if (!snap) continue;
@@ -119,6 +128,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     pending,
     links,
     queued_spawns: queued,
+    messages,
     peer_view: undefined,
     fleet_nodes: status,
   };
