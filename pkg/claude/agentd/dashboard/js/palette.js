@@ -76,6 +76,8 @@ import { createPaletteWindowOperator, webWindowTargets } from './palette-window-
 import { buildRegisteredCommands } from './command-registry.js';
 import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
 import { limitPeerViewCommands } from './peer-view-limits.js';
+import { buildFusedNodeCommands } from './palette-fused.js';
+import { fusedGroupListing } from './group-order.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -535,6 +537,10 @@ export function buildCommands(snapshot) {
       },
     });
   }
+  // The fused Groups view's other nodes' groups (group@node) take theirs on
+  // their node.
+  const fused = fusedGroupListing();
+  cmds.push(...buildFusedNodeCommands(fused, { wiz }));
 
   // 3) Theme toggles — regular, slop (🎰) and wizard (🧙). Each command
   //    toggles ONE re-skin on or off (the header icon cycles only
@@ -743,7 +749,8 @@ export function buildCommands(snapshot) {
       + ' unfurl unseal unroll scroll parties',
     run: () => setAllGroupsOpen(true),
   });
-  for (const g of groups) {
+  // The fused view lists every node's groups, by their merged names.
+  for (const g of fused ? (fused.groups || []).filter((x) => scribeGroupVisible(x, showOfflineScribes)) : groups) {
     cmds.push({
       peerView: 'view', icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl party: ${g.name}`),
       hint: wiz('fold this group', 'roll up this party'),

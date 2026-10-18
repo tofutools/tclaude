@@ -493,6 +493,14 @@ export function peerViewSubtabUsable(tab, subtab, { remote = globalThis.__tclaud
 export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeRemoteNode) {
   if (!remote?.id) return cmds;
   const pv = snap?.peer_view || null;
+  // A command naming its node (the fused view's other nodes') carries that
+  // node's gate, not this page's peer's.
+  const own = cmds.filter((cmd) => !cmd.node);
+  if (own.length !== cmds.length) {
+    const limited = limitPeerViewCommands(own, snap, remote);
+    let i = 0;
+    return cmds.map((cmd) => (cmd.node ? cmd : limited[i++]));
+  }
   const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.id.slice(0, 13);
   if (unrestricted(pv)) {
     return cmds.map((cmd) => (cmd.peerView === 'own'
