@@ -439,21 +439,14 @@ function useFusedItems(section, fused, wanted) {
   return { itemsByNode, withheld, errors, pending };
 }
 
-// DockNodesHead names a fused section's nodes: the ones it lists, and with
-// a 🔒 and the reason, the ones that keep it.
-function DockNodesHead({ nodes, withheld }) {
-  return html`<span class="dock-section-nodes" aria-label="Nodes listed">
-    ${nodes.map((node) => {
-      const why = withheld[node.id];
-      const loading = why === 'loading';
-      return html`<span
-        key=${node.id}
-        class=${`dock-where-pill is-head${why && !loading ? ' is-withheld' : ''}${loading ? ' is-loading' : ''}`}
-        style=${node.color ? `--node-color:${node.color}` : null}
-        title=${loading ? `Reading ${node.name}…` : null}
-      >${node.name}${why && !loading ? html` <${LockReason} why=${why} />` : null}</span>`;
-    })}
-  </span>`;
+// DockWithheld marks a fused section kept by some of its nodes: one 🔒
+// whose reason names each such node. The nodes listed are the Nodes
+// dropdown's, and each card names its own.
+function DockWithheld({ nodes, withheld }) {
+  const kept = nodes.filter((node) => withheld[node.id] && withheld[node.id] !== 'loading');
+  if (!kept.length) return null;
+  const why = kept.map((node) => `${node.name}: ${withheld[node.id]}`).join('\n');
+  return html`<span class="dock-section-withheld" aria-label=${`Not shared by ${kept.map((node) => node.name).join(', ')}`}><${LockReason} why=${why} /></span>`;
 }
 
 // searchTitles are the words that keep a whole section for a search: its
@@ -532,7 +525,7 @@ function DockSection({
           ${section.title()}
           <span class="dock-section-count">${all === null ? '' : searching && items.length !== known.length ? `${items.length}/${known.length}` : known.length}</span>
         </span>
-        ${fused ? html`<${DockNodesHead} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
+        ${fused ? html`<${DockWithheld} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
         <span class="dock-section-tools">
           ${section.onNew ? html`<button
             type="button"
@@ -603,24 +596,44 @@ function DockSection({
   `;
 }
 
-// DockNodeFilter is the fused view's "Nodes" row: which nodes the dock
+// DockNodeFilter is the fused view's Nodes dropdown: which nodes the dock
 // lists, starting from every node the Groups view fuses.
 function DockNodeFilter({ nodes, hidden, onToggle }) {
-  return html`<div key="nodes" class="dock-node-filter" role="group" aria-label="Nodes listed in the panel">
-    <span class="dock-node-filter-label">Nodes</span>
-    ${nodes.map((node) => {
-      const on = !hidden.includes(node.id);
-      return html`<button
-        key=${node.id}
-        type="button"
-        class=${`dock-node-toggle${on ? ' is-on' : ''}`}
-        style=${node.color ? `--node-color:${node.color}` : null}
-        aria-pressed=${on ? 'true' : 'false'}
-        title=${on ? `Hide ${node.name}'s catalogs here` : `List ${node.name}'s catalogs here`}
-        data-dock-node=${node.id}
-        onClick=${() => onToggle(node.id)}
-      ><span class="dock-node-dot" aria-hidden="true"></span>${node.name}</button>`;
-    })}
+  const [open, setOpen] = useState(false);
+  const root = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
+    const key = (event) => { if (event.key === 'Escape') setOpen(false); };
+    globalThis.document?.addEventListener('pointerdown', close, true);
+    globalThis.document?.addEventListener('keydown', key);
+    return () => {
+      globalThis.document?.removeEventListener('pointerdown', close, true);
+      globalThis.document?.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  const shown = nodes.filter((node) => !hidden.includes(node.id));
+  const label = shown.length === nodes.length ? 'all nodes' : shown.length ? shown.map((node) => node.name).join(', ') : 'no nodes';
+  return html`<div key="nodes" class="dock-node-filter" ref=${root}>
+    <button type="button" class="dock-node-filter-button" aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
+      title="Which nodes' catalogs the panel lists" onClick=${() => setOpen(!open)}>
+      <span class="dock-node-filter-label">Nodes</span><span class="dock-node-filter-value">${label}</span> ▾
+    </button>
+    ${open ? html`<div class="dock-node-filter-menu" role="group" aria-label="Nodes listed in the panel">
+      ${nodes.map((node) => {
+        const on = !hidden.includes(node.id);
+        return html`<button
+          key=${node.id}
+          type="button"
+          class=${`dock-node-toggle${on ? ' is-on' : ''}`}
+          style=${node.color ? `--node-color:${node.color}` : null}
+          aria-pressed=${on ? 'true' : 'false'}
+          title=${on ? `Hide ${node.name}'s catalogs here` : `List ${node.name}'s catalogs here`}
+          data-dock-node=${node.id}
+          onClick=${() => onToggle(node.id)}
+        ><span class="dock-node-check" aria-hidden="true">${on ? '☑' : '☐'}</span><span class="dock-node-dot" aria-hidden="true"></span>${node.name}</button>`;
+      })}
+    </div>` : null}
   </div>`;
 }
 
