@@ -7,7 +7,7 @@ import { openHumanNotifications } from './mail-bridge.js';
 import { attachmentHref, bodilessNotice, messageAttachments, withPeerAttachments } from './human-attachments.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { hasShownOverlay } from './overlay-stack.js';
-import { nodeFetch } from './node-api.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -19,13 +19,28 @@ import { senderOnline } from './message-access-dialog-model.js';
 const html = htm.bind(h);
 const readWrites = new Map();
 
-// readRoute is where a read toggle goes. On a peer's page the notification
-// lives on that peer, answered as its Messages tab does: the page's fetch
-// carries /api/human-inbox to it (under node.messages.mark-read), while
-// /api/human-messages stays on this node.
-function readRoute(id, read) {
-  if (!remoteNodeID()) return { url: '/api/human-messages/read', body: { id, read } };
+// readerNode is where a notification lives. node names another node than
+// the page's (a fused-view row; its requests go through nodeFetch(node) and
+// its data is that node's snapshot), blank for the page's own. peer is the
+// node that answers through its human-inbox: the page's peer, a fused peer,
+// or '' for this node, whose /api/human-messages stays local on any page.
+export function readerNode(sender, { self = selfNodeID(), remote = remoteNodeID() } = {}) {
+  const node = sender?.node && !isPageNode(sender.node) ? sender.node : '';
+  return { node, peer: node ? (node === self ? '' : node) : remote };
+}
+
+// readRoute is where a read toggle goes. A peer's notification is answered
+// as that peer's Messages tab does: /api/human-inbox (under
+// node.messages.mark-read).
+function readRoute(id, read, peer) {
+  if (!peer) return { url: '/api/human-messages/read', body: { id, read } };
   return { url: '/api/human-inbox/read', body: read ? { id } : { id, read: false } };
+}
+
+// shares reports whether a peer view takes feature from here: unrestricted
+// trust holds every one.
+function shares(peerView, feature) {
+  return peerView?.level === 'unrestricted' || (feature === 'mark' ? humanReadShared(peerView) : featureState(feature, peerView) === 'shared');
 }
 
 // remoteNodeName is how this page names the peer it shows.
@@ -33,8 +48,8 @@ function remoteNodeName(remote) {
   return document.documentElement.dataset.remoteNodeName || remote.slice(0, 13);
 }
 
-async function postPeerJSON(url, body) {
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function postPeerJSON(url, body, fetchFn = fetch) {
+  const res = await fetchFn(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!res.ok) {
     let data = null;
     try { data = await res.json(); } catch (_) { data = null; }
@@ -119,7 +134,24 @@ function replaceMessageRead(state, id, read, fallback = null) {
   return current.read;
 }
 
-export async function persistHumanMessageRead(state, id, read, onError, fallback = null) {
+// persistHumanMessageRead writes a notification's read state, shown at once.
+// One on another node than the page's (where.node) is not in the page's
+// snapshot: show(read) shows it, and that node is read again once written.
+export async function persistHumanMessageRead(state, id, read, onError, fallback = null, where = null, show = null) {
+  const { node = '', peer = remoteNodeID() } = where || {};
+  if (node) {
+    if (!fallback || fallback.read === read) return;
+    show?.(read);
+    try {
+      const route = readRoute(id, read, peer);
+      await postPeerJSON(route.url, route.body, nodeFetch(node));
+      announceNodeChanged(node);
+    } catch (error) {
+      show?.(!read);
+      onError?.(error);
+    }
+    return;
+  }
   const prior = replaceMessageRead(state, id, read, fallback);
   if (prior === null) return;
   let queue = readWrites.get(id);
@@ -128,7 +160,7 @@ export async function persistHumanMessageRead(state, id, read, onError, fallback
     readWrites.set(id, queue);
   }
   const request = queue.tail.catch(() => {}).then(async () => {
-    const route = readRoute(id, read);
+    const route = readRoute(id, read, peer);
     const response = await fetch(route.url, {
       method: 'POST',
       credentials: 'same-origin',
@@ -181,20 +213,26 @@ export function GroupsNotificationReader({
   descriptor, snapshot, state, actions, onSelect, onClose, closing = false,
 }) {
   const closeRef = useRef(null);
-  const remote = remoteNodeID();
+  const where = readerNode(descriptor.sender);
+  const { node, peer } = where;
+  // Another node's notification reads that node's snapshot (the fused view's).
+  const nodeSnap = node ? nodeSnapshot(node) : snapshot;
   const senderKey = descriptor.sender.agent || descriptor.sender.conv || '';
+  const knownKey = `${node}/${senderKey}`;
   const known = useRef({ sender: null, rows: new Map() });
-  if (known.current.sender !== senderKey) known.current = { sender: senderKey, rows: new Map() };
+  if (known.current.sender !== knownKey) known.current = { sender: knownKey, rows: new Map() };
+  // overrides holds the read state written to another node until it shows.
+  const overrides = useRef(new Map());
   const [, setHistoryLoaded] = useState(0);
   useEffect(() => {
     if (!senderKey) return undefined;
     let live = true;
     const params = new URLSearchParams({ id: 'human', sender: senderKey, page_size: String(SENDER_HISTORY_PAGE) });
-    // The snapshot is the page node's, so its history comes from the page node.
-    nodeFetch('')(`/api/mailbox?${params.toString()}`, { credentials: 'same-origin' })
+    // The history comes from the node the notification lives on.
+    nodeFetch(node)(`/api/mailbox?${params.toString()}`, { credentials: 'same-origin' })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        if (!live || known.current.sender !== senderKey || !Array.isArray(payload?.messages)) return;
+        if (!live || known.current.sender !== knownKey || !Array.isArray(payload?.messages)) return;
         for (const row of payload.messages) {
           if (!known.current.rows.has(row.id)) known.current.rows.set(row.id, row);
         }
@@ -202,12 +240,19 @@ export function GroupsNotificationReader({
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [senderKey]);
-  const messages = mergedSenderMessages(descriptor.sender, snapshot, known.current.rows);
+  }, [knownKey]);
+  const messages = mergedSenderMessages(descriptor.sender, nodeSnap, known.current.rows)
+    .map((m) => {
+      if (!overrides.current.has(m.id)) return m;
+      const read = overrides.current.get(m.id);
+      // The node's own read state caught up.
+      if (m.read === read) { overrides.current.delete(m.id); return m; }
+      return { ...m, read };
+    });
   const found = messages.find((item) => item.id === descriptor.messageId) || messages[0];
   // A peer's files are read through this node's peer attachment routes; the
   // URLs it sends name its own, which on this origin would read this node's.
-  const message = found && remote ? withPeerAttachments(remote, found) : found;
+  const message = found && peer ? withPeerAttachments(peer, found) : found;
   const index = message ? messages.findIndex((item) => item.id === message.id) : -1;
 
   // Opening the reader deliberately does not mark the notification read.
@@ -247,11 +292,11 @@ export function GroupsNotificationReader({
   const created = message.created_at ? new Date(message.created_at).toLocaleString() : '';
   // What the peer does not share from here stays in place, disabled, with a
   // 🔒 saying why, as in its Messages tab.
-  const peerName = remote ? remoteNodeName(remote) : '';
-  const peerView = snapshot?.peer_view;
-  const replyLock = remote && featureState('human.inbox.answer', peerView) !== 'shared'
+  const peerName = !peer ? '' : node ? descriptor.sender.nodeName || node.slice(0, 13) : remoteNodeName(peer);
+  const peerView = nodeSnap?.peer_view;
+  const replyLock = peer && !shares(peerView, 'human.inbox.answer')
     ? `${peerName} keeps answering its notifications to its own operator: it needs unrestricted trust from ${peerName}.` : '';
-  const markLock = remote && !humanReadShared(peerView)
+  const markLock = peer && !shares(peerView, 'mark')
     ? `${peerName} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.` : '';
 
   return html`<aside class=${`human-notification-drawer${closing ? ' closing' : ''}`} role="dialog"
@@ -306,20 +351,24 @@ export function GroupsNotificationReader({
           label: senderLabel,
           subject: message.subject || '',
           // A peer's notification is answered through that peer, text only.
-          ...(remote ? {
+          ...(peer ? {
             nodeName: peerName,
-            // The page's snapshot is the peer's, so it knows the sender's liveness.
-            online: senderOnline(snapshot, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || ''),
-            send: (body) => postPeerJSON('/api/human-inbox/reply', { id: message.id, body }),
+            // The peer's snapshot knows the sender's liveness.
+            online: senderOnline(nodeSnap, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || ''),
+            send: (body) => postPeerJSON('/api/human-inbox/reply', { id: message.id, body }, nodeFetch(node))
+              .then(() => { if (node) announceNodeChanged(node); }),
           } : {}),
         });
       }}>Reply</button><${LockReason} why=${replyLock} />
-      <button type="button" onClick=${() => {
+      ${!node && html`<button type="button" onClick=${() => {
         onClose(false);
         openHumanNotifications(senderID, message.id);
-      }}>Open in Messages ↗</button>
+      }}>Open in Messages ↗</button>`}
       <button type="button" disabled=${!!markLock} onClick=${() =>
-        persistHumanMessageRead(state, message.id, !message.read, actions.reportError, found)}>
+        persistHumanMessageRead(state, message.id, !message.read, actions.reportError, found, where, (read) => {
+          overrides.current.set(message.id, read);
+          setHistoryLoaded((n) => n + 1);
+        })}>
         ${message.read ? 'Mark unread' : 'Mark read'}
       </button><${LockReason} why=${markLock} />
       <span class="grow"></span>
