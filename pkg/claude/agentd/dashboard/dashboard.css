@@ -17853,21 +17853,35 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
 .dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
 .dock-card-pin { font-size: 10px; margin-right: 3px; }
 
-/* The fused Groups view's dock (dock-nodes.js): the Nodes filter row, the
-   nodes each section lists in its heading, and each card's node pills —
-   solid present, amber ≠ differs, dashed missing. */
-.dock-node-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 2px 8px; font-size: 11px; }
-.dock-node-filter-label { color: #7d8590; margin-right: 2px; }
-.dock-node-toggle {
-  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
-  background: none; border: 1px solid #30363d; border-radius: 10px;
-  color: #6e7681; font: inherit; font-size: 11px; padding: 1px 8px;
+/* The fused Groups view's dock (dock-nodes.js): the Nodes dropdown, a
+   section's 🔒 when a node keeps it, and each card's node pills — solid
+   present, amber ≠ differs, dashed missing. */
+.dock-node-filter { position: relative; padding: 0 2px 8px; font-size: 11px; }
+.dock-node-filter-button {
+  display: flex; align-items: center; gap: 6px; width: 100%; cursor: pointer;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  color: #c9d1d9; font: inherit; font-size: 11px; padding: 3px 8px; text-align: left;
 }
-.dock-node-toggle.is-on { color: #79c0ff; border-color: #1f6feb; background: #0d1d33; }
+.dock-node-filter-button:hover { border-color: #8b949e; }
+.dock-node-filter-label { color: #7d8590; }
+.dock-node-filter-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-node-filter-menu {
+  position: absolute; z-index: 20; left: 2px; right: 2px; top: calc(100% - 6px);
+  display: flex; flex-direction: column; padding: 4px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px; box-shadow: 0 8px 24px #01040988;
+}
+.dock-node-toggle {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  background: none; border: 0; border-radius: 4px;
+  color: #8b949e; font: inherit; font-size: 11px; padding: 3px 6px; text-align: left;
+}
+.dock-node-toggle:hover { background: #21262d; }
+.dock-node-toggle.is-on { color: #c9d1d9; }
+.dock-node-check { width: 12px; }
 .dock-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--node-color, #6e7681); opacity: .5; }
 .dock-node-toggle.is-on .dock-node-dot { opacity: 1; }
-#agent-dock .dock-section-head:has(.dock-section-nodes) { flex-wrap: wrap; row-gap: 2px; }
-.dock-section-nodes { order: 3; flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 3px; padding-left: 16px; font-weight: 400; }
+.dock-section-withheld { display: inline-flex; align-items: center; font-weight: 400; }
+.dock-section-withheld .lock-why::after { white-space: pre-line; }
 .dock-where { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
 .dock-where-pill {
   font: inherit; font-size: 10px; line-height: 14px; white-space: nowrap;
@@ -17881,9 +17895,6 @@ button.dock-where-pill { cursor: pointer; }
 .dock-where-pill.is-missing { color: #6e7681; border-style: dashed; border-color: #484f58; background: none; }
 button.dock-where-pill.is-missing:hover, button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
 .dock-where-pill.is-missing.is-locked { opacity: .7; }
-.dock-where-pill.is-head { cursor: default; }
-.dock-where-pill.is-withheld { color: #d29922; border-color: #d2992266; background: none; }
-.dock-where-pill.is-loading { opacity: .5; }
 .dock-card-menu-item.is-locked { opacity: .55; cursor: not-allowed; }
 
 /* Library dialogs: the config-bundle import review. */

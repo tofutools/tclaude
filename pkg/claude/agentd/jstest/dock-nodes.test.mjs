@@ -108,11 +108,10 @@ test('The fused dock lists every shown node, with where pills, a node filter and
 
   const names = () => [...host.querySelectorAll('.dock-card')].map((card) => card.dataset.dockName);
   assert.deepEqual(names(), ['luna', 'opus', 'sol'], 'one card per name across the nodes');
-  const head = host.querySelector('.dock-section-nodes');
-  assert.deepEqual([...head.querySelectorAll('.dock-where-pill')].map((pill) => pill.textContent.replace('🔒', '').trim()), ['brain', 'herc3', 'mac'],
-    'the heading names the nodes it covers');
-  const lock = head.querySelector('.is-withheld .lock-why');
-  assert.match(lock.dataset.why, /node\.spawn\.read/, 'a node keeping its catalogs says why');
+  assert.equal(host.querySelector('.dock-section-head .dock-where-pill'), null, 'the heading lists no nodes: the dropdown and the cards do');
+  const head = host.querySelector('.dock-section-withheld');
+  assert.equal(head.getAttribute('aria-label'), 'Not shared by mac');
+  assert.match(head.querySelector('.lock-why').dataset.why, /^mac .*node\.spawn\.read/, 'a node keeping its catalogs says why, by name');
 
   const opus = host.querySelector('[data-dock-name="opus"]');
   assert.deepEqual([...opus.querySelectorAll('.dock-where-pill')].map((pill) => `${pill.textContent}:${pill.className.match(/is-(present|differs|missing)/)[1]}`),
@@ -151,11 +150,16 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
 
   // The filter row narrows the nodes.
+  const dropdown = host.querySelector('.dock-node-filter-button');
+  assert.match(dropdown.textContent, /Nodes\s*all nodes/);
+  assert.equal(host.querySelector('.dock-node-filter-menu'), null, 'closed until opened');
+  await harness.act(() => harness.fireEvent(dropdown, 'click'));
   const filter = getByRole(host, 'group', { name: 'Nodes listed in the panel' });
   await harness.act(() => harness.fireEvent(filter.querySelector('[data-dock-node="inst_herc31"]'), 'click'));
   assert.deepEqual(hidden.value, ['inst_herc31']);
   assert.deepEqual(names(), ['opus', 'sol'], 'a hidden node lists nothing');
   assert.equal(filter.querySelector('[data-dock-node="inst_herc31"]').getAttribute('aria-pressed'), 'false');
+  assert.match(dropdown.textContent, /brain, mac/, 'the closed dropdown names the listed nodes');
 
   // Off the fused view the dock is the page node's again.
   await harness.act(() => { fused.value = null; });
