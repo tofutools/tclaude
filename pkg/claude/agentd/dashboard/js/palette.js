@@ -543,8 +543,10 @@ export function buildCommands(snapshot) {
   //    it's the active one. slop and wizard are mutually exclusive, so at
   //    most one shows an "off" label at a time.
   const slopOn = isSlopActive();
+  // The theme, the panels and the fold state are this page's own chrome:
+  // view commands, runnable on any peer's page.
   cmds.push({
-    icon: slopOn ? '🤝' : '🎰',
+    peerView: 'view', icon: slopOn ? '🤝' : '🎰',
     // slopOn ⇒ slop is the live theme ⇒ wizard is off, so wiz() falls to the
     // plain "Switch off slop theme"; the arcane variant only ever shows from
     // wizard mode, where it reads as leaving the Tower for the casino halls.
@@ -556,7 +558,7 @@ export function buildCommands(snapshot) {
   });
   const wizardOn = isWizardActive();
   cmds.push({
-    icon: wizardOn ? '🤝' : '🧙',
+    peerView: 'view', icon: wizardOn ? '🤝' : '🧙',
     // wizardOn ⇒ wizard is live ⇒ wiz() returns the arcane "Leave the Tower";
     // when it's off the plain "Switch to wizard theme" shows (the string the
     // wizard HTML guard pins), since labels only re-skin inside wizard mode.
@@ -592,7 +594,7 @@ export function buildCommands(snapshot) {
     run: () => { gotoGroupsTab(); setDockOpen(true); },
   });
   cmds.push({
-    icon: wiz('▭', '📕'), label: wiz('Hide right panel', 'Furl the grimoire'),
+    peerView: 'view', icon: wiz('▭', '📕'), label: wiz('Hide right panel', 'Furl the grimoire'),
     hint: wiz('collapse the right-side dock of profiles, templates & roles',
       'roll up the grimoire of patterns, circles & classes'),
     keywords: 'hide close collapse fold right panel dock sidebar drawer palette rail'
@@ -647,7 +649,7 @@ export function buildCommands(snapshot) {
       ['agents', 'Agents', 'Familiars', 'agents members tables familiars'],
     ]) {
       cmds.push({
-        icon: wiz('◈', '🔮'), label: wiz(`Groups › ${plain} focus`, `Party lens: ${arcane}`),
+        peerView: 'view', icon: wiz('◈', '🔮'), label: wiz(`Groups › ${plain} focus`, `Party lens: ${arcane}`),
         hint: wiz('switch the Groups tab focus', 'turn the party lens'),
         keywords: `groups focus lens view switch toggle ${words}`,
         run: () => openGroupsFocus(focus),
@@ -728,14 +730,14 @@ export function buildCommands(snapshot) {
   //    apply to EVERY group (even idle ones — folding an idle group is
   //    valid), unlike the window ops below which need a running member.
   cmds.push({
-    icon: wiz('⊟', '📕'), label: wiz('Collapse all groups', 'Furl all parties'),
+    peerView: 'view', icon: wiz('⊟', '📕'), label: wiz('Collapse all groups', 'Furl all parties'),
     hint: wiz('fold every group on the Groups tab', "roll up every party's scroll on the Groups tab"),
     keywords: 'collapse fold close all groups view rows'
       + ' furl seal roll scroll parties',
     run: () => setAllGroupsOpen(false),
   });
   cmds.push({
-    icon: wiz('⊞', '📖'), label: wiz('Expand all groups', 'Unfurl all parties'),
+    peerView: 'view', icon: wiz('⊞', '📖'), label: wiz('Expand all groups', 'Unfurl all parties'),
     hint: wiz('unfold every group on the Groups tab', "unroll every party's scroll on the Groups tab"),
     keywords: 'expand unfold open all groups view rows'
       + ' unfurl unseal unroll scroll parties',
