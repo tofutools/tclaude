@@ -90,7 +90,7 @@ export function nodeUpload(node, path, init = {}, {
   if (!target || target === self) return local(path, options);
   if (!NODE_ID.test(target)) throw new Error(`invalid node: ${target}`);
   return local(`/api/peer-upload/${encodeURIComponent(target)}?path=${encodeURIComponent(path)}`,
-    { finishing: 'sending to the node…', ...options });
+    { finishing: 'Sending to the node…', ...options });
 }
 
 // onNodeChanged tells views polling a node (the fused Groups view) that a

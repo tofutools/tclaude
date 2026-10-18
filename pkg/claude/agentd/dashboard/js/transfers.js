@@ -111,7 +111,7 @@ export function routedURL(url) {
 // shows ('dialog' for the page tray, else a terminal path); finishing names
 // the wait after the last byte (a remote terminal's hop to its node).
 export function trackedUpload(url, {
-  body, files = [], scope = 'dialog', title = '', finishing = 'finishing…', signal,
+  body, files = [], scope = 'dialog', title = '', finishing = 'Finishing…', signal,
   XHR, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout,
 } = {}) {
   const id = ++nextID;

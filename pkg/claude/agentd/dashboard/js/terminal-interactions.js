@@ -477,7 +477,7 @@ async function uploadFiles(files, signal, terminalPath, anyFile, uploadImpl) {
   // Terminal upload routes stay local on a peer's page, so no routedURL.
   const res = await uploadImpl(endpoint, {
     body: fd, files, signal, scope: terminalPath,
-    finishing: remote ? 'sending to the remote node…' : 'finishing…',
+    finishing: remote ? 'Sending to the remote node…' : 'Finishing…',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

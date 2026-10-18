@@ -27,6 +27,8 @@ function heading(transfer) {
 }
 
 function rowStatus(transfer, file, done) {
+  // After the last byte the whole batch still waits (a remote node's hop).
+  if (done >= 1 && transfer.phase === 'finishing') return html`<em>sent</em>`;
   if (done >= 1) return html`<em class="transfer-ok">✓ done</em>`;
   if (done <= 0 && transfer.phase === 'uploading') return html`<em>queued</em>`;
   return html`<em>${Math.floor(done * 100)}% · ${fileSize(Math.round(done * file.size))}/${fileSize(file.size)}</em>`;
