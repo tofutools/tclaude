@@ -2466,6 +2466,7 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   assert.match(row.querySelector('[data-holder="group:ops"] button').title, /add more, scoped peer=forge\/builders/, 'a holder opens its Permissions for more');
   await s.click(row.querySelector('[data-holder="group:ops"] [data-reach-take]'));
   assert.equal(s.confirms.at(-1).title, "Stop group ops using forge's builders?");
+  assert.match(s.confirms.at(-1).body, /including any added in its Permissions/, 'stopping removes every reach on the peer group, not only messaging');
   assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'ops', slugs: ['message.direct'], peer: 'inst_forge/builders', remove: true });
 
   // An agent whose grant is held for local use is refused with the way out.

@@ -459,7 +459,7 @@ function holderBody(holder) {
   return holder.startsWith('group:') ? { group: holder.slice(6) } : { target: holder.slice(6) };
 }
 
-function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toast, reload, copy, onPermissions }) {
+function ReachRow({ peer, g, slugs, usable, rows, groups, agents, actions, confirm, toast, reload, copy, onPermissions }) {
   const [holder, setHolder] = useState('');
   const holders = reachHolders(rows, peer.id, g.name, slugs);
   const held = new Set(holders.map((h) => h.key));
@@ -483,9 +483,11 @@ function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toas
     .catch((e) => toast(errText(e), true));
   const take = (h) => confirm({
     title: `Stop ${h.label} using ${peer.label}'s ${g.name}?`,
-    body: `Removes peer=${peer.label}/${g.name} from ${h.label}'s grants of ${slugs.join(', ')}. Other peer groups it holds are kept.`,
+    body: `Removes peer=${peer.label}/${g.name} from ${h.label}'s grants of ${usable.join(', ')}, including any added in its Permissions. Other peer groups it holds are kept.`,
     okLabel: 'Remove', busyLabel: 'Removing…',
-    action: () => actions.setPeerReach({ ...holderBody(`${h.kind}:${h.kind === 'group' ? h.group : h.agent}`), slugs, peer: `${peer.id}/${g.name}`, remove: true }),
+    // Every permission the peer group can be used for, not only the
+    // messaging Give access grants: removing reach a holder lacks is a no-op.
+    action: () => actions.setPeerReach({ ...holderBody(`${h.kind}:${h.kind === 'group' ? h.group : h.agent}`), slugs: usable, peer: `${peer.id}/${g.name}`, remove: true }),
   }).then((ok) => { if (ok) { toast(`${h.label} no longer uses ${peer.label}/${g.name}`, false); reload(); } })
     .catch((e) => toast(errText(e), true));
   const cli = `tclaude agent permissions peer-reach add --group GROUP --peer ${peer.label}/${g.name} ${slugs.map((sl) => `--slug ${sl}`).join(' ')}`;
@@ -543,7 +545,7 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
               ${!alike && html`<td class="fs-caps">${capWords(g.caps).join(', ') || html`<span class="muted">visible only</span>`}</td>`}
               <td>${slugs.length && r.level !== 'unrestricted'
                 ? Array.isArray(rows)
-                  ? html`<${ReachRow} peer=${r} g=${g} slugs=${slugs} rows=${rows} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} toast=${toast} reload=${refresh} copy=${copy} onPermissions=${onPermissions} />`
+                  ? html`<${ReachRow} peer=${r} g=${g} slugs=${slugs} usable=${usable} rows=${rows} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} toast=${toast} reload=${refresh} copy=${copy} onPermissions=${onPermissions} />`
                   : html`<span class="muted">${rows?.error ? '—' : 'Loading…'}</span>`
                 : html`<span class="muted">${r.level === 'unrestricted' ? 'your agents\' own grants apply'
                   : usable.length ? 'no messaging shared; add other permissions in Permissions' : 'nothing for agents to use'}</span>`}</td>
