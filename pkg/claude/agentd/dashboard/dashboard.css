@@ -5181,6 +5181,27 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .global-sandbox-profile, .user-default-model { background: transparent; }
 .global-sandbox-profile:disabled { cursor: wait; opacity: .65; }
 .toolbar-profile-control { display: inline-flex; min-width: 0; }
+/* The fused Groups view's toolbar node chip (toolbar-node.js): whose global
+   defaults and + new group the toolbar shows, in that node's colour. It
+   flashes when following a click moves it to another node. */
+.toolbar-node {
+  display: inline-flex; align-items: center; gap: 5px; padding: 0 2px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--nc) 55%, transparent); border-radius: 10px;
+}
+.toolbar-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); flex: none; }
+.toolbar-node-select {
+  background: transparent; border: 0; color: #c9d1d9; cursor: pointer;
+  font-family: ui-monospace, monospace; font-size: 11px; max-width: 14em;
+}
+.toolbar-node-select:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.toolbar-node-select option { background: #0d1117; }
+.toolbar-node.flash { animation: toolbar-node-flash .9s ease-out; }
+@keyframes toolbar-node-flash {
+  from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nc) 70%, transparent); background: color-mix(in srgb, var(--nc) 25%, transparent); }
+  to { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .toolbar-node.flash { animation: none; } }
+.toolbar-node-refused { opacity: .45; cursor: not-allowed; }
 /* Keyboard focus ring for the quick-option chip family (TCL-330) — the
    group-header spans carry tabindex="0" role="button" (activation is
    delegated in row-actions.js) and the two toolbar chips are native

@@ -1,11 +1,13 @@
 import { Fragment, h, render } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerToolbarProfilePickerController } from './toolbar-profile-picker.js';
 import { isWizardActive } from './slop.js';
 import {
   GLOBAL_DEFAULT_PROFILE_ROLE, GLOBAL_SANDBOX_PROFILE_ROLE,
 } from './resolved-defaults.js';
+import { pickToolbarNode, toolbarNode, toolbarNodes, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
+import { featureState } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
@@ -21,37 +23,81 @@ const remotePage = () => Boolean(globalThis.__tclaudeRemoteNode?.id);
 const GLOBAL_DEFAULT_PROFILE_NAME = 'Global default spawn profile';
 const GLOBAL_SANDBOX_PROFILE_NAME = 'Global sandbox profile';
 
-function labels(kind, current) {
+// nodeName names the node the control shows (a fused Groups view, whose
+// toolbar follows one of its nodes); blank on one node's page.
+function labels(kind, current, nodeName = '') {
+  const on = nodeName ? ` on ${nodeName}` : '';
   if (kind === 'sandbox') {
+    const name = `${GLOBAL_SANDBOX_PROFILE_NAME}${on}`;
     return {
       id: 'dashboard-default-sandbox-profile', icon: '🛡', className: 'global-sandbox-profile',
-      dataName: 'data-sandbox-profile', create: '＋ new sandbox profile…', none: '(none)',
-      name: GLOBAL_SANDBOX_PROFILE_NAME,
+      act: 'set-dash-sandbox-profile', dataName: 'data-sandbox-profile', create: '＋ new sandbox profile…', none: '(none)',
+      name,
       aria: current
-        ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current}. Click to change.`
-        : `Set ${GLOBAL_SANDBOX_PROFILE_NAME.toLowerCase()}`,
+        ? `${name}: ${current}. Click to change.`
+        : `Set ${name.toLowerCase()}`,
       title: current
-        ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current} — ${GLOBAL_SANDBOX_PROFILE_ROLE}. Click to change.`
-        : `No ${GLOBAL_SANDBOX_PROFILE_NAME.toLowerCase()} — click to set one. It would become ${GLOBAL_SANDBOX_PROFILE_ROLE}.`,
+        ? `${name}: ${current} — ${GLOBAL_SANDBOX_PROFILE_ROLE}. Click to change.`
+        : `No ${name.toLowerCase()} — click to set one. It would become ${GLOBAL_SANDBOX_PROFILE_ROLE}.`,
     };
   }
+  const name = `${GLOBAL_DEFAULT_PROFILE_NAME}${on}`;
   return {
     id: 'dashboard-default-profile', icon: '🧠', className: 'user-default-model',
-    dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
-    name: GLOBAL_DEFAULT_PROFILE_NAME,
+    act: 'set-dash-profile', dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
+    name,
     aria: current
-      ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current}. Click to change.`
-      : `Set ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()}`,
+      ? `${name}: ${current}. Click to change.`
+      : `Set ${name.toLowerCase()}`,
     title: current
-      ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current} — ${GLOBAL_DEFAULT_PROFILE_ROLE}. Click to change.`
-      : `No ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()} — click to set one. It is ${GLOBAL_DEFAULT_PROFILE_ROLE}.`,
+      ? `${name}: ${current} — ${GLOBAL_DEFAULT_PROFILE_ROLE}. Click to change.`
+      : `No ${name.toLowerCase()} — click to set one. It is ${GLOBAL_DEFAULT_PROFILE_ROLE}.`,
   };
+}
+
+// hiddenDefaults reports that node withholds its defaults from this one: its
+// snapshot carries them only with its spawn catalog or defaults grant.
+function hiddenDefaults(node) {
+  return !node.local && featureState('spawn.catalog', node.peerView) !== 'shared'
+    && featureState('spawn.defaults', node.peerView) !== 'shared';
+}
+
+// ToolbarNodeChip says whose defaults the toolbar shows in a fused Groups
+// view, in that node's colour, and picks another of its nodes. It follows the
+// group last clicked there, and flashes when it does.
+function ToolbarNodeChip() {
+  const nodes = toolbarNodes.value;
+  const node = toolbarNode.value;
+  const [flash, setFlash] = useState(false);
+  const seen = useRef(node?.id || '');
+  useEffect(() => {
+    const id = node?.id || '';
+    if (id === seen.current) return undefined;
+    const first = !seen.current;
+    seen.current = id;
+    if (first || !id) return undefined;
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), 900);
+    return () => clearTimeout(timer);
+  }, [node?.id]);
+  if (nodes.length < 2 || !node) return null;
+  return html`<span class=${`toolbar-node${flash ? ' flash' : ''}`} style=${`--nc:${node.color || 'currentColor'}`}
+    title="The node whose global defaults and + new group this toolbar shows and sets. It follows the group you last clicked; pick another here.">
+    <i aria-hidden="true"></i>
+    <select class="toolbar-node-select" aria-label="Node the toolbar's global defaults act on" value=${node.id}
+      onChange=${(event) => pickToolbarNode(event.currentTarget.value)}>
+      ${nodes.map((n) => html`<option key=${n.id} value=${n.id}>${n.local ? '⌂ ' : ''}${n.name}</option>`)}
+    </select>
+  </span>`;
 }
 
 function ToolbarProfileControl({ kind, state, actions }) {
   const descriptor = state.editor.value;
   const active = descriptor?.kind === kind;
-  const current = state.values[kind].value;
+  const node = toolbarNode.value;
+  const target = toolbarTarget(node);
+  const hidden = Boolean(target) && hiddenDefaults(node);
+  const current = !target ? state.values[kind].value : (kind === 'sandbox' ? node.sandbox : node.profile) || '';
   const [choices, setChoices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -60,7 +106,16 @@ function ToolbarProfileControl({ kind, state, actions }) {
   const selectRef = useRef(null);
   const triggerRef = useRef(null);
   const restoreFocusRef = useRef(false);
-  const copy = labels(kind, current);
+  const copy = labels(kind, current, node?.name || '');
+  const refusal = toolbarRefusal(node, `[data-act="${copy.act}"]`);
+
+  // The editor belongs to the node it opened on: the toolbar moving to
+  // another node closes it.
+  const openedOn = useRef(target);
+  useLayoutEffect(() => {
+    if (openedOn.current !== target && descriptor?.kind === kind) state.close(descriptor);
+    openedOn.current = target;
+  }, [target]);
 
   useLayoutEffect(() => {
     if (!active) return undefined;
@@ -68,7 +123,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     setLoading(true);
     setError('');
     queueMicrotask(() => selectRef.current?.focus());
-    actions.load(kind).then((result) => {
+    actions.load(kind, target).then((result) => {
       if (live) setChoices(result.choices);
     }).catch((cause) => {
       if (live) setError(cause?.message || String(cause));
@@ -85,11 +140,16 @@ function ToolbarProfileControl({ kind, state, actions }) {
   }, [active]);
 
   if (!active) {
+    // Another node's control runs here, gated by that node's grants: a
+    // refused one keeps no data-act (nothing opens) and says why.
+    const shown = hidden ? '?' : current;
     return html`<button ref=${triggerRef} type="button" id=${copy.id}
-      class=${`${copy.className}${current ? '' : ' unset'}`}
-      data-act=${kind === 'sandbox' ? 'set-dash-sandbox-profile' : 'set-dash-profile'}
-      ...${{ [copy.dataName]: current }} aria-label=${copy.aria} title=${copy.title}
-    >${copy.icon}${current ? ` ${current}` : ''}</button>`;
+      class=${`${copy.className}${shown ? '' : ' unset'}${refusal ? ' toolbar-node-refused' : ''}`}
+      data-act=${refusal ? undefined : copy.act} data-node=${target || undefined}
+      aria-disabled=${refusal ? 'true' : undefined}
+      ...${{ [copy.dataName]: current }} aria-label=${refusal ? `${copy.name}: ${refusal}` : copy.aria}
+      title=${refusal ? `${refusal}\n\n${hidden ? copy.name : copy.title}` : copy.title}
+    >${copy.icon}${shown ? ` ${shown}` : ''}</button>`;
   }
 
   const missing = current && !choices.some((choice) => choice.value === current);
@@ -125,7 +185,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
       setSaving(true);
       setError('');
       try {
-        const committed = await actions.commit(kind, name);
+        const committed = await actions.commit(kind, name, target, node?.name || '');
         savingRef.current = false;
         setSaving(false);
         if (committed) {
@@ -140,7 +200,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
         queueMicrotask(() => selectRef.current?.focus());
       }
     }}>
-    ${remotePage() ? null : html`<option value=${NEW_PROFILE}>${copy.create}</option>`}
+    ${remotePage() || target ? null : html`<option value=${NEW_PROFILE}>${copy.create}</option>`}
     <option value="">${copy.none}</option>
     ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
     ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
@@ -163,7 +223,7 @@ export function mountToolbarProfilePickerIsland({ profileHost, sandboxHost, stat
   };
   try {
     unregister = registerToolbarProfilePickerController(Object.freeze({ open: state.open, update: state.update }));
-    render(html`<${ToolbarProfileControl} kind="profile" state=${state} actions=${actions}/>`, profileHost);
+    render(html`<${ToolbarNodeChip}/><${ToolbarProfileControl} kind="profile" state=${state} actions=${actions}/>`, profileHost);
     render(html`<${ToolbarProfileControl} kind="sandbox" state=${state} actions=${actions}/>`, sandboxHost);
     registerCleanup(cleanup);
   } catch (error) {

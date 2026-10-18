@@ -365,18 +365,34 @@ function managedState(features, peerView) {
   return 'shared';
 }
 
+const managedWhat = (features) => (features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults');
+const managedNeeds = (features, peerView) => features.filter((f) => featureState(f, peerView) !== 'shared').map((f) => featureNeeds(f, peerView));
+
+// A managed control carrying data-node acts on that node, not the page's (the
+// Groups toolbar following a fused view's node, toolbar-node.js): its own
+// component gates it by that node's grants, so the page's limits leave it be
+// (own).
 function managedControl(target, peerView) {
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) {
     const el = target?.closest?.(sel);
-    const needs = features.filter((f) => featureState(f, peerView) !== 'shared').map((f) => featureNeeds(f, peerView));
-    if (el) return { el, state: managedState(features, peerView), what: features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults', needs };
+    if (el?.hasAttribute?.('data-node')) return { el, own: true };
+    if (el) return { el, state: managedState(features, peerView), what: managedWhat(features), needs: managedNeeds(features, peerView) };
   }
   return null;
 }
 
+// managedHint is why the managed control sel is refused on the node whose
+// peerView is given (named node), or '' when that node shares it.
+export function managedHint(sel, peerView, node) {
+  const features = MANAGED_CONTROLS[sel];
+  if (!features) return '';
+  const state = managedState(features, peerView);
+  return state === 'shared' ? '' : limitHint(state, managedWhat(features), node, managedNeeds(features, peerView));
+}
+
 // managedControlsRule greys the managed controls the peer does not share.
 export function managedControlsRule(peerView) {
-  const off = Object.entries(MANAGED_CONTROLS).filter(([, f]) => managedState(f, peerView) !== 'shared').map(([sel]) => `html.remote-node ${sel}`);
+  const off = Object.entries(MANAGED_CONTROLS).filter(([, f]) => managedState(f, peerView) !== 'shared').map(([sel]) => `html.remote-node ${sel}:not([data-node])`);
   return off.length ? `${off.join(', ')} { opacity: .45; cursor: not-allowed; }` : '';
 }
 
@@ -694,7 +710,7 @@ export function blockedControl(target, peerView, event = null) {
     return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('activity', sub.dataset.subtab, peerView)] };
   }
   const managed = managedControl(target, peerView);
-  if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
+  if (managed) return managed.own || managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
   const act = actOf(target, event);
   if (act && SHELL_ACTS.has(act.dataset.act)) return shellControl(act, peerView);
   if (unrestricted(peerView)) {
