@@ -1,6 +1,7 @@
 import { prepareRemoteSpawn } from './agent-spawn-remote.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
+import { selfNodeID } from './node-api.js';
 
 let controller = null;
 
@@ -17,16 +18,24 @@ function requireController() {
 }
 
 // openAgentSpawnModal opens the spawn dialog. On a per-node peer view every
-// spawn targets the peer, so it opens in remote mode there whatever opened it.
+// spawn targets the peer, so it opens on the peer there whatever opened it.
 export function openAgentSpawnModal(options = {}) {
   const page = globalThis.__tclaudeRemoteNode;
-  if (!options?.remote && page?.id) {
+  if (!options?.remote && !options?.target && page?.id) {
     const node = globalThis.document?.documentElement?.dataset?.remoteNodeName || '';
     const snapshot = dashboardState.snapshot.value;
+    if (nodeMode(page.id, snapshot)) return requireController().open({ ...options, target: { node: page.id, nodeId: page.id, name: node, snapshot } });
     const fallback = (snapshot?.groups || []).some((g) => g?.name === options?.defaultGroup) ? options.defaultGroup : '';
     return openRemoteAgentSpawn({ nodeId: page.id, groupName: options?.groupName || fallback, node, snapshot });
   }
   return requireController().open(options);
+}
+
+// nodeMode says whether a spawn on nodeId runs the regular dialog against
+// that node, as its own dashboard would: this node always, and a peer that
+// trusts this one unrestricted. Any other peer takes a spawn request.
+function nodeMode(nodeId, snapshot) {
+  return (!!nodeId && nodeId === selfNodeID()) || snapshot?.peer_view?.level === 'unrestricted';
 }
 
 // openRemoteAgentSpawn opens the regular spawn dialog against a peer's group,
@@ -36,6 +45,10 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
   if (!groupName) {
     toast('Pick a group on the peer to spawn into (its ＋ button)', true);
     return null;
+  }
+  if (nodeMode(nodeId, snapshot)) {
+    const self = nodeId === selfNodeID();
+    return requireController().open({ groupName, target: { node: nodeId, nodeId: self ? '' : nodeId, name: node, snapshot } });
   }
   let remote;
   try {

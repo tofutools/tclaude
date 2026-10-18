@@ -15,7 +15,8 @@ import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { nodeSnapshot } from './node-api.js';
-import { groupFieldHeld } from './peer-view-limits.js';
+import { unrestrictedOn } from './node-trust.js';
+import { groupFieldHeld, groupFieldMissing, needsSuffix } from './peer-view-limits.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog, TerminalChooserDialog,
 } from './small-dialog-components.js';
@@ -56,12 +57,13 @@ function ErrorBanner({ id, error, onDismiss }) {
   `;
 }
 
-function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, base, setBase }) {
+
+function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, base, setBase, node = '' }) {
   const [request, setRequest] = useState({ phase: 'loading', data: null, error: '' });
   useEffect(() => {
     const controller = new AbortController();
     setRequest({ phase: 'loading', data: null, error: '' });
-    actions.loadWorktrees(repo, { signal: controller.signal }).then(
+    actions.loadWorktrees(repo, { signal: controller.signal, node }).then(
       (data) => setRequest({ phase: 'ready', data, error: '' }),
       (error) => {
         if (error?.name !== 'AbortError') setRequest({ phase: 'error', data: null, error: errorMessage(error) });
@@ -159,8 +161,10 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const source = descriptor.label || shortID(descriptor.conv);
   // Another node's agent (here, or on its own page) clones there with its
   // follow-up and history choice only: ownership and a worktree stay that
-  // node's operator's.
+  // node's operator's. A node trusting this one unrestricted takes the whole
+  // clone, as its own dashboard sends it.
   const here = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
+  const full = here || unrestrictedOn(descriptor.node);
   const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {
@@ -173,7 +177,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       if (worktree === WT_NEW) {
         const cleanBranch = branch.trim();
         if (!cleanBranch) throw new Error('enter a branch name for the new worktree');
-        const created = await actions.createWorktree({ repo: descriptor.cwd, branch: cleanBranch, fromBranch: base });
+        const created = await actions.createWorktree({ repo: descriptor.cwd, branch: cleanBranch, fromBranch: base, node: descriptor.node || '' });
         cwd = created.path || '';
       }
       await actions.cloneAgent({
@@ -184,6 +188,8 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         copyConversation,
         copyOwnership,
         cwd,
+        full,
+        group: descriptor.group || '',
       }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
@@ -203,7 +209,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/></h3>
       <div class="modal-meta" id="clone-agent-meta">
-        source: ${source}${descriptor.cwd ? `  ·  ${descriptor.cwd}` : ''}
+        source: ${source}${descriptor.cwd ? `  ·  ${descriptor.cwd}` : ''}${descriptor.group ? `  ·  joins group: ${descriptor.group}` : ''}
       </div>
       <label class="cron-create-row">
         <span class="cron-create-label">Follow-up</span>
@@ -224,7 +230,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyConversation(event.currentTarget.checked)}
         /> Copy conversation history
       </label>
-      ${here && html`<label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
+      ${full && html`<label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
         <input
           id="clone-agent-copy-ownership"
           type="checkbox"
@@ -232,8 +238,9 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyOwnership(event.currentTarget.checked)}
         /> Copy group ownership
       </label>`}
-      ${here && html`<${WorktreeFields}
+      ${full && html`<${WorktreeFields}
         repo=${descriptor.cwd}
+        node=${descriptor.node || ''}
         actions=${actions}
         value=${worktree}
         setValue=${setWorktree}
@@ -548,7 +555,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   const peerView = snap?.peer_view || null;
   const here = !node && !peerView;
   const can = (act) => groupFieldHeld(act, descriptor.group, peerView);
-  const off = (act) => (can(act) ? {} : { disabled: true, title: 'This node does not share this setting with you' });
+  const off = (act) => (can(act) ? {} : { disabled: true, title: `This node does not share this setting with you${needsSuffix(groupFieldMissing(act, descriptor.group, peerView))}` });
   const withCurrent = (names, current) => (current && !names.includes(current) ? [current, ...names] : names);
   const profileNames = withCurrent((snap?.profiles || []).map((profile) => profile.name), group?.default_profile || '');
   const sandboxNames = withCurrent((snap?.sandbox_profiles || []).map((profile) => (typeof profile === 'string' ? profile : profile.name)), group?.sandbox_profile || '');

@@ -17,6 +17,8 @@ import {
 } from './transaction-dialog-controller.js';
 import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
+import { openCloneAgentDialog } from './action-dialog-controller.js';
+import { createDndOps, dndGesture, dndNode, targetGroupOf } from './dnd-ops.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -82,12 +84,25 @@ let dndCloneHoverTarget = null;
 // which keys off that attribute — treats it exactly like the virtual
 // Retired group and routes a drop to runDndRetire. It is a plain <div>,
 // not a <details>, hence listed by id rather than the details[...] rules.
-const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired],#dnd-trash';
+//
+// In the fused Groups view each box is one node's group: its <details> carries
+// data-fleet-node, and data-group-key is the name it is listed by (a peer's
+// group@node). A drop there acts on that node (dndContext).
+const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired],#dnd-trash,details[data-fleet-node][data-group-key]';
+
+// dndSameNode: a drop onto a box on another node than its source's is a
+// move between nodes, which the fused view's own handler takes (the move
+// dialog); the bin stays with the source's node.
+function dndSameNode(box) {
+  return box.id === 'dnd-trash' || dndNode(box).node === dndSourceNode;
+}
 // isCloneGesture: a Ctrl/Cmd-held drag onto a REAL-group box with a
 // non-retired source. Clone is meaningless for the virtual targets, and
 // a retired source always reinstates (never clones). dragover, dragenter
 // and the pill all key off this so the hint, the highlight tint and the
 // drop branch agree.
+// dndSourceNode: the node the dragged row is on ('' for the page's own).
+let dndSourceNode = '';
 function isCloneGesture(e, box) {
   return (!!e.ctrlKey || !!e.metaKey)
     && !box.hasAttribute('data-dnd-target-ungrouped')
@@ -107,6 +122,7 @@ function dndInertOnto(box, isClone) {
   // target except a retired-target (the trash bin or the virtual Retired
   // group, both carrying data-dnd-target-retired), where the drop handler
   // routes it to runDndDeletePending.
+  if (!dndSameNode(box)) return true;
   if (dndSourcePending) return !box.hasAttribute('data-dnd-target-retired');
   if (box.hasAttribute('data-dnd-target-ungrouped')) return dndSourceUngrouped;
   if (box.hasAttribute('data-dnd-target-retired')) return dndSourceRetired || dndSourceConversation;
@@ -114,7 +130,7 @@ function dndInertOnto(box, isClone) {
   // the gesture isn't a clone (cloning a sibling into the same group is
   // a real op). dndSourceGroup is '' for the virtual sources, so this
   // never fires for an add / promote / reinstate onto a real group.
-  return !isClone && !!dndSourceGroup && box.getAttribute('data-dnd-target-group') === dndSourceGroup;
+  return !isClone && !!dndSourceGroup && targetGroupOf(box) === dndSourceGroup;
 }
 // updateDndPill positions + labels the hint pill that tracks the
 // cursor during a drag. `info` is null to hide the pill, else
@@ -155,6 +171,7 @@ function hideDndTrash() {
 }
 function bindDnd() {
   const removers = [];
+  dndGesture.cancelClone = () => { dndCloneHoverTarget = null; };
   const listen = (target, type, listener, options) => {
     target.addEventListener(type, listener, options);
     removers.push(() => target.removeEventListener(type, listener, options));
@@ -221,6 +238,7 @@ function bindDnd() {
     dndSourceRetired = false;
     dndSourcePending = false;
     dndSourceGroup = '';
+    dndSourceNode = '';
     hideDndTrash();
     const row = activeSourceRow || e?.target?.closest?.('.dnd-draggable');
     activeSourceRow?.removeEventListener('dragend', endDndDrag);
@@ -229,8 +247,10 @@ function bindDnd() {
     $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
     $('#dnd-pill')?.classList.remove('show', 'clone');
     if (cloneTarget && clonePayload) {
-      // runDndClone opens the confirmation first and refreshes on every path.
-      runDndClone(clonePayload, cloneTarget);
+      // runDndClone opens the clone dialog and refreshes on every path.
+      const ctx = ops.context(cloneTarget.where);
+      if (ops.allowed(ctx)) ops.clone(clonePayload, cloneTarget.group, ctx);
+      else ops.refused(ctx);
       return;
     }
     refresh();
@@ -266,7 +286,9 @@ function bindDnd() {
     // most-supported channel; the JSON body keeps the encoding
     // self-describing. We allow both move (default) and copy effects
     // so Ctrl-drag can flip the cursor hint via dropEffect.
-    const payloadObj = {conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, queuedId, queuedGroup, label};
+    const where = dndNode(row);
+    const payloadObj = {conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, queuedId, queuedGroup, label,
+      sourceNode: where.node, sourceNodeName: where.name};
     const payload = JSON.stringify(payloadObj);
     e.dataTransfer.setData('application/x-tclaude-member', payload);
     e.dataTransfer.setData('text/plain', payload);
@@ -282,6 +304,7 @@ function bindDnd() {
     dndSourceRetired = sourceRetired;
     dndSourcePending = sourcePending;
     dndSourceGroup = sourceGroup || '';
+    dndSourceNode = where.node;
     dndSourcePayload = payloadObj;
     dndCloneHoverTarget = null;
     // Reveal the fixed drag-to-retire bin for a retireable source (a
@@ -317,7 +340,7 @@ function bindDnd() {
       return;
     }
     e.preventDefault(); // required for drop to fire on this element
-    dndCloneHoverTarget = isClone ? box.getAttribute('data-dnd-target-group') : null;
+    dndCloneHoverTarget = isClone ? { group: targetGroupOf(box), where: dndNode(box) } : null;
     // Own the highlight here rather than leaning on the dragenter that
     // (usually) preceded us: when the gesture flips inert→live in place
     // — e.g. pressing Ctrl/Cmd to clone into the source's own group,
@@ -426,7 +449,13 @@ function bindDnd() {
     if (!payload || !payload.conv) return;
     const targetUngrouped = box.hasAttribute('data-dnd-target-ungrouped');
     const targetRetired = box.hasAttribute('data-dnd-target-retired');
-    const targetGroup = box.getAttribute('data-dnd-target-group');
+    const targetGroup = targetGroupOf(box);
+    // The drop acts on its node (the bin: the source's); a box on another
+    // node is the fused view's move between nodes, never seen here.
+    const where = box.id === 'dnd-trash' ? { node: payload.sourceNode || '', name: payload.sourceNodeName || '' } : dndNode(box);
+    if (where.node !== (payload.sourceNode || '')) return;
+    const ctx = ops.context(where);
+    if (!ops.allowed(ctx)) { ops.refused(ctx); return; }
     const sourceUngrouped = !!payload.sourceUngrouped;
     const sourceConversation = !!payload.sourceConversation;
     const sourceRetired = !!payload.sourceRetired;
@@ -457,21 +486,21 @@ function bindDnd() {
     // stuck spawn. This branch precedes the retire branch below because a
     // pending row is not a real agent and must never take the retire path.
     if (sourcePending) {
-      if (!targetRetired) return; // inert everywhere else (see dndInertOnto)
+      if (!targetRetired || ctx.node) return; // inert everywhere else (see dndInertOnto)
       if (payload.queuedId) {
         // Same confirm + DELETE as the row's trash button; it refreshes on
         // success, so only a cancel or failure needs the reconcile here.
         if (!await discardQueuedSpawn({ id: payload.queuedId, group: payload.queuedGroup, draft: { name: payload.label } })) await refresh();
         return;
       }
-      await runDndDeletePending(payload);
+      await ops.deletePending(payload, ctx);
       return;
     }
     // Target = the virtual Retired group → retire the agent,
     // demoting it back to a plain conversation.
     if (targetRetired) {
       if (sourceRetired || sourceConversation) return; // no-op (see dragover)
-      await runDndRetire(payload);
+      await ops.retire(payload, ctx);
       return;
     }
     // Target = the virtual Ungrouped group.
@@ -480,40 +509,40 @@ function bindDnd() {
       if (sourceRetired) {
         // A retired agent dropped here → reinstate to an active
         // agent, joining no group.
-        await runDndReinstate(payload, null);
+        await ops.reinstate(payload, null, ctx);
         return;
       }
       if (sourceConversation) {
         // A conversation dropped here → promote to agent, no group.
-        await runDndPromoteToUngrouped(payload);
+        await ops.promote(payload, ctx);
         return;
       }
       // A real-group member → remove from that group.
-      await runDndRemoveFromGroup(payload);
+      await ops.remove(payload, ctx);
       return;
     }
     // Target = a real group.
     if (sourceRetired) {
       // A retired agent dragged onto a group → reinstate + join.
-      await runDndReinstate(payload, targetGroup);
+      await ops.reinstate(payload, targetGroup, ctx);
       return;
     }
     if (isClone) {
       // Clone forks a sibling into the target group. Works whether
       // the source is grouped or ungrouped — runDndClone clones the
       // conv then POSTs the clone into the drop-target group.
-      await runDndClone(payload, targetGroup);
+      await ops.clone(payload, targetGroup, ctx);
       return;
     }
     if (sourceUngrouped || sourceConversation) {
       // An ungrouped agent OR a conversation dragged onto a group →
       // pure add. The membership write promotes a conversation.
-      await runDndAddToGroup(payload, targetGroup);
+      await ops.add(payload, targetGroup, ctx);
       return;
     }
     // Real group → real group move. Move-onto-self is a no-op.
     if (payload.sourceGroup === targetGroup) return;
-    await runDndMove(payload, targetGroup);
+    await ops.move(payload, targetGroup, ctx);
   });
 
   let cleaned = false;
@@ -530,6 +559,7 @@ function bindDnd() {
     dndSourceRetired = false;
     dndSourcePending = false;
     dndSourceGroup = '';
+    dndSourceNode = '';
     dndSourcePayload = null;
     dndCloneHoverTarget = null;
     hideDndTrash();
@@ -540,371 +570,12 @@ function bindDnd() {
   };
 }
 
-// runDndClone forks the source conv via POST /api/agents/{conv}/clone with
-// the drop target as `group`. The clone inherits all source memberships
-// (including the source group) and joins the dropped-on group in the same
-// request, so the clone and its new membership succeed or fail together.
-//
-// No optimistic UI: the new conv-id isn't known until the response
-// lands, and inventing a placeholder row would confuse the user
-// when the real conv-id replaces it on the next poll. Just await
-// the call and refresh.
-async function runDndClone(payload, targetGroup) {
-  const {conv, label} = payload;
-  // sel = the rotation-immune selector (agent_id, conv-id fallback) the
-  // server resolves; conv stays for any local snapshot correlation.
-  const sel = payload.agent || conv;
-  const confirmed = await confirmModal({
-    title: 'Clone agent into group?',
-    body: `Fork a new sibling agent from "${label}" and add the clone to `
-      + `group "${targetGroup}". The original keeps running; the clone is a `
-      + `sibling conversation that inherits the original's identity and a `
-      + `copy of its conversation history.`,
-    meta: label,
-    okLabel: 'Clone',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const cloneRes = await fetch(`/api/agents/${encodeURIComponent(sel)}/clone`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({group: targetGroup}),
-    });
-    if (!cloneRes.ok) {
-      toast(`clone failed: ${await cloneRes.text()}`, true);
-      return;
-    }
-    const out = await cloneRes.json();
-    const newConv = out.new_conv;
-    if (!newConv) {
-      toast(`clone: response missing new_conv`, true);
-      return;
-    }
-    toast(`cloned ${label} → ${targetGroup} (new ${newConv.slice(0,8)})`);
-  } catch (err) {
-    toast(`clone failed: ${err && err.message || err}`, true);
-  } finally {
-    // Always re-sync after the operation so every partial/failed path converges
-    // on the daemon's authoritative snapshot.
-    await refresh();
-  }
-}
-
-// runDndMove performs the optimistic local mutation, then the
-// POST B → DELETE A sequence. Failure of either step rolls back
-// the local mutation and surfaces a toast.
-async function runDndMove(payload, targetGroup) {
-  const {conv, sourceGroup, label} = payload;
-  // sel routes the membership writes (server resolves agent_id or conv-id);
-  // the optimistic lastSnapshot splice below still matches on conv_id, so
-  // the local member rows correlate regardless of which selector we send.
-  const sel = payload.agent || conv;
-  // Confirm BEFORE the lastSnapshot read + optimistic splice below,
-  // so a cancelled move leaves the snapshot — and the render —
-  // completely untouched.
-  const confirmed = await confirmModal({
-    title: 'Move agent to another group?',
-    body: `Move "${label}" out of group "${sourceGroup}" and into group `
-      + `"${targetGroup}". Its membership of "${sourceGroup}" is removed and a `
-      + `membership of "${targetGroup}" is added.`,
-    meta: label,
-    okLabel: 'Move',
-  });
-  if (!confirmed) { await refresh(); return; }
-  // Every post-confirm exit — a guard-clause return, the partial-
-  // failure return, success, or an error — funnels through the
-  // finally so the dashboard re-syncs immediately. Without this a
-  // confirmed-then-aborted move could leave optimistic state visible until the
-  // next 2s tick.
-  try {
-    if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) {
-      toast(`move: dashboard snapshot not loaded`, true);
-      return;
-    }
-    // Snapshot the source row so we can restore it on rollback +
-    // append it to the target so the optimistic render is correct.
-    const source = lastSnapshot.groups.find(g => g.name === sourceGroup);
-    const target = lastSnapshot.groups.find(g => g.name === targetGroup);
-    if (!source || !target) {
-      toast(`move: group not found in snapshot`, true);
-      return;
-    }
-    const idx = (source.members || []).findIndex(m => m.conv_id === conv);
-    if (idx < 0) {
-      toast(`move: member not found in source group`, true);
-      return;
-    }
-    const memberSnapshot = source.members[idx];
-    // Optimistic mutation: pull from source, push onto target.
-    source.members.splice(idx, 1);
-    target.members = target.members || [];
-    target.members.push(memberSnapshot);
-    renderGroupsTab();
-
-    const rollback = () => {
-      // Re-insert at the original position so the visible ordering
-      // doesn't drift mid-failure.
-      source.members.splice(idx, 0, memberSnapshot);
-      target.members = (target.members || []).filter(m => m.conv_id !== conv);
-      renderGroupsTab();
-    };
-
-    try {
-      const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv: sel}),
-      });
-      if (!addRes.ok) {
-        toast(`move add failed: ${await addRes.text()}`, true);
-        rollback();
-        return;
-      }
-      const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}`, {
-        method: 'DELETE', credentials: 'same-origin',
-      });
-      if (!delRes.ok) {
-        // Add succeeded but remove failed: the conv is now in BOTH
-        // groups. Report it so the human can manually clean up; do
-        // NOT roll the optimistic mutation back, because the daemon
-        // really did add it to the target.
-        toast(`move partial: added to ${targetGroup} but failed to remove from ${sourceGroup}: ${await delRes.text()}`, true);
-        return;
-      }
-      toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
-    } catch (err) {
-      toast(`move failed: ${err && err.message || err}`, true);
-      rollback();
-    }
-  } finally {
-    await refresh();
-  }
-}
-
-// runDndAddToGroup handles a drag FROM the virtual Ungrouped group
-// ONTO a real group's header — the agent joins that group. Pure add:
-// POST /api/groups/{B}/members. The agent was in no group, so there
-// is nothing to remove; on success it drops out of the Ungrouped
-// virtual group on the next snapshot.
-//
-// Non-optimistic (one round-trip, then refresh): the source isn't a
-// real group in lastSnapshot.groups, so the optimistic splice
-// runDndMove relies on doesn't apply. A single fast call + refresh
-// keeps the code simple and the failure mode obvious.
-async function runDndAddToGroup(payload, targetGroup) {
-  const {conv, label} = payload;
-  const sel = payload.agent || conv;
-  // The source is either an ungrouped agent or a plain conversation;
-  // for a conversation the membership write also promotes it to an
-  // agent, so the modal says so.
-  const isConv = !!payload.sourceConversation;
-  const confirmed = await confirmModal({
-    title: isConv ? 'Promote conversation into group?' : 'Add agent to group?',
-    body: isConv
-      ? `Promote the conversation "${label}" to an agent and add it to group `
-        + `"${targetGroup}".`
-      : `Add the agent "${label}" to group "${targetGroup}". It keeps every `
-        + `other group it already belongs to.`,
-    meta: label,
-    okLabel: isConv ? 'Promote' : 'Add',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const r = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({conv: sel}),
-    });
-    if (!r.ok) {
-      toast(`add to ${targetGroup} failed: ${await r.text()}`, true);
-      return;
-    }
-    toast(`added ${label} → ${targetGroup}`);
-  } catch (err) {
-    toast(`add failed: ${err && err.message || err}`, true);
-  } finally {
-    // The dragend handler's refresh() can race ahead of this
-    // round-trip; refresh again once it has landed so the final
-    // render reflects the mutation.
-    await refresh();
-  }
-}
-
-// runDndRemoveFromGroup handles a drag FROM a real group's member
-// row ONTO the virtual Ungrouped group — the agent leaves that
-// group. Pure remove: DELETE /api/groups/{A}/members/{conv}. If A
-// was the agent's only group it reappears in the Ungrouped virtual
-// group on the next snapshot; if it was in other groups too it
-// simply stays in those. Non-optimistic, same rationale as
-// runDndAddToGroup.
-async function runDndRemoveFromGroup(payload) {
-  const {conv, sourceGroup, label} = payload;
-  const sel = payload.agent || conv;
-  if (!sourceGroup) return; // not a real-group member — nothing to do
-  const confirmed = await confirmModal({
-    title: 'Remove agent from group?',
-    body: `Remove "${label}" from group "${sourceGroup}". If this is its only `
-      + `group it becomes an ungrouped agent; otherwise it stays in its other `
-      + `groups.`,
-    meta: label,
-    okLabel: 'Remove',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}`, {
-      method: 'DELETE', credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      toast(`remove from ${sourceGroup} failed: ${await r.text()}`, true);
-      return;
-    }
-    toast(`removed ${label} from ${sourceGroup}`);
-  } catch (err) {
-    toast(`remove failed: ${err && err.message || err}`, true);
-  } finally {
-    await refresh();
-  }
-}
-
-// runDndRetire handles a drag of an AGENT row (a real-group member or
-// a virtual-Ungrouped row) ONTO the virtual Retired group — the agent
-// is retired, demoting it back to a plain conversation. Retire
-// revokes group memberships + grants, so it gets the same
-// keyed transaction dialog — checkbox and all — as the per-row retire button.
-async function runDndRetire(payload) {
-  const {conv, label} = payload;
-  // Retire stays conv-keyed (unlike the other runDnd* endpoint calls): the
-  // server's dangling-agent recovery only triggers for a UUID-shaped
-  // selector that fails to resolve, so sending the stable agent_id would
-  // silently demote a dangling orphan instead of offering to remove it
-  // (JOH-322). See row-actions.js's retire-agent case.
-  let result = null;
-  try {
-    result = await openRetireAgentDialog(conv, label);
-  } catch (err) {
-    toast(`retire failed: ${err && err.message || err}`, true);
-  }
-  // Successful normal retirement and successful dangling deletion already
-  // refresh inside the transaction action before resolving. Every other final
-  // result is presentation-only (cancel/decline/failure), so DnD must repaint
-  // once to undo its drag-local optimistic state.
-  if (retireResultNeedsReconcile(result)) await refresh();
-}
-
-// runDndDeletePending handles a drag of a PENDING spawn (JOH-205) onto the
-// trash / Retired target — the escape hatch for a spawn wedged behind a
-// startup gate it will never clear. A pending spawn is keyed by its LABEL
-// (no conv-id yet) and is not an agent, so this hits the dedicated
-// /api/pending/delete/{label} endpoint (kill pane + drop pending + session
-// rows) rather than the conv-keyed retire path. Same op and confirmation
-// wording as the per-row 🗑 delete button (row-actions.js).
-async function runDndDeletePending(payload) {
-  const {label} = payload;
-  const confirmed = await confirmModal({
-    title: 'Delete pending spawn?',
-    body: 'This spawn never finished starting up — its pane is stuck behind a startup gate (untrusted dir, config prompt, or an OpenAI-auth modal). Deleting kills its pane and removes it from the pending list. It never became a real agent, so there is no conversation to keep.',
-    meta: label,
-    okLabel: 'Delete',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const r = await fetch(`/api/pending/delete/${encodeURIComponent(label)}`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      toast(`delete ${label} failed: ${await r.text()}`, true);
-      return;
-    }
-    toast(`deleted pending spawn: ${label}`);
-  } catch (err) {
-    toast(`delete failed: ${err && err.message || err}`, true);
-  } finally {
-    await refresh();
-  }
-}
-
-// runDndPromoteToUngrouped handles a drag of a CONVERSATION row ONTO
-// the virtual Ungrouped group — the conversation is promoted to an
-// agent but joins no group, so it lands directly in the Ungrouped
-// virtual group on the next snapshot.
-async function runDndPromoteToUngrouped(payload) {
-  const {conv, label} = payload;
-  const sel = payload.agent || conv;
-  const confirmed = await confirmModal({
-    title: 'Promote conversation to an agent?',
-    body: `Promote the conversation "${label}" to an agent. It joins no group `
-      + `and appears under Ungrouped.`,
-    meta: label,
-    okLabel: 'Promote',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/promote`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      toast(`promote ${label} failed: ${await r.text()}`, true);
-      return;
-    }
-    toast(`promoted ${label} → agent (no group)`);
-  } catch (err) {
-    toast(`promote failed: ${err && err.message || err}`, true);
-  } finally {
-    await refresh();
-  }
-}
-
-// runDndReinstate handles a drag of a RETIRED agent row OUT of the
-// virtual Retired group. The agent is reinstated — its retired flag
-// is cleared, making it an active agent again. Retire stripped the
-// agent's old group memberships and grants and reinstate does not
-// restore them, so the agent starts fresh: when targetGroup is given
-// (dropped onto a real group) it is then added to that group; when
-// null (dropped onto Ungrouped) it joins no group and lands in the
-// Ungrouped virtual group on the next snapshot.
-async function runDndReinstate(payload, targetGroup) {
-  const {conv, label} = payload;
-  const sel = payload.agent || conv;
-  const confirmed = await confirmModal({
-    title: 'Reinstate retired agent?',
-    body: targetGroup
-      ? `Reinstate the retired agent "${label}" and add it to group `
-        + `"${targetGroup}". Group memberships and permission grants stripped `
-        + `when it was retired are NOT restored — it starts fresh.`
-      : `Reinstate the retired agent "${label}" as an active, ungrouped agent. `
-        + `Group memberships and permission grants stripped when it was retired `
-        + `are NOT restored — it starts fresh.`,
-    meta: label,
-    okLabel: 'Reinstate',
-  });
-  if (!confirmed) { await refresh(); return; }
-  try {
-    const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/reinstate`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      toast(`reinstate ${label} failed: ${await r.text()}`, true);
-      return;
-    }
-    if (targetGroup) {
-      const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv: sel}),
-      });
-      if (!addRes.ok) {
-        toast(`reinstated ${label}, but join ${targetGroup} failed: ${await addRes.text()}`, true);
-        return;
-      }
-      toast(`reinstated ${label} → ${targetGroup}`);
-    } else {
-      toast(`reinstated ${label} → agent (no group)`);
-    }
-  } catch (err) {
-    toast(`reinstate failed: ${err && err.message || err}`, true);
-  } finally {
-    await refresh();
-  }
-}
+// ops are the drop operations (dnd-ops.js) on this page.
+const ops = createDndOps({
+  confirm: (options) => confirmModal(options), toast: (...args) => toast(...args), refresh: () => refresh(),
+  render: () => renderGroupsTab(), getSnapshot: () => lastSnapshot,
+  openClone: (...args) => openCloneAgentDialog(...args), openRetire: (...args) => openRetireAgentDialog(...args),
+  retireNeedsReconcile: (result) => retireResultNeedsReconcile(result),
+});
 
 export { bindDnd, dndDragActive };

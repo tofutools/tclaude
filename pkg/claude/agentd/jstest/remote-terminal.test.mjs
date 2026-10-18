@@ -16,6 +16,9 @@ test('a remote terminal opens interactive or watch-only as the peer shares it, a
   m.resetRemoteSessionsCache();
   await go('agt_ada1');
   assert.deepEqual(opened.at(-1), { wsPath: '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive', label: 'ada @ forge', remote: { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' } });
+  await m.openRemoteTerminal({ instance: 'inst_forge7', agent: 'agt_ada1', peerLabel: 'forge', fetchImpl, background: true, open: (o) => { opened.push(o); return o; } });
+  assert.equal(opened.at(-1).reveal, false, 'a background open leaves the current tab in front');
+  opened.pop();
   await go('agt_bob2');
   assert.match(opened.at(-1).wsPath, /mode=watch$/);
   await go('agt_cy3x');
@@ -28,6 +31,19 @@ test('a remote terminal opens interactive or watch-only as the peer shares it, a
   assert.equal(m.nativeAttachCommand('agt_x;rm', 'inst_forge7'), '');
   assert.equal(m.remoteTerminalMode({ watch: true }), 'watch');
   assert.equal(m.remoteTerminalMode(null), '');
+});
+
+test('a just-spawned agent opens once the peer lists its session', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/remote-terminal.js');
+  m.resetRemoteSessionsCache();
+  let reads = 0; let clock = 0; const opened = []; const toasts = [];
+  const fetchImpl = async () => { reads += 1; return { ok: true, json: async () => (reads < 3 ? [] : ROWS) }; };
+  const r = await m.openRemoteTerminal({ instance: 'inst_forge7', agent: 'agt_ada1', peerLabel: 'forge', fetchImpl, wait: 10000,
+    sleep: async (ms) => { clock += ms; }, now: () => clock, toast: (x) => toasts.push(x), open: (o) => { opened.push(o); return o; } });
+  assert.ok(r);
+  assert.equal(reads, 3, 'it rereads the catalog fresh until the agent is listed');
+  assert.deepEqual(toasts, []);
 });
 
 test('a failed catalog read is reported, not opened', async (t) => {

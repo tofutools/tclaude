@@ -722,8 +722,8 @@ tclaude federation grant alice groups.members.spawn.effort --scope group=builder
 tclaude federation grant alice groups.members.spawn.all --scope group=builders
 ```
 
-- An unrestricted peer may choose all of them: its remote spawn dialog works
-  like a local one.
+- An unrestricted peer may choose all of them; its spawn is not a request at
+  all but the regular local dialog run against your node (see below).
 - `groups.members.spawn.cwd`, `.harness`, `.model`, `.effort`, `.profile`,
   `.roles`, `.sandbox`, `.permissions`, `.environment`, `.owner`,
   `.features`, `.prompts` and `.worktree` each open one;
@@ -820,8 +820,16 @@ handlers when it shares them, and stay greyed with the reason otherwise.
 
 #### The remote spawn dialog
 
-Spawning into a peer's group (from its per-node page or the fused Groups view)
-opens the regular spawn dialog with every control in place. Controls the
+Under unrestricted trust a spawn into a peer's group (from its per-node page or
+the fused Groups view) is the local spawn dialog run against that peer: the
+peer's groups, profiles, saved prompts (with **Manage…** editing the peer's
+library), worktrees, queue and spawn route, as on its own dashboard. Only
+what works on this machine stays here: **Browse…** for directories (type the
+path), and saving a profile from the fused view. Auto focus opens the new
+agent in the browser terminal instead of a window on the peer's desktop.
+
+Otherwise spawning into a peer's group sends a spawn request: it opens the
+regular spawn dialog with every control in place. Controls the
 request cannot carry are disabled, and hovering one says why; the spawn still
 works, the peer applying its own value there.
 
@@ -3415,7 +3423,11 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
 - `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
   `{follow_up, no_copy_conv}` and receiver-owned source defaults.
 - `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
-  `groups.members.retire`. The destination is always the requesting peer.
+  `groups.members.retire`. The destination is the requesting peer, except
+  that an unrestricted peer may add `to` (another trusted node's instance ID).
+  The move then runs as this node's own operator move to that node, with
+  `group` naming the receiving group there. The fused dashboard view uses this
+  for a drop between two peers.
 - `POST /api/agents/{id}/teleport`: `{group, note?, clone?, home?, carry_permissions?}`
   with the same source authority and existing teleport landing/confirmation policy.
   A `home: true` recall is accepted only when the requesting node is the
@@ -3423,7 +3435,7 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
 - `POST /api/operator-message` retains the existing scoped messaging contract.
 
 IDs are stable remote agent IDs, and `group` on move/teleport names the
-receiving group on the requesting node. No third-node delegation is accepted.
+receiving group on the requesting node. No other third-node delegation is accepted.
 Use `/api/peer/{instance_id}/<tail>` or the CLI's
 `/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
 `tclaude federation action ACTION --node PEER --agent ID` (ACTION includes
@@ -4174,6 +4186,14 @@ text, anything else is an opaque download, and the response is a sandboxed,
 notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
+
+Agent mail's files cross the same way, under the same grant:
+`GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)
+reads the peer's `GET /api/agent-attachment-chunk?message=&attachment=&offset=&length=`.
+An agent-mail attachment id is a stored attachment's row id, or for a file a
+startup briefing lists under "Attached files" the negative of its position in
+that list. The peer serves a briefing file only from inside its own
+spawn-attachment directories.
 
 Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped

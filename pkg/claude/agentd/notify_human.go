@@ -1212,21 +1212,7 @@ func handleDashboardHumanMessageAttachment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer func() { _ = f.Close() }()
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename})
-	w.Header().Set("Content-Disposition", disposition)
-	contentType := a.ContentType
-	if videoType := humanMessageAttachmentVideoType(a); videoType != "" {
-		// A confirmed video is served as its sniffed container type, so the
-		// player gets e.g. video/mp4 even when the sender labelled the file
-		// application/octet-stream. nosniff then cannot get in the way.
-		contentType = videoType
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// ServeContent answers Range requests (and HEAD), which the dashboard's
-	// video player needs to seek without downloading the whole file first.
-	// A zero modtime keeps it from emitting Last-Modified validators.
-	http.ServeContent(w, r, "", time.Time{}, f)
+	serveMessageAttachmentFile(w, r, f, a)
 }
 
 // parseHumanMessageAttachmentPath returns the message id and, for the explicit

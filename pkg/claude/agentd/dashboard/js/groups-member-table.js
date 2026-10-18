@@ -28,6 +28,7 @@ import { fleetState } from './fleet-state.js';
 import { presenceView } from './agent-presence.js';
 import { hubOffReason } from './fleet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
+import { unrestrictedOn } from './node-trust.js';
 import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
 
 const html = htm.bind(h);
@@ -871,9 +872,9 @@ function SandboxImplMenuItem({ member }) {
 
 // SendElsewhereItems is the ⚙ menu's "Send elsewhere" section (tcl-o9d5d9):
 // each item opens the launch-target dialog on its mode, alongside drag and
-// drop. Modes whose routes this dashboard lacks stay out of the menu. A
-// peer's single-node view offers only the move here, as another node's rows
-// in the fused view do.
+// drop. Modes whose routes this dashboard lacks stay out of the menu. Another
+// node's row (on its own page, or in the fused view) offers the move here,
+// and the morph when that node trusts this one unrestricted.
 // sendElsewhereOffReason says why move and teleport are greyed out when
 // there is no fleet: this node is not on a hub, or no peer is linked yet.
 export function sendElsewhereOffReason(node) {
@@ -892,7 +893,11 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // to but here.
   const pageNode = remote?.id ? { id: remote.id, name: globalThis.document?.documentElement?.dataset?.remoteNodeName || '' } : null;
   const peerRow = !!pageNode || (!!group?.fleet_node && !group.fleet_node.local);
-  const rowNode = pageNode || group?.fleet_node;
+  // A fused row is its group's node's, on a peer's page too.
+  const rowNode = group?.fleet_node || pageNode;
+  // A node trusting this one unrestricted morphs its agent as its own
+  // dashboard does.
+  const acting = peerRow && unrestrictedOn(rowNode.id);
   const view = presenceView(member, fleet);
   const kind = view?.kind || '';
   const label = member.title || member.conv_id;
@@ -913,7 +918,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
     ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
     ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" regular="📸 snapshot…" wizard="📸 capture familiar…" title=${`Keep a named snapshot of ${label} on this node; spawn from it, share or publish it later`} />` : null}
     ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="export-paf" regular="⤓ export (PAF)…" wizard="⤓ seal familiar (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
-    ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${!peerRow || acting ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
     ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
 }
 
@@ -946,7 +951,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
     <${MenuSeparator} />
-    ${snapshot?.peer_view ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
+    ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${RestartMenuItem} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />

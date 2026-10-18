@@ -202,6 +202,8 @@ var peerViewLocalRoutes = []string{
 	"/api/logs/export",
 	"/api/mailbox",
 	"/api/mailboxes",
+	// Files of the agent mail /api/mailbox lists, reached as the mail is.
+	"GET /api/agent-messages/{message}/attachments/{attachment}",
 	"/api/notifications",
 	"/api/open-window/",
 	"/api/pending/delete/",
@@ -345,6 +347,7 @@ var peerViewOwnNodeRoutes = []string{
 	"PUT /api/peer/{node}/{tail...}",
 	"DELETE /api/peer/{node}/{tail...}",
 	"GET /api/peer-attachments/{node}/{message}/{attachment}",
+	"GET /api/peer-agent-attachments/{node}/{message}/{attachment}",
 	"GET /api/peer-message-export/{node}/{message}",
 	"/api/human-messages/",
 	"/api/human-messages/clear",

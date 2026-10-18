@@ -126,7 +126,7 @@ export const REMOTE_CLOSE = Object.freeze({
   untrusted: { text: 'the peer is no longer trusted', final: true },
   kicked: { text: "the peer's operator disconnected this view", final: false },
   taken_over: { text: 'another viewer took over this terminal', final: false },
-  denied: { text: "the peer does not share this terminal with you", final: true },
+  denied: { text: 'the peer does not share this terminal with you (needs sessions.watch to look, sessions.attach to type)', final: true },
   limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
   offline: { text: 'the peer is unreachable', final: false },
   error: { text: 'the connection failed', final: false },

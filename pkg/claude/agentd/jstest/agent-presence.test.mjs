@@ -96,4 +96,11 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   const host3 = harness.document.body.appendChild(harness.document.createElement('div'));
   await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[peerGroup]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host3);
   assert.deepEqual([...host3.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode), ['move'], 'another node\'s agent can only be moved here');
+  assert.ok(host3.querySelector('[data-act="clone"][data-conv="c1"]'), 'another node\'s agent clones there (the clone dialog on that node)');
+  const nodeApi = await harness.importDashboardModule('js/node-api.js');
+  const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { peer_view: { level: 'unrestricted' } } : null));
+  const host4 = harness.document.body.appendChild(harness.document.createElement('div'));
+  await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[peerGroup]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host4);
+  assert.deepEqual([...host4.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode), ['move', 'morph'], 'a node trusting this one unrestricted morphs its agent from here');
+  release();
 });

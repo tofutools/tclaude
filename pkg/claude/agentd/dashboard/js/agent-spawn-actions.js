@@ -3,6 +3,7 @@ import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-prof
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
 const AUTOFOCUS_KEY = 'tclaude.dash.spawn.autofocus';
@@ -46,7 +47,8 @@ function readEffortMap(prefs) {
   }
 }
 
-export function createAgentSpawnActions({
+export function createAgentSpawnActions(dependencies = {}) {
+  const {
   fetchImpl = fetch,
   prefs,
   loadProfiles,
@@ -65,8 +67,21 @@ export function createAgentSpawnActions({
   recordInteraction = () => {},
   shortID = (value) => value,
   getSnapshot = () => null,
-} = {}) {
+  } = dependencies;
   return Object.freeze({
+    canSaveProfile: true,
+    // forNode is the same dialog's actions aimed at another node's group
+    // (target: {node, nodeId, name}, agent-spawn-state.js): every request
+    // goes through nodeFetch(node) to that node's own routes — its profiles,
+    // libraries, worktrees, queue and spawn — as its own dashboard would send
+    // them. What works on the browser's own machine stays with it: the
+    // directory picker, and the profile editor off the node's own page. The new
+    // agent's terminal opens in the browser terminal, not as a window on the
+    // node's desktop.
+    forNode(target) {
+      return createNodeSpawnActions(dependencies, target);
+    },
+
     autoFocusDefault() {
       try {
         const value = prefs?.getItem(AUTOFOCUS_KEY);
@@ -413,6 +428,70 @@ export function createAgentSpawnActions({
       } catch (_) {}
       recordInteraction(draft.group);
       refresh();
+    },
+  });
+}
+
+function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '' } = {}) {
+  const {
+    fetchImpl = fetch, notify = () => {}, refresh = () => {}, getSnapshot = () => null,
+    openNodeTerminal = (options) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(options)),
+  } = dependencies;
+  const api = nodeFetch(node, { fetchImpl });
+  const where = name || 'that node';
+  let catalog = null;
+  const loadCatalog = (force) => {
+    if (!catalog || force) {
+      catalog = Promise.all([
+        jsonRequest(api, '/api/spawn-profiles'),
+        jsonRequest(api, '/api/spawn-profile-default').catch(() => ({})),
+      ]).then(([profiles, fallback]) => ({
+        profiles: Array.isArray(profiles) ? profiles : [],
+        fallback: typeof fallback?.name === 'string' ? fallback.name : '',
+      }));
+      catalog.catch(() => { catalog = null; });
+    }
+    return catalog;
+  };
+  let fallbackProfile = '';
+  const base = createAgentSpawnActions({
+    ...dependencies,
+    fetchImpl: api,
+    async loadProfiles(force = false) {
+      const { profiles, fallback } = await loadCatalog(force);
+      fallbackProfile = fallback;
+      return profiles;
+    },
+    async loadSandboxProfiles() {
+      const value = await jsonRequest(api, '/api/sandbox-profiles');
+      return Array.isArray(value) ? value : [];
+    },
+    getDashboardDefaultProfile: () => fallbackProfile,
+    pickDirectory: async () => ({ error: `Browse ${where}'s folders from its own dashboard, or type the path` }),
+    // The profile editor saves to the page's node: right on that node's own
+    // page, not from another node's.
+    ...(isPageNode(node) ? {} : { openProfileEditor: () => notify(`Save this as a profile from ${where}'s own dashboard`, true) }),
+    refresh: () => { announceNodeChanged(node); refresh(); },
+    getSnapshot: () => nodeSnapshot(node) || getSnapshot(),
+  });
+  return Object.freeze({
+    ...base,
+    canSaveProfile: isPageNode(node),
+    async spawn(request) {
+      // The node would open the new agent's window on its own desktop.
+      const { auto_focus: _focus, auto_focus_web: _web, ...body } = request.body || {};
+      // ?as=local: the node serves its regular spawn route to an
+      // unrestricted peer (peer_actions.go servePeerSpawn).
+      const url = `${request.url}${String(request.url).includes('?') ? '&' : '?'}as=local`;
+      return base.spawn({ ...request, url, body: { ...body, auto_focus: false } });
+    },
+    async complete(payload, draft) {
+      await base.complete(payload, { ...draft, autoFocus: false });
+      const agent = payload?.agent_id || '';
+      if (draft.autoFocus && agent && nodeId) {
+        // The node lists a new agent's session within a few seconds.
+        void openNodeTerminal({ instance: nodeId, agent, peerLabel: name, wait: 20000 });
+      }
     },
   });
 }

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { focusRow } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
-import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
+import { attachmentHref, attachmentSize, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -92,27 +92,33 @@ export function LinkifiedBody({ text }) {
   return html`<${Fragment}>${parts}</${Fragment}>`;
 }
 
-function attachmentSize(bytes) {
-  const size = Number(bytes || 0);
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
-  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
-}
-
-export function HumanAttachment({ message }) {
+// MessageAttachments lists a message's files under the reader body — a
+// notification's published files, or the files that came with agent mail —
+// each with its image or video preview, download link, size and Markdown
+// viewer. Every Messages reader (this node's, a peer's, the fused view) uses
+// it for every kind of message, so the file affordances stay one component.
+// label names where the files came from; the default is the notification's.
+export function MessageAttachments({ message, label = 'Agent file', downloadTitle = 'Download this agent-published file' }) {
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
-    <div class="mail-attachment" key=${attachment.id || index}>
+    <div class="mail-attachment" key=${attachment.url || attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <span class="mail-attachment-label">Agent file</span>
+      <span class="mail-attachment-label">${label}</span>
       <a href=${attachmentHref(message, attachment)}
-        download=${attachment.filename || ''} title="Download this agent-published file">⤓ ${attachment.filename || 'attachment'}</a>
+        download=${attachment.filename || ''} title=${downloadTitle}>⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
       <${MarkdownAttachment} messageID=${message.id} attachment=${attachment}
         siblings=${attachments} surface="messages" />
     </div>`)}</${Fragment}>`;
+}
+
+// AgentMailAttachments is MessageAttachments for agent mail: the files an
+// operator or agent sent with a message, or a startup briefing's uploads.
+export function AgentMailAttachments({ message }) {
+  return html`<${MessageAttachments} message=${message} label="Attached file"
+    downloadTitle="Download this file that came with the message" />`;
 }
 
 export function HeaderRow({ label, children }) {
@@ -347,9 +353,12 @@ export function MessageHeaders({ message, extra = null }) {
 }
 
 // MessageBody is the reader's body: links clickable, everything else text.
-export function MessageBody({ message }) {
-  return html`<div class="mail-reader-body">${bodilessNotice(message)
-    ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
+// agentMail swaps the notification's bodiless notice for agent mail's: a
+// message sent with only a file attached.
+export function MessageBody({ message, agentMail = false }) {
+  const notice = bodilessNotice(message) && (agentMail ? 'No message text — see the attached file.' : bodilessNotice(message));
+  return html`<div class="mail-reader-body">${notice
+    ? html`<span class="notification-bodiless">${notice}</span>`
     : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>`;
 }
 
