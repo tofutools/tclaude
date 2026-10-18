@@ -147,6 +147,7 @@ func handleDashboardPeerUploadChunk(w http.ResponseWriter, r *http.Request) {
 	// One chunk at a time per upload: the lock covers the append.
 	peerUploads.Lock()
 	defer peerUploads.Unlock()
+	sweepPeerUploadsLocked(time.Now())
 	u := peerUploads.byID[r.URL.Query().Get("id")]
 	if u == nil {
 		writeError(w, http.StatusNotFound, "not_found", "no such upload")
@@ -315,6 +316,12 @@ func handleDashboardPeerUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "peer_upload", "peer returned an invalid reply")
 		return
 	}
+	// A failed upload drops what the peer staged: finishing it with no
+	// route removes it there.
+	abort := func() {
+		raw, _ := json.Marshal(map[string]string{"id": opened.ID})
+		_, _ = exchange(fedPeerViewRequest{Method: http.MethodPost, URI: peerUploadFinishPath, Header: http.Header{"Content-Type": {"application/json"}}, Body: raw}, nil)
+	}
 	body := http.MaxBytesReader(w, r.Body, agentTransferLimit())
 	buf := make([]byte, peerUploadChunk)
 	var offset int64
@@ -324,6 +331,7 @@ func handleDashboardPeerUpload(w http.ResponseWriter, r *http.Request) {
 			q := url.Values{"id": {opened.ID}, "offset": {strconv.FormatInt(offset, 10)}}
 			req := fedPeerViewRequest{Method: http.MethodPost, URI: peerUploadChunkPath + "?" + q.Encode(), Header: http.Header{"Content-Type": {"application/octet-stream"}}, Body: buf[:n]}
 			if status, err := exchange(req, nil); err != nil {
+				abort()
 				fail(status, err)
 				return
 			}
@@ -333,7 +341,12 @@ func handleDashboardPeerUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if readErr != nil {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "upload exceeds federation.agent_transfer_max_bytes")
+			abort()
+			if tooLarge := new(http.MaxBytesError); errors.As(readErr, &tooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "too_large", "upload exceeds federation.agent_transfer_max_bytes")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "upload", "read upload: "+readErr.Error())
 			return
 		}
 	}
