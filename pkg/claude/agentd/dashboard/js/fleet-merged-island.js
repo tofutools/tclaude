@@ -112,6 +112,8 @@ const NODE_GROUP_ACTIONS = new Set([
   // The agent controls (AGENT_GRANT_ACTS): the inline rename and the member
   // editor, whose descriptor names the node its save goes to.
   'renameAgent', 'openMemberEditor',
+  // The standing-orders dialog, whose descriptor names the node.
+  'openStandingOrders', 'closeStandingOrders', 'loadStandingOrders', 'setStandingOrderScope', 'openStandingOrderCreate',
 ]);
 
 // createNodeGroupsActions builds the Groups actions for one node's groups in
@@ -515,8 +517,10 @@ export function MergedGroups({
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
   const limits = limitsCSS(nodes.map(({ node, entry }) => ({ id: node.id, name: node.name, local: !!node.local, peerView: entry?.snapshot?.peer_view || null })), { self: fleet.self.id, home });
   // This node's standing-orders dialog renders with its Groups view, hidden
-  // while fused: open it here for a home group.
+  // while fused: open it here, for a home group with its actions and for
+  // another node's (descriptor.node) with that node's.
   const standingOrders = groupsFeature()?.standingOrdersDialog?.value || null;
+  const ordersActions = standingOrders?.node ? forNode({ id: standingOrders.node }) : home && groupsActions();
   return html`<div class="fleet-merged">
     <style id="fleet-merged-limits">${limits}</style>
     <div class="fleet-merged-nodes" aria-label="Nodes in this view">
@@ -533,8 +537,8 @@ export function MergedGroups({
           actions=${routed.current} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
       <//>
     <//>
-    ${home && standingOrders && groupsActions() && html`<${GroupStandingOrdersDialog}
-      key=${standingOrders.launchID} descriptor=${standingOrders} actions=${groupsActions()} />`}
+    ${standingOrders && ordersActions && html`<${GroupStandingOrdersDialog}
+      key=${standingOrders.launchID} descriptor=${standingOrders} actions=${ordersActions} />`}
     ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups} snapshot=${snapOf(peerReq.nodeId)}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} ...${openSpawn ? { openSpawn } : {}} />`}
     ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}

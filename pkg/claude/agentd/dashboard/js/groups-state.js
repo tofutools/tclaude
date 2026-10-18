@@ -340,11 +340,14 @@ export function createGroupsState({
     addMemberDialog.value = null;
   }
 
-  function openStandingOrders(group) {
+  // node names another node's group (the fused Groups view; blank: the
+  // page's): the dialog's requests go there.
+  function openStandingOrders(group, node = '') {
     if (standingOrdersDialog.value || !group?.name || group.virtual) return false;
     standingOrdersDialog.value = {
       launchID: ++nextStandingOrdersLaunchID,
       group: String(group.name),
+      node: String(node || ''),
     };
     return true;
   }

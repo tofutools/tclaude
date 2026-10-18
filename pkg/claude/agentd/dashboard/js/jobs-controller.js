@@ -21,6 +21,7 @@ export function openCronCreateModal(prefill = {}, node = '') {
   return requireController().openCreate(prefill, node);
 }
 
+// options.node names another node's group: the order is created there.
 export function openStandingOrderCreateModal(prefill = {}, options = {}) {
   return requireController().openStandingOrderCreate(prefill, options);
 }

@@ -130,6 +130,12 @@ export function createJobsActions({
     explainCron: (expr, node = '') => (node
       ? requestOnNode(node, '/api/cron/explain', { method: 'POST', body: { expr } })
       : requestMutation('/api/cron/explain', { body: { expr }, refreshAfter: false })),
+    // The hook catalog of the node an order is saved on.
+    loadStandingOrderHooks: async (node = '') => {
+      const response = await nodeFetch(node)('/api/standing-order-hooks', { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error(`hook catalog request failed (${response.status})`);
+      return response.json();
+    },
     loadCronLogs: async (id) => {
       const response = await requestMutation(`/api/cron/${encodeURIComponent(id)}/logs?limit=25`, {
         method: 'GET', refreshAfter: false,
@@ -152,11 +158,12 @@ export function createJobsActions({
         throw new Error(detail(error), { cause: error });
       }
     },
-    saveStandingOrder: async ({ path, method, payload }) => {
+    saveStandingOrder: async ({ path, method, payload, node = '' }) => {
       try {
-        const order = await requestMutation(path, {
-          method, body: payload, refreshAfter: false,
-        });
+        const order = node
+          ? await requestOnNode(node, path, { method, body: payload })
+          : await requestMutation(path, { method, body: payload, refreshAfter: false });
+        if (node) announceNodeChanged(node);
         notify(`standing order ${method === 'PATCH' ? 'saved' : 'created'}: ${order?.name || ('#' + (order?.id || ''))}`);
         if (order?.hook_setup_warning) {
           notify(`Standing order saved, but hook setup needs attention: ${order.hook_setup_warning}`, true);

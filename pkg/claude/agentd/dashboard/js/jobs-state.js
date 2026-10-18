@@ -285,8 +285,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     return true;
   }
 
-  function openStandingOrderCreate(prefill = {}, { onCancel = null } = {}) {
-    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill }, onCancel });
+  function openStandingOrderCreate(prefill = {}, { onCancel = null, node = '' } = {}) {
+    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill }, onCancel, node: String(node || '') });
   }
 
   function openStandingOrderEdit(order = {}) {
