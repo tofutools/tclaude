@@ -30,7 +30,7 @@ import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
 import { TransferCards } from './transfer-card.js';
-import { paneNode, paneScope } from './fleet-scope.js';
+import { fleetNodes, paneNode, paneScope } from './fleet-scope.js';
 import { nodeColor, remoteNodeID } from './fleet-model.js';
 import { remoteSessionAgents, startRemoteSessionStatusPoll } from './remote-session-status.js';
 import { AgentGearMenu } from './groups-member-table.js';
@@ -705,7 +705,7 @@ function PaneTab({
 function GroupStack({
   group, panes, activeKey, actions, renaming, onRenameStart, onRenameCommit, onRenameCancel,
   openMenu, menuOpen, dropActive, dragging, onPillDragOver, onPillDragLeave, onPillDrop,
-  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null,
+  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab, snapshot = null, peerNotifications = {},
 }) {
   const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
@@ -777,7 +777,7 @@ function GroupStack({
   const hiddenUnread = group.collapsed
     ? panes
       .filter((pane) => !visible.includes(pane))
-      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value).length, 0)
+      .reduce((total, pane) => total + paneUnreadNotifications(pane, snapshot?.value, peerNotifications).length, 0)
     : 0;
   const openMenuAt = (event) => {
     const keyboard = event.type === 'keydown';
@@ -1020,9 +1020,12 @@ function TerminalTabs({
     return { ...scoped, node: paneNode(scopeView?.fleet || { peers: [] }, pane.seed, nodeColor) };
   };
   const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
-  // A peer's agent panes raise their ! from that peer's unread notifications.
-  const notifyPeers = [...new Set(current.panes.map(paneRemoteNode).filter(Boolean))].sort();
-  const peerNotifications = usePeerNotifications({ active: true, peers: notifyPeers, fetchFor: (id) => nodeFetch(id) });
+  // A peer's agent panes raise their ! from that peer's unread notifications,
+  // read while the strip is on screen from each peer the hub reports online.
+  const offline = new Set((scopeView?.fleet ? fleetNodes(scopeView.fleet) : []).filter((n) => n?.online === false).map((n) => n.id));
+  const notifyPeers = [...new Set(current.panes.map(paneRemoteNode).filter((id) => id && !offline.has(id)))].sort();
+  const stripShown = solo || dashboardState.activeTab.value === 'terminals';
+  const peerNotifications = usePeerNotifications({ active: stripShown, peers: notifyPeers, fetchFor: (id) => nodeFetch(id) });
   const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
   // Quietly: unticking a node must not pull the operator into this tab.
   useEffect(() => {
@@ -1647,6 +1650,7 @@ function TerminalTabs({
                 key=${segment.key}
                 group=${segment.group}
                 panes=${segment.panes}
+                peerNotifications=${peerNotifications}
                 activeKey=${current.activeKey}
                 actions=${actions}
                 renaming=${renamingGroup === gid}

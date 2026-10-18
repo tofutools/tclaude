@@ -37,12 +37,18 @@ export function usePeerNotifications({ active, peers, fetchFor, timers = globalT
     if (!active || !any) return undefined;
     let live = true;
     const requested = new Set();
+    // refused names the peers that do not share their messages from here
+    // (a 403, or a reply whose view withholds them): not read again until
+    // the poll restarts (the view shown anew).
+    const refused = new Set();
     const read = async (id) => {
       requested.add(id);
       try {
         const response = await fetchRef.current(id)(`/api/mailbox?id=human&unread=1&page=1&page_size=${PEER_NOTIFICATIONS_PAGE}`, { headers: { Accept: 'application/json' } });
+        if (response.status === 403) { refused.add(id); return; }
         if (!response.ok) return;
         const body = await response.json();
+        if (body?.peer_view && !peerSharesNotifications(body)) { refused.add(id); return; }
         // An older peer ignores unread=1 and sends its newest page.
         const messages = (Array.isArray(body?.messages) ? body.messages : []).filter((m) => m && !m.read);
         if (live) setLists((current) => ({ ...current, [id]: messages }));
@@ -52,7 +58,7 @@ export function usePeerNotifications({ active, peers, fetchFor, timers = globalT
     let timer = 0;
     const all = () => {
       // Nothing is read while the page is in the background.
-      if (!globalThis.document?.hidden) for (const id of peersRef.current) void read(id);
+      if (!globalThis.document?.hidden) for (const id of peersRef.current) if (!refused.has(id)) void read(id);
       timer = timers.setTimeout(all, PEER_NOTIFICATIONS_POLL_MS);
     };
     all();
