@@ -3423,7 +3423,11 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
 - `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
   `{follow_up, no_copy_conv}` and receiver-owned source defaults.
 - `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
-  `groups.members.retire`. The destination is always the requesting peer.
+  `groups.members.retire`. The destination is the requesting peer, except
+  that an unrestricted peer may add `to` (another trusted node's instance ID).
+  The move then runs as this node's own operator move to that node, with
+  `group` naming the receiving group there. The fused dashboard view uses this
+  for a drop between two peers.
 - `POST /api/agents/{id}/teleport`: `{group, note?, clone?, home?, carry_permissions?}`
   with the same source authority and existing teleport landing/confirmation policy.
   A `home: true` recall is accepted only when the requesting node is the
@@ -3431,7 +3435,7 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
 - `POST /api/operator-message` retains the existing scoped messaging contract.
 
 IDs are stable remote agent IDs, and `group` on move/teleport names the
-receiving group on the requesting node. No third-node delegation is accepted.
+receiving group on the requesting node. No other third-node delegation is accepted.
 Use `/api/peer/{instance_id}/<tail>` or the CLI's
 `/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
 `tclaude federation action ACTION --node PEER --agent ID` (ACTION includes

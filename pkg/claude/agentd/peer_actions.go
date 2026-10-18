@@ -133,6 +133,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	a := &peerActionAuthority{peer: v.peer.InstanceID, sourceConv: target.CurrentConvID, permission: rule.requires}
+	asOperator := r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
 	r = r.WithContext(context.WithValue(r.Context(), peerActionKey{}, a))
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/stop"):
@@ -234,9 +235,26 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			Clone            bool   `json:"clone,omitempty"`
 			Home             bool   `json:"home,omitempty"`
 			CarryPermissions bool   `json:"carry_permissions,omitempty"`
+			// To sends the agent to a third node instead of the requesting
+			// peer: only an unrestricted peer, which acts here as this
+			// node's operator does, and only to a node this one trusts.
+			To string `json:"to,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
 			return
+		}
+		if body.To != "" {
+			if !db.FederationPeerUnrestricted(a.peer) {
+				writeError(w, 403, "permission", "only an unrestricted peer may send an agent to another node")
+				return
+			}
+			third, err := db.GetFederationPeer(body.To)
+			if err != nil || third == nil || body.To == a.peer || body.Home {
+				writeError(w, 400, "invalid_arg", "to must name another node this one trusts")
+				return
+			}
+			r = asDashboardHumanPeer(asOperator)
+			a = &peerActionAuthority{peer: body.To}
 		}
 		if body.Group == "" {
 			writeError(w, 400, "invalid_arg", "receiving group is required")

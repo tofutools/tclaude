@@ -1069,7 +1069,9 @@ the clone dialog), **Morph** into another spawn profile (a dry run previews the
 change and what happens to the history), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
 send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
-onto another node's group opens the same dialog on Move, pre-filled. In the
+onto another node's group opens the same dialog on Move, pre-filled. A peer's
+agent moves here, or, when that peer trusts this node unrestricted, on to a
+third node: the peer sends it, and its own ⚙ Fleet → Moves follows it. In the
 fused view a drop onto a group on the agent's own node works as on that node's
 Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
 open the clone dialog for that group) — for this node always, and for a peer that

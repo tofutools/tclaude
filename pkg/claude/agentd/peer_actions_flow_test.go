@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -285,4 +286,33 @@ func TestPeerLifecycleTakesTheRegularDialogs(t *testing.T) {
 	require.Contains(t, body, `"action"`)
 	code, body = post("retire?shutdown=0", nil)
 	require.Equal(t, 200, code, body)
+}
+
+// An unrestricted peer may send this node's agent on to a third node this one
+// trusts (to), as this node's operator could; a restricted peer may not, and
+// to must name a trusted node.
+func TestPeerMovesAnAgentOnToAThirdNodeOnlyUnderUnrestrictedTrust(t *testing.T) {
+	fh := newFedHarness(t)
+	aid := fedMoveSource(t, fh)
+	for _, slug := range []string{agentd.PermAgentMove, agentd.PermGroupsMembersRetire} {
+		rec := fedHuman(t, fh.f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=source"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	carol, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: carol.ID(), PubKey: carol.Pub, Label: "carol", Name: "carol-box"}))
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	move := func(to string) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/move", map[string]any{"group": "receiver", "to": to}))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := move(carol.ID())
+	require.Equal(t, 403, code, "a restricted peer moves agents only to itself: %s", body)
+
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	code, body = move("inst_nobody0000")
+	require.Equal(t, 400, code, body)
+	code, body = move(carol.ID())
+	require.Equal(t, 409, code, "the move is this node's own, to carol (which has not advertised moves): %s", body)
+	require.Contains(t, body, "unsupported_peer")
 }
