@@ -24,6 +24,22 @@ const selfPkgDir = "scripts/ci/affected"
 // so that it, too, runs on every change.
 const wholeTreeMarker = "//ci:whole-tree"
 
+// readsDirective declares, on its own comment line in a test file, a
+// documentation path that file's tests read: `//ci:reads docs/dashboard.md`
+// for one file, or a trailing slash (`//ci:reads docs/learn/`) for a tree. It
+// works in a Go test file and in a `.test.mjs` suite, which is credited to the
+// nearest Go package above it (the one whose test runs it). A changed doc
+// selects exactly the packages that declare it, and a doc nobody declares
+// selects nothing. scripts/ci/affected's doc-reader guard test fails when a
+// test reaches into the docs without the directive. Declare it even in a
+// whole-tree package: the package is selected anyway, but its reverse
+// dependents are reached only through the declaration. `//ci:reads none`
+// declares nothing; it silences the guard for a file it misjudges.
+const readsDirective = "//ci:reads "
+
+// readsNothing is the readsDirective target that declares no doc at all.
+const readsNothing = "none"
+
 // goPkg is the slice of `go list -json` output this tool consumes. Deps is the
 // transitive import closure of the non-test package; the Test/XTest imports
 // are direct only, so their own Deps are folded in when the graph is built.
@@ -56,6 +72,10 @@ type selector struct {
 	// alwaysDirs holds the module-root-relative directories whose tests carry
 	// wholeTreeMarker. They are selected by every change.
 	alwaysDirs map[string]bool
+
+	// docReaders maps each readsDirective target to the module-root-relative
+	// directories of the packages whose tests declare it.
+	docReaders map[string][]string
 }
 
 func newSelector() (*selector, error) {
@@ -65,11 +85,13 @@ func newSelector() (*selector, error) {
 	}
 	root = strings.TrimSpace(root)
 
-	pkgs, err := listPackages([]string{"./..."})
+	// From the module root, so the graph covers the whole module whatever
+	// directory the tool (or its own tests) runs in.
+	pkgs, err := listPackages(root, []string{"./..."})
 	if err != nil {
 		return nil, err
 	}
-	goDirs, alwaysDirs, err := scanGoDirs(root)
+	scan, err := scanGoDirs(root)
 	if err != nil {
 		return nil, err
 	}
@@ -77,8 +99,9 @@ func newSelector() (*selector, error) {
 	s := &selector{
 		root:       root,
 		dirToPkg:   make(map[string]string, len(pkgs)),
-		goDirs:     goDirs,
-		alwaysDirs: alwaysDirs,
+		goDirs:     scan.dirs,
+		alwaysDirs: scan.always,
+		docReaders: scan.docReaders,
 	}
 	for _, p := range pkgs {
 		rel, err := filepath.Rel(root, p.Dir)
@@ -157,6 +180,18 @@ func (s *selector) mapChangedFiles(changed []string) (map[string]bool, string) {
 			return nil, fmt.Sprintf("%s changed, running the full shard", selfPkgDir)
 		}
 		dir, ok := s.ownerDir(f)
+		if !ok && isDoc(f) {
+			// Docs feed no build, so only the tests that declare reading
+			// them can notice the change.
+			for _, dir := range s.readersOf(f) {
+				ip, ok := s.dirToPkg[dir]
+				if !ok {
+					return nil, fmt.Sprintf("%s is read by %s, which `go list` does not report on this platform, running the full shard", f, dir)
+				}
+				out[ip] = true
+			}
+			continue
+		}
 		if !ok {
 			return nil, fmt.Sprintf("%s is not owned by a Go package, running the full shard", f)
 		}
@@ -167,6 +202,29 @@ func (s *selector) mapChangedFiles(changed []string) (map[string]bool, string) {
 		out[ip] = true
 	}
 	return out, ""
+}
+
+// isDoc reports whether a module-root-relative path is documentation: the
+// docs tree, the mkdocs config, or Markdown at the module root. It matches
+// scripts/ci/docs-only.py, except that the docs/paf schema and examples count
+// here too — their readers declare them, so they are graded rather than
+// skipped. Markdown deeper in the tree may be embedded runtime input (skills)
+// and stays with its owning package.
+func isDoc(file string) bool {
+	return strings.HasPrefix(file, "docs/") || file == "mkdocs.yml" ||
+		(!strings.Contains(file, "/") && strings.HasSuffix(file, ".md"))
+}
+
+// readersOf returns the directories of the packages whose tests declare
+// reading the given doc, either by its exact path or by a directory prefix.
+func (s *selector) readersOf(doc string) []string {
+	var out []string
+	for target, dirs := range s.docReaders {
+		if doc == target || (strings.HasSuffix(target, "/") && strings.HasPrefix(doc, target)) {
+			out = append(out, dirs...)
+		}
+	}
+	return out
 }
 
 // ownerDir walks up from a changed file to the nearest directory that holds Go
@@ -214,20 +272,49 @@ func (s *selector) changedFiles(base, head string) ([]string, error) {
 	return files, nil
 }
 
+// goScan is what scanGoDirs learns from the source tree without `go list`.
+type goScan struct {
+	dirs       map[string]bool     // every directory holding a .go file
+	always     map[string]bool     // directories whose tests carry wholeTreeMarker
+	docReaders map[string][]string // readsDirective target -> declaring directories
+}
+
 // scanGoDirs records every directory under root holding at least one .go file,
 // build tags ignored, so a file excluded on this platform still marks its
 // directory as Go-owned. It also reports the directories whose test files
-// carry wholeTreeMarker.
-func scanGoDirs(root string) (dirs, always map[string]bool, err error) {
-	dirs = make(map[string]bool)
-	always = make(map[string]bool)
-	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+// carry wholeTreeMarker, and the docs their test files declare reading.
+func scanGoDirs(root string) (goScan, error) {
+	dirs := make(map[string]bool)
+	always := make(map[string]bool)
+	readers := make(map[string]map[string]bool)
+	declare := func(target, dir string) {
+		if readers[target] == nil {
+			readers[target] = make(map[string]bool)
+		}
+		readers[target][dir] = true
+	}
+	jsReads := make(map[string][]string) // directory -> targets, credited once dirs is complete
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			if name := d.Name(); p != root && (name == ".git" || name == "node_modules") {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".test.mjs") {
+			body, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			if targets := readsTargets(string(body)); len(targets) > 0 {
+				rel, err := filepath.Rel(root, filepath.Dir(p))
+				if err != nil {
+					return err
+				}
+				jsReads[filepath.ToSlash(rel)] = append(jsReads[filepath.ToSlash(rel)], targets...)
 			}
 			return nil
 		}
@@ -240,7 +327,7 @@ func scanGoDirs(root string) (dirs, always map[string]bool, err error) {
 		}
 		dir := filepath.ToSlash(rel)
 		dirs[dir] = true
-		if strings.HasSuffix(d.Name(), "_test.go") && !always[dir] {
+		if strings.HasSuffix(d.Name(), "_test.go") {
 			body, err := os.ReadFile(p)
 			if err != nil {
 				return err
@@ -248,19 +335,62 @@ func scanGoDirs(root string) (dirs, always map[string]bool, err error) {
 			if strings.Contains(string(body), wholeTreeMarker) {
 				always[dir] = true
 			}
+			for _, target := range readsTargets(string(body)) {
+				declare(target, dir)
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("scanning for Go directories: %w", err)
+		return goScan{}, fmt.Errorf("scanning for Go directories: %w", err)
 	}
-	return dirs, always, nil
+	for dir, targets := range jsReads {
+		owner := dir
+		for owner != "." && !dirs[owner] {
+			owner = path.Dir(owner)
+		}
+		if !dirs[owner] {
+			return goScan{}, fmt.Errorf("%s declares %s but no Go package above it runs it", dir, readsDirective)
+		}
+		for _, target := range targets {
+			declare(target, owner)
+		}
+	}
+	docReaders := make(map[string][]string, len(readers))
+	for target, set := range readers {
+		for dir := range set {
+			docReaders[target] = append(docReaders[target], dir)
+		}
+		sort.Strings(docReaders[target])
+	}
+	return goScan{dirs: dirs, always: always, docReaders: docReaders}, nil
+}
+
+// readsTargets returns the readsDirective targets a source file declares,
+// leaving out readsNothing.
+func readsTargets(body string) []string {
+	targets, _ := parseReads(body)
+	return targets
+}
+
+// parseReads returns the readsDirective targets a source file declares, and
+// whether it carries a directive at all (readsNothing included).
+func parseReads(body string) (targets []string, declared bool) {
+	for _, line := range strings.Split(body, "\n") {
+		if target, ok := strings.CutPrefix(strings.TrimSpace(line), readsDirective); ok {
+			declared = true
+			if target = strings.TrimSpace(target); target != "" && target != readsNothing {
+				targets = append(targets, target)
+			}
+		}
+	}
+	return targets, declared
 }
 
 // resolvePackages expands the caller's package patterns to import paths,
 // preserving the order `go list` reports.
 func resolvePackages(patterns []string) ([]string, error) {
-	pkgs, err := listPackages(patterns)
+	pkgs, err := listPackages("", patterns)
 	if err != nil {
 		return nil, err
 	}
@@ -271,9 +401,12 @@ func resolvePackages(patterns []string) ([]string, error) {
 	return out, nil
 }
 
-func listPackages(patterns []string) ([]goPkg, error) {
+// listPackages runs `go list` in dir, the caller's working directory when
+// empty.
+func listPackages(dir string, patterns []string) ([]goPkg, error) {
 	args := append([]string{"list", "-json=ImportPath,Dir,Deps,TestImports,XTestImports"}, patterns...)
 	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.Output()
 	if err != nil {

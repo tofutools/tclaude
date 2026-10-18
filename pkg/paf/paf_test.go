@@ -1,3 +1,5 @@
+//ci:reads docs/paf/
+
 package paf
 
 import (

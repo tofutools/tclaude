@@ -46,9 +46,15 @@ packages a change can reach. The step log always names the verdict and why it
 was reached.
 
 The selector is deliberately conservative. A changed file it cannot attribute
-to a Go package — `go.mod`, a workflow, a shell script, a doc that a test
-reads — falls back to running the whole shard, as does a change to the
-selector itself or setting `TCLAUDE_CI_FULL_TESTS=1`. Release and
+to a Go package — `go.mod`, a workflow, a shell script — falls back to running
+the whole shard, as does a change to the selector itself or setting
+`TCLAUDE_CI_FULL_TESTS=1`. Documentation (`docs/`, `mkdocs.yml`, root-level
+Markdown) is the exception: it feeds no build, so a changed doc selects only
+the packages whose tests declare reading it with a `//ci:reads docs/x.md`
+comment line (or a `docs/dir/` prefix) — in a Go test file or a `.test.mjs`
+suite, which counts for the Go package that runs it — and nothing at all
+otherwise. A PR
+that changes only docs skips the Go jobs entirely. Release and
 manual-release always run every shard in full, so the merge commit is measured
 without selection before anything ships.
 
@@ -60,7 +66,8 @@ every production file, for instance — no import graph can predict it, so put a
 `//ci:whole-tree` comment in the file. That opts its package out of selection
 entirely: every change selects it. `scripts/ci/affected` has a guard test that
 fails when a module-root scanner is missing the marker, so this is enforced
-rather than remembered.
+rather than remembered. A second guard fails when a test climbs out of its
+package and names the docs tree without a `//ci:reads` directive.
 
 Two more things worth knowing. A green PR check means "everything this change
 can reach passed", not "the whole suite ran". And running the selector by hand

@@ -25,6 +25,11 @@ func testSelector() *selector {
 			".": true, "pkg/leaf": true, "pkg/other": true,
 			"pkg/consumer": true, "pkg/tester": true, "pkg/excluded": true,
 		},
+		docReaders: map[string][]string{
+			"docs/leaf.md":   {"pkg/leaf"},
+			"docs/consumer/": {"pkg/consumer"},
+			"docs/read.md":   {"pkg/excluded"},
+		},
 		testClosure: map[string]map[string]bool{
 			"m":              {"m": true, "m/pkg/consumer": true, "m/pkg/leaf": true},
 			"m/pkg/leaf":     {"m/pkg/leaf": true},
@@ -68,7 +73,8 @@ func TestOwnerDirWalksUpToTheOwningPackage(t *testing.T) {
 func TestMapChangedFilesFallsBackWhenOwnershipIsUnknown(t *testing.T) {
 	s := testSelector()
 	for _, file := range []string{
-		"docs/dashboard.md",            // read by a Go test, and unowned
+		".github/workflows/ci.yml",     // unowned, and not documentation
+		"docs/read.md",                 // documentation, but its reader is not built here
 		"go.sum",                       // a dependency bump reaches everything
 		"pkg/excluded/only_windows.go", // Go-owned, but not built on this platform
 		selfPkgDir + "/selector.go",    // the selector must not grade itself
@@ -89,6 +95,25 @@ func TestMapChangedFilesResolvesOwnedPaths(t *testing.T) {
 	want := map[string]bool{"m/pkg/leaf": true, "m": true}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mapChangedFiles = %v, want %v", got, want)
+	}
+}
+
+func TestMapChangedFilesSendsDocsToTheirDeclaredReaders(t *testing.T) {
+	s := testSelector()
+	got, reason := s.mapChangedFiles([]string{
+		"docs/leaf.md", "docs/consumer/a/b.md", "docs/unread.md", "README.md", "mkdocs.yml",
+	})
+	if reason != "" {
+		t.Fatalf("unexpected full-run fallback: %s", reason)
+	}
+	want := map[string]bool{"m/pkg/leaf": true, "m/pkg/consumer": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("mapChangedFiles = %v, want %v", got, want)
+	}
+	// An exact-file directive is not a prefix: a sibling doc is unread.
+	got, reason = s.mapChangedFiles([]string{"docs/leaf.md.bak", "docs/consumer.md"})
+	if reason != "" || len(got) != 0 {
+		t.Errorf("mapChangedFiles(siblings) = (%v, %q), want nothing selected", got, reason)
 	}
 }
 

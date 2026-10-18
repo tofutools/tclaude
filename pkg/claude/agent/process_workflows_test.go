@@ -1,3 +1,5 @@
+//ci:reads docs/pwf/examples/
+
 package agent
 
 import (

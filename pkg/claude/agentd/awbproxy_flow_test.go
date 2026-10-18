@@ -1,3 +1,7 @@
+//ci:reads none
+//
+// "docs" here is an awb workspace name, not the docs tree.
+
 package agentd_test
 
 import (

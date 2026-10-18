@@ -1,3 +1,5 @@
+//ci:reads docs/paf/examples/
+
 package render
 
 import (
