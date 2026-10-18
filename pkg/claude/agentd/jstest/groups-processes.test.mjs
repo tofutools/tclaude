@@ -320,7 +320,7 @@ test('the Processes perspective is the Agents tree: nesting, summary counts, a s
   const platform = details('platform');
   assert.equal(platform.querySelector(':scope > summary .gpi-graphs'), null, 'no roll-up into the parent');
   assert.equal(platform.querySelector(':scope > summary .gp-subtree-total').textContent, '↳ in subgroups: 2 running · 2 needs you · 1 planned');
-  assert.ok(platform.querySelector(':scope > .subtable > .group-subgroups + .gp-group'), 'the parent\'s own runs follow its subgroups');
+  assert.ok(platform.querySelector(':scope > .subtable > [data-fused-section="subgroups"] + .gp-group'), 'the parent\'s own runs follow its subgroups');
 
   const memberRuns = group('frontend-squad').querySelector('[data-process-member-runs]');
   assert.equal(memberRuns.querySelector('.gp-member-runs-label').textContent, 'Member runs');

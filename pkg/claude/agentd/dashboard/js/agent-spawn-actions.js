@@ -1,6 +1,7 @@
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
 import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-profiles-data.js';
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
+import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
@@ -63,6 +64,7 @@ export function createAgentSpawnActions({
   celebrateWizard = () => {},
   recordInteraction = () => {},
   shortID = (value) => value,
+  getSnapshot = () => null,
 } = {}) {
   return Object.freeze({
     autoFocusDefault() {
@@ -403,7 +405,12 @@ export function createAgentSpawnActions({
       }
       celebrateSlop();
       celebrateWizard();
-      try { prefs?.setItem(`tclaude.dash.group.${draft.group}`, '1'); } catch (_) {}
+      try {
+        prefs?.setItem(`tclaude.dash.group.${draft.group}`, '1');
+        if (prefs) revealGroupPath(draft.group, getSnapshot()?.groups, prefs);
+        // The new agent must not land in the group's folded Agents (Both).
+        if (prefs) setFusedSectionOpen(draft.group, 'agents', true, prefs);
+      } catch (_) {}
       recordInteraction(draft.group);
       refresh();
     },

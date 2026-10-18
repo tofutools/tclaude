@@ -1,6 +1,7 @@
 import { groupCreateRequest } from './group-create-model.js';
 import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
+import { setFusedSectionOpen } from './groups-fused-sections.js';
 
 const CLONE_TRANSPORT_PREF = 'tclaude.dash.group-create.clone-transport';
 
@@ -118,6 +119,10 @@ export function createGroupCreateActions({
       // Expansion and recency are keyed by the page's own group names.
       if (isPageNode(node)) {
         try { setExpanded(name); } catch (_) {}
+        // A new subgroup must not land in its parent's folded Subgroups.
+        if (parentGroup && prefs) {
+          try { setFusedSectionOpen(parentGroup, 'subgroups', true, prefs); } catch (_) {}
+        }
         recordInteraction(name);
       }
       announceNodeChanged(node);

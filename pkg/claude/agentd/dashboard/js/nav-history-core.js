@@ -57,6 +57,9 @@ export const KNOWN_TABS = new Set([
 //   - Usage: the quota forecasts and the costs views; the bare tab is the
 //     Overview that summarises both.
 //   - Activity: audit / logs / performance (formerly three top-level tabs).
+//   - Fleet config (fleet-admin): its sections; the bare tab is the landing
+//     (the setup guide until setup is done, else Peers). Keep in step with
+//     SUB_PAGES in fleet-admin-island.js.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -66,6 +69,10 @@ export const KNOWN_SUBTABS = {
   processes: new Set(['templates']),
   usage: new Set(['quota', 'costs']),
   activity: new Set(['audit', 'logs', 'performance']),
+  'fleet-admin': new Set([
+    'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models',
+    'profiles', 'offers', 'jobs', 'moves', 'boards', 'audit', 'hub',
+  ]),
 };
 
 // LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now

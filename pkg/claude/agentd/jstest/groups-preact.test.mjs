@@ -1662,3 +1662,25 @@ test("another node's member editor saves to that node", async (t) => {
     '/api/peer/inst_forge1234/agents/agt_stable/tags',
   ]);
 });
+
+test("add member on another node's group adds there and leaves the page's same-named group alone", async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const urls = [];
+  const optimistic = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { urls.push(url); return new Response('[]', { status: 200 }); };
+  t.after(() => { globalThis.fetch = original; });
+  const state = { optimisticAddMember: (...args) => optimistic.push(args) };
+  const actions = createGroupsActions({ state, refresh: async () => {}, fetchImpl: async (url) => { urls.push(`page:${url}`); return new Response('[]', { status: 200 }); } });
+  const node = 'inst_abcdefghijklmnop';
+  await actions.loadAddMemberPromotionPool({ group: 'crew', node });
+  await actions.addExistingMember({ group: 'crew', node }, { agent_id: 'agt_1' });
+  await actions.addExistingMember({ group: 'crew' }, { agent_id: 'agt_2' });
+  assert.deepEqual(urls, [`/api/peer/${node}/conversations`, `/api/peer/${node}/groups/crew/members`, 'page:/api/groups/crew/members']);
+  assert.equal(optimistic.length, 1, "only the page's own group is updated in place");
+});

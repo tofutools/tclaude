@@ -23,8 +23,10 @@ import { MemberTable } from './groups-member-table.js';
 import { GroupFederationMarker } from './group-federation-marker.js';
 import { GroupProcessGraphs } from './groups-process-indicators.js';
 import {
-  GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
+  FusedSection, GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
 } from './groups-processes.js';
+import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
+import { featureState } from './feature-state-registry.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
 
@@ -187,7 +189,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
           : 'Set a default spawn directory before making this the directory auto-join default.'}
     >${defaultSpawnGroup ? '★ directory auto-join default' : '☆ make directory auto-join default'}</button>
     <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
-    <${MenuButton} title=${wizardMode ? 'Set party wards for which realms may summon familiars into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
+    <${MenuButton} ...${shared} data-act="spawn-harness-policy" title=${wizardMode ? 'Set party wards for which realms may summon familiars into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
     <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
     ${quickFold ? html`<button role="menuitem" ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
@@ -634,6 +636,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
         lead=${processes?.fused ? html`<span class="group-header-actions gf-table-actions"><${GroupActions} group=${group} actions=${actions} fold=${false} /></span>` : null} />${hiddenNote}`
     : hiddenNote || html`<div class="muted">(no members yet)</div>`;
   const fused = processes?.fused ? {
+    count: view.members.length,
     actions: html`<${GroupActions} group=${group} actions=${actions} controls=${!table} />`,
     closedActions: table ? html`<${GroupActions} group=${group} actions=${actions} fold=${false} />` : null,
     // The task force card belongs to the roster, so it heads the Agents
@@ -642,14 +645,19 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
     agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
   } : null;
+  // Folded subgroups leave the parent's ↳ subgroup run total on its summary.
+  const subgroupsFolded = node.children.length > 0 && !subgroupsSectionOpen(group, dashPrefs);
   return html`<details
-    class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
+    class=${[classes, fleet?.stale ? 'fleet-stale' : '', subgroupsFolded ? 'subgroups-folded' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
     data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name} data-fleet-home=${fleet?.home ? '' : undefined}
     open=${realGroupOpen(group, dashPrefs)}
   >
     <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
-      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
+      ${node.children.length ? html`<${FusedSection} group=${group.name} section="subgroups" label=${isWizardActive() ? 'Sub-parties' : 'Subgroups'}
+          count=${node.children.length} auto=${subgroupsSectionAuto(group)} onToggle=${rerenderGroupTree}>
+        <div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>
+      <//>` : null}
       ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
         ${processes ? null : pending}
         ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
@@ -659,6 +667,15 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
     </div>
   </details>`;
+}
+
+// rerenderGroupTree redraws the whole tree after a Subgroups fold, since the
+// fold moves activity bots onto (or off) the parent's header. The fused
+// island is not the Groups feature; it re-renders on its own event.
+function rerenderGroupTree(event) {
+  const fused = event?.currentTarget?.closest?.('#fleetview-fused-groups-root');
+  if (fused) fused.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
+  else featureState('groups')?.rerender();
 }
 
 function OnlineDot({ online }) {
@@ -794,6 +811,8 @@ function GroupNode({ node, snapshot, actions, triggers, hoveredGroupKey }) {
 
 export function GroupsNativeList({ groups, snapshot, actions, triggers = [], hoveredGroupKey = null }) {
   if (!groups?.length) return html`<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
-  const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs));
+  // A group shows its subgroups' activity only while they are drawn: its
+  // row and its Subgroups section both open.
+  const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs) && subgroupsSectionOpen(group, dashPrefs));
   return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`);
 }

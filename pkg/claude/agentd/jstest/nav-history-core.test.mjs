@@ -285,6 +285,12 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.equal(toPath(fromPath('/debug')), '/activity/performance');
   assert.deepEqual(normalizeLocation({ tab: 'audit' }), { tab: 'activity', subtab: 'audit' });
 
+  // Fleet config sections; the bare tab is its landing.
+  assert.equal(toPath({ tab: 'fleet-admin', subtab: 'grants' }), '/fleet-admin/grants');
+  assert.deepEqual(fromPath('/fleet-admin'), { tab: 'fleet-admin' });
+  assert.deepEqual(fromPath('/fleet-admin/hub'), { tab: 'fleet-admin', subtab: 'hub' });
+  assert.deepEqual(fromPath('/fleet-admin/bogus'), { tab: 'fleet-admin' });
+
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
 

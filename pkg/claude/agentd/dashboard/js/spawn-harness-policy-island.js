@@ -7,26 +7,27 @@ import {
 } from './management-overlay.js';
 import { registerSpawnHarnessPolicyController } from './spawn-harness-policy-controller.js';
 import { isWizardActive } from './slop.js';
+import { nodeFetch } from './node-api.js';
 
 const html = htm.bind(h);
 
 function edgeKey(source, target) { return `${source}\u0000${target}`; }
 function errorMessage(error) { return error?.message || String(error); }
 
-async function loadPolicy(group) {
+async function loadPolicy(group, node = '') {
   const url = group
     ? `/api/groups/${encodeURIComponent(group)}/spawn-harness-policy`
     : '/api/spawn-harness-policy';
-  const response = await fetch(url, { credentials: 'same-origin' });
+  const response = await nodeFetch(node)(url, { credentials: 'same-origin' });
   if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
   return response.json();
 }
 
-async function savePolicy(group, rules) {
+async function savePolicy(group, rules, node = '') {
   const url = group
     ? `/api/groups/${encodeURIComponent(group)}/spawn-harness-policy`
     : '/api/spawn-harness-policy';
-  const response = await fetch(url, {
+  const response = await nodeFetch(node)(url, {
     method: 'PUT', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rules }),
@@ -122,7 +123,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
   useEffect(() => {
     let live = true;
     setBusy(true);
-    loadPolicy(descriptor.group).then((next) => {
+    loadPolicy(descriptor.group, descriptor.node).then((next) => {
       if (!live) return;
       const initial = policyDraft(next);
       setView(next);
@@ -201,7 +202,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
     setBusy(true);
     setError('');
     try {
-      await savePolicy(descriptor.group, rules);
+      await savePolicy(descriptor.group, rules, descriptor.node);
       notify?.(copy.saved);
       close();
     } catch (cause) {
@@ -274,8 +275,8 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
 function SpawnHarnessPolicyIsland({ confirmDiscard, notify, registerCleanup }) {
   const [descriptor, setDescriptor] = useState(null);
   const controller = useMemo(() => ({
-    open(group = '') {
-      setDescriptor((current) => current || { group, key: Date.now() });
+    open(group = '', node = '') {
+      setDescriptor((current) => current || { group, node, key: Date.now() });
       return true;
     },
   }), []);

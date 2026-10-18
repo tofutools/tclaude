@@ -5,7 +5,9 @@ export function registerSpawnHarnessPolicyController(value) {
   return () => { if (controller === value) controller = null; };
 }
 
-export function openSpawnHarnessPolicy(group = '') {
+// node names another node's group (blank: the page's): its policy is read
+// and saved there.
+export function openSpawnHarnessPolicy(group = '', node = '') {
   if (!controller) throw new Error('spawn harness policy editor is not ready');
-  return controller.open(String(group || ''));
+  return controller.open(String(group || ''), String(node || ''));
 }

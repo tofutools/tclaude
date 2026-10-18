@@ -61,14 +61,35 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
 
   dashPrefs.setItem('tclaude.dash.group.root', '1');
   await paint(groups);
+  const section = (name) => host.querySelector(`details[data-group-key="${name}"] > .subtable > [data-fused-section="subgroups"]`);
+  assert.equal(section('root').classList.contains('open'), false,
+    'a group with members of its own folds its Subgroups section by default');
+  assert.equal(section('root').querySelector('.gf-count').textContent, '1', 'the folded section counts its subgroups');
+  assert.equal(host.querySelector('details[data-group-key="child"]'), null, 'folded subgroups are not drawn');
+  assert.equal(activity('root'), '3 working', 'an open root with folded subgroups still owns their activity');
+  assert.equal(host.querySelector('details[data-group-key="root"]').classList.contains('subgroups-folded'), true);
+
+  section('root').querySelector('.gf-section-toggle').click();
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.subgroups.root'), '1', 'the fold choice is remembered per group');
+  await paint(groups);
   assert.equal(activity('root'), '1 working');
   assert.equal(activity('child'), '2 working', 'the folded visible child owns its hidden grandchild');
 
   dashPrefs.setItem('tclaude.dash.group.child', '1');
+  dashPrefs.setItem('tclaude.dash.groups.fused.subgroups.child', '1');
   await paint(groups);
   assert.equal(activity('root'), '1 working');
   assert.equal(activity('child'), '1 working');
   assert.equal(activity('grandchild'), '1 working');
+
+  const container = [
+    { name: 'container', members: [], online: 0 },
+    { name: 'inner', parent: 'container', members: [member('inner')], online: 1 },
+  ];
+  dashPrefs.setItem('tclaude.dash.group.container', '1');
+  await paint(container);
+  assert.ok(host.querySelector('details[data-group-key="inner"]'),
+    'a group with no members of its own shows its subgroups by default');
 
   const pending = [{
     name: 'pending-root', members: [], online: 0,

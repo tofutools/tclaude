@@ -512,6 +512,7 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   assert.ok(calls.some(([kind]) => kind === 'pane'));
   assert.ok(calls.some(([kind, message]) => kind === 'notify' && /opened in Terminals tab/.test(message)));
   assert.ok(calls.some(([kind]) => kind === 'refresh'));
+  assert.equal(store.get('tclaude.dash.groups.fused.agents.alpha'), '1', 'the new agent shows in an unfolded Agents section');
 
   const beforeWebCompletion = calls.length;
   await actions.complete(
