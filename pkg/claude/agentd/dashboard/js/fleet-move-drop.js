@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
+import { markInTransit } from './drop-landing.js';
 
 const html = htm.bind(h);
 
@@ -97,6 +98,10 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; if (timer.current) timers.clearTimeout(timer.current); }, []);
 
+  // transit is the "arriving" marker on the receiving group (drop-landing.js)
+  // while the copy starts there. It outlives the dialog: closed early, it
+  // lands when the agent's row shows up there.
+  const transit = useRef(null);
   const follow = (id, started) => {
     const tick = async () => {
       timer.current = null;
@@ -109,6 +114,9 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
       }
       if (!alive.current) return;
       const p = moveProgress(rec);
+      if (p.phase === 'landed') transit.current?.land([p.agent]);
+      else if (p.phase === 'failed') transit.current?.fail();
+      else if (p.phase === 'waiting') transit.current?.cancel();
       setProgress(p);
       if (p.phase === 'checking' && now() - started < MOVE_WATCH_MS) timer.current = timers.setTimeout(tick, MOVE_POLL_MS);
       else if (p.phase === 'checking') setProgress({ phase: 'slow' });
@@ -139,11 +147,14 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
       if (!alive.current) return;
       const id = res?.move_id || '';
       setPhase('progress');
+      // A move waiting for acceptance is not on its way yet: no marker.
+      const offered = !third && (res?.disposition === 'pending_acceptance' || !id);
+      if (!offered) transit.current = markInTransit({ group: target.group, node: target.node, ids: [agent.id], from: source.name, label: agent.name });
       // The move is the source's own: this node has no record to follow.
       if (third) { setProgress({ phase: 'relayed' }); return; }
       // A daemon without direct moves answers with no move_id: that is
       // today's offer flow, which always waits for acceptance.
-      if (res?.disposition === 'pending_acceptance' || !id) { setProgress({ phase: 'waiting' }); return; }
+      if (offered) { setProgress({ phase: 'waiting' }); return; }
       setProgress({ phase: 'checking' });
       follow(id, now());
     } catch (e) {

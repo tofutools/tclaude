@@ -19,6 +19,7 @@ import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { clearDropBox, createDndOps, dndGesture, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
+import { markLanded } from './drop-landing.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -576,6 +577,7 @@ const ops = createDndOps({
   render: () => renderGroupsTab(), getSnapshot: () => lastSnapshot,
   openClone: (...args) => openCloneAgentDialog(...args), openRetire: (...args) => openRetireAgentDialog(...args),
   retireNeedsReconcile: (result) => retireResultNeedsReconcile(result),
+  land: (target) => markLanded(target),
 });
 
 export { bindDnd, dndDragActive };

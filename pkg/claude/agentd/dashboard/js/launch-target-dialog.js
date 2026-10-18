@@ -14,6 +14,7 @@ import { shellToast } from './shell-state.js';
 import { missingPullGrants, needsSuffix } from './peer-view-limits.js';
 import { nodeFetch } from './node-api.js';
 import { unrestrictedOn } from './node-trust.js';
+import { markInTransit } from './drop-landing.js';
 
 const html = htm.bind(h);
 
@@ -373,9 +374,19 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       // the peer, so there is none here to follow. A return to a
       // paused home backup answers 202 {state: "returning"} with no move
       // record: its home presence is what to watch then.
+      // The receiving group carries an "arriving" marker (drop-landing.js)
+      // until the copy runs there; a recall goes home, to no group here.
+      const transit = mode !== 'home' && res?.state !== 'returning' && res?.teleport_state !== 'offered'
+        ? markInTransit({ group: target.group, node: target.node, ids: [agent.id], from: agent.nodeName || '', label: agent.name })
+        : null;
       if (res?.move_id && !viaPeer && !pullActions) {
         toast(`${verb}: sent. Waiting for ${dest} to run its copy…`);
-        followMove({ id: res.move_id, actions, timers, now, onProgress: (p) => { const t = progressToast(p); if (t) toast(t.text, t.error); } });
+        followMove({ id: res.move_id, actions, timers, now, onProgress: (p) => {
+          if (p.phase === 'landed') transit?.land([p.agent]);
+          else if (p.phase === 'failed') transit?.fail();
+          else if (p.phase === 'waiting') transit?.cancel();
+          const t = progressToast(p); if (t) toast(t.text, t.error);
+        } });
       } else {
         const t = progressToast({ phase: res?.state === 'returning' ? 'returning' : res?.teleport_state === 'offered' ? 'offered' : 'sent' });
         toast(t.text);

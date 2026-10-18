@@ -4,6 +4,7 @@ import { pickDirectory as defaultPickDirectory } from './helpers.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
+import { markLanded } from './drop-landing.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -151,6 +152,8 @@ export function createActionDialogActions({
           ? `cloned ${label}${target} (warning: ${payload.warning})`
           : `cloned ${label}${target}`, !!payload.warning);
         await refresh();
+        // A clone dropped onto a group (dnd.js) shows up there.
+        if (group && payload.new_conv) markLanded({ group, node, section: 'agents', ids: [payload.new_conv] });
         return payload;
       } catch (error) {
         if (error?.name === 'AbortError') {

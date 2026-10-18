@@ -20274,6 +20274,38 @@ tr.away-placeholder .away-goto { font-style: normal; margin-left: 8px; font-size
 .group-away-hint { margin-left: 4px; font-size: 11px; color: #8b949e; }
 @keyframes presence-flash { from { background: rgba(88, 166, 255, 0.35); } to { background: transparent; } }
 tr.presence-flash > td { animation: presence-flash 1.6s ease-out; }
+/* Drop landing (drop-landing.js): where a confirmed drag ended up. A fixed
+   overlay tracks the landed row / chip / group header, under the modals.
+   A blip is a tint that fades while a ring eases outward; a move to another
+   node first shows a marching "arriving" outline with a tag. */
+#drop-landing-layer { position: fixed; inset: 0; pointer-events: none; z-index: 95; overflow: hidden; }
+.drop-landing { position: absolute; left: 0; top: 0; border-radius: 6px; pointer-events: none; --dl: 88, 166, 255; }
+body.wizard .drop-landing { --dl: 188, 140, 255; }
+.drop-landing.failed { --dl: 248, 81, 73; }
+.drop-landing-blip { animation: drop-landed-tint 1.5s ease-out forwards; }
+.drop-landing-blip::after { content: ''; position: absolute; inset: 0; border-radius: inherit;
+  box-shadow: 0 0 0 2px rgba(var(--dl), 0.9), 0 0 14px 2px rgba(var(--dl), 0.55);
+  animation: drop-landed-ring 1.5s cubic-bezier(.2, .7, .3, 1) forwards; }
+@keyframes drop-landed-tint { 0% { background: rgba(var(--dl), 0.32); } 100% { background: rgba(var(--dl), 0); } }
+@keyframes drop-landed-ring { 0% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.025, 1.4); } }
+.drop-landing-transit {
+  background:
+    linear-gradient(90deg, rgba(var(--dl), .9) 50%, transparent 50%) 0 0 / 14px 2px repeat-x,
+    linear-gradient(90deg, rgba(var(--dl), .9) 50%, transparent 50%) 0 100% / 14px 2px repeat-x,
+    linear-gradient(0deg, rgba(var(--dl), .9) 50%, transparent 50%) 0 0 / 2px 14px repeat-y,
+    linear-gradient(0deg, rgba(var(--dl), .9) 50%, transparent 50%) 100% 0 / 2px 14px repeat-y,
+    rgba(var(--dl), 0.08);
+  animation: drop-transit-march .7s linear infinite, drop-transit-breathe 1.8s ease-in-out infinite;
+}
+.drop-landing-tag { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; white-space: nowrap; color: #0d1117; background: rgba(var(--dl), .95); box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+@keyframes drop-transit-march { to { background-position: 14px 0, -14px 100%, 0 -14px, 100% 14px, 0 0; } }
+@keyframes drop-transit-breathe { 50% { box-shadow: 0 0 12px 1px rgba(var(--dl), .45); } }
+@media (prefers-reduced-motion: reduce) {
+  .drop-landing-blip::after { animation-name: drop-landed-fade; }
+  .drop-landing-transit { animation: none; }
+}
+@keyframes drop-landed-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
 tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-size: 11px; padding: 0 6px; border: 1px solid #3fb950; border-radius: 4px; background: transparent; color: #3fb950; cursor: pointer; }
 /* ⚙ menu section label ("send elsewhere", tcl-o9d5d9). */
 .action-menu .menu-section-label { padding: 4px 10px 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #6e7681; }
