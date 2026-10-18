@@ -515,8 +515,11 @@ by kind with each session's idle time; clicking pins it open. `Attach` opens
 the session as a normal tab, and `Attach all` opens every one. The counter
 always lists this node's sessions, also in a peer's per-node view. A fused
 view, or a peer's per-node view, adds the shown peers' unattached agents
-under each peer's node pill (an unrestricted peer serves that listing);
-`Attach` opens those as remote terminals.
+and tclaude shells (agent and group shells) under each peer's node pill, by
+kind (an unrestricted peer serves that listing). `Attach` opens a peer's
+agent as a remote terminal. A peer's shell can be ended from here (`Kill`,
+through the peer); its `Attach` is locked with the reason until the
+federation terminal stream carries shells.
 
 A peer's terminal (a remote terminal) carries the peer's node pill on its tab
 and one chip in its pane header naming the peer and the mode
@@ -1054,8 +1057,9 @@ The Groups toolbar's global default spawn profile, global sandbox profile and
 both), and are greyed with the reason otherwise. See docs/federation.md,
 "Managing a peer's node".
 
-Terminals in a peer view are not opened in the browser: clicking a terminal control copies
-`tclaude federation attach <agent-id>@<instance-id>` to run in your own
+A peer's agent terminal opens in the browser as a remote terminal (watch-only
+or interactive, as the peer's `sessions.*` grants allow; see above).
+`tclaude federation attach <agent-id>@<instance-id>` attaches from your own
 terminal.
 
 #### Requesting access from a peer
