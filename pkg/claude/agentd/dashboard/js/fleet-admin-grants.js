@@ -135,8 +135,10 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
   if (all) {
     const q = filter.trim().toLowerCase();
     const sections = (allGrants || []).map(({ t, grants: g, error: err }) => {
-      const rows = err ? [] : targetRows(t, g || []).filter((r) => !r.pool);
-      return { t, err, rows, shown: rows.filter((r) => matches(t, r, q)) };
+      // full keeps pool-inherited rows so revoke-all can say what survives.
+      const full = err ? [] : targetRows(t, g || []);
+      const rows = full.filter((r) => !r.pool);
+      return { t, err, full, rows, shown: rows.filter((r) => matches(t, r, q)) };
     }).filter((x) => !q || x.shown.length);
     const total = sections.reduce((n, x) => n + x.rows.length, 0);
     return html`<div class="fa-grants">
@@ -148,13 +150,13 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
       ${!allGrants ? html`<div class="empty">Loading…</div>` : sections.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
       <table class="fa-table" id="fleet-grants">
         <thead><tr><th>Peer / pool</th><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
-        <tbody>${sections.map(({ t, err, rows, shown }) => html`
+        <tbody>${sections.map(({ t, err, full, rows, shown }) => html`
           <tr key=${`h|${t.id}`} class="fa-grant-peer" data-peer=${t.id}>
             <td colspan="4"><button type="button" class="fa-link" data-fa="open-target" title="Show only these grants" onClick=${() => setTarget(t.id)}><b>${t.label}</b></button>
               ${!t.pool && html` <code class="muted">${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
               <span class="muted"> · </span>${t.level === 'unrestricted' ? html`<span class="fa-level unrestricted">unrestricted</span>` : html`<span class="muted">${t.pool ? 'pool' : 'restricted'}</span>`}
               <span class="muted"> · ${err ? '' : rows.length ? `${rows.length} grant${rows.length === 1 ? '' : 's'}` : 'no grants'}</span>${err && html`<span class="fa-danger">${err}</span>`}</td>
-            <td class="fa-acts">${directRows(rows).length > 0 && html`<button type="button" class="fa-danger" data-fa="revoke-all" onClick=${() => revokeAll(t, rows)}>Revoke all…</button>`}</td>
+            <td class="fa-acts">${directRows(rows).length > 0 && html`<button type="button" class="fa-danger" data-fa="revoke-all" onClick=${() => revokeAll(t, full)}>Revoke all…</button>`}</td>
           </tr>
           ${shown.map((r) => html`<tr key=${`${t.id}|${r.key}`} data-peer=${t.id} data-slug=${r.slug}>
             <td class="muted">${t.label}</td>${grantCells(r, () => revoke(t, r))}</tr>`)}`)}</tbody>

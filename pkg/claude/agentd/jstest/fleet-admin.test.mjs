@@ -485,6 +485,7 @@ test('the grants page lists every peer under All and revokes all of one peer\'s 
   // A failed revoke part-way names what remains.
   s.actions.revoke = async (b) => { if (b.slug === 'groups.roster.read') throw new Error('daemon down'); return { ok: true }; };
   await s.click(s.q('tr.fa-grant-peer[data-peer="inst_forge"] [data-fa="revoke-all"]'));
+  assert.match(s.confirms.at(-1).body, /keeps routes\.consume through pool rigs/);
   assert.ok(s.toasts.some((m) => /revoked 1 of 2; groups\.roster\.read in group ops and the rest remain: daemon down/.test(m)));
 });
 
