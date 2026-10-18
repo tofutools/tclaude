@@ -32,3 +32,18 @@ export function subgroupsSectionAuto(group) {
 export function subgroupsSectionOpen(group, prefs = dashPrefs) {
   return fusedSectionOpen(group.name, 'subgroups', subgroupsSectionAuto(group), prefs);
 }
+
+// revealGroupPath opens every ancestor of a group, its row and its Subgroups
+// section, so a hand-off into a nested group (a spawn, a process start)
+// lands somewhere drawn. `groups` are the snapshot's real groups.
+export function revealGroupPath(name, groups, prefs = dashPrefs) {
+  const byName = new Map((groups || []).map((group) => [group.name, group]));
+  const seen = new Set([name]);
+  let parent = byName.get(name)?.parent;
+  while (parent && byName.has(parent) && !seen.has(parent)) {
+    seen.add(parent);
+    prefs.setItem(`tclaude.dash.group.${parent}`, '1');
+    setFusedSectionOpen(parent, 'subgroups', true, prefs);
+    parent = byName.get(parent).parent;
+  }
+}

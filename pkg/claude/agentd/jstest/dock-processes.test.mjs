@@ -78,6 +78,22 @@ test('a Start in request expands the group and expires if never taken', async (t
   assert.equal(takeProcessStart('webshop', { now: () => 60_000 }), null, 'stale request dropped');
 });
 
+test('a Start in request for a nested group opens each ancestor and its Subgroups section', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { requestProcessStart } = await harness.importDashboardModule('js/process-start-handoff.js');
+  const prefs = new Map();
+  const doc = { querySelector: () => null, dispatchEvent: () => true };
+  const groups = [{ name: 'org' }, { name: 'team', parent: 'org' }, { name: 'squad', parent: 'team' }];
+  requestProcessStart({ group: 'squad', templateId: 'ship' }, {
+    doc, groups, prefs: { getItem: (k) => prefs.get(k) ?? null, setItem: (k, v) => prefs.set(k, v) }, now: () => 1000,
+  });
+  for (const name of ['org', 'team']) {
+    assert.equal(prefs.get(`tclaude.dash.group.${name}`), '1', `${name} row opens`);
+    assert.equal(prefs.get(`tclaude.dash.groups.fused.subgroups.${name}`), '1', `${name} subgroups open`);
+  }
+  assert.equal(prefs.has('tclaude.dash.groups.fused.subgroups.squad'), false, 'the target keeps its own Subgroups fold');
+});
+
 test('deleteFromLibrary asks first with the shared copy, then deletes and reloads', async (t) => {
   const { deleteFromLibrary, PROCESS_LIBRARY_EVENT } = await load(t);
   const row = { id: 'ship', name: 'Ship it', versionCount: 3 };

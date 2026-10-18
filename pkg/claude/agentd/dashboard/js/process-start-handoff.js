@@ -4,6 +4,8 @@
 // the group's Processes body takes it: at once when it is mounted (the
 // tclaude:process-start event), or when it mounts after the switch.
 
+import { revealGroupPath } from './groups-fused-sections.js';
+
 let pending = null;
 
 // A start nobody took within this window (the group is filtered out of the
@@ -11,13 +13,16 @@ let pending = null;
 const PENDING_TTL_MS = 10_000;
 
 // requestProcessStart queues the start, opens the group and switches the
-// Groups tab to a lens that shows its runs (setFocus may keep Both).
+// Groups tab to a lens that shows its runs (setFocus may keep Both). A
+// nested group's ancestors open too (`groups`: the snapshot's), or its body
+// never mounts to take the start.
 export function requestProcessStart({ group, templateId }, {
-  doc = document, prefs = null, setFocus = null, rerender = null, now = Date.now,
+  doc = document, prefs = null, groups = [], setFocus = null, rerender = null, now = Date.now,
 } = {}) {
   if (!group || !templateId) return;
   pending = { group, templateId, at: now() };
   prefs?.setItem?.(`tclaude.dash.group.${group}`, '1');
+  if (prefs) revealGroupPath(group, groups, prefs);
   doc.querySelector('nav [data-tab="groups"]')?.click();
   setFocus?.('processes');
   // setFocus is a no-op when Processes is already showing; re-render so a

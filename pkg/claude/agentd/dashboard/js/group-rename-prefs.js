@@ -10,6 +10,9 @@ const GROUP_KEY_PREFIXES = Object.freeze([
   'tclaude.dash.quickpin.',
   'tclaude.dash.forcefold.',
   'tclaude.dash.mail.groupexp.',
+  'tclaude.dash.groups.fused.agents.',
+  'tclaude.dash.groups.fused.processes.',
+  'tclaude.dash.groups.fused.subgroups.',
 ]);
 
 function movePref(prefs, oldKey, newKey) {
