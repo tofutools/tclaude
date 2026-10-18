@@ -379,3 +379,73 @@ test('quick reader yields Escape to a stacked reply dialog', async (t) => {
   assert.deepEqual(closed, [true], 'Escape closes the reader when no modal is stacked');
   await mounted.unmount();
 });
+
+test('on a peer page the reader answers, marks and downloads through that peer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ GroupsNotificationReader }, dialogController] = await Promise.all([
+    harness.importDashboardModule('js/groups-notification-reader.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js'),
+  ]);
+  const opened = [];
+  const unregister = dialogController.registerMessageAccessDialogController({
+    openHumanReply(context) { opened.push(context); },
+  });
+  const previousRemote = globalThis.__tclaudeRemoteNode;
+  const savedFetch = globalThis.fetch;
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  const root = document.documentElement;
+  root.dataset.remoteNodeName = 'forge';
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, text: async () => '', json: async () => ({}) };
+  };
+  t.after(() => {
+    unregister();
+    globalThis.__tclaudeRemoteNode = previousRemote;
+    globalThis.fetch = savedFetch;
+    delete root.dataset.remoteNodeName;
+  });
+  const message = {
+    id: 51, from_agent: 'agt_sender', from_conv: 'conv-sender', from_title: 'sender',
+    subject: 'from the peer', body: 'See attached.', read: false,
+    attachments: [{ id: 9, filename: 'report.txt', size_bytes: 10, content_type: 'text/plain', url: '/api/human-messages/51/attachments/9' }],
+  };
+  const state = {
+    snapshot: { value: { messages: [message], messages_unread: 1, peer_view: { peer: 'desk', included: ['node.messages', 'node.messages.mark-read', 'human.inbox.answer'], omitted: [] } } },
+    publish(next) { state.snapshot.value = next; },
+  };
+  const descriptor = { sender: { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' }, messageId: 51 };
+  const mount = () => harness.mount(harness.html`
+    <${GroupsNotificationReader} descriptor=${descriptor} snapshot=${state.snapshot.value}
+      state=${state} actions=${{ reportError() {} }} onSelect=${() => {}} onClose=${() => {}} />
+  `);
+  const button = (container, label) => [...container.querySelectorAll('.human-notification-drawer-actions button')]
+    .find((b) => b.textContent.trim() === label);
+
+  let mounted = await mount();
+  const download = mounted.container.querySelector('.human-notification-drawer-download');
+  assert.equal(download.getAttribute('href'), '/api/peer-attachments/inst_forge/51/9');
+
+  await harness.act(() => button(mounted.container, 'Mark read').click());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [{ url: '/api/human-inbox/read', body: { id: 51 } }]);
+
+  await harness.act(() => button(mounted.container, 'Reply').click());
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].nodeName, 'forge');
+  assert.equal(opened[0].online, false, 'the sender is not in the peer snapshot');
+  await opened[0].send('on it');
+  assert.deepEqual(calls[1], { url: '/api/human-inbox/reply', body: { id: 51, body: 'on it' } });
+  await mounted.unmount();
+
+  // A peer sharing its notifications for reading only locks both, saying why.
+  state.snapshot.value = { ...state.snapshot.value, peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } };
+  mounted = await mount();
+  assert.equal(button(mounted.container, 'Reply').disabled, true);
+  assert.equal(button(mounted.container, 'Mark unread').disabled, true);
+  const locks = [...mounted.container.querySelectorAll('.human-notification-drawer-actions .lock-why')].map((l) => l.dataset.why);
+  assert.equal(locks.length, 2);
+  assert.match(locks[1], /node\.messages\.mark-read/);
+  await mounted.unmount();
+});
