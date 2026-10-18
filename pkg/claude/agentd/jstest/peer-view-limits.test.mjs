@@ -20,6 +20,18 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   assert.equal(mod.tabState('costs', null), 'omitted');
   assert.equal(mod.limitHint('omitted', 'costs', 'forge'), 'forge does not share costs with you');
   assert.equal(mod.limitHint('local', 'the config tab', 'forge'), 'the config tab is not available in a peer view');
+  assert.equal(mod.limitHint('omitted', 'costs', 'forge', ['costs.read']), 'forge does not share costs with you (needs costs.read)');
+  assert.equal(mod.limitHint('local', 'The daemon log', 'forge', ['unrestricted trust']), 'forge does not share the daemon log with you (needs unrestricted trust)');
+  // The hint names the grant the peer requires, as its omission says.
+  const noStatus = { ...pv, included: ['groups'], omitted: [{ feature: 'agents.status', requires: 'agents.status.read' }, { feature: 'agents.manage.full', requires: 'groups.members.delete', unrestricted_only: true }] };
+  assert.equal(mod.featureNeeds('agents.status', noStatus), 'agents.status.read');
+  assert.equal(mod.tabState('groups', noStatus), 'shared', 'a roster or presence grant alone shows the Groups tab, without agent status');
+  const nothing = { ...pv, included: [], omitted: [{ feature: 'groups', requires: 'groups.roster.read' }] };
+  assert.equal(mod.tabState('groups', nothing), 'omitted', 'no group the peer sees: nothing to show');
+  assert.equal(mod.featureNeeds('agents.manage.full', noStatus), 'unrestricted trust', 'a feature no grant opens names unrestricted trust');
+  assert.equal(mod.featureNeeds('groups', noStatus), '', 'a shared feature needs nothing');
+  assert.equal(mod.featureNeeds('local_dashboard', noStatus), 'unrestricted trust');
+  assert.equal(mod.featureNeeds('local_dashboard', { level: 'unrestricted' }), '');
 });
 
 test('on a peer view, blocked controls are greyed and clicks never reach their handlers', async (t) => {
@@ -36,7 +48,7 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   const tab = (name) => doc.querySelector(`[data-tab="${name}"]`);
   assert.equal(tab('groups').classList.contains('pv-off'), false);
   assert.equal(tab('costs').classList.contains('pv-off'), true);
-  assert.equal(tab('costs').getAttribute('title'), 'forge does not share costs with you');
+  assert.equal(tab('costs').getAttribute('title'), 'forge does not share costs with you (needs costs.read)');
   // linkedom does not order capture before target listeners, so assert the
   // guard's decision (the dashsnap peer-view state proves the browser order).
   const prevented = Object.fromEntries(['retire', 'dot', 'menu', 'group-create-open', 'filter'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
@@ -47,7 +59,7 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   assert.equal(enter.defaultPrevented, true);
   assert.equal(harness.fireEvent(doc.getElementById('filter'), 'keydown', { key: 'Enter' }).defaultPrevented, false);
   harness.fireEvent(tab('costs'), 'click');
-  assert.equal(toasts.at(-1), 'forge does not share costs with you');
+  assert.equal(toasts.at(-1), 'forge does not share costs with you (needs costs.read)');
   snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'costs'], omitted: [] } };
   assert.equal(tab('costs').classList.contains('pv-off'), false, 'a new grant lights the tab up on the next snapshot');
   assert.equal(tab('costs').getAttribute('title'), null, 'and drops the stale reason');
@@ -70,11 +82,11 @@ test('on a peer view, Activity subtabs without a peer route are greyed and refus
   assert.equal(sub('audit').classList.contains('pv-off'), false);
   assert.equal(sub('audit').getAttribute('title'), 'Audit log');
   assert.equal(sub('logs').classList.contains('pv-off'), true);
-  assert.equal(sub('logs').getAttribute('title'), 'The daemon log is not available in a peer view');
+  assert.equal(sub('logs').getAttribute('title'), 'forge does not share the daemon log with you (needs unrestricted trust)');
   assert.equal(sub('performance').classList.contains('pv-off'), true);
   assert.equal(harness.fireEvent(sub('audit'), 'click').defaultPrevented, false);
   assert.equal(harness.fireEvent(sub('logs'), 'click').defaultPrevented, true);
-  assert.equal(toasts.at(-1), 'The daemon log is not available in a peer view');
+  assert.equal(toasts.at(-1), 'forge does not share the daemon log with you (needs unrestricted trust)');
   dispose();
 });
 
@@ -100,7 +112,7 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   ];
   const out = mod.limitPeerViewCommands(cmds, { peer_view: pv }, remote);
   assert.deepEqual(out.map((c) => c.enabled !== false), [false, true, false, true, true]);
-  assert.match(out[2].disabledReason, /does not share costs/);
+  assert.match(out[2].disabledReason, /does not share costs with you \(needs costs\.read\)/);
   assert.equal(mod.limitPeerViewCommands(cmds, { peer_view: pv }, undefined), cmds, 'this node: untouched');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: pv }), false);
   assert.equal(mod.peerViewTabUsable('activity', { remote, peerView: pv }), true);
@@ -228,6 +240,7 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   doc.body.innerHTML = '<button id="solo-notify" data-act="toggle-agent-notify" data-agent="agt_solo"></button><button id="shared-notify" data-act="toggle-agent-notify" data-agent="agt_shared"></button>';
   assert.equal(mod.blockedControl(doc.getElementById('solo-notify'), agents), null, 'a granted agent control runs its own handler');
   assert.equal(mod.blockedControl(doc.getElementById('shared-notify'), agents).state, 'omitted');
+  assert.deepEqual(mod.blockedControl(doc.getElementById('shared-notify'), agents).needs, ['groups.members.manage']);
   assert.equal(mod.grantHeld(doc.getElementById('solo-notify'), agents), true);
   assert.ok(mod.grantSelectors(agents).includes('[data-act="toggle-agent-notify"][data-agent="agt_solo"]'));
   assert.ok(!mod.grantSelectors(agents).some((sel) => sel.includes('agt_shared')));
@@ -246,7 +259,10 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.blockedControl(el('ops-text'), restricted, { ctrlKey: true }).state, 'local', 'Ctrl-click opens a terminal: never on a peer');
   const refused = mod.blockedControl(el('build-dir'), restricted);
   assert.equal(refused.state, 'omitted');
-  assert.equal(mod.limitHint(refused.state, refused.what, 'forge'), "forge does not share this group's settings with you");
+  assert.equal(mod.limitHint(refused.state, refused.what, 'forge', refused.needs), "forge does not share this group's settings with you (needs groups.settings + groups.members.spawn.cwd)");
+  assert.deepEqual(mod.grantMissing(el('ops-dir'), { ...restricted, groups: { ops: ['groups.settings'] } }), ['groups.members.spawn.cwd'], 'only what is missing is named');
+  assert.deepEqual(mod.groupFieldMissing('set-group-sandbox-profile', 'ops', restricted), ['groups.members.spawn.sandbox']);
+  assert.deepEqual(mod.groupFieldMissing('set-group-dir', 'ops', null), [], "this node's own group lacks nothing");
   // A group's message is the regular dialog under unrestricted trust; a
   // restricted peer sharing messaging takes it one agent at a time.
   doc.body.innerHTML = `<button id="ops-msg" data-act="message-new" data-group="ops" data-prefill='{"targetMode":"group","groupName":"ops"}'>✉</button>`;
