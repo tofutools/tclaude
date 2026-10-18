@@ -15,6 +15,8 @@ export function fusedAuditNodes(fleet = fleetState, remote = globalThis.__tclaud
 // auditRefusal words a node's refused audit read.
 export function auditRefusal(node, status) {
   if (status === 403) return `${node.name} does not share its audit log with you (needs federation.audit.read)`;
+  // The peer route gives up after 15s; a slow query alone does not get there.
+  if (status === 504) return `${node.name} is online but did not answer within 15s; retrying on the next refresh`;
   return status ? `${node.name} did not answer (HTTP ${status})` : `${node.name} is unreachable`;
 }
 
@@ -29,8 +31,8 @@ export function mergeAudits(results, pageSize, page = 1, cursors = {}) {
   const pending = [];
   let total = 0; let totalUnfiltered = 0;
   const streams = [];
-  for (const { node, data, why, legacy, pending: waiting } of results) {
-    if (why) { refused.push({ node, why }); continue; }
+  for (const { node, data, why, legacy, offline, pending: waiting } of results) {
+    if (why) { refused.push({ node, why, offline: !!offline }); continue; }
     if (waiting) { pending.push(node); continue; }
     total += data?.total || 0; totalUnfiltered += data?.total_unfiltered || 0;
     const rows = data?.entries || [];
@@ -46,7 +48,13 @@ export function mergeAudits(results, pageSize, page = 1, cursors = {}) {
   };
 }
 
-export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes = fusedAuditNodes, fetchFor = nodeFetch } = {}) {
+// SLOW_NODE_MS is how long a newly opened merged page waits for every node
+// before it shows the ones that answered. Reads of a large log take a second
+// or more, so this is well past a busy node's answer; a refresh of the page
+// on screen keeps it until every node has answered.
+const SLOW_NODE_MS = 2500;
+
+export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes = fusedAuditNodes, fetchFor = nodeFetch, timers = globalThis, slowMs = SLOW_NODE_MS } = {}) {
   if (!state?.beginRequest) throw new TypeError('audit actions require state');
   if (typeof fetchImpl !== 'function') throw new TypeError('audit actions require fetch');
   async function read(fetcher, params) {
@@ -62,12 +70,18 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
   let walk = newWalk();
   let walking = 0;
   let down = new Map();
+  // shownKey names the merged page last committed in full: a refresh of it
+  // keeps it on screen until every node has answered.
+  let shownKey = '';
   // readMerged reads page `page` of every fused node below its cursor, but
   // the skipped ones. onAnswer sees the results so far as each node answers.
   function readMerged(fused, view, page, cursors, { skip = new Map(), onAnswer } = {}) {
     const params = (extra) => { const p = auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' }); for (const [k, v] of Object.entries(extra)) p.set(k, String(v)); return p; };
     const results = fused.map((node) => (skip.has(node.id) ? { node, why: skip.get(node.id) } : { node, pending: true }));
     const readNode = async (node) => {
+      // A node the fleet reports offline is not asked; one that still checks
+      // in as online is asked on every read until it is reported offline.
+      if (!node.local && node.online === false) return { node, why: `${node.name} is offline`, offline: true };
       const fetcher = node.local ? fetchImpl : fetchFor(node.id);
       const before = cursors[node.id];
       try {
@@ -77,11 +91,14 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
         return { node, legacy: true, data: before || page > 1 ? await read(fetcher, params({ page_size: legacyDepth(page, view.pageSize) })) : data };
       } catch (error) { return { node, why: auditRefusal(node, error.status) }; }
     };
+    // onAnswer only hears once a node is slow: until then the page waits.
+    let slow = false;
+    const timer = onAnswer ? timers.setTimeout(() => { slow = true; if (results.some((r) => r.pending)) onAnswer(results.slice()); }, slowMs) : 0;
     return Promise.all(fused.map(async (node, i) => {
       if (skip.has(node.id)) return;
       results[i] = await readNode(node);
-      onAnswer?.(results.slice());
-    })).then(() => results);
+      if (slow) onAnswer(results.slice());
+    })).then(() => { timers.clearTimeout(timer); return results; });
   }
   // loadMerged walks to the requested page one cursor vector at a time,
   // recording each page's next vector as it goes. The page shown is passed
@@ -90,21 +107,32 @@ export function createAuditActions({ state, fetchImpl = globalThis.fetch, nodes 
     const key = `${auditParams({ ...view, page: 1, sort: 'time', dir: 'desc' })}\n${fused.map((n) => n.id).join(',')}`;
     const id = ++walking;
     let page = walkTarget(view.page, walk.key === key ? walk.list : [{}]);
+    // failed are the nodes this load already waited on in vain: a restart's
+    // shown page does not wait on them again.
+    const failed = new Map();
     for (let restarts = 0; ; ) {
       const cursors = (walk.key === key && walk.list[page - 1]) || {};
       const shown = page >= view.page;
-      const results = await readMerged(fused, view, page, cursors, shown
-        ? { onAnswer: (partial) => { if (id === walking && partial.some((r) => r.pending)) show(mergeAudits(partial, view.pageSize, page, cursors)); } }
-        : { skip: down });
+      // A node that was down when the vectors were walked has no cursor in
+      // them: its rows wait for the restart rather than show on a later page.
+      const uncursored = new Set(page > 1 && walk.key === key ? walk.absent.split(',').filter(Boolean) : []);
+      const partialShow = (partial) => {
+        if (id !== walking || !partial.some((r) => r.pending)) return;
+        show(mergeAudits(partial.map((r) => (uncursored.has(r.node.id) && !r.why ? { node: r.node, pending: true } : r)), view.pageSize, page, cursors));
+      };
+      const pageKey = `${key}\n${page}`;
+      const results = await readMerged(fused, view, page, cursors, shown ? { skip: failed, onAnswer: pageKey === shownKey ? undefined : partialShow } : { skip: down });
       if (id !== walking) return null;
       const result = mergeAudits(results, view.pageSize, page, cursors);
       down = new Map(result.refused.map((r) => [r.node.id, r.why]));
+      if (shown) for (const [node, why] of down) failed.set(node, why);
       const absent = result.refused.map((r) => r.node.id).join(',');
       walk = recordVector(walk, { key, absent, page, next: result.next, more: result.more });
       // The set of down nodes changed under the walk: restart from page 1
       // (once; a node flapping between reads gets the page as read).
       if (walk.list.length < page && restarts++ < 1) { page = 1; continue; }
       if (page < view.page && walk.list.length > page) { page += 1; continue; }
+      shownKey = pageKey;
       return result;
     }
   }

@@ -109,10 +109,20 @@ test('a fused audit node that does not answer holds up neither the page nor the 
     return { ok: true, json: async () => ({ entries: below.slice(0, size), total: logs[node].length, total_unfiltered: logs[node].length, has_more: below.length > size, cursor_paging: true }) };
   };
   const state = createAuditState({ activeTab: harness.signals.signal('audit') });
-  const actions = createAuditActions({ state, nodes: () => [self, forge], fetchImpl: serve('desk'), fetchFor: (id) => serve(id.slice(5)) });
+  const settle = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)); };
+  // A healthy fleet refreshes in one step: a node a moment behind is waited for.
+  const slowServe = (id) => async (url) => { await new Promise((r) => setTimeout(r, 5)); return serve(id.slice(5))(url); };
+  const healthy = createAuditState({ activeTab: harness.signals.signal('audit') }); healthy.setNode('all');
+  const commits = [];
+  const steady = createAuditActions({ state: { ...healthy, commitRequest: (token, data) => { commits.push(data); return healthy.commitRequest(token, data); } },
+    nodes: () => [self, forge], fetchImpl: serve('desk'), fetchFor: slowServe });
+  await steady.load(); await steady.load();
+  assert.deepEqual(commits.map((c) => c.pending.length), [0, 0], 'no partial page while every node answers promptly');
+
+  const actions = createAuditActions({ state, nodes: () => [self, forge], fetchImpl: serve('desk'), fetchFor: (id) => serve(id.slice(5)), slowMs: 0 });
+  const refusal = () => state.view.value.response.refused.find((r) => r.node.name === 'forge');
   state.setNode('all'); state.setPageSize(10);
   const verbs = () => state.view.value.rows.map((e) => e.verb);
-  const settle = () => new Promise((r) => setTimeout(r, 0));
 
   // forge is believed online but silent: desk's events show while it is awaited.
   hang = true; const first = actions.load(); await settle();
@@ -132,4 +142,25 @@ test('a fused audit node that does not answer holds up neither the page nor the 
   hang = false; await actions.load();
   const third = verbs(); state.setPage(1); await actions.load();
   assert.ok(third.some((v) => v.startsWith('forge ')) && third.every((v) => !verbs().includes(v)), 'forge is back, nothing twice');
+
+  // A node that goes silent under a known deep page costs one wait, not one
+  // before the restart and another after it.
+  hang = true; forgeCalls.length = 0; state.setPage(3); const deep = actions.load(); await settle();
+  held.splice(0).forEach((resolve) => resolve({ ok: false, status: 504, text: async () => '' })); await deep;
+  assert.equal(forgeCalls.length, 1, 'the silent node is asked once in the load');
+  assert.equal(state.view.value.page, 3); assert.deepEqual(verbs(), logs.desk.slice(20, 30).map((e) => e.verb));
+
+  // Refreshing the page on screen keeps it whole while a node is slow, then
+  // says the node did not answer: it still checks in as online.
+  const pollWhileSlow = actions.load(); await settle();
+  assert.deepEqual(state.view.value.response.pending, [], 'a refresh does not swap in a partial page');
+  held.splice(0).forEach((resolve) => resolve({ ok: false, status: 504, text: async () => '' })); await pollWhileSlow;
+  assert.match(refusal().why, /forge is online but did not answer within 15s; retrying/);
+  assert.equal(refusal().offline, false);
+
+  // Once the fleet reports it offline it is not asked, and that is no error.
+  forge.online = false; forgeCalls.length = 0; await actions.load();
+  assert.equal(forgeCalls.length, 0, 'an offline node is not asked');
+  assert.equal(refusal().offline, true);
+  forge.online = true;
 });
