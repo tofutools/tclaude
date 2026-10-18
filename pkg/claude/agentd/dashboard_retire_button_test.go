@@ -47,7 +47,7 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	for _, needle := range []string{
 		"await openRetireAgentDialog(conv, label)",
 		"openRetireAgentDialog(a.conv_id, label)",
-		"result = await openRetireAgentDialog(conv, label)",
+		"result = await openRetire(conv, label, ctx.node)",
 		"return openTransactionDialog({ kind: 'retire-agent', conv, label, ...(node ? { node } : {}) })",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

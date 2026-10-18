@@ -17,6 +17,7 @@ import {
   ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
+import { dndGesture } from './dnd-ops.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -427,9 +428,11 @@ export function MergedGroups({
       if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
       if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
     };
-    // Drag an agent onto a group on another node to move it there (to or from
-    // this node). These handlers own the gesture here: the per-node Groups
-    // drag-and-drop (dnd.js) never sees it, and nothing else drags.
+    // A member drag is the Groups drag-and-drop (dnd.js) on every node: a
+    // drop on a group on the agent's own node moves, adds or clones it there
+    // as on that node's own Groups view. A drop on a group on another node is
+    // a move between nodes: these handlers take it (the move dialog), and
+    // dnd.js never sees it.
     let dragging = null;
     let marked = null;
     const mark = (el, ok) => {
@@ -450,7 +453,6 @@ export function MergedGroups({
         && (event.target.closest('[data-run-dock]')
           || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
       if (!src) { event.preventDefault(); return; }
-      event.stopPropagation();
       dragging = src;
       // dragend reaches its source even if a re-render detached it.
       const row = event.target.closest('tr.dnd-draggable');
@@ -461,10 +463,14 @@ export function MergedGroups({
     };
     const onDragOver = (event) => {
       if (!dragging) return;
-      event.stopPropagation();
       const target = dropTarget(event.target);
       if (!target) { unmark(); return; }
       const plan = dropPlan({ source: dragging.source, target, self: self() });
+      // The agent's own node: dnd.js.
+      if (plan.kind === 'same') { unmark(); return; }
+      event.stopPropagation();
+      // dnd.js no longer sees this drag's hover: its clone must not finish.
+      dndGesture.cancelClone();
       if (plan.kind === 'none') { unmark(); return; }
       // Same-node and third-node drops are accepted only to say why not.
       event.preventDefault();
@@ -474,12 +480,13 @@ export function MergedGroups({
     };
     const onDrop = (event) => {
       if (!dragging) return;
-      event.preventDefault(); event.stopPropagation();
-      const src = dragging; dragging = null; unmark();
       const target = dropTarget(event.target);
+      const plan = target ? dropPlan({ source: dragging.source, target, self: self() }) : { kind: 'none' };
+      if (plan.kind === 'same') { dragging = null; unmark(); return; }
+      event.preventDefault(); event.stopPropagation();
+      dndGesture.cancelClone();
+      const src = dragging; dragging = null; unmark();
       if (!target) return;
-      const plan = dropPlan({ source: src.source, target, self: self() });
-      if (plan.kind === 'same') { toast(`To move ${src.agent.name} between groups on ${src.source.name}, use ${src.source.name}'s own Groups view`, true); return; }
       if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
       if (plan.kind === 'push' || plan.kind === 'pull') {
         setLaunch({ mode: 'move', fromDrop: true, target: { node: target.node, name: target.name, group: target.group },

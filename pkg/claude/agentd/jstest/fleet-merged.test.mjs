@@ -199,7 +199,7 @@ test('limitsCSS greys exactly the controls a click refuses', async (t) => {
   for (const id of ['f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
 });
 
-test('dragging an agent onto another node\'s group opens the move; other drops say why not', async (t) => {
+test('dragging an agent onto another node\'s group opens the move; a same-node drop is the Groups drag-and-drop\'s', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
@@ -224,7 +224,13 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
   };
   assert.ok(row('agt_b1') && groupEl('reviewers@forge'), 'rows and groups render');
   assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, true, 'group headers do not drag here');
+  // dnd.js's pending Ctrl/Cmd clone hover must not finish under a move
+  // between nodes this view takes.
+  const dndOps = await harness.importDashboardModule('js/dnd-ops.js');
+  let cancelled = 0;
+  dndOps.dndGesture.cancelClone = () => { cancelled += 1; };
   const over = await drag(row('agt_b1'), groupEl('reviewers@forge'));
+  assert.ok(cancelled >= 2, 'its dragover and drop cancel the clone hover');
   assert.equal(over.defaultPrevented, true, 'another node\'s group accepts the drop');
   const dialog = harness.document.querySelector('#launch-target');
   assert.ok(dialog, 'the drop opens the launch-target dialog');
@@ -235,8 +241,12 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
   await harness.act(() => harness.document.querySelector('#fleetview-move-drop-cancel').click());
   await drag(row('agt_r1'), groupEl('qa@lab'));
   assert.match(toasts.at(-1), /Neither forge nor lab is this node: move reviewer-1 from forge's dashboard/);
-  await drag(row('agt_b1'), groupEl('other@desk'));
-  assert.match(toasts.at(-1), /use desk's own Groups view/);
+  // A drop on the agent's own node is the Groups drag-and-drop's (dnd.js):
+  // this view lets it through, saying nothing.
+  const before = toasts.length;
+  const same = await drag(row('agt_b1'), groupEl('other@desk'));
+  assert.equal(same.defaultPrevented, false, "this view leaves a same-node drop to dnd.js");
+  assert.equal(toasts.length, before);
   assert.equal(harness.document.querySelector('#launch-target'), null);
   await mounted.unmount(); state.dispose();
 });
