@@ -20256,7 +20256,6 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"]
 .fleet-merged-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); }
 .fleet-merged-node.stale { color: #7d8590; }
 .fleet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
-.fleet-merged-note { color: #6e7681; margin-left: auto; }
 .fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }

@@ -624,7 +624,6 @@ export function MergedGroups({
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
         <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
       </span>`)}
-      <span class="fleet-merged-note">${home ? "This node's groups work as on its own view; a" : 'A'} peer's groups offer what it shares with you; drag an agent onto another node's group to move it; open <b>@node</b> for a node's own view.</span>
     </div>
     <${BrokerRefusalNotice} snapshot=${snapshot.value} />
     <${GroupsProcessScope} value=${processScope.current}>
