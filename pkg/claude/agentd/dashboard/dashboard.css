@@ -21515,3 +21515,10 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
   display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 10px; vertical-align: 2px;
   border: 1px solid #1f3a5f; background: #0f2135; color: #58a6ff; font-size: 11px; font-weight: 500;
 }
+
+/* Fused Plugins and Processes (fused-sections.js): a section per ticked peer. */
+.fused-self-head { margin: 4px 0 8px; font-size: 13px; }
+.fused-section { margin-top: 16px; border-top: 1px solid #30363d; padding-top: 8px; box-shadow: inset 3px 0 0 var(--nc); padding-left: 10px; }
+.fused-section-head { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0 8px; }
+.fused-section-head .spacer { flex: 1; }
+.fused-section:not([open]) .fused-section-head { opacity: .8; }

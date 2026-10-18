@@ -924,7 +924,13 @@ which merges each node's newest page newest first, with a node pill on each
 row and the nodes that withhold theirs shown locked. On **Config** and **Access**, one
 machine's own settings, the strip also names each ticked peer. An
 unrestricted peer's Access opens on its own view from there. A peer's Config
-is always set on that node itself, so it is shown locked, with the reason. The fused set is part of the address
+is always set on that node itself, so it is shown locked, with the reason.
+**Plugins** and **Processes** keep each node's set intact: this node's as
+before, then a section per ticked peer under its node pill. A peer that
+trusts you unrestricted shows its plugins (check, run, install from its
+catalog, delete, all on that node) and its process templates (delete there;
+open and edit on its own view). A peer that shares less is collapsed and
+locked, with the reason. The fused set is part of the address
 (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 
 ### The map

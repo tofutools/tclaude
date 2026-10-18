@@ -4,7 +4,12 @@ import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
-import { pluginBusyKey } from './plugins-state.js';
+import { signal } from '@preact/signals';
+import { matches, pluginBusyKey } from './plugins-state.js';
+import { createPluginsActions } from './plugins-actions.js';
+import { fleetState } from './fleet-state.js';
+import { NodeSection, fusedPeers, openOnNode, peerRequestMutation, usePeerSections } from './fused-sections.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -116,16 +121,64 @@ function Catalog({ plugins, actions, busy }) {
   </${Fragment}>`;
 }
 
-export function PluginsApp({ state, actions }) {
+// peerPluginsActions is the plugins actions bound to a peer: its routes, its
+// own busy keys; editing opens on that node's own view.
+function peerPluginsActions(node, { reload, confirm, notify, fetchFor, open = openOnNode }) {
+  const busy = signal(new Set());
+  const mark = (key, on) => {
+    if (busy.value.has(key) === on) return false;
+    const next = new Set(busy.value);
+    if (on) next.add(key); else next.delete(key);
+    busy.value = next;
+    return true;
+  };
+  const requestMutation = peerRequestMutation(node, { reload, ...(fetchFor ? { fetchFor } : {}) });
+  const actions = createPluginsActions({
+    requestMutation, refresh: reload, confirm, notify,
+    state: { beginBusy: (key) => mark(key, true), endBusy: (key) => mark(key, false) },
+  });
+  return { actions, busy, state: { openModal: () => open(node, 'plugins') } };
+}
+
+// FusedPeerPlugins is a section per ticked peer after this node's plugins.
+function FusedPeerPlugins({ peers, query, active, confirm, notify, fetchFor }) {
+  const { byNode, reload } = usePeerSections({
+    peers, path: '/api/plugins', what: 'its plugins', active, ...(fetchFor ? { fetchFor } : {}),
+    read: (body) => ({ plugins: body?.plugins || [], catalog: body?.catalog || [] }),
+  });
+  const bound = useRef({});
+  const needle = query.trim().toLowerCase();
+  return peers.map((node) => {
+    if (!bound.current[node.id]) bound.current[node.id] = peerPluginsActions(node, { reload: () => reload(node.id), confirm, notify, fetchFor });
+    const { actions, busy, state } = bound.current[node.id];
+    const entry = byNode[node.id];
+    const plugins = (entry?.data?.plugins || []).filter((plugin) => matches(plugin, needle));
+    const names = new Set((entry?.data?.plugins || []).map((plugin) => plugin.name));
+    const catalog = (entry?.data?.catalog || []).filter((plugin) => !names.has(plugin.name) && matches(plugin, needle));
+    const count = entry?.data?.plugins?.length || 0;
+    return html`<${NodeSection} key=${node.id} node=${node} entry=${entry} summary=${`${count} plugin${count === 1 ? '' : 's'}`}
+      onOpen=${() => openOnNode(node, 'plugins')}>
+      ${plugins.length ? plugins.map((plugin) => html`<${PluginCard} key=${plugin.name} plugin=${plugin} state=${state} actions=${actions} busy=${busy.value} />`)
+        : html`<div class="empty">${needle && count ? 'No plugin matches the filter.' : `No plugins installed on ${node.name}.`}</div>`}
+      <${Catalog} plugins=${catalog} actions=${actions} busy=${busy.value} />
+    </${NodeSection}>`;
+  });
+}
+
+export function PluginsApp({ state, actions, fleet = fleetState, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = state.view.value;
+  // A fused view adds a section per ticked peer (fused-sections.js).
+  const peers = fusedPeers(fleet);
   const inputRef = useRef(null);
+  // A fused view keeps the tab: a ticked peer may have plugins this node lacks.
+  const visible = current.visible || peers.length > 0;
   useEffect(() => {
     if (!current.request.hasLoaded) return;
-    document.body.classList.toggle('hide-plugins', !current.visible);
-    if (!current.visible && current.activeTab === 'plugins') {
+    document.body.classList.toggle('hide-plugins', !visible);
+    if (!visible && current.activeTab === 'plugins') {
       document.querySelector('nav [data-tab="groups"]')?.click();
     }
-  }, [current.request.hasLoaded, current.visible, current.activeTab]);
+  }, [current.request.hasLoaded, visible, current.activeTab]);
 
   const count = current.query
     ? `${current.installed.length} / ${current.all.length}`
@@ -146,6 +199,7 @@ export function PluginsApp({ state, actions }) {
       <button id="plugin-create-open" class="primary" onClick=${() => state.openModal()}
         title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin</button>
     </div>
+    ${peers.length ? html`<h3 class="fused-self-head"><span class="scope-pill" style=${`--nc:${fleet.fleet.value.self.color}`}>⌂ ${fleet.fleet.value.self.name}</span></h3>` : null}
     <${AsyncLoadState} label="Plugins" request=${current.request} retry=${actions.refresh} errorClass="plugins-error" />
     <div id="plugins-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded ? null
@@ -160,6 +214,8 @@ export function PluginsApp({ state, actions }) {
             <${Catalog} plugins=${current.catalog} actions=${actions} busy=${current.busy} />
           </${Fragment}>`}
     </div>
+    ${peers.length ? html`<${FusedPeerPlugins} peers=${peers} query=${current.query} active=${current.activeTab === 'plugins'}
+      confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}
   </div>`;
 }
 

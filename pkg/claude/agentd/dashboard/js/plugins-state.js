@@ -4,7 +4,7 @@ import { dashPrefs } from './prefs.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.plugins';
 
-function matches(plugin, needle) {
+export function matches(plugin, needle) {
   if (!needle) return true;
   if ((plugin.name || '').toLowerCase().includes(needle)) return true;
   if ((plugin.descr || '').toLowerCase().includes(needle)) return true;
