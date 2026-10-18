@@ -10,9 +10,9 @@ export function createGitRepositoriesState() {
   }
   return {
     dialog,
-    open(mode, group) {
+    open(mode, group, node = '') {
       if (dialog.value) return Promise.resolve();
-      dialog.value = Object.freeze({ key: ++sequence, mode, group });
+      dialog.value = Object.freeze({ key: ++sequence, mode, group, node: String(node || '') });
       return new Promise((resolve) => { resolveCurrent = resolve; });
     },
     close: finish,

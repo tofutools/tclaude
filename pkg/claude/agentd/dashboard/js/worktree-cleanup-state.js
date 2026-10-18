@@ -5,11 +5,11 @@ export function createWorktreeCleanupState() {
   let sequence = 0;
   let resolveCurrent = null;
 
-  function open(group = '') {
+  function open(group = '', node = '') {
     if (dialog.value || resolveCurrent) return Promise.resolve(null);
     dialog.value = Object.freeze({
       key: `worktree-cleanup:${++sequence}`,
-      descriptor: Object.freeze({ group: String(group || '') }),
+      descriptor: Object.freeze({ group: String(group || ''), node: String(node || '') }),
     });
     return new Promise((resolve) => { resolveCurrent = resolve; });
   }

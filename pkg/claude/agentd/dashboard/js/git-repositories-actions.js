@@ -1,4 +1,5 @@
 import { readJSONLines } from './stream-json.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 import { dashPrefs } from './prefs.js';
 
 const CONCURRENCY_KEY = 'tclaude.dash.git.concurrency';
@@ -29,18 +30,20 @@ export function gitRepoRequests(repos, selected, { group, mode, switchDefault, d
 }
 
 export function createGitRepositoriesActions({ fetchImpl = fetch } = {}) {
-  async function json(url, options = {}) {
-    const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
+  // node is another node's group: its checkouts are that node's.
+  const on = (node) => nodeFetch(node || '', { fetchImpl });
+  async function json(url, options = {}, node = '') {
+    const response = await on(node)(url, { credentials: 'same-origin', ...options });
     if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
     return response.json();
   }
   return {
-    scan: (group, signal) => json(`/api/git-repositories?group=${encodeURIComponent(group)}`, { signal }),
-    async run(requests, onResult, concurrency = 4) {
+    scan: (group, signal, node = '') => json(`/api/git-repositories?group=${encodeURIComponent(group)}`, { signal }, node),
+    async run(requests, onResult, concurrency = 4, node = '') {
       if (!requests.length) return;
       const pending = new Set(requests.map((request) => request.path));
       try {
-        const response = await fetchImpl('/api/git-repositories/batch', {
+        const response = await on(node)('/api/git-repositories/batch', {
           credentials: 'same-origin', method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ requests, concurrency: gitConcurrency(concurrency) }),
@@ -56,6 +59,7 @@ export function createGitRepositoriesActions({ fetchImpl = fetch } = {}) {
           onResult(result);
         }
         if (!complete || pending.size) throw new Error('Batch progress stream ended early');
+        if (node) announceNodeChanged(node);
       } catch (error) {
         // Never retry mutations after a lost response; preserve completed rows.
         for (const path of pending) {

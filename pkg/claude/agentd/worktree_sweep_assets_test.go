@@ -50,15 +50,15 @@ func TestDashboardWorktreeCleanupPreactOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"registerWorktreeCleanupController", "export function openWorktreeCleanup(group = '')",
-		"return requireController().open(group)",
+		"registerWorktreeCleanupController", "export function openWorktreeCleanup(group = '', node = '')",
+		"return requireController().open(group, node)",
 	} {
 		if !strings.Contains(controller, required) {
 			t.Errorf("worktree controller is missing launch contract %q", required)
 		}
 	}
 	for _, required := range []string{
-		"function openWorktreeCleanup(group = '')", "openWorktreeCleanupDialog(group)",
+		"function openWorktreeCleanup(group = '', node = '')", "openWorktreeCleanupDialog(group, node)",
 	} {
 		if !strings.Contains(operations, required) {
 			t.Errorf("operation launcher is missing %q", required)
@@ -109,7 +109,7 @@ func TestDashboardWorktreeCleanupPreactOwnership(t *testing.T) {
 	// Existing group/global entry points continue to route through the same
 	// compatibility launcher after ownership moves.
 	for _, required := range []string{
-		"openWorktreeCleanup(group)", "run: () => openWorktreeCleanup()",
+		"openWorktreeCleanup(group, node)", "run: () => openWorktreeCleanup()",
 		`id="cleanup-worktrees-all"`, `data-act="cleanup-worktrees-group"`,
 		"case 'cleanup-worktrees-group'",
 	} {

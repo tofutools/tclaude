@@ -856,14 +856,14 @@ export async function handleRowAction(action) {
       }
       case 'pull-repositories-group':
       case 'sync-repositories-group': {
-        await openGitRepositories(act === 'pull-repositories-group' ? 'pull' : 'sync', group);
+        await openGitRepositories(act === 'pull-repositories-group' ? 'pull' : 'sync', group, node);
         return;
       }
       case 'cleanup-worktrees-group': {
         // Open the repo-wide worktree janitor scoped to this group's
         // repo(s). The modal loads + classifies the candidates, owns
         // its POST to /api/worktrees/cleanup, and refreshes on success.
-        openWorktreeCleanup(group);
+        openWorktreeCleanup(group, node);
         return;
       }
       case 'shutdown-group': {

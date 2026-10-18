@@ -401,8 +401,8 @@ export async function openDeleteRetiredPreview() {
 // The worktree janitor is Preact-owned. This compatibility launcher keeps
 // row actions, the palette, and the TCL-487 transaction handoff on one
 // controller seam whose promise covers the full selection + result lifetime.
-export function openWorktreeCleanup(group = '') {
-  return openWorktreeCleanupDialog(group);
+export function openWorktreeCleanup(group = '', node = '') {
+  return openWorktreeCleanupDialog(group, node);
 }
 
 // openWindowModal is now only the snapshot launcher. It freezes the exact

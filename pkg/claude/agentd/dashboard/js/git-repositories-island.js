@@ -32,7 +32,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError('');
-    actions.scan(current.group, controller.signal).then((data) => {
+    actions.scan(current.group, controller.signal, current.node).then((data) => {
       if (controller.signal.aborted) return;
       setRepos(data.repos); setIssues(data.issues);
       setSelected(new Set(data.repos.filter((repo) => !repo.error).map((repo) => repo.path)));
@@ -56,7 +56,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     const requests = gitRepoRequests(repos, selected, { ...current, switchDefault, discard });
     setOutcomes(Object.fromEntries(requests.map((r) => [r.path, { path: r.path, status: 'queued', detail: '' }])));
     try {
-      await actions.run(requests, (out) => setOutcomes((before) => ({ ...before, [out.path]: out })), concurrency);
+      await actions.run(requests, (out) => setOutcomes((before) => ({ ...before, [out.path]: out })), concurrency, current.node);
     } catch (err) { setError(err.message); }
     finally { running.current = false; setBusy(false); setDone(true); }
   };

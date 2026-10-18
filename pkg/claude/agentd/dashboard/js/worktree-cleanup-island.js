@@ -173,7 +173,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
     setError('');
     setBusyAction(rescan ? 'rescan' : 'scan');
     try {
-      const response = await actions.scan(descriptor.group);
+      const response = await actions.scan(descriptor.group, descriptor.node);
       if (!active.current || requestGeneration !== generation.current) return;
       setRepoRoots(response.repoRoots);
       setCandidates(rescan
@@ -190,7 +190,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
     } finally {
       if (active.current && requestGeneration === generation.current) setBusyAction('');
     }
-  }, [actions, descriptor.group]);
+  }, [actions, descriptor.group, descriptor.node]);
 
   useEffect(() => {
     void load(false);
@@ -265,7 +265,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
     setError('');
     setBusyAction('submit');
     try {
-      const response = await actions.cleanup(request);
+      const response = await actions.cleanup(request, descriptor.node);
       if (active.current) setResult(response);
     } catch (cause) {
       submitLock.current = false;
