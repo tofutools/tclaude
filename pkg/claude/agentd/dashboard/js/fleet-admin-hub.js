@@ -149,7 +149,7 @@ export function settingsPlan(settings, edits) {
   return { overrides, lines };
 }
 
-function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
+export function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const claim = () => {

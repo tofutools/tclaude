@@ -14,8 +14,9 @@ Steps 5 to 7 can also be done in each machine's dashboard: **⚙ Fleet config �
 Setup guide** (⌘ Fleet at the right of the tab bar, then ⚙ Fleet config) joins the hub
 from a pasted join code (or the address and invite), trusts the other machine after you compare
 fingerprints, and shares a group. It shows the CLI command for every step,
-and step 4 of the guide lists what each peer shares and the agent grants
-that use it. The hub itself (steps 1 to 4) is set up on the command line.
+and step 6 of the guide lists what each peer shares and the agent grants
+that use it. The hub itself (steps 1 to 4) is set up on the command line; the guide's
+optional first two steps explain it and claim hub admin from the dashboard.
 
 ## 1. Install the hub
 
@@ -166,7 +167,7 @@ tclaude agent permissions peer-reach add lead --peer desktop/builders --slug mes
 
 `peer-reach add` keeps any other peer groups `lead` can already mail. Use
 `--group <group>` instead of `lead` to give every member of a local group
-the reach. In the dashboard, step 4 of **⚙ Fleet config → Setup guide** does the
+the reach. In the dashboard, step 6 of **⚙ Fleet config → Setup guide** does the
 same in place.
 
 The agent can then discover the shared members:

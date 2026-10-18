@@ -6,6 +6,8 @@ const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
 let s_hubGenFails = 0;
+// s_hubOthers: the hub has admins, none of them this node.
+let s_hubOthers = false;
 // s_hubRun is the hub's script status: off by default, like a fresh hub.
 let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
@@ -148,7 +150,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     nodeLabels: async () => ['gpu', 'ci'],
     hubStatus: async () => {
       if (s_hubGenFails > 0) { s_hubGenFails -= 1; const e = new Error('admin generation changed; retry explicitly'); e.code = 'admin_generation'; e.status = 409; throw e; }
-      return ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin })
+      return ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : s_hubOthers ? 1 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin && !s_hubOthers })
     },
     hubClaim: async (token) => { log.push(['hubClaim', token]); s_hubAdmin = true; return { ok: true }; },
     hubHealth: async () => ({ connected_instances: 3, streams: 7, goroutines: 140, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:00:00Z', code: 'stream_reset', message: 'peer inst_lab reset stream 4' }] }),
@@ -2300,6 +2302,10 @@ test('setup progress: joining, trusting and sharing are the setup; agents using 
   const forge = { instance_id: 'inst_forge', label: 'forge', trusted: true, level: 'restricted' };
   assert.equal(g.setupProgress(m.adminView(joinedStatus({ peers: [forge] }))).current, 'share', 'a trusted peer with no grants has nothing shared');
   assert.equal(g.setupProgress(m.adminView(joinedStatus({ peers: [{ ...forge, level: 'unrestricted' }] }))).complete, true, 'an unrestricted peer already holds everything');
+  assert.deepEqual(p.steps.map((st) => st.id), ['runhub', 'hubadmin', 'hub', 'trust', 'share', 'agents'], 'running a hub and claiming it lead, both optional');
+  assert.deepEqual(g.setupProgress(joined).steps.slice(0, 2).map((st) => st.done), [true, false]);
+  assert.equal(g.setupProgress(joined, { hubAdmin: true }).steps[1].done, true);
+  assert.equal(g.setupProgress(fresh, { hubAdmin: true }).steps[1].done, false, 'admin of no hub is not done');
   p = g.setupProgress(m.adminView(status()));
   assert.deepEqual([p.current, p.done, p.complete], ['agents', 3, true]);
   assert.equal(p.steps.find((st) => st.id === 'agents').optional, true);
@@ -2480,6 +2486,50 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   assert.match(s.toasts.at(-1), /a group it is in/);
 });
 
+test('setup guide: the optional hub steps explain running a hub and claim its admin; a done join keeps its instructions', async (t) => {
+  s_hubAdmin = false;
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Setup guide/.test(b.textContent)));
+  await s.click(s.q('.fs-step[data-step="runhub"]'));
+  assert.match(s.q('[data-setup-step="runhub"]').textContent, /tclaude hub serve --listen 0\.0\.0\.0:8470.*tclaude hub invite --space/);
+  await s.click(s.q('.fs-step[data-step="hubadmin"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(s.q('.fs-step[data-step="hubadmin"]').classList.contains('done'), false);
+  assert.match(s.q('[data-setup-step="hubadmin"]').textContent, /no admin yet/);
+  await s.click(s.q('#fleet-setup-claim'));
+  const tok = s.harness.document.querySelector('#fleet-hub-claim-token'); tok.value = 'claim-9';
+  await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
+  await s.click(s.harness.document.querySelector('#fleet-hub-claim-send'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubClaim'), ['hubClaim', 'claim-9']);
+  assert.ok(s.q('#fleet-setup-hub-admin'), 'the claimed admin shows in place');
+  assert.equal(s.q('.fs-step[data-step="hubadmin"]').classList.contains('done'), true);
+  await s.click(s.q('.fs-step[data-step="hub"]'));
+  assert.match(s.q('#fleet-setup-hub-howto').textContent, /How joining works.*join code/, 'a joined node can still read how joining works');
+  s_hubAdmin = true;
+});
+
+test('setup guide: claiming hub admin waits for the join', async (t) => {
+  const s = await setup(t, { statusFn: freshStatus });
+  await s.show();
+  await s.click(s.q('.fs-step[data-step="hubadmin"]'));
+  assert.match(s.q('[data-setup-step="hubadmin"]').textContent, /Join the hub first/);
+  assert.equal(s.q('#fleet-setup-claim'), null);
+});
+
+test('setup guide: a hub that already has admins offers no claim, only who can add this node', async (t) => {
+  s_hubAdmin = false; s_hubOthers = true;
+  t.after(() => { s_hubAdmin = true; s_hubOthers = false; });
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Setup guide/.test(b.textContent)));
+  await s.click(s.q('.fs-step[data-step="hubadmin"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(s.q('#fleet-setup-claim'), null, 'no claim token exists while the hub has admins');
+  assert.match(s.q('#fleet-setup-hub-admin-other').textContent, /already has 1 admin\. An existing admin adds this node.*hub admin reset/);
+});
+
 test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done', async (t) => {
   const s = await setup(t);
   await s.show();
@@ -2487,7 +2537,7 @@ test('a set-up node opens Fleet on Peers; the guide stays one tab away, all done
   const tab = [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Setup guide/.test(b.textContent));
   assert.equal(tab.textContent, 'Setup guide', 'no progress badge when done');
   await s.click(tab);
-  assert.equal(s.mounted.container.querySelectorAll('.fs-step.done').length, 3);
+  assert.equal(s.mounted.container.querySelectorAll('.fs-step.done').length, 5, 'the hub steps, done here too: connected, and this node is a hub admin');
   assert.match(s.q('.fs-progress').textContent, /Set up/);
   assert.match(s.q('[data-setup-step="agents"]').textContent, /Let your agents use peers/);
   await s.click(s.q('.fs-step[data-step="trust"]'));

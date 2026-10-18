@@ -20614,6 +20614,9 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fs-more summary { color: #8b949e; cursor: pointer; }
 .fs-more p { margin: 6px 0; }
 .fs-cli { margin-top: 12px; padding-top: 8px; border-top: 1px dashed #30363d; font-size: 12px; overflow-wrap: anywhere; }
+.fs-list { margin: 0 0 10px; padding-left: 20px; max-width: 760px; }
+.fs-list li { margin-bottom: 8px; }
+.fs-pre { margin: 6px 0; padding: 6px 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; overflow-x: auto; font-size: 12px; }
 .fs-share { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0 10px; }
 .fs-share label { display: inline-flex; align-items: center; gap: 6px; }
 .fs-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-width: 900px; }

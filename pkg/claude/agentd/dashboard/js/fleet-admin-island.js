@@ -479,7 +479,7 @@ export function FleetAdmin({
         ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
         ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
     ${sub.id === 'setup'
-      ? html`<${SetupGuide} onSeen=${state.markSetupSeen} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
+      ? html`<${SetupGuide} onSeen=${state.markSetupSeen} onHub=${() => setPage('hub')} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
           onOpenGrants=${openGrants} onPermissions=${(holder) => openHolderPermissions(holder, snapshot.value).catch((e) => toast(`Permissions: ${errText(e)}`, true))} />`
       : sub.id === 'peers'
