@@ -658,6 +658,28 @@ export function blockedControl(target, peerView, event = null) {
   return null;
 }
 
+// reasonTitles puts why a greyed control is refused on it: its title (hover)
+// and aria-disabled, so a keyboard or screen-reader user gets the same
+// reason. It remembers the control's own title, to prefix, refresh and
+// restore it. The peer page's limits and the fused view share it.
+export function reasonTitles() {
+  const titled = new Map();
+  const setReason = (el, reason, disabled = true) => {
+    if (!titled.has(el)) titled.set(el, el.getAttribute('title'));
+    const own = titled.get(el);
+    el.setAttribute('title', `${reason}${own ? `\n\n${own}` : ''}`);
+    if (disabled) el.setAttribute('aria-disabled', 'true');
+  };
+  const clearReason = (el) => {
+    if (!titled.has(el)) return;
+    const own = titled.get(el);
+    titled.delete(el);
+    if (own == null) el.removeAttribute('title'); else el.setAttribute('title', own);
+    el.removeAttribute('aria-disabled');
+  };
+  return { setReason, clearReason };
+}
+
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
 const PEER_VIEW_STYLE_ID = 'peer-view-limits-style';
@@ -670,20 +692,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   let peerView = snapshot.value?.peer_view || null;
   const nodeName = () => root.dataset.remoteNodeName || remote.id.slice(0, 13);
 
-  // titled remembers each greyed control's own title so the reason can be
-  // prefixed, refreshed and removed again.
-  const titled = new Map();
-  const setReason = (el, reason) => {
-    if (!titled.has(el)) titled.set(el, el.getAttribute('title'));
-    const own = titled.get(el);
-    el.setAttribute('title', `${reason}${own ? `\n\n${own}` : ''}`);
-  };
-  const clearReason = (el) => {
-    if (!titled.has(el)) return;
-    const own = titled.get(el);
-    titled.delete(el);
-    if (own == null) el.removeAttribute('title'); else el.setAttribute('title', own);
-  };
+  const { setReason, clearReason } = reasonTitles();
 
   // Tabs carry their state as a class so CSS greys them, with the reason as
   // their title; recomputed whenever a snapshot changes what the peer shares
@@ -729,10 +738,13 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     if (event.target?.closest?.('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return;
     refuse(event);
   };
-  // Hover explanation for controls (tabs get theirs from the effect).
+  // Hover or focus explanation for controls (tabs get theirs from the
+  // effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView, event);
-    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs));
+    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), blocked.state !== 'attach');
+    // One the peer now shares drops a reason it showed before.
+    else if (!blocked) { const act = actOf(event.target, event); if (act) clearReason(act); }
   };
   // Drags spawn, move and reorder on the node: under unrestricted trust. A
   // restricted peer's agent row still drags where its grants cover a drop's
@@ -746,6 +758,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   doc.addEventListener('click', refuse, true);
   doc.addEventListener('keydown', onKey, true);
   doc.addEventListener('pointerover', onOver, true);
+  doc.addEventListener('focusin', onOver, true);
   doc.addEventListener('dragstart', onDrag, true);
   return () => {
     stop();
@@ -755,6 +768,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     doc.removeEventListener('click', refuse, true);
     doc.removeEventListener('keydown', onKey, true);
     doc.removeEventListener('pointerover', onOver, true);
+    doc.removeEventListener('focusin', onOver, true);
     doc.removeEventListener('dragstart', onDrag, true);
   };
 }

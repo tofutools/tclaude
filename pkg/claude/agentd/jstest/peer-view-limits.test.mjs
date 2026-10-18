@@ -83,6 +83,8 @@ test('on a peer view, Activity subtabs without a peer route are greyed and refus
   assert.equal(sub('audit').getAttribute('title'), 'Audit log');
   assert.equal(sub('logs').classList.contains('pv-off'), true);
   assert.equal(sub('logs').getAttribute('title'), 'forge does not share the daemon log with you (needs unrestricted trust)');
+  assert.equal(sub('logs').getAttribute('aria-disabled'), 'true', 'a refused control says so to assistive tech');
+  assert.equal(sub('audit').getAttribute('aria-disabled'), null);
   assert.equal(sub('performance').classList.contains('pv-off'), true);
   assert.equal(harness.fireEvent(sub('audit'), 'click').defaultPrevented, false);
   assert.equal(harness.fireEvent(sub('logs'), 'click').defaultPrevented, true);
