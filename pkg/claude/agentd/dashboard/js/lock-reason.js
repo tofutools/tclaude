@@ -30,3 +30,10 @@ export function trustLock(node, what) {
     ? globalThis.document?.documentElement?.dataset?.remoteNodeName || 'This peer' : 'That node';
   return `${name} keeps ${what} to its own operator: it needs unrestricted trust from ${name === 'That node' ? 'it' : name}.`;
 }
+
+// machineLock is the 🔒 reason of a control that works on this machine only
+// (its folder picker, which no peer serves): blank for the page's own node
+// off a peer's page, why otherwise.
+export function machineLock(node, why) {
+  return isPageNode(node) && !globalThis.__tclaudeRemoteNode?.id ? '' : why;
+}

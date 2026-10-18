@@ -180,6 +180,16 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   await mounted.cleanup();
 });
 
+test("another node's group settings lock this machine's pickers with the reason", async (t) => {
+  const snapshot = { value: { groups: [{ name: 'alpha', default_cwd: '/repo' }], peer_view: { level: 'unrestricted' } } };
+  const mounted = await mountDialogs(t, 'group-settings', { group: 'alpha', node: 'inst_forge7' }, {}, async () => true, snapshot);
+  const { host } = mounted;
+  assert.equal(host.querySelector('#group-settings-default-cwd-browse').disabled, true);
+  assert.match(host.querySelector('#group-settings-default-cwd-browse-lock').dataset.why, /this machine's folder picker/);
+  assert.match(host.querySelector('#group-settings-prompts-lock').dataset.why, /its own node's dashboard/);
+  await mounted.cleanup();
+});
+
 test("another node's clone shows ownership and worktree locked, with the reason", async (t) => {
   let probed = 0;
   const mounted = await mountDialogs(t, 'clone-agent', { conv: 'agt_ada1', label: 'ada', cwd: '/repo', node: 'inst_forge7' }, {

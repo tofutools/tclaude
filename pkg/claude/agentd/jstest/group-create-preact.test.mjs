@@ -648,3 +648,21 @@ test('dirty group-create Cancel, backdrop, and Escape all honor rejected and acc
   assert.equal(confirmations, 6, 'every dirty dismissal routes through the shared confirmation');
   await mounted.cleanup();
 });
+
+test("group-create on another node, or on a peer's page, locks this machine's folder picker with the reason", async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.open('', '', 'inst_forge7');
+  await flush(harness);
+  assert.equal(host.querySelector('#group-create-cwd-browse').disabled, true);
+  assert.match(host.querySelector('#group-create-cwd-browse + .lock-why').dataset.why, /this machine's folder picker/);
+  state.close();
+  await flush(harness);
+  harness.window.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; delete harness.window.__tclaudeRemoteNode; });
+  state.open();
+  await flush(harness);
+  assert.equal(host.querySelector('#group-create-cwd-browse').disabled, true, "a peer's page has no folder picker of its own");
+  await mounted.cleanup();
+});
