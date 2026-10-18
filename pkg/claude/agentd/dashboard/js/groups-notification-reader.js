@@ -219,10 +219,11 @@ export function GroupsNotificationReader({
   const nodeSnap = node ? nodeSnapshot(node) : snapshot;
   const senderKey = descriptor.sender.agent || descriptor.sender.conv || '';
   const knownKey = `${node}/${senderKey}`;
-  const known = useRef({ sender: null, rows: new Map() });
-  if (known.current.sender !== knownKey) known.current = { sender: knownKey, rows: new Map() };
-  // overrides holds the read state written to another node until it shows.
-  const overrides = useRef(new Map());
+  // overrides holds the read state written to another node until it shows
+  // (message IDs are per node, so it goes with the sender's rows).
+  const known = useRef({ sender: null, rows: new Map(), overrides: new Map() });
+  if (known.current.sender !== knownKey) known.current = { sender: knownKey, rows: new Map(), overrides: new Map() };
+  const overrides = known.current.overrides;
   const [, setHistoryLoaded] = useState(0);
   useEffect(() => {
     if (!senderKey) return undefined;
@@ -243,10 +244,10 @@ export function GroupsNotificationReader({
   }, [knownKey]);
   const messages = mergedSenderMessages(descriptor.sender, nodeSnap, known.current.rows)
     .map((m) => {
-      if (!overrides.current.has(m.id)) return m;
-      const read = overrides.current.get(m.id);
+      if (!overrides.has(m.id)) return m;
+      const read = overrides.get(m.id);
       // The node's own read state caught up.
-      if (m.read === read) { overrides.current.delete(m.id); return m; }
+      if (m.read === read) { overrides.delete(m.id); return m; }
       return { ...m, read };
     });
   const found = messages.find((item) => item.id === descriptor.messageId) || messages[0];
@@ -350,12 +351,13 @@ export function GroupsNotificationReader({
           conv: message.from_conv || descriptor.sender.conv || '',
           label: senderLabel,
           subject: message.subject || '',
-          // A peer's notification is answered through that peer, text only.
-          ...(peer ? {
-            nodeName: peerName,
-            // The peer's snapshot knows the sender's liveness.
+          // A peer's notification is answered through that peer, text only;
+          // so is this node's from a peer's page, whose snapshot is not
+          // this node's. Either's own snapshot knows the sender's liveness.
+          ...(peer || node ? {
+            nodeName: peerName || descriptor.sender.nodeName || '',
             online: senderOnline(nodeSnap, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || ''),
-            send: (body) => postPeerJSON('/api/human-inbox/reply', { id: message.id, body }, nodeFetch(node))
+            send: (body) => postPeerJSON(peer ? '/api/human-inbox/reply' : '/api/human-messages/reply', { id: message.id, body }, nodeFetch(node))
               .then(() => { if (node) announceNodeChanged(node); }),
           } : {}),
         });
@@ -366,7 +368,7 @@ export function GroupsNotificationReader({
       }}>Open in Messages ↗</button>`}
       <button type="button" disabled=${!!markLock} onClick=${() =>
         persistHumanMessageRead(state, message.id, !message.read, actions.reportError, found, where, (read) => {
-          overrides.current.set(message.id, read);
+          overrides.set(message.id, read);
           setHistoryLoaded((n) => n + 1);
         })}>
         ${message.read ? 'Mark unread' : 'Mark read'}

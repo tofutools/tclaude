@@ -540,3 +540,41 @@ test('a fused-view notification on another node is read, answered and downloaded
   assert.deepEqual(calls.at(-1), { url: '/api/peer/inst_forge/human-inbox/reply', method: 'POST', body: { id: 7, body: 'done' } });
   await mounted.unmount();
 });
+
+test('this node\'s notification read from a peer\'s fused view stays on this node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ GroupsNotificationReader }, dialogController, nodeApi] = await Promise.all([
+    harness.importDashboardModule('js/groups-notification-reader.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  const opened = [];
+  const unregister = dialogController.registerMessageAccessDialogController({ openHumanReply(context) { opened.push(context); } });
+  nodeApi.setSelfNode('inst_self');
+  const local = []; const page = [];
+  const previous = globalThis.__tclaudeRemoteNode;
+  const savedFetch = globalThis.fetch;
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge', localFetch: async (url, options = {}) => { local.push({ url, body: options.body ? JSON.parse(options.body) : null }); return { ok: true, text: async () => '', json: async () => ({ messages: [] }) }; } };
+  globalThis.fetch = async (url) => { page.push(url); return { ok: true, json: async () => ({ messages: [] }) }; };
+  const message = { id: 5, from_agent: 'agt_homeagent1', from_conv: 'c-home', from_title: 'home', subject: 'here', body: 'x', read: false };
+  const self = { messages: [message], agents: [{ agent_id: 'agt_homeagent1', conv_id: 'c-home', online: true }] };
+  const stopSource = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_self' ? self : null));
+  t.after(() => { unregister(); stopSource(); nodeApi.setSelfNode(''); globalThis.__tclaudeRemoteNode = previous; globalThis.fetch = savedFetch; });
+  const state = { snapshot: { value: { messages: [], agents: [] } }, publish() { throw new Error('the page snapshot is forge\'s'); } };
+  const mounted = await harness.mount(harness.html`
+    <${GroupsNotificationReader}
+      descriptor=${{ sender: { agent: 'agt_homeagent1', conv: 'c-home', label: 'home', node: 'inst_self', nodeName: 'desk' }, messageId: 5 }}
+      snapshot=${state.snapshot.value} state=${state} actions=${{ reportError(e) { throw e; } }}
+      onSelect=${() => {}} onClose=${() => {}} />
+  `);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const button = (label) => [...mounted.container.querySelectorAll('.human-notification-drawer-actions button')].find((b) => b.textContent.trim() === label);
+  await harness.act(() => button('Mark read').click());
+  await harness.act(() => button('Reply').click());
+  assert.equal(opened[0].online, true, 'its liveness comes from this node\'s snapshot, not forge\'s');
+  await opened[0].send('ok');
+  assert.deepEqual(page, [], 'nothing goes to forge');
+  assert.deepEqual(local.map((c) => c.url), ['/api/mailbox?id=human&sender=agt_homeagent1&page_size=50', '/api/human-messages/read', '/api/human-messages/reply']);
+  assert.deepEqual(local[1].body, { id: 5, read: true });
+  await mounted.unmount();
+});

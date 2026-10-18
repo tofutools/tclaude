@@ -751,5 +751,12 @@ test('a peer agent\'s unread notification raises its ! here and opens the reader
   assert.equal(opened[0].messageId, 9);
   assert.equal(opened[0].sender.node, 'inst_forge');
   assert.equal(opened[0].sender.agent, 'agt_forgeworker1');
+  // forge stops sharing its messages: its ! goes with them.
+  peers.forge = { ...peers.forge, peer_view: { included: [] } };
+  for (const next of timers.queue.splice(0)) await harness.act(async () => { await next.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  for (const d of mounted.container.querySelectorAll('details')) d.open = true;
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.equal(mounted.container.querySelectorAll('.human-notification-attention').length, 0);
   await mounted.unmount(); state.dispose();
 });
