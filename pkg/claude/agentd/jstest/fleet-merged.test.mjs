@@ -11,7 +11,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   const m = await harness.importDashboardModule('js/fleet-merged-model.js');
   const merged = m.mergeSnapshots([
     { node: self, entry: { snapshot: { group_attachments_mode: 'fixed', groups: [group('ops'), group('ops-sub', { parent: 'ops' })], agents: [{ agent_id: 'agt_1' }] }, receivedAt: 1000 } },
-    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], peer_view: { included: [] } }, receivedAt: 1000 } },
+    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], pending: [{ label: 'stuck-1', group: 'ops' }, { label: 'loose' }], peer_view: { included: [] } }, receivedAt: 1000 } },
     { node: lab, entry: { snapshot: { groups: [group('build')] }, receivedAt: 0, failure: { status: 502, code: 'peer_unreachable' } } },
   ], 61000);
   assert.deepEqual(merged.groups.map((g) => g.name), ['ops@desk', 'ops-sub@desk', 'ops@forge', 'build@lab']);
@@ -19,6 +19,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   assert.equal(merged.group_attachments_mode, 'fixed', 'presentation settings come from this node');
   assert.equal(merged.peer_view, undefined);
   assert.deepEqual(merged.agents.map((a) => a.agent_id), ['agt_1', 'agt_2']);
+  assert.deepEqual(merged.pending, [{ label: 'stuck-1', group: 'ops@forge' }], 'a pending spawn sits in its node\'s group; one without a group stays on its node');
   const labGroup = merged.groups[3];
   assert.equal(labGroup.fleet_node.stale, true); assert.equal(labGroup.fleet_node.label, 'stale · data 1 min old');
   assert.equal(merged.groups[2].fleet_node.stale, true, 'a minute-old snapshot is stale even without a failure');
