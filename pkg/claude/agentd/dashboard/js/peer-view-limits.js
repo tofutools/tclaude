@@ -206,9 +206,10 @@ function agentNeedHeld(need, agent, peerView) {
 }
 
 // missingPullGrants names the PULL_GRANTS a peer withholds on its agent;
-// without the peer's metadata nothing is known, so nothing is reported.
+// without the peer's metadata nothing is known, so nothing is reported. An
+// older peer sends no per-agent grants at all: its refusal says why.
 export function missingPullGrants(peerView, agent) {
-  if (!peerView || peerView.level === 'unrestricted') return [];
+  if (!peerView || peerView.level === 'unrestricted' || !peerView.agents) return [];
   const held = peerView.agents?.[agent] || [];
   return PULL_GRANTS.filter((slug) => !held.includes(slug));
 }

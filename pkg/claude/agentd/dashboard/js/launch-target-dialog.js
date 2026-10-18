@@ -23,8 +23,8 @@ export const TELEPORT_ROUTES = true;
 
 // Each mode's hint says in plain words what it does, under the mode tabs.
 export const MODES = Object.freeze([
-  { key: 'move', label: 'Move', hint: 'Relocates it for good: it becomes an agent of the target node and leaves the node it runs on.' },
-  { key: 'teleport', label: 'Teleport', hint: 'Sends it on a visit: it works on the target node but keeps its home node, which can recall it.' },
+  { key: 'move', label: 'Move', hint: 'Transfers it to the target node as a member there; it stops on its current node once its copy runs.' },
+  { key: 'teleport', label: 'Teleport', hint: 'Sends it on a trip to the target node, with an optional arrival note; Recall home brings it back.' },
   { key: 'clone', label: 'Clone', hint: 'Copies it: a new agent starts with its history; the original keeps running.' },
   { key: 'morph', label: 'Morph', hint: 'Keeps it here as the same agent, on another harness, model or profile.' },
   { key: 'home', label: 'Recall home', hint: 'Brings a teleported agent back to its home node.' },

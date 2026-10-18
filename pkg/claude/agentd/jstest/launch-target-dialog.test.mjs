@@ -57,6 +57,9 @@ test('modes, targets and what carries over say what is possible and why not', as
     assert.equal(m.nodeTargets({ mode, fleet, self, source: forge, status: STATUS, pull: true, missing }).find((n) => n.id === 'inst_a').why, 'needs groups.members.retire from forge');
   }
   assert.equal(m.modeState('teleport', { local: true, missing }).ok, true, 'a local agent needs no peer grant');
+  const limits = await harness.importDashboardModule('js/peer-view-limits.js');
+  assert.deepEqual(limits.missingPullGrants({ level: 'restricted' }, 'agt_b1'), [], 'an older peer without per-agent grants is not second-guessed');
+  assert.deepEqual(limits.missingPullGrants({ level: 'restricted', agents: {} }, 'agt_b1'), ['agent.move', 'groups.members.retire']);
 
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });
@@ -215,8 +218,8 @@ test('a dropped peer agent can be teleported or cloned here through the peer\'s 
     peerActions: (node) => ({ teleport: async (id, body) => { sent.push({ node, id, body }); return { move_id: 'mv_p', teleport_state: 'offered' }; } }),
     actions: { moveDetail: async () => { throw new Error('a pulled move has no record here'); } },
   });
-  assert.match(s.q('[data-lt-hint]').textContent, /Relocates it for good/, 'each mode says in plain words what it does');
-  assert.match(s.q('[data-lt-mode="teleport"]').title, /visit/);
+  assert.match(s.q('[data-lt-hint]').textContent, /Transfers it to the target node/, 'each mode says in plain words what it does');
+  assert.match(s.q('[data-lt-mode="teleport"]').title, /trip.*Recall home/);
   await s.click(s.q('[data-lt-mode="clone"]'));
   assert.match(s.q('[data-lt-hint]').textContent, /original keeps running/);
   assert.equal(s.q('#lt-group').value, 'builders', 'the dropped group stays picked');
