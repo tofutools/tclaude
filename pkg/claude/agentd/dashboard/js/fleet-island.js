@@ -791,6 +791,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   // connection while the card is shown. A peer view's map is this node's,
   // and its Fleet config lives on this node's page, so it does not ask.
   useEffect(() => {
+    if (fleet?.hub.state !== 'connected') setHubAdmin(null);
     if (!current.mapActive || !fleet || remote || !showHub || fleet.hub.state !== 'connected') return undefined;
     let off = false;
     Promise.resolve().then(loadHubStatus)
@@ -849,8 +850,10 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     try { await actions.setOfflineAlerts(peer.id, on); toast(on ? `Offline alerts for ${peer.name} on` : `${peer.name} is part-time: no offline or back-online messages`, false); actions.loadStatus?.(); } catch (e) { toast(`Offline alerts for ${peer.name}: ${e?.message || e}`, true); }
   });
   // configure opens a Fleet config section ('' = its landing page), with
-  // the peer a section should open on.
-  const configure = (page, target = '') => () => { setLinkOpen(''); if (page) requestFleetPage(page, target); navigate('fleet-admin'); };
+  // the peer a section should open on. A peer view reaches Fleet config only
+  // through a page load home, which drops the section, so it shows no links.
+  const configure = remote ? undefined : (page, target = '') => () => { setLinkOpen(''); if (page) requestFleetPage(page, target); navigate('fleet-admin'); };
+  const configurePeers = configure ? configure('peers') : () => { setLinkOpen(''); navigate('fleet-admin'); };
   const asking = strangers.filter((s) => s.request).length;
   const hubState = fleet.hub.state;
   const pct = Math.round(zoom.view.s * 100);
@@ -872,7 +875,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
       ${edges.map((e) => { const p = peerById.get(e.id); const live = e.id === ':hub' ? fleet.hub.state === 'connected' : p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`fleet-edge${e.id !== ':hub' && !p ? ' untrusted' : live ? ' live' : ' stale'}`} />`; })}
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<${LinkBadge} key=${`l-${e.id}`} link=${linkView(fleet.self.name, p, card(p))} at=${e.mid} open=${linkOpen === e.id}
-      onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${configure('peers')} />`; })}
+      onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${configurePeers} />`; })}
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} onConfigure=${configure} /></div>
     <div class="fleet-map-hub">${showHub && html`<${HubCard} hub=${fleet.hub} now=${t} admin=${remote ? null : hubAdmin} onConfigure=${configure} />`}</div>
     <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onSilence=${silence(peer)} onOfflineAlerts=${offlineAlerts(peer)} onConfigure=${configure} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
