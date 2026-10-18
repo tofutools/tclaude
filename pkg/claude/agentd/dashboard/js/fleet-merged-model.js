@@ -64,6 +64,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
   const local = base || nodes.find((n) => n.node.local)?.entry?.snapshot || {};
   const groups = [];
   const agents = [];
+  const pending = [];
   const seenAgents = new Set();
   const status = [];
   for (const { node, entry } of nodes) {
@@ -87,6 +88,9 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
         federation_links: undefined,
       });
     }
+    // A node's pending spawns sit in its own groups, under their merged
+    // names (one without a group would mix nodes in the Pending lens).
+    for (const p of snap.pending || []) if (p?.group) pending.push({ ...p, group: suffix(p.group, node) });
     for (const a of snap.agents || []) {
       const id = a.agent_id || a.conv_id;
       if (!id || seenAgents.has(`${node.id}/${id}`)) continue;
@@ -99,7 +103,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     groups,
     agents,
     ungrouped: [],
-    pending: [],
+    pending,
     links: [],
     peer_view: undefined,
     fleet_nodes: status,

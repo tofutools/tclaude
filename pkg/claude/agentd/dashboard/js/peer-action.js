@@ -48,6 +48,9 @@ export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch
     // moveDirect lets the receiving node (this one) land it at once when its
     // permissions allow; otherwise it waits as an offer (tcl-u4yodp).
     moveDirect: (id, body) => call('POST', agent(id, 'move'), body),
+    // teleport asks the peer to teleport (or, with clone, copy) its agent to
+    // this node: {group, clone?, note?}.
+    teleport: (id, body) => call('POST', agent(id, 'teleport'), body),
     message: (to, { subject = '', body }) => call('POST', `${api}operator-message`, { to, subject, body }),
   });
 }

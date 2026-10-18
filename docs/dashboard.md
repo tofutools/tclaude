@@ -883,8 +883,11 @@ stays the same, with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
 Each ⚙ Fleet config section has its own address (`/fleet-admin/peers`,
 `/fleet-admin/grants`, …) and its own history entry, so Back/Forward step
-between sections and a section can be bookmarked. Bare `/fleet-admin` opens
-the setup guide until setup is done, else Peers.
+between sections and a section can be bookmarked. Peer grants narrowed to
+one peer or pool is `/fleet-admin/grants/<id>`. Bare `/fleet-admin` opens
+the setup guide until setup is done, else Peers. The map's shortcuts into
+Fleet config (⚙, grants…, trust…, Hub page…) are links, so a middle-click
+opens the section in a new browser tab.
 
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and
@@ -1077,12 +1080,19 @@ a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
 the clone dialog), **Morph** into another spawn profile (a dry run previews the
 change and what happens to the history), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
-send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
-onto another node's group opens the same dialog on Move, pre-filled. In the
+send home where it runs: straight to its origin, retaking its home identity). Another
+node's agent offers **move here** and **clone** (on that node), plus **Morph** when that
+node trusts this one unrestricted. Dropping an agent
+onto another node's group opens the same dialog on Move, pre-filled. A peer's
+agent moves here, or, when that peer trusts this node unrestricted, on to a
+third node: the peer sends it, and its own ⚙ Fleet → Moves follows it. In the
 fused view a drop onto a group on the agent's own node works as on that node's
 Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
 open the clone dialog for that group) — for this node always, and for a peer that
-trusts this one unrestricted. Group headers drag the same way there: nest a
+trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
+stuck pending spawn, and the rest its grants cover) act on that peer; the few that
+only its own dashboard runs (export, the links manager, its messages, sudo) are
+greyed out. Group headers drag the same way there: nest a
 group under another on its node, pull it back out, reorder it (the fused view
 keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
@@ -1446,6 +1456,14 @@ Browser notifications ride a separate 3-second poll with server-decided
 delivery; the header bell is the master toggle with per-type switches, and
 groups have 🔔/🔕 mutes with per-agent overrides. The footer shows the daemon
 version, refresh time, and the Open PRs popover.
+
+**Addresses and history**: every tab view has its own address, so Back and
+Forward step through what you looked at and any view can be bookmarked or
+linked. Two overlays that open over any tab are in the address too: a
+library manager (`?manage=profiles`, `roles`, `sandbox` or `templates`) and
+the human-notification quick reader (`?notification=<agent>:<message-id>`).
+Opening one is a history step and Back closes it; an editor open on top of a
+manager keeps the manager open.
 
 ### The library panel
 

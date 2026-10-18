@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { extraPolicy, grantRows } from './fleet-admin-model.js';
 import { AddGrantDialog } from './fleet-admin-grant-dialog.js';
+import { ALL_TARGETS } from './fleet-admin-page.js';
 
 const html = htm.bind(h);
 
@@ -29,9 +30,7 @@ function whereText(row) {
   return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
 }
 
-// ALL_TARGETS is the "Grants of" choice listing every peer's and pool's
-// grants together.
-export const ALL_TARGETS = '*all';
+export { ALL_TARGETS };
 
 // directRows are the grants a target's own page can revoke: not inherited
 // from a pool, and not stuck on a deleted group.

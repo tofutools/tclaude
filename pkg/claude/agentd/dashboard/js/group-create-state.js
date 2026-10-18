@@ -6,14 +6,17 @@ export function createGroupCreateState({ getSnapshot = () => null } = {}) {
   const dialog = signal(null);
   let generation = 0;
 
-  function open(presetTemplate = '', parentGroup = '') {
-    const snapshot = getSnapshot() || {};
+  // node names another node's group (a subgroup made there, from that
+  // node's snapshot); blank is the page's.
+  function open(presetTemplate = '', parentGroup = '', node = '') {
+    const snapshot = nodeSnapshot(node) || getSnapshot() || {};
     const currentGeneration = ++generation;
     dialog.value = Object.freeze({
       key: `group-create:${currentGeneration}`,
       generation: currentGeneration,
       presetTemplate: String(presetTemplate || ''),
       parentGroup: String(parentGroup || ''),
+      ...(node ? { node: String(node) } : {}),
       templates: Object.freeze([...(snapshot.templates || [])]),
       groups: Object.freeze([...(snapshot.groups || [])]),
     });

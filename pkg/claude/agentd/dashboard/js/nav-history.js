@@ -20,9 +20,10 @@ import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
-import { fleetAdminLocation, setFleetAdminPage } from './fleet-admin-page.js';
+import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
+import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
 import {
-  DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
+  DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
@@ -269,7 +270,10 @@ function activate(loc, { traversal = false } = {}) {
     // Set before the nav click: the Fleet config island mounts lazily on its
     // first showing and reads the section from this signal. A mounted island
     // also hears the restore event, which drops a stale Run preselect.
-    if (loc.tab === 'fleet-admin') setFleetAdminPage(loc.subtab || '');
+    if (loc.tab === 'fleet-admin') {
+      setFleetAdminPage(loc.subtab || '');
+      if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
+    }
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.
@@ -344,9 +348,56 @@ function activate(loc, { traversal = false } = {}) {
         detail: { location: normalizeLocation(loc) },
       }));
     }
+    // A dialog or drawer over the tab opens or closes to match. One that
+    // refuses to close (an editor open on top of a manager) keeps its value
+    // in the URL.
+    restoreOverlays(loc.params);
+    const shown = withOverlays(current(stack));
+    if (!locEquals(shown, current(stack))) correct(shown);
   } finally {
     applying = false;
   }
+}
+
+// withOverlays is `loc` with the overlays on screen now (overlay-routes.js)
+// in place of whatever overlay params it carried: an overlay stays in the URL
+// across the tab navigation it sits over.
+function withOverlays(loc) {
+  const params = { ...(loc.params || {}) };
+  for (const key of OVERLAY_PARAMS) delete params[key];
+  return normalizeLocation({ ...loc, params: { ...params, ...overlayParams() } });
+}
+
+// steppingBack holds the navigations recorded while an overlay close's
+// history.back() is on its way (it lands asynchronously, as a popstate): a
+// push made meanwhile would be undone by the traversal, so it waits for it.
+let steppingBack = null;
+
+// onOverlay records an overlay opening as a history step, and a change of
+// what it shows (another message in the reader) in place. A close that
+// leaves exactly the entry before this one is a step back, so the close and
+// Back are one gesture rather than two entries; any other close rewrites
+// the current entry.
+function onOverlay(event) {
+  if (!ready || applying) return;
+  const loc = withOverlays(current(stack));
+  if (locEquals(loc, current(stack))) return;
+  if (event?.detail?.replace) { correct(loc); return; }
+  if (!event?.detail?.closed) { record(loc); return; }
+  if (!steppingBack && stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) {
+    steppingBack = [];
+    history.back();
+    // Should the traversal never arrive, stop holding navigations.
+    setTimeout(() => { if (steppingBack) flushSteppingBack(); }, 1000);
+    return;
+  }
+  correct(loc);
+}
+
+function flushSteppingBack() {
+  const queued = steppingBack || [];
+  steppingBack = null;
+  for (const loc of queued) record(withOverlays(loc));
 }
 
 // preservedQuery is the view-state query carried across a path push. Theme is
@@ -384,6 +435,7 @@ function urlFor(loc) {
 // repeated clicks and passive re-renders never grow history (AC #4).
 function record(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
+  if (steppingBack) { steppingBack.push(loc); return; }
   const before = stack;
   stack = push(stack, loc);
   if (stack === before) return; // duplicate — no new entry
@@ -421,7 +473,7 @@ function correct(loc) {
 function recordCurrentLocation(event) {
   if (!ready) return;
   const announced = event?.detail?.location;
-  const loc = announced ? normalizeLocation(announced) : activeLocationFromDOM();
+  const loc = withOverlays(announced ? normalizeLocation(announced) : activeLocationFromDOM());
   if (event?.detail?.correction) { correct(loc); return; }
   if (applying) return;
   record(loc);
@@ -436,7 +488,7 @@ function recordCurrentLocation(event) {
 // A non-routable active tab (Vegas) is left alone.
 function reconcileLocation() {
   if (!ready || applying) return;
-  const loc = activeLocationFromDOM();
+  const loc = withOverlays(activeLocationFromDOM());
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   if (locEquals(loc, current(stack)) && locationAvailable(current(stack))) return; // no drift
   // Reconcile ONLY an involuntary re-location: the entry we're on points at a
@@ -465,6 +517,13 @@ function onPopstate(e) {
   const loc = fromPath(window.location.pathname, window.location.search);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
+  // Our own step back off a closed overlay: the screen already shows this
+  // entry (or whatever was navigated to since, which is recorded now).
+  if (steppingBack) {
+    history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
+    flushSteppingBack();
+    return;
+  }
   // Stale target: a popped tab may have been hidden while it sat in the
   // back-stack (e.g. terminals closed while you were on another tab), so
   // activating it would strand the user on a blank hidden section. Fall back to
@@ -557,6 +616,9 @@ export function initNavHistory() {
     if (isModifiedClick(e)) return;
     recordCurrentLocation();
   });
+
+  // A library manager or the notification reader opened or closed.
+  document.addEventListener(OVERLAY_EVENT, onOverlay);
 
   window.addEventListener('popstate', onPopstate);
 

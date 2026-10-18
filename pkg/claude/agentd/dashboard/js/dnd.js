@@ -486,8 +486,10 @@ function bindDnd() {
     // stuck spawn. This branch precedes the retire branch below because a
     // pending row is not a real agent and must never take the retire path.
     if (sourcePending) {
-      if (!targetRetired || ctx.node) return; // inert everywhere else (see dndInertOnto)
+      if (!targetRetired) return; // inert everywhere else (see dndInertOnto)
       if (payload.queuedId) {
+        // A queued spawn is the page's (queued-spawns.js).
+        if (ctx.node) return;
         // Same confirm + DELETE as the row's trash button; it refreshes on
         // success, so only a cancel or failure needs the reconcile here.
         if (!await discardQueuedSpawn({ id: payload.queuedId, group: payload.queuedGroup, draft: { name: payload.label } })) await refresh();

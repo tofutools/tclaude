@@ -98,6 +98,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
   'add-member': ['feature:local_dashboard'],
+  // A subgroup, through the regular create dialog on the group's node.
+  'create-subgroup': ['feature:groups.create'],
+  // A pending spawn's 🗑, on the group it is pending in.
+  'delete-pending': ['feature:local_dashboard'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -175,6 +179,9 @@ export const AGENT_GRANT_ACTS = Object.freeze({
 // turns the sandbox off takes unrestricted trust, and of "Send elsewhere"
 // only a move brings another node's agent here (which retires it there).
 const STOP_AND_RESUME = Object.freeze(['groups.members.stop', 'groups.members.resume']);
+// PULL_GRANTS are what a peer must grant on its agent for this node to bring
+// it here: a move, a teleport or a clone all go through its move route.
+export const PULL_GRANTS = Object.freeze(['agent.move', 'groups.members.retire']);
 export const AGENT_GRANT_VARIANTS = Object.freeze({
   'dot-toggle': Object.freeze([
     ['[data-online="1"]', (d) => d.online === '1', ['groups.members.stop']],
@@ -185,7 +192,7 @@ export const AGENT_GRANT_VARIANTS = Object.freeze({
     [':not([data-action="restore"])', (d) => d.action !== 'restore', [...STOP_AND_RESUME, 'feature:agents.manage.full']],
   ]),
   'send-elsewhere': Object.freeze([
-    ['[data-mode="move"]', (d) => d.mode === 'move', ['agent.move', 'groups.members.retire']],
+    ['[data-mode="move"]', (d) => d.mode === 'move', PULL_GRANTS],
   ]),
 });
 
@@ -200,6 +207,15 @@ function agentNeedHeld(need, agent, peerView) {
   return need.every((slug) => (slug.startsWith('feature:')
     ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
     : held.includes(slug)));
+}
+
+// missingPullGrants names the PULL_GRANTS a peer withholds on its agent;
+// without the peer's metadata nothing is known, so nothing is reported. A
+// peer that grants no agent controls omits peer_view.agents: none held, as
+// the ⚙ menu's move gating reads it.
+export function missingPullGrants(peerView, agent) {
+  if (!peerView || unrestricted(peerView)) return [];
+  return missingGrants(PULL_GRANTS, peerView.agents?.[agent] || [], peerView);
 }
 
 // agentGrantHeld reports whether the peer lets an agent control act on agent
@@ -539,8 +555,11 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 // really runs: the view-only ones, the terminal attach, the granted ones
 // (grantSelectors) and the PEER_ACTS the peer shares. The
 // greying below is built from it, so it can never disagree with the guard.
-export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
-  if (unrestricted(peerView)) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
+// fused: the fused Groups view, whose guard (fleet-merged-island.js) runs
+// only the tables' controls on another node, unrestricted or not; a peer's
+// own page runs every control there under unrestricted trust.
+export function usableActSelectors(peerView, extra = [], groupName = (g) => g, { fused = false } = {}) {
+  if (unrestricted(peerView) && !fused) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   out.push(...grantSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';

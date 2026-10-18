@@ -79,7 +79,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(`class="spawn-btn"`, "the group spawn button carries the .spawn-btn primary-CTA skin")
 	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
 	must(`class="subgroup-ico"`, "the subgroup button carries a portable two-person-plus icon")
-	must(`openGroupCreateModal(undefined, group)`, "the subgroup shortcut opens group create pinned to its parent")
+	must(`openGroupCreateModal(undefined, group, node)`, "the subgroup shortcut opens group create pinned to its parent")
 	must(`labelledby="group-create-title"
     onClose=${state.close}
     onSubmitHotkey=${submit}`,

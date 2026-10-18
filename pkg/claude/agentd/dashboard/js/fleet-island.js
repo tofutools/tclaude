@@ -11,6 +11,8 @@ import { shortFingerprint, shortID } from './fleet-admin-model.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './fleet-state.js';
 import { requestFleetPage } from './fleet-move-drop.js';
+import { fleetAdminLocation } from './fleet-admin-page.js';
+import { isModifiedClick } from './helpers.js';
 import { toPath } from './nav-history-core.js';
 
 const html = htm.bind(h);
@@ -419,12 +421,18 @@ function CardRows({ card, node, onUpdate }) {
 // so its own trust level is never shown as a bare "unrestricted peer" badge.
 // Your side links to where it is set: the trust level in Fleet config →
 // Peers, and while restricted the grants that say what the peer may use.
+// configHref is the address of a Fleet config section, for the map's
+// shortcuts to it.
+function configHref(page, target = '') {
+  return toPath(fleetAdminLocation(page, target));
+}
+
 function TrustRows({ node, card, selfName, onConfigure }) {
   const link = linkView(selfName, node, card);
   const theirs = link.out.level;
   const restricted = link.in.level !== 'unrestricted';
   return html`<dl class="fleet-card-body fleet-card-trust">
-    <dt>You trust it</dt><dd><span class=${`fleet-trust ${link.in.level}`} title=${`What ${node.name} may do on ${selfName}. You set this in Fleet config.`}>${restricted ? 'restricted' : '⚠ unrestricted'}</span>${onConfigure && html`<span class="fleet-card-acts">${restricted && html`<button type="button" class="fleet-chip-link" data-fleet="grants" title=${`Edit what ${node.name} may use on ${selfName} (Fleet config → Peer grants)`} onClick=${onConfigure('grants', node.id)}>grants…</button>`}<button type="button" class="fleet-chip-link" data-fleet="trust-level" title=${`Change how ${selfName} trusts ${node.name} (Fleet config → Peers)`} onClick=${onConfigure('peers')}>trust…</button></span>`}</dd>
+    <dt>You trust it</dt><dd><span class=${`fleet-trust ${link.in.level}`} title=${`What ${node.name} may do on ${selfName}. You set this in Fleet config.`}>${restricted ? 'restricted' : '⚠ unrestricted'}</span>${onConfigure && html`<span class="fleet-card-acts">${restricted && html`<a class="fleet-chip-link" data-fleet="grants" href=${configHref('grants', node.id)} title=${`Edit what ${node.name} may use on ${selfName} (Fleet config → Peer grants)`} onClick=${onConfigure('grants', node.id)}>grants…</a>`}<a class="fleet-chip-link" data-fleet="trust-level" href=${configHref('peers')} title=${`Change how ${selfName} trusts ${node.name} (Fleet config → Peers)`} onClick=${onConfigure('peers')}>trust…</a></span>`}</dd>
     <dt>It trusts you</dt><dd class=${`fleet-trust ${theirs || 'unknown'}`} title=${`What ${selfName} may do on ${node.name}. ${node.name}'s operator sets this.`}>${theirs || 'not reported'}</dd>
   </dl>`;
 }
@@ -460,7 +468,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, 
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
       <span class="fleet-card-kind">${kind}</span>${node.partTime && html`<span class="fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
       <span class=${`fleet-card-presence ${asleep ? 'asleep' : card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span>
-      ${onConfigure && html`<button type="button" class="fleet-card-cfg" data-fleet="node-config" aria-label=${node.local ? 'This node in Fleet config' : `${node.name} in Fleet config`} title=${node.local ? 'Fleet config' : `${node.name} in Fleet config → Peers`} onClick=${onConfigure(node.local ? '' : 'peers')}>⚙</button>`}</div>
+      ${onConfigure && html`<a class="fleet-card-cfg" data-fleet="node-config" href=${configHref(node.local ? '' : 'peers')} aria-label=${node.local ? 'This node in Fleet config' : `${node.name} in Fleet config`} title=${node.local ? 'Fleet config' : `${node.name} in Fleet config → Peers`} onClick=${onConfigure(node.local ? '' : 'peers')}>⚙</a>`}</div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
     ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} onConfigure=${onConfigure} />`}
     ${!node.local && onOfflineAlerts && html`<${OfflineAlertsRow} node=${node} onOfflineAlerts=${onOfflineAlerts} />`}
@@ -487,7 +495,7 @@ function HubCard({ hub, now, admin, onConfigure }) {
       ${hub.since != null && html`<dt>${connected ? 'Up' : 'Since'}</dt><dd>${fmtAge(Math.max(0, now - hub.since))}</dd>`}
     </dl>
     ${onConfigure && html`<div class="fleet-card-hub-admin">${admin === true ? html`<span class="fleet-hub-admin yes">★ hub admin</span>` : admin === false ? html`<span class="muted">not a hub admin</span>` : ''}
-      <button type="button" class="fleet-chip-link" data-fleet="hub-config" title="Fleet config → Hub" onClick=${onConfigure('hub')}>${admin === true ? 'Manage hub…' : 'Hub page…'}</button></div>`}
+      <a class="fleet-chip-link" data-fleet="hub-config" href=${configHref('hub')} title="Fleet config → Hub" onClick=${onConfigure('hub')}>${admin === true ? 'Manage hub…' : 'Hub page…'}</a></div>`}
   </article>`;
 }
 
@@ -512,7 +520,7 @@ function LinkBadge({ link, at, open, onToggle, onConfigure }) {
     </button>
     ${open && html`<div class="fleet-link-pop" role="dialog" aria-label=${`Trust between ${link.in.from} and ${link.in.to}`}>
       <div class="fleet-link-pop-head">${link.asymmetric ? '⇄ Asymmetric link: each side trusts the other differently' : `Trust between ${link.in.from} and ${link.in.to}`}</div>
-      <p>${tag(link.in.level)} ${sentence(link.in, true)} You set this. <button type="button" class="fleet-link-act" onClick=${onConfigure}>Change in Fleet config…</button></p>
+      <p>${tag(link.in.level)} ${sentence(link.in, true)} You set this. <a class="fleet-link-act" href=${configHref('peers')} onClick=${onConfigure}>Change in Fleet config…</a></p>
       <p>${tag(link.out.level)} ${sentence(link.out, false)}${link.out.level ? ` ${link.out.to}'s operator set this.` : ''}${link.out.hidden.length > 0 ? html` <span class="muted">Hidden from you: ${link.out.hidden.join(', ')}.</span>` : ''}</p>
     </div>`}
   </span>`;
@@ -871,8 +879,14 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   // configure opens a Fleet config section ('' = its landing page), with
   // the peer a section should open on. A peer view reaches Fleet config only
   // through a page load home, which drops the section, so it shows no links.
-  const configure = remote ? undefined : (page, target = '') => () => { setLinkOpen(''); if (page) requestFleetPage(page, target); navigate('fleet-admin'); };
-  const configurePeers = configure ? configure('peers') : () => { setLinkOpen(''); navigate('fleet-admin'); };
+  // Each is a real link (configLink) so a modified or middle click opens the
+  // section in a new browser tab; a plain click switches in place.
+  const configure = remote ? undefined : (page, target = '') => (e) => {
+    if (e && isModifiedClick(e)) return;
+    e?.preventDefault?.();
+    setLinkOpen(''); if (page) requestFleetPage(page, target); navigate('fleet-admin');
+  };
+  const configurePeers = configure ? configure('peers') : (e) => { e?.preventDefault?.(); setLinkOpen(''); navigate('fleet-admin'); };
   const asking = strangers.filter((s) => s.request).length;
   const hubState = fleet.hub.state;
   const pct = Math.round(zoom.view.s * 100);

@@ -508,12 +508,12 @@ export async function handleRowAction(action) {
           okLabel: 'Delete',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/pending/delete/${encodeURIComponent(label)}`, {
+        const r = await api(`/api/pending/delete/${encodeURIComponent(label)}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
         toast(`deleted pending spawn: ${label}`);
-        refresh();
+        changed();
         return;
       }
       case 'term-dir': {
@@ -682,8 +682,9 @@ export async function handleRowAction(action) {
         return;
       }
       case 'create-subgroup': {
-        // Reuse the standard group form, pinned to this group as parent.
-        openGroupCreateModal(undefined, group);
+        // Reuse the standard group form, pinned to this group as parent,
+        // on the group's node.
+        openGroupCreateModal(undefined, group, node);
         return;
       }
       case 'send-elsewhere': {
