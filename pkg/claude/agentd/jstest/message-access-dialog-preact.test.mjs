@@ -580,7 +580,10 @@ test("a restricted peer's group gets the regular dialog: what it withholds is lo
   const sent = [];
   const actions = {
     sendMessage: async () => { throw new Error('a restricted peer refuses a group send'); },
-    sendDirectMessages: async (recipients, message, node) => { sent.push([recipients, message, node]); },
+    sendDirectMessages: async (recipients, message, node) => {
+      sent.push([recipients, message, node]);
+      return { sent: 1, failed: sent.length === 1 ? [{ to: 'agt_bob', error: 'not shared' }] : [] };
+    },
   };
   const peer = { ...snapshot({ members: [member('ada'), member('bob')] }), peer_view: { level: 'restricted', included: ['messaging'] } };
   const { host, mounted } = await mountDialogs(harness, state, actions, peer);
@@ -593,6 +596,12 @@ test("a restricted peer's group gets the regular dialog: what it withholds is lo
   await harness.act(() => host.querySelector('#message-create-submit').click());
   await harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.deepEqual(sent, [[['agt_ada', 'agt_bob'], { subject: '', body: 'status?' }, '']]);
+  // A refusal keeps the draft, ticked for exactly the member it missed.
+  assert.match(host.querySelector('#message-create-error').textContent, /bob: not shared/);
+  assert.equal(host.querySelector('#message-create-body').value, 'status?');
+  await harness.act(() => host.querySelector('#message-create-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(sent[1][0], ['agt_bob'], 'the retry reaches only who was refused');
   assert.equal(host.querySelector('#message-create-modal'), null, 'sent and closed');
   await mounted.unmount();
 });

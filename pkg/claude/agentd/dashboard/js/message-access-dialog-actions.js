@@ -98,13 +98,13 @@ export function createMessageAccessDialogActions({
           body: JSON.stringify({ to, subject, body }),
         });
       } catch (cause) {
-        failed.push(`${to}: ${cause?.message || cause}`);
+        failed.push({ to, error: cause?.message || String(cause) });
       }
     }
     announceNodeChanged(node);
     const sent = recipients.length - failed.length;
-    if (!sent) throw new Error(failed.join('; ') || 'nothing sent');
-    notify(`message saved for ${sent} recipient${sent === 1 ? '' : 's'}${failed.length ? `; ${failed.length} refused (${failed.join('; ')})` : ''}`, failed.length > 0);
+    // The dialog shows what was refused and keeps the draft for a retry.
+    if (sent) notify(`message saved for ${sent} recipient${sent === 1 ? '' : 's'}${failed.length ? `; ${failed.length} refused` : ''}`, failed.length > 0);
     return { sent, failed };
   }
 

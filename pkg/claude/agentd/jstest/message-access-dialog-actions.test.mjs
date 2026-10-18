@@ -254,6 +254,7 @@ test('direct messages go one per recipient to the node, and a partial refusal is
   const result = await actions.sendDirectMessages(['agt_ada', 'agt_bob'], { body: 'hi' }, '');
   assert.deepEqual(sent, [['/api/operator-message', 'agt_ada'], ['/api/operator-message', 'agt_bob']]);
   assert.equal(result.sent, 1);
-  assert.match(notes[0][0], /message saved for 1 recipient; 1 refused \(agt_bob: not shared\)/);
+  assert.deepEqual(result.failed, [{ to: 'agt_bob', error: 'not shared' }]);
+  assert.match(notes[0][0], /message saved for 1 recipient; 1 refused/);
   assert.equal(notes[0][1], true);
 });

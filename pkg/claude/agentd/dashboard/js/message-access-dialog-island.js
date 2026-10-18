@@ -25,6 +25,8 @@ function Words({ plain, wizard }) {
 
 function errorText(error) { return error?.message || String(error); }
 
+const SAFE_AGENT_ID = /^agt_[A-Za-z0-9]{1,64}$/;
+
 function memberSelectionKeys(member) {
   return [...new Set([member.agent_id, member.conv_id, member.key].filter(Boolean))];
 }
@@ -361,12 +363,23 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     }
     if (restricted) {
       if (!scopedGroup && target.mode === 'group') { setError(lock.group); return; }
-      const recipients = scopedGroup ? selectedMembers.map((member) => member.agent_id || member.conv_id) : [to];
+      // The peer's route takes an agent ID only.
+      const agentID = (value) => (SAFE_AGENT_ID.test(value) ? value : (snapshot?.agents || [])
+        .find((agent) => agent.title === value || agent.conv_id === value)?.agent_id || '');
+      const recipients = scopedGroup ? selectedMembers.map((member) => member.agent_id).filter((id) => SAFE_AGENT_ID.test(id || '')) : [agentID(to)].filter(Boolean);
+      if (!recipients.length) { setError(scopedGroup ? 'None of the ticked members has an agent ID the peer can address.' : 'Pick the agent with 🔍: the peer addresses it by its agent ID.'); return; }
+      const skipped = scopedGroup ? selectedMembers.length - recipients.length : 0;
       busyRef.current = true;
       setBusy(true);
       try {
-        await actions.sendDirectMessages(recipients, { subject: subject.trim(), body }, descriptor.node || '');
-        state.close();
+        const { failed } = await actions.sendDirectMessages(recipients, { subject: subject.trim(), body }, descriptor.node || '');
+        if (!failed.length && !skipped) { state.close(); return; }
+        // Keep the draft, ticked for exactly the members it did not reach.
+        if (scopedGroup) { setSelected(new Set(failed.map((item) => item.to))); setCustomized(true); }
+        setError([
+          ...failed.map((item) => `${members.find((member) => member.agent_id === item.to)?.title || item.to}: ${item.error}`),
+          ...(skipped ? [`${skipped} member${skipped === 1 ? '' : 's'} without an agent ID skipped`] : []),
+        ].join('; '));
       } catch (cause) { setError(errorText(cause)); }
       finally { busyRef.current = false; setBusy(false); }
       return;
