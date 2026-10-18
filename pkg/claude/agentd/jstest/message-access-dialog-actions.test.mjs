@@ -258,3 +258,14 @@ test('direct messages go one per recipient to the node, and a partial refusal is
   assert.match(notes[0][0], /message saved for 1 recipient; 1 refused/);
   assert.equal(notes[0][1], true);
 });
+
+test('a message to another node\'s agent goes through that node, text only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  const calls = [];
+  const handle = async (url, options) => { calls.push({ url, options }); return response(200, { id: 8 }); };
+  const actions = createMessageAccessDialogActions({ fetchImpl: handle, uploadTransport: handle });
+  await actions.sendOperatorMessage(Object.freeze({ to: 'agt_builder1', subject: 's', body: 'hi', files: Object.freeze([]), node: 'inst_forge' }));
+  assert.deepEqual(calls.map((call) => call.url), ['/api/peer/inst_forge/operator-message']);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { to: 'agt_builder1', subject: 's', body: 'hi' });
+});

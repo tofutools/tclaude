@@ -45,6 +45,13 @@ export function createMessageAccessDialogActions({
   }
 
   async function sendOperatorMessage(draft) {
+    // Another node's agent: that node's operator-message route, text only.
+    if (draft.node) {
+      return requestJSON(on(draft.node), '/api/operator-message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: draft.to, subject: draft.subject, body: draft.body }),
+      });
+    }
     const attachmentToken = await uploadOperatorAttachments(draft.files);
     return requestJSON(fetchImpl, '/api/operator-message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

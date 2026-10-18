@@ -65,15 +65,25 @@ export function tabDragStartedOnClose(target) {
   return Boolean(target?.closest?.('.mux-tab-close'));
 }
 
+// composeTarget is who Ctrl/Cmd+M messages from a pane: its agent, or a
+// peer pane's agent on that peer (seed.remote), sent through that node.
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
+  const remote = pane.seed.remote;
   return Object.freeze({
     ...seed,
+    ...(!seed.agent && remote?.agent ? { agent: remote.agent, node: remote.peer, nodeName: remote.peerLabel || '' } : {}),
     // activatePane refits and focuses the opaque xterm widget. If this exact
     // pane closed while the composer was open, activation safely returns false.
     restoreFocus: () => actions.activatePane(pane.key),
   });
 }
+
+// composeAgent is the agent a pane's Ctrl/Cmd+M messages, or ''.
+function composeAgent(pane) {
+  return pane?.seed?.agent || (SAFE_REMOTE_AGENT.test(pane?.seed?.remote?.agent || '') ? pane.seed.remote.agent : '');
+}
+const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
 // While a terminal drag is in flight, follow the pointer so the surface can say
 // "release here and this terminal leaves" before the user commits. The same
@@ -287,7 +297,7 @@ function TerminalPane({
   // dashboard — the mirror image of dragging a dashboard tab out of the strip.
   const reattachArmed = useDragOutArmed(solo && dragging, headerRef);
   const theme = useTerminalThemeState();
-  const composeMessage = pane.seed.agent && onComposeMessage
+  const composeMessage = composeAgent(pane) && onComposeMessage
     ? () => onComposeMessage(composeTarget(pane, actions))
     : null;
   const startTitleDrag = (event) => {
@@ -1566,7 +1576,7 @@ function TerminalTabs({
         tabActive: solo || document.getElementById('tab-terminals')?.classList.contains('active'),
         operatorModalOpen: dialogKind === 'operator-message',
         blockingOverlayOpen: hasShownOverlay(),
-        eligiblePane: Boolean(pane?.seed?.agent),
+        eligiblePane: Boolean(composeAgent(pane)),
       });
       if (action === 'ignore') return;
       event.preventDefault();

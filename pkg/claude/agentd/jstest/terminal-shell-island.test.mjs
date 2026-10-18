@@ -939,3 +939,27 @@ test('closing the last terminal moves to Groups unless configured to stay', asyn
   assert.equal(corrections.length, 1);
   cleanup();
 });
+
+test('Ctrl/Cmd+M on a peer agent\'s terminal messages that agent on its node', async (t) => {
+  const harness = await createPreactHarness(t);
+  installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const composed = [];
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory, confirm: async () => true, fetchImpl: async () => ({ ok: true }),
+    onComposeMessage: (seed) => composed.push(seed),
+  });
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/peer', key: 'peer', label: 'builder', initialRetry: true, remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_builder1' } });
+    await Promise.resolve();
+  });
+  assert.equal(typeof fake.widgets[0].options.onComposeMessage, 'function', 'a peer agent\'s pane takes the shortcut');
+  fake.widgets[0].options.onComposeMessage();
+  assert.deepEqual(
+    (({ agent, node, nodeName, label }) => ({ agent, node, nodeName, label }))(composed[0]),
+    { agent: 'agt_builder1', node: 'inst_forge', nodeName: 'forge', label: 'builder' },
+  );
+  await harness.act(() => cleanup());
+});
