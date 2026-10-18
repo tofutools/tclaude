@@ -282,8 +282,8 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   harness.window.HTMLElement.prototype.scrollIntoView = () => {};
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${AgentSpawnApp} state=${state} actions=${actions} confirmDiscard=${async () => true} notify=${() => {}} />`, host);
-  const open = async () => {
-    state.open({ groupName: 'build', remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options, catalogs, peerFetch, snapshot: { groups: [{ name: 'build' }], harnesses } } });
+  const open = async (extra = {}) => {
+    state.open({ groupName: 'build', ...extra, remote: { node: 'forge', nodeId: 'inst_forge', group: 'build', api, options, catalogs, peerFetch, snapshot: { groups: [{ name: 'build' }], harnesses } } });
     await flush(harness);
     await harness.act(() => new Promise((r) => setTimeout(r, 400)));
     await flush(harness);
@@ -339,6 +339,23 @@ test('a peer that lends its catalogs pre-fills the dialog with what it applies, 
   await pick('#agent-spawn-init-msg', 'go', 'input');
   await submit();
   assert.deepEqual(sent.pop(), { brief: 'go', name: 'w', profile: 'reviewer' });
+
+  // A palette or dock open naming a profile picks it as the operator would:
+  // the request names it.
+  await open({ chosenProfile: 'reviewer' });
+  assert.equal(val('#agent-spawn-load-profile'), 'reviewer');
+  assert.equal(val('#agent-spawn-model'), 'opus');
+  await pick('#agent-spawn-name', 'w', 'input');
+  await pick('#agent-spawn-init-msg', 'go', 'input');
+  await submit();
+  assert.deepEqual(sent.pop(), { brief: 'go', name: 'w', profile: 'reviewer' }, 'a chosen profile reaches the peer');
+  // One the grant does not let this operator pick leaves the peer's pre-fill.
+  await open({ chosenProfile: 'house' });
+  assert.equal(val('#agent-spawn-load-profile'), 'house');
+  await pick('#agent-spawn-name', 'w', 'input');
+  await pick('#agent-spawn-init-msg', 'go', 'input');
+  await submit();
+  assert.deepEqual(sent.pop(), { brief: 'go', name: 'w' }, 'an unpickable choice sends nothing');
 
   // A local profile fills only what the request carries.
   await open();

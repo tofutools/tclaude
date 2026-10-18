@@ -673,6 +673,22 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     }));
   };
   const changeProfile = (handle) => (remote ? changeRemoteProfile(handle) : changeLocalProfile(handle));
+  // A remote spawn opened with a chosen profile (a palette or dock open on a
+  // peer) picks it once the peer's profiles load, as the operator would: the
+  // request then names it. One the grant does not let this operator pick
+  // stays unpicked; the peer's pre-fill stands.
+  const chosenRemote = useRef(remote ? current.options.chosenProfile : '');
+  useEffect(() => {
+    const handle = chosenRemote.current;
+    if (!handle || !profiles.length) return;
+    chosenRemote.current = '';
+    const profile = findSpawnProfile(profiles, handle);
+    if (!profile?.remoteSelectable || isLocalRef(profile.name)) return;
+    changeRemoteProfile(profile.name);
+    const harness = profile.harness || draftRef.current.harness;
+    if (current.options.fastMode && remote.options.overrides?.features
+      && spawnCapabilityView({ ...draftRef.current, harness }, context).showFastMode) update('fastMode', '1');
+  }, [profiles]);
   // The settings a remote request names: those the operator set, less a role
   // set or sandbox profile they changed and then put back as the peer has it.
   const remoteExplicit = (value) => [...operatorSet.current].filter((key) => !['roleRefs', 'sandboxProfile'].includes(key)

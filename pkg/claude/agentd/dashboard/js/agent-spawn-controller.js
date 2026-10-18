@@ -26,7 +26,8 @@ export function openAgentSpawnModal(options = {}) {
     const snapshot = dashboardState.snapshot.value;
     if (nodeMode(page.id, snapshot)) return requireController().open({ ...options, target: { node: page.id, nodeId: page.id, name: node, snapshot } });
     const fallback = (snapshot?.groups || []).some((g) => g?.name === options?.defaultGroup) ? options.defaultGroup : '';
-    return openRemoteAgentSpawn({ nodeId: page.id, groupName: options?.groupName || fallback, node, snapshot });
+    return openRemoteAgentSpawn({ nodeId: page.id, groupName: options?.groupName || fallback, node, snapshot,
+      profileName: options?.profileName, role: options?.role, fastMode: options?.fastMode });
   }
   return requireController().open(options);
 }
@@ -41,14 +42,16 @@ function nodeMode(nodeId, snapshot) {
 // openRemoteAgentSpawn opens the regular spawn dialog against a peer's group,
 // addressed through /api/peer/{nodeId}/ (which a per-node peer view leaves
 // local). It reads the peer's allowances first, so the dialog opens locked.
-export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, snapshot = null, toast = shellToast, prepare = prepareRemoteSpawn } = {}) {
+// profileName, role and fastMode are what the opener chose (a palette or dock
+// spawn), as for a local spawn.
+export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, snapshot = null, profileName = '', role = '', fastMode = false, toast = shellToast, prepare = prepareRemoteSpawn } = {}) {
   if (!groupName) {
     toast('Pick a group on the peer to spawn into (its ＋ button)', true);
     return null;
   }
   if (nodeMode(nodeId, snapshot)) {
     const self = nodeId === selfNodeID();
-    return requireController().open({ groupName, target: { node: nodeId, nodeId: self ? '' : nodeId, name: node, snapshot } });
+    return requireController().open({ groupName, profileName, role, fastMode, target: { node: nodeId, nodeId: self ? '' : nodeId, name: node, snapshot } });
   }
   let remote;
   try {
@@ -59,7 +62,10 @@ export async function openRemoteAgentSpawn({ nodeId = '', node = '', groupName, 
   }
   // The grant's pinned profile is the peer's default for this requester: it
   // outranks the group's default profile, as on the peer.
-  return requireController().open({ groupName, remote, profileName: remote.options?.defaults?.profile || '' });
+  // A chosen profile is the operator's pick (the dialog applies it as one, so
+  // the request names it); a pin leaves nothing to choose.
+  const pin = remote.options?.defaults?.profile || '';
+  return requireController().open({ groupName, remote, role, fastMode, profileName: pin, chosenProfile: pin ? '' : profileName });
 }
 
 export function refreshAgentSpawnSandboxPolicy() {
