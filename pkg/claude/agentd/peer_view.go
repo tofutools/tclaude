@@ -147,6 +147,8 @@ func peerViewRules() map[string]peerViewRule {
 		}
 		rules[pattern] = rule
 	}
+	// Restricted peers list what their terminal and shell grants open.
+	rules["/api/background-terminals"] = peerViewRule{feature: "background_terminals", requires: PermSessionsShell, group: true, serve: servePeerBackgroundTerminals}
 	rules["GET /api/snapshot"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerSnapshot}
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}

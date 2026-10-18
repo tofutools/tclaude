@@ -516,9 +516,13 @@ the session as a normal tab, and `Attach all` opens every one. The counter
 always lists this node's sessions, also in a peer's per-node view. A fused
 view, or a peer's per-node view, adds the shown peers' unattached agents
 and tclaude shells (agent and group shells) under each peer's node pill, by
-kind (an unrestricted peer serves that listing). `Attach` opens a peer's
+kind. An unrestricted peer lists everything; a restricted one lists only what
+its grants open from here, which is the shells of groups granting
+`sessions.shell` and the agents of groups granting `sessions.watch` or
+`sessions.attach`, none of them killable. `Attach` opens a peer's
 agent as a remote terminal, and a peer's shell as a remote shell (below).
-A peer's shell can also be ended from here (`Kill`, through the peer). Only a
+Under unrestricted trust a peer's shell can also be ended from here (`Kill`,
+through the peer). Only a
 shell from before shells were filed under their group keeps a locked
 `Attach`.
 

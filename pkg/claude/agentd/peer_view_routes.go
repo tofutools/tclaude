@@ -77,7 +77,6 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/sessions",
 	"/api/agent-generations/",
 	"/api/agent-windows",
-	"/api/background-terminals",
 	"/api/background-terminals/kill",
 	"/api/agents/",
 	"/api/audit",

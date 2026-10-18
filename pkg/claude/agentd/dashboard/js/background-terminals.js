@@ -66,10 +66,12 @@ export function backgroundPeers(view, remote = '') {
 export const PEER_SHELL_ATTACH = "This shell predates group shells: attach it on that node";
 
 // peerBackgroundRows keeps the peer's agents (the rows a remote terminal can
-// open) and its tclaude shells, each tagged with its node. A peer lists its
-// background terminals only under unrestricted trust, which holds
-// sessions.shell, so its shells attach over the federation terminal stream
-// (remote-terminal.js openRemoteShell) when they name their group.
+// open) and its tclaude shells, each tagged with its node. A peer lists only
+// what its grants open from here (peer_background_terminals.go): every row
+// under unrestricted trust, otherwise the shells of groups granting
+// sessions.shell and the agents of groups granting a terminal. Its shells
+// attach over the federation terminal stream (remote-terminal.js
+// openRemoteShell) when they name their group.
 export function peerBackgroundRows(rows, peer) {
   const node = { id: peer.id, name: peer.name, color: peer.color };
   return (rows || []).flatMap((row) => {
