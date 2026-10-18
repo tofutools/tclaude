@@ -41,8 +41,9 @@ import { registerFusedMailRoute, senderOnline } from './mail-bridge.js';
 import { fromPath, locEquals, normalizeLocation, toPath, toQuery, withoutOverlays } from './nav-history-core.js';
 import {
   FUSED_FOLDERS, PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderMatches, folderURL, mergeMessages, mergeRequests,
-  mergedDepth, mergedPages, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
+  messageKey, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
 } from './fused-mail-model.js';
+import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, pageCount as mergedPageCount, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
 
 const html = htm.bind(h);
 
@@ -142,20 +143,18 @@ function rosterOptions(node, { inView, bq, toggles, limits, agentsOpen, expanded
 }
 
 // useFusedMail reads what the open folder needs from each node.
-function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, rosters, retired, fetchImpl, localFetch, timers, now, snapshot, remote, reload }) {
+function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursors, rosters, retired, fetchImpl, localFetch, timers, now, snapshot, remote, reload }) {
   const [entries, setEntries] = useState({});
   const ref = useRef(entries);
   ref.current = entries;
   const nodesKey = nodes.map((n) => `${n.id}:${n.online}:${n.level}`).join(',');
   const scopeKey = scoped.map((n) => n.id).join(',');
-  // A merged folder reads each node's newest messages down to the open page;
-  // a node folder, or a fused one narrowed to one node, reads the node's own
-  // page.
+  // A merged folder reads one page from each node below the page's cursor
+  // vector (fleet-pager.js); a node folder, or a fused one narrowed to one
+  // node, reads the node's own offset page.
   const merged = !folder.node && scoped.length > 1;
-  const depth = merged ? mergedDepth(page, pageSize) : pageSize;
-  const readPage = merged ? 1 : page;
   // sig names what a page shows; a page read for another folder is never shown.
-  const sig = `${folderKey(folder)}:${scopeKey}:${q}:${readPage}:${depth}:${retired}`;
+  const sig = `${folderKey(folder)}:${scopeKey}:${q}:${page}:${pageSize}:${merged ? cursorKey(cursors) : ''}:${retired}`;
   const rosterKey = JSON.stringify(rosters);
   useEffect(() => {
     if (!active || !nodes.length) return undefined;
@@ -216,11 +215,25 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, roster
             }
           }
           if (mode === 'page') {
-            const data = await readJSON(fetchFn, folderURL(node, folder.id, { q, page: readPage, size: depth, retired }));
+            // A node on an older build ignores before=; it is read to the
+            // depth the page needs and cut at the cursor client-side.
+            const legacy = merged && ref.current[node.id]?.legacy;
+            const before = merged ? cursors[node.id] || 0 : 0;
+            const read = (old) => readJSON(fetchFn, folderURL(node, folder.id, old
+              ? { q, page: 1, size: legacyDepth(page, pageSize), retired }
+              : { q, page: merged ? 1 : page, size: pageSize, retired, before }));
+            let data = await read(legacy);
+            let old = legacy;
+            if (merged && !legacy && data?.cursor_paging !== true) {
+              old = true;
+              if (before) data = await read(true);
+            }
             commit(node.id, {
+              legacy: merged ? old : ref.current[node.id]?.legacy,
               page: {
                 sig, messages: Array.isArray(data?.messages) ? data.messages : [], total: data?.total || 0,
                 totalUnfiltered: data?.total_unfiltered ?? data?.total ?? 0,
+                hasMore: !!data?.has_more, legacy: old,
               },
               status: null, at: now(),
             });
@@ -376,6 +389,9 @@ export function FusedMail({
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(initialPageSize);
+  // vectors are the merged folder's known cursor vectors, vectors[p - 1] for
+  // page p, for the folder, search and scope in view (fleet-pager.js).
+  const [vectors, setVectors] = useState(() => ({ key: '', list: [{}] }));
   const [selected, setSelected] = useState('');
   const [checked, setChecked] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -453,8 +469,24 @@ export function FusedMail({
   const scoped = scope ? nodes.filter((n) => n.id === scope) : nodes;
   const rosters = {};
   for (const n of nodes) rosters[n.id] = rosterOptions(n, { inView: scoped.includes(n), bq, toggles, limits, agentsOpen, expanded, memberLimits });
+  // A merged folder walks to the requested page one known vector at a time.
+  const vectorKey = `${resetKey}\n${pageSize}\n${toggles.retired}\n${scoped.map((n) => n.id).join(',')}`;
+  const known = vectors.key === vectorKey ? vectors.list : [{}];
+  const willMerge = !folder.node && scoped.length > 1;
+  const shown = willMerge ? walkTarget(page, known) : page;
   const { entries, sig, merged, localRequests } = useFusedMail({
-    active, nodes, scoped, folder, q, page, pageSize, rosters, retired: toggles.retired, fetchImpl, localFetch, timers, now, snapshot, remote, reload,
+    active, nodes, scoped, folder, q, page: shown, pageSize, cursors: known[shown - 1] || {}, rosters, retired: toggles.retired, fetchImpl, localFetch, timers, now, snapshot, remote, reload,
+  });
+  // Recorded after the render that merged it (set below, past the early
+  // returns, which hooks may not follow).
+  const pendingVector = useRef(null);
+  useEffect(() => {
+    const v = pendingVector.current;
+    if (!v) return;
+    setVectors((cur) => {
+      const list = cur.key === v.key ? cur.list : [{}];
+      return list.length === v.page ? { key: v.key, list: [...list, v.next] } : cur;
+    });
   });
   if (!current.fused) return null;
   if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
@@ -474,12 +506,34 @@ export function FusedMail({
     const list = pages[i]?.messages || [];
     return node.local ? list : list.map((m) => withPeerAttachments(node.id, m, !isHuman));
   };
-  const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pageMessages(node, i) })));
-  const pageCount = isAccess ? 1 : merged ? mergedPages(total, pageSize) : Math.max(1, Math.ceil(total / pageSize));
-  const rows = isAccess || !merged ? allRows : allRows.slice((page - 1) * pageSize, page * pageSize);
+  const kind = isHuman ? 'human' : 'agent';
+  const cursors = known[shown - 1] || {};
+  // A merged page: each node's stream below its cursor, merged newest head
+  // first. A node that failed or has not answered gives no rows and keeps its
+  // cursor, so its rows show once it does.
+  const mergedPage = merged && !isAccess ? mergeCursorPage(pageNodes.map((node, i) => {
+    const p = pages[i];
+    if (!p) return { node: node.id, rows: [], hasMore: false };
+    const list = pageMessages(node, i);
+    return p.legacy ? legacyStream(node.id, list, cursors[node.id], pageSize, p.total) : { node: node.id, rows: list, hasMore: p.hasMore };
+  }), pageSize, cursors) : null;
+  const nodeByID = Object.fromEntries(pageNodes.map((n) => [n.id, n]));
+  const allRows = isAccess ? requestRows : mergedPage
+    ? mergedPage.rows.map(({ node, row }) => ({ ...row, key: messageKey(node, kind, row.id), node: nodeByID[node], kind }))
+    : mergeMessages(pageNodes.map((node, i) => ({ node, kind, messages: pageMessages(node, i) })));
+  const pageCount = isAccess ? 1 : mergedPage
+    ? (mergedPage.more ? Math.max(mergedPageCount(total, pageSize), shown + 1) : shown)
+    : Math.max(1, Math.ceil(total / pageSize));
+  const rows = allRows;
   const item = rows.find((r) => r.key === selected) || null;
-  const deeper = merged && !isAccess && Math.ceil(total / pageSize) > pageCount;
   const loaded = pageNodes.every((n) => entries[n.id]?.status || (isAccess ? entries[n.id]?.at || n.local : entries[n.id]?.page?.sig === sig));
+  // An older node pages by depth, so its mail past LEGACY_MAX_DEPTH is only
+  // reachable on its own.
+  const deeper = !!mergedPage && pages.some((p) => p?.legacy && p.total > LEGACY_MAX_DEPTH);
+  // Once every node has answered this page, the merge yields the next page's
+  // cursor vector: record it so Next (and a walk to a deeper page) can read it.
+  pendingVector.current = mergedPage && loaded && mergedPage.more && known.length === shown
+    ? { key: vectorKey, page: shown, next: mergedPage.next } : null;
 
   const status = (n) => {
     const e = entries[n.id];
@@ -694,7 +748,7 @@ export function FusedMail({
               onSelect=${() => selectRow(m.key)} onDelete=${() => deleteRows([m])}
               canDelete=${deletable(m)} deleteTitle=${deletable(m) ? 'Delete this message' : `Only ${m.node.name}'s operator can delete its messages`} />`))}
       </div>
-      <${MailPager} id="fused-mail-pager" hidden=${isAccess || !totalUnfiltered} page=${page} pages=${pageCount} pageSize=${pageSize}
+      <${MailPager} id="fused-mail-pager" hidden=${isAccess || !totalUnfiltered} page=${shown} pages=${pageCount} pageSize=${pageSize}
         onPage=${(n) => { nav.current = 'push'; setPage(n); setSelected(''); }} onPageSize=${setPageSize}
         note=${deeper ? 'pick one node for older mail' : ''} />
     </div>

@@ -604,10 +604,23 @@ type mailboxPage struct {
 	PageSize        int
 	Total           int
 	TotalUnfiltered int
+	// HasMore reports rows older than this page. With a before cursor it is
+	// the only way to know whether the folder continues.
+	HasMore bool
+}
+
+// mailboxWindow is which slice of a folder to serve: a 1-based offset page,
+// or, when Before is set, the PageSize rows older than message id Before (a
+// keyset cursor). Fleet views page with the cursor: it stays stable while
+// new mail arrives and lets a client merge several nodes' folders without
+// re-reading every node down to the page it shows (see fleet-pager.js).
+type mailboxWindow struct {
+	Page, PageSize int
+	Before         int64
 }
 
 // handleDashboardMailbox serves
-// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&focus=&unread= — one
+// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&before=&focus=&unread= — one
 // newest-first page of the selected mailbox's messages, server-filtered
 // by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
@@ -626,11 +639,13 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	sender := strings.TrimSpace(r.URL.Query().Get("sender"))
 	page, pageSize := mailboxPageParams(r)
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	win := mailboxWindow{Page: page, PageSize: pageSize, Before: max(before, 0)}
 
 	if id == humanMailboxID {
 		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
 		unread := r.URL.Query().Get("unread") == "1"
-		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, page, pageSize, focus)
+		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, win, focus)
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -645,7 +660,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// operator opened it on purpose, so they see all of its mail. A
 		// lookup error fails the request (matches the roster handler)
 		// rather than silently falling open to the unfiltered firehose.
-		p, err := agentMailboxPage("", q, page, pageSize, !mailboxIncludeRetired(r))
+		p, err := agentMailboxPage("", q, win, !mailboxIncludeRetired(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -675,7 +690,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// current member's traffic and channel posts survive. A lookup error
 		// fails the request (matches the all branch) rather than silently
 		// falling open to the unfiltered group scope.
-		p, err := groupMailboxPage(g.ID, q, page, pageSize, !mailboxIncludeRetired(r))
+		p, err := groupMailboxPage(g.ID, q, win, !mailboxIncludeRetired(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -688,7 +703,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := agentMailboxPage(id, q, page, pageSize, false)
+	p, err := agentMailboxPage(id, q, win, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -718,6 +733,10 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 	head["page_size"] = p.PageSize
 	head["total"] = p.Total
 	head["total_unfiltered"] = p.TotalUnfiltered
+	head["has_more"] = p.HasMore
+	// Tells a fleet client this node honours before=<id>; an older node
+	// ignores it and serves the newest page instead.
+	head["cursor_paging"] = true
 	writeJSON(w, http.StatusOK, head)
 }
 
@@ -901,9 +920,9 @@ func directionFor(forConv string, m *db.AgentMessage) string {
 // that scope, totalUnfiltered = rows in the (still exclude-scoped) folder
 // regardless of q — so the pager and the search count both reflect the
 // same hidden-retired view.
-func agentMailboxPage(forConv, q string, page, pageSize int, excludeRetired bool) (mailboxPage, error) {
+func agentMailboxPage(forConv, q string, win mailboxWindow, excludeRetired bool) (mailboxPage, error) {
 	scope := db.MailboxFilter{ForConv: forConv, ExcludeRetired: excludeRetired}
-	return mailboxPageForScope(scope, forConv, q, page, pageSize)
+	return mailboxPageForScope(scope, forConv, q, win)
 }
 
 // groupMailboxPage builds one newest-first page of a GROUP folder — all
@@ -915,9 +934,9 @@ func agentMailboxPage(forConv, q string, page, pageSize int, excludeRetired bool
 // unless the operator opted into "show retired"): a member's DM to a
 // retired agent disappears, and a channel multicast survives unless its own
 // sender is retired. false shows the whole scope (the opted-in case).
-func groupMailboxPage(groupID int64, q string, page, pageSize int, excludeRetired bool) (mailboxPage, error) {
+func groupMailboxPage(groupID int64, q string, win mailboxWindow, excludeRetired bool) (mailboxPage, error) {
 	scope := db.MailboxFilter{ScopeGroupID: groupID, ExcludeRetired: excludeRetired}
-	return mailboxPageForScope(scope, "", q, page, pageSize)
+	return mailboxPageForScope(scope, "", q, win)
 }
 
 // mailboxPageForScope is the shared count → search → clamp → list →
@@ -926,7 +945,8 @@ func groupMailboxPage(groupID int64, q string, page, pageSize int, excludeRetire
 // firehose); forConv labels each row's direction relative to the folder
 // ("in"/"out" for an agent folder, "" for an aggregate folder that
 // renders from→to).
-func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSize int) (mailboxPage, error) {
+func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, win mailboxWindow) (mailboxPage, error) {
+	pageSize := win.PageSize
 	totalUnfiltered, err := db.CountMailbox(scope)
 	if err != nil {
 		return mailboxPage{}, err
@@ -941,10 +961,27 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 		}
 	}
 
-	servedPage, offset := clampOffset(page, pageSize, total)
+	servedPage, offset := clampOffset(win.Page, pageSize, total)
+	if win.Before > 0 {
+		servedPage, offset = 1, 0
+		filter.BeforeID = win.Before
+	}
 	rows, err := db.ListMailboxPage(filter, pageSize, offset)
 	if err != nil {
 		return mailboxPage{}, err
+	}
+	hasMore := offset+len(rows) < total
+	if win.Before > 0 {
+		hasMore = false
+		if len(rows) == pageSize {
+			older := filter
+			older.BeforeID = rows[len(rows)-1].ID
+			next, err := db.ListMailboxPage(older, 1, 0)
+			if err != nil {
+				return mailboxPage{}, err
+			}
+			hasMore = len(next) > 0
+		}
 	}
 	dec := newMailboxDecorator().withOperatorMessages(rows)
 	attachments := agentMessageAttachmentViews(rows)
@@ -962,6 +999,7 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 		PageSize:        pageSize,
 		Total:           total,
 		TotalUnfiltered: totalUnfiltered,
+		HasMore:         hasMore,
 	}, nil
 }
 
@@ -1072,7 +1110,8 @@ func withRetiredParticipants(members, participants []string, retiredSet map[stri
 // focus, when it names a row in the filtered list, overrides page with the
 // page holding that row: the snapshot only carries recent and unread
 // notifications, so the browser cannot compute an older row's page itself.
-func humanMailboxPage(filter db.HumanMessageFilter, page, pageSize int, focus int64) mailboxPage {
+func humanMailboxPage(filter db.HumanMessageFilter, win mailboxWindow, focus int64) mailboxPage {
+	page, pageSize := win.Page, win.PageSize
 	empty := mailboxPage{Messages: []mailboxMessage{}, Page: 1, PageSize: pageSize}
 	total, err := db.CountHumanMessages(filter)
 	if err != nil {
@@ -1092,10 +1131,25 @@ func humanMailboxPage(filter db.HumanMessageFilter, page, pageSize int, focus in
 		}
 	}
 	servedPage, offset := clampOffset(page, pageSize, total)
-	rows, err := db.ListHumanMessagesPage(filter, offset, pageSize)
+	window := filter
+	if win.Before > 0 {
+		servedPage, offset = 1, 0
+		window.BeforeID = win.Before
+	}
+	rows, err := db.ListHumanMessagesPage(window, offset, pageSize)
 	if err != nil {
 		slog.Warn("mailbox: list human messages failed", "error", err)
 		return empty
+	}
+	hasMore := offset+len(rows) < total
+	if win.Before > 0 {
+		hasMore = false
+		if len(rows) == pageSize {
+			older := filter
+			older.BeforeID = rows[len(rows)-1].ID
+			next, err := db.ListHumanMessagesPage(older, 0, 1)
+			hasMore = err == nil && len(next) > 0
+		}
 	}
 	return mailboxPage{
 		Messages:        humanMailboxMessages(rows),
@@ -1103,6 +1157,7 @@ func humanMailboxPage(filter db.HumanMessageFilter, page, pageSize int, focus in
 		PageSize:        pageSize,
 		Total:           total,
 		TotalUnfiltered: totalUnfiltered,
+		HasMore:         hasMore,
 	}
 }
 
