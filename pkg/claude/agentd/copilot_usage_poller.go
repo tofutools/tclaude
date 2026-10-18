@@ -257,7 +257,7 @@ func liveCopilotSessions() ([]*db.SessionRow, bool) {
 			"error", err, "module", "agentd")
 		return nil, false
 	}
-	rows, err := db.ListSessions()
+	rows, err := db.ListSessionsByHarness(harness.CopilotName)
 	if err != nil {
 		slog.Debug("copilot-usage: session list unavailable; skipping sweep",
 			"error", err, "module", "agentd")

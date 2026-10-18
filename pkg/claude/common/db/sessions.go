@@ -405,8 +405,7 @@ func LoadSession(id string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -444,8 +443,23 @@ func ListSessions() ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+	rows, err := db.Query(`SELECT ` + sessionColumns + ` FROM sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSessions(rows)
+}
+
+// ListSessionsByHarness returns all sessions of one harness. Pollers that only
+// care about a single harness use it instead of ListSessions, which decodes
+// every retained row of every harness.
+func ListSessionsByHarness(harnessName string) ([]*SessionRow, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT `+sessionColumns+` FROM sessions WHERE harness = ?`, harnessName)
 	if err != nil {
 		return nil, err
 	}
@@ -485,8 +499,7 @@ func FindLatestSessionsByTmux(names []string) (map[string]*SessionRow, error) {
 	for i, name := range names {
 		args[i] = name
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE tmux_session IN (`+strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")+`)
+	rows, err := db.Query(`SELECT `+sessionColumns+` FROM sessions WHERE tmux_session IN (`+strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")+`)
 		ORDER BY updated_at DESC, created_at DESC, id DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -513,8 +526,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+	row := db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -546,8 +558,7 @@ func FindSessionsByPID(pid int) ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+	rows, err := db.Query(`SELECT `+sessionColumns+` FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC`, pid)
 	if err != nil {
 		return nil, err
@@ -591,8 +602,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+	row := db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -719,8 +729,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+	rows, err := db.Query(`SELECT `+sessionColumns+` FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -882,6 +891,9 @@ func MaxUpdatedAt() (time.Time, error) {
 func scanSession(row *sql.Row) (*SessionRow, error) {
 	return scanSessionRow(row)
 }
+
+// sessionColumns is the sessions column list scanSessionRow reads, in order.
+const sessionColumns = `id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance`
 
 // scanSessionRow scans one session row off a *sql.Row or *sql.Rows. It is the
 // shared per-row body of scanSession / scanSessions, and lets best-effort
