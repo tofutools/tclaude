@@ -180,6 +180,27 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   await mounted.cleanup();
 });
 
+test("another node's clone shows ownership and worktree locked, with the reason", async (t) => {
+  let probed = 0;
+  const mounted = await mountDialogs(t, 'clone-agent', { conv: 'agt_ada1', label: 'ada', cwd: '/repo', node: 'inst_forge7' }, {
+    loadWorktrees: async () => { probed += 1; return { is_repo: true, worktrees: [] }; },
+  });
+  const { harness, host, calls } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const ownership = host.querySelector('#clone-agent-copy-ownership');
+  assert.equal(ownership.disabled, true);
+  assert.equal(ownership.getAttribute('aria-disabled'), 'true');
+  assert.match(host.querySelector('#clone-agent-copy-ownership-lock').dataset.why, /group ownership and worktrees[\s\S]*unrestricted trust/);
+  assert.equal(host.querySelector('#clone-agent-worktree').disabled, true);
+  assert.ok(host.querySelector('#clone-agent-worktree-lock'));
+  assert.equal(probed, 0, "a locked worktree reads none of that node's worktrees");
+  host.querySelector('#clone-agent-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls[0][1].full, false);
+  assert.equal(calls[0][1].copyOwnership, false);
+  await mounted.cleanup();
+});
+
 test('reincarnate dialog gates force mode and preserves plain DOM hooks', async (t) => {
   const mounted = await mountDialogs(t, 'reincarnate-agent', { conv: 'abcdefgh-1234', label: 'worker' });
   const { harness, host, calls } = mounted;

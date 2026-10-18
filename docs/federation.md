@@ -3419,7 +3419,7 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   under the same grants. `unlock` restarts the agent with its sandbox off and
   is accepted only from an unrestricted peer.
 - `POST /api/agents/{id}/retire`: `groups.members.retire`; worktree deletion
-  and its options are not exposed remotely.
+  and its options are accepted only from an unrestricted peer.
 - `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
   `{follow_up, no_copy_conv}` and receiver-owned source defaults.
 - `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source

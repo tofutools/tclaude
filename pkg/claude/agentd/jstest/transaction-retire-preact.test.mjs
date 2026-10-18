@@ -16,6 +16,7 @@ async function openRetire(t, options = {}) {
     harness.importDashboardModule('js/transaction-dialog-state.js'),
     harness.importDashboardModule('js/transaction-dialog-island.js'),
   ]);
+  await options.before?.(harness);
   const state = createTransactionDialogState();
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const opener = harness.document.body.appendChild(harness.document.createElement('button'));
@@ -41,6 +42,7 @@ async function openRetire(t, options = {}) {
       kind: 'retire-agent',
       conv: options.conv || 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       label: options.label || 'Retire target',
+      ...(options.node ? { node: options.node } : {}),
     });
   });
   await harness.act(() => Promise.resolve());
@@ -655,4 +657,35 @@ test('concrete retire dialog yields Escape to a higher painted overlay', async (
   await mounted.harness.act(() => Promise.resolve());
   assertAbsent(mounted.host.querySelector('#retire-modal'));
   await mounted.mounted.unmount();
+});
+
+test("another node's retire shows worktree deletion locked unless that node trusts this one unrestricted", async (t) => {
+  for (const level of ['restricted', 'unrestricted']) {
+    await t.test(level, async (t) => {
+      const probes = [];
+      const mounted = await openRetire(t, {
+        node: 'inst_forge7',
+        before: async (harness) => {
+          const { setNodeSnapshotSource } = await harness.importDashboardModule('js/node-api.js');
+          setNodeSnapshotSource(() => ({ peer_view: { level } }));
+        },
+        actions: { loadAgentWorktree: async (conv, options) => { probes.push(options.node); return { kind: 'linked', path: '/repo/wt', branch: 'feature', removable: true }; } },
+      });
+      await mounted.harness.act(() => Promise.resolve());
+      const box = mounted.host.querySelector('#retire-wt');
+      if (level === 'restricted') {
+        assert.equal(box.disabled, true);
+        assert.equal(box.getAttribute('aria-disabled'), 'true');
+        assert.match(mounted.host.querySelector('#retire-wt-lock').dataset.why, /worktree deletion[\s\S]*unrestricted trust/);
+        assert.deepEqual(probes, [], 'nothing to probe on a node that keeps its worktrees');
+      } else {
+        assert.equal(box.disabled, false);
+        assert.equal(mounted.host.querySelector('#retire-wt-lock'), null);
+        assert.deepEqual(probes, ['inst_forge7'], "the probe reads that node's worktree");
+      }
+      mounted.state.close();
+      await mounted.harness.act(() => Promise.resolve());
+      await mounted.mounted.unmount();
+    });
+  }
 });

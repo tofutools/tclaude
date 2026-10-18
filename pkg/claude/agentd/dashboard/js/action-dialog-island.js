@@ -15,7 +15,7 @@ import { fleetState } from './fleet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import { SavedPromptChips } from './saved-prompts.js';
 import { nodeSnapshot } from './node-api.js';
-import { unrestrictedOn } from './node-trust.js';
+import { LockReason, trustLock } from './lock-reason.js';
 import { groupFieldHeld, groupFieldMissing, needsSuffix } from './peer-view-limits.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog, TerminalChooserDialog,
@@ -161,10 +161,11 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const source = descriptor.label || shortID(descriptor.conv);
   // Another node's agent (here, or on its own page) clones there with its
   // follow-up and history choice only: ownership and a worktree stay that
-  // node's operator's. A node trusting this one unrestricted takes the whole
-  // clone, as its own dashboard sends it.
+  // node's operator's, shown locked with the reason. A node trusting this one
+  // unrestricted takes the whole clone, as its own dashboard sends it.
   const here = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
-  const full = here || unrestrictedOn(descriptor.node);
+  const locked = trustLock(descriptor.node, 'group ownership and worktrees');
+  const full = !locked;
   const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {
@@ -230,15 +231,17 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyConversation(event.currentTarget.checked)}
         /> Copy conversation history
       </label>
-      ${full && html`<label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
+      <label class=${`cron-create-enabled${locked ? ' locked-field' : ''}`} title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
         <input
           id="clone-agent-copy-ownership"
           type="checkbox"
-          checked=${copyOwnership}
+          checked=${copyOwnership && !locked}
+          disabled=${!!locked}
+          aria-disabled=${locked ? 'true' : undefined}
           onChange=${(event) => setCopyOwnership(event.currentTarget.checked)}
-        /> Copy group ownership
-      </label>`}
-      ${full && html`<${WorktreeFields}
+        /> Copy group ownership<${LockReason} id="clone-agent-copy-ownership-lock" why=${locked}/>
+      </label>
+      ${full ? html`<${WorktreeFields}
         repo=${descriptor.cwd}
         node=${descriptor.node || ''}
         actions=${actions}
@@ -248,7 +251,11 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         setBranch=${setBranch}
         base=${base}
         setBase=${setBase}
-      />`}
+      />` : html`<label class="cron-create-row locked-field" id="clone-agent-worktree-row">
+        <span class="cron-create-label">Worktree</span>
+        <select id="clone-agent-worktree" disabled aria-disabled="true"><option>(same directory as source)</option></select>
+        <${LockReason} id="clone-agent-worktree-lock" why=${locked}/>
+      </label>`}
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
         <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
