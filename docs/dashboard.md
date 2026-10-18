@@ -921,7 +921,10 @@ own view opens from its node button.
 **Activity › Audit** gets a **node** filter: this node, one ticked peer
 (paged through its routes, under `federation.audit.read`), or **all nodes**,
 which merges each node's newest page newest first, with a node pill on each
-row and the nodes that withhold theirs shown locked. On **Config** and **Access**, one
+row and the nodes that withhold theirs shown locked. **Logs** and
+**Performance** are one daemon's own, so they get a **node** switch instead:
+this node or one ticked peer, read through its routes when it trusts this
+node unrestricted (anything less shows why it is refused). On **Config** and **Access**, one
 machine's own settings, the strip also names each ticked peer. An
 unrestricted peer's Access opens on its own view from there. A peer's Config
 is always set on that node itself, so it is shown locked, with the reason. The fused set is part of the address

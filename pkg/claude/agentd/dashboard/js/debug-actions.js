@@ -1,3 +1,4 @@
+import { activityFetch } from './activity-node.js';
 async function responseError(response) {
   let detail = '';
   try { detail = await response.text(); } catch (_) {}
@@ -11,6 +12,7 @@ function isAbort(error) {
 export function createDebugActions({
   state,
   fetchImpl = globalThis.fetch,
+  route = activityFetch,
   AbortControllerImpl = globalThis.AbortController,
 } = {}) {
   if (!state?.beginRequest) throw new TypeError('debug actions require state');
@@ -50,7 +52,7 @@ export function createDebugActions({
     if (disposed || state.resetting.value) return false;
     const request = begin('load');
     try {
-      const response = await fetchImpl('/api/perf?limit=240', {
+      const response = await route(fetchImpl)('/api/perf?limit=240', {
         credentials: 'same-origin',
         signal: request.controller.signal,
       });
@@ -70,7 +72,7 @@ export function createDebugActions({
     state.setResetting(true);
     const request = begin('reset');
     try {
-      const response = await fetchImpl('/api/perf/reset', {
+      const response = await route(fetchImpl)('/api/perf/reset', {
         method: 'POST',
         credentials: 'same-origin',
         signal: request.controller.signal,
