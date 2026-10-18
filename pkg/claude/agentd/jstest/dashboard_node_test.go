@@ -14,10 +14,12 @@ import (
 	"strconv"
 	"testing"
 
-	// agentd embeds the production dashboard tree. Keeping that package in this
-	// test binary's dependency graph makes dashboard contents part of the build
-	// ID, so Go's test cache is invalidated by content, not only file metadata.
-	_ "github.com/tofutools/tclaude/pkg/claude/agentd"
+	// The dashboard package embeds the production dashboard tree. Keeping it
+	// in this test binary's dependency graph makes dashboard contents part of
+	// the build ID, so Go's test cache is invalidated by content, not only file
+	// metadata — and PR CI selects this package when, and only when, those
+	// contents change.
+	_ "github.com/tofutools/tclaude/pkg/claude/agentd/dashboard"
 )
 
 // nodeTestInputs makes every suite, harness module, and nested vendor runtime
@@ -110,7 +112,7 @@ func TestDashboardJS(t *testing.T) {
 }
 
 // recordNodeInputs hashes the runtime input set for diagnostics. nodeTestInputs
-// and the agentd import above make those bytes content-addressed build inputs;
+// and the dashboard import above make those bytes content-addressed build inputs;
 // the direct dashboard reads also expose their paths in Go's test-cache trace.
 func recordNodeInputs(t *testing.T) {
 	t.Helper()

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/agentd/dashboard"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -44,12 +44,9 @@ import (
 // dynamically loaded so a missing optional feature module cannot prevent the
 // static entry graph from linking.
 //
-//go:embed dashboard
-var dashboardFS embed.FS
-
-// dashboardAssetsFS is dashboardFS rooted at the dashboard/ directory,
-// so its files address as "dashboard.html", "dashboard.css", "js/...".
-var dashboardAssetsFS = mustSubFS(dashboardFS, "dashboard")
+// The tree is embedded by the dashboard package (see its doc for why);
+// dashboardAssetsFS addresses its files as "dashboard.html", "js/...".
+var dashboardAssetsFS fs.FS = dashboard.FS
 
 // dashboardIndexHTML is dashboard.html, read once at init — the page
 // handleDashboardRoot serves at "/". injectBootPreload splices in the
@@ -57,14 +54,6 @@ var dashboardAssetsFS = mustSubFS(dashboardFS, "dashboard")
 // import graph is fetched in parallel rather than as a discover-one-at-a-time
 // waterfall.
 var dashboardIndexHTML = injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS))
-
-func mustSubFS(f embed.FS, dir string) fs.FS {
-	sub, err := fs.Sub(f, dir)
-	if err != nil {
-		panic("agentd: embedded dashboard/ subtree missing: " + err.Error())
-	}
-	return sub
-}
 
 func mustReadFS(fsys fs.FS, name string) []byte {
 	b, err := fs.ReadFile(fsys, name)
