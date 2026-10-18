@@ -5,6 +5,7 @@
 // to that node's own routes, as its own dashboard sends them.
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
 import { agentGrantHeld } from './peer-view-limits.js';
+import { UNGROUPED_VKEY } from './virtual-groups.js';
 
 // DRAG_GRANT_ACTS are the drop gestures a restricted peer's grants can cover,
 // as the row control (AGENT_GRANT_ACTS) each stands for.
@@ -79,11 +80,13 @@ export function sameGroupTree(ctx, details) {
 }
 
 // createDndOps binds the operations to the page: confirm, toast and refresh
-// (refresh.js), render (the Groups tab), the page snapshot, and the clone and
-// retire dialogs.
+// (refresh.js), render (the Groups tab), the page snapshot, the clone and
+// retire dialogs, and land, which shows where a done drop ended up
+// (drop-landing.js markLanded).
 export function createDndOps({
   confirm, toast, refresh, render = () => {}, getSnapshot = () => null,
   openClone, openRetire, retireNeedsReconcile = () => true, fetchImpl = (...args) => globalThis.fetch(...args),
+  land = () => {},
 }) {
   // context is how a drop acts on its node: that node's routes (nodeFetch),
   // its own group names (the fused view lists a peer's as group@node), its
@@ -122,6 +125,13 @@ export function createDndOps({
       ? `${ctx.name || 'That node'} does not share this agent's ${gesture} with you (needs ${act === 'clone' ? 'groups.members.clone on the agent and the group dropped on' : 'groups.members.retire'})`
       : `${ctx.name || 'That node'} trusts this node restricted: move its agents from its own dashboard`, true);
     void refresh();
+  }
+
+  // landed shows the dropped agent where it went: a real group (its own name
+  // on ctx's node) or, with none, the virtual Ungrouped group.
+  function landed(ctx, payload, group = '') {
+    const ids = [payload.agent, payload.conv];
+    land(group ? { group, node: ctx.node, section: 'agents', ids } : { virtualKey: UNGROUPED_VKEY, ids });
   }
 
   // memberCwd finds the dragged agent's directory in its node's snapshot (the
@@ -241,6 +251,7 @@ export function createDndOps({
           return;
         }
         toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
+        landed(ctx, payload, targetGroup);
       } catch (err) {
         toast(`move failed: ${err && err.message || err}`, true);
         rollback();
@@ -290,6 +301,7 @@ export function createDndOps({
         return;
       }
       toast(`added ${label} → ${targetGroup}`);
+      landed(ctx, payload, targetGroup);
     } catch (err) {
       toast(`add failed: ${err && err.message || err}`, true);
     } finally {
@@ -330,6 +342,10 @@ export function createDndOps({
         return;
       }
       toast(`removed ${label} from ${sourceGroup}`);
+      // It shows under Ungrouped only once it is in no group at all.
+      const elsewhere = (ctx.snapshot()?.groups || []).some((g) => g.name !== sourceGroup
+        && (g.members || []).some((m) => m.conv_id === conv));
+      if (!elsewhere) landed(ctx, payload);
     } catch (err) {
       toast(`remove failed: ${err && err.message || err}`, true);
     } finally {
@@ -421,6 +437,7 @@ export function createDndOps({
         return;
       }
       toast(`promoted ${label} → agent (no group)`);
+      landed(ctx, payload);
     } catch (err) {
       toast(`promote failed: ${err && err.message || err}`, true);
     } finally {
@@ -472,8 +489,10 @@ export function createDndOps({
           return;
         }
         toast(`reinstated ${label} → ${targetGroup}`);
+        landed(ctx, payload, targetGroup);
       } else {
         toast(`reinstated ${label} → agent (no group)`);
+        landed(ctx, payload);
       }
     } catch (err) {
       toast(`reinstate failed: ${err && err.message || err}`, true);

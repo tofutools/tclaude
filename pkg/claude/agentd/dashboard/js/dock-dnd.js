@@ -39,6 +39,7 @@ import { wizWord } from './slop.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openSummonForDrop } from './modal-templates.js';
 import { pinToGroup } from './dock-processes.js';
+import { markLanded } from './drop-landing.js';
 
 // Custom drag payload MIME. Intentionally NOT 'text/plain' — see the module
 // header: withholding text/plain is what makes dnd.js's member-row drop handler
@@ -265,7 +266,10 @@ function bindDockDnd() {
     if (item.kind === 'processes') {
       if (!group) return;
       void pinToGroup(group, item.name)
-        .then(() => import('./refresh.js').then(({ toast }) => toast(`Pinned ${item.label || item.name} to ${group}`)))
+        .then(() => {
+          markLanded({ group, section: 'processes', process: item.name });
+          return import('./refresh.js').then(({ toast }) => toast(`Pinned ${item.label || item.name} to ${group}`));
+        })
         .catch((error) => import('./refresh.js').then(({ toast }) => toast(`Could not pin ${item.label || item.name}: ${error.message}`, true)));
       return;
     }

@@ -63,6 +63,7 @@ import { openDeleteGroupModal } from './dashboard-operations.js';
 import { openGroupCloneModal } from './modal-templates.js';
 import { isWizardActive } from './slop.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
+import { markLanded } from './drop-landing.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
 // module header: withholding text/plain is what makes dnd.js's member-row
@@ -284,8 +285,11 @@ function applyGroupDrop(dragName, targetName, zone, ctx = groupDragContext(null,
   // refresh honours it.
   persistSiblingOrder(dragName, targetName, plan.before, ctx);
 
+  // landed shows the dropped group where it now sits.
+  const landed = () => markLanded({ group: ctx.own(dragName), node: ctx.node, header: true });
   if (!parentChanged) {
     renderGroupsTab();
+    landed();
     return;
   }
   // Re-parent on the server; the response-driven refresh re-lays-out the tree.
@@ -303,6 +307,7 @@ function applyGroupDrop(dragName, targetName, zone, ctx = groupDragContext(null,
     // Show the moved group, not a folded Subgroups line.
     if (plan.desiredParent) setFusedSectionOpen(plan.desiredParent, 'subgroups', true);
     ctx.done();
+    landed();
   }).catch((err) => {
     toast(`nest failed: ${(err && err.message) || err}`, true);
     renderGroupsTab();

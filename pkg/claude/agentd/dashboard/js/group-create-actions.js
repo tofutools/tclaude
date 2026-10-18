@@ -2,6 +2,7 @@ import { groupCreateRequest } from './group-create-model.js';
 import { FUSED_GROUP_ORDER_KEY, fusedGroupListing, insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
+import { markLanded } from './drop-landing.js';
 
 const CLONE_TRANSPORT_PREF = 'tclaude.dash.group-create.clone-transport';
 
@@ -74,6 +75,7 @@ export function createGroupCreateActions({
 
     complete(result, parentGroup = '', node = '') {
       let { name } = result;
+      let cloned = false;
       if (result.kind === 'blank') {
         notify(parentGroup
           ? `subgroup created: ${name} under ${parentGroup}`
@@ -94,6 +96,7 @@ export function createGroupCreateActions({
       } else {
         const response = result.response || {};
         name = response.group || name;
+        cloned = !!response.group;
         // The board order is the page's own groups'.
         if (response.group && result.placement?.anchor && isPageNode(node)) {
           const snapshotGroups = getSnapshot()?.groups || [];
@@ -135,6 +138,9 @@ export function createGroupCreateActions({
       }
       announceNodeChanged(node);
       refresh();
+      // A clone (often a Ctrl/Cmd group drop) shows where it was placed;
+      // the landing waits for the refresh to draw it.
+      if (cloned) markLanded({ group: name, node, header: true });
     },
   });
 }

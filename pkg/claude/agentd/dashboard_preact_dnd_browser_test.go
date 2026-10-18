@@ -42,6 +42,8 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 		groupDragCancelState(),
 		groupCloneModifierDropState(),
 		memberCloneModifierDropState(),
+		memberMoveLandingState(),
+		crossNodeTransitState(),
 	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
 		filtered := states[:0]
@@ -476,5 +478,88 @@ document.addEventListener('pointerdown', function(e){ window.__tcl359DragEvents.
 document.addEventListener('dragstart', function(e){ window.__tcl359DragEvents.push('dragstart:' + e.target.tagName + '.' + e.target.className); }, {once:true, capture:true});
 `,
 		Actions: actions,
+	}
+}
+
+// memberMoveLandingState drops a member row onto a FOLDED group and confirms
+// the move: the receiving group must open and the landing blip
+// (drop-landing.js) must play over the moved agent's row there.
+func memberMoveLandingState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "preact-member-move-landing",
+		Title:   "A confirmed move opens its target and blips the row",
+		Caption: "After a member drag onto a folded group is confirmed, that group unfolds and a soft blip marks the moved agent's row in it.",
+		JS: `
+document.querySelector('nav [data-tab="groups"]').click();
+return (async function(){
+  function frames() { return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); }); }
+  function until(check, what) {
+    return new Promise(function(resolve, reject){
+      var started = Date.now();
+      (function poll(){
+        var hit = check();
+        if (hit) return resolve(hit);
+        if (Date.now() - started > 5000) return reject(new Error(what));
+        setTimeout(poll, 50);
+      })();
+    });
+  }
+  await frames();
+  var source = document.querySelector('.dnd-draggable[data-dnd-source-group][data-dnd-agent]');
+  if (!source) throw new Error('move landing fixture missing a grouped source row');
+  var sourceGroup = source.getAttribute('data-dnd-source-group');
+  var agent = source.getAttribute('data-dnd-agent');
+  var target = Array.from(document.querySelectorAll('details[data-dnd-target-group]')).find(function(box){
+    return box.getAttribute('data-dnd-target-group') !== sourceGroup && box.getClientRects().length;
+  });
+  if (!target) throw new Error('move landing fixture missing a target group');
+  var name = target.getAttribute('data-dnd-target-group');
+  try { localStorage.setItem('tclaude.dash.group.' + name, '0'); } catch (_) {}
+  target.open = false;
+  var transfer = new DataTransfer();
+  function fire(element, type) {
+    var rect = element.getBoundingClientRect();
+    var event = new DragEvent(type, {bubbles:true, cancelable:true, dataTransfer:transfer, clientX:rect.left + 20, clientY:rect.top + 8});
+    if (event.dataTransfer !== transfer) Object.defineProperty(event, 'dataTransfer', {value:transfer});
+    element.dispatchEvent(event);
+  }
+  fire(source, 'dragstart');
+  fire(target, 'dragover');
+  fire(target, 'drop');
+  fire(source, 'dragend');
+  var ok = await until(function(){ return document.querySelector('#confirm-modal.show #confirm-ok'); }, 'move confirmation did not open');
+  ok.click();
+  var row = await until(function(){
+    var box = document.querySelector('details[data-dnd-target-group="' + name + '"]');
+    if (!box || !box.open) return null;
+    return Array.from(box.querySelectorAll('tr[data-dnd-agent]')).find(function(tr){ return tr.getAttribute('data-dnd-agent') === agent && tr.getClientRects().length; });
+  }, 'target group did not open with the moved row');
+  var blip = await until(function(){ return document.querySelector('#drop-landing-layer .drop-landing-blip:not([hidden])'); }, 'no landing blip played');
+  var a = blip.getBoundingClientRect(), b = row.getBoundingClientRect();
+  if (Math.abs(a.top - b.top) > 2 || Math.abs(a.height - b.height) > 2) throw new Error('landing blip is not over the moved row');
+})();`,
+	}
+}
+
+// crossNodeTransitState raises the "arriving" marker a move to another node
+// puts on its receiving group while the copy starts there.
+func crossNodeTransitState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "preact-cross-node-transit",
+		Title:   "A move to another node marks its receiving group in transit",
+		Caption: "While an agent's copy starts on the receiving node, that group's header carries a marching outline and an arriving tag; it turns into the landing blip when the row appears.",
+		JS: `
+document.querySelector('nav [data-tab="groups"]').click();
+return (async function(){
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var box = Array.from(document.querySelectorAll('details[data-dnd-target-group]')).find(function(d){ return d.getClientRects().length; });
+  if (!box) throw new Error('transit fixture missing a group');
+  var landing = await import('/static/js/drop-landing.js');
+  landing.markInTransit({ group: box.getAttribute('data-dnd-target-group'), ids: ['agt_not_here'], from: 'laptop', label: 'scout' });
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var marker = document.querySelector('#drop-landing-layer .drop-landing-transit:not([hidden])');
+  if (!marker) throw new Error('no transit marker over the receiving group');
+  if (!/arriving from laptop/.test(marker.textContent)) throw new Error('transit tag text: ' + marker.textContent);
+})();`,
 	}
 }
