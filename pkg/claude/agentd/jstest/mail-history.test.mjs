@@ -119,6 +119,14 @@ test('a page step pushes; a search edit pushes once, then corrects as it is type
   s.mail.setBoxQuery('op');
   assert.deepEqual(s.events.map((e) => e.correction), [false, true]);
   assert.equal(s.path(), '/messages/conv-a?q=dep&box=op');
+  // Refining with a space changes nothing in the URL, so it is not an edit:
+  // the word after it pushes past the earlier search rather than replacing it.
+  s.mail.selectMessage(2, { navigate: true });
+  s.events.length = 0;
+  s.mail.setMessageQuery('dep ');
+  assert.deepEqual(s.events, []);
+  s.mail.setMessageQuery('dep x');
+  assert.deepEqual(s.events.map((e) => e.correction), [false]);
   // A click ends the edit: the next keystroke pushes once more.
   s.mail.selectMessage(2, { navigate: true });
   s.events.length = 0;

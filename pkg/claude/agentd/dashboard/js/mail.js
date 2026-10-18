@@ -992,10 +992,16 @@ function mailLocation() {
   });
 }
 
-// editing names the filter ('q' or 'box') whose edit pushed the current
-// entry; further edits of it only correct that entry. Any other navigation
-// or a history restore ends the edit.
+// editing is the filter edit ('q' or 'box') that pushed a history entry,
+// with that entry's index (history.state.navIndex): further edits of it while
+// that entry is still the current one only correct it. Any other navigation
+// from here, a history restore, or the router recording a new entry (leaving
+// the tab and coming back) ends the edit.
 let editing = null;
+
+function navEntry() {
+  return globalThis.history?.state?.navIndex;
+}
 
 function announceMailLocation(correction) {
   if (!correction) editing = null;
@@ -1004,9 +1010,13 @@ function announceMailLocation(correction) {
 
 function announceFilterEdit(kind) {
   if (isFused() || !mailTabActive()) return;
-  const continuing = editing === kind;
+  // An edit the URL already says (a trailing space, clearing an empty
+  // search) records nothing, and so does not start an edit either: the next
+  // real change must push past the entry rather than overwrite it.
+  if (locEquals(mailLocation(), fromPath(globalThis.location?.pathname, globalThis.location?.search || ''))) return;
+  const continuing = editing?.kind === kind && editing.entry === navEntry();
   announceMailLocation(continuing);
-  editing = kind;
+  editing = { kind, entry: navEntry() };
 }
 
 // restoring holds syncMailUrl off while a history location is being loaded,
