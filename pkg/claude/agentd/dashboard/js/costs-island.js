@@ -10,7 +10,6 @@ import {
   fmtCredits, fmtExactUSD, modelRollup, monthProjectionLabel, providerSegmentClass,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
-import { registerFeatureState } from './feature-state-registry.js';
 import { fromPath } from './nav-history-core.js';
 
 const html = htm.bind(h);
@@ -559,11 +558,8 @@ export function CostsApp({ state, actions }) {
 
 export function mountCostsIsland({ host, state, actions, registerCleanup }) {
   state.initialize();
-  // The router reads the period from here and Back/Forward or a link sets it.
-  // One Costs island reads the period at a time; a second mount (tests) leaves
-  // the first one's registration in place.
-  let unregister = () => {};
-  try { unregister = registerFeatureState('costs', state); } catch { /* already registered */ }
+  // The router reads the period from the 'costs' feature state (registered
+  // by the island lifecycle); Back/Forward or a link sets it here.
   // Mounted after the router already restored a /usage/costs?period= link.
   const shown = fromPath(globalThis.location?.pathname, globalThis.location?.search || '');
   if (shown.tab === 'usage' && shown.subtab === 'costs') state.applyPeriod(shown.params?.period || '');
@@ -574,5 +570,5 @@ export function mountCostsIsland({ host, state, actions, registerCleanup }) {
   };
   document.addEventListener('tclaude:restore-location', restore);
   render(html`<${CostsApp} state=${state} actions=${actions} />`, host);
-  registerCleanup(() => { document.removeEventListener('tclaude:restore-location', restore); unregister(); render(null, host); });
+  registerCleanup(() => { document.removeEventListener('tclaude:restore-location', restore); render(null, host); });
 }
