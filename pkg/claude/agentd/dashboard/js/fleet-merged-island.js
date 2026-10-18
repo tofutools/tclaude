@@ -1,5 +1,6 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { loadTriggerRules } from './group-triggers.js';
 import htm from 'htm';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import {
@@ -360,6 +361,35 @@ export function MergedGroups({
   const mergedRef = useRef(merged);
   mergedRef.current = merged;
   useEffect(() => setFusedGroupListing(() => mergedRef.current), []);
+  // Triggers are read from each node that lets this one act there (this
+  // node, or a peer trusting it unrestricted) and has them on; each rule is
+  // tagged with its node, its group under the merged name.
+  const [triggers, setTriggers] = useState([]);
+  const selfID = fleet?.self?.id || '';
+  const triggerNodes = (merged?.fleet_nodes || []).map(({ node }) => node)
+    .filter((node) => snapOf(node.id)?.triggers_enabled === true && (node.id === selfID || snapOf(node.id)?.peer_view?.level === 'unrestricted'));
+  const triggerKey = triggerNodes.map((node) => `${node.id}=${node.name}`).join(',');
+  // Each node is read once while it stays listed (its rules shown as they
+  // arrive), not again as other nodes' snapshots load.
+  const triggerCache = useRef(new Map());
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    const self = state.view.value.fleet?.self?.id || '';
+    const keys = new Set(triggerNodes.map((node) => `${node.id}=${node.name}`));
+    for (const key of [...triggerCache.current.keys()]) if (!keys.has(key)) triggerCache.current.delete(key);
+    const publish = () => setTriggers([...triggerCache.current.values()].flat());
+    publish();
+    for (const node of triggerNodes) {
+      const key = `${node.id}=${node.name}`;
+      if (triggerCache.current.has(key)) continue;
+      triggerCache.current.set(key, []);
+      loadTriggerRules(nodeFetch(node.id, { self, fetchImpl, remote: remote ? { id: remote, localFetch } : null }))
+        .then((rules) => rules.map((rule) => ({ ...rule, fleet_node: node.id, ...(rule.group ? { group: `${rule.group}@${node.name}` } : {}) })))
+        .catch(() => [])
+        .then((rules) => { if (mountedRef.current && triggerCache.current.has(key)) { triggerCache.current.set(key, rules); publish(); } });
+    }
+  }, [triggerKey]);
   const wizard = useWizardTheme();
   const hoveredGroupKey = useGroupsHover(host, view.groups);
   useGroupsTableControls(host, groups, routed.current);
@@ -560,7 +590,7 @@ export function MergedGroups({
     <${GroupsProcessScope} value=${processScope.current}>
       <${GroupsInteractionProvider}>
         <${GroupsLensList} state=${groups} groups=${view.groups} rosters=${home ? snapshot.value?.groups : []} snapshot=${merged}
-          actions=${routed.current} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
+          actions=${routed.current} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
       <//>
     <//>
     ${standingOrders && ordersActions && html`<${GroupStandingOrdersDialog}
