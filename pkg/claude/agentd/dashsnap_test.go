@@ -337,6 +337,11 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	if _, err := db.SetAgentGroupParent(infra.ID, tfTemplate); err != nil {
 		t.Fatalf("nest %s under %s: %v", otherGroup, tfTemplate, err)
 	}
+	// frontend-squad has members of its own, so its Subgroups section folds by
+	// default; the states drawing infra-crew need it open.
+	if err := db.SetDashboardPref("tclaude.dash.groups.fused.subgroups."+tfTemplate, "1"); err != nil {
+		t.Fatalf("open %s subgroups: %v", tfTemplate, err)
+	}
 
 	// Record deployment provenance on frontend-squad (mission + source_template)
 	// so isDeployedForce is true and the group renders its task-force info card
@@ -848,7 +853,7 @@ func baseStates() []dashsnap.State {
   var agents = document.querySelector('.groups-focus-switch [data-groups-focus="agents"]');
   if (!agents || agents.getAttribute('aria-pressed') !== 'true') throw new Error('Agents focus is not selected');
   if (!document.querySelector('#groups-list details[data-group-key]')) throw new Error('Agents focus lost the member tables');
-  if (document.querySelector('[data-fused-section]')) throw new Error('Agents still shows Both sections');
+  if (document.querySelector('[data-fused-section]:not([data-fused-section="subgroups"])')) throw new Error('Agents still shows Both sections');
 })();`,
 			SettleMS: 200,
 		},
@@ -3501,7 +3506,7 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   var child = document.querySelector('details[data-group-key="infra-crew"]');
   if (!parent) throw new Error('groups-nested: frontend-squad not found');
   if (!child) throw new Error('groups-nested: infra-crew not found');
-  var sub = parent.querySelector(':scope > .subtable > .group-subgroups');
+  var sub = parent.querySelector(':scope > .subtable > [data-fused-section="subgroups"] > .group-subgroups');
   if (!sub) throw new Error('groups-nested: no .group-subgroups under frontend-squad');
   if (!sub.contains(child)) throw new Error('groups-nested: infra-crew is not nested inside frontend-squad');
   var table = parent.querySelector(':scope > .subtable > table');

@@ -20821,7 +20821,7 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member-runs-label { color: #8b949e; font-size: 11px; }
 .gp-member-run { display: inline-flex; align-items: center; gap: 4px; }
 .gp-subtree-total { color: #6e7681; font-size: 11px; }
-details[open] > summary .gp-subtree-total { display: none; }
+details[open]:not(.subgroups-folded) > summary .gp-subtree-total { display: none; }
 .gp-error { color: #ff7b72; }
 .gp-run-glyph { width: 11px; height: 11px; fill: #c9d1d9; vertical-align: -1px; }
 
@@ -20859,6 +20859,8 @@ body.wizard .group-header-actions.gf-title-row { border-bottom-color: rgba(122, 
 .gf-section:not(.open) > .gf-section-head { margin-bottom: 0; }
 .gf-tri { width: 10px; color: #6e7681; }
 .gf-label { color: #c9d1d9; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 10.5px; }
+.gf-count { color: #6e7681; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.gf-count.zero { color: #484f58; }
 .gf-section > .gp-group { padding: 0; }
 .gf-section > .gp-group .gp-card, .gf-section > .gp-group .gp-planned-list { margin-left: 0; }
 .gf-section > .gp-group .gp-empty { margin: 0 0 4px; }

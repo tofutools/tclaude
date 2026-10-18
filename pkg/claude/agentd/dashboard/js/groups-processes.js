@@ -501,9 +501,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
-    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
+    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
+        count=${runs.length + planned.length + memberRuns.length}
         actions=${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
@@ -527,21 +528,28 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // in Agents and Processes -- Both adds a line, never a nesting level. The
 // line carries the section's own controls (`actions`, plus `closedActions`
 // while folded, which the open content otherwise heads), so they stay in
-// reach while the section is folded; it has no counts, which the group's header
-// row already shows (its member bots and process graphs). The label, and the empty
+// reach while the section is folded. A dim `count` beside the label says
+// whether a folded section has anything in it. The label, and the empty
 // rest of the line, fold the section; the choice is remembered per group
 // (see groups-fused-sections.js), and `force` holds it open while a start
-// or edit form inside needs it.
-export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, closedActions = null, children }) {
+// or edit form inside needs it. `onToggle` runs after a fold changes, for a
+// section whose state matters outside it (Subgroups moves activity bots).
+export function FusedSection({ group, section, label, count = null, auto = true, force = false, attrs = {}, actions = null, closedActions = null, onToggle = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
-  const toggle = () => { if (!force) { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); } };
+  const toggle = (event) => {
+    if (force) return;
+    setFusedSectionOpen(group, section, !open);
+    bump((n) => n + 1);
+    onToggle?.(event);
+  };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
     <div class="gf-section-head">
       <button type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
+        ${count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`}
       </button>
       ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions">${!open && closedActions}${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
@@ -587,7 +595,7 @@ function UnsharedRuns({ group, wizard, fused }) {
     : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
   const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
-  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'}
+  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
     ${note}
     ${fused.after}`;
