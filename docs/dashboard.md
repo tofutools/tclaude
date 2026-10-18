@@ -220,7 +220,9 @@ Columns are hide/showable via "▾ view" (persisted server-side):
 - **Last** (last hook), **Age**, **CWD** — startup dir and current dir stacked
   as `init`/`now`; click opens a terminal there.
 - **Branch** — `⎇ branch` GitHub link, PR pill, CI pill, and any PRs presented
-  via `tclaude agent present-pr`.
+  via `tclaude agent present-pr`. The PR the agent's statusline shows is
+  included too, even when its directory/branch doesn't line up with the
+  branch row.
 - **Role** (with `owner` badge), **Task** — a clickable 🔗 work-item URL set
   via `tclaude agent task`, with inline `✎` edit — and **Description** with
   tag chips.
