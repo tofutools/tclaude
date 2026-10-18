@@ -61,7 +61,10 @@ export function receivingGroups(status, peer, mode) {
 
 // nodeTargets lists every node with whether this mode may send the agent
 // there, and why not. self is this node; source is where the agent runs.
-export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES }) {
+// relay is set when the source is a peer that trusts this node unrestricted:
+// it can then send its agent on to a third node (nodeGroups[id] lists that
+// node's groups), as its own operator could.
+export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES, relay = false, nodeGroups = {} }) {
   const nodes = [self, ...(fleet?.peers || [])].filter((n) => n?.id);
   return nodes.map((n) => {
     const here = n.id === source.node;
@@ -71,9 +74,10 @@ export function nodeTargets({ mode, fleet, self, source, status, localGroups = [
     if (here) return { ...row, ok: mode === 'clone', why: mode === 'clone' ? '' : 'it is already here — drag it onto another group to move it within this node', groups: [] };
     if (!isSelf && n.online === false) return { ...row, ok: false, why: 'offline' };
     if (source.node !== self.id) {
-      // A peer's agent can only be pulled here, and only by a move.
-      if (!isSelf || mode !== 'move') return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
-      return { ...row, groups: localGroups };
+      // A peer's agent can only be pulled here, and only by a move, unless
+      // the peer relays it on to a third node.
+      if (mode !== 'move' || (!isSelf && !relay)) return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
+      return { ...row, groups: isSelf ? localGroups : (nodeGroups[n.id] || []) };
     }
     if (mode === 'clone' && !teleport) return { ...row, ok: false, why: 'a peer clone needs the operator teleport routes (not on this dashboard yet)' };
     return { ...row, groups: receivingGroups(status, n.id, mode) };
@@ -383,7 +387,7 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
 // drop ({node, name, group}).
 export function LaunchTargetDialog({
   agent, self, fleet, initialMode = 'move', target: initialTarget = null, fromDrop = false,
-  api = createLaunchTargetApi(), actions, peerActions, localGroups = [], onClose, onLocalClone,
+  api = createLaunchTargetApi(), actions, peerActions, localGroups = [], relay = false, nodeGroups = {}, onClose, onLocalClone,
   timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES, toast = shellToast,
 }) {
   const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
@@ -408,7 +412,7 @@ export function LaunchTargetDialog({
     return () => { live = false; };
   }, []);
   const needsNode = mode === 'move' || mode === 'teleport' || mode === 'clone';
-  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport }) : [];
+  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport, relay, nodeGroups }) : [];
   const picked = targets.find((n) => n.id === node && n.ok) || null;
   const pick = (id) => { setNode(id); if (id !== node) setGroup(''); };
   const switchMode = (key) => { if (locked) return; setMode(key); setCarry(null); };
@@ -425,7 +429,7 @@ export function LaunchTargetDialog({
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
       <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
-  else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull')) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
+  else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull' || (plan.kind === 'third' && relay))) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
