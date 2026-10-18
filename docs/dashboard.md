@@ -917,7 +917,11 @@ the peers in it show what they share with you, so this node's own groups and
 controls work as on its own view. Fusing from a peer's page goes to this
 node's page, and so does an address that names both a peer and a fused set.
 Every other tab shows this node, says so in a strip at the top, and a peer's
-own view opens from its node button.
+own view opens from its node button. The header's quota bars show one node at
+a time, because quota percentages do not add up across machines. A node pill
+before them names whose they are (this node by default), and its menu lists
+each ticked node's peak quota. A node that does not share usage
+(`costs.read`) is locked there, with the reason.
 **Activity › Audit** gets a **node** filter: this node, one ticked peer
 (paged through its routes, under `federation.audit.read`), or **all nodes**,
 which merges each node's newest page newest first, with a node pill on each

@@ -18,6 +18,9 @@ import { PRReviewBadge } from './pr-review-badge.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
 import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
+import { UsageNodePill, peerUsageState, usagePeak, useUsageNode } from './usage-nodes.js';
+import { fleetState } from './fleet-state.js';
+import { tickedNodes } from './fleet-scope.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
@@ -51,10 +54,27 @@ function UsageToken({ token }) {
   `;
 }
 
-function Usage({ state }) {
+function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
   const prefKey = (provider) => `tclaude.dash.headerUsageMode.${provider}`;
   const [modes, setModes] = useState({});
-  const usage = state.snapshot.value?.usage;
+  // A fused view (always this node's page) picks whose quota the bars show.
+  const fleetValue = fleet.fleet.value;
+  const fused = fleet.fused.value;
+  const nodes = fleetValue && fused && !globalThis.__tclaudeRemoteNode ? tickedNodes(fleetValue, fused) : [];
+  const selfID = fleetValue?.self?.id || '';
+  const picker = useUsageNode({ nodes, selfID, ...(fetchImpl ? { fetchImpl } : {}) });
+  const multi = nodes.length > 1;
+  const shownNode = multi ? nodes.find((n) => n.id === picker.selected) : null;
+  const peerShown = shownNode && !shownNode.local ? peerUsageState(shownNode, picker.peer(shownNode.id)) : null;
+  const usage = peerShown ? peerShown.usage : state.snapshot.value?.usage;
+  const pill = multi ? html`<${UsageNodePill} nodes=${nodes} selected=${shownNode?.id || selfID} onSelect=${picker.select} onOpen=${picker.refreshAll}
+    peakOf=${(id) => {
+      if (id === selfID) return { value: usagePeak(state.snapshot.value?.usage) };
+      const node = nodes.find((n) => n.id === id);
+      const st = peerUsageState(node, picker.peer(id));
+      return st.why ? st : { value: usagePeak(st.usage) };
+    }} />` : null;
+  if (peerShown?.why) return html`<span id="usage" class="meta na">${pill}<span title=${peerShown.why}>${peerShown.pending ? peerShown.why : `usage not shared · ${shownNode.name}`}</span></span>`;
   const savedModes = Object.fromEntries((usageView(usage).lines || [])
     .map((line) => [line.key, dashPrefs.getItem(prefKey(line.key)) || 'usage']));
   const view = usageView(usage, { ...savedModes, ...modes });
@@ -71,9 +91,10 @@ function Usage({ state }) {
     const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.slice(0, 13);
     return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you${needsSuffix([featureNeeds('costs', state.snapshot.value?.peer_view)])}`}>usage and costs not shared by ${name}</span>`;
   }
-  if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
+  if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${pill}${view.text}</span>`;
   return html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
+      ${pill}
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
           <span class="usage-source">

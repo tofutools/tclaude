@@ -95,6 +95,49 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
   await mounted.unmount();
 });
 
+test('a fused view picks whose quota the header shows; peers come from their snapshots', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { Usage }, { createFleetState }, { USAGE_NODE_PREF }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+    harness.importDashboardModule('js/fleet-state.js'),
+    harness.importDashboardModule('js/usage-nodes.js'),
+  ]);
+  dashPrefs.removeItem(USAGE_NODE_PREF);
+  const fleet = createFleetState({ search: '?nodes=all' });
+  const peer = (id, label) => ({ instance_id: id, label, trusted: true, online: true, level: 'restricted' });
+  fleet.setStatus({ enabled: true, instance_id: 'inst_self', name: 'desk', hub: { state: 'connected' }, peers: [peer('inst_forge', 'forge'), peer('inst_mac0', 'mac')] });
+  const fetched = [];
+  const fetchImpl = async (path) => {
+    fetched.push(path);
+    if (path.includes('inst_mac0')) return { ok: true, json: async () => ({ usage: { available: false }, peer_view: { level: 'restricted', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }] } }) };
+    return { ok: true, json: async () => ({ usage: { available: true, five_hour: { pct: 62, remaining: '2h' }, seven_day: { pct: 31, remaining: '4d' } }, peer_view: { level: 'unrestricted' } }) };
+  };
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${Usage} state=${state} fleet=${fleet} fetchImpl=${fetchImpl} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { usage: { available: true, five_hour: { pct: 4, remaining: '4h' }, seven_day: { pct: 5, remaining: '4d9h' } } }));
+  const c = mounted.container;
+  const pill = c.querySelector('.usage-node-pill');
+  assert.match(pill.textContent, /⌂ desk/, 'this node by default');
+  assert.match(c.textContent, /5%/);
+  assert.deepEqual(fetched, [], 'no peer read until one is asked for');
+  await harness.act(() => pill.click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  const items = () => [...c.querySelectorAll('.usage-node-item')];
+  assert.deepEqual(items().map((i) => i.textContent.trim().replace(/\s+/g, ' ')), ['⌂ deskpeak 5%', 'forgepeak 62%', 'mac🔒']);
+  assert.equal(items()[2].disabled, true, 'a peer that does not share costs cannot be picked');
+  assert.match(items()[2].querySelector('.lock-why').dataset.why, /mac does not share usage or costs with you/);
+  await harness.act(() => items()[1].click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.match(c.querySelector('.usage-node-pill').textContent, /forge/);
+  assert.match(c.textContent, /62%/, "forge's own quota, not a sum");
+  assert.equal(dashPrefs.getItem(USAGE_NODE_PREF), 'inst_forge');
+  dashPrefs.removeItem(USAGE_NODE_PREF);
+  await mounted.unmount(); fleet.dispose();
+});
+
 test('disconnect overlay is removed on reconnect so its compositor layers cannot linger', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { Disconnect }] = await Promise.all([
