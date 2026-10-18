@@ -67,5 +67,14 @@ export function createFleetActions({ state, fetchImpl = globalThis.fetch } = {})
     return out;
   };
 
-  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest, silenceOffline });
+  // setOfflineAlerts turns a peer's offline/back notices on or off; off marks
+  // it part-time and keeps the rest of its health policy.
+  const setOfflineAlerts = async (instance, on) => {
+    const response = await fetchImpl(`/api/federation/nodes/health/presence?peer=${encodeURIComponent(instance)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ presence: !!on }) });
+    const out = await readJSON(response);
+    if (!response.ok) throw Object.assign(new Error(out?.error || `HTTP ${response.status}`), { code: out?.code || '' });
+    return out;
+  };
+
+  return Object.freeze({ loadStatus, loadSummary, requestTrust, dismissTrustRequest, silenceOffline, setOfflineAlerts });
 }

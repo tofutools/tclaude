@@ -31,6 +31,7 @@ const fleetFederationStubJS = `(function(){
     status.peers.push({ instance_id: 'inst_d8vk2mqa', name: 'dave-rig', fingerprint: 'd8vk-2mqa-x7rp-0kc3-fe9w-4ny1', trusted: false, online: true, trust_request: { note: "Dave here, the new build box in the lab. Fingerprint read out on Slack.", trusts_you: true, received_at: new Date(Date.now() - 6 * 60e3).toISOString() } });
     status.peers[2].trust_requested_at = new Date(Date.now() - 3 * 60e3).toISOString();
   }
+  if (window.__dashsnapPartTime) status.peers[1].part_time = true;
   if (window.__dashsnapKeyPending) status.peers[0].identity_transition = { state: 'pending', old_id: 'inst_hn3cxq7a', new_id: 'inst_c7m2x9tf', new_fingerprint: 'c7m2-x9tf-4kp1-wq8e-zn3d-6hv0', received_at: '2026-10-10T09:02:00Z', accept_after: '2026-10-10T09:12:00Z' };
   var res = { status: 'current', cpu: { logical_cores: 8, load_average: [2.7, 2, 1] }, ram: { total_bytes: 32e9, available_bytes: 12e9, available_estimated: false }, data_disk: { total_bytes: 500e9, available_bytes: 210e9 } };
   window.fetch = function(input, init) {
@@ -1118,6 +1119,20 @@ func fleetStates() []dashsnap.State {
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && document.querySelectorAll('.fleet-card-key').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('.fleet-card-key').length !== 2) throw new Error('fleet: key transition notes missing on the map');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-map-part-time",
+			Title:   "Map card of a part-time peer",
+			Caption: "Each peer card has an Offline alerts switch: forge notifies, lab is part-time, so its card carries a part-time tag and shows a grey asleep instead of offline, with no offline notice row.",
+			InitJS:  "window.__dashsnapPartTime = true;" + fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.fleet-card-presence.asleep'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.fleet-card-presence.asleep')) throw new Error('fleet: part-time peer not shown asleep');
+  if (document.querySelectorAll('.fleet-card-seg').length !== 2) throw new Error('fleet: offline alerts switch missing');
 })();`,
 			SettleMS: 400,
 		},

@@ -574,6 +574,50 @@ test('⌘ Fleet is lit on the fleet views and returns to the one used last', asy
   await peerView.unmount(); state.dispose();
 });
 
+test('a peer card switches offline alerts and marks a part-time node asleep', async (t) => {
+  const { harness, stateMod, actionsMod, island } = await load(t);
+  const now = Date.parse('2026-10-09T21:00:00Z');
+  const notice = { since: '2026-10-09T20:37:00Z', notices: 1, next_at: '2026-10-09T21:07:00Z', silenced: false };
+  const withLab = (extra) => { const s = status([]); s.peers[1] = { ...s.peers[1], ...extra }; return s; };
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('map'), prefs: { getItem: () => null, setItem: () => {} } });
+  let reply = withLab({ offline_notice: notice });
+  const posts = [];
+  const fetchImpl = async (url, init) => {
+    if (init?.method === 'POST') {
+      const on = JSON.parse(init.body).presence;
+      posts.push([url, on]);
+      reply = withLab(on ? { offline_notice: notice } : { part_time: true });
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    return { ok: true, status: 200, json: async () => reply };
+  };
+  const actions = actionsMod.createFleetActions({ state, fetchImpl });
+  await actions.loadStatus();
+  const toasts = [];
+  const mounted = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} now=${() => now} toast=${(m) => toasts.push(m)} />`);
+  const card = () => mounted.container.querySelector('[aria-label="lab node"]');
+  const click = async (sel) => harness.act(async () => { harness.fireEvent(card().querySelector(sel), 'click'); for (let i = 0; i < 6; i++) await Promise.resolve(); });
+  assert.equal(card().querySelector('[data-fleet="offline-alerts-notify"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(card().querySelector('.fleet-card-kind.part-time'), null);
+  assert.ok(mounted.container.querySelector('[aria-label="forge node"] [data-fleet="offline-alerts-notify"]'), 'online peers can be switched too');
+
+  await click('[data-fleet="offline-alerts-part-time"]');
+  assert.deepEqual(posts, [['/api/federation/nodes/health/presence?peer=inst_lab', false]]);
+  assert.deepEqual(toasts, ['lab is part-time: no offline or back-online messages']);
+  assert.equal(card().querySelector('[data-fleet="offline-alerts-part-time"]').getAttribute('aria-pressed'), 'true');
+  assert.ok(card().querySelector('.fleet-card-kind.part-time'));
+  assert.match(card().querySelector('.fleet-card-presence.asleep').textContent, /asleep/);
+  assert.equal(card().querySelector('.fleet-card-notice'), null, 'a part-time node shows no offline notice row');
+
+  await click('[data-fleet="offline-alerts-notify"]');
+  assert.deepEqual(posts[1], ['/api/federation/nodes/health/presence?peer=inst_lab', true]);
+  assert.ok(card().querySelector('.fleet-card-notice'));
+  await mounted.unmount();
+  const remote = await harness.mount(harness.html`<${island.FleetMap} state=${state} actions=${actions} timers=${fakeTimers()} remote="inst_forge" />`);
+  assert.equal(remote.container.querySelector('[data-fleet="offline-alerts-notify"]'), null, 'a peer view never switches this node\'s alerts');
+  await remote.unmount(); state.dispose();
+});
+
 test('an offline peer card shows its offline notices and silences this disconnection', async (t) => {
   const { harness, stateMod, actionsMod, island, model } = await load(t);
   const now = Date.parse('2026-10-09T21:00:00Z');

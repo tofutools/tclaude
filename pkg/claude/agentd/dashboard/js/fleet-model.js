@@ -100,6 +100,8 @@ export function normalizeFleet(status) {
       lastSeen: p.last_seen || null,
       keyTransition: keyTransition(p),
       offlineNotice: offlineNotice(p),
+      // partTime: its offline/back notices are off, as it is often off on purpose.
+      partTime: !!p.part_time,
       color: nodeColor(p.instance_id),
       local: false,
     }))

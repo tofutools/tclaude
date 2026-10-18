@@ -465,6 +465,8 @@ type fedPeerJSON struct {
 	TrustedAt          time.Time              `json:"trusted_at,omitempty"`
 	// OfflineNotice is this trusted peer's open offline episode, if any.
 	OfflineNotice *fleetOfflineNotice `json:"offline_notice,omitempty"`
+	// PartTime marks a trusted peer whose offline/back notices are off.
+	PartTime bool `json:"part_time,omitempty"`
 	// TrustRequest is a request to be trusted received from this untrusted
 	// instance; TrustRequestedAt is when this node last asked it.
 	TrustRequest     *fedTrustRequest `json:"trust_request,omitempty"`
@@ -536,6 +538,7 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 			AcceptAfter: rotation.AcceptAfter, Reason: rotation.Reason,
 		}
 	}
+	partTime := fleetPartTime(trusted)
 	labels := map[string]string{}
 	seen := map[string]bool{}
 	for _, p := range trusted {
@@ -547,6 +550,7 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Peers = append(resp.Peers, fedPeerJSON{
 			OfflineNotice:      notice,
+			PartTime:           partTime[p.InstanceID],
 			IdentityTransition: transitions[p.InstanceID],
 			InstanceID:         p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
 			Level: p.TrustLevel, Trusted: true, Online: e.Online, LastSeen: e.LastSeen, Version: e.Version, TrustedAt: p.TrustedAt,
@@ -1310,6 +1314,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/nodes/health", handleFleetHealthConfig)
 	mux.HandleFunc("POST /v1/federation/nodes/health", handleFleetHealthConfig)
 	mux.HandleFunc("POST /v1/federation/nodes/health/silence", handleFleetOfflineSilence)
+	mux.HandleFunc("POST /v1/federation/nodes/health/presence", handleFleetPresenceNotices)
 	mux.HandleFunc("GET /v1/federation/node-labels", handleFederationNodeLabels)
 	mux.HandleFunc("POST /v1/federation/node-labels", handleFederationNodeLabels)
 	mux.HandleFunc("GET /v1/federation/file", handleFederationFileGet)
