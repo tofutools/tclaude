@@ -16,9 +16,13 @@ import { featureState, humanReadShared } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
 import { refreshPageNotifications } from './peer-notifications.js';
 import { senderOnline } from './message-access-dialog-model.js';
+import { MessageDownloadMenu } from './message-download-menu.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
+// SAFE_AGENT admits only a plain agent ID into a terminal request.
+const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
 // readerNode is where a notification lives. node names another node than
 // the page's (a fused-view row; its requests go through nodeFetch(node) and
@@ -216,7 +220,7 @@ function Attachment({ message }) {
 }
 
 export function GroupsNotificationReader({
-  descriptor, snapshot, state, actions, onSelect, onClose, closing = false,
+  descriptor, snapshot, state, actions, onSelect, onClose, closing = false, confirm = shellConfirm, toast = shellToast,
 }) {
   const closeRef = useRef(null);
   const where = readerNode(descriptor.sender);
@@ -308,6 +312,52 @@ export function GroupsNotificationReader({
     ? `${peerName} keeps answering its notifications to its own operator: it needs unrestricted trust from ${peerName}.` : '';
   const markLock = peer && !shares(peerView, 'mark')
     ? `${peerName} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.` : '';
+  // Deleting has no peer grant: unrestricted trust reaches the node's own
+  // route, as its operator does.
+  const deleteLock = peer && peerView?.level !== 'unrestricted'
+    ? `${peerName} keeps deleting its notifications to its own operator: it needs unrestricted trust from ${peerName}.` : '';
+  const senderAgent = message.from_agent || descriptor.sender.agent || '';
+  const senderConv = message.from_conv || descriptor.sender.conv || '';
+  const senderLive = nodeSnap ? senderOnline(nodeSnap, senderAgent, senderConv) : undefined;
+  // The sender's terminal opens here: this node's as its row's jump does, a
+  // peer's through the federation bridge (the peer decides whether it shares
+  // it). This node's own, seen from a peer's page, raises nothing there.
+  const terminalLock = peer
+    ? (SAFE_AGENT.test(senderAgent) ? '' : 'This sender has no stable agent ID to open its terminal by.')
+    : remoteNodeID() ? "This node's agents open their terminals from this node's own dashboard."
+      : senderAgent || senderConv ? '' : 'This notification has no sending agent.';
+  const openTerminal = () => {
+    if (peer) {
+      void import('./remote-terminal.js').then((m) => m.openRemoteTerminal({ instance: peer, agent: senderAgent, peerLabel: peerName, label: senderLabel, toast }));
+      return;
+    }
+    const row = [...(nodeSnap?.agents || []), ...(nodeSnap?.ungrouped || [])]
+      .find((a) => (senderAgent ? a.agent_id === senderAgent : a.conv_id === senderConv));
+    void import('./agent-jump.js').then((m) => m.jumpAgent(senderAgent || senderConv, senderLabel, nodeSnap?.default_terminal === 'web', row?.state?.harness || '', toast));
+  };
+  // A deleted notification leaves the reader on its neighbour, else closes it.
+  const dropDeleted = () => {
+    known.current.rows.delete(message.id);
+    if (node) announceNodeChanged(node);
+    else {
+      const snap = state.snapshot.value;
+      if (snap?.messages?.some((m) => m.id === message.id)) {
+        state.publish({ ...snap, messages: snap.messages.filter((m) => m.id !== message.id),
+          messages_unread: Math.max(0, Number(snap.messages_unread || 0) - (message.read ? 0 : 1)) });
+      }
+    }
+    const neighbour = next || previous;
+    if (neighbour) onSelect(neighbour.id); else onClose(true);
+  };
+  // A peer's own route through this node's proxy; this node's stays local on
+  // any page (remote-node.js).
+  const remove = () => confirm({
+    title: 'Delete this notification?',
+    body: `Permanently deletes this one notification${peer ? ` on ${peerName}` : ''}, read or unread. This cannot be undone.`,
+    meta: `#${message.id}`, okLabel: 'Delete', busyLabel: 'Deleting…',
+    action: () => postPeerJSON(peer ? `/api/peer/${encodeURIComponent(peer)}/human-messages/delete` : '/api/human-messages/delete', { id: message.id }),
+  }).then((ok) => { if (ok) { toast(`Deleted${peer ? ` on ${peerName}` : ''}`, false); dropDeleted(); } },
+    (e) => toast(`Delete failed: ${e?.message || e}`, true));
 
   return html`<aside class=${`human-notification-drawer${closing ? ' closing' : ''}`} role="dialog"
     data-message-id=${message.id}
@@ -372,6 +422,9 @@ export function GroupsNotificationReader({
           } : {}),
         });
       }}>Reply</button><${LockReason} why=${replyLock} />
+      <button type="button" class="human-notification-drawer-terminal" disabled=${!!terminalLock || senderLive === false}
+        title=${terminalLock ? undefined : senderLive === false ? 'Sending agent is offline — no terminal to open' : `Open ${senderLabel}'s terminal${peer ? ` on ${peerName} here` : ''}`}
+        onClick=${openTerminal}>Terminal</button><${LockReason} why=${terminalLock} />
       ${!node && html`<button type="button" onClick=${() => {
         onClose(false);
         openHumanNotifications(senderID, message.id);
@@ -384,6 +437,9 @@ export function GroupsNotificationReader({
         ${message.read ? 'Mark unread' : 'Mark read'}
       </button><${LockReason} why=${markLock} />
       <span class="grow"></span>
+      <${MessageDownloadMenu} message=${message} node=${peer} toast=${toast} />
+      <button type="button" class="danger human-notification-drawer-delete" disabled=${!!deleteLock}
+        title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete</button><${LockReason} why=${deleteLock} />
       <button type="button" onClick=${() => onClose(true)}>Close</button>
     </div>
   </aside>`;

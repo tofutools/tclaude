@@ -71,13 +71,14 @@ import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
 import { scribeGroupVisible } from './scribe-groups.js';
-import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openGroupWebTermPane, openWebWindowPane } from './terminals-tab.js';
+import { closeTerminalsForConvs, closeTerminalsForWindowOp, openGroupWebTermPane, openWebWindowPane } from './terminals-tab.js';
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
 import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
 import { limitHint, limitPeerViewCommands, shellControl } from './peer-view-limits.js';
 import { buildFusedNodeCommands } from './palette-fused.js';
 import { fusedGroupListing } from './group-order.js';
+import { jumpAgent } from './agent-jump.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -102,26 +103,6 @@ const bulkWindowOp = createPaletteWindowOperator({
   openWebWindowPane,
   closeTerminalsForWindowOp,
 });
-
-async function jumpAgent(conv, label, preferWebTerminal, harness = '') {
-  // If this agent already has an open web terminal / window pane in the
-  // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
-  // the per-agent 'jump' row action.
-  if (focusTerminalForConv([conv])) { toast(`focused: ${label}`); return; }
-  // With web terminals as the default (config dashboard.default_terminal =
-  // "web"), open the agent's live session as a browser pane rather than raising
-  // a native OS window — same as the per-agent 'jump' row action.
-  if (preferWebTerminal) { openWebWindowPane(conv, label, { harness }); toast(`focused: ${label}`); return; }
-  try {
-    const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!r.ok) { toast(`focus ${label}: ${await r.text()}`, true); return; }
-    toast(`focused: ${label}`);
-  } catch (e) {
-    toast(`focus ${label}: ${(e && e.message) || e}`, true);
-  }
-}
 
 async function hideAgent(conv, label) {
   try {
@@ -888,7 +869,7 @@ export function buildCommands(snapshot) {
       hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
         + ' reveal behold conjure portal scrying familiar',
-      run: () => jumpAgent(sel, label, snap.default_terminal === 'web', a.state?.harness || ''),
+      run: () => jumpAgent(sel, label, snap.default_terminal === 'web', a.state?.harness || '', toast),
     });
     cmds.push({
       id: `agent-hide:${sel}`,

@@ -38,12 +38,13 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 			"/api/jump — so an open web pane is preferred over a native window")
 	}
 
-	// The palette per-agent focus mirrors it.
-	pal := readDashboardJS(t, "palette.js")
-	pFocus := strings.Index(pal, "focusTerminalForConv([conv])")
-	pJump := strings.Index(pal, "/api/jump/")
+	// The palette's per-agent focus and the quick reader's jump share
+	// agent-jump.js, which mirrors it.
+	jump := readDashboardJS(t, "agent-jump.js")
+	pFocus := strings.Index(jump, "focusTerminalForConv([conv])")
+	pJump := strings.Index(jump, "/api/jump/")
 	if pFocus < 0 || pJump < 0 || pFocus > pJump {
-		t.Error("palette.js jumpAgent must call focusTerminalForConv([conv]) BEFORE POSTing /api/jump")
+		t.Error("agent-jump.js jumpAgent must call focusTerminalForConv([conv]) BEFORE POSTing /api/jump")
 	}
 }
 
