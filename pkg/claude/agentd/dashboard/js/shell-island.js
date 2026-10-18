@@ -92,9 +92,9 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
     return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you${needsSuffix([featureNeeds('costs', state.snapshot.value?.peer_view)])}`}>usage and costs not shared by ${name}</span>`;
   }
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${pill}${view.text}</span>`;
-  return html`
+  const readout = html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
-      ${pill}
+      ${view.multiline ? null : pill}
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
           <span class="usage-source">
@@ -114,6 +114,8 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
       ` : line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`))}
     </span>
   `;
+  // Beside the two-line readout, not above it: the header keeps its height.
+  return pill && view.multiline ? html`<span class="usage-with-node">${pill}${readout}</span>` : readout;
 }
 
 function GlobalActivity({ state, groupsState }) {

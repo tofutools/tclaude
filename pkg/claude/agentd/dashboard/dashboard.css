@@ -3625,7 +3625,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
 #usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
 #usage.na { color: #6e7681; font-style: italic; }
-/* Header usage node pill (usage-nodes.js): whose quota a fused view shows. */
+/* Header usage node pill (usage-nodes.js): whose quota a fused view shows,
+   left of the readout (beside its two rows, so the header keeps its height). */
+.usage-with-node { display: flex; align-items: center; gap: 8px; }
 .usage-node { position: relative; display: inline-flex; font-style: normal; }
 .usage-node-pill { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--nc); border-radius: 10px; background: transparent; color: var(--nc); font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; }
 .usage-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nc); flex: none; }
