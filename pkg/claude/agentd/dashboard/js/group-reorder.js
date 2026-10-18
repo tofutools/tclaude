@@ -329,6 +329,9 @@ function openClone(ctx, dragName, plan) {
     parent: ctx.own(plan.desiredParent),
     anchor: ctx.own(plan.anchor),
     before: plan.before,
+    // The fused view orders its own listing (group@node): the clone goes
+    // beside the anchor there too.
+    ...(ctx.fused && plan.anchor ? { fused: { anchor: plan.anchor, at: `@${ctx.name}` } } : {}),
   }, ctx.node);
 }
 
