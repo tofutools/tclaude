@@ -15,7 +15,7 @@ test('a remote terminal opens interactive or watch-only as the peer shares it, a
   const go = (agent) => m.openRemoteTerminal({ instance: 'inst_forge7', agent, peerLabel: 'forge', fetchImpl, toast: (x, err) => toasts.push([x, err]), open: (o) => { opened.push(o); return o; } });
   m.resetRemoteSessionsCache();
   await go('agt_ada1');
-  assert.deepEqual(opened.at(-1), { wsPath: '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive', label: 'ada @ forge', remote: { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' } });
+  assert.deepEqual(opened.at(-1), { wsPath: '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive', label: 'ada', remote: { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' } });
   await m.openRemoteTerminal({ instance: 'inst_forge7', agent: 'agt_ada1', peerLabel: 'forge', fetchImpl, background: true, open: (o) => { opened.push(o); return o; } });
   assert.equal(opened.at(-1).reveal, false, 'a background open leaves the current tab in front');
   opened.pop();
@@ -76,7 +76,7 @@ test('the map\'s terminal picker lists one peer\'s sessions with how each opens,
   await harness.act(() => q('[data-agent="agt_bob2"] [data-open]').click());
   assert.equal(closed, 1);
   assert.equal(opened[0].wsPath, '/api/federation/terminal?peer=inst_forge7&agent=agt_bob2&mode=watch');
-  assert.equal(opened[0].label, 'bob @ forge');
+  assert.equal(opened[0].label, 'bob');
   await mounted.unmount();
 });
 
@@ -97,7 +97,7 @@ test('by default a remote terminal opens as a Terminals tab pane, not the overla
   assert.equal(panes.length, 1);
   const [seed, opts] = panes[0];
   assert.equal(seed.ws, '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive');
-  assert.equal(seed.label, 'ada @ forge');
+  assert.equal(seed.label, 'ada');
   assert.deepEqual({ ...seed.remote }, { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' });
   assert.equal(seed.agent, undefined, 'no local agent actions on a peer agent');
   assert.deepEqual(opts, { reveal: true });

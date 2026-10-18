@@ -20696,9 +20696,19 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-bi-list li .muted { display: block; font-size: 11px; }
 /* A peer's agent terminal: whose it is and whether this view can type. Amber
    for interactive (your keys reach the peer's agent), neutral for watch-only. */
-.term-remote-badge { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; }
-.term-remote-badge.interactive { border-color: #9e6a03; color: #d29922; }
-.term-remote-badge.watch { border-color: #3d444d; color: #c9d1d9; }
+.term-remote-badge {
+  --nc: #8b949e;
+  flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; line-height: 16px; padding: 0 7px 0 0; border-radius: 10px; white-space: nowrap; overflow: hidden;
+  color: #8b949e; border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117); background: color-mix(in srgb, var(--nc) 12%, #0d1117);
+}
+/* The peer's name, in its node colour: the header's one statement of whose
+   terminal this is (the tab carries the compact node pill). */
+.term-remote-node {
+  padding: 0 6px; font: 500 10.5px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc;
+  background: color-mix(in srgb, var(--nc) 30%, #0d1117);
+}
+.term-remote-badge.interactive { color: #d29922; }
+.term-remote-badge.watch { color: #c9d1d9; }
 /* A pinned remote terminal: the peer's session is also attached elsewhere. */
 .term-remote-shared { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 10px; font-size: 12px; color: #d29922; background: #1c1708; border-bottom: 1px solid #3d2e00; }
 .term-remote-shared .mux-btn { margin-left: auto; }
