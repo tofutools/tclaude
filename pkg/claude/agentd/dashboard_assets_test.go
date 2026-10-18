@@ -1024,6 +1024,27 @@ func TestDashboardAssets_ShowGroupDescriptionWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ShowFinalPRChecksWired guards the merged/closed-PR CI
+// pill toggle (config dashboard.show_final_pr_checks): the badge tags a
+// terminal PR's non-failing pill, CSS hides it unless refresh.js sets the body
+// class, and the Config tab loads/gathers the checkbox.
+func TestDashboardAssets_ShowFinalPRChecksWired(t *testing.T) {
+	for _, needle := range []string{
+		"'show-final-pr-checks', !!data.show_final_pr_checks",
+		"(prState === 'merged' || prState === 'closed') && stateName !== 'failing'",
+		`body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }`,
+		"summary=${checks} prState=${prState}",
+		"summary=${pr.checks} prState=${pr.state}",
+		"#cfg-dashboard-show-final-pr-checks",
+		"dashboard.show_final_pr_checks = true",
+		`id="cfg-dashboard-show-final-pr-checks"`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — final-PR CI toggle broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_TUIColorSchemeWired guards the interactive-TUI color
 // scheme selector (config tui.color_scheme), whose Config-tab pieces span
 // dashboard.html + config.js and must stay in lockstep — there's no JS render

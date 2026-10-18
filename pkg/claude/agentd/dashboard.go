@@ -1182,6 +1182,11 @@ type snapshotPayload struct {
 	// off this each poll; CSS drops the chip unless the class is present. See
 	// Config.ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description"`
+	// ShowFinalPRChecks mirrors config dashboard.show_final_pr_checks —
+	// whether merged/closed PRs keep a non-failing CI checks pill. Off by
+	// default; refresh.js toggles body.show-final-pr-checks off this each
+	// poll. See Config.ShowFinalPRChecks.
+	ShowFinalPRChecks bool `json:"show_final_pr_checks"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -3406,6 +3411,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		DefaultDirectoryPicker:   cfg.DefaultDirectoryPicker(),
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
+		ShowFinalPRChecks:        cfg.ShowFinalPRChecks(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
 		TriggersEnabled:          triggersEnabled,
 		GroupsRouteMapEnabled:    groupsRouteMapEnabled,

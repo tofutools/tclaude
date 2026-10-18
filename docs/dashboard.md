@@ -361,8 +361,10 @@ The CI pill reads `✓ 12/14` with glyphs ✓ ✕ ◐ · (the denominator exclud
 skipped checks). Hovering or focusing either opens a checks panel that
 re-polls every 6 seconds while open: failures first, then running, pending,
 and passed/skipped, with live elapsed timers and a link to the GitHub checks
-page. The data comes from `git` and `gh` off the snapshot path, cached with a
-90-second TTL. The footer's **Open PRs** popover reuses the same badges with
+page. On merged and closed PRs the CI pill is shown only when the final run
+is failing; set `dashboard.show_final_pr_checks` (Config tab, "CI on finished
+PRs") to always show it. The data comes from `git` and `gh` off the snapshot
+path, cached with a 90-second TTL. The footer's **Open PRs** popover reuses the same badges with
 Open / Needs attention / Unattached / Closed filters and an "Open all on
 GitHub" action. Drafts are muted grey and stay out of **Needs attention** by
 default; select that filter to reveal its **Include drafts** checkbox. Open PRs

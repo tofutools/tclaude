@@ -1177,7 +1177,7 @@ function BranchCell({ member }) {
     // .pr-chain keeps the link and its badges one inline run: inside an
     // init/now .loc-row (a flex row with a gap) they would otherwise each
     // become a flex item and sit wider apart than on a single-branch row.
-    return html`${branchNode}${prNumber && prURL ? html` <span class="pr-chain"><${PRLinkHover} url=${prURL} prNumber=${prNumber} title=${prTitle} prState=${prState} className=${stateClass} label=${`#${prNumber}`} describe=${`${stateLabel} pull request #${prNumber}`} /><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} /><${PRReviewBadge} url=${prURL} prNumber=${prNumber} reviews=${reviews} prState=${prState} /></span>` : null}`;
+    return html`${branchNode}${prNumber && prURL ? html` <span class="pr-chain"><${PRLinkHover} url=${prURL} prNumber=${prNumber} title=${prTitle} prState=${prState} className=${stateClass} label=${`#${prNumber}`} describe=${`${stateLabel} pull request #${prNumber}`} /><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} prState=${prState} /><${PRReviewBadge} url=${prURL} prNumber=${prNumber} reviews=${reviews} prState=${prState} /></span>` : null}`;
   };
   const start = branch(member.startup_branch || '', member.startup_branch_url || '', member.startup_pr_number || 0, member.startup_pr_url || '', member.startup_pr_state || '', member.startup_checks, member.startup_reviews, member.startup_pr_title || '');
   const current = branch(member.branch || '', member.branch_url || '', member.branch_pr_number || 0, member.branch_pr_url || '', member.branch_pr_state || '', member.branch_checks, member.branch_reviews, member.branch_pr_title || '');
@@ -1189,7 +1189,7 @@ function BranchCell({ member }) {
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
     const stateClass = prStateClass(pr.state);
-    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
+    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} prState=${pr.state} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
   })}</span>` : null}`;
 }
 

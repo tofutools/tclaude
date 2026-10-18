@@ -602,6 +602,14 @@ type DashboardConfig struct {
 	// dashboard reads the resolved value off the snapshot each poll and toggles
 	// body.show-group-description. See (*Config).ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description,omitempty"`
+	// ShowFinalPRChecks keeps the CI checks pill (✓ n/m) beside merged and
+	// closed pull requests in the Groups member table. Once a PR is merged or
+	// closed its CI result is history, so by default the dashboard only keeps
+	// the pill when the final run is failing; flip this on to always show it.
+	// Default false. The dashboard reads the resolved value off the snapshot
+	// each poll and toggles body.show-final-pr-checks. See
+	// (*Config).ShowFinalPRChecks.
+	ShowFinalPRChecks bool `json:"show_final_pr_checks,omitempty"`
 }
 
 // Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
@@ -1696,6 +1704,13 @@ func (c *Config) ShowAgentHideButton() bool {
 // back. Nil-safe on the receiver.
 func (c *Config) ShowGroupDescription() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowGroupDescription
+}
+
+// ShowFinalPRChecks reports whether merged/closed PRs keep their CI checks
+// pill even when the final run is not failing — config
+// dashboard.show_final_pr_checks. Default false. Nil-safe on the receiver.
+func (c *Config) ShowFinalPRChecks() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.ShowFinalPRChecks
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars
