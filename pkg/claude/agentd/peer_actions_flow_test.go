@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -150,6 +151,44 @@ func TestPeerCloneAndRetireProductionCores(t *testing.T) {
 	actor, err := db.GetAgent(aid)
 	require.NoError(t, err)
 	require.False(t, actor.Active())
+}
+
+// A clone dropped onto another group joins it only when the peer holds the
+// clone grant on that group as well as on the source's.
+func TestPeerCloneIntoGrantedGroup(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveConvWithTitle(moveSourceConv, "peer-worker")
+	f.HaveEnrolledAgent(moveSourceConv)
+	f.HaveAliveSession(moveSourceConv, "peer-clone-source", "peer-clone-pane", f.TestCwd("work"))
+	f.HaveGroup("source")
+	f.HaveGroup("target")
+	f.HaveMember("source", moveSourceConv)
+	aid, err := db.AgentIDForConv(moveSourceConv)
+	require.NoError(t, err)
+	grant := func(group string) {
+		rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersClone, "scope": "group=" + group})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	grant("source")
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	clone := func() *httptest.ResponseRecorder {
+		return testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/clone", map[string]any{"no_copy_conv": true, "group": "target"}))
+	}
+	rec := clone()
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+	grant("target")
+	rec = clone()
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var reply struct {
+		Conv string `json:"new_conv"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reply))
+	target, err := db.GetAgentGroupByName("target")
+	require.NoError(t, err)
+	m, err := db.FindMemberInGroup(target.ID, reply.Conv)
+	require.NoError(t, err)
+	require.NotNil(t, m, "the clone joins the group it was dropped on")
 }
 
 func TestPeerTeleportProductionOffer(t *testing.T) {

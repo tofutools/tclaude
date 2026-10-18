@@ -79,6 +79,15 @@ func (a *peerActionAuthority) allows(perm, target string, actx ActionContext) bo
 		if slug != PermGroupsMembersClone {
 			return false
 		}
+	case PermGroupsMembersAdd:
+		// A clone placed in another group joins it as a member; the clone
+		// grant on that group covers it (checked again here, not only at the
+		// route, so the clone core's own gate stays authoritative).
+		if slug != PermGroupsMembersClone || target != "" {
+			return false
+		}
+		g, err := db.GetAgentGroupByName(actx.Group)
+		return err == nil && g != nil && fedPeerAllows(a.peer, g.ID, PermGroupsMembersClone)
 	case PermAgentRename, PermAgentTask:
 		if slug != PermGroupsMembersManage {
 			return false
@@ -214,9 +223,20 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		var body struct {
 			FollowUp   string `json:"follow_up"`
 			NoCopyConv bool   `json:"no_copy_conv"`
+			// Group also places the clone in another group, as a drop onto it
+			// does. The peer needs the clone grant there too: that grant is
+			// what lets it put new clones into a group.
+			Group string `json:"group,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
 			return
+		}
+		if body.Group = strings.TrimSpace(body.Group); body.Group != "" {
+			g, err := db.GetAgentGroupByName(body.Group)
+			if err != nil || g == nil || !fedPeerAllows(a.peer, g.ID, PermGroupsMembersClone) {
+				writeError(w, 403, "permission", "requires groups.members.clone on the target group")
+				return
+			}
 		}
 		raw, _ := json.Marshal(body)
 		r.Body = io.NopCloser(bytes.NewReader(raw))

@@ -249,8 +249,8 @@ function bindDnd() {
     if (cloneTarget && clonePayload) {
       // runDndClone opens the clone dialog and refreshes on every path.
       const ctx = ops.context(cloneTarget.where);
-      if (ops.allowed(ctx)) ops.clone(clonePayload, cloneTarget.group, ctx);
-      else ops.refused(ctx);
+      if (ops.allowed(ctx, 'clone', clonePayload.agent, cloneTarget.group)) ops.clone(clonePayload, cloneTarget.group, ctx);
+      else ops.refused(ctx, 'clone');
       return;
     }
     refresh();
@@ -455,7 +455,6 @@ function bindDnd() {
     const where = box.id === 'dnd-trash' ? { node: payload.sourceNode || '', name: payload.sourceNodeName || '' } : dndNode(box);
     if (where.node !== (payload.sourceNode || '')) return;
     const ctx = ops.context(where);
-    if (!ops.allowed(ctx)) { ops.refused(ctx); return; }
     const sourceUngrouped = !!payload.sourceUngrouped;
     const sourceConversation = !!payload.sourceConversation;
     const sourceRetired = !!payload.sourceRetired;
@@ -467,6 +466,9 @@ function bindDnd() {
     const cloneIntent = e.dataTransfer?.dropEffect === 'copy' || paintedClone
       || !!e.ctrlKey || !!e.metaKey;
     const isClone = cloneIntent && !targetUngrouped && !targetRetired && !sourceRetired;
+    // A restricted peer takes only the gestures its grants on the agent cover.
+    const gesture = sourcePending ? '' : isClone ? 'clone' : targetRetired && !sourceRetired && !sourceConversation ? 'retire' : '';
+    if (!ops.allowed(ctx, gesture, payload.agent, targetGroup)) { ops.refused(ctx, gesture); return; }
 
     // Confirmation gate. Each runDnd* function below opens its own
     // tailored confirmation modal as its first step, BEFORE any

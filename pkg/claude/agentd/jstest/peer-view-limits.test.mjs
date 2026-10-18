@@ -99,6 +99,19 @@ test('this node is never limited', async (t) => {
   assert.equal(harness.fireEvent(doc.getElementById('retire'), 'click').defaultPrevented, false);
 });
 
+test('a restricted peer page drags only agent rows whose grants cover a drop', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<table><tr id="a" class="dnd-draggable" data-dnd-agent="agt_a"><td>a</td></tr><tr id="b" class="dnd-draggable" data-dnd-agent="agt_b"><td>b</td></tr></table><summary id="g" data-group-reorder="ops">ops</summary>';
+  const snapshot = harness.signals.signal({ peer_view: { included: ['agents.status'], agents: { agt_a: ['groups.members.retire'] } } });
+  const stop = mod.installPeerViewLimits({ doc, snapshot, toast: () => {}, remote: { id: 'inst_forge7' } });
+  t.after(stop);
+  assert.equal(harness.fireEvent(doc.getElementById('a'), 'dragstart').defaultPrevented, false, 'its retire grant lets it drag to the bin');
+  assert.equal(harness.fireEvent(doc.getElementById('b'), 'dragstart').defaultPrevented, true);
+  assert.equal(harness.fireEvent(doc.getElementById('g'), 'dragstart').defaultPrevented, true, 'group drags stay unrestricted-only');
+});
+
 test('palette commands and tab routing respect what the peer offers', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
