@@ -377,7 +377,7 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       // The receiving group carries an "arriving" marker (drop-landing.js)
       // until the copy runs there; a recall goes home, to no group here.
       const transit = mode !== 'home' && res?.state !== 'returning' && res?.teleport_state !== 'offered'
-        ? markInTransit({ group: target.group, node: target.node, ids: [agent.id], from: agent.nodeName || '', label: agent.name })
+        ? markInTransit({ group: target.group, node: target.node, ids: [agent.id], from: agent.nodeName || '', label: agent.name, newRow: mode === 'clone' && !!pullActions })
         : null;
       if (res?.move_id && !viaPeer && !pullActions) {
         toast(`${verb}: sent. Waiting for ${dest} to run its copy…`);

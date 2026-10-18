@@ -130,12 +130,21 @@ function overlayLayer() {
   return layer;
 }
 
+// live: a page that can draw the effect. Outside one (the node test DOM, a
+// torn-down page) the landing does nothing rather than throw.
+const live = () => typeof document !== 'undefined' && !!document.body && typeof requestAnimationFrame === 'function';
+
 // track keeps an overlay over `resolve()`'s element each frame until stop().
+// A lost element is looked for again at most every RESOLVE_MS, not per frame.
+const RESOLVE_MS = 250;
 function track(overlay, resolve) {
   let el = null;
   let raf = 0;
+  let looked = -Infinity;
   const frame = () => {
-    if (!visible(el)) el = resolve();
+    if (!live()) return;
+    if (!visible(el) && Date.now() - looked >= RESOLVE_MS) { looked = Date.now(); el = resolve(); }
+    else if (!visible(el)) el = null;
     if (el) {
       const r = el.getBoundingClientRect();
       overlay.style.transform = `translate(${r.left}px, ${r.top}px)`;
@@ -167,6 +176,7 @@ function blip(el, { failed = false } = {}) {
 function waitFor(target, done, ms = FIND_MS) {
   const started = Date.now();
   const tick = () => {
+    if (!live()) return;
     const hit = findLanded(target, false);
     if (hit) return done(hit);
     if (Date.now() - started >= ms) return done(findLanded(target, true));
@@ -178,21 +188,35 @@ function waitFor(target, done, ms = FIND_MS) {
 // markLanded reveals a drop's target and blips what landed there. target:
 // {group, node, virtualKey, section, ids (agent_id / conv_id of the dropped
 // agent), process (a pinned template's id), header (the group itself
-// landed: blip its header)}.
+// landed: blip its header)}. Cosmetic: it never throws into the operation
+// that called it.
 export function markLanded(target = {}) {
-  revealDropTarget(target);
-  waitFor(target, (hit) => {
-    if (!hit) return;
-    scrollTo(hit.el);
-    blip(hit.el);
-  });
+  if (!live()) return;
+  try {
+    revealDropTarget(target);
+    waitFor(target, (hit) => {
+      if (!hit) return;
+      scrollTo(hit.el);
+      blip(hit.el);
+    });
+  } catch (_) { /* the drop itself already succeeded */ }
 }
+
+const NO_TRANSIT = Object.freeze({ land() {}, fail() {}, cancel() {} });
 
 // markInTransit puts the "arriving" marker on the receiving group of a move
 // to another node. The returned handle lands it (with the agent IDs the copy
 // runs under there) or fails it; left alone, it lands by itself when the
-// agent's row appears there, and gives up after TRANSIT_MS.
-export function markInTransit({ group = '', node = '', ids = [], from = '', label = '' } = {}) {
+// agent's row appears there, and gives up after TRANSIT_MS. `newRow` (a
+// clone this page cannot follow, which runs under a new ID) also lands on any
+// row the group did not have when the marker went up. Like markLanded it
+// never throws: the move was already sent.
+export function markInTransit(options = {}) {
+  if (!live()) return NO_TRANSIT;
+  try { return transit(options); } catch (_) { return NO_TRANSIT; }
+}
+
+function transit({ group = '', node = '', ids = [], from = '', label = '', newRow = false } = {}) {
   const target = { group, node, section: 'agents', ids: ids.filter(Boolean) };
   revealDropTarget(target);
   const overlay = document.createElement('div');
@@ -232,15 +256,15 @@ export function markInTransit({ group = '', node = '', ids = [], from = '', labe
     cancel() { end(); },
   };
   // A move whose record this page cannot follow (a pull, a relay, a dialog
-  // closed early) lands when the row does: the agent's own, or (a clone runs
-  // under a new ID) any row the group did not have when the marker went up.
+  // closed early) lands when the agent's row does.
   let known = null;
   watch = setInterval(() => {
+    if (!live()) { end(); return; }
     const box = groupBoxes(target)[0];
     if (!box) return;
     const rows = boxRows(box);
-    if (!known) { known = new Set(rows.flatMap(rowIDs)); }
-    const hit = rows.find((row) => rowIDs(row).some((id) => target.ids.includes(id) || !known.has(id)));
+    if (newRow && !known) known = new Set(rows.flatMap(rowIDs));
+    const hit = rows.find((row) => rowIDs(row).some((id) => target.ids.includes(id) || (known && !known.has(id))));
     if (hit) handle.land(rowIDs(hit));
   }, 500);
   return handle;
