@@ -202,4 +202,12 @@ func TestPeerUnrestrictedReachesTheLocalDashboard(t *testing.T) {
 	require.Equal(t, 200, code, body)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Contains(t, rec.Body.String(), `"local_dashboard"`, "the metadata includes the local dashboard")
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/terminal-file?path=/etc/hostname"},
+		{"POST", "/api/delete-directory"},
+		{"POST", "/api/config-bundle/import"},
+	} {
+		code, body = call(c.method, c.path, map[string]any{})
+		require.Equal(t, 403, code, "%s %s stays with this node: %s", c.method, c.path, body)
+	}
 }

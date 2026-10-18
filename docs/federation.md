@@ -323,8 +323,11 @@ orders, cron jobs, templates, repositories and worktrees, retiring with the
 worktree, and so on. A few things stay with this node even then:
 - its dashboard login and browser-side preferences;
 - its configuration, which holds the remote-script and federation settings
-  that bound every peer;
-- its updates and remote-script settings;
+  that bound every peer, whether edited directly or imported in a config
+  bundle;
+- its remote-script settings (updates have their own `node.update` grant);
+- its files outside an agent's own routes: a terminal's file reads and
+  uploads, and the folder picker;
 - its federation administration;
 - the peer proxy (no peer reaches a third node through this one);
 - terminal streams;

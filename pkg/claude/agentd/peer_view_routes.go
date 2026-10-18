@@ -11,6 +11,9 @@ import (
 // guard test requires an explicit decision here, or in peerViewOwnNodeRoutes,
 // whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	"GET /api/node/update/jobs/{id}",
+	"POST /api/node/update",
+	"GET /api/node/update",
 	// Daemon profiling captures this node's own process.
 	"GET /api/profiles",
 	"POST /api/profiles",
@@ -64,7 +67,6 @@ var peerViewLocalRoutes = []string{
 	"POST /api/federation/hub/identity/revoke-old",
 	"GET /api/federation/hub/health",
 	"GET /api/federation/hub/logs",
-	"POST /api/federation/terminal-attachments",
 	"GET /api/federation/terminal-file",
 	"GET /api/federation/terminal",
 	"GET /api/federation/sessions",
@@ -74,7 +76,6 @@ var peerViewLocalRoutes = []string{
 	"/api/background-terminals/kill",
 	"/api/agents/",
 	"/api/audit",
-	"/api/browse-directories",
 	"/api/claude-settings/default-model",
 	"/api/cleanup/",
 	"GET /api/node/run",
@@ -93,10 +94,8 @@ var peerViewLocalRoutes = []string{
 	"/api/conversations",
 	"/api/cost-factor",
 	"/api/costs",
-	"/api/create-directory",
 	"/api/cron",
 	"/api/cron/",
-	"/api/delete-directory",
 	"/api/export-jobs/",
 	"POST /api/federation/offer-config",
 	"POST /api/federation/share-agent",
@@ -210,20 +209,17 @@ var peerViewLocalRoutes = []string{
 	"/api/perf",
 	"/api/perf/reset",
 	"/api/permissions",
-	"/api/pick-directory",
 	"/api/power-on",
 	"/api/pr-checks",
 	"/api/pr-details",
 	"/api/queued-spawns",
 	"/api/queued-spawns/{id}",
-	"/api/rename-directory",
 	"/api/replaced",
 	"/api/retired",
 	"/api/saved-prompts",
 	"/api/saved-prompts/{name}",
 	"POST /api/library/rename",
 	"GET /api/config-bundle/export",
-	"POST /api/config-bundle/import",
 	"/api/roles",
 	"/api/roles/{name}",
 	"/api/sandbox-profile-default",
@@ -250,8 +246,6 @@ var peerViewLocalRoutes = []string{
 	"/api/templates",
 	"/api/templates/{name}",
 	"/api/term/",
-	"/api/terminal-attachments",
-	"/api/terminal-file",
 	"/api/triggers",
 	"/api/triggers/",
 	"/api/tui/",
@@ -320,20 +314,28 @@ var peerViewLocalRoutes = []string{
 
 // peerViewOwnNodeRoutes stay with this node even for unrestricted trust: its
 // dashboard login and browser-side preferences, its configuration (which
-// holds the remote-script and federation settings that bound every peer),
-// its own updates, the peer proxy (a peer never reaches a third node through
+// holds the remote-script and federation settings that bound every peer,
+// directly or through a config bundle), its remote-script settings, its files
+// outside an agent's own routes (a terminal's file reads and uploads, the
+// folder picker's browse, create, rename and delete), the peer proxy (a peer never reaches a third node through
 // this one), the terminal streams (no websocket crosses the peer view) and
 // this node's human inbox, which has its own peer routes. Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
+	"/api/terminal-file",
+	"POST /api/federation/terminal-attachments",
+	"/api/terminal-attachments",
+	"/api/delete-directory",
+	"/api/rename-directory",
+	"/api/create-directory",
+	"/api/browse-directories",
+	"/api/pick-directory",
+	"POST /api/config-bundle/import",
 	"/",
 	"/api/auth/session",
 	"/api/browser-notifications",
 	"/api/config",
 	"/api/dashboard/prefs",
-	"GET /api/node/update",
-	"POST /api/node/update",
-	"GET /api/node/update/jobs/{id}",
 	"GET /api/node/run/settings",
 	"PUT /api/node/run/settings",
 	"GET /api/peer/{node}/{tail...}",
