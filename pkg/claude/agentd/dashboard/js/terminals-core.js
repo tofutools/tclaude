@@ -845,7 +845,9 @@ export function mountTerminalWidget({
     // A remote terminal's visible paths download from the peer only while
     // the live view holds sessions.files.read.
     remoteFileViewer: remote ? () => (remoteState.files ? remoteState.viewer : '') : null,
-    oscClipboard: !remote,
+    // A remote stream's clipboard writes follow a copy gesture and must
+    // match text on screen (terminal-interactions.js shownOnScreen).
+    oscClipboard: remote ? 'visible' : true,
   });
 
   disposables.push(term.onData((data) => {

