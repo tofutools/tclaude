@@ -17,6 +17,7 @@ import {
   MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
+import { pageHumanRoute } from './mail-state.js';
 import { refreshPageNotifications } from './peer-notifications.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -267,7 +268,7 @@ function FolderActions({ current, controller, solo = false }) {
     const clearLock = trustLock('', 'deleting its notifications');
     const clearRead = () => shellConfirm({
       title: 'Delete read messages?', body: `Permanently deletes every notification on ${name} that has been marked read. Unread ones are kept.`,
-      okLabel: 'Delete read', busyLabel: 'Deleting…', action: () => postPeerJSON('/api/human-messages/clear', {}),
+      okLabel: 'Delete read', busyLabel: 'Deleting…', action: () => postPeerJSON(pageHumanRoute('/api/human-messages/clear', remote), {}),
     }).then((res) => { if (res) { shellToast(`Deleted read notifications on ${name}`); controller.reloadMail(); } },
       (e) => shellToast(`Delete failed: ${e?.message || e}`, true));
     return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
@@ -533,7 +534,9 @@ function peerHumanActions(remote, peerView) {
     // Deleting has no peer grant: unrestricted trust reaches the peer's own
     // route, as its operator does.
     canDelete: operatorHere(),
-    remove: (id) => postPeerJSON('/api/human-messages/delete', { id }),
+    // /api/human-messages stays on this node from a peer's page
+    // (remote-node.js), so the peer's own route is named through its proxy.
+    remove: (id) => postPeerJSON(pageHumanRoute('/api/human-messages/delete', remote), { id }),
     focus: (m) => openRemote({ instance: remote, agent: m.from_agent, peerLabel: name, label: m.from_title || '', toast: shellToast }),
     // The page's own list of its unread ones (a restricted peer's) follows.
     mark: (id, read) => postPeerJSON('/api/human-inbox/read', read ? { id } : { id, read: false })

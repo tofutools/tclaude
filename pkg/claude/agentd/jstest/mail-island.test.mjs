@@ -655,9 +655,9 @@ test('on a peer\'s page under unrestricted trust, Messages deletes, wipes and fo
     assertAbsent(c.querySelector(`[data-human="${b}"] + .lock-why`), `${b} lock`);
   }
   await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="delete"]'), 'click'); await confirmed(); });
-  assert.ok(calls.includes('POST /api/human-messages/delete {"id":1}'), calls.join('\n'));
+  assert.ok(calls.includes('POST /api/peer/inst_forge/human-messages/delete {"id":1}'), 'the peer\'s own route: /api/human-messages stays on this node\n' + calls.join('\n'));
   await harness.act(async () => { harness.fireEvent(c.querySelector('#mail-clear-read'), 'click'); await confirmed(); });
-  assert.ok(calls.includes('POST /api/human-messages/clear {}'), calls.join('\n'));
+  assert.ok(calls.includes('POST /api/peer/inst_forge/human-messages/clear {}'), 'deleting read ones on forge, never this node\'s\n' + calls.join('\n'));
   // Focus reads the shared sessions here (never /api/jump on the peer) and
   // marks the notification read.
   await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="focus"]'), 'click'); await settle(); await settle(); });

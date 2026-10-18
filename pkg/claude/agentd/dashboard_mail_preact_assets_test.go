@@ -46,7 +46,7 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 	}
 	for _, want := range []string{
 		"if (mail.busy) return;",
-		"const deleteURL = messageDeleteEndpoint(mail.selected);",
+		"const deleteURL = pageHumanRoute(messageDeleteEndpoint(mail.selected));",
 		"postDeleteMessages(batch, deleteURL)",
 	} {
 		if !strings.Contains(controller, want) {

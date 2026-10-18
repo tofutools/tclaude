@@ -90,7 +90,7 @@ import { remoteNodeID } from './fleet-model.js';
 import { humanReadShared } from './peer-view-limits.js';
 import {
   createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
-  messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
+  messageDeleteEndpoint, nextMessagesAttention, pageHumanRoute, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
 import { refreshPageNotifications } from './peer-notifications.js';
@@ -1695,7 +1695,7 @@ async function postDeleteMessages(ids, url) {
 
 async function deleteOneMessage(id) {
   if (mail.busy || !Number.isFinite(id)) return;
-  const deleteURL = messageDeleteEndpoint(mail.selected);
+  const deleteURL = pageHumanRoute(messageDeleteEndpoint(mail.selected));
   const confirmed = await confirmModal({
     title: 'Delete this message?',
     body: 'Permanently deletes this one message. This cannot be undone.',
@@ -1713,7 +1713,7 @@ async function deleteOneMessage(id) {
 
 async function deleteSelectedMessages() {
   if (mail.busy) return;
-  const deleteURL = messageDeleteEndpoint(mail.selected);
+  const deleteURL = pageHumanRoute(messageDeleteEndpoint(mail.selected));
   // Snapshot the selection up front: runBatches iterates this captured
   // list, not the live Set, so a background refresh landing during the
   // confirm wait (before mail.busy is set) can prune the Set without
