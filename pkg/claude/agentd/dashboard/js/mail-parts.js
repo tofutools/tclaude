@@ -16,6 +16,8 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
+import { LockReason } from './lock-reason.js';
+import { shellConfirm } from './shell-state.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
 
 const html = htm.bind(h);
@@ -362,6 +364,9 @@ export function MessageBody({ message, agentMail = false }) {
     : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>`;
 }
 
+// SAFE_AGENT admits only a plain agent ID into a terminal request.
+const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
+
 // HumanActions are the reader's buttons for a human notification, one row
 // wherever a notification is read (this node's Messages, a peer's page, the
 // fused view): reply, focus, mark read/unread, ⤓ download and delete, then
@@ -369,11 +374,12 @@ export function MessageBody({ message, agentMail = false }) {
 //
 // On this node row-action-handler.js runs them (data-act): reply opens the
 // reply dialog, focus raises the sender's terminal. A notification that lives
-// on another node (peer = { name, exportNode, canAnswer, canMark, mark(id, read),
-// reply(id, body) }, each action a promise) is answered through that node's
-// human-inbox routes, reply in the same dialog. What the node does not take
-// from here stays in place, greyed, with the reason on hover.
-export function HumanActions({ message, senderLive, harness = '', toast, peer = null, onDone, openReply = openHumanReplyModal, before = null, children = null }) {
+// on another node (peer = { name, exportNode, canAnswer, canMark, canDelete,
+// mark(id, read), reply(id, body), remove(id), focus(message) }, each action a
+// promise) is answered through that node's routes, reply in the same dialog.
+// What the node does not take from here stays in place, disabled, with a 🔒
+// saying why.
+export function HumanActions({ message, senderLive, harness = '', toast, peer = null, onDone, openReply = openHumanReplyModal, confirm = shellConfirm, before = null, children = null }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => { setBusy(false); }, [message.id, peer?.name]);
   const label = message.from_title || message.from_conv || message.from_agent || 'the agent';
@@ -399,8 +405,21 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
   const { name } = peer;
   // An older caller names one answer gate for both.
   const canMark = peer.canMark ?? peer.canAnswer;
-  const readOnly = `${name} shares its notifications for reading only — answering them from here needs its unrestricted trust`;
-  const markLocked = `${name} shares its notifications for reading only — marking them read from here needs its node.messages.mark-read`;
+  // What the node withholds stays in place, disabled, with a 🔒 saying why.
+  const keeps = (what) => `${name} keeps ${what} to its own operator: it needs unrestricted trust from ${name}.`;
+  const replyLock = peer.canAnswer ? '' : keeps('answering its notifications');
+  const markLock = canMark ? '' : `${name} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.`;
+  const deleteLock = peer.remove && peer.canDelete ? '' : keeps('deleting its notifications');
+  // Focus opens the sender's terminal here through the federation bridge
+  // (never a window on the other host), which decides whether it shares it.
+  const focusLock = !peer.focus ? `Focus raises a terminal window on this node; ${name}'s agent opens from its Groups tab.`
+    : SAFE_AGENT.test(message.from_agent || '') ? '' : 'This sender has no stable agent ID to open its terminal by.';
+  const offline = senderLive === false;
+  const fail = (what) => (e) => {
+    setBusy(false);
+    const reason = e?.message || String(e);
+    toast(e?.status === 403 ? `${what}: ${name} does not allow it from here (${reason}).` : `${what} failed: ${reason}`, true);
+  };
   const mark = () => {
     setBusy(true);
     const read = !message.read;
@@ -412,11 +431,7 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
       setBusy(false);
       toast(`Marked ${read ? 'read' : 'unread'} on ${name}`, false);
       onDone?.();
-    }).catch((e) => {
-      setBusy(false);
-      const reason = e?.message || String(e);
-      toast(e?.status === 403 ? `${markLabel}: ${name} does not allow it from here (${reason}).` : `${markLabel} failed: ${reason}`, true);
-    });
+    }).catch(fail(markLabel));
   };
   const reply = () => openReply({
     id: message.id, agent: message.from_agent || '', conv: message.from_conv || '', label, subject: message.subject || '',
@@ -425,17 +440,28 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
     nodeName: name, online: typeof senderLive === 'boolean' ? senderLive : undefined,
     send: (body) => peer.reply(message.id, body).then(() => { toast(`Replied on ${name}`, false); onDone?.(); }),
   });
+  // As on this node, focusing marks the notification read: the human is
+  // acting on it.
+  const focus = () => {
+    void peer.focus(message);
+    if (!message.read && canMark) peer.mark(message.id, true).then(() => onDone?.(), () => {});
+  };
+  const remove = () => confirm({
+    title: 'Delete this message?', body: `Permanently deletes this one message on ${name}, read or unread. This cannot be undone.`,
+    meta: `#${message.id}`, okLabel: 'Delete', busyLabel: 'Deleting…', action: () => peer.remove(message.id),
+  }).then((ok) => { if (ok) { toast(`Deleted on ${name}`, false); onDone?.(); } }, fail('Delete'));
   return html`<div class="mail-reader-actions">
     ${before}
-    ${(message.from_conv || message.from_agent) && html`<${Fragment}><button type="button" data-human="reply" disabled=${!peer.canAnswer}
-      title=${peer.canAnswer ? `Reply to this agent on ${name} — opens a dialog to send your answer back` : readOnly} onClick=${reply}>reply</button>
-      <button type="button" data-human="focus" disabled
-        title=${`Focus raises a terminal window on this node; ${name}'s agent opens from its Groups tab`}>focus</button></${Fragment}>`}
-    <button type="button" data-human="mark" disabled=${busy || !canMark}
-      title=${canMark ? `${markTitle} on ${name}` : markLocked} onClick=${mark}>${markLabel}</button>
+    ${(message.from_conv || message.from_agent) && html`<${Fragment}><button type="button" data-human="reply" disabled=${!!replyLock}
+      title=${replyLock ? undefined : `Reply to this agent on ${name} — opens a dialog to send your answer back`} onClick=${reply}>reply</button><${LockReason} why=${replyLock} />
+      <button type="button" data-human="focus" disabled=${!!focusLock || offline}
+        title=${focusLock ? undefined : offline ? 'Sending agent is offline — no terminal to open' : `Open this agent's terminal on ${name} here and mark the message read`} onClick=${focus}>focus</button><${LockReason} why=${focusLock} /></${Fragment}>`}
+    <button type="button" data-human="mark" disabled=${busy || !!markLock}
+      title=${markLock ? undefined : `${markTitle} on ${name}`} onClick=${mark}>${markLabel}</button><${LockReason} why=${markLock} />
     <span class="spacer"></span>
     <${MessageDownloadMenu} message=${message} node=${peer.exportNode || ''} toast=${toast} />
-    <button type="button" class="danger" data-human="delete" disabled title=${`Only ${name}'s own operator deletes its notifications`}>delete</button>
+    <button type="button" class="danger" data-human="delete" disabled=${busy || !!deleteLock}
+      title=${deleteLock ? undefined : `Permanently delete this message on ${name}`} onClick=${remove}>delete</button><${LockReason} why=${deleteLock} />
     ${children}
   </div>`;
 }

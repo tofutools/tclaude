@@ -36,6 +36,7 @@ import {
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { humanReadShared } from './peer-view-limits.js';
+import { LockReason } from './lock-reason.js';
 import { registerFusedMailRoute, senderOnline } from './mail-bridge.js';
 import { fromPath, locEquals, normalizeLocation, toPath, toQuery, withoutOverlays } from './nav-history-core.js';
 import {
@@ -44,6 +45,9 @@ import {
 } from './fused-mail-model.js';
 
 const html = htm.bind(h);
+
+// openRemote opens a peer agent's terminal here (remote-terminal.js).
+const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 
 export const MAIL_POLL_MS = 5000;
 const ROSTER_EVERY = 3; // mailboxes refresh every third page read
@@ -80,7 +84,8 @@ async function readJSON(fetchFn, url, init) {
 }
 
 // createFusedMailActions posts an action to the node that owns the message.
-// Deleting stays with this node: a peer never serves it.
+// A peer serves deleting (deleteLocal, its own delete routes) only under
+// unrestricted trust.
 export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(...a), localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl } = {}) {
   const post = (node, url, body) => readJSON(node.local ? localFetch : fetchImpl, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return Object.freeze({
@@ -322,6 +327,9 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
       // on a peer's page, where its data-act buttons are refused.
       const peer = node.local && !remote ? null : {
         name: node.name, exportNode: node.local ? '' : node.id, canAnswer: canActOnHuman(node), canMark: humanMarkable(node, peerView),
+        canDelete: canActOnHuman(node), remove: (id) => actions.deleteLocal(node, 'human', [id]),
+        // A peer's agent opens here through the federation bridge.
+        focus: node.local ? null : (m) => openRemote({ instance: node.id, agent: m.from_agent, peerLabel: node.name, label: m.from_title || '', toast }),
         mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
       };
       return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
@@ -339,9 +347,8 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         <button type="button" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
           onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}</button>
         ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>send reply</button>`}`;
-    if (node.local && !remote) {
-      buttons = html`${buttons}<button type="button" class="danger" data-fused="delete" disabled=${busy} title="Permanently delete this message" onClick=${() => onDelete([item])}>delete</button>`;
-    }
+    const deleteLock = canActOnHuman(node) ? '' : `${node.name} keeps deleting its messages to its own operator: it needs unrestricted trust from ${node.name}.`;
+    buttons = html`${buttons}<button type="button" class="danger" data-fused="delete" disabled=${busy || !!deleteLock} title=${deleteLock ? undefined : `Permanently delete this message on ${node.name}`} onClick=${() => onDelete([item])}>delete</button><${LockReason} why=${deleteLock} />`;
   }
   return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
     role="region" aria-label="Message reader" tabindex="0">
@@ -576,7 +583,9 @@ export function FusedMail({
   // Bulk actions run on each owning node. Read state goes to every node
   // (needs its node.messages.manage); deleting is this node's alone.
   const checkedRows = rows.filter((r) => checked.has(r.key));
-  const deletable = (r) => r.node.local && !remote;
+  // Deleting is a node operator's: this node's own, and a peer's that trusts
+  // this one unrestricted (it serves its delete routes as for its operator).
+  const deletable = (r) => canActOnHuman(r.node);
   const runBulk = async (verb, groupsOf, fn) => {
     setBusy(true);
     const failures = [];
@@ -597,12 +606,13 @@ export function FusedMail({
   const deleteRows = async (list) => {
     const mine = list.filter(deletable);
     const skipped = list.length - mine.length;
-    if (!mine.length) { toast('Only this node’s messages can be deleted from here; open the peer’s own dashboard for its mail.', true); return; }
+    if (!mine.length) { toast('Only messages on nodes that trust you unrestricted can be deleted from here; open the node’s own dashboard for its mail.', true); return; }
+    const groups = byNode(mine);
     const ok = await confirm({
       title: `Delete ${mine.length} message${mine.length === 1 ? '' : 's'}?`,
-      body: `This permanently deletes ${mine.length === 1 ? 'it' : 'them'} on this node.${skipped ? ` ${skipped} on peers stay: only their operators can delete them.` : ''}`,
+      body: `This permanently deletes ${mine.length === 1 ? 'it' : 'them'} on ${[...groups.keys()].map((n) => n.name).join(', ')}.${skipped ? ` ${skipped} on other nodes stay: only their operators can delete them.` : ''}`,
       okLabel: 'Delete', busyLabel: 'Deleting…',
-      action: () => acts.current.deleteLocal(mine[0].node, isHuman ? 'human' : 'all', mine.map((r) => r.id)),
+      action: async () => { for (const [node, rs] of groups) await acts.current.deleteLocal(node, isHuman ? 'human' : 'all', rs.map((r) => r.id)); },
     }).catch((e) => { toast(`Delete failed: ${errText(e)}`, true); return false; });
     if (ok) { toast(`Deleted ${mine.length}`, false); setChecked(new Set()); setSelected(''); setReload((r) => r + 1); }
   };
@@ -621,7 +631,7 @@ export function FusedMail({
         <button disabled=${busy || !checkedRows.length} title="Mark the selected messages unread on their nodes"
           onClick=${() => markRows(false)}>○ unread</button></${Fragment}>`}
       ${rows.length > 0 && html`<button class="danger" disabled=${busy || !checkedRows.some(deletable)}
-        title=${checkedRows.length && !checkedRows.some(deletable) ? 'Only this node’s messages can be deleted from here' : 'Delete the selected messages (this node’s only)'}
+        title=${checkedRows.length && !checkedRows.some(deletable) ? 'Only messages on nodes that trust you unrestricted can be deleted from here' : 'Delete the selected messages on their nodes'}
         onClick=${() => deleteRows(checkedRows)}>🗑 delete selected</button>`}
       ${agentFolder && html`<span class="mail-folder-actions"><button disabled=${busy} title=${`Mark every message this agent has received as read (on ${folderNode.name})`}
         onClick=${() => runBulk('Mark all read', new Map([[folderNode, [folder.id]]]), (node) => acts.current.markFolderRead(node, folder.id))}>✓ mark all read</button></span>`}

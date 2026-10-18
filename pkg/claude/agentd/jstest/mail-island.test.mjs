@@ -588,7 +588,11 @@ test('on a peer\'s page, Messages answers notifications through the peer and lea
   const labels = (root) => [...root.querySelectorAll('button')].map((b) => b.textContent.trim());
   assert.deepEqual(labels(c.querySelector('#mail-reader .mail-reader-actions')).slice(0, 3), ['reply', 'focus', 'mark read']);
   assert.ok(c.querySelector('#mail-reader .mail-download'), 'the download menu is there');
-  assert.ok(c.querySelector('[data-human="focus"]').disabled && c.querySelector('[data-human="delete"]').disabled);
+  // Focus opens the sender's terminal through the federation bridge, which
+  // decides what it shares; deleting is locked with its reason.
+  assert.equal(c.querySelector('[data-human="focus"]').disabled, false);
+  assert.ok(c.querySelector('[data-human="delete"]').disabled);
+  assert.match(c.querySelector('[data-human="delete"] + .lock-why').dataset.why, /keeps deleting its notifications to its own operator/);
   // The bulk bar is the local one, deleting greyed.
   const bar = c.querySelector('#mail-bulk-bar');
   assert.equal(bar.hidden, false);
@@ -607,7 +611,8 @@ test('on a peer\'s page, Messages answers notifications through the peer and lea
   // Without the peer's answer grant the notification is read-only here.
   await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages'], omitted: [] } }); });
   assert.ok(c.querySelector('[data-human="reply"]').disabled && c.querySelector('[data-human="mark"]').disabled);
-  assert.match(c.querySelector('[data-human="reply"]').title, /for reading only/);
+  assert.match(c.querySelector('[data-human="reply"] + .lock-why').dataset.why, /needs unrestricted trust/);
+  assert.match(c.querySelector('[data-human="mark"] + .lock-why').dataset.why, /node\.messages\.mark-read/);
   // node.messages.mark-read lets this operator mark them read (as opening one
   // does), without answering.
   await harness.act(() => { dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', included: ['node.messages', 'node.messages.mark-read'], omitted: [] } }); });
@@ -621,5 +626,47 @@ test('on a peer\'s page, Messages answers notifications through the peer and lea
   assert.ok([...reader.querySelectorAll('button')].some((b) => b.textContent === 'mark read' && !b.dataset.act));
   assert.ok([...reader.querySelectorAll('button')].filter((b) => b.textContent === 'delete').every((b) => b.disabled));
   assert.ok([...c.querySelectorAll('#mail-bulk-bar button')].filter((b) => /delete selected/.test(b.textContent)).every((b) => b.disabled));
+  await mounted.unmount();
+});
+
+test('on a peer\'s page under unrestricted trust, Messages deletes, wipes and focuses as on the peer itself', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const shell = await harness.importDashboardModule('js/shell-state.js');
+  const previousRemote = globalThis.__tclaudeRemoteNode;
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push(`${init.method || 'GET'} ${url} ${init.body || ''}`.trim());
+    return { ok: true, status: 200, json: async () => (String(url).includes('federation/sessions') ? [] : {}) };
+  };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previousRemote; globalThis.fetch = previousFetch; dashboardState.publishLocalEdit(null); });
+  dashboardState.publishLocalEdit({ peer_view: { peer: 'desk', level: 'unrestricted', included: ['human.inbox.answer', 'node.messages', 'node.messages.mark-read', 'local_dashboard'], omitted: [] } });
+  const state = harness.signals.signal(populated());
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controllerFor(state)} />`);
+  const c = mounted.container;
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  // Confirms are answered yes.
+  const confirmed = async () => { await settle(); assert.ok(shell.shellState.confirmation.value, 'asks first'); shell.shellState.resolveConfirmation(true); await settle(); };
+  for (const b of ['reply', 'focus', 'mark', 'delete']) {
+    assert.equal(c.querySelector(`[data-human="${b}"]`).disabled, false, b);
+    assertAbsent(c.querySelector(`[data-human="${b}"] + .lock-why`), `${b} lock`);
+  }
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="delete"]'), 'click'); await confirmed(); });
+  assert.ok(calls.includes('POST /api/human-messages/delete {"id":1}'), calls.join('\n'));
+  await harness.act(async () => { harness.fireEvent(c.querySelector('#mail-clear-read'), 'click'); await confirmed(); });
+  assert.ok(calls.includes('POST /api/human-messages/clear {}'), calls.join('\n'));
+  // Focus reads the shared sessions here (never /api/jump on the peer) and
+  // marks the notification read.
+  await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="focus"]'), 'click'); await settle(); await settle(); });
+  assert.ok(calls.some((x) => x.startsWith('GET /api/federation/sessions')), calls.join('\n'));
+  assert.ok(!calls.some((x) => x.includes('/api/jump/')));
+  assert.ok(calls.includes('POST /api/human-inbox/read {"id":1}'), calls.join('\n'));
+  assert.equal(c.querySelector('.mail-row-del').disabled, false);
+  await harness.act(() => { state.value = { ...state.value, selected: 'conv-a' }; });
+  const del = [...c.querySelectorAll('#mail-reader button')].find((b) => b.textContent === 'delete');
+  assert.equal(del.disabled, false);
   await mounted.unmount();
 });

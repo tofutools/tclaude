@@ -178,7 +178,10 @@ test('switching folders never shows the old folder\'s rows; human actions use ea
   assert.deepEqual(labels(), localLabels, 'the same buttons as this node\'s notification');
   assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/peer-attachments/inst_forge/5/7',
     'a peer\'s file loads through this node\'s peer attachment route, never the local URL the peer sent');
-  assert.ok(c.querySelector('[data-human="focus"]').disabled && c.querySelector('[data-human="delete"]').disabled);
+  // forge trusts this operator unrestricted: focus (its agent's terminal,
+  // opened here) and delete work as on forge itself.
+  assert.ok(!c.querySelector('[data-human="focus"]').disabled && !c.querySelector('[data-human="delete"]').disabled);
+  assert.equal(c.querySelector('#fused-mail-reader .lock-why'), null, 'nothing locked');
   await harness.act(async () => { harness.fireEvent(c.querySelector('[data-human="mark"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(calls.includes('POST /api/peer/inst_forge/human-inbox/read {"id":5}'));
   // reply opens the same reply dialog, which sends through forge.
@@ -303,18 +306,18 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   assert.equal(key.defaultPrevented, false, 'arrows in the reply box move its caret, not the focus');
   assert.equal(c.querySelector('#fused-mail-filter-count').textContent, '30 messages');
 
-  // Bulk read goes to forge; delete stays disabled, since only this node's
-  // mail can be deleted from here.
+  // Bulk read goes to forge; so does delete, which forge's unrestricted
+  // trust lets this operator do.
   const all = c.querySelector('.mail-select-all');
   await harness.act(() => { all.checked = true; harness.fireEvent(all, 'change'); });
   assert.match(c.querySelector('#fused-mail-bulk-bar').textContent, /30 selected/);
   const del = [...c.querySelectorAll('#fused-mail-bulk-bar button')].find((b) => /delete selected/.test(b.textContent));
-  assert.equal(del.disabled, true);
+  assert.equal(del.disabled, false);
   await harness.act(async () => { harness.fireEvent([...c.querySelectorAll('#fused-mail-bulk-bar button')].find((b) => /✓ read/.test(b.textContent)), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(calls.some((u) => u.startsWith('POST /api/peer/inst_forge/mailbox/mark-read {"ids":[30,29,') && u.endsWith('"read":true}')));
-  assert.equal(c.querySelector('.mail-row-wrap[data-key="inst_forge/agent/30"] .mail-row-del').disabled, true, 'a peer\'s row cannot be deleted from here');
+  assert.equal(c.querySelector('.mail-row-wrap[data-key="inst_forge/agent/30"] .mail-row-del').disabled, false, 'an unrestricted peer\'s row is deleted from here');
 
-  // Back to all nodes: deleting a mixed selection deletes this node's row only.
+  // Back to all nodes: a mixed selection is deleted on each owning node.
   await click(c.querySelector('.fused-mail-chip[data-scope=""]'));
   await once();
   for (const key of ['inst_self/agent/30', 'inst_forge/agent/30']) {
@@ -323,8 +326,8 @@ test('the node chips narrow the view to one node; pages, filters and bulk action
   }
   calls.length = 0;
   await harness.act(async () => { harness.fireEvent([...c.querySelectorAll('#fused-mail-bulk-bar button')].find((b) => /delete selected/.test(b.textContent)), 'click'); await new Promise((r) => setTimeout(r, 0)); });
-  assert.match(confirms.at(-1).body, /1 on peers stay/);
-  assert.deepEqual(calls.filter((u) => u.startsWith('POST')), ['POST /api/mailbox/delete {"ids":[30]}']);
+  assert.match(confirms.at(-1).body, /on forge, desk\.$/);
+  assert.deepEqual(calls.filter((u) => u.startsWith('POST')).sort(), ['POST /api/mailbox/delete {"ids":[30]}', 'POST /api/peer/inst_forge/mailbox/delete {"ids":[30]}']);
 
   // The folder filter and the scope toggles reach every node's reads.
   const boxFilter = c.querySelector('#fused-mail-box-filter');
@@ -458,6 +461,10 @@ test('opening a notification marks it read on its node wherever that node allows
   assert.equal(posts.length, 2, 'mark unread sticks while the message stays open');
   assert.equal(c.querySelector('[data-human="mark"]').disabled, false, 'forge grants marking');
   assert.equal(c.querySelector('[data-human="reply"]').disabled, true, 'replying still needs unrestricted trust');
+  assert.match(c.querySelector('[data-human="reply"] + .lock-why').dataset.why, /needs unrestricted trust from forge/);
+  assert.equal(c.querySelector('[data-human="delete"]').disabled, true);
+  assert.match(c.querySelector('[data-human="delete"] + .lock-why').dataset.why, /forge keeps deleting its notifications/);
+  assert.equal(c.querySelector('[data-human="focus"]').disabled, false, 'its terminal opens through the bridge, which decides');
   await open('inst_lab/human/5');
   assert.equal(posts.length, 2, 'lab shares its notifications for reading only');
   assert.equal(c.querySelector('[data-human="mark"]').disabled, true);

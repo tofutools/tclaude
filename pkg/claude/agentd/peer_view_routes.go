@@ -296,6 +296,10 @@ var peerViewLocalRoutes = []string{
 	"POST /api/groups/{name}/stand-down",
 	"POST /api/groups/{name}/standing-orders/{id}",
 	"POST /api/mailbox/delete",
+	// Deleting this node's human notifications: its read state and replies
+	// have their own peer routes (/api/human-inbox/*), deleting has no grant.
+	"/api/human-messages/clear",
+	"/api/human-messages/delete",
 	"POST /api/mailbox/mark-read",
 	"POST /api/mailbox/wipe",
 	"POST /api/message",
@@ -327,7 +331,8 @@ var peerViewLocalRoutes = []string{
 // outside an agent's own routes (a terminal's file reads and uploads, the
 // folder picker's browse, create, rename and delete), the peer proxy (a peer never reaches a third node through
 // this one), the terminal streams (no websocket crosses the peer view) and
-// this node's human inbox, which has its own peer routes. Every federation
+// this node's human inbox, which has its own peer routes (deleting
+// notifications, which has none, is reached as local above). Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
 	"/api/terminal-file",
@@ -357,8 +362,6 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /api/peer-download/{node}",
 	"POST /api/peer-upload/{node}",
 	"/api/human-messages/",
-	"/api/human-messages/clear",
-	"/api/human-messages/delete",
 	"/api/human-messages/read",
 	"/api/human-messages/reply",
 	"/api/slop/channel",
