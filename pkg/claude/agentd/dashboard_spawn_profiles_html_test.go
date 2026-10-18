@@ -128,7 +128,9 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 
 	// 4. Dashboard default-profile chip replaced the user-default-model chip.
 	present(`id: 'dashboard-default-profile'`, "the dashboard default-profile chip")
-	present(`data-act=${kind === 'sandbox' ? 'set-dash-sandbox-profile' : 'set-dash-profile'}`, "the dashboard default-profile picker action")
+	present(`act: 'set-dash-sandbox-profile'`, "the dashboard default-sandbox-profile picker action")
+	present(`act: 'set-dash-profile'`, "the dashboard default-profile picker action")
+	present(`data-act=${refusal ? undefined : copy.act}`, "the dashboard default picker chip action")
 	present(`case 'set-dash-profile':`, "the dashboard default-profile handler")
 	present(`function renderDashDefaultProfile(`, "the dashboard default-profile chip renderer")
 	present(`/api/spawn-profile-default`, "global default uses the validated operational endpoint")
