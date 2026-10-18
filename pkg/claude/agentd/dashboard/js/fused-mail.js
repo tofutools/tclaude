@@ -35,7 +35,8 @@ import {
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
 import { withPeerAttachments } from './human-attachments.js';
-import { senderOnline } from './mail-bridge.js';
+import { registerFusedMailRoute, senderOnline } from './mail-bridge.js';
+import { fromPath, locEquals, normalizeLocation, toPath, toQuery, withoutOverlays } from './nav-history-core.js';
 import {
   FUSED_FOLDERS, PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderMatches, folderURL, mergeMessages, mergeRequests,
   mergedDepth, mergedPages, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
@@ -105,6 +106,22 @@ function NodePill({ node }) {
 // folderKey names a sidebar folder: a fused folder spans the nodes in view,
 // a node folder is one node's.
 function folderKey(f) { return `${f.node || '*'}|${f.id}`; }
+
+// fusedLocation is the router location for the fused view:
+// /messages/<folder-id>[/<message-key>]?at=<folder's node>&scope=<node chip>
+// plus the search, page and folder filter. The fused All folder is the bare
+// tab, like a fresh fused view.
+export function fusedLocation({ folder, selected, page, q, bq, scope }) {
+  const plain = !folder.node && folder.id === 'all';
+  return normalizeLocation({
+    tab: 'messages', selection: plain && !selected ? undefined : folder.id, item: selected || undefined,
+    params: { q, page, box: bq, at: folder.node, scope },
+  });
+}
+
+function navEntry() {
+  return globalThis.history?.state?.navIndex;
+}
 function groupKey(node, title) { return `${node}\n${title}`; }
 
 // rosterOptions is what one node's roster read asks for. A node outside the
@@ -345,7 +362,55 @@ export function FusedMail({
   useEffect(() => (hasClient && clientRef.current ? initMailResize(clientRef.current) : undefined), [hasClient]);
   useEffect(() => { const t = timers.setTimeout(() => setQ(query.trim()), SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [query]);
   useEffect(() => { const t = timers.setTimeout(() => setBq(boxQuery.trim()), SEARCH_DEBOUNCE_MS); return () => timers.clearTimeout(t); }, [boxQuery]);
-  useEffect(() => { setPage(1); setSelected(''); setChecked(new Set()); }, [folder.node, folder.id, q, scope]);
+  // restored names the folder/search/scope a history location just set, so
+  // the reset below (a new folder starts on page 1 with nothing open) leaves
+  // the page and message that location named.
+  const restored = useRef('');
+  const resetKey = `${folderKey(folder)}\n${q}\n${scope}`;
+  useEffect(() => {
+    if (restored.current === resetKey) { restored.current = ''; return; }
+    restored.current = '';
+    setPage(1); setSelected(''); setChecked(new Set());
+  }, [folder.node, folder.id, q, scope]);
+  // --- history: the URL follows the folder, message, page, search and scope.
+  // A click on a folder, message, page or node chip pushes (nav = 'push'); a
+  // search or folder-filter edit pushes once and then corrects as it is
+  // typed; every other change (arrow keys, a reset) corrects in place.
+  const nav = useRef(null);
+  const editing = useRef(null);
+  const loc = fusedLocation({ folder, selected, page, q, bq, scope });
+  const locRef = useRef(loc);
+  locRef.current = loc;
+  const sync = () => {
+    if (!active) return;
+    const url = globalThis.location;
+    const shown = withoutOverlays(fromPath(url?.pathname, url?.search || ''));
+    if (shown.tab !== 'messages') return;
+    const why = nav.current;
+    if (locEquals(locRef.current, shown)) { if (why === 'push') nav.current = null; return; }
+    nav.current = null;
+    let correction = true;
+    if (why === 'push') { correction = false; editing.current = null; }
+    else if (why === 'q' || why === 'box') correction = editing.current?.kind === why && editing.current.entry === navEntry();
+    globalThis.document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: locRef.current, correction } }));
+    if (why === 'q' || why === 'box') editing.current = { kind: why, entry: navEntry() };
+  };
+  useEffect(sync, [active, toPath(loc), toQuery(loc)]);
+  const restoreRef = useRef(null);
+  restoreRef.current = (target) => {
+    editing.current = null;
+    nav.current = null;
+    // A bare /messages is the fused All folder, unfiltered.
+    const p = target?.params || {};
+    const nextFolder = { node: p.at || '', id: target?.selection || 'all' };
+    restored.current = `${folderKey(nextFolder)}\n${p.q || ''}\n${p.scope || ''}`;
+    setFolder(nextFolder); setSelected(target?.item || ''); setPage(Number(p.page) > 0 ? Number(p.page) : 1);
+    setQuery(p.q || ''); setQ(p.q || ''); setBoxQuery(p.box || ''); setBq(p.box || ''); setScope(p.scope || '');
+  };
+  useEffect(() => registerFusedMailRoute({
+    mailLocation: () => locRef.current,
+    restoreLocation: (target) => restoreRef.current(target),
+  }), []);
   // A node no longer ticked drops out of the scope and its folders fall back
   // to the fused All folder.
   useEffect(() => {
@@ -393,12 +458,12 @@ export function FusedMail({
   const folders = (n) => nodeFolders(entries[n.id]?.mailboxes);
   const humanUnread = (n) => folders(n).human?.unread || 0;
 
-  const pick = (f) => setFolder(f);
+  const pick = (f, { push = true } = {}) => { if (push) nav.current = 'push'; setFolder(f); };
   const isOn = (f) => folderKey(folder) === folderKey(f);
   const toggleSet = (setter, key) => setter((cur) => { const next = new Set(cur); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const setToggle = (name, on) => { setPref(PREF[name], on ? '1' : '0'); setToggles((cur) => ({ ...cur, [name]: on })); };
   const setPageSize = (n) => { setPref(PREF.pageSize, String(n)); setPageSizeState(n); setPage(1); };
-  const selectRow = (key) => setSelected(key);
+  const selectRow = (key, { push = true } = {}) => { if (push) nav.current = 'push'; setSelected(key); };
   const folderRows = new Map();
   const folderRow = (f, { icon, label, title, total: count = null, totalTitle, unread = 0, lead = null, nested = false, className = '', tags = null }) => {
     const key = folderKey(f);
@@ -417,13 +482,13 @@ export function FusedMail({
   // The node chips narrow the whole view: folders, list and counts.
   const chips = html`<div class="fused-mail-scope" role="group" aria-label="Show mail from">
     <button type="button" class=${`fused-mail-chip${scope ? '' : ' active'}`} aria-pressed=${String(!scope)} data-scope=""
-      title="Show every ticked node's mail" onClick=${() => setScope('')}>All nodes · ${nodes.length}</button>
+      title="Show every ticked node's mail" onClick=${() => { nav.current = 'push'; setScope(''); }}>All nodes · ${nodes.length}</button>
     ${nodes.map((n) => {
       const s = status(n);
       const unread = humanUnread(n);
       return html`<button type="button" key=${n.id} class=${`fused-mail-chip fused-mail-node${scope === n.id ? ' active' : ''}${s && s !== 'loading…' ? ' degraded' : ''}`}
         data-node=${n.id} aria-pressed=${String(scope === n.id)} title=${`Show only ${n.name}'s mail${s ? ` (${s})` : ''}`}
-        onClick=${() => { setScope(scope === n.id ? '' : n.id); if (folder.node && folder.node !== n.id) setFolder({ node: '', id: folder.id === 'access' || folder.id === 'human' ? folder.id : 'all' }); }}>
+        onClick=${() => { nav.current = 'push'; setScope(scope === n.id ? '' : n.id); if (folder.node && folder.node !== n.id) setFolder({ node: '', id: folder.id === 'access' || folder.id === 'human' ? folder.id : 'all' }); }}>
         <${NodePill} node=${n} />${unread ? html`<span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : null}${s && html`<span class="muted fused-mail-chip-status">${s}</span>`}</button>`;
     })}
   </div>`;
@@ -539,26 +604,26 @@ export function FusedMail({
     : q ? `${total} / ${totalUnfiltered}` : `${totalUnfiltered} message${totalUnfiltered === 1 ? '' : 's'}`;
   const listKeyDown = (event) => {
     if (leaveFirstRow({ event, ...LIST_ROWS, filter: clientRef.current?.querySelector('#fused-mail-filter') })) return;
-    moveRowSelection({ event, ...LIST_ROWS, select: (row) => selectRow(row.dataset.id) });
+    moveRowSelection({ event, ...LIST_ROWS, select: (row) => selectRow(row.dataset.id, { push: false }) });
   };
   const sidebarKeyDown = (event) => {
     if (leaveFirstRow({ event, ...SIDEBAR_ROWS, filter: clientRef.current?.querySelector('#fused-mail-box-filter') })) return;
-    moveRowSelection({ event, ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f); } });
+    moveRowSelection({ event, ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f, { push: false }); } });
   };
   const panes = [
     { selector: '#fused-mail-sidebar', rows: SIDEBAR_ROWS },
-    { selector: '#fused-mail-list', rows: LIST_ROWS, select: (row) => selectRow(row.dataset.id) },
+    { selector: '#fused-mail-list', rows: LIST_ROWS, select: (row) => selectRow(row.dataset.id, { push: false }) },
     { selector: '#fused-mail-reader' },
   ];
   const aggregate = folder.id === 'all' || folder.id.startsWith('group:');
   return html`<div class="mail-client fused-mail" ref=${clientRef} onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, panes)}>
     <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
-      boxValue=${boxQuery} onBoxInput=${setBoxQuery}
+      boxValue=${boxQuery} onBoxInput=${(value) => { nav.current = 'box'; setBoxQuery(value); }}
       onBoxKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-sidebar'), ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f); } })}
       id="fused-mail-filter" placeholder=${scope ? `Filter ${scoped[0]?.name}'s messages` : 'Filter messages on every ticked node'}
-      value=${query} onInput=${setQuery}
+      value=${query} onInput=${(value) => { nav.current = 'q'; setQuery(value); }}
       onKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-list'), ...LIST_ROWS, select: (row) => selectRow(row.dataset.id) })}
-      countId="fused-mail-filter-count" countText=${countText} clearId="fused-mail-filter-clear" onClear=${() => { setQuery(''); setQ(''); }} />
+      countId="fused-mail-filter-count" countText=${countText} clearId="fused-mail-filter-clear" onClear=${() => { nav.current = 'q'; setQuery(''); setQ(''); }} />
     <div class="mail-col mail-sidebar-col">
       ${chips}
       <aside class="mail-sidebar" id="fused-mail-sidebar" onKeyDown=${sidebarKeyDown}>
@@ -591,7 +656,7 @@ export function FusedMail({
               canDelete=${deletable(m)} deleteTitle=${deletable(m) ? 'Delete this message' : `Only ${m.node.name}'s operator can delete its messages`} />`))}
       </div>
       <${MailPager} id="fused-mail-pager" hidden=${isAccess || !totalUnfiltered} page=${page} pages=${pageCount} pageSize=${pageSize}
-        onPage=${(n) => { setPage(n); setSelected(''); }} onPageSize=${setPageSize}
+        onPage=${(n) => { nav.current = 'push'; setPage(n); setSelected(''); }} onPageSize=${setPageSize}
         note=${deeper ? 'pick one node for older mail' : ''} />
     </div>
     <${Reader} item=${item} remote=${remote} snapshot=${snapshot} timers=${timers} actions=${acts.current} confirm=${confirm} toast=${toast} openOnNode=${openOnNode}
