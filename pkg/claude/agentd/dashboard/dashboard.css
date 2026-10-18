@@ -3625,6 +3625,15 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
 #usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
 #usage.na { color: #6e7681; font-style: italic; }
+/* Header usage node pill (usage-nodes.js): whose quota a fused view shows. */
+.usage-node { position: relative; display: inline-flex; font-style: normal; }
+.usage-node-pill { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--nc); border-radius: 10px; background: transparent; color: var(--nc); font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; }
+.usage-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nc); flex: none; }
+.usage-node-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 220px; display: flex; flex-direction: column; padding: 4px 0; background: #0b1520; border: 1px solid #1f6feb; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, .6); }
+.usage-node-item { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border: 0; background: transparent; color: #c9d1d9; font: 11.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-align: left; cursor: pointer; }
+.usage-node-item:hover:not(:disabled), .usage-node-item.on { background: #1f6feb22; }
+.usage-node-item.locked { opacity: .55; cursor: not-allowed; }
+.usage-node-peak { margin-left: auto; color: #8b949e; }
 #usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 /* An unavailable Codex window still occupies its fixed-width slot so the
    following window stays aligned with the Claude row, but contributes no
