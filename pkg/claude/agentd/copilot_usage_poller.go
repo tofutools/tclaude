@@ -248,18 +248,23 @@ func noteCopilotUsageLiveCount(sessions, homes int) {
 // observation that should retire cached state, while "tmux did not answer" is
 // the absence of an observation and must change nothing.
 func liveCopilotSessions() ([]*db.SessionRow, bool) {
+	rows, err := db.ListSessionsByHarness(harness.CopilotName)
+	if err != nil {
+		slog.Debug("copilot-usage: session list unavailable; skipping sweep",
+			"error", err, "module", "agentd")
+		return nil, false
+	}
+	// No Copilot session was ever recorded, so none can be running: a real
+	// observation that needs no tmux probe.
+	if len(rows) == 0 {
+		return nil, true
+	}
 	// Through the daemon-wide coalescing cache, not a direct probe: this sweep
 	// ticks at the same 2s cadence as the dashboard's poll handlers, so it
 	// almost always rides their `tmux ls` instead of forking its own.
 	alive, err := cachedLiveTmuxSessions()
 	if err != nil {
 		slog.Debug("copilot-usage: tmux liveness unavailable; skipping sweep",
-			"error", err, "module", "agentd")
-		return nil, false
-	}
-	rows, err := db.ListSessionsByHarness(harness.CopilotName)
-	if err != nil {
-		slog.Debug("copilot-usage: session list unavailable; skipping sweep",
 			"error", err, "module", "agentd")
 		return nil, false
 	}
