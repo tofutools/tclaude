@@ -8,7 +8,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { setFleetAdminPage } from './fleet-admin-page.js';
+import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 
 const html = htm.bind(h);
 
@@ -26,22 +26,19 @@ export const FLEET_PAGE_EVENT = 'tclaude:fleet-admin-page';
 // The page is set in fleetAdminPage up front, so it is in place for a ⚙ Fleet
 // island that mounts only once its tab is first shown, and the nav click that
 // shows the tab records it in the URL.
-// A page can carry a target, e.g. the peer whose grants Peer grants opens on,
-// which waits here for the island.
-let pendingFleetTarget = '';
-export function takeFleetTarget() { const t = pendingFleetTarget; pendingFleetTarget = ''; return t; }
+// A page can carry a target, the peer whose grants Peer grants opens on; it
+// is set alongside the section (fleet-admin-page.js), so the URL names it too.
 
 // requestFleetPage asks for a section without showing the ⚙ Fleet tab; the
 // caller navigates there itself.
 export function requestFleetPage(page, target = '', doc = globalThis.document) {
   setFleetAdminPage(page);
-  pendingFleetTarget = target;
+  if (page === 'grants' && target) setFleetGrantTarget(target);
   doc?.dispatchEvent?.(new CustomEvent(FLEET_PAGE_EVENT, { detail: page }));
 }
 
 export function openFleetPage(page, doc = globalThis.document) {
   setFleetAdminPage(page);
-  pendingFleetTarget = '';
   doc?.querySelector?.('nav [data-tab="fleet-admin"]')?.click();
   doc?.dispatchEvent?.(new CustomEvent(FLEET_PAGE_EVENT, { detail: page }));
 }

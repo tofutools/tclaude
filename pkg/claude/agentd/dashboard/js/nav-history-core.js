@@ -102,9 +102,11 @@ export const LEGACY_TAB_LOCATIONS = Object.freeze({
 //   - processes/templates/<template-id> — the template editor is open on it.
 //   - groups/routes/<route-id> — the Route map has that route selected.
 //   - groups/runs/<group> — the single-run focus, on a run of that group.
+//   - fleet-admin/grants/<peer-or-pool> — Peer grants shows that one's grants.
 // A selection parsed under any other tab/subtab is dropped.
 export const SELECTABLE_SUBTABS = {
   groups: new Set(['routes', 'runs']),
+  'fleet-admin': new Set(['grants']),
   processes: new Set(['templates']),
 };
 

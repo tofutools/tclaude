@@ -20138,6 +20138,10 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-cfg:hover, .fleet-chip-link:hover { color: #58a6ff; border-color: #58a6ff; }
 .fleet-card-trust dd { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fleet-card-acts { display: inline-flex; gap: 5px; margin-left: auto; }
+/* The Fleet config shortcuts are links (middle-click opens a tab) styled as the chips they were. */
+a.fleet-chip-link, a.fleet-link-act { text-decoration: none; }
+a.fleet-link-act:hover { text-decoration: underline; }
+a.fleet-card-cfg { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; text-decoration: none; }
 .fleet-chip-link { padding: 0 7px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #58a6ff; font: 11px/1.6 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
 .fleet-card-hub-admin { display: flex; align-items: center; gap: 6px; padding: 7px 12px 9px; border-top: 1px solid #21262d; font-size: 11.5px; }
 .fleet-card-hub-admin .fleet-chip-link { margin-left: auto; }

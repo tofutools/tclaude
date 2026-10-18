@@ -22,8 +22,8 @@ import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
-import { FLEET_PAGE_EVENT, takeFleetTarget } from './fleet-move-drop.js';
-import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-admin-page.js';
+import { FLEET_PAGE_EVENT } from './fleet-move-drop.js';
+import { fleetAdminLocation, fleetAdminPage, fleetGrantTarget, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { toPath } from './nav-history-core.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
@@ -362,7 +362,15 @@ export function FleetAdmin({
   };
   const landing = useRef('');
   const [dialog, setDialog] = useState(null);
-  const [grantTarget, setGrantTarget] = useState(() => takeFleetTarget());
+  // The peer or pool Peer grants shows: picking one there is a history step
+  // (/fleet-admin/grants/<id>); set from another section, it rides on the
+  // section's own step.
+  const grantTarget = fleetGrantTarget.value;
+  const setGrantTarget = (target) => {
+    if (!setFleetGrantTarget(target) || fleetAdminPage.peek() !== 'grants' || !state.view.peek().adminActive) return;
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: fleetAdminLocation() } }));
+  };
+  const openGrants = (target) => { setFleetGrantTarget(target); setPage('grants'); };
   // runPreselect is the Run target another page sent the operator to (the hub).
   const [runPreselect, setRunPreselect] = useState('');
   const [tick, setTick] = useState(0);
@@ -410,8 +418,6 @@ export function FleetAdmin({
   // Other views (a dropped move's progress) can ask for a section.
   useEffect(() => {
     const on = (e) => {
-      const target = takeFleetTarget();
-      if (target && e.detail === 'grants') setGrantTarget(target);
       if (SUB_PAGES.some((p) => p.id === e.detail)) setPage(e.detail);
     };
     document.addEventListener(FLEET_PAGE_EVENT, on);
@@ -422,7 +428,10 @@ export function FleetAdmin({
   useEffect(() => {
     const restore = (e) => {
       const loc = e.detail?.location;
-      if (loc?.tab === 'fleet-admin') { setRunPreselect(''); setFleetAdminPage(loc.subtab || ''); }
+      if (loc?.tab !== 'fleet-admin') return;
+      setRunPreselect('');
+      setFleetAdminPage(loc.subtab || '');
+      if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
     };
     document.addEventListener('tclaude:restore-location', restore);
     return () => document.removeEventListener('tclaude:restore-location', restore);
@@ -462,11 +471,11 @@ export function FleetAdmin({
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
-          onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
+          onOpenGrants=${openGrants} />`
       : sub.id === 'peers'
       ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} proposable=${proposable} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
-          onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
+          onGrants=${(r) => openGrants(r.id)} />`
       : sub.id === 'harnesses'
       ? html`<${HarnessesPage} view=${view} actions=${harnessActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} />`
       : sub.id === 'run'
@@ -479,7 +488,7 @@ export function FleetAdmin({
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
       ? html`<${ProfilesPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
-          onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
+          onOpenGrants=${openGrants} />`
       : sub.id === 'offers'
       ? html`<${OffersPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} />`
       : sub.id === 'jobs'
