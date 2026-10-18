@@ -894,11 +894,13 @@ with its node — its initial on the tab, the full name in the pane header — w
 this node's go unlabelled (the others stay open, out of sight), and **Messages**
 their mail (see [Messages on several nodes](#messages-on-several-nodes)); the
 button reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
-alone, as does unticking all but one. Every other tab still shows one node, the
-primary: the node of the page you fused from. It says so in a strip at the top,
-whose buttons switch the primary without leaving the fused view, and the tab
-label carries a dot in the primary's colour. The fused set is part of the
-address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
+alone, as does unticking all but one. A fused view is always this node's page:
+the peers in it show what they share with you, so this node's own groups and
+controls work as on its own view. Fusing from a peer's page goes to this
+node's page, and so does an address that names both a peer and a fused set.
+Every other tab shows this node, says so in a strip at the top, and a peer's
+own view opens from its node button. The fused set is part of the address
+(`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 
 ### The map
 

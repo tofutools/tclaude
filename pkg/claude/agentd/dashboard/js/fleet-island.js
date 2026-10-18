@@ -52,9 +52,10 @@ function defaultSwitchNode(id, path) {
 }
 
 // openNodeView opens a node's per-node view from elsewhere in the dashboard,
-// e.g. a linked group's federation marker.
-export function openNodeView(id) {
-  defaultSwitchNode(id);
+// e.g. a linked group's federation marker. A node alone leaves any fused view
+// (a fused set is always this node's page; remote-node.js).
+export function openNodeView(id, loc = globalThis.location, assign = (url) => globalThis.location.assign(url)) {
+  assign(nodeHref(id, { pathname: loc.pathname, search: withFused(loc.search, null) }));
 }
 
 const MapGlyph = () => html`<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg>`;
@@ -198,7 +199,6 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
     if (alone) setOpen(!open);
     else if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
   };
-  const primary = nodes.find((n) => n.id === pageNode) || fleet.self;
   return html`<span class="node-pick" ref=${rootRef}>
     <button type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${fused ? `Fused view of ${ticked.length} of ${nodes.length} nodes. Change the nodes` : 'Show several nodes together'}
@@ -214,9 +214,9 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
         <span class="node-pop-swatch" aria-hidden="true"></span>
         <button type="button" class="node-pop-name" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || `Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
         <button type="button" class="node-pop-only" tabindex="-1" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined} onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
-        <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}${node.id === primary.id ? ' · primary' : ''}</span>
+        <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}</span>
       </div>`)}
-      ${alone ? html`<div class="node-pop-foot">${NO_PEERS}</div>` : html`<div class="node-pop-foot"><b>Groups</b> and <b>Terminals</b> show the ticked nodes together. Other tabs show one node, the primary: <b>${primary.local ? '⌂ ' : ''}${primary.name}</b>.</div>`}
+      ${alone ? html`<div class="node-pop-foot">${NO_PEERS}</div>` : html`<div class="node-pop-foot"><b>Groups</b>, <b>Terminals</b> and <b>Messages</b> show the ticked nodes together, as this node's page. Other tabs show this node: <b>⌂ ${fleet.self.name}</b>.</div>`}
     </div>`}
   </span>`;
 }
@@ -301,6 +301,8 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const onFuse = (value) => {
     state.setFused(value);
     writeScopeURL(value);
+    // A fused view is this node's page: from a peer's page, go home with it.
+    if (value && remote) { switchNode('', state.view.value.topLevel ? toPath({ tab: 'groups' }) : undefined); return; }
     if (state.view.value.topLevel) navigate('groups');
   };
   // The shown node's button is current while its per-node view is on screen;
@@ -330,7 +332,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
 
 // ScopeSync mirrors the fused set onto the page: the html class the CSS keys
 // on, the ?nodes= value nav-history.js carries across tab pushes, and the
-// primary's colour. It drops a fused set once a status read says no linked
+// shown node's colour. It drops a fused set once a status read says no linked
 // nodes are left (a failed read keeps it).
 export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNodeID() }) {
   const current = state.view.value;
@@ -352,24 +354,17 @@ export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNo
   return null;
 }
 
-// ScopeBanner tops a per-node tab while a fused view is on: that tab shows one
-// node, the primary, and the strip says which and can switch it (a page load,
-// as any node switch; the fused set stays).
-export function ScopeBanner({ state, remote = remoteNodeID(), switchNode = defaultSwitchNode, doc = globalThis.document }) {
+// ScopeBanner tops a per-node tab while a fused view is on: that tab shows
+// this node only (a fused view is always this node's page), and the strip
+// says so. A peer's own view opens from its node chip.
+export function ScopeBanner({ state, doc = globalThis.document }) {
   const current = state.view.value;
   const fleet = current.fleet;
   if (!fleet || !current.fused || current.topLevel || FUSED_TABS.has(current.activeTab)) return null;
-  const ticked = tickedNodes(fleet, current.fused);
-  const pageNode = remote || fleet.self.id;
-  const primary = fleetNodes(fleet).find((n) => n.id === pageNode) || fleet.self;
+  const self = fleet.self;
   const label = doc?.querySelector?.(`nav [data-tab="${current.activeTab}"] .tab-label-regular`)?.textContent?.trim() || 'This tab';
-  const pill = (n) => html`<span class="scope-pill" style=${`--nc:${n.color}`}>${n.local ? '⌂ ' : ''}${n.name}</span>`;
-  return html`<div class="scope-banner" role="status" style=${`--nc:${primary.color}`}>
-    <span>${label} shows one node. Showing ${pill(primary)}, the primary of your ${ticked.length} fused nodes.</span>
-    <span class="scope-banner-seg" role="group" aria-label="Primary node">
-      ${ticked.map((n) => html`<button type="button" key=${n.id} class=${n.id === pageNode ? 'on' : ''} aria-pressed=${n.id === pageNode ? 'true' : 'false'}
-        onClick=${() => { if (n.id !== pageNode) switchNode(n.local ? '' : n.id); }}>${n.local ? '⌂ ' : ''}${n.name}</button>`)}
-    </span>
+  return html`<div class="scope-banner" role="status" style=${`--nc:${self.color}`}>
+    <span>${label} shows this node, <span class="scope-pill" style=${`--nc:${self.color}`}>⌂ ${self.name}</span>. Open another node's own view from its chip.</span>
   </div>`;
 }
 
