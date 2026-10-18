@@ -26,6 +26,8 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.equal(m.modeState('teleport', { local: true }).ok, true);
   assert.equal(m.modeState('morph', { local: true }).ok, true);
   assert.match(m.modeState('morph', { local: false, source: 'forge' }).why, /forge's dashboard/);
+  assert.equal(m.modeState('morph', { local: false, acting: true, source: 'forge' }).ok, true, 'a node trusting this one unrestricted morphs as locally');
+  assert.equal(m.modeState('clone', { local: false, acting: true, source: 'forge' }).ok, false, 'clone there is its own dialog');
   assert.equal(m.modeState('move', { local: false }).ok, true, 'a peer agent can be pulled here');
   assert.equal(m.modeState('home', { local: true, presence: 'visiting', teleport: true }).ok, true, 'send home from where it runs');
   assert.equal(m.modeState('home', { local: false, presence: 'away', teleport: true }).ok, true, 'recall from its home placeholder');

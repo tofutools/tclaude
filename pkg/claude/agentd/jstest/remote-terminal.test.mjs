@@ -16,6 +16,9 @@ test('a remote terminal opens interactive or watch-only as the peer shares it, a
   m.resetRemoteSessionsCache();
   await go('agt_ada1');
   assert.deepEqual(opened.at(-1), { wsPath: '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive', label: 'ada @ forge', remote: { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' } });
+  await m.openRemoteTerminal({ instance: 'inst_forge7', agent: 'agt_ada1', peerLabel: 'forge', fetchImpl, background: true, open: (o) => { opened.push(o); return o; } });
+  assert.equal(opened.at(-1).reveal, false, 'a background open leaves the current tab in front');
+  opened.pop();
   await go('agt_bob2');
   assert.match(opened.at(-1).wsPath, /mode=watch$/);
   await go('agt_cy3x');

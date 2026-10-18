@@ -21,8 +21,8 @@ const SESSIONS_TTL_MS = 10000;
 
 // openRemotePane opens a peer's terminal as a tab in the Terminals tab, like
 // a local web terminal (pop-out and drag-out work the same way).
-export function openRemotePane({ wsPath, label, remote }) {
-  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) });
+export function openRemotePane({ wsPath, label, remote, reveal = true }) {
+  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) }, { reveal });
 }
 const SAFE_ID = /^(agt|inst)_[A-Za-z0-9]{4,64}$/;
 const SESSIONS_WAIT_STEP_MS = 1500;
@@ -58,7 +58,7 @@ export function nativeAttachCommand(agent, instance) {
 // it cannot. It resolves to the opened descriptor or null. wait (ms) keeps
 // rereading the peer's sessions until the agent is listed, for one that was
 // just spawned there and is not yet in its catalog.
-export async function openRemoteTerminal({ instance, agent, peerLabel = '', label = '', fetchImpl, toast = shellToast, open = openRemotePane, wait = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() } = {}) {
+export async function openRemoteTerminal({ instance, agent, peerLabel = '', label = '', fetchImpl, toast = shellToast, open = openRemotePane, background = false, wait = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() } = {}) {
   if (!SAFE_ID.test(agent || '') || !SAFE_ID.test(instance || '')) {
     toast('This agent has no stable ID to open its terminal on the peer', true);
     return null;
@@ -90,6 +90,7 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
     label: `${name} @ ${peer}`,
     remote: { peer: instance, peerLabel: peer, agent },
+    ...(background ? { reveal: false } : {}),
   });
   if (!opened) toast('The terminal could not open here (the terminal runtime did not load)', true);
   return opened || null;
