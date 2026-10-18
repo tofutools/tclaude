@@ -738,7 +738,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-grants",
 			Title:   "Peer grants",
-			Caption: "Fleet → Peer grants for forge: each permission with where it applies (a group, or all groups including future ones, flagged), what it allows, and Revoke; a pool-inherited grant is revoked on its pool. The add row picks a permission, a group scope and, for spawning, the live cap; Grant… confirms with the consequence spelled out.",
+			Caption: "Fleet → Peer grants for forge: each permission with where it applies (a group, or all groups including future ones, flagged), what it allows, and Revoke; a pool-inherited grant is revoked on its pool. The filter narrows the list, Revoke all removes forge's own grants, and + Add grant… opens the add dialog.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -788,16 +788,20 @@ func fleetStates() []dashsnap.State {
 		},
 		{
 			Key:     "fleet-grant-launch",
-			Title:   "Grant launch settings",
-			Caption: "Fleet → Peer grants with groups.members.spawn picked: launch settings opens the receiver settings this node uses when it starts a worker for the peer — profile, selectable profiles, harness, model, directory and requester pays (jobs.run gets job approval instead). models.proxy grants take a gateway name or cover every gateway.",
+			Title:   "Adding grants",
+			Caption: "Fleet → Peer grants → + Add grant…: a searchable permission list in categories (with sensitive and already-held markers and each permission's warning), several picked at once, granted to one peer or pool in all groups or the groups ticked. Spawn and job grants take the live cap and launch settings — profile, selectable profiles, harness, model, directory and requester pays (jobs.run gets job approval instead); models.proxy grants take a gateway name or cover every gateway. The plan lists each grant before Grant… confirms.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="grants"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-trusted [data-fa="grants"]').click();
-  for (var j = 0; j < 30 && !document.querySelector('#fleet-grant-slug'); j++) await new Promise(function(r){ setTimeout(r, 100); });
-  var sel = document.querySelector('#fleet-grant-slug'); sel.value = 'groups.members.spawn'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-grant-add'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-grant-add').click();
+  for (var d = 0; d < 30 && !document.querySelector('[data-grant-slug="groups.members.spawn"] input'); d++) await new Promise(function(r){ setTimeout(r, 50); });
+  ['groups.members.spawn', 'message.direct'].forEach(function(s){ document.querySelector('[data-grant-slug="' + s + '"] input').click(); });
+  for (var g = 0; g < 20 && !document.querySelector('[data-grant-group] input'); g++) await new Promise(function(r){ setTimeout(r, 50); });
+  document.querySelector('[data-grant-group] input').click();
   for (var k = 0; k < 20 && !document.querySelector('#fleet-grant-launch-toggle'); k++) await new Promise(function(r){ setTimeout(r, 50); });
   document.querySelector('#fleet-grant-launch-toggle').click();
   for (var l = 0; l < 20 && !document.querySelector('#fleet-grant-launch'); l++) await new Promise(function(r){ setTimeout(r, 50); });

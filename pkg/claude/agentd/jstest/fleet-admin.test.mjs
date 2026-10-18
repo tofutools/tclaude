@@ -411,6 +411,19 @@ test('grant rows mark all-groups and pool-inherited grants; the consequence name
   assert.match(m.grantConsequence({ target: 'forge', slug: 'node.read', group: 'ops' }), /node-wide/);
 });
 
+// openAddGrant opens the add-grants dialog and ticks slugs (and groups).
+async function openAddGrant(s, { slugs = [], groups = [], allGroups = false } = {}) {
+  await s.click(s.q('#fleet-grant-add'));
+  for (const slug of slugs) await s.check(s.q(`[data-grant-slug="${slug}"] input`));
+  for (const g of groups) await s.check(s.q(`[data-grant-group="${g}"] input`));
+  if (allGroups) await s.check(s.q('#fleet-grant-all-groups'));
+}
+async function pickOption(s, sel, value) {
+  const el = s.q(sel);
+  for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+}
+
 test('the grants page lists, grants with a spelled-out confirm, and revokes direct grants only', async (t) => {
   const s = await setup(t);
   await s.show();
@@ -421,27 +434,23 @@ test('the grants page lists, grants with a spelled-out confirm, and revokes dire
   assert.match(s.q('#fleet-grants').textContent, /all groups, incl\. future/);
   assert.equal(rows[2].querySelector('[data-fa="revoke"]'), null, 'a pool grant is revoked on the pool');
   assert.match(rows[2].textContent, /via pool rigs/);
-  // Default form: message.direct on all groups.
+  // The dialog opens on this peer: message.direct on all groups.
+  await openAddGrant(s, { slugs: ['message.direct'], allGroups: true });
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).body, /EVERY group.*created later/);
   assert.deepEqual(s.log.find((l) => l[0] === 'grant'), ['grant', { peer: 'inst_forge', slug: 'message.direct', scope: '' }]);
   assert.ok(s.toasts.some((m) => /future groups/.test(m)), 'daemon warnings are shown');
+  assert.equal(s.q('#fleet-grant-dialog'), null, 'a granted dialog closes');
   // A spawn grant scoped to a group carries its live cap.
-  // linkedom's select.value is read-only: pick the option instead.
-  const pick = async (sel, value) => {
-    const el = s.q(sel);
-    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
-  };
-  await pick('#fleet-grant-slug', 'groups.members.spawn');
-  await pick('#fleet-grant-group', 'ops');
+  await openAddGrant(s, { slugs: ['groups.members.spawn'], groups: ['ops'] });
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).body, /in group ops\. Live cap: 2\. This lets it act on this node/);
   assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } });
   // A slug that requires a group cannot be granted without one.
-  await pick('#fleet-grant-slug', 'agents.receive');
-  await pick('#fleet-grant-group', '');
+  await openAddGrant(s, { slugs: ['agents.receive'] });
   assert.equal(s.q('#fleet-grant-submit').disabled, true);
+  assert.match(s.q('#fleet-grant-plan').textContent, /Pick a group for agents\.receive/);
+  await s.click([...s.q('#fleet-grant-dialog').querySelectorAll('button')].find((b) => b.textContent === 'Cancel'));
   await s.click(s.q('#fleet-grants [data-slug="groups.roster.read"] [data-fa="revoke"]'));
   assert.match(s.confirms.at(-1).body, /loses groups\.roster\.read .* in group ops/);
   assert.deepEqual(s.log.find((l) => l[0] === 'revoke'), ['revoke', { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' }]);
@@ -489,6 +498,49 @@ test('the grants page lists every peer under All and revokes all of one peer\'s 
   assert.ok(s.toasts.some((m) => /revoked 1 of 2; groups\.roster\.read in group ops and the rest remain: daemon down/.test(m)));
 });
 
+test('the grants page opens on All; the add dialog searches, plans per group and grants several at once', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Peer grants/.test(b.textContent)));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.q('#fleet-grants').querySelectorAll('tr.fa-grant-peer').length, 2, 'All is the default');
+  // The page filter narrows the list in either view.
+  const filter = s.q('#fleet-grant-filter'); filter.value = 'presence';
+  await s.harness.act(() => s.harness.fireEvent(filter, 'input'));
+  assert.equal(s.q('#fleet-grants').querySelectorAll('tbody tr[data-slug]').length, 1);
+  assert.match(s.q('.fa-grants-head').textContent, /1 of 2 grants/);
+
+  // A header's + Add preselects that peer; search and category narrow the list.
+  await s.click(s.q('tr.fa-grant-peer[data-peer="inst_forge"] [data-fa="add-grant"]'));
+  const search = s.q('#fleet-grant-search'); search.value = 'roster';
+  await s.harness.act(() => s.harness.fireEvent(search, 'input'));
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['groups.roster.read']);
+  assert.match(s.q('[data-grant-slug="groups.roster.read"]').textContent, /held: ops/);
+  search.value = '';
+  await s.harness.act(() => s.harness.fireEvent(search, 'input'));
+  await s.click(s.q('[data-cat="Terminals"]'));
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch', 'sessions.attach', 'sessions.takeover']);
+  await s.check(s.q('#fleet-grant-hide-sensitive'));
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch']);
+  await s.click(s.q('[data-cat=""]'));
+
+  // Two permissions over two groups: four grants, the held one skipped.
+  for (const slug of ['groups.roster.read', 'message.direct', 'node.read']) await s.check(s.q(`[data-grant-slug="${slug}"] input`));
+  for (const g of ['ops', 'build']) await s.check(s.q(`[data-grant-group="${g}"] input`));
+  const plan = s.q('#fleet-grant-plan').textContent;
+  assert.match(plan, /forge gets 4 grants/);
+  assert.match(plan, /groups\.roster\.read in group ops — already granted/);
+  assert.match(plan, /node\.read node-wide/);
+  assert.match(s.q('#fleet-grant-submit').textContent, /Grant 4…/);
+  // A failure part-way says what was not granted.
+  s.actions.grant = async (b) => { s.log.push(['grant', b]); if (b.slug === 'message.direct' && b.scope === 'group=build') throw new Error('daemon down'); return { ok: true }; };
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).title, /^Grant 4 permissions to forge\?/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').map((l) => `${l[1].slug} ${l[1].scope}`), ['groups.roster.read group=build', 'message.direct group=ops', 'message.direct group=build']);
+  assert.ok(s.toasts.some((m) => /granted 2 of 4; message\.direct in group build and the rest were not: daemon down/.test(m)));
+  assert.ok(s.q('#fleet-grant-dialog'), 'a failed grant keeps the dialog open');
+});
+
 test('a pool page revokes its own grants; re-granting keeps CLI launch settings and only changes the cap', async (t) => {
   const s = await setup(t);
   const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
@@ -501,13 +553,8 @@ test('a pool page revokes its own grants; re-granting keeps CLI launch settings 
   s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'jobs.run', scope: 'group=ops', spawn_policy: { max_live: 2, job_approval: 'manual', profile: 'safe' } }];
   await s.show();
   await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
-  const pick = async (sel, value) => {
-    const el = s.q(sel);
-    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
-  };
-  await pick('#fleet-grant-slug', 'jobs.run');
-  await pick('#fleet-grant-group', 'ops');
+  await openAddGrant(s, { slugs: ['jobs.run'], groups: ['ops'] });
+  assert.match(s.q('[data-grant-slug="jobs.run"]').textContent, /held: ops/);
   const cap = s.q('#fleet-grant-cap'); cap.value = '5';
   await s.harness.act(() => s.harness.fireEvent(cap, 'input'));
   await s.click(s.q('#fleet-grant-submit'));
@@ -543,6 +590,7 @@ test('an all-groups grant is new even when the peer holds the same permission on
   s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'message.direct', scope: 'group_id=12', group_id: 12, group_deleted: true }];
   await s.show();
   await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  await openAddGrant(s, { slugs: ['message.direct'], allGroups: true });
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).title, /^Grant message\.direct/);
   assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1], { peer: 'inst_forge', slug: 'message.direct', scope: '' });
@@ -631,7 +679,7 @@ test('pools: adding a member names the grants it gains; deleting and removing co
   assert.match(s.confirms.at(-1).body, /Profiles test-rig include this pool: applying them, trusting new peers with the default profile and enrolling with their invites fail/);
   assert.deepEqual(s.log.find((l) => l[0] === 'deletePool'), ['deletePool', 'rigs']);
   await s.click(s.q('#fleet-pools [data-fa="pool-grants"]'));
-  assert.match(s.q('.fa-grants-head').textContent, /A pool's grants apply to every member node/, 'Grants… opens the pool on the grants page');
+  assert.match(s.q('.fa-grants').textContent, /A pool's grants apply to every member node/, 'Grants… opens the pool on the grants page');
 });
 
 test('profiles: default and apply preview the effect; applying unrestricted confirms the fingerprint', async (t) => {
@@ -900,32 +948,33 @@ test('grant launch settings and model gateway scopes reach the grant body and th
   const s = await setup(t);
   await s.show();
   await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
-  const pick = async (sel, value) => {
-    const el = s.q(sel);
-    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
-    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
-  };
+  const pick = (sel, value) => pickOption(s, sel, value);
   const type = async (sel, v) => { const el = s.q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
-  await pick('#fleet-grant-slug', 'groups.members.spawn');
-  await pick('#fleet-grant-group', 'ops');
+  await openAddGrant(s, { slugs: ['groups.members.spawn'], groups: ['ops'] });
   await s.click(s.q('#fleet-grant-launch-toggle'));
   await type('[data-launch="profile"]', 'opus-fast');
   await type('[data-launch="allowed_profiles"]', 'opus-fast, sonnet-review');
   await type('[data-launch="cwd"]', '/srv/ops');
   await pick('[data-launch="requester_pays"]', 'required');
   await s.click(s.q('#fleet-grant-submit'));
-  // A spawn-only setting typed, then a switch to jobs.run: it is not sent.
-  await pick('[data-launch="requester_pays"]', 'allowed');
   assert.match(s.confirms.at(-1).body, /Workers start with profile opus-fast; selectable opus-fast, sonnet-review; directory \/srv\/ops; requester pays: required\. Its workers must use its own model gateway/);
   assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops',
     spawn_policy: { profile: 'opus-fast', allowed_profiles: ['opus-fast', 'sonnet-review'], cwd: '/srv/ops', requester_pays: 'required', max_live: 2 } });
-  await pick('#fleet-grant-slug', 'jobs.run');
-  assert.equal(s.q('[data-launch="requester_pays"]'), null, 'requester pays is a spawn setting');
+  // Spawn and jobs picked together: a spawn-only setting never rides along
+  // on the job grant.
+  await openAddGrant(s, { slugs: ['groups.members.spawn', 'jobs.run'], groups: ['ops'] });
+  await s.click(s.q('#fleet-grant-launch-toggle'));
+  await pick('[data-launch="requester_pays"]', 'allowed');
   await pick('[data-launch="job_approval"]', 'manual');
   await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).title, /^Grant 2 permissions to forge\?/);
   assert.match(s.confirms.at(-1).body, /Each job waits for your approval/);
-  assert.equal(s.log.filter((l) => l[0] === 'grant').at(-1)[1].spawn_policy.requester_pays, undefined, 'a spawn-only setting never rides along');
-  await pick('#fleet-grant-slug', 'models.proxy');
+  const [spawnBody, jobBody] = s.log.filter((l) => l[0] === 'grant').slice(-2).map((l) => l[1]);
+  assert.equal(spawnBody.spawn_policy.requester_pays, 'allowed');
+  assert.equal(spawnBody.spawn_policy.job_approval, undefined);
+  assert.equal(jobBody.spawn_policy.requester_pays, undefined, 'a spawn-only setting never rides along');
+  assert.equal(jobBody.spawn_policy.job_approval, 'manual');
+  await openAddGrant(s, { slugs: ['models.proxy'] });
   await type('#fleet-grant-gateway', 'claude');
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).body, /on gateway claude only/);

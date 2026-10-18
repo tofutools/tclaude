@@ -183,6 +183,73 @@ export function slugInfo(slug) {
   return PEER_SLUGS.find((s) => s.slug === slug) || { slug, kind: 'node', what: '' };
 }
 
+// GRANT_CATEGORIES group PEER_SLUGS for the add-grants picker, in display
+// order.
+export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Models']);
+
+const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
+const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.members.manage', 'node.groups.create']);
+
+export function slugCategory(slug) {
+  if (slug.startsWith('groups.members.spawn') || slug.startsWith('node.spawn.') || slug === 'jobs.run') return 'Spawn & jobs';
+  if (slug.startsWith('sessions.') && slug !== 'sessions.read') return 'Terminals';
+  if (slug.startsWith('message.') || slug === 'routes.consume') return 'Messaging';
+  if (slug.startsWith('models.')) return 'Models';
+  if (LIFECYCLE.has(slug)) return 'Agent lifecycle';
+  if (GROUP_ADMIN.has(slug)) return 'Group admin';
+  if (slug.endsWith('.read')) return 'Read & status';
+  return 'Node admin';
+}
+
+// grantVisibleSettings are the launch settings a policy grant of slug takes.
+export function grantVisibleSettings(slug) {
+  return [
+    ...LAUNCH_FIELDS.filter((f) => !f.slugs || f.slugs.includes(slug)).map((f) => f.key),
+    ...(slug === 'groups.members.spawn' ? ['requester_pays'] : []),
+    ...(slug === 'jobs.run' ? ['job_approval'] : []),
+  ];
+}
+
+// planGrants turns an add-grants selection into one grant body per
+// permission and scope. Group permissions get one grant per chosen group, or
+// one unscoped grant when allGroups; a permission that needs a group and has
+// none is listed in missing. An existing direct grant with the same
+// permission and scope is skipped, except a spawn/job grant, which is
+// updated: the daemon replaces it wholesale, so its other launch settings
+// are carried over and only the ones typed here change.
+export function planGrants({ target, slugs, groups = [], allGroups = false, gateway = '', maxLive = 2, launch = {}, rows = [] }) {
+  const out = []; const missing = [];
+  for (const slug of slugs) {
+    const info = slugInfo(slug);
+    let scopes;
+    if (info.gateway) scopes = [gateway ? `http_proxy=${gateway}` : ''];
+    else if (info.kind === 'node') scopes = [''];
+    else if (info.kind === 'group' && allGroups) scopes = [''];
+    else if (groups.length) scopes = groups.map((g) => `group=${g}`);
+    else { missing.push(slug); continue; }
+    for (const scope of scopes) {
+      const group = scopeGroup(scope);
+      const gw = scope.startsWith('http_proxy=') ? scope.slice(11) : '';
+      // A deleted group's grant has no name, so an unscoped grant matches
+      // only an empty scope, never a nameless group row.
+      const existing = rows.find((r) => !r.pool && !r.deletedGroup && r.slug === slug && (gw ? r.scope === scope : group ? r.group === group : !r.scope)) || null;
+      const body = { peer: target, slug, scope };
+      if (info.policy) {
+        const visible = new Set(grantVisibleSettings(slug));
+        const set = {};
+        for (const [k, v] of Object.entries(launch)) {
+          if (v === undefined || !visible.has(k)) continue;
+          set[k] = k === 'allowed_profiles' ? String(v).split(',').map((x) => x.trim()).filter(Boolean) : String(v).trim();
+        }
+        body.spawn_policy = { ...(existing?.policy || {}), ...set, max_live: Math.max(1, Number(maxLive) || 2) };
+        for (const k of Object.keys(body.spawn_policy)) { const v = body.spawn_policy[k]; if (v === '' || (Array.isArray(v) && !v.length)) delete body.spawn_policy[k]; }
+      }
+      out.push({ key: `${slug}|${scope}`, slug, scope, group, gateway: gw, body, existing, skip: !!existing && !info.policy });
+    }
+  }
+  return { grants: out, missing };
+}
+
 // scopeGroup names the group of a 'group=<name>' scope ('' = unscoped).
 export function scopeGroup(scope) {
   return String(scope || '').startsWith('group=') ? String(scope).slice(6) : '';
