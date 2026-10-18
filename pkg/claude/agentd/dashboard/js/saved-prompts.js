@@ -8,6 +8,7 @@ import {
 } from './saved-prompts-actions.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { downloadBlob } from './paf-model.js';
+import { nodeFetch } from './node-api.js';
 
 const html = htm.bind(h);
 const blank = () => ({ name: '', body: '' });
@@ -48,7 +49,8 @@ function SavedPromptImport({ incoming, prompts, busy, onImport, onCancel }) {
   </div>`;
 }
 
-function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initial = '', clone = false }) {
+function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initial = '', clone = false, node = '' }) {
+  const api = node ? nodeFetch(node) : undefined;
   const seed = prompts.find((item) => item.name === initial) || null;
   const [original, setOriginal] = useState(clone ? null : seed);
   const [draft, setDraft] = useState(() => (seed
@@ -82,8 +84,8 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
     try { await work(); } catch (cause) { setError(cause.message); } finally { busyRef.current = false; setBusy(false); }
   };
   const mutate = (remove = false) => run(async () => {
-    if (remove) await deleteSavedPrompt(original.name);
-    else await saveSavedPrompt(original?.name, draft);
+    if (remove) await deleteSavedPrompt(original.name, api);
+    else await saveSavedPrompt(original?.name, draft, api);
     // Clear the saved draft before refreshing so a failed refresh never
     // leaves a successful create looking like an unsaved, retryable write.
     setOriginal(null); setDraft(blank()); setDeleting(false);
@@ -93,7 +95,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
     let done = 0;
     try {
       for (const [previous, prompt] of writes) {
-        await saveSavedPrompt(previous, prompt);
+        await saveSavedPrompt(previous, prompt, api);
         done += 1;
       }
     } finally {
@@ -160,13 +162,14 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
   </div>`;
 }
 
-function useSavedPrompts(enabled = true) {
+// useSavedPrompts reads node's library (blank: the page's node).
+function useSavedPrompts(enabled = true, node = '') {
   const [prompts, setPrompts] = useState([]);
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const live = useRef(true);
   const reload = async () => {
-    const list = await loadSavedPrompts();
+    const list = await loadSavedPrompts(node ? nodeFetch(node) : undefined);
     if (live.current) { setPrompts(list); setError(''); }
   };
   useEffect(() => {
@@ -193,16 +196,17 @@ export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
 // SavedPromptChips selects an ordered set of saved prompts with the same chip
 // + "Add…" control the role pickers use. value/onChange carry prompt names.
 //
-// library replaces this node's own library with a given list (a remote
+// node names the node whose library the chips pick from and Manage… edits
+// (node-api.js; blank: the page's). library replaces it with a given list (a remote
 // spawn's two libraries, agent-spawn-remote.js): each prompt may carry a
 // label and a source, sources groups the Add list ({source, label}, in order),
 // and visible limits it to some of them. locked names chips that cannot be
 // removed, with lockedReason as their hover text.
 export function SavedPromptChips({
   id, value = [], onChange, disabled = false, confirmDiscard = shellConfirmDiscard, hint = '',
-  library = null, sources = [], visible = null, locked = [], lockedReason = '',
+  library = null, sources = [], visible = null, locked = [], lockedReason = '', node = '',
 }) {
-  const own = useSavedPrompts(!library);
+  const own = useSavedPrompts(!library, node);
   const { error, setError, reload } = own;
   const prompts = library || own.prompts;
   const [inspected, setInspected] = useState('');
@@ -254,7 +258,7 @@ export function SavedPromptChips({
       ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}
     ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
-    ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}
+    ${managing ? html`<${SavedPromptManager} prompts=${prompts} node=${node} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}
   </div>`;
 }
