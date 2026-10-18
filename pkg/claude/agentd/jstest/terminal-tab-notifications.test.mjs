@@ -327,3 +327,25 @@ test('a link or Back opens the quick reader on the notification the URL names, a
   await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
   assertAbsent(mounted.container.querySelector('.human-notification-drawer'));
 });
+
+test('a peer agent\'s terminal tab raises its ! from that peer\'s notifications and opens them there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [island, attention] = await Promise.all([
+    harness.importDashboardModule('js/terminal-shell-island.js'),
+    harness.importDashboardModule('js/human-notification-attention.js'),
+  ]);
+  const pane = { key: 'p1', label: 'builder', seed: { remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_one' } } };
+  const lists = { inst_forge: [notification, { ...older, read: true }] };
+  assert.equal(island.paneRemoteNode(pane), 'inst_forge');
+  assert.deepEqual(island.paneUnreadNotifications(pane, { messages: [] }, lists).map((m) => m.id), [42], 'forge\'s unread ones, not the page\'s');
+  assert.deepEqual(island.paneUnreadNotifications(pane, { messages: [notification] }, {}), [], 'none before forge answers');
+  const opened = [];
+  const listen = (e) => opened.push(e.detail);
+  harness.document.addEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen);
+  t.after(() => harness.document.removeEventListener(attention.OPEN_HUMAN_NOTIFICATION_EVENT, listen));
+  const mounted = await harness.mount(harness.html`<${island.TabAttention} pane=${pane} snapshot=${{ value: {} }} messages=${island.paneUnreadNotifications(pane, {}, lists)} />`);
+  await harness.act(() => mounted.container.querySelector('.mux-tab-attention').click());
+  assert.equal(opened[0].messageId, 42);
+  assert.deepEqual({ node: opened[0].sender.node, nodeName: opened[0].sender.nodeName }, { node: 'inst_forge', nodeName: 'forge' });
+  await mounted.unmount();
+});

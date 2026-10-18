@@ -234,6 +234,9 @@ export function GroupsNotificationReader({
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
         if (!live || known.current.sender !== knownKey || !Array.isArray(payload?.messages)) return;
+        // Its reply names what the node shares from here (a peer's view),
+        // for a view that has no snapshot of that node (a terminal tab).
+        if (payload.peer_view) known.current.peerView = payload.peer_view;
         for (const row of payload.messages) {
           if (!known.current.rows.has(row.id)) known.current.rows.set(row.id, row);
         }
@@ -294,7 +297,7 @@ export function GroupsNotificationReader({
   // What the peer does not share from here stays in place, disabled, with a
   // 🔒 saying why, as in its Messages tab.
   const peerName = !peer ? '' : node ? descriptor.sender.nodeName || node.slice(0, 13) : remoteNodeName(peer);
-  const peerView = nodeSnap?.peer_view;
+  const peerView = nodeSnap?.peer_view || known.current.peerView;
   const replyLock = peer && !shares(peerView, 'human.inbox.answer')
     ? `${peerName} keeps answering its notifications to its own operator: it needs unrestricted trust from ${peerName}.` : '';
   const markLock = peer && !shares(peerView, 'mark')
@@ -356,7 +359,8 @@ export function GroupsNotificationReader({
           // this node's. Either's own snapshot knows the sender's liveness.
           ...(peer || node ? {
             nodeName: peerName || descriptor.sender.nodeName || '',
-            online: senderOnline(nodeSnap, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || ''),
+            // Without that node's snapshot the node itself refuses an offline sender.
+            online: nodeSnap ? senderOnline(nodeSnap, message.from_agent || descriptor.sender.agent || '', message.from_conv || descriptor.sender.conv || '') : undefined,
             send: (body) => postPeerJSON(peer ? '/api/human-inbox/reply' : '/api/human-messages/reply', { id: message.id, body }, nodeFetch(node))
               .then(() => { if (node) announceNodeChanged(node); }),
           } : {}),

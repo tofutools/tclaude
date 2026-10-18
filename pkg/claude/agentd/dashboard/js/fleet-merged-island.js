@@ -29,7 +29,7 @@ import { LaunchTargetDialog, createLaunchTargetApi, grantWhy, launchAgent } from
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { featureState } from './feature-state-registry.js';
-import { featureState as peerFeatureState } from './peer-view-limits.js';
+import { peerSharesNotifications, usePeerNotifications } from './peer-notifications.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { publishFusedDock } from './dock-nodes.js';
 import { pickToolbarNode, setToolbarNodes } from './toolbar-node.js';
@@ -303,68 +303,6 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
     return () => { live = false; timers.clearTimeout(timer); };
   }, [active, key]);
   return lists;
-}
-
-// PEER_NOTIFICATIONS_POLL_MS paces each peer's unread-notification read;
-// PEER_NOTIFICATIONS_PAGE is how many of its newest unread ones it reads.
-export const PEER_NOTIFICATIONS_POLL_MS = 15000;
-const PEER_NOTIFICATIONS_PAGE = 100;
-
-// peerSharesNotifications reports whether a peer lets this operator read its
-// human notifications: under node.messages.read, which unrestricted trust
-// holds. Its snapshot never carries them.
-export function peerSharesNotifications(snapshot) {
-  const view = snapshot?.peer_view;
-  return !!view && (view.level === 'unrestricted' || peerFeatureState('node.messages', view) === 'shared');
-}
-
-// usePeerNotifications reads each listed peer's unread human notifications
-// from its Messages mailbox (the human folder) while active, and again at
-// once when a control here changes that peer. It returns id -> messages.
-export function usePeerNotifications({ active, peers, fetchFor, timers = globalThis }) {
-  const [lists, setLists] = useState({});
-  const peersRef = useRef(peers);
-  peersRef.current = peers;
-  const fetchRef = useRef(fetchFor);
-  fetchRef.current = fetchFor;
-  // read is the live poll's reader; requested names the peers it has read,
-  // so one newly listed (its first snapshot just arrived) is read at once
-  // without the others being read again.
-  const reader = useRef({ read: null, requested: new Set() });
-  const any = peers.length > 0;
-  useEffect(() => {
-    if (!active || !any) return undefined;
-    let live = true;
-    const requested = new Set();
-    const read = async (id) => {
-      requested.add(id);
-      try {
-        const response = await fetchRef.current(id)(`/api/mailbox?id=human&unread=1&page=1&page_size=${PEER_NOTIFICATIONS_PAGE}`, { headers: { Accept: 'application/json' } });
-        if (!response.ok) return;
-        const body = await response.json();
-        // An older peer ignores unread=1 and sends its newest page.
-        const messages = (Array.isArray(body?.messages) ? body.messages : []).filter((m) => m && !m.read);
-        if (live) setLists((current) => ({ ...current, [id]: messages }));
-      } catch (_) { /* keeps the last list */ }
-    };
-    reader.current = { read, requested };
-    let timer = 0;
-    const all = () => {
-      // Nothing is read while the page is in the background.
-      if (!globalThis.document?.hidden) for (const id of peersRef.current) void read(id);
-      timer = timers.setTimeout(all, PEER_NOTIFICATIONS_POLL_MS);
-    };
-    all();
-    const stopChanged = onNodeChanged((node) => { if (peersRef.current.includes(node)) void read(node); });
-    return () => { live = false; reader.current = { read: null, requested: new Set() }; timers.clearTimeout(timer); stopChanged(); };
-  }, [active, any]);
-  const key = peers.join(',');
-  useEffect(() => {
-    const { read, requested } = reader.current;
-    if (read) for (const id of peers) if (!requested.has(id)) void read(id);
-  }, [key]);
-  // A peer that stopped sharing (or left the view) shows none of its last.
-  return Object.fromEntries(peers.filter((id) => lists[id]).map((id) => [id, lists[id]]));
 }
 
 // fusedOrder sorts the merged groups by the fused view's own remembered order
