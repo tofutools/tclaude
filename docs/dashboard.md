@@ -921,7 +921,10 @@ own view opens from its node button. The header's quota bars show one node at
 a time, because quota percentages do not add up across machines. A node pill
 before them names whose they are (this node by default), and its menu lists
 each ticked node's peak quota. A node that does not share usage
-(`costs.read`) is locked there, with the reason.
+(`costs.read`) is locked there, with the reason. **Usage** opens with a per-node summary: each
+ticked node's spend today and this month, and its peak quota. The spend is
+totalled across the nodes that share it; quota is shown per node only. The
+views below it show this node.
 **Activity › Audit** gets a **node** filter: this node, one ticked peer
 (paged through its routes, under `federation.audit.read`), or **all nodes**,
 which merges each node's newest page newest first, with a node pill on each
