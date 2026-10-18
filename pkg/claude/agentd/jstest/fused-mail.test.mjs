@@ -531,5 +531,41 @@ test('a merged folder pages every node with its keyset cursor, beside a node on 
   await once();
   assert.match(pos(), /Page 3 \/ 3/);
   assert.deepEqual(subjects(), seen.slice(100));
+
+  // New mail moves page 1 under a poll; Next starts right below the page as
+  // it now reads, so nothing slips between the pages.
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once();
+  for (let i = 0; i < 3; i++) box.forge.unshift(mail('forge', 100 + i));
+  counts.forge += 3;
+  await once(); await once();
+  const first = subjects();
+  assert.equal(first[0], 'forge 102', 'the poll shows the new mail');
+  await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
+  await once();
+  const all = [...box.desk, ...box.forge, ...box.lab].map((m) => m.subject)
+    .sort((a, b) => { const t = (s) => { const [n, i] = s.split(' '); return Date.parse(mail(n, Number(i)).created_at); }; return t(b) - t(a); });
+  assert.deepEqual([...first, ...subjects()], all.slice(0, 100), 'page 2 follows page 1 as it reads now');
+
+  // A node that was down when the pages were walked has no cursor in them;
+  // when it comes back the walk restarts, so its rows do not repeat.
+  const peers = (labOnline) => state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: labOnline, level: 'restricted' },
+  ] });
+  await harness.act(() => peers(false));
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once(); await once();
+  await click(c.querySelector('#fused-mail-pager button[title="Next page"]'));
+  await once();
+  assert.match(pos(), /Page 2 \//);
+  await harness.act(() => peers(true));
+  await once(); await once(); await once();
+  const page2 = subjects();
+  await click(c.querySelector('#fused-mail-pager button[title="First page"]'));
+  await once();
+  const page1 = subjects();
+  assert.ok(page2.some((s) => s.startsWith('lab ')), 'lab rows are back');
+  assert.deepEqual(page2.filter((s) => page1.includes(s)), [], 'no row on both pages');
   await mounted.unmount();
 });

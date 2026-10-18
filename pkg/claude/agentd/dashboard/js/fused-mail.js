@@ -391,7 +391,7 @@ export function FusedMail({
   const [pageSize, setPageSizeState] = useState(initialPageSize);
   // vectors are the merged folder's known cursor vectors, vectors[p - 1] for
   // page p, for the folder, search and scope in view (fleet-pager.js).
-  const [vectors, setVectors] = useState(() => ({ key: '', list: [{}] }));
+  const [vectors, setVectors] = useState(() => ({ key: '', absent: '', list: [{}] }));
   const [selected, setSelected] = useState('');
   const [checked, setChecked] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -484,8 +484,18 @@ export function FusedMail({
     const v = pendingVector.current;
     if (!v) return;
     setVectors((cur) => {
-      const list = cur.key === v.key ? cur.list : [{}];
-      return list.length === v.page ? { key: v.key, list: [...list, v.next] } : cur;
+      // A node that comes back (or drops out) changes every page past the
+      // first, so the walk restarts from page 1.
+      if (cur.key !== v.key || cur.absent !== v.absent) return { key: v.key, absent: v.absent, list: [{}] };
+      const { list } = cur;
+      if (list.length < v.page) return cur;
+      // The page's own merge is the truth for where the next one starts:
+      // polling moves page 1 as mail arrives, and a deletion moves any page.
+      // A changed boundary drops the deeper vectors, which were derived from
+      // the old one.
+      if (!v.more) return list.length > v.page ? { ...cur, list: list.slice(0, v.page) } : cur;
+      if (list.length > v.page && cursorKey(list[v.page]) === cursorKey(v.next)) return cur;
+      return { ...cur, list: [...list.slice(0, v.page), v.next] };
     });
   });
   if (!current.fused) return null;
@@ -531,9 +541,13 @@ export function FusedMail({
   // reachable on its own.
   const deeper = !!mergedPage && pages.some((p) => p?.legacy && p.total > LEGACY_MAX_DEPTH);
   // Once every node has answered this page, the merge yields the next page's
-  // cursor vector: record it so Next (and a walk to a deeper page) can read it.
-  pendingVector.current = mergedPage && loaded && mergedPage.more && known.length === shown
-    ? { key: vectorKey, page: shown, next: mergedPage.next } : null;
+  // cursor vector: record it so Next (and a walk to a deeper page) can read
+  // it. A node that is down gives no rows and no cursor, so the vectors are
+  // only good while the same nodes are down; they are recorded with that set.
+  const absent = pageNodes.filter((n, i) => !pages[i] && entries[n.id]?.status).map((n) => n.id).join(',');
+  const answered = pageNodes.every((n, i) => pages[i] || entries[n.id]?.status);
+  pendingVector.current = mergedPage && answered
+    ? { key: vectorKey, absent, page: shown, next: mergedPage.next, more: mergedPage.more } : null;
 
   const status = (n) => {
     const e = entries[n.id];
