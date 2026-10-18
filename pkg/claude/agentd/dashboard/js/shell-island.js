@@ -21,6 +21,7 @@ import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
 import { UsageNodePill, peerUsageState, usagePeak, useUsageNode } from './usage-nodes.js';
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
+import { fusedDock } from './dock-nodes.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
@@ -219,7 +220,12 @@ function OpenPRs({ state }) {
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
   const hoverCloseTimer = useRef(null);
-  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention);
+  // In the fused Groups view the peers' agents are on screen too; their PRs
+  // count as attached (the page's daemon only knows its own agents).
+  const dock = fusedDock.value;
+  const peers = dock ? (dock.nodes || []).filter((n) => n.id !== dock.page)
+    .map((n) => ({ name: n.name, snapshot: dock.snapshots?.[n.id] })) : [];
+  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers);
   // The indicator is permanent by default (dashboard.always_show_open_prs), so
   // the popover must open at zero open PRs too — that is where the recently
   // closed list lives. It still stays out of the footer entirely until the

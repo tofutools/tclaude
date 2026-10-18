@@ -114,6 +114,21 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     [2, 3, 4, 5],
     'an associated local row does not inflate the unattached count',
   );
+  // The fused Groups view's peers: their agents' PRs count as attached.
+  const peers = [
+    { name: 'brain', snapshot: { groups: [{ members: [
+      { agent_id: 'agt_p', title: 'paste-files', branch_pr_url: 'https://github.com/ACME/app/pull/2/files' },
+      { agent_id: 'agt_q', title: 'other', presented_prs: [{ url: 'https://github.com/acme/app/pull/3' }] },
+      { agent_id: 'agt_r', title: 'thief', branch_pr_url: 'https://github.com/acme/app/pull/1' },
+    ] }] } },
+    { name: 'restricted', snapshot: { groups: [{ members: [{ agent_id: 'agt_s', title: 'no links' }] }] } },
+  ];
+  const fused = authoredOpenPRsView({ authored_open_prs: prs }, 'all', false, peers);
+  assert.deepEqual(fused.items.map((pr) => [pr.number, pr.agent_id || '', pr.agent_title || '']), [
+    [1, 'agt_1', ''], [2, 'agt_p', 'paste-files@brain'], [3, 'agt_q', 'other@brain'], [4, '', ''], [5, '', ''],
+  ], 'a peer agent fills in only PRs the page daemon left unattached');
+  assert.equal(fused.unattached, 2);
+  assert.equal(prs.items[1].agent_id, undefined, 'the snapshot rows are not mutated');
 
   // Recently closed PRs live in their own filter: they must not reach the open
   // list, the open count, or the attention/unattached tallies.

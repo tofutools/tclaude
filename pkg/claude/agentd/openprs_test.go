@@ -378,3 +378,19 @@ func TestOpenPRSnapshotOrderIgnoresSourceOrderAndActivity(t *testing.T) {
 		assert.Equal(t, []int{2, 10, 1}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number})
 	}
 }
+
+// A PR Claude Code's statusline reports from a cwd that misses both branch
+// slots still attaches its agent to the footer list.
+func TestAssociateAuthoredOpenPRsWithStatuslineOnlyPR(t *testing.T) {
+	const prURL = "https://github.com/acme/app/pull/12"
+	links := branchLinksForParts("conv", agentLocationView{CurrentDir: "/repo", Branch: "main"}, db.AgentWorkspace{
+		ConvID: "conv", Cwd: "/repo/sub", Branch: "feature", RepoURL: "https://github.com/acme/app",
+		PRNumber: 12, PRURL: prURL, PRState: "open", UpdatedAt: time.Now(),
+	}, func(string, string) (string, int, string, string, time.Time) { return "", 0, "", "", time.Time{} })
+	require.Empty(t, links.BranchPRURL)
+	view := associateAuthoredOpenPRs(dashboardAuthoredOpenPRs{
+		Available: true, Total: 1, Items: []dashboardAuthoredOpenPR{{Number: 12, URL: prURL}},
+	}, []dashboardAgent{{AgentID: "agt_1", ConvID: "conv", Title: "builder", repoLinksView: links.withPresentedPRs(nil)}})
+	assert.Equal(t, "agt_1", view.Items[0].AgentID)
+	assert.Equal(t, "builder", view.Items[0].AgentTitle)
+}
