@@ -504,6 +504,10 @@ export function MergedGroups({
         const header = event.target.closest?.('summary[data-group-reorder]');
         const box = header?.closest('details[data-fleet-node]');
         if (header && box && nodeAllowsActing(isPageNode(box.dataset.fleetNode) ? '' : box.dataset.fleetNode)) return;
+        // A pending or queued spawn drags to the bin only (dnd.js), on a node
+        // this one may act on.
+        const spawn = event.target.closest?.('tr.dnd-draggable[data-dnd-pending]')?.closest('details[data-fleet-node]');
+        if (spawn && nodeAllowsActing(isPageNode(spawn.dataset.fleetNode) ? '' : spawn.dataset.fleetNode)) return;
         event.preventDefault(); return;
       }
       dragging = src;

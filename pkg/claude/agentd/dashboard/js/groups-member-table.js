@@ -1266,13 +1266,13 @@ function QueuedMemberRow({ entry, columns }) {
   const cell = (column) => {
     switch (column.key) {
       case 'ctl': return html`<td><div class="agent-ctl">
-        <button type="button" class="status-dot queued-play" data-act="queued-spawn-launch"
+        <button type="button" class="status-dot queued-play" data-act="queued-spawn-launch" data-group=${entry.group}
           title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
           aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
         <div class="row-actions">
           <button class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /></button>
-          <button class="icon-btn warn" data-act="queued-spawn-discard" title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
-          <button type="button" class="cog-btn" data-act="queued-spawn-edit" title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
+          <button class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
+          <button type="button" class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
         </div></div>
         ${draft.profile || harness ? html`<div class="agent-harness" title=${draft.profile ? `Queued with profile ${draft.profile}` : `Queued for ${labels.long}${draft.model ? ` · ${draft.model}` : ''}`}><span class="runtime-meta runtime-meta-offline">${draft.profile
           ? String(draft.profile)

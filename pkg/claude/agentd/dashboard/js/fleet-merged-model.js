@@ -66,6 +66,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
   const agents = [];
   const pending = [];
   const links = [];
+  const queued = [];
   const seenAgents = new Set();
   const status = [];
   for (const { node, entry } of nodes) {
@@ -92,6 +93,9 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     // A node's pending spawns sit in its own groups, under their merged
     // names (one without a group would mix nodes in the Pending lens).
     for (const p of snap.pending || []) if (p?.group) pending.push({ ...p, group: suffix(p.group, node) });
+    // A node's queued spawns head its own groups' member tables; each names
+    // its node (fleet_node) and its own group name, which its dialog takes.
+    for (const q of snap.queued_spawns || []) if (q?.group) queued.push({ ...q, group: suffix(q.group, node), own_group: q.group, fleet_node: node.id, fleet_node_name: node.name });
     // A node's links join its own groups, under their merged names.
     for (const l of snap.links || []) links.push({ ...l, from: suffix(l.from, node), to: suffix(l.to, node) });
     for (const a of snap.agents || []) {
@@ -108,6 +112,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     ungrouped: [],
     pending,
     links,
+    queued_spawns: queued,
     peer_view: undefined,
     fleet_nodes: status,
   };
