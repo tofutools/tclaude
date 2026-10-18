@@ -59,6 +59,11 @@ test('up to four nodes get a button each; the fused dropdown ticks nodes and one
   await harness.act(() => harness.fireEvent(box('inst_self'), 'change'));
   assert.equal(state.fused.value, null, 'one ticked node is that node alone');
   assert.deepEqual(switched, ['inst_forge']);
+  await harness.act(() => { state.setFused(['inst_self', 'inst_lab']); });
+  await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Fused view of 2 of 3 nodes/ }), 'click'));
+  await harness.act(() => harness.fireEvent(box('inst_self'), 'change'));
+  assert.deepEqual(state.fused.value, ['inst_self', 'inst_lab'], 'unticking down to an offline peer keeps the set');
+  assert.deepEqual(switched, ['inst_forge']);
   await mounted.unmount(); state.dispose();
 });
 

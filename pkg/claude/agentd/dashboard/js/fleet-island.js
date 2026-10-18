@@ -179,7 +179,12 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   const toggle = (id) => {
     if (alone) return;
     const next = toggleNode(fleet, fused || 'all', id);
-    if (next.only !== undefined) { setOpen(false); onPick(next.only); } else onFuse(next);
+    // Unticking down to one offline peer would open it alone: keep the set.
+    if (next.only !== undefined) {
+      const only = nodes.find((n) => n.id === next.only);
+      if (only && closedNode(only, pageNode)) return;
+      setOpen(false); onPick(next.only);
+    } else onFuse(next);
   };
   const onButton = () => {
     if (alone) setOpen(!open);
@@ -729,8 +734,10 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
       if (!switchKeyAllowed(event)) return;
       const fleet = state.fleet.value;
       const node = switchOrder(fleet)[Number(event.code.slice(5)) - 1];
-      if (!node || closedNode(node, remote || fleet.self.id)) return;
+      if (!node) return;
+      // Swallow an offline peer's key too, or the browser switches tabs.
       event.preventDefault();
+      if (closedNode(node, remote || fleet.self.id)) return;
       if (node.id === (remote || fleet.self.id) && !state.fused.value) { if (state.view.value.topLevel) navigate(state.lastLocalTab()); return; }
       pickNode(state, node.id, { navigate, remote, switchNode });
     };
