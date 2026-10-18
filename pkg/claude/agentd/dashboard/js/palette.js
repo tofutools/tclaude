@@ -834,6 +834,7 @@ export function buildCommands(snapshot) {
     if (onlineG) {
       const plural = onlineG === 1 ? '' : 's';
       cmds.push({
+        groupGrant: { act: 'shutdown-group', group: g.name },
         icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`),
         hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
           `lull ${onlineG} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
@@ -846,6 +847,7 @@ export function buildCommands(snapshot) {
     if (offlineG) {
       const plural = offlineG === 1 ? '' : 's';
       cmds.push({
+        groupGrant: { act: 'power-on-group', group: g.name },
         icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`),
         hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
           `rouse ${offlineG} slumbering familiar${plural} back onto their scrolls`),

@@ -53,3 +53,22 @@ test('on a peer page the palette opens the peer\'s agent terminals and group she
   assert.match(locked.disabledReason, /needs sessions\.shell/);
   assert.notEqual(find(buildCommands(snap({ ops: ['sessions.shell'] })), 'Open terminal in group: ops').enabled, false, 'its shell grant opens it');
 });
+
+test('on a restricted peer page a group\'s shut down and power on follow its grants there', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `export let lastSnapshot = null; export function setLastSnapshot(v) { lastSnapshot=v; } export function webTerminalDefault() { return false; }`);
+  harness.document.body.innerHTML = '<nav><button data-tab="groups" class="active"></button></nav>';
+  const previous = globalThis.__tclaudeRemoteNode;
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
+  const { buildCommands } = await harness.importDashboardModule('js/palette.js');
+  const cmds = buildCommands({
+    agents: [],
+    groups: [{ name: 'ops', online: 1, members: [{ conv_id: 'a', online: true }, { conv_id: 'b', online: false }] }],
+    peer_view: { included: ['agents.status'], groups: { ops: ['groups.members.stop'] } },
+  });
+  const find = (label) => cmds.find((c) => c.label === label);
+  assert.notEqual(find('Shut down group: ops').enabled, false, 'its stop grant on ops covers it');
+  assert.equal(find('Power on group: ops').enabled, false);
+  assert.match(find('Power on group: ops').disabledReason, /needs groups\.members\.resume/);
+});
