@@ -21560,3 +21560,7 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 .fused-section-head { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0 8px; }
 .fused-section-head .spacer { flex: 1; }
 .fused-section:not([open]) .fused-section-head { opacity: .8; }
+
+/* Fused Automations (fused-jobs.js): a peer's rows under its node pill. */
+.fused-jobs-head td { padding-top: 12px; border-bottom: 1px solid #30363d; }
+.fused-jobs-node tr:not(.fused-jobs-head) td:first-child { box-shadow: inset 3px 0 0 var(--nc); }
