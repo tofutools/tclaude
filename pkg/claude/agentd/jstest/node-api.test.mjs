@@ -43,3 +43,21 @@ test('a download from another node comes through this node, read from that node 
   assert.deepEqual(calls, [['local', via('inst_forge')], ['local', path]]);
   assert.throws(() => mod.nodeDownloadPath('inst_x"]', path, { self: 'inst_self', remote: null }));
 });
+
+test('an upload to another node goes through this node, which sends it on in chunks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/node-api.js');
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push(['page', url, init.method]); return { ok: true }; };
+  const localFetch = async (url, init) => { calls.push(['local', url, init.method]); return { ok: true }; };
+  const via = (node) => `/api/peer-upload/${node}?path=${encodeURIComponent('/api/spawn-attachments')}`;
+  await mod.nodeUpload('', '/api/spawn-attachments', {}, { self: 'inst_self', remote: null, fetchImpl });
+  await mod.nodeUpload('inst_forge', '/api/spawn-attachments', {}, { self: 'inst_self', remote: null, fetchImpl });
+  const remote = { id: 'inst_forge', localFetch };
+  await mod.nodeUpload('', '/api/spawn-attachments', {}, { self: 'inst_self', remote, fetchImpl });
+  await mod.nodeUpload('inst_self', '/api/spawn-attachments', {}, { self: 'inst_self', remote, fetchImpl });
+  assert.deepEqual(calls, [
+    ['page', '/api/spawn-attachments', 'POST'], ['page', via('inst_forge'), 'POST'],
+    ['local', via('inst_forge'), 'POST'], ['local', '/api/spawn-attachments', 'POST'],
+  ]);
+});

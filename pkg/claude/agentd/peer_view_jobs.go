@@ -28,6 +28,7 @@ var peerViewJobRoutes = map[string]bool{
 	"/api/git-repositories/batch": true,
 	"/api/worktrees/cleanup":      true,
 	"/api/peer-downloads":         true,
+	"/api/peer-uploads/finish":    true,
 }
 
 const (

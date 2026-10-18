@@ -4198,6 +4198,19 @@ an opaque, sandboxed, `nosniff` attachment with Range support. A download is
 at most `federation.agent_transfer_max_bytes` (2 GiB by default), the cap
 agent archives already cross nodes under.
 
+Uploads go the other way, in 512 KiB chunks. Today the only upload is a spawn's
+attachments on a peer's group, from the shared spawn dialog.
+`POST /api/peer-upload/INSTANCE?path=PATH` (local-only) opens a staged upload
+on the peer (`POST /api/peer-uploads`) and appends the body chunk by chunk
+(`POST /api/peer-uploads/chunk?id=&offset=`). It then has the peer run the
+upload route on the whole file (`POST /api/peer-uploads/finish
+{"id","path","content_type"}`, a peer view job) and answers that route's reply.
+Only the upload routes (`/api/spawn-attachments`) take a staged upload, and
+only under unrestricted trust. The chunk route alone may carry a 512 KiB
+request; every other peer view request keeps its 32 KiB body limit. An upload
+is at most `federation.agent_transfer_max_bytes`, on top of the route's own
+caps.
+
 Agent mail's files cross the same way, under the same grant:
 `GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)
 reads the peer's `GET /api/agent-attachment-chunk?message=&attachment=&offset=&length=`.

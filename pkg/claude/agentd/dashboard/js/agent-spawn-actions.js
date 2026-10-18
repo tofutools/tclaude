@@ -3,7 +3,7 @@ import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-prof
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
-import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, nodeUpload } from './node-api.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
 const AUTOFOCUS_KEY = 'tclaude.dash.spawn.autofocus';
@@ -67,6 +67,9 @@ export function createAgentSpawnActions(dependencies = {}) {
   recordInteraction = () => {},
   shortID = (value) => value,
   getSnapshot = () => null,
+  // uploadImpl posts a file upload to the dialog's node; another node's
+  // goes on in chunks (nodeUpload).
+  uploadImpl = (path, init) => nodeUpload('', path, init, { fetchImpl }),
   } = dependencies;
   return Object.freeze({
     canSaveProfile: true,
@@ -293,9 +296,7 @@ export function createAgentSpawnActions(dependencies = {}) {
       for (const attachment of attachments) {
         form.append('file', attachment.file, attachment.name);
       }
-      const response = await fetchImpl('/api/spawn-attachments', {
-        method: 'POST', credentials: 'same-origin', body: form,
-      });
+      const response = await uploadImpl('/api/spawn-attachments', { body: form });
       if (!response.ok) {
         throw new Error(`attachment upload failed: ${(await responseText(response)) || `HTTP ${response.status}`}`);
       }
@@ -457,6 +458,7 @@ function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '
   const base = createAgentSpawnActions({
     ...dependencies,
     fetchImpl: api,
+    uploadImpl: (path, init) => nodeUpload(node, path, init, { fetchImpl }),
     async loadProfiles(force = false) {
       const { profiles, fallback } = await loadCatalog(force);
       fallbackProfile = fallback;

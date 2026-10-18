@@ -22,7 +22,7 @@
     // A peer's notification files, read by this node from the peer.
     '/api/peer-attachments/', '/api/peer-message-export/',
     // A peer's file downloads, read the same way (dashboard_peer_downloads.go).
-    '/api/peer-download/',
+    '/api/peer-download/', '/api/peer-upload/',
   ];
   // Peer-granted routes change settings with the dashboard's own methods.
   const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE']);

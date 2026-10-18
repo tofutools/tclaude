@@ -72,6 +72,21 @@ export function nodeDownload(node, path, {
   return (remote?.localFetch || fetchImpl)(nodeDownloadPath(node, path, { self, remote }), { credentials: 'same-origin' });
 }
 
+// nodeUpload posts a file upload (a spawn's attachments) to node: this node's
+// route directly, another node's (the page's own on a peer's page) through
+// this node's /api/peer-upload/{node}, which sends it on in chunks (the peer
+// view carries 32 KiB requests otherwise).
+export function nodeUpload(node, path, init = {}, {
+  self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+} = {}) {
+  const target = node || remote?.id || '';
+  const local = remote?.localFetch || fetchImpl;
+  const options = { credentials: 'same-origin', ...init, method: 'POST' };
+  if (!target || target === self) return local(path, options);
+  if (!NODE_ID.test(target)) throw new Error(`invalid node: ${target}`);
+  return local(`/api/peer-upload/${encodeURIComponent(target)}?path=${encodeURIComponent(path)}`, options);
+}
+
 // onNodeChanged tells views polling a node (the fused Groups view) that a
 // control just changed it, so they read it again now. It returns the
 // unsubscribe.

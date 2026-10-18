@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	fedPeerViewTimeout           = 15 * time.Second
-	fedPeerViewRequestLimit      = 96 << 10
+	fedPeerViewTimeout = 15 * time.Second
+	// fedPeerViewRequestLimit fits the largest request body, an upload chunk
+	// (peerViewBodyLimit), base64-encoded in its JSON frame.
+	fedPeerViewRequestLimit      = 768 << 10
 	fedPeerViewBodyLimit         = 32 << 10
 	fedPeerViewResponseLimit     = 12 << 20
 	fedPeerViewResponseBodyLimit = 8 << 20
@@ -214,7 +216,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 			return
 		}
 		parsed, err := url.ParseRequestURI(wire.URI)
-		if err != nil || len(wire.URI) > 4096 || len(wire.Body) > fedPeerViewBodyLimit || parsed.IsAbs() || parsed.Host != "" {
+		if err != nil || len(wire.URI) > 4096 || len(wire.Body) > peerViewBodyLimit(parsed.Path) || parsed.IsAbs() || parsed.Host != "" {
 			return
 		}
 		req, err := http.NewRequestWithContext(ctx, wire.Method, "http://peer"+wire.URI, bytes.NewReader(wire.Body))
