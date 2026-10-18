@@ -94,6 +94,25 @@ func TestDashboardMailbox_StartupBriefingFilesAreServed(t *testing.T) {
 		assert.Equal(t, http.StatusGone, rec.Code, "file %d is outside the attachment roots", attachment)
 		assert.NotContains(t, rec.Body.String(), "secret")
 	}
+	// A sender writing the same section itself names no files: operator mail
+	// under the briefing's own subject, and ordinary mail under any other.
+	spoofed, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: mbAlice, Subject: db.StartupContextSubject, Body: body, ToRecipients: []string{mbAlice}, OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: mbAlice, Subject: "look", Body: body, ToRecipients: []string{mbAlice},
+	})
+	require.NoError(t, err)
+	for _, m := range mailboxWithAttachments(t, dash, mbAlice) {
+		if m.ID != id {
+			assert.Empty(t, m.Attachments, "message %d (%s) is not a briefing tclaude wrote", m.ID, m.Subject)
+		}
+	}
+	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		fmt.Sprintf("/api/agent-messages/%d/attachments/-2", spoofed), nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the route honours only tclaude's own briefings")
+
 	for _, attachment := range []int{-4, 0} {
 		rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
 			fmt.Sprintf("/api/agent-messages/%d/attachments/%d", id, attachment), nil))

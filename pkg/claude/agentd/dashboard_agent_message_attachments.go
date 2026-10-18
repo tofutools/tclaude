@@ -32,10 +32,11 @@ import (
 // components. The body text is left as it is: the paths stay readable, the
 // files just become usable too.
 //
-// A briefing path comes from message text, and an agent can write any text
-// into a message it sends, so a path is served only from inside one of the
-// daemon's spawn-attachment roots and through an os.Root, which refuses a
-// symlink that leads out of it. Anything else stays plain text.
+// A briefing path comes from message text, so it counts only in a briefing
+// tclaude wrote itself (db.BriefingMessagesBatch: not operator mail, not a
+// federation peer's, whatever its subject), and is served only from inside one
+// of the daemon's spawn-attachment roots and through an os.Root, which refuses
+// a symlink that leads out of it. Anything else stays plain text.
 
 //
 // One id names either kind: a stored attachment by its positive row id, a
@@ -68,6 +69,10 @@ func agentMessageAttachmentViews(rows []*db.AgentMessage) map[int64][]*dashboard
 	if err != nil {
 		slog.Warn("mailbox: agent message attachment lookup failed", "rows", len(ids), "error", err)
 	}
+	briefings, err := db.BriefingMessagesBatch(ids)
+	if err != nil {
+		slog.Warn("mailbox: briefing lookup failed", "rows", len(ids), "error", err)
+	}
 	for _, m := range rows {
 		for _, a := range stored[m.ID] {
 			view := dashboardHumanMessageAttachmentView(m.ID, &db.HumanMessageAttachment{
@@ -76,6 +81,9 @@ func agentMessageAttachmentViews(rows []*db.AgentMessage) map[int64][]*dashboard
 			})
 			view.URL = agentMessageAttachmentURL(m.ID, a.ID)
 			out[m.ID] = append(out[m.ID], view)
+		}
+		if !briefings[m.ID] {
+			continue
 		}
 		for i, path := range briefingAttachmentPaths(m.Body) {
 			f, a := briefingFile(path)
@@ -209,9 +217,13 @@ func openAgentMessageAttachment(messageID, attachmentID int64) (f *os.File, a *d
 	if err != nil {
 		return nil, nil, http.StatusInternalServerError, errors.New("read message")
 	}
+	briefing, err := db.BriefingMessagesBatch([]int64{messageID})
+	if err != nil {
+		return nil, nil, http.StatusInternalServerError, errors.New("read message")
+	}
 	index := -attachmentID - 1
 	var paths []string
-	if m != nil {
+	if m != nil && briefing[messageID] {
 		paths = briefingAttachmentPaths(m.Body)
 	}
 	if attachmentID == 0 || index >= int64(len(paths)) {

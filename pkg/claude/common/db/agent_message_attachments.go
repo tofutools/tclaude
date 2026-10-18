@@ -249,3 +249,48 @@ func ListAgentMessageAttachmentsBatch(messageIDs []int64) (map[int64][]AgentMess
 	}
 	return out, nil
 }
+
+// BriefingMessagesBatch reports which of messageIDs are startup briefings
+// tclaude wrote itself: a spawn's startup context or a re-injection of it,
+// neither operator-authored nor arrived from a federation peer. Only those
+// rows' "Attached files" sections name files the daemon put there; a subject
+// is free text on every send path, so the authorship check is what keeps a
+// peer from listing paths of its own choosing.
+func BriefingMessagesBatch(messageIDs []int64) (map[int64]bool, error) {
+	out := make(map[int64]bool)
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkInt64s(messageIDs, batchChunkSize) {
+		args := make([]any, 0, len(chunk)+3)
+		args = append(args, StartupContextSubject, ReinjectedAfterCompactSubject, ReinjectedAfterClearSubject)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := d.Query(`SELECT m.id FROM agent_messages m
+			WHERE m.subject IN (?, ?, ?) AND m.id IN (`+sqlPlaceholders(len(chunk))+`)
+			  AND NOT EXISTS (SELECT 1 FROM operator_agent_messages o WHERE o.message_id = m.id)
+			  AND NOT EXISTS (SELECT 1 FROM federation_inbound f WHERE f.message_id = m.id)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
