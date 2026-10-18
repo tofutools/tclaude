@@ -28,7 +28,8 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 		"roster":   "Role",
 		"presence": "Online FederationPresence",
 		"status":   "State taskRefView",
-		"denied":   "CreatedAt Descr agentLocationView repoLinksView tagsView Waking RouteHealth Owner Notify NotifyEffective",
+		"settings": "Descr tagsView Notify NotifyEffective",
+		"denied":   "CreatedAt agentLocationView repoLinksView Waking RouteHealth Owner",
 	}),
 	reflect.TypeFor[dashboardAgent](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title Groups",
@@ -58,10 +59,10 @@ func classifyPeerFields(byPolicy map[string]string) map[string]string {
 // from escaping. It does not mutate the shared gather.
 var allPeerProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true}
 
-// peerGroupSettingsPolicy classifies the group settings a peer reads only
-// where its grants let it change them: every row drops them, and
-// projectPeerGroupSettings sets the granted ones afterwards, so the final
-// snapshot gate (peerSnapshotGate) passes them.
+// peerGroupSettingsPolicy classifies the group and member settings a peer
+// reads only where its grants let it change them: every row drops them, and
+// projectPeerGroupSettings and projectPeerMemberSettings set the granted ones
+// afterwards, so the final snapshot gate (peerSnapshotGate) passes them.
 const peerGroupSettingsPolicy = "settings"
 
 // peerSnapshotGate is the final gate's policy set for a snapshot projected

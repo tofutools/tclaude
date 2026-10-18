@@ -422,6 +422,10 @@ test("another node's group controls run through actions bound to that node, as f
   await routed.patchGroup({ name: 'build@forge', fleet_node: { id: 'inst_forge', name: 'forge' } }, 'max_members', 3);
   await routed.patchGroup({ name: 'x@lab', fleet_node: { id: 'inst_lab', name: 'lab' } }, 'max_members', 3);
   assert.deepEqual(calls, [['forge', 'build', 'max_members', 3]], 'a node without actions is a no-op');
+  // An agent's own action (a rename) names its node through the member.
+  forgeActions.renameAgent = async (m, title) => { calls.push(['forge-rename', m, title]); };
+  await routed.renameAgent({ agent_id: 'agt_1', title: 'old', fleet_node: { id: 'inst_forge', name: 'forge' } }, 'new');
+  assert.deepEqual(calls.pop(), ['forge-rename', { agent_id: 'agt_1', title: 'old', fleet_node: undefined }, 'new']);
 
   // createNodeGroupsActions sends that node's requests through its route and reads it again.
   const requests = []; const changed = [];
@@ -435,7 +439,8 @@ test("another node's group controls run through actions bound to that node, as f
   assert.deepEqual(changed, ['inst_forge'], 'the fused view reads forge again now');
   assert.deepEqual((await actions.groupProfileChoices('profile', { name: 'build' })).map((c) => c.value), ['fast'], "forge's own profiles");
   assert.equal(requests.pop()[0], '/api/spawn-profiles');
-  assert.equal(actions.openMemberEditor, undefined, 'only the node-bound group controls exist');
+  assert.equal(actions.openAddMember, undefined, 'only the node-bound group and agent controls exist');
+  assert.equal(typeof actions.openMemberEditor, 'function', "the member editor is an agent control");
 
   // The click guard lets a granted control through and stops the rest; this node's always pass.
   const state = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });

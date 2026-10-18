@@ -186,18 +186,20 @@ export function createActionDialogActions({
     // the daemon stays the single source of truth for Linear/GitHub/hostname
     // derivation; a blank URL clears the reference. `changed` is false when the
     // submit is a no-op, in which case nothing is POSTed.
-    async setTaskLink({ conv, label, url, taskLabel, changed }, owner) {
+    async setTaskLink({ conv, node = '', label, url, taskLabel, changed }, owner) {
       if (!changed) {
         state.close(owner);
         notify('no changes');
         return;
       }
-      await requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/task`, {
+      // node names another node's agent (the fused view); blank is the page's.
+      await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/task`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(url ? { url, label: taskLabel } : { clear: true }),
       });
       state.close(owner);
       notify(url ? `task link updated: ${label}` : `task link cleared: ${label}`);
+      announceNodeChanged(node);
       await refresh();
     },
     async setGroupAttachment({ group, node = '', url, attachmentLabel, changed }, owner) {

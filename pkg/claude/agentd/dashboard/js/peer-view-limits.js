@@ -63,6 +63,9 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // prompts every spawn's brief.
   'set-group-environment': ['groups.settings.environment'],
   'set-group-prompts': ['groups.settings', 'groups.members.spawn.prompts'],
+  // A member's role belongs to the group (its description cell also edits
+  // the agent's tags: an agent control).
+  'edit-role': ['groups.members.manage'],
   // A clone's members spawn with the node's launch settings, and delete and
   // cleanup remove what no peer grant hands out: unrestricted trust only (a
   // feature no restricted peer shares).
@@ -85,6 +88,41 @@ export function groupGrantHeld(act, group, peerView) {
   return Array.isArray(held) && need.every((slug) => (slug.startsWith('feature:')
     ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
     : held.includes(slug)));
+}
+
+// AGENT_GRANT_ACTS are an agent's controls a peer serves through its
+// peer-granted routes (peer_member_routes.go), with the peer grants they
+// need. An agent's own settings follow it into every group it is in, so the
+// peer names per agent the grants it holds in all of them
+// (peer_view.agents); unrestricted trust holds them all. A control listed
+// here runs its normal handler, whose requests reach the agent's node.
+export const AGENT_GRANT_ACTS = Object.freeze({
+  'rename-name': ['groups.members.manage'],
+  'edit-member': ['groups.members.manage'],
+  'edit-descr': ['groups.members.manage'],
+  'edit-task': ['groups.members.manage'],
+  'toggle-agent-notify': ['groups.members.manage'],
+});
+
+// agentGrantHeld reports whether the peer lets an agent control act on agent
+// (its agent ID).
+export function agentGrantHeld(act, agent, peerView) {
+  const need = AGENT_GRANT_ACTS[act];
+  if (!need || !agent) return false;
+  if (peerView?.level === 'unrestricted') return true;
+  const held = peerView?.agents?.[agent];
+  return Array.isArray(held) && need.every((slug) => held.includes(slug));
+}
+
+// grantHeld reports whether the peer lets a granted control run: a group's
+// (GROUP_GRANT_ACTS, on its group, which groupOf maps to the peer's own name)
+// or an agent's (AGENT_GRANT_ACTS, on its agent). It is null for any other
+// control.
+export function grantHeld(act, peerView, groupOf = (g) => g) {
+  const name = act?.dataset?.act;
+  if (GROUP_GRANT_ACTS[name]) return groupGrantHeld(name, groupOf(act.dataset.group || ''), peerView);
+  if (AGENT_GRANT_ACTS[name]) return agentGrantHeld(name, act.dataset.agent || '', peerView);
+  return null;
 }
 
 // groupFieldHeld is groupGrantHeld for a dialog that may be on this node's
@@ -117,6 +155,22 @@ export function groupGrantSelectors(peerView, groupName = (g) => g) {
   for (const group of Object.keys(peerView?.groups || {})) {
     for (const act of Object.keys(GROUP_GRANT_ACTS)) {
       if (groupGrantHeld(act, group, peerView)) add(act, `[data-group=${cssString(groupName(group))}]`);
+    }
+  }
+  return out;
+}
+
+// grantSelectors is groupGrantSelectors with the agent controls the peer lets
+// run: every one under unrestricted trust, otherwise each agent's own.
+export function grantSelectors(peerView, groupName = (g) => g) {
+  const out = groupGrantSelectors(peerView, groupName);
+  if (peerView?.level === 'unrestricted') {
+    for (const act of Object.keys(AGENT_GRANT_ACTS)) out.push(`[data-act="${act}"]`);
+    return out;
+  }
+  for (const agent of Object.keys(peerView?.agents || {})) {
+    for (const act of Object.keys(AGENT_GRANT_ACTS)) {
+      if (agentGrantHeld(act, agent, peerView)) out.push(`[data-act="${act}"][data-agent=${cssString(agent)}]`);
     }
   }
   return out;
@@ -327,7 +381,7 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 // greying below is built from it, so it can never disagree with the guard.
 export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
-  out.push(...groupGrantSelectors(peerView, groupName));
+  out.push(...grantSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
@@ -380,8 +434,9 @@ export function blockedControl(target, peerView, event = null) {
   const managed = managedControl(target, peerView);
   if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what };
   const act = actOf(target, event);
-  if (act && GROUP_GRANT_ACTS[act.dataset.act]) {
-    return groupGrantHeld(act.dataset.act, act.dataset.group, peerView) ? null : { el: act, state: 'omitted', what: "this group's settings" };
+  const held = grantHeld(act, peerView);
+  if (held !== null) {
+    return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : "this agent's settings" };
   }
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   const pa = act && peerAction(act, peerView);

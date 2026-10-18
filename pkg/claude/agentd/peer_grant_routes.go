@@ -194,7 +194,7 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 
 // peerGroupControlGrants are the grants behind a group's peer-invoked
 // controls, which peer_view.groups names per group.
-var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsMembersStop, PermGroupsMembersResume}
+var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage}
 
 // peerGroupGrants names, per group, the peer grants of
 // peerGroupControlGrants (and the spawn directory, prompts and sandbox

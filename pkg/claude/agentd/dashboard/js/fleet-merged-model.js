@@ -72,12 +72,16 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     status.push({ node, ...st, failure: entry?.failure || null });
     if (!snap) continue;
     for (const g of snap.groups || []) {
+      const fleetNode = { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label };
       groups.push({
         ...g,
         name: suffix(g.name, node),
         key: `${node.id}/${g.key || g.name}`,
         parent: g.parent ? suffix(g.parent, node) : g.parent,
-        fleet_node: { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label },
+        fleet_node: fleetNode,
+        // Members name their node too, so an action on an agent alone (a
+        // rename) reaches the node it is on (fleet-merged-island.js).
+        ...(Array.isArray(g.members) ? { members: g.members.map((m) => ({ ...m, fleet_node: fleetNode })) } : {}),
         // Links and attachments describe one node's configuration; the
         // merged overview does not carry them across.
         federation_links: undefined,

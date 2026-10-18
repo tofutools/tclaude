@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"time"
 
@@ -113,11 +114,14 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 	if v != nil {
 		settings = peerGroupGrants(v.peer.InstanceID, groups)
 	}
+	// So do the member settings its editors change (peerAgentGrants).
+	agentHeld := v.agentGrants(groups)
 	for _, g := range groups {
 		if g.IsArchived() || (v != nil && !fedPeerGroupVisible(v.peer.InstanceID, g.ID)) {
 			continue
 		}
 		row := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
+		descrs := map[string]string{}
 		status := v.allows(rules["GET /api/snapshot"], g.ID)
 		roster := v.allows(rules["feature:roster"], g.ID)
 		presence := v.allows(rules["feature:presence"], g.ID)
@@ -149,6 +153,7 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					continue
 				}
 				ar := dashboardMember{AgentID: aid, ConvID: m.ConvID, Title: agent.TitleFor(m.ConvID)}
+				descrs[aid] = m.Descr
 				fp, err := db.ProjectedAgentFederationPresence(aid)
 				if err != nil {
 					return nil, nil, err
@@ -198,6 +203,13 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		emptyPeerCollections(reflect.ValueOf(&row).Elem())
 		if held := settings[g.Name]; len(held) > 0 {
 			projectPeerGroupSettings(&row, g, v.peer.InstanceID, held)
+		}
+		for i := range row.Members {
+			if m := &row.Members[i]; slices.Contains(settings[g.Name], PermGroupsMembersManage) || len(agentHeld[m.AgentID]) > 0 {
+				if err := projectPeerMemberSettings(m, descrs[m.AgentID], settings[g.Name], agentHeld[m.AgentID]); err != nil {
+					return nil, nil, err
+				}
+			}
 		}
 		out = append(out, row)
 	}

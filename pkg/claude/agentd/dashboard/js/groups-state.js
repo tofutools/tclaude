@@ -296,7 +296,9 @@ export function createGroupsState({
     prefs.setItem(PROCESS_FILTER_PREF, next);
   }
 
-  function openMemberEditor(member, group, focus = 'title') {
+  // node names another node's agent (the fused Groups view); blank is the
+  // page's. The editor's requests go there.
+  function openMemberEditor(member, group, focus = 'title', node = '') {
     // A live editor owns its frozen baseline until it closes. Poll publishes
     // may replace the row objects underneath it, but cannot retarget or reset
     // the draft; repeated launch gestures are ignored for the same reason.
@@ -313,6 +315,7 @@ export function createGroupsState({
       tags: Array.isArray(member.tags) ? [...member.tags] : [],
       owner: !!member.owner,
       focus: ['role', 'descr'].includes(focus) ? focus : 'title',
+      ...(node ? { node: String(node) } : {}),
     };
     return true;
   }

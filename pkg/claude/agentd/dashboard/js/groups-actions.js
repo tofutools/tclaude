@@ -81,7 +81,7 @@ export function createGroupsActions({
       notify((error && error.message) || String(error), true);
     },
     openMemberEditor(member, group, focus = 'title') {
-      return state.openMemberEditor(member, group, focus);
+      return state.openMemberEditor(member, group, focus, node);
     },
     closeMemberEditor() {
       state.closeMemberEditor();
