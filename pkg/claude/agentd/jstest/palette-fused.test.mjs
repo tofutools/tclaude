@@ -15,8 +15,8 @@ test('the palette spawns into and messages another node\'s group in the fused vi
     groups: [
       { name: 'ops@desk', fleet_node: node('inst_self', 'desk', true) },
       { name: 'build@forge', fleet_node: node('inst_forge', 'forge'), members: [
-        { agent_id: 'agt_builder01', title: 'builder', state: { online: true } },
-        { agent_id: 'agt_sleeper01', title: 'sleeper', state: { online: false } },
+        { agent_id: 'agt_builder01', title: 'builder', online: true },
+        { agent_id: 'agt_sleeper01', title: 'sleeper', online: false },
       ] },
       { name: 'qa@lab', fleet_node: node('inst_lab', 'lab') },
     ],

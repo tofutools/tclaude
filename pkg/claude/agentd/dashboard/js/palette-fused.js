@@ -63,7 +63,7 @@ export function buildFusedNodeCommands(listing, {
     // open from its own dashboard.)
     if (g.fleet_node.local) continue;
     for (const m of g.members || []) {
-      if (!m?.state?.online || !SAFE_AGENT.test(m.agent_id || '') || seen.has(`${id}/${m.agent_id}`)) continue;
+      if (!m?.online || !SAFE_AGENT.test(m.agent_id || '') || seen.has(`${id}/${m.agent_id}`)) continue;
       seen.add(`${id}/${m.agent_id}`);
       const label = `${m.title || m.agent_id}@${nodeName}`;
       cmds.push({
