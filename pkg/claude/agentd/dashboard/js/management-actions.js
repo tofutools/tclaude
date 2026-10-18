@@ -598,7 +598,11 @@ export function createManagementActions({
     else notify(`template created from ${group}: ${name}${blankNote}${droppedNote}`);
     // Another node's template is edited on its own dashboard: this node's
     // editor saves here.
-    if (node) { announceNodeChanged(node); return result; }
+    if (node) {
+      notify(`saved in that node's templates: edit ${name} on its own dashboard`);
+      announceNodeChanged(node);
+      return result;
+    }
     await refresh();
     if (result.name || result.agents) openTemplateEditor(result);
     return result;

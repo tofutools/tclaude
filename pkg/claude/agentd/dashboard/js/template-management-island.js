@@ -617,8 +617,9 @@ export function TemplateFromGroupDialog({
       /></label>
       <div class="modal-meta">
         Captures the group's roles, owner, per-agent permission grants and
-        shared context. Per-agent task briefs come through blank — fill them in
-        the editor that opens next.
+        shared context. Per-agent task briefs come through blank — ${descriptor.node
+          ? "fill them in on that node's own dashboard, where the template is saved."
+          : 'fill them in the editor that opens next.'}
       </div>
       ${updating &&
       html`<div class="modal-meta" id="template-from-group-update-note">
