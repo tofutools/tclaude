@@ -75,6 +75,7 @@ func (rt *fedRuntime) pushAgentStatuses() {
 	groups, _ := db.ListAgentGroups()
 	rows := map[int64][]proto.AgentStatus{}
 	active := map[string]bool{}
+	grants := newFedGrantResolver()
 	rt.agentStatusMu.Lock()
 	defer rt.agentStatusMu.Unlock()
 	if rt.agentStatusSent == nil {
@@ -87,7 +88,7 @@ func (rt *fedRuntime) pushAgentStatuses() {
 		u := proto.AgentStatusUpdatePayload{}
 		sent := map[string]string{}
 		for _, g := range groups {
-			if g.IsArchived() || !fedPeerAllows(p.InstanceID, g.ID, PermAgentsStatusRead) {
+			if g.IsArchived() || !grants.allows(p.InstanceID, g.ID, PermAgentsStatusRead) {
 				continue
 			}
 			key := p.InstanceID + "/" + g.Name

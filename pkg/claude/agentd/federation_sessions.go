@@ -121,13 +121,14 @@ func (rt *fedRuntime) pushSessionTransitions() {
 	}
 	snapshots := map[int64][]proto.CatalogSession{}
 	activeSent := map[string]bool{}
+	grants := newFedGrantResolver()
 	for _, peer := range peers {
 		if !rt.sessionPeerOnline(peer.InstanceID) {
 			continue
 		}
 		update := proto.SessionsUpdatePayload{}
 		for _, g := range groups {
-			if !fedPeerAllows(peer.InstanceID, g.ID, PermSessionsRead) {
+			if !grants.allows(peer.InstanceID, g.ID, PermSessionsRead) {
 				continue
 			}
 			ss, ok := snapshots[g.ID]
