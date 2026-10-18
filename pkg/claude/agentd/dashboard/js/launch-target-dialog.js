@@ -399,8 +399,10 @@ export function LaunchTargetDialog({
 }) {
   const acting = agent.node !== self.id && unrestrictedOn(agent.node);
   // A morph on another node runs through that node's routes.
+  // (Built once acting holds: before the node's snapshot loads, Morph stays
+  // disabled, and nothing goes to this node under the agent's ID.)
   const morphApi = useRef(null);
-  if (!morphApi.current) morphApi.current = acting ? nodeApi(agent.node) : api;
+  if (acting && !morphApi.current) morphApi.current = nodeApi(agent.node);
   const firstCtx = { local: agent.node === self.id, acting, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
   // A mode this agent cannot use here never opens: fall back to the first
   // one it can (Move always can).
@@ -435,7 +437,7 @@ export function LaunchTargetDialog({
   const cloneHere = mode === 'clone' && picked?.id === source.node;
 
   let body;
-  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${morphApi.current} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
+  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${acting ? morphApi.current : api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
   else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>

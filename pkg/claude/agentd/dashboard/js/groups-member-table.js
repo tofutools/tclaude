@@ -893,7 +893,8 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // to but here.
   const pageNode = remote?.id ? { id: remote.id, name: globalThis.document?.documentElement?.dataset?.remoteNodeName || '' } : null;
   const peerRow = !!pageNode || (!!group?.fleet_node && !group.fleet_node.local);
-  const rowNode = pageNode || group?.fleet_node;
+  // A fused row is its group's node's, on a peer's page too.
+  const rowNode = group?.fleet_node || pageNode;
   // A node trusting this one unrestricted morphs its agent as its own
   // dashboard does.
   const acting = peerRow && unrestrictedOn(rowNode.id);
