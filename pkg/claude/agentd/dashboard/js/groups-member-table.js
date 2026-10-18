@@ -758,6 +758,9 @@ function menuMemberAttrs(member, selector) {
   const attrs = { 'data-label': member.title || member.conv_id };
   if (selector !== 'label') attrs['data-conv'] = member.conv_id;
   if (selector === 'agent') attrs['data-agent'] = member.agent_id || member.conv_id;
+  // A conv-keyed control names its agent too, which another node's route
+  // takes (the retire icon does the same).
+  else if (selector === 'conv' && member.agent_id) attrs['data-stable-agent'] = member.agent_id;
   return attrs;
 }
 
@@ -868,7 +871,8 @@ function SandboxImplMenuItem({ member }) {
 // SendElsewhereItems is the ⚙ menu's "Send elsewhere" section (tcl-o9d5d9):
 // each item opens the launch-target dialog on its mode, alongside drag and
 // drop. Modes whose routes this dashboard lacks stay out of the menu. A
-// peer's single-node view has no such routes, so it shows none.
+// peer's single-node view offers only the move here, as another node's rows
+// in the fused view do.
 // sendElsewhereOffReason says why move and teleport are greyed out when
 // there is no fleet: this node is not on a hub, or no peer is linked yet.
 export function sendElsewhereOffReason(node) {
@@ -879,11 +883,15 @@ export function sendElsewhereOffReason(node) {
 }
 
 function SendElsewhereItems({ member, group, snapshot }) {
-  if (snapshot?.peer_view || !member.agent_id) return null;
+  const remote = snapshot?.peer_view ? globalThis.__tclaudeRemoteNode : null;
+  if ((snapshot?.peer_view && !remote?.id) || !member.agent_id) return null;
   const fleet = fleetState.fleet.value;
-  // Another node's row in a fused view can only be pulled here by a move;
-  // without a fleet there is nowhere to move or clone to but here.
-  const peerRow = !!group?.fleet_node && !group.fleet_node.local;
+  // Another node's row (in a fused view, or on its own page) can only be
+  // pulled here by a move; without a fleet there is nowhere to move or clone
+  // to but here.
+  const pageNode = remote?.id ? { id: remote.id, name: globalThis.document?.documentElement?.dataset?.remoteNodeName || '' } : null;
+  const peerRow = !!pageNode || (!!group?.fleet_node && !group.fleet_node.local);
+  const rowNode = pageNode || group?.fleet_node;
   const view = presenceView(member, fleet);
   const kind = view?.kind || '';
   const label = member.title || member.conv_id;
@@ -892,7 +900,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
   const attrs = (mode) => ({
     'data-mode': mode, 'data-presence': kind, 'data-home-node': view?.home?.id || '', 'data-home-name': view?.home?.name || '',
     'data-cwd': member.state?.cwd || member.cwd || '',
-    ...(peerRow ? { 'data-node': group.fleet_node.id, 'data-node-name': group.fleet_node.name || '' } : {}),
+    ...(peerRow ? { 'data-node': rowNode.id, 'data-node-name': rowNode.name || '' } : {}),
   });
   const item = (mode, regular, wizard, title, disabled = false) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} disabled=${disabled} />`;
   // Without a fleet (no hub connection, or no linked node yet) move and
@@ -905,7 +913,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
     ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" regular="📸 snapshot…" wizard="📸 capture familiar…" title=${`Keep a named snapshot of ${label} on this node; spawn from it, share or publish it later`} />` : null}
     ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="export-paf" regular="⤓ export (PAF)…" wizard="⤓ seal familiar (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
     ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
-    ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+    ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
 }
 
 function MenuSeparator() {

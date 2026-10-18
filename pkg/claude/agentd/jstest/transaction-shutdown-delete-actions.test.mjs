@@ -252,3 +252,22 @@ test("another node's agent: the delete dialog's worktree read and delete go to t
   await actions.deleteAgent({ agent: 'agt_remote', node: 'inst_forge1234', label: 'remote' });
   assert.deepEqual(urls, ['/api/peer/inst_forge1234/agents/agt_remote/worktree', '/api/peer/inst_forge1234/agents/agt_remote']);
 });
+
+test("another node's agent: the shutdown and retire dialogs send their own requests to that node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const sent = [];
+  const actions = createTransactionDialogActions({
+    state: createTransactionDialogState(),
+    fetchImpl: async (url, init = {}) => { sent.push([url, init.body ? JSON.parse(init.body) : null]); return new Response('{"action":"stopped"}', { status: 200 }); },
+  });
+  await actions.shutdownAgent({ agent: 'agt_remote', node: 'inst_forge1234', label: 'remote', force: true });
+  await actions.retireAgent({ conv: 'agt_remote', node: 'inst_forge1234', label: 'remote', shutdown: true });
+  assert.deepEqual(sent, [
+    ['/api/peer/inst_forge1234/agents/agt_remote/stop', { force: true, wait: true }],
+    ['/api/peer/inst_forge1234/agents/agt_remote/retire?shutdown=1', null],
+  ]);
+});

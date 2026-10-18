@@ -925,13 +925,14 @@ The peer-view pill names both directions of trust and lists what is hidden
 from you, with the grant each needs. Usage
 and costs say when they are not shared.
 
-If the peer granted you lifecycle actions, its agents' stop (the status dot),
-retire and clone controls open a peer action dialog instead of the local one.
-It lists only what the peer allows — Stop (optionally force kill), Retire
-(its session exits; its worktree is kept), Clone, **Move here** and **Teleport here** (always to
-a group on this node; groups that receive agents from that peer are listed
-first) — and confirms what will happen. CLI:
-`tclaude federation action <action> --node PEER --agent ID`.
+If the peer granted you lifecycle actions, its agents' status dot (stop or
+wake), restart, sandbox restart, retire and clone controls open the same
+dialogs as on the peer itself, sent to the peer. Options the peer keeps for
+its own operator are left out: deleting the worktree on retire, recreating a
+missing launch directory on wake, and a clone's group ownership and worktree.
+Turning an agent's sandbox off takes unrestricted trust. With a move grant,
+the ⚙ **move here…** item opens the regular move dialog, to a group on this
+node. CLI: `tclaude federation action <action> --node PEER --agent ID`.
 
 A group's spawn button (and any other way of opening the spawn dialog on a
 peer view) opens the regular spawn dialog, aimed at the peer. Every control

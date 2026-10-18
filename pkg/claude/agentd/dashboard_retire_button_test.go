@@ -48,7 +48,7 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 		"await openRetireAgentDialog(conv, label)",
 		"openRetireAgentDialog(a.conv_id, label)",
 		"result = await openRetireAgentDialog(conv, label)",
-		"return openTransactionDialog({ kind: 'retire-agent', conv, label })",
+		"return openTransactionDialog({ kind: 'retire-agent', conv, label, ...(node ? { node } : {}) })",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("single-retire launcher ownership missing %q", needle)

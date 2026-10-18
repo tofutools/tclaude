@@ -386,6 +386,14 @@ export function MergedGroups({
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
       const group = act.closest('details[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
+      // ⚙ "Send elsewhere" opens the same launch-target dialog as a drop.
+      if (act.dataset.act === 'send-elsewhere' && group) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const name = group.dataset.fleetNodeName || '';
+        const data = { ...act.dataset, ownGroup: ownGroup(act.dataset.group || '', name) };
+        setLaunch({ mode: act.dataset.mode || 'move', agent: launchAgent(data, { id: instance, name }) });
+        return;
+      }
       // A group or agent control another node lets run goes to its own
       // handler, whose actions are bound to that node (forNode); this node's
       // always may.
@@ -395,17 +403,9 @@ export function MergedGroups({
         if (held !== null && (instance === state.view.value.fleet?.self?.id || held)) return;
       }
       // A home group's control runs as on this node's Groups view (the
-      // document's data-act handler maps its group@node names back), except
-      // "Send elsewhere", which opens the fleet-wide dialog below.
-      if (instance && instance === homeRef.current && act.dataset.act !== 'send-elsewhere') return;
+      // document's data-act handler maps its group@node names back).
+      if (instance && instance === homeRef.current) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      // ⚙ "Send elsewhere" opens the same launch-target dialog as a drop.
-      if (act.dataset.act === 'send-elsewhere' && group) {
-        const name = group.dataset.fleetNodeName || '';
-        const data = { ...act.dataset, ownGroup: ownGroup(act.dataset.group || '', name) };
-        setLaunch({ mode: act.dataset.mode || 'move', agent: launchAgent(data, { id: instance, name }) });
-        return;
-      }
       if (TERMINAL_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
         void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
         return;

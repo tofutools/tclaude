@@ -157,6 +157,10 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const source = descriptor.label || shortID(descriptor.conv);
+  // Another node's agent (here, or on its own page) clones there with its
+  // follow-up and history choice only: ownership and a worktree stay that
+  // node's operator's.
+  const here = !descriptor.node && !globalThis.__tclaudeRemoteNode?.id;
   const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {
@@ -174,6 +178,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       }
       await actions.cloneAgent({
         conv: descriptor.conv,
+        ...(here ? {} : { node: descriptor.node }),
         label: source,
         followUp,
         copyConversation,
@@ -219,15 +224,15 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyConversation(event.currentTarget.checked)}
         /> Copy conversation history
       </label>
-      <label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
+      ${here && html`<label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
         <input
           id="clone-agent-copy-ownership"
           type="checkbox"
           checked=${copyOwnership}
           onChange=${(event) => setCopyOwnership(event.currentTarget.checked)}
         /> Copy group ownership
-      </label>
-      <${WorktreeFields}
+      </label>`}
+      ${here && html`<${WorktreeFields}
         repo=${descriptor.cwd}
         actions=${actions}
         value=${worktree}
@@ -236,7 +241,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         setBranch=${setBranch}
         base=${base}
         setBase=${setBase}
-      />
+      />`}
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
         <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
@@ -615,7 +620,20 @@ function LaunchTargetGate({ descriptor, actions, snapshot }) {
   const self = fleet?.self || { id: descriptor.agent.node || 'local', name: 'this node' };
   const fleetActions = useMemo(() => createFleetAdminActions(), []);
   const close = () => actions.close(descriptor);
-  const localGroups = (snapshot?.value?.groups || []).map((g) => g.name).filter(Boolean).sort();
+  // On a peer's page the snapshot is the peer's: this node's own groups (a
+  // move's destinations) come from this node.
+  const remote = globalThis.__tclaudeRemoteNode;
+  const [ownGroups, setOwnGroups] = useState(null);
+  useEffect(() => {
+    if (!remote?.localFetch) return undefined;
+    let live = true;
+    remote.localFetch('/api/federation/links', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live) setOwnGroups((d?.groups || []).map((g) => g?.name).filter(Boolean).sort()); })
+      .catch(() => { if (live) setOwnGroups([]); });
+    return () => { live = false; };
+  }, []);
+  const localGroups = remote?.localFetch ? ownGroups || [] : (snapshot?.value?.groups || []).map((g) => g.name).filter(Boolean).sort();
   return html`<${LaunchTargetDialog} agent=${descriptor.agent} self=${self} fleet=${fleet} initialMode=${descriptor.mode}
     actions=${fleetActions} peerActions=${(node) => createPeerActionActions({ node })} localGroups=${localGroups}
     onClose=${close}

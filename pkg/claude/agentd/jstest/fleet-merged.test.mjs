@@ -97,7 +97,7 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   await mounted.unmount(); state.dispose();
 });
 
-test('a peer row runs what the peer shares through its peer routes; this node\'s rows act directly; unshared controls are stopped', async (t) => {
+test('a peer row runs what the peer grants through its own handlers or peer routes; this node\'s rows act directly; unshared controls are stopped', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
   const activeTab = harness.signals.signal('groups');
@@ -106,7 +106,7 @@ test('a peer row runs what the peer shares through its peer routes; this node\'s
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const toasts = []; const calls = []; const confirms = [];
   const spawns = [];
-  const peerSnap = { groups: [group('build', { members: [{ agent_id: 'agt_ada1', title: 'ada' }] })], agents: [], peer_view: { included: ['agents.status', 'lifecycle.resume', 'spawn', 'messaging'] } };
+  const peerSnap = { groups: [group('build', { members: [{ agent_id: 'agt_ada1', title: 'ada' }] })], agents: [], peer_view: { included: ['agents.status', 'lifecycle.resume', 'spawn', 'messaging'], agents: { agt_ada1: ['groups.members.resume'] } } };
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => peerSnap });
   const peerActions = (node) => ({
     resume: async (id) => { calls.push([node, 'resume', id]); return {}; },
@@ -118,14 +118,11 @@ test('a peer row runs what the peer shares through its peer routes; this node\'s
   await harness.act(async () => { await timers.queue.shift().fn(); });
   const doc = harness.document;
   const inGroup = (node, name, inner) => { const d = doc.createElement('div'); d.innerHTML = `<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`; host.appendChild(d); return d.firstElementChild.firstElementChild; };
-  // A stopped agent's dot wakes it on forge.
+  // A stopped agent's dot wakes it on forge: the click reaches the regular
+  // row handler (which addresses forge), not a peer dialog.
   const dot = inGroup('inst_forge', 'forge', '<span data-act="dot-toggle" data-online="0" data-agent="agt_ada1" data-label="ada">○</span>');
-  await harness.act(() => harness.fireEvent(dot, 'click'));
-  assert.match(doc.querySelector('#peer-action-title').textContent, /ada on forge/);
-  await harness.act(() => doc.querySelector('#peer-action-submit').click());
-  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
-  assert.deepEqual(calls.shift(), ['inst_forge', 'resume', 'agt_ada1']);
-  assert.match(confirms[0].body, /ada starts again on forge/);
+  assert.equal(harness.fireEvent(dot, 'click').defaultPrevented, false);
+  assert.equal(doc.querySelector('#peer-action-modal'), null);
   // Spawn and message carry the peer's own group name, not group@node.
   const spawn = inGroup('inst_forge', 'forge', '<button data-act="spawn-agent" data-group="build@forge">+</button>');
   await harness.act(() => harness.fireEvent(spawn, 'click'));
@@ -157,10 +154,10 @@ test('a peer row runs what the peer shares through its peer routes; this node\'s
   // The greying is generated from the same rules, per node.
   const css = doc.querySelector('#fleet-merged-limits').textContent;
   const forgeRule = css.split('\n').find((r) => r.includes('details[data-fleet-node="inst_forge"]'));
-  assert.match(forgeRule, /\[data-act="dot-toggle"\]:not\(\[data-online="1"\]\)/, 'wake is shared');
+  assert.match(forgeRule, /\[data-act="dot-toggle"\]:not\(\[data-online="1"\]\)\[data-agent="agt_ada1"\]/, 'wake is granted on ada');
   assert.match(forgeRule, /\[data-act="spawn-agent"\]/);
   assert.match(forgeRule, /\[data-act="jump"\]/, 'its terminal opens here');
-  assert.doesNotMatch(forgeRule, /\[data-online="1"\],|\[data-act="restart"\]/, 'stop and restart are not shared');
+  assert.doesNotMatch(forgeRule, /\[data-act="dot-toggle"\]\[data-online="1"\]|\[data-act="restart"\]/, 'stop and restart are not granted');
   assert.ok(!css.includes('details[data-fleet-node="inst_self"]'), 'this node\'s own groups act directly here: nothing greyed');
   await mounted.unmount(); state.dispose();
 });
@@ -170,15 +167,15 @@ test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused
   const island = await harness.importDashboardModule('js/fleet-merged-island.js');
   const css = island.limitsCSS([
     { id: 'inst_self', peerView: null },
-    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.stop', 'lifecycle.restart'] } },
+    { id: 'inst_forge', peerView: { included: ['agents.status'], agents: { agt_a: ['groups.members.stop', 'groups.members.resume'] } } },
     { id: 'inst_x"]{}*{', peerView: null },
   ], { self: 'inst_self', home: '' });
   const lines = css.split('\n');
   assert.equal(lines.length, 3, 'outside-any-group, this node, forge; the odd ID gets no rule');
   assert.match(lines[0], /\[data-act\]:not\(details\[data-fleet-node\] \[data-act\]\):not\(.*\[data-act="send-elsewhere"\]/);
   assert.doesNotMatch(lines[1], /"jump"/, 'on a peer page this node\'s terminal is not opened from here');
-  assert.match(lines[2], /\[data-act="dot-toggle"\]\[data-online="1"\]/);
-  assert.match(lines[2], /\[data-act="restart"\]/);
+  assert.match(lines[2], /\[data-act="dot-toggle"\]\[data-online="1"\]\[data-agent="agt_a"\]/);
+  assert.match(lines[2], /\[data-act="restart"\]\[data-agent="agt_a"\]/);
   for (const l of lines) assert.match(l, /\{ opacity: \.45; cursor: not-allowed; \}$/);
 });
 
@@ -187,14 +184,14 @@ test('limitsCSS greys exactly the controls a click refuses', async (t) => {
   const island = await harness.importDashboardModule('js/fleet-merged-island.js');
   const css = island.limitsCSS([
     { id: 'inst_self', peerView: null },
-    { id: 'inst_forge', peerView: { included: ['agents.status', 'lifecycle.resume', 'spawn'] } },
+    { id: 'inst_forge', peerView: { included: ['agents.status', 'spawn'], agents: { agt_a: ['groups.members.resume'] } } },
   ], { self: 'inst_self', home: 'inst_self' });
   const doc = harness.document;
   doc.body.innerHTML = `<div id="fleetview-fused-groups-root"><div class="fleet-merged">
     <details data-fleet-node="inst_self"><summary><b id="s-jump" data-act="jump"></b><b id="s-spawn" data-act="spawn-agent"></b><b id="s-menu" data-act="group-menu"></b></summary>
       <details data-fleet-node="inst_self"><summary><b id="s-sub-jump" data-act="web-open-window"></b></summary></details></details>
-    <details data-fleet-node="inst_forge"><summary><b id="f-jump" data-act="jump"></b><b id="f-spawn" data-act="spawn-agent"></b><b id="f-wake" data-act="dot-toggle" data-online="0"></b>
-      <b id="f-stop" data-act="dot-toggle" data-online="1"></b><b id="f-restart" data-act="restart"></b><b id="f-send" data-act="send-elsewhere"></b></summary></details>
+    <details data-fleet-node="inst_forge"><summary><b id="f-jump" data-act="jump"></b><b id="f-spawn" data-act="spawn-agent"></b><b id="f-wake" data-act="dot-toggle" data-online="0" data-agent="agt_a"></b>
+      <b id="f-stop" data-act="dot-toggle" data-online="1" data-agent="agt_a"></b><b id="f-restart" data-act="restart" data-agent="agt_a"></b><b id="f-send" data-act="send-elsewhere"></b></summary></details>
     <b id="loose" data-act="jump"></b><b id="loose-send" data-act="send-elsewhere"></b></div></div>`;
   const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
   const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));

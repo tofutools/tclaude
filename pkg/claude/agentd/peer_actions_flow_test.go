@@ -230,3 +230,59 @@ func TestPeerResumeAndRestartGrants(t *testing.T) {
 	code, body = post("sandbox-restart", map[string]any{"action": "unlock"})
 	require.NotEqual(t, 403, code, "unrestricted trust implies the grants and may unlock: "+body)
 }
+
+// An agent's lifecycle controls run their regular dialogs on a peer page:
+// the peer routes take those dialogs' own requests (less the options they
+// keep local), and peer_view.agents names, per agent, the lifecycle grants
+// its whole footprint holds, retire and clone counting the groups it owns.
+func TestPeerLifecycleTakesTheRegularDialogs(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	for _, name := range []string{"crew", "owned"} {
+		f.HaveGroup(name)
+	}
+	f.HaveAliveSession(moveSourceConv, "lifecycle-source", "lifecycle-pane", testutil.CanonicalTempDir(t))
+	f.HaveMember("crew", moveSourceConv)
+	aid, err := db.AgentIDForConv(moveSourceConv)
+	require.NoError(t, err)
+	owned, err := db.GetAgentGroupByName("owned")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, moveSourceConv, "fixture"))
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	grant := func(slug, group string) {
+		rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=" + group})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	for _, slug := range []string{agentd.PermGroupsRosterRead, agentd.PermGroupsMembersStop, agentd.PermGroupsMembersRetire, agentd.PermGroupsMembersClone} {
+		grant(slug, "crew")
+	}
+	agents := func() []string {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var out struct {
+			PeerView struct {
+				Agents map[string][]string `json:"agents"`
+			} `json:"peer_view"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out.PeerView.Agents[aid]
+	}
+	require.Equal(t, []string{agentd.PermGroupsMembersStop}, agents(), "retire and clone also need the owned group")
+	grant(agentd.PermGroupsMembersRetire, "owned")
+	require.Equal(t, []string{agentd.PermGroupsMembersStop, agentd.PermGroupsMembersRetire}, agents())
+
+	post := func(path string, body any) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/"+path, body))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := post("stop", map[string]any{"force": true, "wait": true, "extra": 1})
+	require.Equal(t, 400, code, body)
+	code, body = post("retire?shutdown=0&delete_worktree=1", nil)
+	require.Equal(t, 400, code, body)
+	code, body = post("stop", map[string]any{"force": false})
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"action"`)
+	code, body = post("retire?shutdown=0", nil)
+	require.Equal(t, 200, code, body)
+}

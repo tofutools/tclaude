@@ -114,18 +114,52 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'fast-mode-disable': ['feature:agents.manage.full'],
   'reincarnate': ['feature:agents.manage.full'],
   'delete-agent': ['feature:agents.manage.full'],
+  // Its lifecycle, through the regular dialogs (peer_actions.go refuses
+  // their local-only options). A restart stops the agent first.
+  'restart': ['groups.members.stop', 'groups.members.resume'],
+  'retire-agent': ['groups.members.retire'],
+  'clone': ['groups.members.clone'],
 });
 
-// agentGrantHeld reports whether the peer lets an agent control act on agent
-// (its agent ID).
-export function agentGrantHeld(act, agent, peerView) {
-  const need = AGENT_GRANT_ACTS[act];
-  if (!need || !agent) return false;
+// AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way
+// they act, as [selector qualifier, dataset test, grants]: the status dot
+// stops a running agent and wakes a stopped one, a sandbox restart that
+// turns the sandbox off takes unrestricted trust, and of "Send elsewhere"
+// only a move brings another node's agent here (which retires it there).
+const STOP_AND_RESUME = Object.freeze(['groups.members.stop', 'groups.members.resume']);
+export const AGENT_GRANT_VARIANTS = Object.freeze({
+  'dot-toggle': Object.freeze([
+    ['[data-online="1"]', (d) => d.online === '1', ['groups.members.stop']],
+    [':not([data-online="1"])', (d) => d.online !== '1', ['groups.members.resume']],
+  ]),
+  'sandbox-restart': Object.freeze([
+    ['[data-action="restore"]', (d) => d.action === 'restore', STOP_AND_RESUME],
+    [':not([data-action="restore"])', (d) => d.action !== 'restore', [...STOP_AND_RESUME, 'feature:agents.manage.full']],
+  ]),
+  'send-elsewhere': Object.freeze([
+    ['[data-mode="move"]', (d) => d.mode === 'move', ['agent.move', 'groups.members.retire']],
+  ]),
+});
+
+// isAgentGrantAct reports whether act is an agent control of either table.
+export function isAgentGrantAct(act) {
+  return !!(AGENT_GRANT_ACTS[act] || AGENT_GRANT_VARIANTS[act]);
+}
+
+function agentNeedHeld(need, agent, peerView) {
   if (peerView?.level === 'unrestricted') return true;
   const held = peerView?.agents?.[agent] || [];
   return need.every((slug) => (slug.startsWith('feature:')
     ? featureState(slug.slice('feature:'.length), peerView) === 'shared'
     : held.includes(slug)));
+}
+
+// agentGrantHeld reports whether the peer lets an agent control act on agent
+// (its agent ID); dataset picks a variant's direction.
+export function agentGrantHeld(act, agent, peerView, dataset = {}) {
+  const need = AGENT_GRANT_ACTS[act] || AGENT_GRANT_VARIANTS[act]?.find(([, test]) => test(dataset))?.[2];
+  if (!need || !agent) return false;
+  return agentNeedHeld(need, agent, peerView);
 }
 
 // grantHeld reports whether the peer lets a granted control run: a group's
@@ -135,7 +169,9 @@ export function agentGrantHeld(act, agent, peerView) {
 export function grantHeld(act, peerView, groupOf = (g) => g) {
   const name = act?.dataset?.act;
   if (GROUP_GRANT_ACTS[name]) return groupGrantHeld(name, groupOf(act.dataset.group || ''), peerView);
-  if (AGENT_GRANT_ACTS[name]) return agentGrantHeld(name, act.dataset.agent || '', peerView);
+  // The retire icon stays conv-keyed and names its agent in
+  // data-stable-agent.
+  if (isAgentGrantAct(name)) return agentGrantHeld(name, act.dataset.stableAgent || act.dataset.agent || '', peerView, act.dataset);
   return null;
 }
 
@@ -178,13 +214,16 @@ export function groupGrantSelectors(peerView, groupName = (g) => g) {
 // run: every one under unrestricted trust, otherwise each agent's own.
 export function grantSelectors(peerView, groupName = (g) => g) {
   const out = groupGrantSelectors(peerView, groupName);
-  if (peerView?.level === 'unrestricted') {
-    for (const act of Object.keys(AGENT_GRANT_ACTS)) out.push(`[data-act="${act}"]`);
-    return out;
-  }
-  for (const agent of Object.keys(peerView?.agents || {})) {
-    for (const act of Object.keys(AGENT_GRANT_ACTS)) {
-      if (agentGrantHeld(act, agent, peerView)) out.push(`[data-act="${act}"][data-agent=${cssString(agent)}]`);
+  const controls = [
+    ...Object.entries(AGENT_GRANT_ACTS).map(([act, need]) => [`[data-act="${act}"]`, need]),
+    ...Object.entries(AGENT_GRANT_VARIANTS).flatMap(([act, variants]) => variants.map(([qualifier, , need]) => [`[data-act="${act}"]${qualifier}`, need])),
+  ];
+  const agents = peerView?.level === 'unrestricted' ? [''] : Object.keys(peerView?.agents || {});
+  for (const agent of agents) {
+    for (const [sel, need] of controls) {
+      if (!agentNeedHeld(need, agent, peerView)) continue;
+      if (!agent) { out.push(sel); continue; }
+      out.push(`${sel}[data-agent=${cssString(agent)}]`, `${sel}[data-stable-agent=${cssString(agent)}]`);
     }
   }
   return out;
@@ -343,17 +382,12 @@ export function attachCommand(agentID, remoteID) {
   return `tclaude federation attach ${agentID}@${remoteID}`;
 }
 
-// PEER_ACTS are controls a peer may grant through its action routes (stop or
-// wake, restart, sandbox restart, retire, clone; spawn into a group; message
-// one of its members). When the peer shares the feature, the
-// click opens the peer action dialog (peer-action.js) instead of the local
-// one, whose requests (conv IDs, local-only options) the peer refuses.
+// PEER_ACTS are controls a peer may grant through its action routes (spawn
+// into a group; message one of its members). When the peer shares the
+// feature, the click opens the peer action dialog (peer-action.js) instead
+// of the local one. (An agent's lifecycle runs its regular dialogs:
+// AGENT_GRANT_ACTS.)
 const PEER_ACTS = Object.freeze({
-  'dot-toggle': { action: 'stop', feature: 'lifecycle.stop' },
-  restart: { action: 'restart', feature: 'lifecycle.restart' },
-  'sandbox-restart': { action: 'sandbox-restart', feature: 'lifecycle.sandbox-restart' },
-  'retire-agent': { action: 'retire', feature: 'lifecycle.retire' },
-  clone: { action: 'clone', feature: 'lifecycle.clone' },
   // Any visible group takes a spawn request (spawn.request; without a grant
   // it waits for the peer's operator). An older peer only offers 'spawn'.
   'spawn-agent': { action: 'spawn', feature: 'spawn.request', legacy: 'spawn' },
@@ -368,30 +402,19 @@ const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
 // (fleet-merged-island.js) uses it for a peer's rows too, with groupOf
 // turning its group@node names back into the peer's own.
 export function peerAction(act, peerView, groupOf = (g) => g) {
-  let spec = PEER_ACTS[act.dataset.act];
-  // The status dot stops a running agent and wakes a stopped one.
-  if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') spec = { action: 'resume', feature: 'lifecycle.resume' };
+  const spec = PEER_ACTS[act.dataset.act];
   if (!spec || (featureState(spec.feature, peerView) !== 'shared' && !(spec.legacy && featureState(spec.legacy, peerView) === 'shared'))) return null;
-  if (spec.action === 'spawn' || spec.action === 'message') {
-    let group = act.dataset.group || '';
-    if (spec.action === 'message') {
-      try { group = JSON.parse(act.dataset.prefill || '{}')?.groupName; } catch (_) { group = ''; }
-    }
-    group = typeof group === 'string' ? groupOf(group) : '';
-    return SAFE_GROUP.test(group) ? { action: spec.action, group } : null;
+  let group = act.dataset.group || '';
+  if (spec.action === 'message') {
+    try { group = JSON.parse(act.dataset.prefill || '{}')?.groupName; } catch (_) { group = ''; }
   }
-  // The retire icon stays conv-keyed (data-agent would change its local
-  // recovery path), so it carries the stable ID as data-stable-agent.
-  const agent = act.dataset.stableAgent || act.dataset.agent || '';
-  if (!SAFE_AGENT_ID.test(agent)) return null;
-  const req = { action: spec.action, agent, label: act.dataset.label || '' };
-  if (spec.action === 'sandbox-restart') req.direction = act.dataset.action === 'unlock' ? 'unlock' : 'restore';
-  return req;
+  group = typeof group === 'string' ? groupOf(group) : '';
+  return SAFE_GROUP.test(group) ? { action: spec.action, group } : null;
 }
 
 // usableActSelectors lists the data-act controls a click on a peer's row
-// really runs: the view-only ones, the terminal attach, and the PEER_ACTS the
-// peer shares (the status dot per direction, as peerAction picks it). The
+// really runs: the view-only ones, the terminal attach, the granted ones
+// (grantSelectors) and the PEER_ACTS the peer shares. The
 // greying below is built from it, so it can never disagree with the guard.
 export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
@@ -399,9 +422,7 @@ export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
   const shared = (feature) => featureState(feature, peerView) === 'shared';
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) if (sel.startsWith('[data-act') && managedState(features, peerView) === 'shared') out.push(sel);
   for (const [act, spec] of Object.entries(PEER_ACTS)) {
-    if (act !== 'dot-toggle') { if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`); continue; }
-    if (shared('lifecycle.stop')) out.push('[data-act="dot-toggle"][data-online="1"]');
-    if (shared('lifecycle.resume')) out.push('[data-act="dot-toggle"]:not([data-online="1"])');
+    if (shared(spec.feature) || (spec.legacy && shared(spec.legacy))) out.push(`[data-act="${act}"]`);
   }
   return out;
 }
@@ -450,7 +471,7 @@ export function blockedControl(target, peerView, event = null) {
   const act = actOf(target, event);
   const held = grantHeld(act, peerView);
   if (held !== null) {
-    return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : "this agent's settings" };
+    return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : 'This action' };
   }
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   const pa = act && peerAction(act, peerView);

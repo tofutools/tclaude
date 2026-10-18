@@ -18,7 +18,7 @@ import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
 } from './links-controller.js';
 import {
-  chooseTerminalAction, chooseTerminalDirectory, openAgentExportDialog,
+  chooseTerminalAction, chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
@@ -45,7 +45,7 @@ import {
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
-import { AGENT_GRANT_ACTS, GROUP_GRANT_ACTS, READ_ONLY_ACTS } from './peer-view-limits.js';
+import { GROUP_GRANT_ACTS, READ_ONLY_ACTS, isAgentGrantAct } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 
 export async function handleRowAction(action) {
@@ -62,7 +62,7 @@ export async function handleRowAction(action) {
   // the backstop); view-only ones show what is on screen.
   const node = isPageNode(action.fleetNode) ? '' : action.fleetNode;
   if (node && !READ_ONLY_ACTS.has(act)) {
-    if (!GROUP_GRANT_ACTS[act] && !AGENT_GRANT_ACTS[act]) {
+    if (!GROUP_GRANT_ACTS[act] && !isAgentGrantAct(act)) {
       toast(`${action.fleetName || 'That node'}: act on its groups from its own dashboard`, true);
       return;
     }
@@ -267,7 +267,7 @@ export async function handleRowAction(action) {
           okLabel: unlocking ? 'Restart without sandbox' : 'Restore sandbox and restart',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/sandbox-restart`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/sandbox-restart`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: direction }),
@@ -279,13 +279,13 @@ export async function handleRowAction(action) {
             detail = parsed.error || parsed.message || detail;
           } catch (_) { /* plain error */ }
           toast(`Sandbox restart failed: ${detail}`, true);
-          refresh();
+          changed();
           return;
         }
         toast(unlocking
           ? `${label}: restarted with sandbox OFF ⚠`
           : `${label}: normal sandbox restored`);
-        refresh();
+        changed();
         return;
       }
       case 'fast-mode-disable':
@@ -332,7 +332,7 @@ export async function handleRowAction(action) {
           okLabel: 'Restart agent',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/restart`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/restart`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
@@ -342,11 +342,11 @@ export async function handleRowAction(action) {
             detail = parsed.error || parsed.message || detail;
           } catch (_) { /* plain error */ }
           toast(`Restart failed: ${detail}`, true);
-          refresh();
+          changed();
           return;
         }
         toast(`${label}: restarted`);
-        refresh();
+        changed();
         return;
       }
       case 'jump': {
@@ -579,8 +579,17 @@ export async function handleRowAction(action) {
         // path only fires for a UUID-shaped selector that FAILS to resolve
         // (a dangling agent whose conversation is gone); a stable agent_id
         // resolves successfully even then and would silently demote the
-        // orphan instead of offering to remove it (JOH-322).
-        await openRetireAgentDialog(conv, label);
+        // orphan instead of offering to remove it (JOH-322). Another node's
+        // retire (here, or on its own page) names its stable ID: that node's
+        // route takes no other.
+        if (node || globalThis.__tclaudeRemoteNode?.id) await openRetireAgentDialog(data.stableAgent || agent, label, node);
+        else await openRetireAgentDialog(conv, label);
+        return;
+      }
+      case 'clone': {
+        // Another node's agent (the menu item shows on a peer's rows only):
+        // the regular clone dialog, sent to that node.
+        openCloneAgentDialog(agent, label, '', node);
         return;
       }
       case 'reinstate-agent': {
@@ -660,10 +669,10 @@ export async function handleRowAction(action) {
         // online is read from data-* set by agentStatusDot.
         const online = data.online === '1';
         if (!online) {
-          await resumeAgentReq(agent, label);
+          await resumeAgentReq(agent, label, false, node);
           return;
         }
-        await openShutdownAgentDialog(agent, label);
+        await openShutdownAgentDialog(agent, label, node);
         return;
       }
       case 'spawn-agent': {

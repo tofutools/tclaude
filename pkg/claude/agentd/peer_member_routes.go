@@ -29,8 +29,13 @@ const (
 )
 
 // peerAgentControlGrants are the grants behind an agent's peer-invoked
-// controls, which peer_view.agents names per agent.
-var peerAgentControlGrants = []string{PermGroupsMembersManage}
+// controls, which peer_view.agents names per agent: its settings, and its
+// lifecycle and move (peer_actions.go).
+var peerAgentControlGrants = []string{PermGroupsMembersManage, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
+
+// peerOwnerFootprintGrants are the ones whose footprint also covers the
+// groups the agent owns (cloneAuthorizationGroups).
+var peerOwnerFootprintGrants = []string{PermGroupsMembersRetire, PermGroupsMembersClone, PermAgentMove}
 
 func addPeerMemberRules(rules map[string]peerViewRule) {
 	for _, verb := range []string{"rename", "tags", "task", "notify"} {
@@ -226,6 +231,17 @@ func peerAgentGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 	held := map[string]map[string]int{}
 	groupsOf := map[string]int{}
 	seen := map[string]bool{}
+	memberOf := map[string]map[int64]bool{}
+	count := func(counts map[string]map[string]int, conv string, groupID int64, slugs []string) {
+		for _, slug := range slugs {
+			if holds(groupID, slug) {
+				if counts[conv] == nil {
+					counts[conv] = map[string]int{}
+				}
+				counts[conv][slug]++
+			}
+		}
+	}
 	for _, g := range groups {
 		if g.IsArchived() {
 			continue
@@ -234,13 +250,28 @@ func peerAgentGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		for _, m := range members[g.ID] {
 			groupsOf[m.ConvID]++
 			seen[m.ConvID] = seen[m.ConvID] || visible
-			for _, slug := range peerAgentControlGrants {
-				if holds(g.ID, slug) {
-					if held[m.ConvID] == nil {
-						held[m.ConvID] = map[string]int{}
-					}
-					held[m.ConvID][slug]++
+			if memberOf[m.ConvID] == nil {
+				memberOf[m.ConvID] = map[int64]bool{}
+			}
+			memberOf[m.ConvID][g.ID] = true
+			count(held, m.ConvID, g.ID, peerAgentControlGrants)
+		}
+	}
+	// The groups an agent owns without being in them widen its retire and
+	// clone footprint; read only when the peer holds one of those anywhere.
+	owned, ownedHeld := map[string]int{}, map[string]map[string]int{}
+	if slices.ContainsFunc(grants, func(g db.FederationPeerGrant) bool { return slices.Contains(peerOwnerFootprintGrants, g.Slug) }) {
+		owners, err := db.ListAgentGroupOwnersBatch(ids)
+		if err != nil {
+			return nil
+		}
+		for _, id := range ids {
+			for _, o := range owners[id] {
+				if o.ConvID == "" || memberOf[o.ConvID][id] {
+					continue
 				}
+				owned[o.ConvID]++
+				count(ownedHeld, o.ConvID, id, peerOwnerFootprintGrants)
 			}
 		}
 	}
@@ -251,7 +282,11 @@ func peerAgentGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		}
 		var all []string
 		for _, slug := range peerAgentControlGrants {
-			if counts[slug] == groupsOf[conv] {
+			n, total := counts[slug], groupsOf[conv]
+			if slices.Contains(peerOwnerFootprintGrants, slug) {
+				n, total = n+ownedHeld[conv][slug], total+owned[conv]
+			}
+			if n == total {
 				all = append(all, slug)
 			}
 		}

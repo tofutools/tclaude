@@ -17,12 +17,13 @@ export function openTransactionDialog(descriptor) {
   return requireController().open(descriptor);
 }
 
-export function openRetireAgentDialog(conv, label = '') {
-  return openTransactionDialog({ kind: 'retire-agent', conv, label });
+// node names another node's agent (the fused Groups view); blank is the page's.
+export function openRetireAgentDialog(conv, label = '', node = '') {
+  return openTransactionDialog({ kind: 'retire-agent', conv, label, ...(node ? { node } : {}) });
 }
 
-export function openShutdownAgentDialog(agent, label = '') {
-  return openTransactionDialog({ kind: 'shutdown-agent', agent, label });
+export function openShutdownAgentDialog(agent, label = '', node = '') {
+  return openTransactionDialog({ kind: 'shutdown-agent', agent, label, ...(node ? { node } : {}) });
 }
 
 // node names another node's agent (the fused Groups view); blank is the page's.
