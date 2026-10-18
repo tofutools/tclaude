@@ -465,6 +465,14 @@ test('agent-spawn state snapshots opens and invalidates every async generation',
   assert.equal(state.isCurrent(first.generation), false);
   state.open();
   assert.equal(state.dialog.value.groups.length, 0);
+  // A spawn on another node opens on its snapshot, but the name fix-up follows
+  // this page's own setting (the peer's snapshot reads false: it withholds it).
+  snapshot = { groups, harnesses, spawn_name_normalize: true };
+  state.open({ target: { node: 'herc', nodeId: 'inst_herc', name: 'herc', snapshot: { groups, harnesses, spawn_name_normalize: false } } });
+  assert.equal(state.dialog.value.normalizeNames, true, "a fused spawn on a peer fixes up the name as a local one does");
+  snapshot = { groups, harnesses, spawn_name_normalize: false, peer_view: { level: 'restricted' } };
+  state.open();
+  assert.equal(state.dialog.value.normalizeNames, true, "a peer page's snapshot withholds the setting: the default, on");
 });
 
 test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inputs, and completion', async (t) => {
