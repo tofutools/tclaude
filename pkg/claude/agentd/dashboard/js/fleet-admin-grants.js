@@ -24,13 +24,46 @@ function where(row) {
   return html`<span class="muted">node-wide</span>`;
 }
 
-// GrantsPage shows and edits one target's peer grants. Every grant goes
-// through a confirm naming what it allows and where; an unscoped group grant
-// says it covers future groups too.
+function whereText(row) {
+  return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
+}
+
+// ALL_TARGETS is the "Grants of" choice listing every peer's and pool's
+// grants together.
+export const ALL_TARGETS = '*all';
+
+// directRows are the grants a target's own page can revoke: not inherited
+// from a pool, and not stuck on a deleted group.
+function directRows(rows) { return rows.filter((r) => !r.pool && r.revocable); }
+
+function matches(t, r, q) {
+  return !q || [t.label, t.id, r.slug, r.group, r.gateway, r.what].some((x) => String(x || '').toLowerCase().includes(q));
+}
+
+// grantCells renders one grant row's permission, where, allows and action
+// cells.
+function grantCells(r, onRevoke) {
+  return html`<td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}${extraPolicy(r.policy).length ? html` <span class="muted" title=${extraPolicy(r.policy).map((k) => `${k}: ${JSON.stringify(r.policy[k])}`).join('\n')}>+ settings</span>` : ''}</td>
+    <td>${where(r)}</td>
+    <td class="muted">${r.what}</td>
+    <td class="fa-acts">${r.pool
+      ? html`<span class="muted" title="Revoke it on the pool">via pool ${r.pool}</span>`
+      : !r.revocable ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
+      : html`<button type="button" class="fa-danger" data-fa="revoke" onClick=${onRevoke}>Revoke…</button>`}</td>`;
+}
+
+// GrantsPage shows and edits one target's peer grants, or lists every
+// target's together (ALL_TARGETS). Every grant goes through a confirm naming
+// what it allows and where; an unscoped group grant says it covers future
+// groups too.
 export function GrantsPage({ view, pools, groups, actions, confirm, toast, target, setTarget }) {
   const targets = grantTargets(view, pools);
-  const current = targets.find((t) => t.id === target) || targets[0] || null;
+  const all = target === ALL_TARGETS && targets.length > 0;
+  const current = all ? null : targets.find((t) => t.id === target) || targets[0] || null;
   const [grants, setGrants] = useState(null);
+  // allGrants holds, per target, its grants or the error reading them.
+  const [allGrants, setAllGrants] = useState(null);
+  const [filter, setFilter] = useState('');
   const [error, setError] = useState('');
   const [tick, setTick] = useState(0);
   const [slug, setSlug] = useState('message.direct');
@@ -42,6 +75,15 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
   const info = slugInfo(slug);
   const fields = LAUNCH_FIELDS.filter((f) => !f.slugs || f.slugs.includes(slug));
 
+  const targetIDs = targets.map((t) => t.id).join(' ');
+  useEffect(() => {
+    if (!all) return undefined;
+    let off = false;
+    setAllGrants(null); setError('');
+    Promise.all(targets.map((t) => actions.grants(t.id).then((g) => ({ t, grants: g }), (e) => ({ t, error: errText(e) }))))
+      .then((list) => { if (!off) setAllGrants(list); });
+    return () => { off = true; };
+  }, [all, targetIDs, tick]);
   useEffect(() => {
     if (!current) return undefined;
     let off = false;
@@ -50,8 +92,79 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     return () => { off = true; };
   }, [current?.id, tick]);
 
+  const targetRows = (t, g) => grantRows(g, { ownPool: t.pool ? t.id.slice(6) : '', groups });
+  const revoke = (t, row) => confirm({
+    title: `Revoke ${row.slug} from ${t.label}?`,
+    body: `${t.label} loses ${row.slug} (${row.what || 'this permission'}) ${whereText(row)}. Anything it is doing that relies on it stops being allowed.`,
+    okLabel: 'Revoke',
+    busyLabel: 'Revoking…',
+    action: () => actions.revoke({ peer: t.id, slug: row.slug, scope: row.scope }),
+  }).then((ok) => { if (ok) { toast(`Revoked ${row.slug} from ${t.label}`, false); setTick((n) => n + 1); } })
+    .catch((e) => toast(`Revoke failed: ${errText(e)}`, true));
+  // revokeAll removes every grant listed on t's own page, one revoke each;
+  // pool-inherited grants and the trust level are left alone.
+  const revokeAll = (t, rows) => {
+    const direct = directRows(rows);
+    const kept = rows.filter((r) => r.pool).map((r) => `${r.slug} through pool ${r.pool}`);
+    const n = direct.length;
+    return confirm({
+      title: `Revoke all ${n} grant${n === 1 ? '' : 's'} from ${t.label}?`,
+      body: `${t.label} loses everything it was granted on this node: ${direct.map((r) => `${r.slug} ${whereText(r)}`).join('; ')}. Anything it is doing that relies on these stops being allowed.${t.pool ? ' This applies to every node in the pool.' : ` It stays trusted (${t.level || 'restricted'})${kept.length ? ` and keeps ${kept.join(', ')}` : ''}.`}${t.level === 'unrestricted' ? ` ${t.label} is unrestricted, so this changes nothing until it is restricted.` : ''}`,
+      okLabel: 'Revoke all',
+      busyLabel: 'Revoking…',
+      action: async () => {
+        for (const [i, r] of direct.entries()) {
+          try {
+            await actions.revoke({ peer: t.id, slug: r.slug, scope: r.scope });
+          } catch (e) {
+            throw new Error(`revoked ${i} of ${n}; ${r.slug} ${whereText(r)} and the rest remain: ${errText(e)}`);
+          }
+        }
+        return n;
+      },
+    }).then((ok) => { if (ok) toast(`Revoked ${n} grant${n === 1 ? '' : 's'} from ${t.label}`, false); })
+      .catch((e) => toast(`Revoke all failed: ${errText(e)}`, true))
+      .finally(() => setTick((k) => k + 1));
+  };
+  const picker = html`<label><span class="fa-k">Grants of</span>
+        <select id="fleet-grant-target" value=${all ? ALL_TARGETS : current?.id} onChange=${(e) => setTarget(e.currentTarget.value)}>
+          ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
+          <option value=${ALL_TARGETS}>All peers & pools</option>
+        </select></label>`;
+
+  if (all) {
+    const q = filter.trim().toLowerCase();
+    const sections = (allGrants || []).map(({ t, grants: g, error: err }) => {
+      const rows = err ? [] : targetRows(t, g || []).filter((r) => !r.pool);
+      return { t, err, rows, shown: rows.filter((r) => matches(t, r, q)) };
+    }).filter((x) => !q || x.shown.length);
+    const total = sections.reduce((n, x) => n + x.rows.length, 0);
+    return html`<div class="fa-grants">
+      <div class="fa-grants-head">
+        ${picker}
+        <label><span class="fa-k">Filter</span><input id="fleet-grant-filter" type="text" placeholder="peer, permission or group…" value=${filter} autocomplete="off" spellcheck="false" style="width:14em" onInput=${(e) => setFilter(e.currentTarget.value)} /></label>
+        ${allGrants && html`<span class="muted">${total} grant${total === 1 ? '' : 's'} across ${allGrants.length} peer${allGrants.length === 1 ? '' : 's'} and pool${allGrants.length === 1 ? '' : 's'}. Pick one to add grants.</span>`}
+      </div>
+      ${!allGrants ? html`<div class="empty">Loading…</div>` : sections.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
+      <table class="fa-table" id="fleet-grants">
+        <thead><tr><th>Peer / pool</th><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
+        <tbody>${sections.map(({ t, err, rows, shown }) => html`
+          <tr key=${`h|${t.id}`} class="fa-grant-peer" data-peer=${t.id}>
+            <td colspan="4"><button type="button" class="fa-link" data-fa="open-target" title="Show only these grants" onClick=${() => setTarget(t.id)}><b>${t.label}</b></button>
+              ${!t.pool && html` <code class="muted">${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
+              <span class="muted"> · </span>${t.level === 'unrestricted' ? html`<span class="fa-level unrestricted">unrestricted</span>` : html`<span class="muted">${t.pool ? 'pool' : 'restricted'}</span>`}
+              <span class="muted"> · ${err ? '' : rows.length ? `${rows.length} grant${rows.length === 1 ? '' : 's'}` : 'no grants'}</span>${err && html`<span class="fa-danger">${err}</span>`}</td>
+            <td class="fa-acts">${directRows(rows).length > 0 && html`<button type="button" class="fa-danger" data-fa="revoke-all" onClick=${() => revokeAll(t, rows)}>Revoke all…</button>`}</td>
+          </tr>
+          ${shown.map((r) => html`<tr key=${`${t.id}|${r.key}`} data-peer=${t.id} data-slug=${r.slug}>
+            <td class="muted">${t.label}</td>${grantCells(r, () => revoke(t, r))}</tr>`)}`)}</tbody>
+      </table>`}
+    </div>`;
+  }
+
   if (!current) return html`<div class="empty">Trust a peer first; grants say what it may do on this node.</div>`;
-  const rows = grants ? grantRows(grants, { ownPool: current.pool ? current.id.slice(6) : '', groups }) : [];
+  const rows = grants ? targetRows(current, grants) : [];
+  const direct = directRows(rows);
   const scopeGroupName = info.kind === 'node' ? '' : group;
   const canGrant = info.kind !== 'scoped' || !!group;
 
@@ -96,37 +209,18 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
       setLaunch({});
     }).catch((e) => toast(`Grant failed: ${errText(e)}`, true));
   };
-  const revoke = (row) => confirm({
-    title: `Revoke ${row.slug} from ${current.label}?`,
-    body: `${current.label} loses ${row.slug} (${row.what || 'this permission'}) ${row.deletedGroup ? "in a deleted group (it applies nowhere)" : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide'}. Anything it is doing that relies on it stops being allowed.`,
-    okLabel: 'Revoke',
-    busyLabel: 'Revoking…',
-    action: () => actions.revoke({ peer: current.id, slug: row.slug, scope: row.scope }),
-  }).then((ok) => { if (ok) { toast(`Revoked ${row.slug} from ${current.label}`, false); setTick((n) => n + 1); } })
-    .catch((e) => toast(`Revoke failed: ${errText(e)}`, true));
-
   return html`<div class="fa-grants">
     <div class="fa-grants-head">
-      <label><span class="fa-k">Grants of</span>
-        <select id="fleet-grant-target" value=${current.id} onChange=${(e) => setTarget(e.currentTarget.value)}>
-          ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        </select></label>
+      ${picker}
       ${current.level === 'unrestricted' && html`<span class="fa-warn">Unrestricted: ${current.label} already holds every group permission on all groups; the grants below matter once it is restricted.</span>`}
       ${current.pool && html`<span class="muted">A pool's grants apply to every member node.</span>`}
+      ${direct.length > 0 && html`<button type="button" class="fa-danger fa-grants-revoke-all" data-fa="revoke-all" onClick=${() => revokeAll(current, rows)}>Revoke all ${direct.length} from ${current.label}…</button>`}
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!grants && !error ? html`<div class="empty">Loading…</div>` : rows.length === 0 ? html`<div class="empty">No grants: ${current.label} can do nothing on this node beyond being trusted.</div>` : html`
     <table class="fa-table" id="fleet-grants">
       <thead><tr><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
-      <tbody>${rows.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>
-        <td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}${extraPolicy(r.policy).length ? html` <span class="muted" title=${extraPolicy(r.policy).map((k) => `${k}: ${JSON.stringify(r.policy[k])}`).join('\n')}>+ settings</span>` : ''}</td>
-        <td>${where(r)}</td>
-        <td class="muted">${r.what}</td>
-        <td class="fa-acts">${r.pool
-          ? html`<span class="muted" title="Revoke it on the pool">via pool ${r.pool}</span>`
-          : !r.revocable ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
-          : html`<button type="button" class="fa-danger" data-fa="revoke" onClick=${() => revoke(r)}>Revoke…</button>`}</td>
-      </tr>`)}</tbody>
+      <tbody>${rows.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>${grantCells(r, () => revoke(current, r))}</tr>`)}</tbody>
     </table>`}
     <div class="fa-grant-form">
       <span class="fa-k">Add</span>

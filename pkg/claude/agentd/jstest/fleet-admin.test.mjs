@@ -447,6 +447,47 @@ test('the grants page lists, grants with a spelled-out confirm, and revokes dire
   assert.deepEqual(s.log.find((l) => l[0] === 'revoke'), ['revoke', { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' }]);
 });
 
+test('the grants page lists every peer under All and revokes all of one peer\'s own grants', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  // One peer: the header revokes its two direct grants, never the pool one.
+  const all = s.q('[data-fa="revoke-all"]');
+  assert.match(all.textContent, /Revoke all 2 from forge/);
+  await s.click(all);
+  assert.match(s.confirms.at(-1).title, /Revoke all 2 grants from forge\?/);
+  assert.match(s.confirms.at(-1).body, /groups\.presence\.read in every group; groups\.roster\.read in group ops/);
+  assert.match(s.confirms.at(-1).body, /keeps routes\.consume through pool rigs/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'revoke').map((l) => l[1]), [
+    { peer: 'inst_forge', slug: 'groups.presence.read', scope: '' },
+    { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' },
+  ]);
+  assert.ok(s.toasts.some((m) => /Revoked 2 grants from forge/.test(m)));
+
+  // All: every target is read; each gets a header row, its direct grants
+  // carry its name, and pool-inherited grants are left to the pool.
+  const sel = s.q('#fleet-grant-target');
+  for (const o of sel.querySelectorAll('option')) { if (o.value === '*all') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.ok(s.log.some((l) => l[0] === 'grants' && l[1] === 'inst_lab'));
+  const table = s.q('#fleet-grants');
+  assert.equal(table.querySelectorAll('tr.fa-grant-peer').length, 2);
+  assert.equal(table.querySelectorAll('tbody tr[data-slug]').length, 2);
+  assert.equal(table.querySelector('[data-slug="routes.consume"]'), null);
+  assert.match(table.querySelector('tr.fa-grant-peer[data-peer="inst_lab"]').textContent, /unrestricted.*no grants/);
+  assert.equal(table.querySelector('tr.fa-grant-peer[data-peer="inst_lab"] [data-fa="revoke-all"]'), null);
+  assert.equal(s.q('#fleet-grant-submit'), null, 'grants are added on one peer\'s page');
+  const filter = s.q('#fleet-grant-filter'); filter.value = 'roster';
+  await s.harness.act(() => s.harness.fireEvent(filter, 'input'));
+  assert.equal(s.q('#fleet-grants').querySelectorAll('tbody tr[data-slug]').length, 1);
+  assert.equal(s.q('#fleet-grants').querySelectorAll('tr.fa-grant-peer').length, 1);
+  // A failed revoke part-way names what remains.
+  s.actions.revoke = async (b) => { if (b.slug === 'groups.roster.read') throw new Error('daemon down'); return { ok: true }; };
+  await s.click(s.q('tr.fa-grant-peer[data-peer="inst_forge"] [data-fa="revoke-all"]'));
+  assert.ok(s.toasts.some((m) => /revoked 1 of 2; groups\.roster\.read in group ops and the rest remain: daemon down/.test(m)));
+});
+
 test('a pool page revokes its own grants; re-granting keeps CLI launch settings and only changes the cap', async (t) => {
   const s = await setup(t);
   const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
