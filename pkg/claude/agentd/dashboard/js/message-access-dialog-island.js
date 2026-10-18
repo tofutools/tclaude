@@ -74,6 +74,9 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
   const bodyRef = useRef(null);
   const fileInputRef = useRef(null);
   const allLive = !!descriptor.allLive;
+  // Another node's agent takes text only: the peer's message route carries
+  // no attachment upload.
+  const textOnly = allLive || !!descriptor.node;
   const dirty = !!subject || !!body || files.length > 0;
 
   const addFiles = (incoming) => {
@@ -92,9 +95,10 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       body,
       files: Object.freeze([...files]),
       ...(allLive ? { allLive: true } : {}),
+      ...(descriptor.node ? { node: descriptor.node } : {}),
     });
     setError('');
-    if (!draft.body.trim() && (allLive || !draft.files.length)) {
+    if (!draft.body.trim() && (textOnly || !draft.files.length)) {
       setError(allLive ? 'Write an announcement.' : 'Write a message or attach a file.');
       return;
     }
@@ -127,18 +131,18 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     registerClose=${registerClose}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
-      if (allLive) return;
+      if (textOnly) return;
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
       event.preventDefault();
       addFiles(pasted);
     }}
     onDragOver=${(event) => {
-      if (allLive) return;
+      if (textOnly) return;
       if (event.dataTransfer?.types?.includes('Files')) event.preventDefault();
     }}
     onDrop=${(event) => {
-      if (allLive) return;
+      if (textOnly) return;
       const dropped = Array.from(event.dataTransfer?.files || []);
       if (!dropped.length) return;
       event.preventDefault();
@@ -146,7 +150,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     }}>
     <h3 id="operator-message-title"><${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
-      wizard=${allLive ? '📯 Proclaim to all channeling familiars' : '✒ Send a missive to the familiar'}/></h3>
+      wizard=${allLive ? '📯 Proclaim to all channeling familiars' : '✒ Send a missive to the familiar'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
     <p class="modal-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
@@ -165,7 +169,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
         onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
     <${SavedPromptPicker} value=${body} onChange=${setBody} textareaRef=${bodyRef}
       disabled=${busy} confirmDiscard=${confirmDiscard}/>
-    ${!allLive && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
+    ${!textOnly && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
         <button type="button" id="operator-message-attach-btn" disabled=${busy}
           onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/></button>

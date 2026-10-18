@@ -67,6 +67,10 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
         agent: allLive ? '' : String(context.agent),
         label: String(context.label || (allLive ? 'all live agents' : context.agent)),
         allLive,
+        // An agent on another node (a peer's terminal): sent through that
+        // node, which delivers it under its messaging grant.
+        node: allLive ? '' : String(context.node || ''),
+        nodeName: allLive ? '' : String(context.nodeName || ''),
         restoreFocus: typeof context.restoreFocus === 'function' ? context.restoreFocus : null,
       });
     },
