@@ -518,6 +518,10 @@ test('the grants page opens on All; the add dialog searches, plans per group and
   assert.match(s.q('[data-grant-slug="groups.roster.read"]').textContent, /held: ops/);
   search.value = '';
   await s.harness.act(() => s.harness.fireEvent(search, 'input'));
+  await s.click(s.q('[data-cat="Routes"]'));
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['routes.consume']);
+  await s.click(s.q('[data-cat="Messaging"]'));
+  assert.ok(!s.q('#fleet-grant-list [data-grant-slug="routes.consume"]'), 'routes are not messaging');
   await s.click(s.q('[data-cat="Terminals"]'));
   assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch', 'sessions.attach', 'sessions.takeover']);
   await s.check(s.q('#fleet-grant-hide-sensitive'));
