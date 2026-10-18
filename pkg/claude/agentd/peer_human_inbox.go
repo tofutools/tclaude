@@ -32,9 +32,13 @@ const (
 
 func addPeerHumanInboxRules(rules map[string]peerViewRule) {
 	rules["GET /api/human-inbox"] = peerViewRule{feature: "human.inbox", requires: PermHumanInboxRead, unrestrictedOnly: true, serve: servePeerHumanInbox}
-	for _, pattern := range []string{"POST /api/human-inbox/reply", "POST /api/human-inbox/read", "POST /api/human-inbox/access/{id}"} {
+	for _, pattern := range []string{"POST /api/human-inbox/reply", "POST /api/human-inbox/access/{id}"} {
 		rules[pattern] = peerViewRule{feature: "human.inbox.answer", requires: PermHumanInboxAnswer, unrestrictedOnly: true, write: servePeerHumanInboxAnswer}
 	}
+	// Read state is the one grantable part: a peer holding
+	// node.messages.mark-read marks notifications read as opening one does
+	// locally, without any answer authority.
+	rules["POST /api/human-inbox/read"] = peerViewRule{feature: "node.messages.mark-read", requires: PermNodeMessagesMarkRead, write: servePeerHumanInboxAnswer}
 }
 
 type peerHumanMessage struct {
@@ -137,7 +141,11 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 
 func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
 	if !v.allows(rule, 0) {
-		writeError(w, 403, "permission", "requires unrestricted trust ("+rule.requires+")")
+		if rule.unrestrictedOnly {
+			writeError(w, 403, "permission", "requires unrestricted trust ("+rule.requires+")")
+		} else {
+			writeError(w, 403, "permission", "requires "+rule.requires)
+		}
 		return
 	}
 	switch {

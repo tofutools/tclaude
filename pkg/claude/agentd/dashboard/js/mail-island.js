@@ -16,7 +16,7 @@ import {
   AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
-import { featureState } from './peer-view-limits.js';
+import { featureState, humanReadShared } from './peer-view-limits.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './fleet-model.js';
@@ -256,14 +256,14 @@ function FolderActions({ current, controller, solo = false }) {
   const remote = remoteNodeID();
   if (human && remote) {
     const name = remoteNodeName(remote);
-    const canAnswer = featureState('human.inbox.answer', dashboardState.snapshot.value?.peer_view) === 'shared';
+    const canMark = humanReadShared(dashboardState.snapshot.value?.peer_view);
     const markAll = () => postPeerJSON('/api/human-inbox/read', { all: true }).then((res) => {
       shellToast(`marked ${res?.marked || 0} message(s) read on ${name}`);
       controller.reloadMail();
     }, (e) => shellToast(`Mark all read failed: ${e?.message || e}`, true));
     return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
-      <button id="mail-mark-all" disabled=${!canAnswer} onClick=${markAll}
-        title=${canAnswer ? `Mark every human notification on ${name} read` : `${name} shares its notifications for reading only`}>✓ mark all read</button>
+      <button id="mail-mark-all" disabled=${!canMark} onClick=${markAll}
+        title=${canMark ? `Mark every human notification on ${name} read` : `${name} shares its notifications for reading only (marking them read needs its node.messages.mark-read)`}>✓ mark all read</button>
       <button id="mail-peer-compose" disabled title="Message a peer's operator from this node's own Messages">✉ peer</button>
       <button class="danger" id="mail-clear-read" disabled title=${`Only ${name}'s own operator deletes its notifications`}>🗑 delete read</button>
     </span>`;
@@ -505,9 +505,10 @@ async function postPeerJSON(url, body) {
 
 // peerHumanActions answer a notification on the peer this page shows: the
 // page's fetch sends /api/human-inbox to that peer.
-function peerHumanActions(remote, canAnswer) {
+function peerHumanActions(remote, peerView) {
   return {
-    name: remoteNodeName(remote), exportNode: remote, canAnswer,
+    name: remoteNodeName(remote), exportNode: remote,
+    canAnswer: featureState('human.inbox.answer', peerView) === 'shared', canMark: humanReadShared(peerView),
     mark: (id, read) => postPeerJSON('/api/human-inbox/read', read ? { id } : { id, read: false }),
     reply: (id, body) => postPeerJSON('/api/human-inbox/reply', { id, body }),
   };
@@ -541,7 +542,7 @@ function MessageReader({ current, controller, model }) {
         onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}</${Fragment}>`;
     actions = html`<${HumanActions} message=${message} senderLive=${controller.senderOnline(message.from_agent, message.from_conv)}
       harness=${remote ? '' : senderHarness(message)} toast=${shellToast} onDone=${controller.reloadMail} before=${lead}
-      peer=${remote ? peerHumanActions(remote, featureState('human.inbox.answer', dashboardState.snapshot.value?.peer_view) === 'shared') : null} />`;
+      peer=${remote ? peerHumanActions(remote, dashboardState.snapshot.value?.peer_view) : null} />`;
   } else {
     actions = html`<div class="mail-reader-actions">
       <button onClick=${() => controller.setMessagesRead([message.id], !message.read)}

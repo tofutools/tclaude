@@ -497,7 +497,7 @@ func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, r
 func auditPeerActionProxy(r *http.Request, peer, phase string, status int) {
 	mux := http.NewServeMux()
 	for pattern, rule := range peerViewRules() {
-		if rule.write == nil || rule.feature != "messaging" && rule.feature != "spawn.request" && rule.feature != "human.inbox.answer" && !strings.HasPrefix(rule.feature, "lifecycle.") {
+		if rule.write == nil || rule.feature != "messaging" && rule.feature != "spawn.request" && rule.feature != "human.inbox.answer" && rule.feature != "node.messages.mark-read" && !strings.HasPrefix(rule.feature, "lifecycle.") {
 			continue
 		}
 		mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})

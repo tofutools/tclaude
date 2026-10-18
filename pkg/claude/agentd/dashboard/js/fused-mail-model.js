@@ -9,7 +9,8 @@
 // with code "permission". Actions go to the owning node: agent mail read
 // state under node.messages.manage, a reply to an agent under message.direct
 // (operator-message), and human notifications and access requests through
-// the human-inbox routes, which need unrestricted trust.
+// the human-inbox routes: read state under node.messages.mark-read, replies
+// and access decisions under unrestricted trust.
 
 // FUSED_FOLDERS are the folders that span every ticked node.
 export const FUSED_FOLDERS = Object.freeze([

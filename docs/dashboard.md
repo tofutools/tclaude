@@ -976,8 +976,9 @@ the same client as this node's: folders, filters, bulk bar, pager, reader and
 attached files (agent mail's and startup briefings' too). Read state on agent
 mail needs its `node.messages.manage`. Its
 human notifications carry the same buttons as this node's (reply, focus, mark
-read/unread, download, delete); reply, mark read/unread and the folder's mark
-all read go to the peer when it trusts you unrestricted, and download builds
+read/unread, download, delete). Opening one marks it read on the peer, and
+mark read/unread and the folder's mark all read go to the peer, when it grants
+you `node.messages.mark-read`; reply needs its unrestricted trust. Download builds
 the Markdown or zip from the peer under `node.messages.read`. Focus, deleting
 and wiping stay with the peer's own operator and are greyed, and its access
 requests are answered in the fused Messages view.
@@ -1182,9 +1183,12 @@ node's `node.messages.manage`; only this node's messages can be deleted from
 here. A reply to an agent goes through its `operator-message` route
 (`message.direct`). This node's human notifications have the same buttons as
 in its own Messages (reply, focus, mark read/unread, download, delete), and
-so do a peer's: reply opens the same dialog (text only) and, with mark
-read/unread, goes to the peer when it trusts you unrestricted; otherwise they
-are greyed and the notification is read-only. Their files preview, play and
+so do a peer's: reply opens the same dialog (text only) and goes to the peer
+when it trusts you unrestricted. Opening a notification marks it read on its
+node, as in each node's own Messages, wherever mark read/unread is allowed:
+on this node, and on a peer that grants you `node.messages.mark-read`
+(unrestricted trust holds it). What a peer withholds is greyed, the
+notification read-only. Their files preview, play and
 download as usual, read from the peer under the same `node.messages.read`.
 Access requests (approve once, deny) are answered here on this node and on
 peers that trust you unrestricted; approving says exactly what it lets

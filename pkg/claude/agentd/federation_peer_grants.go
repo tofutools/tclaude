@@ -18,6 +18,9 @@ const (
 	PermGroupsLinkAccept     = "groups.link.accept"
 	PermNodeMessagesRead     = "node.messages.read"
 	PermNodeMessagesManage   = "node.messages.manage"
+	// PermNodeMessagesMarkRead marks this node's human notifications read or
+	// unread from a peer's dashboard, as opening one does locally.
+	PermNodeMessagesMarkRead = "node.messages.mark-read"
 	PermAgentsStatusRead     = "agents.status.read"
 	PermSessionsRead         = "sessions.read"
 	PermSessionsWatch        = "sessions.watch"
@@ -84,7 +87,7 @@ var fedInstancePeerSlugs = map[string]bool{
 	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermNodeHarnessesRead: true,
 	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
 	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
-	PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeGroupsCreate: true,
+	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeGroupsCreate: true,
 }
 
 func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }

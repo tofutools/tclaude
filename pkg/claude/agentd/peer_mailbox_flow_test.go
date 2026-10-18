@@ -94,3 +94,72 @@ func TestPeerMailboxReadGrantPagingAndLiveRevocation(t *testing.T) {
 	// local operator does.
 	require.NotEqual(t, 403, serve("POST", "/api/mailbox/delete", body).Code)
 }
+
+// node.messages.mark-read is the grantable part of a human notification's
+// read state: opening one on a peer's page marks it read there, with no
+// answer, delete or agent-mail authority. Unrestricted trust holds it.
+func TestPeerHumanNotificationMarkReadGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	seedMailboxes(t, fh.f)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	serve := func(method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+	}
+	grant := func(method, slug string) {
+		t.Helper()
+		rec := fedHuman(t, fh.f, method, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	id, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: mbAlice, FromTitle: "alice", Body: "open me"})
+	require.NoError(t, err)
+	isRead := func() bool {
+		m, err := db.GetHumanMessage(id)
+		require.NoError(t, err)
+		return !m.ReadAt.IsZero()
+	}
+	included := func() []string {
+		var out struct {
+			PeerView struct {
+				Included []string `json:"included"`
+			} `json:"peer_view"`
+		}
+		rec := serve("GET", "/api/mailboxes", nil)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		testharness.DecodeJSON(t, rec, &out)
+		return out.PeerView.Included
+	}
+
+	grant("POST", agentd.PermNodeMessagesRead)
+	require.NotContains(t, included(), "node.messages.mark-read")
+	require.Equal(t, 403, serve("POST", "/api/human-inbox/read", map[string]any{"id": id}).Code)
+	// Agent mail read state does not reach a human notification's.
+	grant("POST", agentd.PermNodeMessagesManage)
+	require.Equal(t, 403, serve("POST", "/api/human-inbox/read", map[string]any{"id": id}).Code)
+	require.False(t, isRead())
+
+	grant("POST", agentd.PermNodeMessagesMarkRead)
+	require.Contains(t, included(), "node.messages.mark-read")
+	rec := serve("POST", "/api/human-inbox/read", map[string]any{"id": id})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.True(t, isRead())
+	rec = serve("POST", "/api/human-inbox/read", map[string]any{"id": id, "read": false})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.False(t, isRead())
+	// Read state only: replies, decisions and the inbox listing stay
+	// unrestricted trust's.
+	require.Equal(t, 403, serve("POST", "/api/human-inbox/reply", map[string]any{"id": id, "body": "hi"}).Code)
+	require.Equal(t, 403, serve("POST", "/api/human-inbox/access/x", map[string]any{"decision": "approve"}).Code)
+	require.Equal(t, 403, serve("GET", "/api/human-inbox", nil).Code)
+
+	grant("DELETE", agentd.PermNodeMessagesMarkRead)
+	require.Equal(t, 403, serve("POST", "/api/human-inbox/read", map[string]any{"id": id}).Code)
+
+	peer, err := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	require.Contains(t, included(), "node.messages.mark-read")
+	rec = serve("POST", "/api/human-inbox/read", map[string]any{"id": id})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.True(t, isRead())
+}
