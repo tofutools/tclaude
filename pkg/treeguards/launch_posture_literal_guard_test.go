@@ -1,10 +1,10 @@
 //ci:whole-tree
 //
-// This guard parses every production file in the module, not only what
-// session imports, so PR CI's package selection cannot tell whether a
-// change reached it. The marker runs it on every change.
+// This guard parses every production file in the module, so PR CI's package
+// selection cannot tell whether a change reached it. The marker runs it on
+// every change.
 
-package session
+package treeguards
 
 import (
 	"go/ast"
@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Every LaunchPosture literal must NAME every field, and the reason is TCL-1076
@@ -71,7 +73,7 @@ import (
 // run. The behavioural tests in pkg/claude/conv are what cover the semantics for
 // the surfaces that exist; this guard covers the shape of new ones.
 func TestEveryLaunchPostureLiteralNamesEveryField(t *testing.T) {
-	root := repoRootForLiteralGuard(t)
+	root := moduleRoot(t)
 	want := launchPostureFieldNames()
 	require.NotEmpty(t, want)
 
@@ -372,30 +374,11 @@ func launchPostureLiteralFields(lit *ast.CompositeLit) (named []string, unkeyed 
 // launchPostureFieldNames is the expected set, taken from the struct itself so a
 // field added to LaunchPosture cannot be silently left out of every literal.
 func launchPostureFieldNames() []string {
-	typ := reflect.TypeOf(LaunchPosture{})
+	typ := reflect.TypeOf(session.LaunchPosture{})
 	names := make([]string, 0, typ.NumField())
 	for i := range typ.NumField() {
 		names = append(names, typ.Field(i).Name)
 	}
 	sort.Strings(names)
 	return names
-}
-
-// repoRootForLiteralGuard walks up from the package directory to the module
-// root, so the guard covers every package that can build a LaunchPosture rather
-// than only this one.
-func repoRootForLiteralGuard(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	for range 10 {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		require.NotEqual(t, dir, parent, "walked past the filesystem root without finding go.mod")
-		dir = parent
-	}
-	t.Fatal("could not locate the module root above the package directory")
-	return ""
 }

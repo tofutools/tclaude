@@ -1,10 +1,9 @@
 //ci:whole-tree
 
-package agentd
+package treeguards
 
 import (
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,14 +19,8 @@ import (
 // vendoring, so no directory in the module may be named vendor; vendored
 // browser and test assets live under third_party/ instead.
 func TestNoVendorDirsInModule(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("module root not found at %s: %v", root, err)
-	}
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	root := moduleRoot(t)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
