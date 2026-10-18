@@ -67,7 +67,7 @@ export function Pager({
   };
   const position = range
     ? html`<span class=${`${prefix}-count`}>${total ? offset + 1 : 0}–${Math.min(offset + limit, total)} of ${total}</span>`
-    : html`<span class=${`${prefix}-pos`}>Page ${page} / ${pages}${stepping > page ? html` <span class="muted">→ ${stepping}…</span>` : ''}</span>`;
+    : html`<span class=${`${prefix}-pos`}>Page ${page} / ${pages}${stepping > page && page < pages ? html` <span class="muted">→ ${stepping}…</span>` : ''}</span>`;
   const nav = (range || pages > 1) && html`<${Fragment}>${button(NAV[0], atStart)}${button(NAV[1], atStart)}${position}${button(NAV[2], atEnd)}${button(NAV[3], atEnd)}</${Fragment}>`;
   const select = html`<select id=${sizeId} class=${range ? `${prefix}-size` : sizeClass} data-pager=${delegated ? 'size' : undefined} ...${data}
     title=${range ? sizeTitle : undefined} aria-label=${range ? sizeTitle : undefined} disabled=${disabled} value=${String(range ? limit : pageSize)}

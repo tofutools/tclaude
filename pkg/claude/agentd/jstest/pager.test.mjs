@@ -13,6 +13,9 @@ test('the shared pager pages by number or by offset range, and says where a walk
   </div>`);
   const c = mounted.container;
   assert.match(c.querySelector('#p .mail-pager-pos').textContent, /Page 2 \/ 5 → 4…/);
+  const ended = await harness.mount(harness.html`<${Pager} id="q" prefix="mail-pager" page=${3} pages=${3} stepping=${99} onPage=${() => {}} sizes=${[50]} pageSize=${50} />`);
+  assert.equal(ended.container.querySelector('.mail-pager-pos').textContent, 'Page 3 / 3', 'no walk past the end');
+  await ended.unmount();
   for (const title of ['First page', 'Previous page', 'Next page', 'Last page']) await harness.act(() => harness.fireEvent(c.querySelector(`#p button[title="${title}"]`), 'click'));
   assert.deepEqual(pages, [1, 1, 3, 5]);
   assert.deepEqual([...c.querySelectorAll('#p option')].map((o) => o.textContent), ['25', '50']);
