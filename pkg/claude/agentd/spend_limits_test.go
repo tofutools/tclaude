@@ -19,15 +19,15 @@ func TestSpendLimits_LocalPeriodRollover(t *testing.T) {
 	now := time.Date(2026, 10, 31, 23, 59, 0, 0, time.FixedZone("local", 7200))
 	evaluateSpendLimits(cfg, 10, 10, now)
 	evaluateSpendLimits(cfg, 10, 10, now)
-	messages, err := db.ListHumanMessages()
+	messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Len(t, messages, 4)
 	evaluateSpendLimits(cfg, 10, 10, now.Add(2*time.Minute))
-	messages, err = db.ListHumanMessages()
+	messages, err = db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Len(t, messages, 8)
 	evaluateSpendLimits(cfg, 11, 11, now.Add(48*time.Hour))
-	messages, err = db.ListHumanMessages()
+	messages, err = db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Len(t, messages, 10) // new day, same month
 }

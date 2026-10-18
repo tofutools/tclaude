@@ -173,10 +173,10 @@ func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
 
 func TestPostWorktreeTrackingFallbackNotice(t *testing.T) {
 	setupTestDB(t)
-	before, err := db.ListHumanMessages()
+	before, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	postWorktreeTrackingFallbackNotice("/repo with spaces", "feature;echo-pwned", "refs/remotes/origin/main")
-	after, err := db.ListHumanMessages()
+	after, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, after, len(before)+1)
 	assert.Equal(t, "worktree spawn", after[0].FromTitle)

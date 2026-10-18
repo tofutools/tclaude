@@ -51,7 +51,7 @@ func TestFederation_FleetHealthWatchConfigurationAndMetadata(t *testing.T) {
 	require.Equal(t, fh.peer.id.ID(), event.Instance)
 	require.Equal(t, "bob", event.Peer)
 	fedEventually(t, "fleet notice in operator inbox", func() bool {
-		messages, err := db.ListHumanMessages()
+		messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 		require.NoError(t, err)
 		for _, m := range messages {
 			if m.FromTitle == "Fleet health" && m.Subject == "Fleet health: bob disk" {
@@ -122,7 +122,7 @@ func TestFederation_FleetHealthWatchTeleportLeaseRecovery(t *testing.T) {
 	require.NoError(t, dec.Decode(&event))
 	require.Equal(t, "teleport_recovered", event.Kind)
 	fedEventually(t, "lease loss and recovery notices", func() bool {
-		rows, err := db.ListHumanMessages()
+		rows, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 		require.NoError(t, err)
 		found := 0
 		for _, m := range rows {

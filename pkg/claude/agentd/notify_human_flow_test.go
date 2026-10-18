@@ -46,7 +46,7 @@ func TestNotifyHuman_AttachmentDownloadAndDelete(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &delivered)
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.NotNil(t, msgs[0].Attachment())
@@ -104,7 +104,7 @@ func TestNotifyHuman_BodilessAttachmentWithSubjectDelivers(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &delivered)
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Empty(t, msgs[0].Body, "the bodiless form is stored as written, not padded")
@@ -133,7 +133,7 @@ func TestNotifyHuman_BodilessAttachmentWithoutSubjectRejected(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "a body or a subject is required",
 		"the refusal must be the content gate, not some other 400")
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 	attachments, err := db.ListHumanMessageAttachments()
@@ -153,7 +153,7 @@ func TestNotifyHuman_SubjectWithoutBodyRejectedOnPlainRoute(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "body is required",
 		"a subject must not satisfy the plain route's body requirement")
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 }
@@ -165,7 +165,7 @@ func TestNotifyHuman_ZeroByteAttachment(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
 	rec := postNotifyAttachment(t, f.Mux, conv, "empty.txt", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.NotNil(t, msgs[0].Attachment())
@@ -180,7 +180,7 @@ func TestNotifyHuman_AttachmentQuotaRejectedBeforeStorage(t *testing.T) {
 	t.Cleanup(agentd.SetHumanMessageAttachmentQuotasForTest(4, 100, 100, 1000))
 	rec := postNotifyAttachment(t, f.Mux, conv, "too-big.txt", "12345")
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 	attachments, err := db.ListHumanMessageAttachments()
@@ -206,7 +206,7 @@ func TestNotifyHuman_AttachmentContentTypeBounded(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
 	rec := postNotifyAttachmentWithContentType(t, f.Mux, conv, "x.bin", "x", "text/plain; note="+strings.Repeat("x", 300))
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 }
@@ -290,7 +290,7 @@ func TestHumanMessageAttachmentCleanupDropsTruncatedReference(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
 	rec := postNotifyAttachment(t, f.Mux, conv, "report.txt", "original")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.NotNil(t, msgs[0].Attachment())
@@ -357,7 +357,7 @@ func TestNotifyHuman_GrantedSenderDelivers(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1, "the message should be persisted")
 	m := msgs[0]
@@ -386,7 +386,7 @@ func TestNotifyHuman_GroupOwnerDelivers(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code,
 		"a group owner should pass without the slug; body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 }
 
@@ -406,7 +406,7 @@ func TestNotifyHuman_GroupPermissionDelivers(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 }
 
@@ -425,7 +425,7 @@ func TestNotifyHuman_DenyOverrideBeatsGroupPermission(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Empty(t, msgs)
 }
 
@@ -451,7 +451,7 @@ func TestNotifyHuman_DenyOverrideBeatsGroupOwner(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code,
 		"a deny override must beat the group-owner default; body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Empty(t, msgs, "no message should be persisted on a denied call")
 }
 
@@ -473,7 +473,7 @@ func TestNotifyHuman_UngrantedWorkerForbidden(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), agentd.PermHumanNotify,
 		"the 403 should name the missing slug")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	assert.Empty(t, msgs, "a denied caller must not persist a message")
 }
 
@@ -488,7 +488,7 @@ func TestNotifyHuman_HumanBypasses(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	assert.Empty(t, msgs[0].FromConv, "the human path has no caller conv-id")
 }
@@ -503,7 +503,7 @@ func TestNotifyHuman_EmptyBodyRejected(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	assert.Empty(t, msgs)
 }
 
@@ -520,7 +520,7 @@ func TestNotifyHuman_BodyTooLongRejected(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "too long")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	assert.Empty(t, msgs, "an over-long body must not be persisted")
 }
 
@@ -618,7 +618,7 @@ func TestHumanMessages_DashboardMarkUnread(t *testing.T) {
 	n, _ = db.CountUnreadHumanMessages()
 	assert.Equal(t, 1, n, "the read message is unread again")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1)
 	assert.False(t, msgs[0].IsRead(), "read_at is cleared")
 }
@@ -640,7 +640,7 @@ func TestHumanMessages_DashboardClear(t *testing.T) {
 		"/api/human-messages/clear", nil))
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1, "only the unread message should remain")
 	assert.Equal(t, "still unread", msgs[0].Body)
 }
@@ -659,7 +659,7 @@ func TestHumanMessages_DashboardDeleteOne(t *testing.T) {
 	// The to-delete message is left UNREAD on purpose — proving the
 	// per-message delete ignores read state, unlike the /clear sweep
 	// (which only removes already-read rows).
-	before, err := db.ListHumanMessages()
+	before, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, before, 2)
 	for _, m := range before {
@@ -675,7 +675,7 @@ func TestHumanMessages_DashboardDeleteOne(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	assert.Equal(t, 1, resp.Deleted, "exactly one row removed")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1, "only the untouched message survives")
 	assert.Equal(t, keepID, msgs[0].ID)
 	assert.Equal(t, "keep me", msgs[0].Body)
@@ -732,7 +732,7 @@ func TestHumanMessages_DashboardDeleteMany(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	assert.Equal(t, 2, resp.Deleted, "both named rows removed")
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1, "only the unselected message survives")
 	assert.Equal(t, keepID, msgs[0].ID)
 }
@@ -764,7 +764,7 @@ func TestNotifyHuman_StoresPayloadVerbatim(t *testing.T) {
 	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, r).Code)
 
 	// DB surface: stored exactly as sent — no pre-escaping, no stripping.
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, xssBody, msgs[0].Body,
@@ -819,7 +819,7 @@ func TestNotifyHuman_UnrelatedGroupOwnerPasses(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code,
 		"owning any group — related or not — passes the gate; body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.Len(t, msgs, 1, "the owner's message is persisted")
 }
 
@@ -876,7 +876,7 @@ func TestNotifyHuman_RaisesOSNotification(t *testing.T) {
 	assert.Equal(t, "tclaude-PO", n.fromTitle, "the snapshotted sender title rides along")
 	// And it matches what was snapshotted onto the persisted row — both
 	// come from notifyHumanCallerTitle(callerConv).
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, msgs[0].FromTitle, n.fromTitle,
@@ -900,7 +900,7 @@ func TestNotifyHuman_PendingNameTitlesUnindexedSender(t *testing.T) {
 	r = agentd.AsAgentPeer(r, conv)
 	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, r).Code)
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "codex-reviewer", msgs[0].FromTitle)
@@ -948,6 +948,6 @@ func TestNotifyHuman_OversizedRequestRejected(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 
-	msgs, _ := db.ListHumanMessages()
+	msgs, _ := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	assert.Empty(t, msgs, "an oversized request must not be persisted")
 }

@@ -276,8 +276,18 @@ func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
 	for _, m := range messages {
 		byID[m.ID] = m
 	}
-	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments ORDER BY message_id, seq, id`)
+	// A bounded slice reads only its own attachments; the full history reads
+	// the whole (smaller) attachment table rather than binding thousands of ids.
+	query := `SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`
+	var args []any
+	if len(messages) <= 500 {
+		query += ` WHERE message_id IN (?` + strings.Repeat(",?", len(messages)-1) + `)`
+		for _, m := range messages {
+			args = append(args, m.ID)
+		}
+	}
+	rows, err := d.Query(query+` ORDER BY message_id, seq, id`, args...)
 	if err != nil {
 		return err
 	}
@@ -295,12 +305,135 @@ func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
 	return rows.Err()
 }
 
-// ListHumanMessages returns every human message, newest first.
-//
-// Ordering is by id DESC because this history's "newest" contract is insertion
-// order. The autoincrement key is unique, so equal created_at instants still
-// have a stable total order.
-func ListHumanMessages() ([]*HumanMessage, error) {
+// MaxHumanMessagesPage bounds every human-message listing. There is no
+// unbounded read of this history: callers page through it with
+// ListHumanMessagesPage, so a growing table never grows a single query.
+const MaxHumanMessagesPage = 500
+
+// HumanMessageFilter narrows a human-message listing in SQL. Sender matches
+// the stable agent id, or for a legacy row without one, its conversation (or
+// any conversation that agent owns). Query is a case-insensitive substring
+// over sender title/agent/conv, group, subject and body. Unread keeps only
+// unread rows; SenderlessGroupPrefix keeps rows with no local sender whose
+// group name starts with the prefix (remote operator mail).
+type HumanMessageFilter struct {
+	Sender                string
+	Query                 string
+	Unread                bool
+	SenderlessGroupPrefix string
+}
+
+// humanMessageEffectiveAgent is a row's stable sender id, healing a legacy
+// row that only recorded its conversation.
+const humanMessageEffectiveAgent = `COALESCE(NULLIF(from_agent, ''),
+	(SELECT ac.agent_id FROM agent_conversations ac WHERE ac.conv_id = human_messages.from_conv), '')`
+
+// humanMessageEffectiveTitle is the sender title the dashboard shows: the
+// stored snapshot, or for a row stored before the sender had one, its actor's
+// spawn-time pending name.
+const humanMessageEffectiveTitle = `COALESCE(NULLIF(from_title, ''),
+	(SELECT a.pending_name FROM agents a WHERE a.agent_id = ` + humanMessageEffectiveAgent + `), '')`
+
+func (f HumanMessageFilter) where() (string, []any) {
+	var clauses []string
+	var args []any
+	if f.Sender != "" {
+		clauses = append(clauses, `(from_agent = ? OR (from_agent = '' AND (from_conv = ? OR `+humanMessageEffectiveAgent+` = ?)))`)
+		args = append(args, f.Sender, f.Sender, f.Sender)
+	}
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		var ors []string
+		for _, col := range []string{humanMessageEffectiveTitle, humanMessageEffectiveAgent, "from_conv", "group_name", "subject", "body"} {
+			ors = append(ors, `instr(lower(`+col+`), ?) > 0`)
+			args = append(args, q)
+		}
+		clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.Unread {
+		clauses = append(clauses, `read_at IS NULL`)
+	}
+	if f.SenderlessGroupPrefix != "" {
+		clauses = append(clauses, `from_conv = '' AND substr(group_name, 1, ?) = ?`)
+		args = append(args, len(f.SenderlessGroupPrefix), f.SenderlessGroupPrefix)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func clampHumanMessagesLimit(limit int) int {
+	return max(1, min(limit, MaxHumanMessagesPage))
+}
+
+// ListHumanMessagesPage returns one newest-first page of the filtered human
+// messages. limit is clamped to [1, MaxHumanMessagesPage].
+func ListHumanMessagesPage(f HumanMessageFilter, offset, limit int) ([]*HumanMessage, error) {
+	where, args := f.where()
+	args = append(args, clampHumanMessagesLimit(limit), max(offset, 0))
+	return queryHumanMessages(where+` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
+}
+
+// CountHumanMessages counts the filtered human messages.
+func CountHumanMessages(f HumanMessageFilter) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	where, args := f.where()
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM human_messages `+where, args...).Scan(&n)
+	return n, err
+}
+
+// HumanMessagePosition reports a message's zero-based index in the filtered,
+// newest-first listing, or -1 when it is not in it.
+func HumanMessagePosition(f HumanMessageFilter, id int64) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return -1, err
+	}
+	where, args := f.where()
+	scope := where
+	if scope == "" {
+		scope = "WHERE 1"
+	}
+	var present, newer int
+	err = d.QueryRow(`SELECT
+		COALESCE(SUM(CASE WHEN id = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN id > ? THEN 1 ELSE 0 END), 0)
+		FROM human_messages `+scope+` AND id >= ?`, append([]any{id, id}, append(args, id)...)...).Scan(&present, &newer)
+	if err != nil || present == 0 {
+		return -1, err
+	}
+	return newer, nil
+}
+
+// ListUnreadAndRecentHumanMessages returns, newest first, every unread human
+// message plus the newest `recent` ones, capped at limit rows. It is the
+// bounded slice the polled dashboard snapshot carries; the full history is
+// paged through the mailbox endpoint.
+func ListUnreadAndRecentHumanMessages(recent, limit int) ([]*HumanMessage, error) {
+	return queryHumanMessages(`WHERE read_at IS NULL
+		   OR id IN (SELECT id FROM human_messages ORDER BY id DESC LIMIT ?)
+		ORDER BY id DESC LIMIT ?`, recent, clampHumanMessagesLimit(limit))
+}
+
+// HumanMessageStats summarizes the human-message history without loading it:
+// the row count, the unread count and the newest created_at (zero when empty).
+func HumanMessageStats() (total, unread int, lastAt time.Time, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, 0, time.Time{}, err
+	}
+	var last dbTimestamp
+	err = d.QueryRow(`SELECT COUNT(*), COUNT(*) - COUNT(read_at),
+		(SELECT created_at FROM human_messages ORDER BY id DESC LIMIT 1)
+		FROM human_messages`).Scan(&total, &unread, &last)
+	return total, unread, last.Time(), err
+}
+
+func queryHumanMessages(tail string, args ...any) ([]*HumanMessage, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -309,7 +442,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
 		       process_run_id, process_node_id, process_command_id
 		FROM human_messages
-		ORDER BY id DESC`)
+		`+tail, args...)
 	if err != nil {
 		return nil, err
 	}

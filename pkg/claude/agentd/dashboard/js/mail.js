@@ -85,12 +85,11 @@ import { proposalTurn } from './proposals-model.js';
 import { confirmModal, toast } from './refresh.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, wz } from './mail-labels.js';
-import { humanNotificationTargetPage } from './human-notification-attention.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { remoteNodeID } from './fleet-model.js';
 import { humanReadShared } from './peer-view-limits.js';
 import {
-  adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
+  createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
@@ -445,8 +444,15 @@ async function loadMailboxes() {
   }
 }
 
-async function loadMessages() {
+// focus names a human notification whose page the server should serve: the
+// snapshot only carries recent and unread notifications, so the page of an
+// arbitrary one is the server's to compute. It stays pending until a response
+// that carried it commits, so a background refresh that supersedes the
+// focused request asks for the same page instead of page 1.
+async function loadMessages({ focus = 0 } = {}) {
   const id = mail.selected;
+  if (focus) mail.pendingFocus = focus;
+  const focusID = id === HUMAN_ID ? mail.pendingFocus : 0;
   // The access-requests folder renders from the live snapshot, not from
   // /api/mailbox — there are no stored rows to page. Skip the fetch so it
   // doesn't 404 on a mailbox that doesn't exist server-side.
@@ -463,6 +469,7 @@ async function loadMessages() {
     page_size: String(mail.pageSize),
   });
   if (id === HUMAN_ID && mail.senderFilter) params.set('sender', mail.senderFilter);
+  if (focusID) params.set('focus', String(focusID));
   // The "all" firehose and group folders honour include_retired
   // server-side — a group folder hides retired members' traffic by
   // default, like the firehose. Sending it for a specific agent folder is
@@ -481,7 +488,9 @@ async function loadMessages() {
     // attachment routes; the URLs the peer sends name its own routes.
     const remote = remoteNodeID();
     if (remote && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m, id !== HUMAN_ID));
-    mailState.messageRequest.commitRequest(token, data);
+    if (mailState.messageRequest.commitRequest(token, data) && focusID && mail.pendingFocus === focusID) {
+      mail.pendingFocus = 0;
+    }
   } catch (error) {
     if (mailState.messageRequest.failRequest(token, error)) clearMessages();
   }
@@ -1094,13 +1103,14 @@ function selectMailbox(id, options = {}) {
   if (!id || id === mail.selected) {
     if (Number(options.page) > 0) mail.page = Number(options.page);
     // Re-click on the active folder: just refresh it.
-    return loadMessages().then(() => {
+    return loadMessages({ focus: options.focus }).then(() => {
       pruneSelections();
       paintMail();
       return !!id && mail.selected === id;
     });
   }
   mail.selected = id;
+  mail.pendingFocus = 0;
   mail.selectedMsgId = null;
   mail.selectedMsgs.clear();  // message selection is per-folder
   mail.messages = [];
@@ -1111,7 +1121,7 @@ function selectMailbox(id, options = {}) {
   dashPrefs.setItem(SELECTED_KEY, id);
   if (options.navigate) announceMailLocation(false);
   paintMail();        // immediate feedback (active folder, empty list)
-  return loadMessages().then(() => {
+  return loadMessages({ focus: options.focus }).then(() => {
     pruneSelections();
     paintMail();
     return mail.selected === id;
@@ -1215,10 +1225,7 @@ async function openHumanNotifications(sender, messageID) {
   mail.messageQuery = sender;
   mail.senderFilter = sender;
   messageID = Number(messageID) || null;
-  const targetPage = messageID
-    ? humanNotificationTargetPage(lastSnapshot, sender, messageID, mail.pageSize)
-    : 1;
-  mail.page = targetPage;
+  mail.page = 1;
   mail.selectedMsgs.clear();
   const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) {
@@ -1228,31 +1235,20 @@ async function openHumanNotifications(sender, messageID) {
   await loadMailboxes();
   const selected = await selectMailbox(HUMAN_ID, {
     preserveSenderFilter: true,
-    page: targetPage,
+    page: 1,
+    focus: messageID,
   });
   if (!selected) return;
-  const target = messageID
+  // A refresh superseded the focused load before it committed; finish it.
+  if (mail.pendingFocus) await loadMessages();
+  const exact = messageID
     ? mail.messages.find((message) => message.id === messageID)
     : null;
-  let exact = target;
   if (messageID && !exact) {
-    // The snapshot used to estimate the page can race an insertion/deletion.
-    // Probe both adjacent pages, as the generic Messages attention jump does,
-    // before giving up. Never silently open a different notification.
-    const estimatedPage = mail.page;
-    for (const candidatePage of adjacentAttentionPages(estimatedPage, pageCount())) {
-      mail.page = candidatePage;
-      await loadMessages();
-      exact = mail.messages.find((message) => message.id === messageID);
-      if (exact) break;
-    }
-    if (!exact) {
-      mail.page = estimatedPage;
-      await loadMessages();
-      mail.selectedMsgId = null;
-      paintReader();
-      return;
-    }
+    // Deleted since the snapshot. Never silently open a different notification.
+    mail.selectedMsgId = null;
+    paintReader();
+    return;
   }
   const first = exact || mail.messages[0];
   if (first) selectMessage(first.id);
@@ -1586,8 +1582,8 @@ function clearAttentionSearch() {
 
 // focusNextAttention opens the oldest outstanding item advertised by the
 // Messages badge. Access requests are already snapshot-ordered oldest-first;
-// human notifications are newest-first and paged, so nextMessagesAttention
-// returns the target's full-snapshot index for a direct page jump.
+// human notifications are newest-first and paged, so the server serves the
+// page holding the target (focus).
 async function focusNextAttention(snapshot) {
   if (mail.busy) return false;
   const target = nextMessagesAttention(snapshot);
@@ -1603,31 +1599,12 @@ async function focusNextAttention(snapshot) {
     return true;
   }
 
-  const selected = await selectMailbox(HUMAN_ID);
+  const selected = await selectMailbox(HUMAN_ID, { focus: target.id });
   if (!selected || mail.selected !== HUMAN_ID) return false;
-  const targetPage = Math.floor(target.index / mail.pageSize) + 1;
-  if (mail.page !== targetPage) {
-    mail.page = targetPage;
-    await loadMessages();
-  }
-  if (mail.selected !== HUMAN_ID) return false;
+  if (mail.pendingFocus) await loadMessages();
   if (!mail.messages.some((message) => message.id === target.id)) {
-    // A mutation between snapshot and mailbox fetch can move the target across
-    // one page boundary: insertions push it later, while deletions pull it
-    // earlier. Probe both neighbours before leaving the operator at the
-    // estimated page.
-    const estimatedPage = mail.page;
-    for (const candidatePage of adjacentAttentionPages(estimatedPage, pageCount())) {
-      mail.page = candidatePage;
-      await loadMessages();
-      if (mail.messages.some((message) => message.id === target.id)) break;
-    }
-    if (!mail.messages.some((message) => message.id === target.id)) {
-      mail.page = estimatedPage;
-      await loadMessages();
-      paintMail();
-      return false;
-    }
+    paintMail();
+    return false;
   }
   selectMessage(target.id);
   // Avoid reopening the same notification on a rapid second click before the

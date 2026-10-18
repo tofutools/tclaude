@@ -25,7 +25,7 @@ func healthFixture(t *testing.T) (*fedRuntime, string) {
 }
 func healthMessages(t *testing.T) []*db.HumanMessage {
 	t.Helper()
-	m, e := db.ListHumanMessages()
+	m, e := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, e)
 	return m
 }

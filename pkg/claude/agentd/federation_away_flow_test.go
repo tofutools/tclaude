@@ -239,7 +239,7 @@ func TestFederation_AwayNoticesAndHumanOnly(t *testing.T) {
 	p.send(incoming)
 	p.send(incoming)
 	fedEventually(t, "remote operator inbox", func() bool {
-		messages, err := db.ListHumanMessages()
+		messages, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 		require.NoError(t, err)
 		n := 0
 		for _, m := range messages {

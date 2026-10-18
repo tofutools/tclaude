@@ -449,3 +449,37 @@ test('on a peer page the reader answers, marks and downloads through that peer',
   assert.match(locks[1], /node\.messages\.mark-read/);
   await mounted.unmount();
 });
+
+test('the reader keeps a notification the snapshot dropped and pages the sender history', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { GroupsNotificationReader } = await harness.importDashboardModule(
+    'js/groups-notification-reader.js',
+  );
+  const sender = { agent: 'agt_sender', conv: 'conv-sender', label: 'sender' };
+  const open = { id: 41, from_agent: 'agt_sender', subject: 'open one', read: false };
+  const older = { id: 12, from_agent: 'agt_sender', subject: 'older read one', read: true };
+  const savedFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return { ok: true, json: async () => ({ messages: [{ ...open }, older] }) };
+  };
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const state = { snapshot: { value: { messages: [open], messages_unread: 1 } }, publish() {} };
+  const render = (snapshot) => harness.html`
+    <${GroupsNotificationReader} descriptor=${{ sender, messageId: 41 }}
+      snapshot=${snapshot} state=${state} actions=${{ reportError() {} }}
+      onSelect=${() => {}} onClose=${() => {}} />`;
+
+  const mounted = await harness.mount(render(state.snapshot.value));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(urls[0], /\/api\/mailbox\?id=human&sender=agt_sender/);
+  assert.match(mounted.container.textContent, /1 of 2 from this agent/, 'history rows join the sender list');
+
+  // Marked read elsewhere: the next snapshot no longer carries it.
+  await mounted.rerender(render({ messages: [], messages_unread: 0 }));
+  const drawer = mounted.container.querySelector('.human-notification-drawer');
+  assert.ok(drawer, 'the drawer stays open');
+  assert.equal(drawer.getAttribute('data-message-id'), '41', 'and keeps the same notification');
+  await mounted.unmount();
+});

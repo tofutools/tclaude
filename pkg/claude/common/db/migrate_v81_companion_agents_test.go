@@ -121,7 +121,7 @@ func TestDualWrite_HumanMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	// ListHumanMessages surfaces the companion (newest first).
-	msgs, err := ListHumanMessages()
+	msgs, err := ListHumanMessagesPage(HumanMessageFilter{}, 0, MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 2)
 	assert.Equal(t, "", msgs[0].FromAgent, "non-actor sender surfaces empty FromAgent")

@@ -24,7 +24,7 @@ test('Messages delivery state distinguishes offline notification discard', async
 test('Messages attention prioritizes the oldest pending access request, then the oldest unread notification', async (t) => {
   const harness = await createPreactHarness(t);
   const {
-    adjacentAttentionPages, nextMessagesAttention, prepareMessagesAttention,
+    nextMessagesAttention, prepareMessagesAttention,
   } = await harness.importDashboardModule('js/mail-state.js');
   const messages = [
     { id: 30, read: false },
@@ -51,9 +51,6 @@ test('Messages attention prioritizes the oldest pending access request, then the
   prepareMessagesAttention(jumpState);
   assert.equal(jumpState.messageQuery, '');
   assert.deepEqual([...jumpState.selectedMsgs], []);
-  assert.deepEqual(adjacentAttentionPages(3, 5), [4, 2]);
-  assert.deepEqual(adjacentAttentionPages(1, 5), [2]);
-  assert.deepEqual(adjacentAttentionPages(5, 5), [4]);
 });
 
 test('Messages state publishes atomic snapshots and does not leak mutable selections', async (t) => {

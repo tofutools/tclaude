@@ -427,16 +427,22 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	})
 	// The human.notify channel comes next — it is the operator's own
 	// folder, distinct from the agent-to-agent traffic.
-	humanMsgs, humanUnread := buildHumanMessagesSnapshot()
-	mailboxes = append(mailboxes, dashboardMailbox{
+	humanTotal, humanUnread, humanLastAt, err := db.HumanMessageStats()
+	if err != nil {
+		slog.Warn("mailbox: human message stats failed", "error", err)
+	}
+	humanBox := dashboardMailbox{
 		ID:     humanMailboxID,
 		Kind:   "human",
 		Title:  "Human notifications",
-		In:     len(humanMsgs),
-		Total:  len(humanMsgs),
+		In:     humanTotal,
+		Total:  humanTotal,
 		Unread: humanUnread,
-		LastAt: latestHumanMessageAt(humanMsgs),
-	})
+	}
+	if !humanLastAt.IsZero() {
+		humanBox.LastAt = humanLastAt.Format(time.RFC3339)
+	}
+	mailboxes = append(mailboxes, humanBox)
 	// Final order: [all, human] (pinned), then groups, then the agent page.
 	mailboxes = append(mailboxes, groupBoxes...)
 	for _, conv := range page {
@@ -497,15 +503,6 @@ func agentMailboxEntries(convs []string, counts map[string]db.MailboxCount,
 		out[conv] = mb
 	}
 	return out
-}
-
-// latestHumanMessageAt returns the newest human message's timestamp (the
-// snapshot is already newest-first), or "" when empty.
-func latestHumanMessageAt(msgs []dashboardHumanMessage) string {
-	if len(msgs) == 0 {
-		return ""
-	}
-	return msgs[0].CreatedAt
 }
 
 // mailboxMessage is one message in a mailbox's reading list. Direction
@@ -610,7 +607,7 @@ type mailboxPage struct {
 }
 
 // handleDashboardMailbox serves
-// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size= — one
+// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&focus=&unread= — one
 // newest-first page of the selected mailbox's messages, server-filtered
 // by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
@@ -631,7 +628,9 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	page, pageSize := mailboxPageParams(r)
 
 	if id == humanMailboxID {
-		p := humanMailboxPage(q, sender, page, pageSize)
+		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
+		unread := r.URL.Query().Get("unread") == "1"
+		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, page, pageSize, focus)
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -725,8 +724,8 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 // humanMailboxMessages maps the human_messages snapshot into the shared
 // mailboxMessage shape so the reading pane renders uniformly. Every row
 // is direction "in" — agents notifying the human.
-func humanMailboxMessages() []mailboxMessage {
-	rows, _ := buildHumanMessagesSnapshot()
+func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
+	rows, _ := humanMessageViews(page)
 	out := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, mailboxMessage{
@@ -1066,59 +1065,45 @@ func withRetiredParticipants(members, participants []string, retiredSet map[stri
 	return out
 }
 
-// humanMailboxPage paginates the human_messages folder. The snapshot is
-// small (the operator's own notifications) and lives in a different
-// table with its own builder, so search + paging happen in Go over the
-// already-loaded, newest-first snapshot rather than in SQL.
-func humanMailboxPage(q, sender string, page, pageSize int) mailboxPage {
-	all := humanMailboxMessages()
-	filtered := all
-	if sender != "" || q != "" {
-		lq := strings.ToLower(q)
-		filtered = make([]mailboxMessage, 0, len(all))
-		for _, m := range all {
-			if humanMsgMatchesSender(m, sender) && (q == "" || humanMsgMatchesSearch(m, lq)) {
-				filtered = append(filtered, m)
-			}
+// humanMailboxPage paginates the human_messages folder in SQL: the sender
+// filter, search, count and page window all run in the query, so only the
+// served page is read.
+//
+// focus, when it names a row in the filtered list, overrides page with the
+// page holding that row: the snapshot only carries recent and unread
+// notifications, so the browser cannot compute an older row's page itself.
+func humanMailboxPage(filter db.HumanMessageFilter, page, pageSize int, focus int64) mailboxPage {
+	empty := mailboxPage{Messages: []mailboxMessage{}, Page: 1, PageSize: pageSize}
+	total, err := db.CountHumanMessages(filter)
+	if err != nil {
+		slog.Warn("mailbox: count human messages failed", "error", err)
+		return empty
+	}
+	totalUnfiltered := total
+	if filter != (db.HumanMessageFilter{}) {
+		if totalUnfiltered, err = db.CountHumanMessages(db.HumanMessageFilter{}); err != nil {
+			slog.Warn("mailbox: count human messages failed", "error", err)
+			return empty
 		}
 	}
-	total := len(filtered)
-	servedPage, offset := clampOffset(page, pageSize, total)
-	end := offset + pageSize
-	if offset > total {
-		offset = total
+	if focus > 0 {
+		if i, err := db.HumanMessagePosition(filter, focus); err == nil && i >= 0 {
+			page = i/pageSize + 1
+		}
 	}
-	if end > total {
-		end = total
+	servedPage, offset := clampOffset(page, pageSize, total)
+	rows, err := db.ListHumanMessagesPage(filter, offset, pageSize)
+	if err != nil {
+		slog.Warn("mailbox: list human messages failed", "error", err)
+		return empty
 	}
 	return mailboxPage{
-		Messages:        filtered[offset:end],
+		Messages:        humanMailboxMessages(rows),
 		Page:            servedPage,
 		PageSize:        pageSize,
 		Total:           total,
-		TotalUnfiltered: len(all),
+		TotalUnfiltered: totalUnfiltered,
 	}
-}
-
-// humanMsgMatchesSender is the structured half of a Groups-row notification
-// deep link. Unlike q, it is exact and sender-only: another agent mentioning
-// this id in a subject/body must never leak into the focused result.
-func humanMsgMatchesSender(m mailboxMessage, sender string) bool {
-	return sender == "" || m.FromAgent == sender || (m.FromAgent == "" && m.FromConv == sender)
-}
-
-// humanMsgMatchesSearch reports whether a human notification matches the
-// (already-lowercased) query, over the same fields the agent-folder
-// search covers that a human message has: sender title / stable agent-id /
-// conv-id, group,
-// subject, body.
-func humanMsgMatchesSearch(m mailboxMessage, lq string) bool {
-	for _, s := range []string{m.FromTitle, m.FromAgent, m.FromConv, m.Group, m.Subject, m.Body} {
-		if s != "" && strings.Contains(strings.ToLower(s), lq) {
-			return true
-		}
-	}
-	return false
 }
 
 // handleDashboardMailboxDelete serves POST /api/mailbox/delete — hard-

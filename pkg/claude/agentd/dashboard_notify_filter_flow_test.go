@@ -398,7 +398,7 @@ func TestNotificationFilters_GateNotifyHumanBanner(t *testing.T) {
 	require.NoError(t, db.SetConvNotifyPref(conv, db.NotifyPrefOff))
 	send("while muted")
 	assert.Empty(t, banners, "a muted sender's ping must skip the OS banner")
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1, "the message itself still lands in the Messages tab")
 

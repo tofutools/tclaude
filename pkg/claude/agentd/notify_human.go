@@ -1086,17 +1086,38 @@ func humanImageHeaderMatches(mediaType string, header []byte) bool {
 	}
 }
 
-// buildHumanMessagesSnapshot loads the human_messages rows for the
-// dashboard snapshot, newest first, plus the unread count that drives
-// the Messages tab badge.
+// The polled snapshot carries every unread notification (they drive the
+// attention glyphs and badges) plus the newest few, never the whole history:
+// that is paged through /api/mailbox?id=human. The cap only bounds a flood
+// of unread rows; messages_unread still counts all of them.
+const (
+	snapshotRecentHumanMessages = 20
+	snapshotMaxHumanMessages    = 500
+)
+
+// buildHumanMessagesSnapshot loads the bounded human_messages slice for the
+// dashboard snapshot, newest first, plus the unread count that drives the
+// Messages tab badge.
 func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
-	rows, err := db.ListHumanMessages()
+	rows, err := db.ListUnreadAndRecentHumanMessages(snapshotRecentHumanMessages, snapshotMaxHumanMessages)
 	if err != nil {
 		slog.Warn("dashboard: list human messages failed", "error", err)
 		// Empty (not nil) slice so the snapshot serializes [] — the
 		// dashboard JS calls .map() on it directly.
 		return []dashboardHumanMessage{}, 0
 	}
+	out, unread := humanMessageViews(rows)
+	if len(rows) == snapshotMaxHumanMessages {
+		if _, all, _, err := db.HumanMessageStats(); err == nil {
+			unread = all
+		}
+	}
+	return out, unread
+}
+
+// humanMessageViews maps human_messages rows to their dashboard shape and
+// counts the unread ones among them.
+func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 	// A short-lived Codex sender can notify the human before its conversation
 	// index exists. Older send paths therefore snapshotted an empty from_title
 	// even though the actor's spawn-time pending_name was already durable in

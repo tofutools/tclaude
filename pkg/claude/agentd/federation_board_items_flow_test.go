@@ -175,7 +175,7 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	updates = must("GET", "/updates", nil)
 	require.Equal(t, true, updates["notify"])
 	require.Equal(t, third["version"], updates["updates"].([]any)[0].(map[string]any)["latest_version"])
-	notes, e := db.ListHumanMessages()
+	notes, e := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, e)
 	announced := 0
 	for _, n := range notes {
@@ -188,7 +188,7 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	require.Equal(t, 1, announced)
 	agentd.ExpireBoardUpdatesForTest()
 	must("GET", "/updates", nil)
-	notes, e = db.ListHumanMessages()
+	notes, e = db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, e)
 	again := 0
 	for _, n := range notes {
@@ -201,7 +201,7 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	agentd.RestartBoardUpdatesForTest()
 	fourth := must("POST", "/"+copiedBoard+"/items", map[string]any{"name": "fourth edition", "item": copiedItem, "parent": third["version"], "only": []string{"roles/board-role"}})
 	must("GET", "/updates", nil)
-	notes, e = db.ListHumanMessages()
+	notes, e = db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, e)
 	subjects := []string{}
 	for _, n := range notes {

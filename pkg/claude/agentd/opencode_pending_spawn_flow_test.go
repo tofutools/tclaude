@@ -281,7 +281,7 @@ func TestOpenCodeAgent_BackgroundBootFailureClearsPendingAndNotifies(t *testing.
 	assert.Nil(t, gone, "a failed deferred launch must not leave a forever-Pending row")
 	assert.Empty(t, f.ListGroupMembers("oc-crew"), "nothing was enrolled")
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	found := false
 	for _, m := range msgs {
@@ -313,7 +313,7 @@ func TestPendingSpawnSweeper_OrphanDropNotifiesOperator(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, gone, "the orphaned reservation is dropped")
 
-	msgs, err := db.ListHumanMessages()
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, db.MaxHumanMessagesPage)
 	require.NoError(t, err)
 	found := false
 	for _, m := range msgs {

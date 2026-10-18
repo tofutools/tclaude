@@ -1052,19 +1052,16 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "read remote operator mail") {
 		return
 	}
-	msgs, err := db.ListHumanMessages()
+	prefix := db.FederationHumanGroup("")
+	// Remote operator rows have no local sender; a local group that happens
+	// to be named federation:… cannot pose as one.
+	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{SenderlessGroupPrefix: prefix}, 0, db.MaxHumanMessagesPage)
 	if err != nil {
 		writeFedErr(w, err)
 		return
 	}
-	prefix := db.FederationHumanGroup("")
 	out := []fedInboxJSON{}
 	for _, m := range msgs {
-		// Remote operator rows have no local sender; a local group that
-		// happens to be named federation:… cannot pose as one.
-		if m.FromConv != "" || !strings.HasPrefix(m.GroupName, prefix) {
-			continue
-		}
 		out = append(out, fedInboxJSON{ID: m.ID, From: m.FromTitle, Instance: strings.TrimPrefix(m.GroupName, prefix),
 			Subject: m.Subject, Body: m.Body, CreatedAt: m.CreatedAt, Read: m.IsRead()})
 	}

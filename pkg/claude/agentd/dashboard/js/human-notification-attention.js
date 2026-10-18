@@ -34,14 +34,6 @@ export function humanNotificationMatchesSender(message, sender) {
   );
 }
 
-export function humanNotificationTargetPage(snapshot, sender, messageID, pageSize) {
-  const size = Math.max(1, Number(pageSize) || 1);
-  const index = (snapshot?.messages || [])
-    .filter((message) => humanNotificationMatchesSender(message, sender))
-    .findIndex((message) => message.id === Number(messageID));
-  return index < 0 ? 1 : Math.floor(index / size) + 1;
-}
-
 function senderMatchesMember(message, member) {
   return humanNotificationMatchesSender(message, member);
 }
