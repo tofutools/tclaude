@@ -480,13 +480,17 @@ function createNodeSpawnActions(dependencies, { node = '', nodeId = '', name = '
     async spawn(request) {
       // The node would open the new agent's window on its own desktop.
       const { auto_focus: _focus, auto_focus_web: _web, ...body } = request.body || {};
-      return base.spawn({ ...request, body: { ...body, auto_focus: false } });
+      // ?as=local: the node serves its regular spawn route to an
+      // unrestricted peer (peer_actions.go servePeerSpawn).
+      const url = `${request.url}${String(request.url).includes('?') ? '&' : '?'}as=local`;
+      return base.spawn({ ...request, url, body: { ...body, auto_focus: false } });
     },
     async complete(payload, draft) {
       await base.complete(payload, { ...draft, autoFocus: false });
       const agent = payload?.agent_id || '';
       if (draft.autoFocus && agent && nodeId) {
-        void openNodeTerminal({ instance: nodeId, agent, peerLabel: name });
+        // The node lists a new agent's session within a few seconds.
+        void openNodeTerminal({ instance: nodeId, agent, peerLabel: name, wait: 20000 });
       }
     },
   });

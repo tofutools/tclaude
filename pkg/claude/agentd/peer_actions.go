@@ -296,6 +296,14 @@ func decodePeerActionLimit(w http.ResponseWriter, r *http.Request, out any, limi
 // automatically under the grant's policy; without one it waits for this
 // node's operator, exactly like an agent's federation spawn-request.
 func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	// An unrestricted peer's dashboard spawns as this node's own spawn dialog
+	// does (agent-spawn-actions.js forNode), marking it ?as=local: the
+	// regular spawn route and body. Without the mark the route keeps the
+	// remote spawn request, which the CLI and request mode send.
+	if r.URL.Query().Get("as") == "local" && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
+		return
+	}
 	g, err := db.GetAgentGroupByName(r.PathValue("name"))
 	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) || !v.allows(rule, g.ID) {
 		writeError(w, 404, "not_found", "object not found")

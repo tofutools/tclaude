@@ -40,10 +40,10 @@ test("a node's spawn actions send every request to that node and keep this machi
   await actions.spawn({ url: '/api/groups/build/spawn', body: { name: 'w', auto_focus: true, auto_focus_web: true } });
   await actions.complete({ agent_id: 'agt_new1' }, { name: 'w', group: 'build', autoFocus: true });
   assert.deepEqual(calls.map(([url]) => url), [
-    `/api/peer/${NODE}/spawn-profiles`, `/api/peer/${NODE}/spawn-profile-default`, `/api/peer/${NODE}/groups/build/spawn`,
+    `/api/peer/${NODE}/spawn-profiles`, `/api/peer/${NODE}/spawn-profile-default`, `/api/peer/${NODE}/groups/build/spawn?as=local`,
   ]);
   assert.deepEqual(calls[2][2], { name: 'w', auto_focus: false }, "no window opens on the node's desktop");
-  assert.deepEqual(terminals, [{ instance: NODE, agent: 'agt_new1', peerLabel: 'forge' }], 'the browser terminal opens the new agent');
+  assert.deepEqual(terminals, [{ instance: NODE, agent: 'agt_new1', peerLabel: 'forge', wait: 20000 }], 'the browser terminal opens the new agent');
   assert.match(notes[0], /spawned w → build/);
 });
 

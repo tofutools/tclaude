@@ -213,3 +213,33 @@ func TestPeerUnrestrictedReachesTheLocalDashboard(t *testing.T) {
 		require.Equal(t, 403, code, "%s %s stays with this node: %s", c.method, c.path, body)
 	}
 }
+
+// An unrestricted peer's spawn dialog runs as this node's own (?as=local):
+// the regular spawn route and body. Unmarked, or from a restricted peer, the
+// route stays the remote spawn request.
+func TestPeerUnrestrictedSpawnsThroughTheLocalDialogRoute(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("crew")
+	require.Equal(t, 200, f.SpawnWith("crew", map[string]any{"name": "seed"}).Code, "the launch fixture is in place")
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	local := map[string]any{"name": "from-peer", "initial_message": "hello", "auto_focus": false}
+	call := func(path string) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", path, local))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := call("/api/groups/crew/spawn?as=local")
+	require.NotEqual(t, 200, code, "a restricted peer gets the remote spawn request: %s", body)
+
+	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
+	code, body = call("/api/groups/crew/spawn")
+	require.Equal(t, 400, code, "unmarked, the route is the remote spawn request: %s", body)
+	code, body = call("/api/groups/crew/spawn?as=local")
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"conv_id"`)
+	titles := []string{}
+	for _, m := range f.ListGroupMembers("crew") {
+		titles = append(titles, m.Title)
+	}
+	require.Contains(t, titles, "from-peer")
+}
