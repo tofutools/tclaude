@@ -2,6 +2,9 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -164,26 +167,67 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the grace window: the body override wins, clamped to
-	// [0, cap]. 0 is legitimate ("no grace — escalate immediately").
-	grace := shutdownGrace
-	if body.GraceMs != nil {
-		ms := *body.GraceMs
-		if ms < 0 {
-			ms = 0
-		}
-		grace = time.Duration(ms) * time.Millisecond
-		if grace > shutdownGraceCap {
-			grace = shutdownGraceCap
-		}
-	}
-
 	scope := strings.TrimSpace(body.Scope)
 	groupName, memberIDs, ok := resolvePowerScope(w, scope, body.Group)
 	if !ok {
 		return
 	}
+	serveShutdown(w, scope, groupName, aliveConvIDs(memberIDs), shutdownGraceFor(body.GraceMs))
+}
+
+// handleGroupShutdown serves POST /api/groups/{name}/shutdown: the group
+// scope of /api/shutdown, addressed by its path so a peer's grant for that
+// one group can cover it (peer_grant_routes.go). Body: {grace_ms?}.
+func handleGroupShutdown(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	var body struct {
+		GraceMs *int64 `json:"grace_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	memberIDs, ok := groupMemberConvIDs(w, g)
+	if !ok {
+		return
+	}
 	targets := aliveConvIDs(memberIDs)
+	if !peerMayPower(w, r, targets, PermGroupsMembersStop) {
+		return
+	}
+	serveShutdown(w, "group", g.Name, targets, shutdownGraceFor(body.GraceMs))
+}
+
+// peerMayPower holds a peer's group shut down or power on to the agents its
+// grant covers in every group they belong to, as its per-agent stop and
+// wake are (peerAgentActionAllowed): the route's grant names only the group
+// in its path, and a member may also sit in a group the peer holds nothing
+// in. A local caller passes.
+func peerMayPower(w http.ResponseWriter, r *http.Request, targets []string, slug string) bool {
+	a := peerGrantFromRequest(r)
+	if a == nil {
+		return true
+	}
+	for _, conv := range targets {
+		if !peerAgentActionAllowed(a.peer, conv, slug) {
+			writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for every affected group", slug))
+			return false
+		}
+	}
+	return true
+}
+
+// shutdownGraceFor resolves the grace window: the body override wins,
+// clamped to [0, cap]. 0 is legitimate ("no grace — escalate immediately").
+func shutdownGraceFor(ms *int64) time.Duration {
+	if ms == nil {
+		return shutdownGrace
+	}
+	grace := time.Duration(max(*ms, 0)) * time.Millisecond
+	return min(grace, shutdownGraceCap)
+}
+
+// serveShutdown stops targets, running agents, and reports each.
+func serveShutdown(w http.ResponseWriter, scope, groupName string, targets []string, grace time.Duration) {
 
 	outcomes := runShutdown(targets, grace)
 	// Deterministic order so the dashboard list (and the flow test)
@@ -249,7 +293,25 @@ func handlePowerOn(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	servePowerOn(w, scope, groupName, offlineConvIDs(memberIDs))
+}
+
+// handleGroupPowerOn serves POST /api/groups/{name}/power-on: the group
+// scope of /api/power-on, addressed by its path like handleGroupShutdown.
+func handleGroupPowerOn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	memberIDs, ok := groupMemberConvIDs(w, g)
+	if !ok {
+		return
+	}
 	targets := offlineConvIDs(memberIDs)
+	if !peerMayPower(w, r, targets, PermGroupsMembersResume) {
+		return
+	}
+	servePowerOn(w, "group", g.Name, targets)
+}
+
+// servePowerOn resumes targets, offline agents, and reports each.
+func servePowerOn(w http.ResponseWriter, scope, groupName string, targets []string) {
 
 	outcomes := runPowerOn(targets)
 	// Deterministic order so the dashboard list (and the flow test)
@@ -302,16 +364,8 @@ func resolvePowerScope(w http.ResponseWriter, scope, group string) (resolvedGrou
 			http.Error(w, "no such group "+groupName, http.StatusNotFound)
 			return "", nil, false
 		}
-		members, err := db.ListAgentGroupMembers(g.ID)
-		if err != nil {
-			http.Error(w, "list members: "+err.Error(), http.StatusInternalServerError)
-			return "", nil, false
-		}
-		ids := make([]string, 0, len(members))
-		for _, m := range members {
-			ids = append(ids, m.ConvID)
-		}
-		return groupName, ids, true
+		ids, ok := groupMemberConvIDs(w, g)
+		return groupName, ids, ok
 	case "all":
 		agents, err := db.ListActiveAgents()
 		if err != nil {
@@ -605,4 +659,18 @@ func waitForConvOffline(convID string, grace time.Duration) bool {
 		}
 		time.Sleep(sleep)
 	}
+}
+
+// groupMemberConvIDs lists g's members' conversations.
+func groupMemberConvIDs(w http.ResponseWriter, g *db.AgentGroup) ([]string, bool) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		http.Error(w, "list members: "+err.Error(), http.StatusInternalServerError)
+		return nil, false
+	}
+	ids := make([]string, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m.ConvID)
+	}
+	return ids, true
 }

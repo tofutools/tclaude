@@ -192,12 +192,16 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
 }
 
-// peerGroupGrants names, per group, the peer grants of peerGrantFamilies
-// (and the spawn directory, prompts and sandbox grants a group's default
-// directory, saved prompts and sandbox assignment also need) that
-// peer holds there, so its dashboard enables exactly the controls a click
-// would be allowed to run. It rides on every peer-view read, so it lists the
-// peer's grants once. Unrestricted trust holds them all on every visible
+// peerGroupControlGrants are the grants behind a group's peer-invoked
+// controls, which peer_view.groups names per group.
+var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsMembersStop, PermGroupsMembersResume}
+
+// peerGroupGrants names, per group, the peer grants of
+// peerGroupControlGrants (and the spawn directory, prompts and sandbox
+// grants a group's default directory, saved prompts and sandbox assignment
+// also need) that peer holds there, so its dashboard enables exactly the
+// controls a click would be allowed to run. It rides on every peer-view read,
+// so it lists the peer's grants once. Unrestricted trust holds them all on every visible
 // group, which the metadata's level already says: nothing is listed.
 func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 	if db.FederationPeerUnrestricted(peer) {
@@ -223,7 +227,7 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 			continue
 		}
 		var held []string
-		for _, slug := range []string{PermGroupsSettings, PermGroupsSettingsEnvironment} {
+		for _, slug := range peerGroupControlGrants {
 			if holds(g.ID, slug) {
 				held = append(held, slug)
 			}
@@ -276,9 +280,9 @@ func projectPeerGroupSettings(row *dashboardGroup, g *db.AgentGroup, peer string
 	}
 }
 
-// addPeerGroupSettingsRules declares the group settings a peer may change
-// with groups.settings: the quick options and settings of a group's header
-// and ⚙ menu.
+// addPeerGroupSettingsRules declares the group controls a peer may run: the
+// settings of a group's header and ⚙ menu (groups.settings), and its ⚙
+// shut down and power on (the member lifecycle grants).
 func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 	settings := func(param string, extra func(string, *db.AgentGroup) []string) peerViewRule {
 		return peerViewRule{feature: "groups.settings", requires: PermGroupsSettings, group: true, invoke: &peerInvokeSpec{param: param, extra: extra}}
@@ -298,6 +302,18 @@ func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 		"DELETE /api/groups/{group}/sandbox-profile",
 	} {
 		rules[pattern] = withPeerInvoke(pattern, settings("group", peerGroupSandboxGates))
+	}
+	// A group's ⚙ shut down / power on: the member lifecycle grants, for
+	// every member at once.
+	for pattern, requires := range map[string]string{
+		"POST /api/groups/{name}/shutdown": PermGroupsMembersStop,
+		"POST /api/groups/{name}/power-on": PermGroupsMembersResume,
+	} {
+		feature := "lifecycle.stop"
+		if requires == PermGroupsMembersResume {
+			feature = "lifecycle.resume"
+		}
+		rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: feature, requires: requires, group: true, invoke: &peerInvokeSpec{param: "name"}})
 	}
 }
 

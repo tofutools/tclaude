@@ -192,3 +192,69 @@ func TestPeerGroupNestingAndDefaultPrompts(t *testing.T) {
 	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
 	require.Equal(t, map[string][]string{"child": {agentd.PermGroupsSettings, agentd.PermGroupsMembersSpawnPrompts}}, out.PeerView.Groups)
 }
+
+// A group's ⚙ shut down and power on run under the member lifecycle grants
+// for that group, through the group's own routes, and only on members whose
+// every group grants them (as a per-agent stop or wake).
+func TestPeerGroupPowerUnderLifecycleGrants(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	f.HaveGroup("secret")
+	f.HaveConvWithTitle("pwr-solo", "solo")
+	f.HaveConvWithTitle("pwr-shared", "shared")
+	f.HaveAliveSession("pwr-solo", "spwn-pwr-solo", "tmux-pwr-solo", f.World.HomeDir)
+	f.HaveAliveSession("pwr-shared", "spwn-pwr-shared", "tmux-pwr-shared", f.World.HomeDir)
+	f.HaveMember("crew", "pwr-solo")
+	f.HaveMember("crew", "pwr-shared")
+	f.HaveMember("secret", "pwr-shared")
+	grant := func(slug, group string) {
+		t.Helper()
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=" + group})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	h := agentd.PeerViewHandler(p.id.ID())
+	call := func(path string) (int, string) {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", path, map[string]any{"grace_ms": 60}))
+		return rec.Code, rec.Body.String()
+	}
+
+	grant(agentd.PermGroupsRosterRead, "crew")
+	code, body := call("/api/groups/crew/shutdown")
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsMembersStop)
+	grant(agentd.PermGroupsMembersStop, "crew")
+	// A member also in secret, where the peer holds nothing, is not crew's
+	// to stop: nothing is.
+	code, body = call("/api/groups/crew/shutdown")
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, "every affected group")
+	require.True(t, f.World.Tmux.IsAlive("tmux-pwr-solo"))
+	require.True(t, f.World.Tmux.IsAlive("tmux-pwr-shared"))
+	grant(agentd.PermGroupsMembersStop, "secret")
+	code, body = call("/api/groups/crew/shutdown")
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"group":"crew"`)
+	require.False(t, f.World.Tmux.IsAlive("tmux-pwr-solo"))
+	require.False(t, f.World.Tmux.IsAlive("tmux-pwr-shared"))
+
+	code, body = call("/api/groups/crew/power-on")
+	require.Equal(t, 403, code, body)
+	grant(agentd.PermGroupsMembersResume, "crew")
+	code, body = call("/api/groups/crew/power-on")
+	require.Equal(t, 403, code, body, "the shared member also needs secret's resume grant")
+	grant(agentd.PermGroupsMembersResume, "secret")
+	code, body = call("/api/groups/crew/power-on")
+	require.Equal(t, 200, code, body)
+	require.Contains(t, body, `"resumed":2`)
+
+	snap := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	var out struct {
+		PeerView struct {
+			Groups map[string][]string `json:"groups"`
+		} `json:"peer_view"`
+	}
+	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
+	require.Equal(t, []string{agentd.PermGroupsMembersStop, agentd.PermGroupsMembersResume}, out.PeerView.Groups["crew"])
+}

@@ -157,6 +157,8 @@ func TestMatchAuditRoute(t *testing.T) {
 		{"remote-access setup", http.MethodPost, "/api/remote-access/setup", true, "remote-access.setup", db.AuditSourceDashboard, nil},
 		{"power shutdown", http.MethodPost, "/api/shutdown", true, "power.shutdown", db.AuditSourceDashboard, nil},
 		{"power on", http.MethodPost, "/api/power-on", true, "power.on", db.AuditSourceDashboard, nil},
+		{"group shutdown", http.MethodPost, "/api/groups/crew/shutdown", true, "power.shutdown", db.AuditSourceDashboard, map[string]string{"name": "crew"}},
+		{"group power on", http.MethodPost, "/api/groups/crew/power-on", true, "power.on", db.AuditSourceDashboard, map[string]string{"name": "crew"}},
 
 		// Reads + non-command routes must not match.
 		{"GET members is a read", http.MethodGet, "/v1/groups/crew/members", false, "", "", nil},
