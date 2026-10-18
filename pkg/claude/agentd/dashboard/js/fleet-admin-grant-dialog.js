@@ -25,7 +25,11 @@ function heldText(rows, slug) {
 // up front (planGrants), shows that plan, and sends it through one confirm.
 export function AddGrantDialog({ targets, initialTarget, groups, actions, confirm, toast, onClose, onDone }) {
   const [to, setTo] = useState(initialTarget || '');
-  const [rows, setRows] = useState([]);
+  // rows are the target's current grants (null while loading): a plan made
+  // without them could re-grant a spawn/job grant and drop its settings.
+  const [rows, setRows] = useState(null);
+  const [rowsError, setRowsError] = useState('');
+  const [reload, setReload] = useState(0);
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
   const [hideSensitive, setHideSensitive] = useState(false);
@@ -40,11 +44,12 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const target = targets.find((t) => t.id === to) || null;
 
   useEffect(() => {
-    if (!target) { setRows([]); return undefined; }
+    setRows(null); setRowsError('');
+    if (!target) return undefined;
     let off = false;
-    actions.grants(target.id).then((g) => { if (!off) setRows(grantRows(g, { ownPool: target.pool ? target.id.slice(6) : '', groups })); }).catch(() => { if (!off) setRows([]); });
+    actions.grants(target.id).then((g) => { if (!off) setRows(grantRows(g, { ownPool: target.pool ? target.id.slice(6) : '', groups })); }).catch((e) => { if (!off) setRowsError(errText(e)); });
     return () => { off = true; };
-  }, [to]);
+  }, [to, reload]);
 
   const needle = q.trim().toLowerCase();
   const visible = PEER_SLUGS
@@ -59,9 +64,9 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   const fields = LAUNCH_FIELDS.filter((f) => policySlugs.some((s) => !f.slugs || f.slugs.includes(s)));
   const gw = gateway.trim();
   const gwBad = gatewayKinds && gw && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(gw);
-  const plan = target ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows }) : { grants: [], missing: [] };
+  const plan = target && rows ? planGrants({ target: target.id, slugs: picked, groups: chosen, allGroups, gateway: gw, maxLive, launch, rows }) : { grants: [], missing: [] };
   const todo = plan.grants.filter((g) => !g.skip);
-  const canGrant = !!target && todo.length > 0 && !plan.missing.length && !gwBad && !busy;
+  const canGrant = !!target && !!rows && todo.length > 0 && !plan.missing.length && !gwBad && !busy;
 
   const toggle = (slug) => setPicked((p) => (p.includes(slug) ? p.filter((x) => x !== slug) : [...p, slug]));
   const toggleGroup = (g) => setChosen((c) => (c.includes(g) ? c.filter((x) => x !== g) : [...c, g]));
@@ -102,7 +107,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       for (const w of res.warnings || []) toast(w, true);
       toast(single ? `Granted ${single.slug} to ${target.label}` : `Granted ${n} permissions to ${target.label}`, false);
       onDone();
-    }).catch((e) => { toast(`Grant failed: ${errText(e)}`, true); onDone(false); })
+    }).catch((e) => { toast(`Grant failed: ${errText(e)}`, true); setReload((n) => n + 1); onDone(false); })
       .finally(() => setBusy(false));
   };
 
@@ -123,7 +128,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             const c = slugCategory(s.slug);
             const head = c !== lastCat ? html`<div class="fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
             lastCat = c;
-            const held = heldText(rows, s.slug);
+            const held = heldText(rows || [], s.slug);
             const on = picked.includes(s.slug);
             return html`${head}<label key=${s.slug} class=${`fa-gd-item${on ? ' on' : ''}`} data-grant-slug=${s.slug}>
               <input type="checkbox" checked=${on} onChange=${() => toggle(s.slug)} />
@@ -161,7 +166,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             <option value="">auto (default)</option><option value="manual">manual: each job waits for you</option></select></label>`}
         </div>`}
         <div class="fa-gd-plan" id="fleet-grant-plan">
-          ${!picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : html`
+          ${rowsError ? html`<span class="fa-danger" role="alert">Could not read ${target?.label}'s grants: ${rowsError}</span>` : !picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : !rows ? html`<span class="muted">Loading ${target.label}'s grants…</span>` : html`
             <b>${todo.length ? `${target.label} gets ${todo.length} grant${todo.length === 1 ? '' : 's'}:` : 'Nothing new to grant.'}</b>
             <ul>${plan.grants.map((g) => html`<li key=${g.key} data-plan=${g.key} class=${g.skip ? 'muted' : ''}><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code> ${where(g)}${g.body.spawn_policy ? ` (cap ${g.body.spawn_policy.max_live})` : ''}${g.skip ? ' — already granted' : g.existing ? ' — updates the existing grant' : ''}</li>`)}</ul>
             ${plan.missing.length > 0 && html`<div class="fa-warn">Pick a group for ${plan.missing.join(', ')}.</div>`}`}

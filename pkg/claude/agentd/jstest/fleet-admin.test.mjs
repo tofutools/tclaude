@@ -539,6 +539,13 @@ test('the grants page opens on All; the add dialog searches, plans per group and
   assert.deepEqual(s.log.filter((l) => l[0] === 'grant').map((l) => `${l[1].slug} ${l[1].scope}`), ['groups.roster.read group=build', 'message.direct group=ops', 'message.direct group=build']);
   assert.ok(s.toasts.some((m) => /granted 2 of 4; message\.direct in group build and the rest were not: daemon down/.test(m)));
   assert.ok(s.q('#fleet-grant-dialog'), 'a failed grant keeps the dialog open');
+  // Until the target's grants load, nothing is planned; a failed read says so.
+  s.actions.grants = async () => { throw new Error('peer gone'); };
+  await pickOption(s, '#fleet-grant-to', 'inst_lab');
+  assert.equal(s.q('#fleet-grant-submit').disabled, true);
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.q('#fleet-grant-submit').disabled, true);
+  assert.match(s.q('#fleet-grant-plan').textContent, /Could not read lab's grants: peer gone/);
 });
 
 test('a pool page revokes its own grants; re-granting keeps CLI launch settings and only changes the cap', async (t) => {
