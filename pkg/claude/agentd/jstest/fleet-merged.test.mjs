@@ -10,8 +10,8 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/fleet-merged-model.js');
   const merged = m.mergeSnapshots([
-    { node: self, entry: { snapshot: { group_attachments_mode: 'fixed', groups: [group('ops'), group('ops-sub', { parent: 'ops' })], agents: [{ agent_id: 'agt_1' }] }, receivedAt: 1000 } },
-    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], pending: [{ label: 'stuck-1', group: 'ops' }, { label: 'loose' }], peer_view: { included: [] } }, receivedAt: 1000 } },
+    { node: self, entry: { snapshot: { group_attachments_mode: 'fixed', groups: [group('ops'), group('ops-sub', { parent: 'ops' })], agents: [{ agent_id: 'agt_1' }], links: [{ id: 7, from: 'ops', to: 'ops-sub', mode: 'send' }] }, receivedAt: 1000 } },
+    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], pending: [{ label: 'stuck-1', group: 'ops' }, { label: 'loose' }], queued_spawns: [{ id: 3, group: 'ops', draft: {} }], peer_view: { included: [] } }, receivedAt: 1000 } },
     { node: lab, entry: { snapshot: { groups: [group('build')] }, receivedAt: 0, failure: { status: 502, code: 'peer_unreachable' } } },
   ], 61000);
   assert.deepEqual(merged.groups.map((g) => g.name), ['ops@desk', 'ops-sub@desk', 'ops@forge', 'build@lab']);
@@ -20,6 +20,8 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   assert.equal(merged.peer_view, undefined);
   assert.deepEqual(merged.agents.map((a) => a.agent_id), ['agt_1', 'agt_2']);
   assert.deepEqual(merged.pending, [{ label: 'stuck-1', group: 'ops@forge' }], 'a pending spawn sits in its node\'s group; one without a group stays on its node');
+  assert.deepEqual(merged.queued_spawns, [{ id: 3, group: 'ops@forge', own_group: 'ops', fleet_node: 'inst_forge', fleet_node_name: 'forge', draft: {} }], 'a queued spawn heads its node\'s group and names its node');
+  assert.deepEqual(merged.links, [{ id: 7, from: 'ops@desk', to: 'ops-sub@desk', mode: 'send' }], 'a node\'s links join its groups under their merged names');
   const labGroup = merged.groups[3];
   assert.equal(labGroup.fleet_node.stale, true); assert.equal(labGroup.fleet_node.label, 'stale · data 1 min old');
   assert.equal(merged.groups[2].fleet_node.stale, true, 'a minute-old snapshot is stale even without a failure');
@@ -170,6 +172,41 @@ test('a peer row runs what the peer grants through its own handlers or peer rout
   await mounted.unmount(); state.dispose();
 });
 
+test('fused Groups shows each node\'s triggers in its own groups, read from nodes that let it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [], triggers_enabled: true });
+  const rules = {
+    self: [{ id: 1, name: 'desk-global', scope: 'global', source: 'pr.opened', enabled: true }],
+    forge: [{ id: 1, name: 'forge-ops', scope: 'group', group: 'ops', source: 'pr.merged', enabled: true }],
+  };
+  const peers = {
+    forge: { groups: [group('ops')], agents: [], triggers_enabled: true, peer_view: { level: 'unrestricted' } },
+    lab: { groups: [group('qa')], agents: [], triggers_enabled: true, peer_view: { included: [] } },
+  };
+  const asked = [];
+  const fetchImpl = async (url) => {
+    const node = url.includes('inst_forge') ? 'forge' : url.includes('inst_lab') ? 'lab' : 'self';
+    if (url.includes('/firings')) return { ok: true, status: 200, json: async () => ({ firings: [] }) };
+    if (/\/triggers(\?|$)/.test(url)) { asked.push(node); return { ok: true, status: 200, json: async () => ({ triggers: rules[node] || [] }) }; }
+    return { ok: true, status: 200, json: async () => peers[node] };
+  };
+  const timers = fakeTimers();
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${() => {}} switchNode=${() => {}} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 5)));
+  const names = (key) => [...(mounted.container.querySelector(`details[data-group-key="${key}"]`)?.querySelectorAll('.group-triggers-section .rowname') || [])].map((n) => n.textContent);
+  assert.deepEqual(names('ops@desk'), ['desk-global'], 'this node\'s global rule, not forge\'s group rule of the same name');
+  assert.deepEqual(names('ops@forge'), ['forge-ops'], 'forge\'s rule on its own ops');
+  assert.deepEqual(names('qa@lab'), [], 'a restricted peer\'s triggers are not read');
+  assert.deepEqual(asked.sort(), ['forge', 'self'], 'each node is read once; lab is never asked');
+  await mounted.unmount(); state.dispose();
+});
+
 test('limitsCSS greys per node; a peer page keeps this node\'s terminals refused and skips odd node IDs', async (t) => {
   const harness = await createPreactHarness(t);
   const island = await harness.importDashboardModule('js/fleet-merged-island.js');
@@ -251,6 +288,16 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   assert.ok(row('agt_b1') && groupEl('reviewers@forge'), 'rows and groups render');
   assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, false, "this node's group headers drag (group-reorder.js)");
   assert.equal(harness.fireEvent(groupEl('reviewers@forge').querySelector('summary'), 'dragstart').defaultPrevented, true, 'a peer trusting this node restricted keeps its groups');
+  // A pending or queued spawn row drags to the bin (dnd.js) on a node this
+  // one acts on.
+  const spawnRow = (key) => {
+    const table = harness.document.createElement('table');
+    table.innerHTML = '<tbody><tr class="dnd-draggable" data-dnd-pending="1" data-dnd-queued="7"><td>q</td></tr></tbody>';
+    groupEl(key).appendChild(table);
+    return table.querySelector('tr');
+  };
+  assert.equal(harness.fireEvent(spawnRow('builders@desk'), 'dragstart').defaultPrevented, false, "this node's queued spawn drags to the bin");
+  assert.equal(harness.fireEvent(spawnRow('reviewers@forge'), 'dragstart').defaultPrevented, true, 'a restricted peer\'s does not');
   // dnd.js's pending Ctrl/Cmd clone hover must not finish under a move
   // between nodes this view takes.
   const dndOps = await harness.importDashboardModule('js/dnd-ops.js');

@@ -8,7 +8,7 @@ import {
   formatUsageDuration, formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView,
   usageProviderLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
-import { usageLocation } from './usage-hub-state.js';
+import { usageLocation, withCostsPeriod } from './usage-hub-state.js';
 import { Sparkline, SpendChart, topCostAgents } from './usage-overview-charts.js';
 
 export { topCostAgents };
@@ -245,7 +245,7 @@ export function UsageHubApp({ state, quotaState, costsState }) {
     if (event && isModifiedClick(event)) return;
     event?.preventDefault();
     if (!state.select(name)) return;
-    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: state.location.value } }));
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: withCostsPeriod(state.location.value) } }));
     // A quota card names its series; bring that graph into view.
     const series = event?.currentTarget?.dataset?.series;
     if (series) {

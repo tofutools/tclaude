@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
@@ -92,6 +92,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
   const [error, setError] = useState('');
   const [outbox, setOutbox] = useState(null);
   const [tick, setTick] = useState(0);
+  const bodyRef = useRef(null);
   useEffect(() => {
     actions.peers().then((p) => { setPeers(p); if (!peer && p[0]) setPeer(p[0].id); }).catch((e) => { setPeers([]); setError(errText(e)); });
   }, []);
@@ -107,7 +108,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
   };
-  return html`<${Overlay} id="peer-mail-modal" labelledby="peer-mail-title" onClose=${onClose} blocked=${busy}>
+  return html`<${Overlay} id="peer-mail-modal" labelledby="peer-mail-title" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}>
     <h3 id="peer-mail-title">Message a peer</h3>
     <div class="peer-mail-kind" role="radiogroup">
       <label><input type="radio" name="peer-mail-kind" value="operator" checked=${kind === 'operator'} onChange=${() => setKind('operator')} /> its operator</label>
@@ -119,7 +120,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       : html`<label class="peer-mail-opt">To <input id="peer-mail-to" value=${to} onInput=${(e) => setTo(e.currentTarget.value)} placeholder="agent@peer or group:<group>@peer" /></label>
         <label class="peer-mail-opt">Role <input id="peer-mail-role" value=${role} onInput=${(e) => setRole(e.currentTarget.value)} placeholder="only with group:…, e.g. reviewer" /></label>`}
     <label class="peer-mail-opt">Subject <input id="peer-mail-subject" value=${subject} onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
-    <label class="peer-mail-opt peer-mail-top">Body <textarea id="peer-mail-body" rows="6" value=${body} onInput=${(e) => setBody(e.currentTarget.value)}></textarea></label>
+    <label class="peer-mail-opt peer-mail-top">Body <textarea ref=${bodyRef} id="peer-mail-body" rows="6" value=${body} onInput=${(e) => setBody(e.currentTarget.value)}></textarea></label>
     <div class="muted">${kind === 'operator'
       ? 'Lands in that operator\'s Messages, from you as this node\'s operator.'
       : 'Delivered as mail from you, this node\'s operator, if the peer lets you message that agent or group.'} It waits in the outbox while the peer is offline.</div>

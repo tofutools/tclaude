@@ -65,6 +65,8 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
   const groups = [];
   const agents = [];
   const pending = [];
+  const links = [];
+  const queued = [];
   const seenAgents = new Set();
   const status = [];
   for (const { node, entry } of nodes) {
@@ -83,14 +85,19 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
         // Members name their node too, so an action on an agent alone (a
         // rename) reaches the node it is on (fleet-merged-island.js).
         ...(Array.isArray(g.members) ? { members: g.members.map((m) => ({ ...m, fleet_node: fleetNode })) } : {}),
-        // Links and attachments describe one node's configuration; the
-        // merged overview does not carry them across.
+        // A link to another node's group (federation_links) names that
+        // node's own configuration; the merged overview does not carry it.
         federation_links: undefined,
       });
     }
     // A node's pending spawns sit in its own groups, under their merged
     // names (one without a group would mix nodes in the Pending lens).
     for (const p of snap.pending || []) if (p?.group) pending.push({ ...p, group: suffix(p.group, node) });
+    // A node's queued spawns head its own groups' member tables; each names
+    // its node (fleet_node) and its own group name, which its dialog takes.
+    for (const q of snap.queued_spawns || []) if (q?.group) queued.push({ ...q, group: suffix(q.group, node), own_group: q.group, fleet_node: node.id, fleet_node_name: node.name });
+    // A node's links join its own groups, under their merged names.
+    for (const l of snap.links || []) links.push({ ...l, from: suffix(l.from, node), to: suffix(l.to, node) });
     for (const a of snap.agents || []) {
       const id = a.agent_id || a.conv_id;
       if (!id || seenAgents.has(`${node.id}/${id}`)) continue;
@@ -104,7 +111,8 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     agents,
     ungrouped: [],
     pending,
-    links: [],
+    links,
+    queued_spawns: queued,
     peer_view: undefined,
     fleet_nodes: status,
   };

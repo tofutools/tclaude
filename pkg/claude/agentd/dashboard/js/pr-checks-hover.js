@@ -486,8 +486,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
 // PRChecksBadge is the whole affordance: the n/m pill plus its panel. Renders
 // nothing when the snapshot carried no summary — a PR whose checks haven't
 // resolved yet, or a repo with no CI at all, keeps the bare PR link it always
-// had rather than growing an empty indicator.
-export function PRChecksBadge({ url, prNumber, summary }) {
+// had rather than growing an empty indicator. A merged/closed PR (prState)
+// whose checks are not failing is tagged .ci-final, which CSS hides unless
+// config dashboard.show_final_pr_checks opts back in.
+export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
   const rootRef = useRef(null);
   const instanceID = useId();
   const [hovered, setHovered] = useState(false);
@@ -516,11 +518,12 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const panelID = `ci-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
   const stateName = summary.state || 'unknown';
+  const final = (prState === 'merged' || prState === 'closed') && stateName !== 'failing';
 
   return html`
     <span
       ref=${rootRef}
-      class=${`ci-hover${open ? ' is-open' : ''}${placement ? ` ci-place-${placement.placement}` : ''}`}
+      class=${`ci-hover${final ? ' ci-final' : ''}${open ? ' is-open' : ''}${placement ? ` ci-place-${placement.placement}` : ''}`}
       onMouseEnter=${() => setHovered(true)}
       onMouseLeave=${() => setHovered(false)}
       onFocusIn=${() => setFocused(true)}

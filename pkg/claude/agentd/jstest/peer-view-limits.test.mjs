@@ -114,6 +114,22 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.deepEqual(out.map((c) => c.enabled !== false), [false, true, false, true, true]);
   assert.match(out[2].disabledReason, /does not share costs with you \(needs costs\.read\)/);
   assert.equal(mod.limitPeerViewCommands(cmds, { peer_view: pv }, undefined), cmds, 'this node: untouched');
+  // Unrestricted trust runs every command on the peer but this machine's own
+  // windows, terminals and files; a restricted peer's agent lifecycle follows
+  // its grants.
+  const more = [
+    ...cmds,
+    { label: 'Focus window: ada', peerView: 'own' },
+    { label: 'Stop agent: ada', grant: { act: 'dot-toggle', agent: 'agt_ada', dataset: { online: '1' } } },
+    { label: 'Retire agent: ada', grant: { act: 'retire-agent', agent: 'agt_ada' } },
+    { label: 'Spawn agent in ops…', peerView: 'spawn' },
+  ];
+  const full = mod.limitPeerViewCommands(more, { peer_view: { level: 'unrestricted' } }, remote);
+  assert.deepEqual(full.map((c) => c.enabled !== false), [true, true, true, true, true, false, true, true, true]);
+  assert.match(full[5].disabledReason, /windows, terminals and files stay on/);
+  const granted = mod.limitPeerViewCommands(more, { peer_view: { included: ['agents.status', 'spawn.request'], agents: { agt_ada: ['groups.members.stop'] } } }, remote);
+  assert.deepEqual(granted.slice(5).map((c) => c.enabled !== false), [false, true, false, true], 'stop is granted, retire is not');
+  assert.match(granted[7].disabledReason, /does not share this agent's lifecycle with you \(needs groups\.members\.retire\)/);
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: pv }), false);
   assert.equal(mod.peerViewTabUsable('activity', { remote, peerView: pv }), true);
   assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: pv }), true);

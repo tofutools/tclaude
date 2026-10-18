@@ -22,6 +22,7 @@ import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
+import { withCostsPeriod } from './usage-hub-state.js';
 import {
   DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
@@ -159,7 +160,7 @@ function activeLocationFromDOM() {
     if (island?.subview?.value === 'routes') {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
-      loc.params = { group: island.routeGroup?.value };
+      loc.params = { group: island.routeGroup?.value, view: island.routeView?.value === 'list' ? 'list' : '' };
     } else if (island?.focusedRun?.value && island.focus?.value !== 'agents' && groupsProcessesFocusAvailable()) {
       // The single-run focus shows in Both and Processes alike, so the lens
       // stays out of its URL (groups-focus.js groupsRunLocation).
@@ -192,7 +193,8 @@ function activeLocationFromDOM() {
     // Overview / Quota / Costs is island state (a signal, not an active class
     // the DOM could be trusted to have committed yet), so ask the island.
     const island = featureState('usage-hub');
-    if (island) return normalizeLocation(island.location.value);
+    // The Costs period is the costs island's (/usage/costs?period=).
+    if (island) return normalizeLocation(withCostsPeriod(island.location.value));
   } else if (tab === 'terminals') {
     // Which terminal is being viewed is island state the DOM never spells out
     // (the active pane's agent selector), so ask the island — same reasoning as

@@ -122,7 +122,9 @@ and ⌘ Fleet opens the Map / ⚙ Fleet config views; see
 [Fleet UI](#fleet-ui-linked-nodes).
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
-navigation, window focus, spawn, retire, power, and every manager dialog.
+navigation, window focus, spawn, retire, power, and every manager dialog. On a
+peer's page it runs on that peer: everything but window focus/hide and terminals
+under unrestricted trust, or what the peer's grants cover.
 Type `spawn luna` to find saved profiles by partial name or alias. Add `fast`
 to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile
@@ -176,7 +178,9 @@ Processes shows each group's runs as live graph cards with *+ start process*
 (template, params, explicit program-profile authorization); *open ›* focuses
 one run with its graph, a node inspector for decisions, a performer dock to
 drag-reassign agent nodes, and pause (⏸) / resume (⏵). The open run has its
-own address, `/groups/runs/<group>/<run-id>`, so Back closes it.
+own address, `/groups/runs/<group>/<run-id>`, so Back closes it. The Route
+map's group and its exact-list view are in its address too
+(`/groups/routes?group=ops&view=list`).
 
 Both, the default, shows each group's members and runs together as an
 **Agents** and a **Processes** section. Each section's header line carries
@@ -361,8 +365,10 @@ The CI pill reads `✓ 12/14` with glyphs ✓ ✕ ◐ · (the denominator exclud
 skipped checks). Hovering or focusing either opens a checks panel that
 re-polls every 6 seconds while open: failures first, then running, pending,
 and passed/skipped, with live elapsed timers and a link to the GitHub checks
-page. The data comes from `git` and `gh` off the snapshot path, cached with a
-90-second TTL. The footer's **Open PRs** popover reuses the same badges with
+page. On merged and closed PRs the CI pill is shown only when the final run
+is failing; set `dashboard.show_final_pr_checks` (Config tab, "CI on finished
+PRs") to always show it. The data comes from `git` and `gh` off the snapshot
+path, cached with a 90-second TTL. The footer's **Open PRs** popover reuses the same badges with
 Open / Needs attention / Unattached / Closed filters and an "Open all on
 GitHub" action. Drafts are muted grey and stay out of **Needs attention** by
 default; select that filter to reveal its **Include drafts** checkbox. Open PRs
@@ -501,7 +507,16 @@ agents, plain sessions, and agent or group shells that were minimized or
 whose tab was closed. A counter to the right of the tab strip counts them so
 idle sessions are not left running by mistake. Hovering it peeks a breakdown
 by kind with each session's idle time; clicking pins it open. `Attach` opens
-the session as a normal tab, and `Attach all` opens every one.
+the session as a normal tab, and `Attach all` opens every one. The counter
+always lists this node's sessions, also in a peer's per-node view. A fused
+view, or a peer's per-node view, adds the shown peers' unattached agents
+under each peer's node pill (an unrestricted peer serves that listing);
+`Attach` opens those as remote terminals.
+
+A peer's terminal (a remote terminal) carries the peer's node pill on its tab
+and one chip in its pane header naming the peer and the mode
+(`⌨ interactive` or `👁 watch-only`). Its tab's status glyph follows the
+peer's shared session state from the federation sessions catalog.
 
 With `features.processes` on, a pane whose agent takes part in a process run
 shows a collapsible top-right cluster of run icons (also on its tab). An icon
@@ -609,8 +624,10 @@ filter are in the query (`/messages/human/42?q=deploy&page=3&box=ops`; a
 Groups notification link adds `from=<agent>`): a page step is a history step,
 and so is a search or folder-filter edit, recorded once when you start typing
 so Back undoes the whole edit. A link opens the folder with that search and
-page, and the message if it is still there. The view of several nodes keeps
-the bare `/messages`.
+page, and the message if it is still there. The view of several nodes routes
+the same way, naming the node that owns an open folder (`at=<node>`) and the
+node chip that narrows the view (`scope=<node>`); its All folder is the bare
+`/messages`.
 
 The image and Markdown attachment viewers zoom with the usual inputs: a
 trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
@@ -733,7 +750,9 @@ back on selects its models again. The accumulated
 and daily graphs use the same date domain and plot width. Hover either the
 solid recorded line or the dashed month-projection line for the day's change
 and accumulated value. Spans are: This month (the only span with a projection),
-7d/30d/90d, and a month browser going 24 months back. Model attribution uses
+7d/30d/90d, and a month browser going 24 months back. The span is in the
+address (`/usage/costs?period=30d`, `?period=2026-08` for a past month), so
+each pick is a history step and a link opens that span. Model attribution uses
 the last model recorded for each agent-day slice; a model switch within the
 same session and calendar day is therefore grouped under the final observed
 model.
@@ -1090,7 +1109,9 @@ open the clone dialog for that group) — for this node always, and for a peer t
 trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
 stuck pending spawn, and the rest its grants cover) act on that peer; the few that
 only its own dashboard runs (export, the links manager, its messages, sudo) are
-greyed out. Group headers drag the same way there: nest a
+greyed out. Each node's links show on its own groups there, and its triggers and queued spawns
+too for this node and peers that trust it unrestricted (a queued spawn launches,
+edits and discards on its node). Group headers drag the same way there: nest a
 group under another on its node, pull it back out, reorder it (the fused view
 keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what

@@ -1182,6 +1182,11 @@ type snapshotPayload struct {
 	// off this each poll; CSS drops the chip unless the class is present. See
 	// Config.ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description"`
+	// ShowFinalPRChecks mirrors config dashboard.show_final_pr_checks —
+	// whether merged/closed PRs keep a non-failing CI checks pill. Off by
+	// default; refresh.js toggles body.show-final-pr-checks off this each
+	// poll. See Config.ShowFinalPRChecks.
+	ShowFinalPRChecks bool `json:"show_final_pr_checks"`
 	// StayOnTerminalsAfterLastClose mirrors config
 	// dashboard.stay_on_terminals_after_last_close — whether closing the last
 	// open terminal leaves the operator on the Terminals tab (true) or moves
@@ -3412,6 +3417,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		DefaultDirectoryPicker:        cfg.DefaultDirectoryPicker(),
 		ShowAgentHideButton:           cfg.ShowAgentHideButton(),
 		ShowGroupDescription:          cfg.ShowGroupDescription(),
+		ShowFinalPRChecks:             cfg.ShowFinalPRChecks(),
 		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
 		TriggersEnabled:               triggersEnabled,

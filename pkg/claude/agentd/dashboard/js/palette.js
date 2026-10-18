@@ -220,7 +220,7 @@ export function buildCommands(snapshot) {
   //    window is a familiar's "scrying portal", so hide → Veil, focus →
   //    Reveal (arcane presented label; the plain keywords stay searchable).
   cmds.push({
-    icon: wiz('⏏', '🌫'), label: wiz('Hide all windows', 'Veil all familiars'),
+    peerView: 'own', icon: wiz('⏏', '🌫'), label: wiz('Hide all windows', 'Veil all familiars'),
     hint: wiz('detach every agent terminal window (agents keep running)',
       "draw the veil over every familiar's scrying portal (they keep channeling)"),
     keywords: 'hide unfocus all windows declutter detach panic minimize'
@@ -229,7 +229,7 @@ export function buildCommands(snapshot) {
       'hide all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
-    icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all familiars'),
+    peerView: 'own', icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all familiars'),
     hint: wiz('raise / open a terminal window for every running agent',
       'conjure a scrying portal for every channeling familiar'),
     keywords: 'show all windows raise focus bring up'
@@ -238,7 +238,7 @@ export function buildCommands(snapshot) {
       'focus all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
-    icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose familiars to reveal / veil…'),
+    peerView: 'own', icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose familiars to reveal / veil…'),
     hint: wiz('open the window modal to choose a subset',
       'open the scrying circle to choose which portals to reveal or veil'),
     keywords: 'windows subset choose select modal some'
@@ -319,7 +319,7 @@ export function buildCommands(snapshot) {
     const home = (g.default_cwd || '').trim();
     if (home) {
       cmds.push({
-        icon: wiz('🖥', '🔮'),
+        peerView: 'own', icon: wiz('🖥', '🔮'),
         label: wiz(`Open terminal in group: ${g.name}`, `Open party portal: ${g.name}`),
         hint: wiz(`web shell in ${home}`, `browser scrying portal in ${home}`),
         keywords: `open terminal shell console web term cd home dir directory default cwd group ${g.name} terminal ${g.name} shell ${g.name}`
@@ -358,7 +358,7 @@ export function buildCommands(snapshot) {
     run: () => openGroupImport(),
   });
   cmds.push({
-    icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
+    peerView: 'own', icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
     hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
       'the library of captured familiars: capture, summon from, share or publish them'),
     keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',
@@ -430,7 +430,7 @@ export function buildCommands(snapshot) {
   const lastGroup = lastInteractedGroup();
   const lastGroupLive = groups.some(g => g.name === lastGroup);
   cmds.push({
-    icon: wiz('＋', '🔮'), label: wiz('Spawn agent…', 'Summon a familiar…'),
+    peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz('Spawn agent…', 'Summon a familiar…'),
     hint: lastGroupLive
       ? wiz(`open the spawn dialog (defaults to ${lastGroup} — last used)`,
         `open the summoning circle (defaults to ${lastGroup} — last used)`)
@@ -516,7 +516,7 @@ export function buildCommands(snapshot) {
   // the per-group cog's "message" / "missive" item.
   for (const g of groups) {
     cmds.push({
-      icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
+      peerView: 'spawn', icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
       hint: wiz('open the spawn dialog pinned to this group',
         'open the summoning circle bound to this party'),
       keywords: 'new agent create spawn launch start group ' + g.name
@@ -767,7 +767,7 @@ export function buildCommands(snapshot) {
     const n = `${online} window${online === 1 ? '' : 's'}`;
     const nPortals = `${online} scrying portal${online === 1 ? '' : 's'}`;
     cmds.push({
-      icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil party: ${g.name}`),
+      peerView: 'own', icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil party: ${g.name}`),
       hint: wiz(`hide ${n}`, `draw the veil over ${nPortals}`),
       keywords: 'hide unfocus group windows ' + g.name
         + ' veil conceal cloak portal scrying party',
@@ -777,7 +777,7 @@ export function buildCommands(snapshot) {
         { webTerminal: preferWebTerminal, targets: groupWebWindowTargets }); },
     });
     cmds.push({
-      icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
+      peerView: 'own', icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
       hint: wiz(`raise ${n}`, `conjure ${nPortals}`),
       keywords: 'focus show group windows ' + g.name
         + ' reveal behold conjure portal scrying party',
@@ -830,6 +830,7 @@ export function buildCommands(snapshot) {
     const sel = a.agent_id || a.conv_id;
     cmds.push({
       id: `agent-focus:${sel}`,
+      peerView: 'own',
       icon: wiz('◎', '👁'), label: wiz(`Focus window: ${label}`, `Reveal familiar: ${label}`),
       hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
@@ -838,6 +839,7 @@ export function buildCommands(snapshot) {
     });
     cmds.push({
       id: `agent-hide:${sel}`,
+      peerView: 'own',
       icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),
       hint: wiz("detach this agent's terminal", "draw the veil over this familiar's scrying portal"),
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || '')
@@ -859,6 +861,7 @@ export function buildCommands(snapshot) {
     if (a.online) {
       cmds.push({
         id: `agent-stop:${sel}`,
+        grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '1' } },
         icon: wiz('⏻', '🌙'), label: wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`),
         hint: wiz('soft-exit, then force-kill if it does not exit (resumable)',
           'lull into slumber: a gentle /exit, then a firmer hand if it lingers (rousable)'),
@@ -869,6 +872,7 @@ export function buildCommands(snapshot) {
     } else {
       cmds.push({
         id: `agent-resume:${sel}`,
+        grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '0' } },
         icon: wiz('⏼', '✨'), label: wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`),
         hint: wiz('restart in a fresh tmux session, resumed onto its conversation',
           'rouse into a fresh tmux session, resumed onto its scroll'),
@@ -990,6 +994,7 @@ export function buildCommands(snapshot) {
     const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
     cmds.push({
       id: `agent-retire:${a.conv_id}`,
+      grant: { act: 'retire-agent', agent: a.agent_id || '' },
       icon: wiz('♻', '🪄'), label: wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`),
       hint: wiz(`demote to a plain conversation (${status})`, `banish back to a plain scroll (${status})`),
       keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status
@@ -998,7 +1003,8 @@ export function buildCommands(snapshot) {
       // recovery only triggers for a UUID-shaped selector that fails to
       // resolve, so a stable agent_id would silently demote a dangling
       // orphan instead of offering to remove it (JOH-322).
-      run: () => openRetireAgentDialog(a.conv_id, label),
+      // On a peer's page its route takes the stable agent_id only.
+      run: () => (globalThis.__tclaudeRemoteNode?.id && a.agent_id ? openRetireAgentDialog(a.agent_id, label) : openRetireAgentDialog(a.conv_id, label)),
     });
   }
 

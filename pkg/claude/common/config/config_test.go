@@ -1112,6 +1112,12 @@ func TestShowAgentHideButton(t *testing.T) {
 	assert.True(t, loaded.ShowAgentHideButton(), "true survives round-trip")
 }
 
+func TestShowFinalPRChecks(t *testing.T) {
+	assert.False(t, (*Config)(nil).ShowFinalPRChecks(), "nil → hidden")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).ShowFinalPRChecks(), "absent key → hidden")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{ShowFinalPRChecks: true}}).ShowFinalPRChecks(), "explicit true → shown")
+}
+
 func TestStayOnTerminalsAfterLastClose(t *testing.T) {
 	assert.False(t, (*Config)(nil).StayOnTerminalsAfterLastClose(), "nil → leave for Groups")
 	assert.False(t, (&Config{}).StayOnTerminalsAfterLastClose(), "no block → leave for Groups")

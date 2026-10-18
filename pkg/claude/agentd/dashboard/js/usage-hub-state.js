@@ -1,5 +1,6 @@
 import { computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { featureState } from './feature-state-registry.js';
 
 // The Usage tab hosts three views: an Overview summarising both halves, the
 // subscription Quota forecasts (usage-history-*), and Costs (costs-*). The two
@@ -22,6 +23,13 @@ export function effectiveSubview(requested, halves) {
 
 export function usageLocation(subview) {
   return subview === 'overview' ? { tab: 'usage' } : { tab: 'usage', subtab: subview };
+}
+
+// withCostsPeriod adds the Costs view's period (/usage/costs?period=), which
+// the costs island owns, to a Usage location.
+export function withCostsPeriod(loc) {
+  const period = loc?.subtab === 'costs' ? featureState('costs')?.period?.value : '';
+  return period ? { ...loc, params: { ...(loc.params || {}), period } } : loc;
 }
 
 export function createUsageHubState({
@@ -81,7 +89,7 @@ export function createUsageHubState({
     const nav = doc?.querySelector('nav [data-tab="usage"]');
     if (!nav) return false;
     if (!nav.classList.contains('active')) nav.click();
-    else if (changed) doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: location.value } }));
+    else if (changed) doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: withCostsPeriod(location.value) } }));
     return true;
   }
 

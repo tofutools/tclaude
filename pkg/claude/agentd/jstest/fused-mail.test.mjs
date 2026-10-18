@@ -369,3 +369,51 @@ test('on a peer\'s page, this node\'s own notification files keep their local ro
   assert.equal(c.querySelector('#fused-mail-reader .mail-attachment a').getAttribute('href'), '/api/peer-attachments/inst_forge/8/7');
   await mounted.unmount(); state.dispose();
 });
+
+test('the fused view routes its folder, message, page and search through the URL', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, bridge, core] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fused-mail.js'),
+    harness.importDashboardModule('js/mail-bridge.js'), harness.importDashboardModule('js/nav-history-core.js'),
+  ]);
+  harness.document.documentElement.dataset.scopeNodes = 'all';
+  t.after(() => { delete harness.document.documentElement.dataset.scopeNodes; });
+  let pathname = '/messages'; let search = '?nodes=all';
+  const location = { get pathname() { return pathname; }, get search() { return search; } };
+  for (const target of [globalThis, harness.window]) Object.defineProperty(target, 'location', { configurable: true, writable: true, value: location });
+  const events = [];
+  const onNav = (e) => {
+    events.push({ correction: !!e.detail.correction, location: e.detail.location });
+    pathname = core.toPath(e.detail.location); const q = core.toQuery(e.detail.location); search = q ? `?nodes=all&${q}` : '?nodes=all';
+  };
+  harness.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => harness.document.removeEventListener('tclaude:navigated', onNav));
+  const state = stateMod.createFleetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_lab', label: 'lab', trusted: true, online: true, level: 'unrestricted' }] });
+  const fetchImpl = async (url) => {
+    if (/\/mailboxes(\?|$)/.test(url)) return ok({ mailboxes: [{ id: 'group:ops', kind: 'group', title: 'ops', total: 120, unread: 0 }] });
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    const node = url.startsWith('/api/peer/inst_lab/') ? 'lab' : 'desk';
+    return ok({ messages: [{ id: 7, from_agent: `agt_${node}`, subject: `${node} 7`, created_at: '2026-01-01T00:00:01Z' }], total: 120 });
+  };
+  const timers = fakeTimers();
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${fetchImpl} localFetch=${fetchImpl}
+    timers=${timers} now=${() => 0} remote="" />`);
+  const c = mounted.container;
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
+  await once();
+  assert.deepEqual(events, [], 'a fresh fused view is the bare tab');
+  await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_lab/agent/7"] .mail-row'), 'click'));
+  assert.deepEqual(events.at(-1), { correction: false, location: { tab: 'messages', selection: 'all', item: 'inst_lab/agent/7' } });
+  assert.equal(pathname, '/messages/all/inst_lab%2Fagent%2F7');
+  // A link (or Back) opens lab's ops folder on page 2 with a search.
+  events.length = 0;
+  pathname = '/messages/group:ops'; search = '?nodes=all&q=deploy&page=2&at=inst_lab';
+  await harness.act(() => bridge.restoreMailLocation({ tab: 'messages', selection: 'group:ops', params: { at: 'inst_lab', page: '2', q: 'deploy' } }));
+  await once();
+  assert.equal(c.querySelector('button.mailbox.active')?.dataset.id, 'inst_lab|group:ops', 'the folder is open');
+  assert.equal(c.querySelector('#fused-mail-filter').value, 'deploy');
+  assert.deepEqual(bridge.mailLocation(), { tab: 'messages', selection: 'group:ops', params: { q: 'deploy', page: '2', at: 'inst_lab' } });
+  assert.deepEqual(events, [], 'a restore records nothing');
+  await mounted.unmount(); state.dispose();
+});

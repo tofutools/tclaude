@@ -297,6 +297,10 @@ export async function refresh(options) {
     // the 📝 chip in each group header is hidden unless body.show-group-description
     // is present, brought back only by an explicit opt-in. Plain class toggle.
     document.body.classList.toggle('show-group-description', !!data.show_group_description);
+    // CI pill on merged/closed PRs (config dashboard.show_final_pr_checks,
+    // default off). PRChecksBadge tags a terminal PR's non-failing pill
+    // .ci-final; CSS hides it unless body.show-final-pr-checks is present.
+    document.body.classList.toggle('show-final-pr-checks', !!data.show_final_pr_checks);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

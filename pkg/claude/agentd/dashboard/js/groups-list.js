@@ -595,7 +595,9 @@ function compactTriggerState(rule) {
 }
 
 function GroupTriggersSection({ group, triggers }) {
-  const rows = (triggers || []).filter((rule) => rule.scope === 'global' ||
+  // In the fused view each rule is its node's (fleet_node): a global rule
+  // covers that node's groups only.
+  const rows = (triggers || []).filter((rule) => (!group.fleet_node || rule.fleet_node === group.fleet_node.id)).filter((rule) => rule.scope === 'global' ||
     (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
@@ -626,9 +628,9 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // actions, the task-force card, the member table) for the group's runs;
   // Both hands them to the runs body, which lays the two out as sections.
   const processes = useProcessesPerspective();
-  // Queued spawns are this node's own drafts, so a peer's group never has any.
-  // They ride the member table as its leading rows.
-  const queued = fleet ? [] : groupQueuedSpawns(snapshot, group.name);
+  // Queued spawns (in the fused view, each node's own, under the merged
+  // group names) ride the member table as its leading rows.
+  const queued = groupQueuedSpawns(snapshot, group.name);
   const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} group=${group.name} /></div>` : null;
   // In Both the agent controls head the member table's first column, which
   // has no title of its own; the section line keeps them only while it is
