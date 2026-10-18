@@ -724,8 +724,8 @@ export function createManagementActions({
     const files = new Map();
     const lib = {
       list: async () => (await snapshotCall('GET', 'snapshots', undefined, node)).snapshots || [],
-      create: (body) => snapshotCall('POST', 'snapshots', body, node),
-      remove: (name) => snapshotCall('DELETE', `snapshots/${encodeURIComponent(name)}`, undefined, node),
+      create: (body) => { files.clear(); return snapshotCall('POST', 'snapshots', body, node); },
+      remove: (name) => { files.delete(name); return snapshotCall('DELETE', `snapshots/${encodeURIComponent(name)}`, undefined, node); },
       prune: () => snapshotCall('POST', 'snapshots/prune', {}, node),
       async spawn(name, body) {
         const result = await snapshotCall('POST', `snapshots/${encodeURIComponent(name)}/spawn`, body, node);

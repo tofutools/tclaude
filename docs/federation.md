@@ -4192,9 +4192,11 @@ or an agent's `.paf`, a group archive, a template) crosses the same way.
 `GET /api/peer-download/INSTANCE?path=PATH` (local-only) asks the peer to stage
 `PATH` (`POST /api/peer-downloads {"path"}`, a peer view job there; only the
 download routes stage, and only under unrestricted trust), reads it in 4 MiB
-chunks (`GET /api/peer-downloads/ID?offset=`; a staged file goes away 10
-minutes after its last read), and serves it as an opaque, sandboxed, `nosniff`
-attachment with Range support.
+chunks (`GET /api/peer-downloads/ID?offset=`; a staged file goes away once
+its last chunk is read, or 10 minutes after its last read), and serves it as
+an opaque, sandboxed, `nosniff` attachment with Range support. A download is
+at most `federation.agent_transfer_max_bytes` (2 GiB by default), the cap
+agent archives already cross nodes under.
 
 Agent mail's files cross the same way, under the same grant:
 `GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)

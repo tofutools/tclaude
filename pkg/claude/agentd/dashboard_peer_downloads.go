@@ -37,6 +37,9 @@ import (
 //	GET /api/peer-download/{node}?path=P
 //	    local-only: stages P on the peer and serves it as a sandboxed
 //	    download, chunk by chunk.
+//
+// A download is at most federation.agent_transfer_max_bytes (2 GiB by
+// default), the cap agent archives already cross nodes under.
 
 // peerDownloadRoutes are the GETs a peer may stage: file downloads whose
 // route the peer view already serves under unrestricted trust.
@@ -48,7 +51,6 @@ var peerDownloadRoutes = map[string]bool{
 }
 
 const (
-	peerDownloadLimit  = 4 << 30
 	peerDownloadKeep   = 10 * time.Minute
 	peerDownloadsKept  = 4
 	peerDownloadPrefix = "pdl_"
@@ -101,6 +103,7 @@ func sweepPeerDownloadsLocked(now time.Time) {
 
 // peerDownloadFile is the ResponseWriter a staged GET writes its body to.
 type peerDownloadFile struct {
+	limit  int64
 	header http.Header
 	status int
 	file   *os.File
@@ -118,7 +121,7 @@ func (f *peerDownloadFile) Write(b []byte) (int, error) {
 	if f.status == 0 {
 		f.status = http.StatusOK
 	}
-	if f.size+int64(len(b)) > peerDownloadLimit {
+	if f.size+int64(len(b)) > f.limit {
 		f.err = errors.New("download exceeds limit")
 		return 0, f.err
 	}
@@ -164,7 +167,7 @@ func handleDashboardPeerDownloadStage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "stage download")
 		return
 	}
-	out := &peerDownloadFile{header: make(http.Header), file: f}
+	out := &peerDownloadFile{limit: agentTransferLimit(), header: make(http.Header), file: f}
 	mux.ServeHTTP(out, sub)
 	closeErr := f.Close()
 	if out.status == 0 {
@@ -231,6 +234,17 @@ func handleDashboardPeerDownloadChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such download")
 		return
 	}
+	defer func() {
+		// The last chunk read, the staged file goes.
+		if offset+length >= d.size {
+			peerDownloads.Lock()
+			if peerDownloads.byID[r.PathValue("id")] == d {
+				delete(peerDownloads.byID, r.PathValue("id"))
+				_ = os.Remove(d.file)
+			}
+			peerDownloads.Unlock()
+		}
+	}()
 	if offset > d.size {
 		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_arg", "offset is past the end of the file")
 		return
@@ -288,7 +302,7 @@ var stagePeerDownload = func(ctx context.Context, peer *db.FederationPeer, targe
 		return peerDownloadStaged{}, reply.Status, &peerDownloadRefused{body: reply.Body}
 	}
 	var staged peerDownloadStaged
-	if json.Unmarshal(reply.Body, &staged) != nil || !strings.HasPrefix(staged.ID, peerDownloadPrefix) || staged.Size < 0 {
+	if json.Unmarshal(reply.Body, &staged) != nil || !strings.HasPrefix(staged.ID, peerDownloadPrefix) || staged.Size < 0 || staged.Size > agentTransferLimit() {
 		return peerDownloadStaged{}, http.StatusBadGateway, errors.New("peer returned an invalid reply")
 	}
 	return staged, http.StatusOK, nil
