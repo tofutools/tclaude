@@ -55,6 +55,9 @@ export function NodeSelect({
   const root = useRef(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // A pick the caller ignores (All while already all) still re-renders, so
+  // the boxes show the value again rather than the browser's toggle.
+  const [, repaint] = useState(0);
   useEffect(() => {
     if (!open) return undefined;
     const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
@@ -72,7 +75,7 @@ export function NodeSelect({
   const q = query.trim().toLowerCase();
   const list = nodes.length >= NODE_SELECT_FILTER_AT ? nodes.filter((n) => matches(n, q)) : nodes;
   const total = badge ? nodes.filter((n) => picked.has(n.id)).reduce((s, n) => s + (badge(n) || 0), 0) : 0;
-  const choose = (next) => { onChange(next); if (!multiple) setOpen(false); };
+  const choose = (next) => { onChange(next); repaint((n) => n + 1); if (!multiple) setOpen(false); };
   const row = (n) => {
     const why = lock?.(n) || '';
     const on = picked.has(n.id) && (multiple || !all);
@@ -87,7 +90,7 @@ export function NodeSelect({
         : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${on} disabled=${!!why} aria-label=${`Show ${n.name}`} onChange=${pick} />`}
       <span class="node-pop-swatch" aria-hidden="true"></span>
       <button type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
-      ${multiple && !why && html`<button type="button" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => onChange([n.id])}>only</button>`}
+      ${multiple && !why && html`<button type="button" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only</button>`}
       <span class="node-pop-meta">${count ? html`<span class="mailbox-unread">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
     </div>`;
   };

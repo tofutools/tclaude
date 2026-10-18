@@ -603,6 +603,10 @@ function DockSection({
 // DockNodeFilter is the fused view's Nodes dropdown (node-select.js): which
 // nodes the dock lists, starting from every node the Groups view fuses.
 function DockNodeFilter({ nodes, hidden, onHide }) {
+  // Every node hidden (the one it was narrowed to left the fused view) lists
+  // nothing: the filter starts over from all.
+  const allHidden = nodes.length > 0 && nodes.every((n) => hidden.includes(n.id));
+  useEffect(() => { if (allHidden) onHide(hidden.filter((id) => !nodes.some((n) => n.id === id))); }, [allHidden]);
   const value = hidden.some((id) => nodes.some((n) => n.id === id)) ? nodes.filter((n) => !hidden.includes(n.id)).map((n) => n.id) : [];
   return html`<div key="nodes" class="dock-node-filter">
     <${NodeSelect} multiple label="Nodes" allLabel="all nodes" nodes=${nodes} value=${value} title="Which nodes' catalogs the panel lists" menuLabel="Nodes listed in the panel"

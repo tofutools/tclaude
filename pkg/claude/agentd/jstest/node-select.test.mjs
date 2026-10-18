@@ -44,6 +44,11 @@ test('multiple: checkboxes, only, all, badges and notes; single: one pick closes
   await click(q('[data-node-option=""] .node-pop-name'));
   assert.deepEqual(picks, [[], ['inst_forge'], []]);
   assert.ok(q('.node-select-menu'), 'picking several keeps it open');
+  // A pick the caller ignores repaints the boxes from the value.
+  const box = q('[data-node-option="inst_lab"] input');
+  box.checked = true;
+  await harness.act(() => harness.fireEvent(box, 'change'));
+  assert.equal(box.checked, false, 'lab is still not picked');
   await mounted.unmount();
 
   picks.length = 0;
