@@ -533,7 +533,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // (see groups-fused-sections.js), and `force` holds it open while a start
 // or edit form inside needs it. A button on a folded line unfolds the
 // section too, so what it spawns or starts shows up rather than landing out
-// of sight; the click itself still reaches the button's handler.
+// of sight. The re-render waits for a task, not a microtask: a microtask runs
+// between listeners, and opening drops `closedActions`, which would detach
+// the button before the document's row-action handler sees the click.
 export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, closedActions = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
@@ -541,7 +543,7 @@ export function FusedSection({ group, section, label, auto = true, force = false
   const unfold = (event) => {
     if (open || !event.target.closest?.('button')) return;
     setFusedSectionOpen(group, section, true);
-    bump((n) => n + 1);
+    setTimeout(() => bump((n) => n + 1), 0);
   };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
