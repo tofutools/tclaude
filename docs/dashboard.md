@@ -1083,8 +1083,9 @@ open the clone dialog for that group) — for this node always, and for a peer t
 trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
 stuck pending spawn, and the rest its grants cover) act on that peer; the few that
 only its own dashboard runs (export, the links manager, its messages, sudo) are
-greyed out. Each node's links show on its own groups there, and its triggers too
-for this node and peers that trust it unrestricted. Group headers drag the same way there: nest a
+greyed out. Each node's links show on its own groups there, and its triggers and queued spawns
+too for this node and peers that trust it unrestricted (a queued spawn launches,
+edits and discards on its node). Group headers drag the same way there: nest a
 group under another on its node, pull it back out, reorder it (the fused view
 keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what

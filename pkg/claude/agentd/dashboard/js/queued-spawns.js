@@ -11,6 +11,7 @@ import { h } from 'preact';
 import htm from 'htm';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { relTime } from './helpers.js';
+import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot, selfNodeID } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -52,12 +53,31 @@ export function queuedSpawnDetail(entry, { group = true } = {}) {
   return parts.join(' · ');
 }
 
+// queuedNode is the node another node's queued spawn is on (the fused view
+// names it, fleet_node); blank is the page's.
+function queuedNode(entry) {
+  const node = entry?.fleet_node || '';
+  return isPageNode(node) ? '' : node;
+}
+
+// spawnOptions opens a queued spawn's dialog on its node, as the regular
+// dialog does for a node trusting this one (or this node itself), under the
+// node's own group name.
+function spawnOptions(entry, extra = {}) {
+  const node = queuedNode(entry);
+  if (!entry?.fleet_node) return { queued: entry, ...extra };
+  const own = { ...entry, group: entry.own_group || entry.group };
+  if (!node) return { queued: own, ...extra };
+  const self = node === selfNodeID();
+  return { queued: own, ...extra, target: { node, nodeId: self ? '' : node, name: entry.fleet_node_name || '', snapshot: nodeSnapshot(node) } };
+}
+
 export function editQueuedSpawn(entry) {
-  return openAgentSpawnModal({ queued: entry });
+  return openAgentSpawnModal(spawnOptions(entry));
 }
 
 export function launchQueuedSpawn(entry) {
-  return openAgentSpawnModal({ queued: entry, autoSpawn: true });
+  return openAgentSpawnModal(spawnOptions(entry, { autoSpawn: true }));
 }
 
 export async function discardQueuedSpawn(entry) {
@@ -70,7 +90,8 @@ export async function discardQueuedSpawn(entry) {
   });
   if (!proceed) return false;
   try {
-    const response = await deps.fetchImpl(`/api/queued-spawns/${encodeURIComponent(entry.id)}`, {
+    const node = queuedNode(entry);
+    const response = await (node ? nodeFetch(node, { fetchImpl: deps.fetchImpl }) : deps.fetchImpl)(`/api/queued-spawns/${encodeURIComponent(entry.id)}`, {
       method: 'DELETE', credentials: 'same-origin',
     });
     if (!response.ok && response.status !== 404) {
@@ -81,6 +102,7 @@ export async function discardQueuedSpawn(entry) {
     deps.notify(`could not discard queued ${label}: ${cause?.message || cause}`, true);
     return false;
   }
+  announceNodeChanged(queuedNode(entry));
   deps.refresh();
   return true;
 }

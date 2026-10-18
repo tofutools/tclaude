@@ -11,7 +11,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   const m = await harness.importDashboardModule('js/fleet-merged-model.js');
   const merged = m.mergeSnapshots([
     { node: self, entry: { snapshot: { group_attachments_mode: 'fixed', groups: [group('ops'), group('ops-sub', { parent: 'ops' })], agents: [{ agent_id: 'agt_1' }], links: [{ id: 7, from: 'ops', to: 'ops-sub', mode: 'send' }] }, receivedAt: 1000 } },
-    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], pending: [{ label: 'stuck-1', group: 'ops' }, { label: 'loose' }], peer_view: { included: [] } }, receivedAt: 1000 } },
+    { node: forge, entry: { snapshot: { groups: [group('ops')], agents: [{ agent_id: 'agt_2' }], pending: [{ label: 'stuck-1', group: 'ops' }, { label: 'loose' }], queued_spawns: [{ id: 3, group: 'ops', draft: {} }], peer_view: { included: [] } }, receivedAt: 1000 } },
     { node: lab, entry: { snapshot: { groups: [group('build')] }, receivedAt: 0, failure: { status: 502, code: 'peer_unreachable' } } },
   ], 61000);
   assert.deepEqual(merged.groups.map((g) => g.name), ['ops@desk', 'ops-sub@desk', 'ops@forge', 'build@lab']);
@@ -20,6 +20,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   assert.equal(merged.peer_view, undefined);
   assert.deepEqual(merged.agents.map((a) => a.agent_id), ['agt_1', 'agt_2']);
   assert.deepEqual(merged.pending, [{ label: 'stuck-1', group: 'ops@forge' }], 'a pending spawn sits in its node\'s group; one without a group stays on its node');
+  assert.deepEqual(merged.queued_spawns, [{ id: 3, group: 'ops@forge', own_group: 'ops', fleet_node: 'inst_forge', fleet_node_name: 'forge', draft: {} }], 'a queued spawn heads its node\'s group and names its node');
   assert.deepEqual(merged.links, [{ id: 7, from: 'ops@desk', to: 'ops-sub@desk', mode: 'send' }], 'a node\'s links join its groups under their merged names');
   const labGroup = merged.groups[3];
   assert.equal(labGroup.fleet_node.stale, true); assert.equal(labGroup.fleet_node.label, 'stale · data 1 min old');

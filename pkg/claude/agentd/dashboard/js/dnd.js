@@ -488,11 +488,9 @@ function bindDnd() {
     if (sourcePending) {
       if (!targetRetired) return; // inert everywhere else (see dndInertOnto)
       if (payload.queuedId) {
-        // A queued spawn is the page's (queued-spawns.js).
-        if (ctx.node) return;
         // Same confirm + DELETE as the row's trash button; it refreshes on
         // success, so only a cancel or failure needs the reconcile here.
-        if (!await discardQueuedSpawn({ id: payload.queuedId, group: payload.queuedGroup, draft: { name: payload.label } })) await refresh();
+        if (!await discardQueuedSpawn({ id: payload.queuedId, group: payload.queuedGroup, draft: { name: payload.label }, ...(ctx.node ? { fleet_node: ctx.node } : {}) })) await refresh();
         return;
       }
       await ops.deletePending(payload, ctx);

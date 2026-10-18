@@ -102,6 +102,11 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'create-subgroup': ['feature:groups.create'],
   // A pending spawn's 🗑, on the group it is pending in.
   'delete-pending': ['feature:local_dashboard'],
+  // A queued spawn's row (queued-spawns.js): its dialog or discard, on the
+  // queue's node.
+  'queued-spawn-launch': ['feature:local_dashboard'],
+  'queued-spawn-edit': ['feature:local_dashboard'],
+  'queued-spawn-discard': ['feature:local_dashboard'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
