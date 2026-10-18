@@ -19913,6 +19913,8 @@ nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 nav [data-tab="map"].node-chip { display: none; }
 .node-chip.fleet-entry { --nc: #58a6ff; color: #8b949e; margin-left: 3px; flex: none; }
 .node-chip.fleet-entry:hover { color: #f0f6fc; }
+.node-chip.fleet-entry.connected { color: #c9d1d9; border-color: color-mix(in srgb, var(--nc) 45%, #2a3340); }
+.node-chip.fleet-entry.connected svg { color: var(--nc); }
 .node-chip-hint { font: 600 10px/14px ui-sans-serif, system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: #1f6feb; color: #f0f6fc; }
 
 /* Node scope (tcl-sb4grp): fused-view outlines, the node and fused dropdowns. */

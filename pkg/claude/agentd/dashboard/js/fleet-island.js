@@ -217,7 +217,9 @@ const NO_STRANGERS = 'No linked nodes yet, and no other instance is visible on t
 // connected, since that is where the hub and the first peer are set up. It is
 // never greyed out on this node. In a peer's view it can only open the map,
 // so it hides while there is none. Until the setup guide has been opened once,
-// a node that was never set up says so on the chip.
+// a node that was never set up says so on the chip. It lights up while the
+// hub is connected, with a status dot like a node's; a node set up but not
+// connected gets a grey dot.
 function FleetChip({ state, node, off, remote, navigate }) {
   const current = state.view.value;
   const mapOK = !off && !!current.mapFleet;
@@ -225,16 +227,18 @@ function FleetChip({ state, node, off, remote, navigate }) {
   const active = current.topLevel;
   const target = remote || (mapOK && state.lastFleetTab() !== 'fleet-admin') ? 'map' : 'fleet-admin';
   const hint = !remote && !!node && !node.configured && !current.setupSeen;
+  const connected = !off;
   const title = off
     ? `Fleet: ${node?.configured ? 'the hub connection and peers' : 'link this node with your other machines or colleagues'} (${off.replace(/^Not connected to a federation hub: /, 'not connected: ')})`
-    : !current.fleet ? 'Fleet: trust a peer to link nodes'
-      : `Fleet: every linked node (${target === 'map' ? 'the map' : 'Fleet config'})`;
+    : !current.fleet ? 'Fleet: hub connected · trust a peer to link nodes'
+      : `Fleet: hub connected · every linked node (${target === 'map' ? 'the map' : 'Fleet config'})`;
   // The separator comes with the chip, so a row without it ends cleanly.
   return html`<span class="node-chips-sep" aria-hidden="true"></span>
-  <button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}`} data-fleet-entry data-fleet-target=${target}
+  <button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}${connected ? ' connected' : ' offline'}`} data-fleet-entry data-fleet-target=${target}
     aria-current=${active ? 'page' : undefined} aria-label=${`Fleet${hint ? ': set up' : ''}`} title=${title}
     onClick=${() => { if (!active) navigate(target); }}>
     <${MapGlyph} /><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
+    ${(connected || node?.configured) && html`<span class="node-chip-dot"></span>`}
   </button>`;
 }
 
