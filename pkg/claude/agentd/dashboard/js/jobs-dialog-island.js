@@ -8,6 +8,7 @@ import {
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
+import { nodeSnapshot } from './node-api.js';
 import {
   buildCronMutation, createCronDraft, cronDraftDirty,
   resetCronDraftForAnother, validateCronDraft,
@@ -223,7 +224,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
     busyRef.current = true;
     setBusy(true);
     try {
-      await actions.saveCron(buildCronMutation(descriptor, draft));
+      await actions.saveCron({ ...buildCronMutation(descriptor, draft), node: descriptor.node || '' });
       if (keepOpen) {
         const next = resetCronDraftForAnother(draft);
         setInitial(next);
@@ -380,6 +381,8 @@ export function JobsCronDialogRoot({ state, actions, confirmDiscard }) {
   const current = state.view.value;
   const descriptor = current.dialog;
   if (!descriptor) return null;
+  // Another node's job reads that node's snapshot, never the page's.
+  const snapshot = descriptor.node ? nodeSnapshot(descriptor.node) || {} : current.dashboard || {};
   return html`<${CronDialog} key=${descriptor.launchID} descriptor=${descriptor}
-    snapshot=${current.dashboard || {}} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    snapshot=${snapshot} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
 }

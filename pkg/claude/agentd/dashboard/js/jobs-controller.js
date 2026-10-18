@@ -15,8 +15,10 @@ function requireController() {
   return controller;
 }
 
-export function openCronCreateModal(prefill = {}) {
-  return requireController().openCreate(prefill);
+// node names another node's agent or group (blank: the page's): the dialog
+// reads that node's snapshot and creates the job there.
+export function openCronCreateModal(prefill = {}, node = '') {
+  return requireController().openCreate(prefill, node);
 }
 
 export function openStandingOrderCreateModal(prefill = {}, options = {}) {

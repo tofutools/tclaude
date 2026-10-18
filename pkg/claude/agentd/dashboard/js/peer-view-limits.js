@@ -79,8 +79,8 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'remove-member': ['feature:agents.manage.full'],
   // What no peer grant covers, which unrestricted trust reaches as this
   // node's operator does (the local_dashboard routes): its process, force
-  // and ownership controls, the auto-join default, its member permissions and its
-  // links within its node.
+  // and ownership controls, the auto-join default, its member permissions, its
+  // links within its node and new cron jobs.
   'advance-phase': ['feature:local_dashboard'],
   'rebrief-force': ['feature:local_dashboard'],
   'stand-down-force': ['feature:local_dashboard'],
@@ -91,7 +91,8 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'link-new': ['feature:local_dashboard'],
   'link-edit': ['feature:local_dashboard'],
   'link-delete': ['feature:local_dashboard'],
-  // Not listed, so local to their own node: the links manager, standing orders, cron,
+  'cron-new': ['feature:local_dashboard'],
+  // Not listed, so local to their own node: the links manager, standing orders,
   // messages, templates, repositories and worktrees, terminals and showing a
   // window (hiding one is an agent control); and export, whose binary archive the JSON peer
   // view does not carry.

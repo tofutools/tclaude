@@ -1,4 +1,23 @@
 import { cronRunSucceeded } from './jobs-format.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
+
+// requestOnNode sends a JSON mutation to another node, failing as
+// requestMutation does (error.body carries the answer).
+async function requestOnNode(node, path, { method, body }) {
+  const response = await nodeFetch(node)(path, {
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin',
+  });
+  const text = await response.text();
+  let result = {};
+  try { result = text ? JSON.parse(text) : {}; } catch (_) { result = text; }
+  if (!response.ok) {
+    const error = new Error(`dashboard mutation failed: HTTP ${response.status}`);
+    error.status = response.status;
+    error.body = result;
+    throw error;
+  }
+  return result;
+}
 
 export function createJobsActions({
   state,
@@ -116,12 +135,15 @@ export function createJobsActions({
       });
       return Array.isArray(response?.runs) ? response.runs : [];
     },
-    saveCron: async ({ path, method, payload }) => {
+    saveCron: async ({ path, method, payload, node = '' }) => {
       try {
-        const cron = await requestMutation(path, {
-          method, body: payload, refreshAfter: false,
-        });
-        state.upsertCron(cron);
+        // Another node's job is that node's: this node's Jobs list is not
+        // touched, the node's copy is re-read.
+        const cron = node
+          ? await requestOnNode(node, path, { method, body: payload })
+          : await requestMutation(path, { method, body: payload, refreshAfter: false });
+        if (node) announceNodeChanged(node);
+        else state.upsertCron(cron);
         notify(`cron ${method === 'PATCH' ? 'saved' : 'created'}: ${cron?.name || ('#' + (cron?.id || ''))}`);
         void refresh();
         return cron;

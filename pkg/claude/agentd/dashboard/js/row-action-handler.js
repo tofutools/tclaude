@@ -983,7 +983,7 @@ export async function handleRowAction(action) {
         if (raw) {
           try { prefill = JSON.parse(raw); } catch (_) {}
         }
-        openCronCreateModal(prefill);
+        openCronCreateModal(prefill, node);
         return;
       }
       case 'message-new': {

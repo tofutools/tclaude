@@ -163,7 +163,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       interactions.closeMenu(true);
       actions.openAddMember(group);
     }} />
-    <${MenuButton} data-act="cron-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
+    <${MenuButton} data-act="cron-new" data-group=${name} data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
     <${MenuButton} title=${wizardMode ? `Choose which durable decrees apply to party ${name}` : `Choose which standing orders apply to ${name}`} regular="📋 standing orders…" wizard="📜 standing orders…" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
