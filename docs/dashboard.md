@@ -1341,8 +1341,17 @@ first and says what will happen. Most pages name their CLI.
 - **Setup guide** — where Fleet opens until this node is joined to a hub,
   trusts a peer and shares a group with it (the tab counts the steps done);
   afterwards it is one tab away, for linking more nodes. Each step shows its
-  state, does the step in place and names its CLI:
-    1. **Join a hub**: paste the join code from the hub admin; the guide
+  state, does the step in place and names its CLI. Any step, done or not,
+  opens from the list to read again; a joined node keeps the join
+  instructions under **How joining works**:
+    1. **Set up a hub** (optional): how to run `tclaude hub serve` (with TLS,
+       or plain HTTP over loopback), where its one-time admin claim token is
+       written, and `tclaude hub invite` for each node's join code. Skip it
+       when someone else runs the hub.
+    2. **Become hub admin** (optional): once joined, whether this node is an
+       admin of its hub, or the same **Claim hub admin…** dialog as Hub for
+       the claim token. Before joining it says to join first.
+    3. **Join a hub**: paste the join code from the hub admin; the guide
        shows what the daemon read from it (hub, space, invite expiry, the
        SHA-256 of a certificate it trusts, and the hub it replaces) before
        one Join confirmation. A hub address and a bare invite work too (a
@@ -1351,15 +1360,15 @@ first and says what will happen. Most pages name their CLI.
        there for an admin who admits nodes directly. A refused or
        unreachable hub is explained, and a refusal takes a new invite or
        join code in place.
-    2. **Trust your peers**: the nodes waiting in your spaces with their full
+    4. **Trust your peers**: the nodes waiting in your spaces with their full
        fingerprints, and the same Trust… dialog as Peers; your own fingerprint
        to read to the other operator.
-    3. **Share groups**: a peer, one of your groups and presets of ordinary
+    5. **Share groups**: a peer, one of your groups and presets of ordinary
        peer grants on it (Mail: `message.direct`, roster and presence;
        Status: `agents.status.read`, `sessions.read`; Watch terminals:
        `sessions.watch`; Spawn workers: `groups.members.spawn`, cap 2), with
        what the peer already holds there left out. Peer grants has the rest.
-    4. **Let agents use peers** (optional): what each trusted peer shares with
+    6. **Let agents use peers** (optional): what each trusted peer shares with
        this node, per group, which of your groups and agents already use it,
        and **Give access…** for another group (every member) or agent. That
        merges `peer=<peer>/<group>` into their grants of the slugs that use

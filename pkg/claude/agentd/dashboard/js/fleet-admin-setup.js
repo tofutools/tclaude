@@ -3,12 +3,13 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { confirmHubSave } from './fleet-admin-node-settings.js';
 import { grantConsequence, grantRows, shortID } from './fleet-admin-model.js';
+import { ClaimDialog } from './fleet-admin-hub.js';
 
 const html = htm.bind(h);
 
 // The setup guide (Fleet → Setup guide) walks one node through federation:
-// join a hub, trust the other nodes, share groups with them, and let local
-// agents use what they share. Every step runs the same daemon routes as the
+// optionally run a hub and become its admin, join a hub, trust the other
+// nodes, share groups with them, and let local agents use what they share. Every step runs the same daemon routes as the
 // rest of Fleet administration and names its CLI, so nothing here is
 // dashboard-only. It is the landing page until the first three steps are
 // done, and stays one click away after.
@@ -72,12 +73,17 @@ export function sharedAlike(catalog = []) {
 // setupProgress reads the admin view as the guide's steps. Joining, trusting
 // and sharing are the setup; letting agents use a peer is optional, since a
 // peer that only reads or mails this node needs nothing more here.
-export function setupProgress(view) {
+// hubAdmin is whether this node administers its hub (Fleet → Hub's status;
+// unknown until read), for the optional admin step only.
+export function setupProgress(view, { hubAdmin = false } = {}) {
   const self = view.self;
   const connected = self.enabled && self.hubState === 'connected';
   const trusted = view.trusted.length > 0;
   const shared = view.trusted.some((r) => r.level === 'unrestricted' || r.grants.total > 0);
   const steps = [
+    // Optional: only one node per fleet runs the hub and claims it.
+    { id: 'runhub', title: 'Set up a hub', optional: true, done: connected },
+    { id: 'hubadmin', title: 'Become hub admin', optional: true, done: connected && hubAdmin },
     { id: 'hub', title: 'Join a hub', done: connected },
     { id: 'trust', title: 'Trust your peers', done: trusted },
     { id: 'share', title: 'Share groups', done: shared },
@@ -210,6 +216,50 @@ async function joinWithCode({ code, preview, name, actions, confirm }) {
   }
 }
 
+// JOIN_HOWTO is the join step's instructions, shown again once joined.
+const JOIN_HOWTO = html`<p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>`;
+
+// RunHubStep explains running a hub, for the one node (or server) that hosts
+// it. Nothing here runs it: the hub is its own process on its host.
+function RunHubStep({ view }) {
+  const connected = view.self.enabled && view.self.hubState === 'connected';
+  return html`<div class="fs-body" data-setup-step="runhub">
+    <h3>Set up a hub <span class="muted">(optional)</span></h3>
+    ${connected && html`<p class="fs-ok">✓ This node is connected to a hub at <code>${view.self.hubURL}</code>. The steps below are for running another one.</p>`}
+    <p>Skip this if someone already runs a hub for you: you only need its join code (step 3). A hub relays between nodes and stores only who is admitted and in which spaces, never messages. Run it anywhere every node can reach: a team server, a cloud VM, or one of your own machines.</p>
+    <ol class="fs-list">
+      <li>Start it on the hub host. With TLS: <pre class="fs-pre"><code>tclaude hub serve --listen 0.0.0.0:8470 --tls-cert hub.crt --tls-key hub.key</code></pre>
+        Without <code>--tls-cert</code> it serves plain HTTP, which nodes accept only over loopback (<code>--listen 127.0.0.1:8470</code> on this machine), or front it with a TLS proxy. <code>tclaude-hub serve …</code> is the same, as a separate binary; run it as a service to keep it up (see the federation docs).</li>
+      <li>Its first start writes a one-time admin claim token to a private file next to the hub database and prints how to read it. Keep it for step 2.</li>
+      <li>Make a join code for each node, this one included, on the hub host: <pre class="fs-pre"><code>tclaude hub invite --space team-a --url wss://hub.example:8470 [--ca-file hub.crt]</code></pre>
+        Nodes in the same space see each other. Paste each code into step 3 on its node.</li>
+    </ol>
+    <${Cli}><code>tclaude hub serve</code>, <code>tclaude hub invite</code>, <code>tclaude hub ls</code>, <code>tclaude hub admit inst_… --space …</code><//>
+  </div>`;
+}
+
+// HubAdminStep claims admin of the hub this node is connected to (the same
+// claim as Fleet → Hub), or says this node already is one.
+function HubAdminStep({ view, status, actions, confirm, toast, onHub, onClaimed }) {
+  const [claiming, setClaiming] = useState(false);
+  const self = view.self;
+  const connected = self.enabled && self.hubState === 'connected';
+  const body = !connected
+    ? html`<p class="fs-warn">Join the hub first (step 3): the hub admits this node, then this node claims admin over that connection. Come back here after joining.</p>`
+    : !status ? html`<p class="muted">Reading the hub's admin status…</p>`
+    : status.error ? html`<div class="fs-error" role="note">${status.error}</div>`
+    : status.admin ? html`<p class="fs-ok" id="fleet-setup-hub-admin">✓ This node is a hub admin <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>. <button type="button" class="fa-link" onClick=${onHub}>Hub…</button> admits nodes, makes invites and adds admins.</p>`
+    : html`<p>${status.bootstrap_claimable ? 'This hub has no admin yet. Claim it with the one-time token from the private claim file on the hub host.' : 'This hub already has an admin. An existing admin can add this node from their Fleet → Hub, or you can redeem a fresh claim token if one was issued.'}</p>
+      <div class="fs-actions"><button type="button" class="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…</button></div>`;
+  return html`<div class="fs-body" data-setup-step="hubadmin">
+    <h3>Become hub admin <span class="muted">(optional)</span></h3>
+    <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>
+    ${body}
+    ${claiming && html`<${ClaimDialog} self=${self} actions=${actions} confirm=${confirm} onClose=${() => setClaiming(false)} onDone=${(msg) => { setClaiming(false); toast(msg, false); onClaimed(); }} />`}
+    <${Cli}><code>tclaude federation hub claim TOKEN</code>, <code>tclaude federation hub status</code><//>
+  </div>`;
+}
+
 function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
   const self = view.self;
   const [form, setForm] = useState({ hubURL: '', name: self.name === 'this node' ? '' : self.name, invite: '', caFile: '', clearCA: false, connect: true });
@@ -257,6 +307,11 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
       <p class="fs-ok">✓ Connected to <code>${self.hubURL}</code> as <b>${self.name}</b>${self.spaces.length ? html`, in space${self.spaces.length === 1 ? '' : 's'} <b>${self.spaces.join(', ')}</b>` : ''}.</p>
       <p class="muted">Other nodes in the same space see this node and can ask you to trust them; nothing is shared until you trust a node and grant it something. A node uses one hub at a time: <button type="button" class="fa-link" onClick=${onSettings}>Hub settings…</button> moves it to another hub or renames it.</p>
       <${Cli}><code>tclaude federation status</code><//>
+      <details class="fs-more" id="fleet-setup-hub-howto">
+        <summary>How joining works</summary>
+        ${JOIN_HOWTO}
+        <${Cli}><code>tclaude federation join tchj_… [--name …]</code>, or <code>tclaude federation connect wss://… --invite tchi_… [--name …] [--ca-file …]</code><//>
+      </details>
     </div>`;
   }
   const problem = hubProblem(self);
@@ -280,7 +335,7 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
   }
   return html`<div class="fs-body" data-setup-step="hub">
     <h3>Join a hub</h3>
-    <p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>
+    ${JOIN_HOWTO}
     <label class="fa-ns-row"><span class="fa-k">join code</span><textarea id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
     <label class="fa-ns-row"><span class="fa-k">this node's name</span><input id="fleet-setup-name" value=${form.name} placeholder="how other nodes see this one" autocomplete="off" onInput=${set('name')} /></label>
     <${JoinPreview} preview=${preview} />
@@ -371,7 +426,7 @@ function ShareStep({ view, groups, actions, confirm, toast, reload, onOpenGrants
 
   const intro = html`<h3>Share groups</h3>
     <p>A trusted peer can do nothing on this node until you grant it something. Pick one of your groups and what the peer may do in it. The other operator shares their groups with you on their node, the same way.</p>`;
-  if (!view.trusted.length) return html`<div class="fs-body" data-setup-step="share">${intro}<p class="fs-warn">Trust a peer first (step 2).</p></div>`;
+  if (!view.trusted.length) return html`<div class="fs-body" data-setup-step="share">${intro}<p class="fs-warn">Trust a peer first (step 4).</p></div>`;
   if (!current) {
     return html`<div class="fs-body" data-setup-step="share">${intro}
       <p class="fs-ok">✓ Every peer you trust is unrestricted: it already holds every peer permission on all groups.</p></div>`;
@@ -527,14 +582,14 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
     <h3>Let your agents use peers</h3>
     <p>Below is what each peer shares with this node. Your agents need their own permission to use it: local grants never reach another node, so the grant names the peer and its group (<code>peer=<i>peer</i>/<i>group</i></code>). Start with messaging: give it to one of your groups and every member can mail the peer group's agents. Towards an unrestricted peer, your agents' ordinary grants count too. You can always reach a peer's agents yourself, from Messages or the node row.</p>
     <p class="muted">To allow more (status, terminals, spawning, jobs), click a group or agent below to open its Permissions, or use Groups → the group's Permissions…, and add the permission with scope <code>peer=<i>peer</i>/<i>group</i></code>.</p>
-    ${!peers.length && html`<p class="fs-warn">Trust a peer first (step 2).</p>`}
+    ${!peers.length && html`<p class="fs-warn">Trust a peer first (step 4).</p>`}
     ${rows?.error && html`<div class="fa-danger" role="alert">Could not read who uses peers: ${rows.error}</div>`}
     ${peers.map((r) => {
       const alike = sharedAlike(r.catalog);
       return html`<div class="fs-peer" key=${r.id} data-peer=${r.id}>
       <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
       ${!r.catalog.length
-        ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 3).</div>`
+        ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 5).</div>`
         : html`${alike && html`<div class="fs-shared-alike" data-shared-alike>All ${r.catalog.length} groups share: <span>${alike}</span></div>`}
         <table class="fa-table fs-reach-table">
           <thead><tr><th>Its group</th>${!alike && html`<th>Shared with you</th>`}<th>Your agents that use it</th></tr></thead>
@@ -564,8 +619,18 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
 // starts on the first one not done.
 // onSeen runs once it is on screen, which retires the Fleet chip's "set up"
 // hint.
-export function SetupGuide({ view, groups = [], agents = [], actions, confirm, toast, copy, reload, onTrust, onSettings, onPeers, onOpenGrants, onPermissions = null, onSeen = null }) {
-  const progress = setupProgress(view);
+export function SetupGuide({ view, groups = [], agents = [], actions, confirm, toast, copy, reload, onTrust, onSettings, onPeers, onOpenGrants, onPermissions = null, onSeen = null, onHub = null }) {
+  // The hub's admin status, read while connected (the optional admin step).
+  const connected = view.self.enabled && view.self.hubState === 'connected';
+  const [hubStatus, setHubStatus] = useState(null);
+  const [hubTick, setHubTick] = useState(0);
+  useEffect(() => {
+    if (!connected || !actions.hubStatus) { setHubStatus(null); return undefined; }
+    let off = false;
+    actions.hubStatus().then((s) => { if (!off) setHubStatus(s || {}); }, (e) => { if (!off) setHubStatus({ error: errText(e) }); });
+    return () => { off = true; };
+  }, [connected, hubTick]);
+  const progress = setupProgress(view, { hubAdmin: !!hubStatus?.admin });
   const [step, setStep] = useState(progress.current);
   useEffect(() => { onSeen?.(); }, []);
   const shown = progress.steps.find((s) => s.id === step) || progress.steps[0];
@@ -580,7 +645,9 @@ export function SetupGuide({ view, groups = [], agents = [], actions, confirm, t
       </li>`)}
       <li class="fs-progress muted">${progress.complete ? 'Set up. Come back here to link more nodes.' : `${progress.done} of ${progress.total} done`}</li>
     </ol>
-    ${shown.id === 'hub' ? html`<${HubStep} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onSettings=${onSettings} />`
+    ${shown.id === 'runhub' ? html`<${RunHubStep} view=${view} />`
+      : shown.id === 'hubadmin' ? html`<${HubAdminStep} view=${view} status=${hubStatus} actions=${actions} confirm=${confirm} toast=${toast} onHub=${onHub} onClaimed=${() => setHubTick((n) => n + 1)} />`
+      : shown.id === 'hub' ? html`<${HubStep} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onSettings=${onSettings} />`
       : shown.id === 'trust' ? html`<${TrustStep} view=${view} copy=${copy} toast=${toast} onTrust=${onTrust} onPeers=${onPeers} />`
       : shown.id === 'share' ? html`<${ShareStep} view=${view} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} onOpenGrants=${onOpenGrants} />`
       : html`<${AgentsStep} view=${view} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} copy=${copy} toast=${toast} reload=${reload} onPermissions=${onPermissions} />`}
