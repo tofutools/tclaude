@@ -19,6 +19,7 @@ import { openGroupAttachmentDialog } from './action-dialog-controller.js';
 import { openStandingOrderCreateModal } from './jobs-controller.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 import { resolveAgentTitle } from './agent-title.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -75,6 +76,9 @@ export function createGroupsActions({
   if (!state) throw new TypeError('groups actions require state');
   if (typeof refresh !== 'function') throw new TypeError('groups actions require refresh');
   if (typeof wait !== 'function') throw new TypeError('groups actions require wait');
+  // A dialog these actions serve may be on another node's group (its
+  // descriptor's node, from that node's own actions): its requests go there.
+  const on = (descriptor) => (descriptor?.node && descriptor.node !== node ? nodeFetch(descriptor.node) : fetchImpl);
 
   return Object.freeze({
     refresh,
@@ -88,7 +92,7 @@ export function createGroupsActions({
       state.closeMemberEditor();
     },
     openAddMember(group) {
-      return state.openAddMember(group);
+      return state.openAddMember(group, node);
     },
     openStandingOrders(group) {
       return state.openStandingOrders(group, node);
@@ -151,7 +155,7 @@ export function createGroupsActions({
       return updated;
     },
     openSpawnHarnessPolicy(group) {
-      return openSpawnHarnessPolicy(group?.name || group || '');
+      return openSpawnHarnessPolicy(group?.name || group || '', node);
     },
     openGroupAttachment(group) {
       return openGroupAttachmentDialog({
@@ -163,21 +167,24 @@ export function createGroupsActions({
     closeAddMember() {
       state.closeAddMember();
     },
-    loadAddMemberPromotionPool() {
-      return loadAddMemberPromotionPool({ fetchImpl });
+    loadAddMemberPromotionPool(descriptor) {
+      return loadAddMemberPromotionPool({ fetchImpl: on(descriptor) });
     },
     async addExistingMember(descriptor, candidate) {
       await addExistingMemberRequest({
         group: descriptor.group,
         candidate,
-        fetchImpl,
+        fetchImpl: on(descriptor),
       });
-      state.optimisticAddMember(descriptor.group, candidate);
+      // Another node's group is that node's: re-read it rather than adding
+      // the member to the page's same-named group.
+      if (descriptor.node || node) announceNodeChanged(descriptor.node || node);
+      else state.optimisticAddMember(descriptor.group, candidate);
       notify(`added ${candidate.title || candidate.conv_id} to ${descriptor.group}`);
       return true;
     },
     openMemberPermissions(descriptor) {
-      return openMemberPermissions(descriptor.conv, descriptor.label);
+      return openMemberPermissions(descriptor.conv, descriptor.label, descriptor.node || node);
     },
     noMemberChanges() {
       notify('no changes');

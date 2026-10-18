@@ -326,7 +326,8 @@ export function createGroupsState({
     memberEditor.value = null;
   }
 
-  function openAddMember(group) {
+  // node names another node's group (blank: the page's).
+  function openAddMember(group, node = '') {
     // The dialog owns its search/toggle/highlight transaction until it closes.
     // Poll publishes update the candidate source without retargeting the group
     // or remounting that local state.
@@ -334,6 +335,7 @@ export function createGroupsState({
     addMemberDialog.value = {
       launchID: ++nextAddMemberLaunchID,
       group: String(group.name),
+      node: String(node || ''),
     };
     return true;
   }

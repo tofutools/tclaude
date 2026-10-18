@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import htm from 'htm';
 import { shortId } from './helpers.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { nodeSnapshot } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -96,7 +97,9 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   const listRef = useRef(null);
   const poolRequest = useRef(0);
   const poolBusyRef = useRef(false);
-  const currentSnapshot = state.snapshot.value;
+  // Another node's group lists that node's agents (a null snapshot means the
+  // node is the page's own).
+  const currentSnapshot = (descriptor.node && nodeSnapshot(descriptor.node)) || state.snapshot.value;
   const candidates = useMemo(() => buildAddMemberCandidates({
     snapshot: currentSnapshot,
     promotionPool,
@@ -115,7 +118,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     setPoolLoading(true);
     setPoolError('');
     try {
-      const rows = await actions.loadAddMemberPromotionPool();
+      const rows = await actions.loadAddMemberPromotionPool(descriptor);
       if (request === poolRequest.current) setPromotionPool(rows);
     } catch (error) {
       if (request === poolRequest.current) {
