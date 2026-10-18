@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
 
 const html = htm.bind(h);
 export const DEBUG_POLL_MS = 10_000;
@@ -166,6 +167,8 @@ export function DebugApp({
   clearIntervalImpl = globalThis.clearInterval,
 }) {
   const current = state.view.value;
+  // The fused node switch (activity-node.js) re-reads the chosen daemon.
+  const node = activityTarget()?.id || '';
   useEffect(() => {
     if (!current.active) {
       actions.cancel();
@@ -177,7 +180,7 @@ export function DebugApp({
       clearIntervalImpl(timer);
       actions.cancel();
     };
-  }, [current.active, actions, pollMs, setIntervalImpl, clearIntervalImpl]);
+  }, [current.active, actions, pollMs, setIntervalImpl, clearIntervalImpl, node]);
 
   const busy = current.request.phase === 'loading' || current.request.phase === 'refreshing';
   return html`<${Fragment}>
@@ -187,6 +190,7 @@ export function DebugApp({
         <span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (reset on daemon restart).</span>
         <span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (the readings vanish when the daemon restarts).</span>
       </span>
+      <${ActivityNodeSwitch} />
       <span class="spacer"></span>
       <span id="debug-updated" class="muted" aria-live="polite">${updatedLabel(current.response)}</span>
       <button class="tool" id="debug-reset" disabled=${current.resetting}
