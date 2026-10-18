@@ -244,6 +244,10 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			return
 		}
 		if body.To != "" {
+			if strings.HasSuffix(r.URL.Path, "/teleport") {
+				writeError(w, 400, "invalid_arg", "to is only valid for move")
+				return
+			}
 			if !db.FederationPeerUnrestricted(a.peer) {
 				writeError(w, 403, "permission", "only an unrestricted peer may send an agent to another node")
 				return
@@ -253,6 +257,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 				writeError(w, 400, "invalid_arg", "to must name another node this one trusts")
 				return
 			}
+			v.auditDetail = "to=" + body.To
 			r = asDashboardHumanPeer(asOperator)
 			a = &peerActionAuthority{peer: body.To}
 		}

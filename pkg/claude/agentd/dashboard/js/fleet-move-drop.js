@@ -152,7 +152,8 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     } catch (e) {
       if (!alive.current) return;
       setPhase('confirm');
-      if (third && e?.status === 400 && e?.code !== 'invalid_arg') {
+      // An older peer refuses the unknown "to" as its body decoder does.
+      if (third && e?.status === 400 && e?.code === 'invalid_arg' && /invalid remote action body/.test(errText(e))) {
         setError(`${source.name} cannot send ${agent.name} on to another node (an older build): move it from ${source.name}'s dashboard.`);
       } else if (!push && (e?.code === 'flagged_credentials' || e?.status === 422)) {
         setError(`${agent.name}'s history looks like it contains credentials, and a pulled move cannot override that. Move it from ${source.name}'s dashboard, where you can choose to send it anyway.`);

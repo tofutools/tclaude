@@ -139,3 +139,13 @@ test('a drop between two peers is sent by the source peer, on to the third node'
   assert.match(s.q('[data-move-drop-state="relayed"]').textContent, /desk is sending builder-1 to group reviewers on forge.*desk's ⚙ Fleet → Moves/);
   assert.equal(s.timers.queue.length, 0, 'nothing here to follow');
 });
+
+test('a source peer on an older build says where to move from instead', async (t) => {
+  const s = await mountDialog(t, {
+    plan: { kind: 'third' },
+    actions: {},
+    peerActions: () => ({ moveDirect: async () => { const e = new Error('invalid remote action body'); e.status = 400; e.code = 'invalid_arg'; throw e; } }),
+  });
+  await s.click(s.q('#fleetview-move-drop-ok'));
+  assert.match(s.q('#fleetview-move-drop [role=alert]').textContent, /desk cannot send builder-1 on to another node \(an older build\)/);
+});

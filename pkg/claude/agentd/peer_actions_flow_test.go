@@ -315,4 +315,6 @@ func TestPeerMovesAnAgentOnToAThirdNodeOnlyUnderUnrestrictedTrust(t *testing.T) 
 	code, body = move(carol.ID())
 	require.Equal(t, 409, code, "the move is this node's own, to carol (which has not advertised moves): %s", body)
 	require.Contains(t, body, "unsupported_peer")
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/teleport", map[string]any{"group": "receiver", "to": carol.ID()}))
+	require.Equal(t, 400, rec.Code, "only a move relays: %s", rec.Body.String())
 }
