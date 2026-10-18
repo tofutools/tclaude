@@ -24,11 +24,15 @@ const (
 	PermSessionsAttach       = "sessions.attach"
 	PermSessionsTakeover     = "sessions.takeover"
 	PermSessionsFilesRead    = "sessions.files.read"
-	PermGroupsRosterRead     = "groups.roster.read"
-	PermGroupsPresenceRead   = "groups.presence.read"
-	PermMessageAttachments   = "message.attachments"
-	PermAgentsReceive        = "agents.receive"
-	PermJobsRun              = "jobs.run"
+	// PermSessionsShell opens a raw tclaude shell on this node (the group's
+	// shell, a member agent's directory shell): host shell access, more than
+	// attaching an agent's pane, so it is its own grant.
+	PermSessionsShell      = "sessions.shell"
+	PermGroupsRosterRead   = "groups.roster.read"
+	PermGroupsPresenceRead = "groups.presence.read"
+	PermMessageAttachments = "message.attachments"
+	PermAgentsReceive      = "agents.receive"
+	PermJobsRun            = "jobs.run"
 	// PermSnapshotsReceive lets a peer send this node encrypted resilience
 	// snapshots of its agents to keep. Instance-wide; nothing is imported.
 	PermSnapshotsReceive = "snapshots.receive"
@@ -45,6 +49,7 @@ var federationPeerSlugs = map[string]string{
 	PermSessionsAttach:           proto.CapSessionsAttach,
 	PermSessionsTakeover:         proto.CapSessionsTakeover,
 	PermSessionsFilesRead:        proto.CapSessionsFilesRead,
+	PermSessionsShell:            proto.CapSessionsShell,
 	PermGroupsPresenceRead:       proto.CapPresence,
 	PermMessageDirect:            proto.CapMail,
 	PermMessageAttachments:       proto.CapAttachments,

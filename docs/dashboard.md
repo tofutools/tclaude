@@ -517,9 +517,19 @@ always lists this node's sessions, also in a peer's per-node view. A fused
 view, or a peer's per-node view, adds the shown peers' unattached agents
 and tclaude shells (agent and group shells) under each peer's node pill, by
 kind (an unrestricted peer serves that listing). `Attach` opens a peer's
-agent as a remote terminal. A peer's shell can be ended from here (`Kill`,
-through the peer); its `Attach` is locked with the reason until the
-federation terminal stream carries shells.
+agent as a remote terminal, and a peer's shell as a remote shell (below).
+A peer's shell can also be ended from here (`Kill`, through the peer). Only a
+shell from before shells were filed under their group keeps a locked
+`Attach`.
+
+A peer's tclaude shells open here too: on a peer's Groups rows (its own view,
+or a fused view), clicking a member's directory path opens that agent's
+directory shell, and Ctrl/Cmd-clicking the group's default directory (or its
+`open web terminal` item) opens the group's shell. Each opens in the browser
+over the federation terminal stream, landing in the same tmux session that a
+click on that node would. The peer must grant `sessions.shell` on the group,
+which unrestricted trust always does. Without it, the path stays dimmed and
+its hover names the missing grant.
 
 A peer's terminal (a remote terminal) carries the peer's node pill on its tab
 and one chip in its pane header naming the peer and the mode

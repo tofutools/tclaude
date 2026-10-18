@@ -60,13 +60,16 @@ export function backgroundPeers(view, remote = '') {
   return fleet.peers.filter((peer) => ids.has(peer.id) && peer.online);
 }
 
-// PEER_SHELL_ATTACH is why a peer's shell has no Attach here yet: the
-// federation terminal stream addresses agents only.
-export const PEER_SHELL_ATTACH = "A peer's shell attaches on that node for now: the federation terminal stream carries agents only";
+// PEER_SHELL_ATTACH is why a peer's shell has no Attach here: one from before
+// shells were filed under their group, which the federation terminal stream
+// addresses a shell by.
+export const PEER_SHELL_ATTACH = "This shell predates group shells: attach it on that node";
 
 // peerBackgroundRows keeps the peer's agents (the rows a remote terminal can
-// open) and its tclaude shells (ended from here; attached on that node), each
-// tagged with its node.
+// open) and its tclaude shells, each tagged with its node. A peer lists its
+// background terminals only under unrestricted trust, which holds
+// sessions.shell, so its shells attach over the federation terminal stream
+// (remote-terminal.js openRemoteShell) when they name their group.
 export function peerBackgroundRows(rows, peer) {
   const node = { id: peer.id, name: peer.name, color: peer.color };
   return (rows || []).flatMap((row) => {
@@ -74,10 +77,20 @@ export function peerBackgroundRows(rows, peer) {
       return [{ ...row, key: `peer:${peer.id}:${row.agent_id}`, killable: false, node }];
     }
     if ((row?.kind === 'shell' || row?.kind === 'group_shell') && row.tmux_session) {
-      return [{ ...row, key: '', killable: !!row.killable, attachLock: PEER_SHELL_ATTACH, node }];
+      const shell = peerShell(row);
+      return [shell
+        ? { ...row, key: `peer:${peer.id}:${row.tmux_session}`, killable: !!row.killable, shell, node }
+        : { ...row, key: '', killable: !!row.killable, attachLock: PEER_SHELL_ATTACH, node }];
     }
     return [];
   });
+}
+
+// peerShell is the openRemoteShell target of a peer's shell row, or null.
+function peerShell(row) {
+  if (!row.group) return null;
+  if (row.kind === 'group_shell') return { group: row.group, shell: 'group' };
+  return PEER_AGENT_ID.test(row.agent_id || '') && !row.superseded ? { group: row.group, shell: row.which || 'current', agent: row.agent_id } : null;
 }
 
 // readListing resolves to the listing's rows, null when it could not be read
@@ -215,12 +228,14 @@ export function idleText(lastActivity, nowSeconds = Date.now() / 1000) {
 
 // attachBackgroundTerminal opens row as a normal terminal tab and returns the
 // promise of its pane (null when the row cannot be attached from here).
-export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, activate = true, openRemote = openRemoteAgent } = {}) {
+export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, activate = true, openRemote = openRemoteAgent, openShell = openRemoteShellPane } = {}) {
   const { title } = rowView(row, snapshotValue);
   const selector = selectorOf(row);
   const options = { reveal, activate };
   let opened = null;
-  if (row.node) {
+  if (row.node && row.shell) {
+    opened = openShell({ instance: row.node.id, ...row.shell, peerLabel: row.node.name, label: title, options });
+  } else if (row.node) {
     opened = openRemote({ instance: row.node.id, agent: row.agent_id, peerLabel: row.node.name, label: row.label || '', options });
   } else if ((row.kind === 'agent' || row.kind === 'session') && selector) {
     opened = openWebWindowPane(selector, title, { harness: row.harness || '', ...options });
@@ -236,6 +251,12 @@ export function attachBackgroundTerminal(row, snapshotValue, { reveal = true, ac
 
 function openRemoteAgent({ options, ...rest }) {
   return import('./remote-terminal.js').then((m) => m.openRemoteTerminal({
+    ...rest, open: (args) => m.openRemotePane(args, options),
+  }));
+}
+
+function openRemoteShellPane({ options, ...rest }) {
+  return import('./remote-terminal.js').then((m) => m.openRemoteShell({
     ...rest, open: (args) => m.openRemotePane(args, options),
   }));
 }

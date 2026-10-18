@@ -105,19 +105,12 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `which must be "start", "current", or "worktree"`, http.StatusBadRequest)
 		return
 	}
-	start, current, worktree, _ := resolveDirs(res.ConvID)
-	dir := pickDir(which, start, current, worktree)
-	if dir == "" {
-		http.Error(w, "no known "+which+" directory for "+short8(res.ConvID), http.StatusNotFound)
-		return
-	}
-	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
-	environment, err := terminalGroupEnvironment(res.ConvID, groupName)
+	spec, status, err := agentShellSpec(res.ConvID, which, r.URL.Query().Get("group"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), status)
 		return
 	}
-	name := termSessionNameForGroup(res.ConvID, which, groupName)
+	name, dir, environment := spec.name, spec.dir, spec.environment
 	if err := session.RequireExternalTmuxServer(); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -137,6 +130,67 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(name))
 	runPTYOverWS(w, r, cmd, name, "", nil, config.TerminalTabAgentTerminal)
+}
+
+// shellSpec is one tclaude shell: its tmux session, the directory it starts
+// in and the group environment it exports. The browser's local routes and a
+// peer's federation shell open (federation_terminal_shell.go) resolve the
+// same shell through agentShellSpec and groupShellSpec.
+type shellSpec struct {
+	name, dir   string
+	environment []sandboxpolicy.EnvironmentEntry
+}
+
+// agentShellSpec is the shell in an agent's start, current or worktree
+// directory, opened from group (blank: no group, no group environment).
+// The status is the HTTP status a refusal maps to.
+func agentShellSpec(convID, which, group string) (shellSpec, int, error) {
+	start, current, worktree, _ := resolveDirs(convID)
+	dir := pickDir(which, start, current, worktree)
+	if dir == "" {
+		return shellSpec{}, http.StatusNotFound, fmt.Errorf("no known %s directory for %s", which, short8(convID))
+	}
+	group = strings.TrimSpace(group)
+	environment, err := terminalGroupEnvironment(convID, group)
+	if err != nil {
+		return shellSpec{}, http.StatusBadRequest, err
+	}
+	return shellSpec{name: termSessionNameForGroup(convID, which, group), dir: dir, environment: environment}, 0, nil
+}
+
+// groupShellSpec is the shell in a group's default directory.
+func groupShellSpec(g *db.AgentGroup) (shellSpec, error) {
+	dir := strings.TrimSpace(g.DefaultCwd)
+	if dir == "" {
+		return shellSpec{}, fmt.Errorf("group %s has no default working directory set", g.Name)
+	}
+	return shellSpec{name: groupTermSessionName(g.Name), dir: dir, environment: g.Environment}, nil
+}
+
+// ensureShellSession starts spec's shell detached when it is not running,
+// as `tmux new-session -A` does for a browser that attaches at once. Its
+// bootstrap script outlives this call: the shell reads it at start, and the
+// launch scripts' stale sweep removes it later.
+func ensureShellSession(spec shellSpec) error {
+	if session.IsTmuxSessionAlive(spec.name) {
+		return nil
+	}
+	if err := session.RequireExternalTmuxServer(); err != nil {
+		return err
+	}
+	args := []string{"new-session", "-d", "-s", spec.name, "-c", spec.dir}
+	if len(spec.environment) > 0 {
+		scriptPath, _, err := session.WriteLaunchScript(groupTerminalBootstrap(spec.environment))
+		if err != nil {
+			return fmt.Errorf("prepare terminal: %w", err)
+		}
+		args = append(args, clcommon.BootstrapShellCommandPrefix()+" "+shellSingleQuote(scriptPath))
+	}
+	if out, err := clcommon.TmuxCommand(args...).CombinedOutput(); err != nil && !session.IsTmuxSessionAlive(spec.name) {
+		return fmt.Errorf("start shell: %s", strings.TrimSpace(string(out)))
+	}
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(spec.name)+":", "mouse", "on").Run()
+	return nil
 }
 
 func termSessionNameForGroup(convID, which, group string) string {
@@ -222,12 +276,12 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "resolve group: "+name, http.StatusNotFound)
 		return
 	}
-	dir := strings.TrimSpace(g.DefaultCwd)
-	if dir == "" {
-		http.Error(w, "group "+name+" has no default working directory set", http.StatusNotFound)
+	spec, err := groupShellSpec(g)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	sessName := groupTermSessionName(g.Name)
+	sessName, dir := spec.name, spec.dir
 	if err := session.RequireExternalTmuxServer(); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return

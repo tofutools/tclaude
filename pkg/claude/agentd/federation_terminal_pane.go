@@ -43,6 +43,9 @@ func fedTerminalCap(readOnly bool) string {
 }
 
 func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error) {
+	if p.Shell != "" {
+		return resolveFedShell(peer, p, false)
+	}
 	trusted, _ := db.GetFederationPeer(peer)
 	if trusted == nil {
 		return nil, errors.New("peer no longer trusted")

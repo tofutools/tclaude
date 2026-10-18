@@ -159,9 +159,15 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   assert.deepEqual(peerRows.map((row) => [row.key, row.killable, row.node.name, row.kind]), [
     ['peer:inst_forge:agt_scout', false, 'forge', 'agent'],
     ['', true, 'forge', 'shell'],
-    ['', true, 'forge', 'group_shell'],
-  ], 'agents open as remote terminals; tclaude shells list too, killable there, not attachable from here; other sessions stay out');
-  assert.match(peerRows[2].attachLock, /federation terminal stream carries agents only/);
+    ['peer:inst_forge:g', true, 'forge', 'group_shell'],
+  ], 'agents open as remote terminals; tclaude shells list too, killable there, attachable when they name their group; other sessions stay out');
+  assert.match(peerRows[1].attachLock, /predates group shells/);
+  assert.deepEqual(peerRows[2].shell, { group: 'ops', shell: 'group' });
+  const [dirShell] = bg.peerBackgroundRows([{ kind: 'shell', tmux_session: 'd', agent_id: 'agt_scout', which: 'worktree', group: 'ops', label: 'scout' }], forge);
+  const shells = [];
+  bg.attachBackgroundTerminal(dirShell, null, { openShell: (o) => { shells.push(o); return Promise.resolve({ key: 'k' }); } });
+  assert.deepEqual(shells.map(({ instance, group, shell, agent, peerLabel }) => ({ instance, group, shell, agent, peerLabel })),
+    [{ instance: 'inst_forge', group: 'ops', shell: 'worktree', agent: 'agt_scout', peerLabel: 'forge' }], "a peer's directory shell opens over the federation terminal stream");
   const kills = [];
   assert.equal(await bg.killBackgroundTerminal(peerRows[2], { fetchImpl: async (path, init) => { kills.push([path, JSON.parse(init.body)]); return { ok: true }; } }), '');
   assert.equal(await bg.killBackgroundTerminal({ tmux_session: 'mine' }, { fetchImpl: async (path, init) => { kills.push([path, JSON.parse(init.body)]); return { ok: true }; } }), '');
@@ -187,7 +193,7 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   t.after(() => { stop(); bg.backgroundTerminals.value = []; });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(requests, ['/api/background-terminals', '/api/peer/inst_forge/background-terminals', '/api/peer/inst_lab/background-terminals']);
-  assert.deepEqual(bg.backgroundTerminals.value.map((row) => row.key || row.tmux_session), ['window:agt_bg', 'peer:inst_forge:agt_scout', 'g'],
+  assert.deepEqual(bg.backgroundTerminals.value.map((row) => row.key || row.tmux_session), ['window:agt_bg', 'peer:inst_forge:agt_scout', 'peer:inst_forge:g'],
     'this node\'s rows, then the peer\'s; a peer that refuses adds none');
   requests.length = 0;
   bg.refreshBackgroundTerminals();
@@ -206,8 +212,8 @@ test('a fused or peer view also lists the shown peers\' unattached agents, opene
   const heads = [...host.querySelectorAll('.mux-bg-sec-head')].map((head) => head.textContent);
   assert.deepEqual(heads, ['Agents · 1', 'forgeAgents · 1', 'forgeGroup shells · 1'], "the peer's rows sit under its node pill, by kind");
   const shellRow = [...host.querySelectorAll('.mux-bg-sec')].at(-1).querySelector('.mux-bg-row');
-  assert.equal(shellRow.querySelector('.mux-bg-attach').disabled, true, "a peer's shell has no attach from here yet");
-  assert.ok(shellRow.querySelector('.lock-why'), 'the 🔒 says why');
+  assert.equal(shellRow.querySelector('.mux-bg-attach').disabled, false, "a peer's group shell attaches from here");
+  assert.equal(shellRow.querySelector('.lock-why'), null);
   assert.ok(shellRow.querySelector('.mux-bg-kill'), 'it can be ended from here');
   await mounted.unmount();
 });

@@ -22,7 +22,10 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 		writeError(refusal, 400, "invalid_arg", "mode must be watch or interactive")
 	} else {
 		q := r.URL.Query()
-		q.Set("target", q.Get("agent")+"@"+q.Get("peer"))
+		// A shell names its peer, group and kind (and agent) directly.
+		if q.Get("shell") == "" {
+			q.Set("target", q.Get("agent")+"@"+q.Get("peer"))
+		}
 		if mode == "watch" {
 			q.Set("read_only", "1")
 		} else {
@@ -112,23 +115,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			return "offline"
 		}
 		cat, _, _ := fedCatalogFor(peer.InstanceID)
-		if cat == nil {
-			return "revoked"
-		}
-		for _, g := range cat.Groups {
-			if g.Name != p.Group || !g.HasCap(fedTerminalCap(p.ReadOnly)) {
-				continue
-			}
-			for _, s := range g.Sessions {
-				if s.Agent == p.Agent && s.Session == p.Session {
-					if s.Incarnation != p.Incarnation {
-						return "reincarnated"
-					}
-					return ""
-				}
-			}
-		}
-		return "revoked"
+		return fedViewerTargetStatus(cat, p)
 	})
 	authorized := gate.allowed
 	input := terminal.NewWindow()
