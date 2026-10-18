@@ -1,10 +1,10 @@
 //ci:whole-tree
 //
-// This guard parses every production file in the module, not only what
-// agentd imports, so PR CI's package selection cannot tell whether a
-// change reached it. The marker runs it on every change.
+// This guard parses every production file in the module, so PR CI's package
+// selection cannot tell whether a change reached it. The marker runs it on
+// every change.
 
-package agentd
+package treeguards
 
 import (
 	"go/ast"
@@ -43,7 +43,7 @@ var productionInterpreterPattern = regexp.MustCompile(
 )
 
 func TestNoPythonInterpreterLiteralInProduction(t *testing.T) {
-	root := noPythonModuleRoot(t)
+	root := moduleRoot(t)
 	used := make([]bool, len(productionInterpreterAllowlist))
 	for index, allowance := range productionInterpreterAllowlist {
 		require.NotEmpty(t, allowance.Path, "allowlist entry %d path", index)
@@ -108,7 +108,7 @@ func TestNoPythonInterpreterLiteralInProduction(t *testing.T) {
 }
 
 func TestNoPythonShebangInProductSources(t *testing.T) {
-	root := noPythonModuleRoot(t)
+	root := moduleRoot(t)
 	require.NoError(t, filepath.WalkDir(filepath.Join(root, "pkg"), func(
 		path string,
 		entry os.DirEntry,
@@ -158,18 +158,4 @@ func allowedProductionInterpreterLiteral(
 		}
 	}
 	return false
-}
-
-func noPythonModuleRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		require.NotEqual(t, dir, parent, "could not find module root")
-		dir = parent
-	}
 }
