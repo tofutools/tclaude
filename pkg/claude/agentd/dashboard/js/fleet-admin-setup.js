@@ -54,6 +54,20 @@ export function agentSlugs(caps = []) {
   return CAP_USES.filter((u) => u.slug && caps.includes(u.cap)).map((u) => u.slug);
 }
 
+// REACH_SLUGS are what the guide's Give access grants: messaging only. More
+// (status, terminals, spawning, jobs) is added in the holder's own
+// Permissions editor, scoped peer=<peer>/<group>.
+export const REACH_SLUGS = Object.freeze(['message.direct']);
+
+// sharedAlike is the one capability wording every catalog group shares, or ''
+// when they differ (or there is only one group), so the guide can say it once
+// above the table instead of on every row.
+export function sharedAlike(catalog = []) {
+  if (catalog.length < 2) return '';
+  const words = catalog.map((g) => capWords(g.caps).join(', '));
+  return words.every((w) => w === words[0]) ? words[0] : '';
+}
+
 // setupProgress reads the admin view as the guide's steps. Joining, trusting
 // and sharing are the setup; letting agents use a peer is optional, since a
 // peer that only reads or mails this node needs nothing more here.
@@ -433,7 +447,7 @@ export function reachHolders(rows, peer, group, slugs) {
     const exact = r.peers.includes(`${peer}/${group}`);
     if (!exact && !r.peers.includes(peer)) continue;
     const k = key(r);
-    const cur = by.get(k) || { key: k, kind: r.kind, group: r.group, agent: r.agent_id || r.conv, label: r.kind === 'group' ? `group ${r.group}` : (r.title || r.agent_id || r.conv), slugs: new Set(), exact: true };
+    const cur = by.get(k) || { key: k, kind: r.kind, group: r.group, agent: r.agent_id || r.conv, conv: r.conv, label: r.kind === 'group' ? `group ${r.group}` : (r.title || r.agent_id || r.conv), slugs: new Set(), exact: true };
     cur.slugs.add(r.slug);
     cur.exact = cur.exact && exact;
     by.set(k, cur);
@@ -445,7 +459,7 @@ function holderBody(holder) {
   return holder.startsWith('group:') ? { group: holder.slice(6) } : { target: holder.slice(6) };
 }
 
-function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toast, reload, copy }) {
+function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toast, reload, copy, onPermissions }) {
   const [holder, setHolder] = useState('');
   const holders = reachHolders(rows, peer.id, g.name, slugs);
   const held = new Set(holders.map((h) => h.key));
@@ -474,10 +488,14 @@ function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toas
     action: () => actions.setPeerReach({ ...holderBody(`${h.kind}:${h.kind === 'group' ? h.group : h.agent}`), slugs, peer: `${peer.id}/${g.name}`, remove: true }),
   }).then((ok) => { if (ok) { toast(`${h.label} no longer uses ${peer.label}/${g.name}`, false); reload(); } })
     .catch((e) => toast(errText(e), true));
+  const cli = `tclaude agent permissions peer-reach add --group GROUP --peer ${peer.label}/${g.name} ${slugs.map((sl) => `--slug ${sl}`).join(' ')}`;
+  const copyCli = () => copy(cli).then(() => toast('Command copied', false)).catch(() => toast(`Command: ${cli}`, false));
   return html`<div class="fs-reach">
     <div class="fs-reach-holders">${holders.length
-      ? holders.map((h) => html`<span class="fs-holder" key=${h.key} data-holder=${h.key}>${h.label}${h.exact
-        ? html` <button type="button" class="fa-link" title=${`Stop ${h.label} using it`} onClick=${() => take(h)}>✕</button>`
+      ? holders.map((h) => html`<span class="fs-holder" key=${h.key} data-holder=${h.key}>${onPermissions
+        ? html`<button type="button" class="fa-link" title=${`${h.label}'s permissions: add more, scoped peer=${peer.label}/${g.name}`} onClick=${() => onPermissions(h)}>${h.label}</button>`
+        : h.label}${h.exact
+        ? html` <button type="button" class="fa-link" data-reach-take title=${`Stop ${h.label} using it`} onClick=${() => take(h)}>✕</button>`
         : html` <span class="muted">(all of ${peer.label})</span>`}</span>`)
       : html`<span class="muted">no one yet</span>`}</div>
     ${options.length ? html`<div class="fs-reach-give">
@@ -486,13 +504,13 @@ function ReachRow({ peer, g, slugs, rows, groups, agents, actions, confirm, toas
         ${groups.length && html`<optgroup label="Groups">${options.filter((o) => o.key.startsWith('group:')).map((o) => html`<option key=${o.key} value=${o.key} selected=${o.key === pick}>${o.label}</option>`)}</optgroup>`}
         ${agents.length && html`<optgroup label="Agents">${options.filter((o) => o.key.startsWith('agent:')).map((o) => html`<option key=${o.key} value=${o.key} selected=${o.key === pick}>${o.label}</option>`)}</optgroup>`}
       </select>
-      <button type="button" class="primary" data-reach-give disabled=${!pick} onClick=${give}>Give access…</button>
+      <button type="button" class="primary" data-reach-give disabled=${!pick} onClick=${give}>Allow messaging…</button>
     </div>` : ''}
-    <details class="fs-more"><summary>CLI</summary><${Copyable} value=${`tclaude agent permissions peer-reach add --group GROUP --peer ${peer.label}/${g.name} ${slugs.map((sl) => `--slug ${sl}`).join(' ')}`} what="Command" copy=${copy} toast=${toast} /></details>
+    <button type="button" class="fa-link fs-reach-cli" title=${`Copy: ${cli}`} data-cli=${cli} onClick=${copyCli}>⧉ CLI</button>
   </div>`;
 }
 
-function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reload }) {
+function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reload, onPermissions }) {
   const peers = view.trusted;
   const [rows, setRows] = useState(null);
   const [tick, setTick] = useState(0);
@@ -504,29 +522,36 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
   const refresh = () => { setTick((n) => n + 1); reload(); };
   return html`<div class="fs-body" data-setup-step="agents">
     <h3>Let your agents use peers</h3>
-    <p>Below is what each peer shares with this node. Your agents need their own permission to use it: local grants never reach another node, so the grant names the peer and its group (<code>peer=<i>peer</i>/<i>group</i></code>). Give it to one of your groups and every member can use it. Towards an unrestricted peer, your agents' ordinary grants count too. You can always reach a peer's agents yourself, from Messages or the node row.</p>
+    <p>Below is what each peer shares with this node. Your agents need their own permission to use it: local grants never reach another node, so the grant names the peer and its group (<code>peer=<i>peer</i>/<i>group</i></code>). Start with messaging: give it to one of your groups and every member can mail the peer group's agents. Towards an unrestricted peer, your agents' ordinary grants count too. You can always reach a peer's agents yourself, from Messages or the node row.</p>
+    <p class="muted">To allow more (status, terminals, spawning, jobs), click a group or agent below to open its Permissions, or use Groups → the group's Permissions…, and add the permission with scope <code>peer=<i>peer</i>/<i>group</i></code>.</p>
     ${!peers.length && html`<p class="fs-warn">Trust a peer first (step 2).</p>`}
     ${rows?.error && html`<div class="fa-danger" role="alert">Could not read who uses peers: ${rows.error}</div>`}
-    ${peers.map((r) => html`<div class="fs-peer" key=${r.id} data-peer=${r.id}>
+    ${peers.map((r) => {
+      const alike = sharedAlike(r.catalog);
+      return html`<div class="fs-peer" key=${r.id} data-peer=${r.id}>
       <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
       ${!r.catalog.length
         ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 3).</div>`
-        : html`<table class="fa-table">
-          <thead><tr><th>Its group</th><th>Shared with you</th><th>Your agents that use it</th></tr></thead>
+        : html`${alike && html`<div class="fs-shared-alike" data-shared-alike>All ${r.catalog.length} groups share: <span>${alike}</span></div>`}
+        <table class="fa-table fs-reach-table">
+          <thead><tr><th>Its group</th>${!alike && html`<th>Shared with you</th>`}<th>Your agents that use it</th></tr></thead>
           <tbody>${r.catalog.map((g) => {
-            const slugs = agentSlugs(g.caps);
+            const usable = agentSlugs(g.caps);
+            const slugs = usable.filter((sl) => REACH_SLUGS.includes(sl));
             return html`<tr key=${g.name} data-remote-group=${g.name}>
               <td><b>${g.name}</b></td>
-              <td>${capWords(g.caps).join(', ') || html`<span class="muted">visible only</span>`}</td>
+              ${!alike && html`<td class="fs-caps">${capWords(g.caps).join(', ') || html`<span class="muted">visible only</span>`}</td>`}
               <td>${slugs.length && r.level !== 'unrestricted'
                 ? Array.isArray(rows)
-                  ? html`<${ReachRow} peer=${r} g=${g} slugs=${slugs} rows=${rows} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} toast=${toast} reload=${refresh} copy=${copy} />`
+                  ? html`<${ReachRow} peer=${r} g=${g} slugs=${slugs} rows=${rows} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} toast=${toast} reload=${refresh} copy=${copy} onPermissions=${onPermissions} />`
                   : html`<span class="muted">${rows?.error ? '—' : 'Loading…'}</span>`
-                : html`<span class="muted">${r.level === 'unrestricted' ? 'your agents\' own grants apply' : 'nothing for agents to use'}</span>`}</td>
+                : html`<span class="muted">${r.level === 'unrestricted' ? 'your agents\' own grants apply'
+                  : usable.length ? 'no messaging shared; add other permissions in Permissions' : 'nothing for agents to use'}</span>`}</td>
             </tr>`;
           })}</tbody>
         </table>`}
-    </div>`)}
+    </div>`;
+    })}
     <p class="muted">A grant that already holds a slug for local use cannot also hold peer reach; the guide says so and you can give the reach to a group the agent is in instead. Agents find remote members with <code>tclaude agent ls --remote</code>.</p>
     <${Cli}><code>tclaude federation remote</code>, <code>tclaude agent permissions peer-reach ls|add|remove</code><//>
   </div>`;
@@ -536,7 +561,7 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
 // starts on the first one not done.
 // onSeen runs once it is on screen, which retires the Fleet chip's "set up"
 // hint.
-export function SetupGuide({ view, groups = [], agents = [], actions, confirm, toast, copy, reload, onTrust, onSettings, onPeers, onOpenGrants, onSeen = null }) {
+export function SetupGuide({ view, groups = [], agents = [], actions, confirm, toast, copy, reload, onTrust, onSettings, onPeers, onOpenGrants, onPermissions = null, onSeen = null }) {
   const progress = setupProgress(view);
   const [step, setStep] = useState(progress.current);
   useEffect(() => { onSeen?.(); }, []);
@@ -555,7 +580,7 @@ export function SetupGuide({ view, groups = [], agents = [], actions, confirm, t
     ${shown.id === 'hub' ? html`<${HubStep} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onSettings=${onSettings} />`
       : shown.id === 'trust' ? html`<${TrustStep} view=${view} copy=${copy} toast=${toast} onTrust=${onTrust} onPeers=${onPeers} />`
       : shown.id === 'share' ? html`<${ShareStep} view=${view} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} onOpenGrants=${onOpenGrants} />`
-      : html`<${AgentsStep} view=${view} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} copy=${copy} toast=${toast} reload=${reload} />`}
+      : html`<${AgentsStep} view=${view} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} copy=${copy} toast=${toast} reload=${reload} onPermissions=${onPermissions} />`}
     ${next && html`<div class="fs-next"><button type="button" data-setup-next=${next.id} onClick=${() => setStep(next.id)}>Next: ${next.title} →</button></div>`}
   </div>`;
 }

@@ -20475,12 +20475,15 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fs-sub { margin: 16px 0 4px; font-size: 13px; color: #8b949e; font-weight: 600; }
 .fs-fp { font-size: 11px; overflow-wrap: anywhere; }
 #fleet-setup-code-preview { max-width: 680px; margin: 8px 0; }
-.fs-reach { display: flex; flex-direction: column; gap: 6px; }
-.fs-reach-holders { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.fs-reach { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.fs-reach-holders { display: flex; flex-wrap: wrap; gap: 4px 6px; flex: 1 1 auto; min-width: 90px; }
+.fs-reach-cli { font-size: 12px; white-space: nowrap; }
+.fs-reach-table td.fs-caps { font-size: 12px; }
+.fs-shared-alike { font-size: 12px; color: #8b949e; margin: 2px 0 8px; padding: 6px 10px; background: #161b22; border: 1px solid #21262d; border-radius: 4px; }
+.fs-shared-alike span { color: #c9d1d9; }
 .fs-holder { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 1px solid #30363d; border-radius: 10px; background: #161b22; font-size: 12px; }
 .fs-reach-give { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .fs-reach-pick { max-width: 260px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 4px; font: inherit; }
-.fs-reach .fs-more summary { font-size: 12px; }
 .fs-more summary { color: #8b949e; cursor: pointer; }
 .fs-more p { margin: 6px 0; }
 .fs-cli { margin-top: 12px; padding-top: 8px; border-top: 1px dashed #30363d; font-size: 12px; overflow-wrap: anywhere; }
