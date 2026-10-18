@@ -45,7 +45,7 @@ import {
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
-import { GROUP_GRANT_ACTS, READ_ONLY_ACTS } from './peer-view-limits.js';
+import { AGENT_GRANT_ACTS, GROUP_GRANT_ACTS, READ_ONLY_ACTS } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 
 export async function handleRowAction(action) {
@@ -54,14 +54,15 @@ export async function handleRowAction(action) {
   const data = action.fleetName ? Object.freeze(ownGroupData(action.data, action.fleetName)) : action.data;
   const act = data.act;
   // node is the group's node in the fused view (blank: the page's). Only the
-  // group controls of GROUP_GRANT_ACTS address it: their requests go through
+  // group and agent controls of GROUP_GRANT_ACTS and AGENT_GRANT_ACTS address
+  // it: their requests go through
   // api and their dialogs take node, reading its snapshot (never the page's,
   // whose same-named group is another one). Any other control that acts acts
   // on the page's node only (the fused view stops it before here; this is
   // the backstop); view-only ones show what is on screen.
   const node = isPageNode(action.fleetNode) ? '' : action.fleetNode;
   if (node && !READ_ONLY_ACTS.has(act)) {
-    if (!GROUP_GRANT_ACTS[act]) {
+    if (!GROUP_GRANT_ACTS[act] && !AGENT_GRANT_ACTS[act]) {
       toast(`${action.fleetName || 'That node'}: act on its groups from its own dashboard`, true);
       return;
     }
@@ -224,14 +225,14 @@ export async function handleRowAction(action) {
         // cycle pattern, but persisted daemon-side).
         const cur = data.mode || 'inherit';
         const next = cur === 'inherit' ? 'off' : cur === 'off' ? 'on' : 'inherit';
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/notify`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/notify`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mode: next }),
         });
         if (!r.ok) { toast(`Notification toggle failed: ${await r.text()}`, true); return; }
         toast(`${label}: notifications ${next === 'inherit' ? 'inherit from group' : next}`);
-        refresh();
+        changed();
         return;
       }
       case 'toggle-remote-control': {
@@ -757,6 +758,7 @@ export async function handleRowAction(action) {
         const oldURL = data.current || '';
         const oldTaskLabel = data.currentTaskLabel || '';
         openTaskLinkDialog({
+          node,
           conv: agent,
           agentLabel: label,
           url: oldURL,

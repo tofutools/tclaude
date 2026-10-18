@@ -79,6 +79,10 @@ func (a *peerActionAuthority) allows(perm, target string, actx ActionContext) bo
 		if slug != PermGroupsMembersClone {
 			return false
 		}
+	case PermAgentRename, PermAgentTask:
+		if slug != PermGroupsMembersManage {
+			return false
+		}
 	case PermSelfTeleport, PermAgentMove, PermAgentShare, PermAgentBundleExport:
 		if slug != PermAgentMove {
 			return false

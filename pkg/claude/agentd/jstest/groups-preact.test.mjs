@@ -1621,3 +1621,19 @@ test('queued spawns ride the member table as rows, even in an empty group', asyn
   assert.equal(host.textContent.includes('(no members yet)'), false, 'the queued row stands in for the empty note');
   await mounted.unmount();
 });
+
+test("another node's member editor saves to that node", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { saveMemberEditorRequests } = await harness.importDashboardModule('js/member-editor-actions.js');
+  const urls = [];
+  await saveMemberEditorRequests({
+    descriptor: { conv: 'conv-1', agent: 'agt_stable', label: 'Worker', group: 'build', node: 'inst_forge1234' },
+    changes: { rename: { title: 'Worker two' }, role: 'reviewer', tags: ['one'] },
+    fetchImpl: async (url) => { urls.push(url); return new Response('', { status: 200 }); },
+  });
+  assert.deepEqual(urls, [
+    '/api/peer/inst_forge1234/agents/agt_stable/rename',
+    '/api/peer/inst_forge1234/groups/build/members/agt_stable',
+    '/api/peer/inst_forge1234/agents/agt_stable/tags',
+  ]);
+});

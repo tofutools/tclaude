@@ -307,7 +307,6 @@ var peerViewLocalRoutes = []string{
 	"GET /v1/process/templates",
 	"GET /v1/process/templates/{id}",
 	"PATCH /api/groups/{name}/links/{id}",
-	"PATCH /api/groups/{name}/members/{conv}",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",

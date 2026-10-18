@@ -327,3 +327,77 @@ func TestPeerGroupDeleteAndCleanupUnderUnrestrictedTrust(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, g)
 }
+
+// A peer's operator changes an agent's ordinary settings through this node's
+// own dashboard handlers under groups.members.manage: its own settings need the
+// grant in every group it is in, its role in a group that group's grant, and
+// the peer's metadata names the agents it may change.
+func TestPeerMemberSettingsUnderManageGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	f.HaveGroup("secret")
+	f.HaveConvWithTitle("mbr-solo", "solo")
+	f.HaveConvWithTitle("mbr-shared", "shared")
+	f.HaveAliveSession("mbr-solo", "spwn-mbr-solo", "tmux-mbr-solo", f.World.HomeDir)
+	f.HaveMember("crew", "mbr-solo")
+	f.HaveMember("crew", "mbr-shared")
+	f.HaveMember("secret", "mbr-shared")
+	solo, err := db.AgentIDForConv("mbr-solo")
+	require.NoError(t, err)
+	shared, err := db.AgentIDForConv("mbr-shared")
+	require.NoError(t, err)
+	grant := func(slug, group string) {
+		t.Helper()
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=" + group})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	h := agentd.PeerViewHandler(p.id.ID())
+	call := func(method, path string, body any) (int, string) {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, method, path, body))
+		return rec.Code, rec.Body.String()
+	}
+	tags := func(agent string) (int, string) {
+		return call("POST", "/api/agents/"+agent+"/tags", map[string]any{"tags": []string{"remote"}})
+	}
+
+	grant(agentd.PermGroupsRosterRead, "crew")
+	code, body := tags(solo)
+	require.Equal(t, 403, code, body)
+	require.Contains(t, body, agentd.PermGroupsMembersManage)
+	grant(agentd.PermGroupsMembersManage, "crew")
+
+	code, body = tags(solo)
+	require.Equal(t, 200, code, body)
+	got, err := db.ListAgentTags(solo)
+	require.NoError(t, err)
+	require.Equal(t, []string{"remote"}, got)
+	code, body = call("POST", "/api/agents/"+solo+"/notify", map[string]any{"mode": "off"})
+	require.Equal(t, 200, code, body)
+	code, body = call("POST", "/api/agents/"+solo+"/task", map[string]any{"url": "https://example.com/issue/1"})
+	require.Equal(t, 200, code, body)
+	code, body = call("POST", "/api/agents/"+solo+"/rename", map[string]any{"title": "renamed"})
+	require.NotEqual(t, 403, code, body)
+	require.NotEqual(t, 404, code, body)
+
+	// The shared agent is also in secret, where the peer holds nothing: its
+	// own settings are not crew's to change, but its role in crew is.
+	for _, verb := range []string{"tags", "notify", "task", "rename"} {
+		code, body = call("POST", "/api/agents/"+shared+"/"+verb, map[string]any{})
+		require.Equal(t, 403, code, "%s: %s", verb, body)
+	}
+	code, body = call("PATCH", "/api/groups/crew/members/"+shared, map[string]any{"role": "reviewer"})
+	require.Equal(t, 200, code, body)
+	code, body = call("PATCH", "/api/groups/secret/members/"+shared, map[string]any{"role": "reviewer"})
+	require.Equal(t, 404, code, "secret is not visible: %s", body)
+
+	snap := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	var out struct {
+		PeerView struct {
+			Agents map[string][]string `json:"agents"`
+		} `json:"peer_view"`
+	}
+	require.NoError(t, json.Unmarshal(snap.Body.Bytes(), &out))
+	require.Equal(t, map[string][]string{solo: {agentd.PermGroupsMembersManage}}, out.PeerView.Agents)
+}

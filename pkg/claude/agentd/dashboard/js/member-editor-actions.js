@@ -1,10 +1,14 @@
+import { announceNodeChanged, nodeFetch } from './node-api.js';
+
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
 }
 
 export async function saveMemberEditorRequests({
-  descriptor, changes, fetchImpl = fetch, notify = () => {}, refresh = () => {},
+  descriptor, changes, fetchImpl: pageFetch = fetch, notify = () => {}, refresh = () => {},
 }) {
+  // descriptor.node names another node's agent (the fused Groups view).
+  const fetchImpl = nodeFetch(descriptor.node || '', { fetchImpl: pageFetch });
   const succeeded = [];
   const errors = [];
   const attempt = async (key, request, successMessage) => {
@@ -63,6 +67,9 @@ export async function saveMemberEditorRequests({
       ? `${descriptor.label} is now an owner of ${descriptor.group}`
       : `${descriptor.label} is no longer an owner of ${descriptor.group}`);
   }
-  if (succeeded.length) void refresh();
+  if (succeeded.length) {
+    announceNodeChanged(descriptor.node);
+    void refresh();
+  }
   return { succeeded, errors };
 }

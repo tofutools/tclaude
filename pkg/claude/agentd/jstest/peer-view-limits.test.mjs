@@ -218,6 +218,17 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   }
   assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', restricted), false, 'the environment is its own grant');
   assert.equal(mod.groupFieldHeld('set-group-environment', 'ops', null), true, "this node's own group holds every field");
+  // An agent's controls follow the grants the peer holds in all of its groups.
+  const agents = { ...restricted, agents: { agt_solo: ['groups.members.manage'] } };
+  assert.equal(mod.agentGrantHeld('edit-member', 'agt_solo', agents), true);
+  assert.equal(mod.agentGrantHeld('edit-member', 'agt_shared', agents), false, 'an agent without the grant in every group');
+  assert.equal(mod.agentGrantHeld('edit-member', 'agt_shared', { level: 'unrestricted' }), true);
+  doc.body.innerHTML = '<button id="solo-notify" data-act="toggle-agent-notify" data-agent="agt_solo"></button><button id="shared-notify" data-act="toggle-agent-notify" data-agent="agt_shared"></button>';
+  assert.equal(mod.blockedControl(doc.getElementById('solo-notify'), agents), null, 'a granted agent control runs its own handler');
+  assert.equal(mod.blockedControl(doc.getElementById('shared-notify'), agents).state, 'omitted');
+  assert.equal(mod.grantHeld(doc.getElementById('solo-notify'), agents), true);
+  assert.ok(mod.grantSelectors(agents).includes('[data-act="toggle-agent-notify"][data-agent="agt_solo"]'));
+  assert.ok(!mod.grantSelectors(agents).some((sel) => sel.includes('agt_shared')));
 
   doc.body.innerHTML = `<span id="ops-dir" data-act="set-group-dir" data-group="ops"><span id="ops-text" data-act="group-web-term" data-group="ops">~/src</span></span>
     <span id="build-dir" data-act="set-group-dir" data-group="build">x</span>`;

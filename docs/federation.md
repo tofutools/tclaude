@@ -253,6 +253,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn.all` | every `groups.members.spawn.*` launch setting above |
 | `groups.settings` | change the group's ordinary settings from the peer's dashboard: description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting; its default directory, default profile, default saved prompts and sandbox profile also need the matching spawn grant (see "Changing a peer's groups") |
 | `groups.settings.environment` | change the group's spawn environment, whose values reach every agent spawned into it |
+| `groups.members.manage` | change member agents' ordinary settings from the peer's dashboard: name, tags, task link and notifications, and role and description in the group; an agent's own settings need it in every group the agent is in |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
@@ -305,7 +306,10 @@ settings a peer may choose"). The environment needs
 `groups.settings.environment`. The dashboard's profile pickers list this
 node's profiles under `node.spawn.read`. A group's shut down and power on
 buttons stop or wake every member under `groups.members.stop` and
-`groups.members.resume` for that group. Cloning a group, deleting it (with
+`groups.members.resume` for that group. An agent's name, tags, task link and
+notifications change under `groups.members.manage`, held in every group the
+agent is in; its role and description in a group under that group's grant.
+Its ownership and permissions stay with this node's operator. Cloning a group, deleting it (with
 retiring its members first) and cleaning up its offline members take
 unrestricted trust: no peer grant covers them. Its export, links, standing
 orders, cron jobs, templates, repositories, worktrees and windows stay on its

@@ -14,7 +14,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  GROUP_GRANT_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, groupGrantHeld, groupGrantSelectors, peerAction, refusedActsRule, usableActSelectors,
+  READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantSelectors, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -64,7 +64,7 @@ export function limitsCSS(nodes, { self, home = '' }) {
     // (node-api.js), as though this node trusted itself unrestricted.
     const usable = id !== self
       ? usableActSelectors(peerView, ['send-elsewhere'], merged)
-      : [...always.map((a) => `[data-act="${a}"]`), ...groupGrantSelectors({ level: 'unrestricted' })];
+      : [...always.map((a) => `[data-act="${a}"]`), ...grantSelectors({ level: 'unrestricted' })];
     rules.push(refusedActsRule(scope, usable));
   }
   return rules.join('\n');
@@ -109,6 +109,9 @@ const readOnlyActions = new Proxy({}, {
 const NODE_GROUP_ACTIONS = new Set([
   'patchGroup', 'renameGroup', 'setGroupProfile', 'groupProfileChoices', 'openGroupAttachment',
   'pickGroupDirectory', 'openNewGroupProfile', 'reportError',
+  // The agent controls (AGENT_GRANT_ACTS): the inline rename and the member
+  // editor, whose descriptor names the node its save goes to.
+  'renameAgent', 'openMemberEditor',
 ]);
 
 // createNodeGroupsActions builds the Groups actions for one node's groups in
@@ -130,7 +133,11 @@ export function createNodeGroupsActions({
   return Object.freeze(Object.fromEntries([...NODE_GROUP_ACTIONS].map((key) => [key, (...args) => actions().then((a) => a[key](...args))])));
 }
 
-// homeActions routes the Groups actions by the group they act on: a home
+// isMergedGroup tells a merged group from a merged member: both name their
+// node (fleet_node), and only a member names its agent.
+const isMergedGroup = (a) => !('agent_id' in a) && !('conv_id' in a);
+
+// homeActions routes the Groups actions by the group (or agent) they act on: a home
 // group's go to this node's Groups actions with the group as this node names
 // it (ownOf), another node's to forNode(node) with the group under its own
 // name, or resolve without doing anything when that node has no such
@@ -144,11 +151,13 @@ export function homeActions(live, ownOf, forNode = () => null) {
       if (group && !group.fleet_node.home) {
         const actions = forNode(group.fleet_node);
         if (!actions || typeof actions[key] !== 'function') return readOnlyActions[key](...args);
-        const own = (a) => ({ ...a, name: ownGroup(a.name, a.fleet_node.name) || a.name, fleet_node: undefined });
+        const own = (a) => (isMergedGroup(a)
+          ? { ...a, name: ownGroup(a.name, a.fleet_node.name) || a.name, fleet_node: undefined }
+          : { ...a, fleet_node: undefined });
         return actions[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? own(a) : a)));
       }
       if (!real || typeof real[key] !== 'function') return readOnlyActions[key](...args);
-      return real[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? ownOf(a) : a)));
+      return real[key](...args.map((a) => (a && typeof a === 'object' && a.fleet_node ? (isMergedGroup(a) ? ownOf(a) : { ...a, fleet_node: undefined }) : a)));
     },
   });
 }
@@ -377,11 +386,13 @@ export function MergedGroups({
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
       const group = act.closest('details[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
-      // A group control another node lets run goes to its own handler, whose
-      // actions are bound to that node (forNode); this node's always may.
-      if (group && instance !== homeRef.current && GROUP_GRANT_ACTS[act.dataset.act]) {
-        const own = ownGroup(act.dataset.group || '', group.dataset.fleetNodeName || '');
-        if (instance === state.view.value.fleet?.self?.id || groupGrantHeld(act.dataset.act, own, snapRef.current(instance)?.peer_view)) return;
+      // A group or agent control another node lets run goes to its own
+      // handler, whose actions are bound to that node (forNode); this node's
+      // always may.
+      if (group && instance !== homeRef.current) {
+        const name = group.dataset.fleetNodeName || '';
+        const held = grantHeld(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
+        if (held !== null && (instance === state.view.value.fleet?.self?.id || held)) return;
       }
       // A home group's control runs as on this node's Groups view (the
       // document's data-act handler maps its group@node names back), except

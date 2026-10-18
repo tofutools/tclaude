@@ -176,6 +176,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}
 	rules["GET /api/pr-details"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRDetails)}
 	addPeerGroupSettingsRules(rules)
+	addPeerMemberRules(rules)
 	addPeerSpawnCatalogRules(rules)
 	addPeerNodeManageRules(rules)
 	addPeerSpawnWorktreeRules(rules)
@@ -215,6 +216,9 @@ type peerViewMetadata struct {
 	// Groups names, per visible group, the group-scoped grants behind the
 	// controls a peer-granted route serves (peerGroupGrants).
 	Groups map[string][]string `json:"groups,omitempty"`
+	// Agents names, per visible agent, the grants behind its agent controls
+	// held in every group it is in (peerAgentGrants).
+	Agents map[string][]string `json:"agents,omitempty"`
 }
 
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
@@ -285,6 +289,7 @@ func (v *peerView) metadata() peerViewMetadata {
 		}
 	}
 	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)
+	out.Agents = peerAgentGrants(v.peer.InstanceID, groups)
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })
 	return out

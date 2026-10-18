@@ -25,8 +25,9 @@ export function openNestGroupDialog({ group, node = '' }) {
   return requireController().openNest({ group, node });
 }
 
-export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
-  return requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
+// node names another node's agent (the fused Groups view); blank is the page's.
+export function openTaskLinkDialog({ conv, node = '', agentLabel, url, taskLabel }) {
+  return requireController().openTaskLink({ conv, ...(node ? { node } : {}), agentLabel, url, taskLabel });
 }
 
 export function openGroupAttachmentDialog({ group, node = '', url, attachmentLabel }) {

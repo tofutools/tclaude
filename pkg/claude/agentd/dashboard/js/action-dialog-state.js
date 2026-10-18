@@ -64,8 +64,8 @@ export function createActionDialogState() {
     openNest({ group, node = '' }) {
       return !!open({ kind: 'nest-group', group, node });
     },
-    openTaskLink({ conv, agentLabel = '', url = '', taskLabel = '' }) {
-      return !!open({ kind: 'task-link', conv, agentLabel, url, taskLabel });
+    openTaskLink({ conv, node = '', agentLabel = '', url = '', taskLabel = '' }) {
+      return !!open({ kind: 'task-link', conv, ...(node ? { node } : {}), agentLabel, url, taskLabel });
     },
     openGroupAttachment({ group, node = '', url = '', attachmentLabel = '' }) {
       return !!open({ kind: 'group-attachment', group, node, url, attachmentLabel });

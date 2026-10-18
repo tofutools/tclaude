@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { isPageNode } from './node-api.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -142,6 +143,9 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
   };
 
   const autofocus = (field) => descriptor.focus === field;
+  // Ownership and permissions are administered on the agent's own node: not
+  // from a peer's page, nor for another node's agent in the fused view.
+  const here = isPageNode(descriptor.node) && !globalThis.__tclaudeRemoteNode?.id;
   return html`<${Overlay}
     id="edit-member-modal" dialogClass="modal" labelledby="edit-member-title"
     onClose=${state.closeMemberEditor} onSubmitHotkey=${submit}
@@ -168,8 +172,8 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
       <input id="edit-member-role" type="text" value=${draft.role} disabled=${busy}
         autofocus=${autofocus('role')} data-select-on-focus autocomplete="off" spellcheck=${false}
         onInput=${(event) => update('role', event.currentTarget.value)} />
-      <label class="edit-member-owner-row" title="Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.">
-        <input id="edit-member-owner" type="checkbox" checked=${draft.owner} disabled=${busy}
+      <label class="edit-member-owner-row" title=${here ? 'Group / party owners gain the implicit power to manage the other agents / familiars in it without a per-slug grant.' : "Ownership is set on the agent's own node"}>
+        <input id="edit-member-owner" type="checkbox" checked=${draft.owner} disabled=${busy || !here}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> <span class="theme-copy-regular">Group owner</span><span class="theme-copy-wizard">Party owner</span>
       </label>
     </div>
@@ -186,7 +190,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     </div>
     <div class="cron-create-error" id="edit-member-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button id="edit-member-perms" type="button" disabled=${busy}
+      <button id="edit-member-perms" type="button" disabled=${busy || !here}
         title="Open this agent / familiar's permanent permission grimoire (grant / deny / inherit per slug)"
         onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
       <span class="spacer"></span>

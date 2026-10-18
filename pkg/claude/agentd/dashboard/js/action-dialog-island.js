@@ -433,6 +433,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       } else {
         await actions.setTaskLink({
           conv: descriptor.conv,
+          ...(descriptor.node ? { node: descriptor.node } : {}),
           label: subjectLabel,
           url: nextURL,
           taskLabel: nextURL ? nextLabel : '',

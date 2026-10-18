@@ -69,6 +69,7 @@ var federationPeerSlugs = map[string]string{
 	PermGroupsMembersSpawnAll:         "spawn_all",
 	PermGroupsSettings:                "group_settings",
 	PermGroupsSettingsEnvironment:     "group_environment",
+	PermGroupsMembersManage:           "member_manage",
 	PermGroupsMembersStop:             "stop",
 	PermGroupsMembersResume:           "resume",
 	PermGroupsMembersRetire:           "retire",
