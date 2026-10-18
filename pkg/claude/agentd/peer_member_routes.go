@@ -39,23 +39,31 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// A member's role and description belong to the one group.
 	pattern := "PATCH /api/groups/{name}/members/{conv}"
 	rules[pattern] = withPeerInvoke(pattern, peerViewRule{feature: "members.manage", requires: PermGroupsMembersManage, group: true, invoke: &peerInvokeSpec{param: "name"}})
-	// An agent's remote access and fast mode, its reincarnation, its removal
-	// from a group and its permanent delete reach what no peer grant hands
-	// out: only unrestricted trust holds these, through this node's own
+	// An agent's remote access and fast mode, its sandbox implementation, its
+	// reincarnation, its removal from a group and its permanent delete reach
+	// what no peer grant hands out, as does its debug export: only unrestricted trust holds these, through this node's own
 	// handlers. One feature names one slug, so the metadata is stable.
 	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
 	for _, pattern := range []string{
 		"POST /api/agents/{id}/remote-control",
 		"POST /api/agents/{id}/fast-mode/{direction}",
 		"POST /api/agents/{id}/reincarnate",
+		"POST /api/agents/{id}/sandbox-impl",
 		"DELETE /api/agents/{id}",
 	} {
 		rules[pattern] = full
 	}
-	// The delete dialog reads the agent's worktree first.
+	// The delete dialog reads the agent's worktree first, the sandbox picker
+	// the recorded posture.
 	read := full
 	read.write, read.serve = nil, servePeerFullAgent
-	rules["GET /api/agents/{id}/worktree"] = read
+	for _, pattern := range []string{
+		"GET /api/agents/{id}/worktree",
+		"GET /api/agents/{id}/sandbox-impl",
+		"GET /api/agents/{id}/debug-export",
+	} {
+		rules[pattern] = read
+	}
 	full.write = servePeerFullGroup(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardRemoveMember(w, g, r.PathValue("conv"))
 	}))

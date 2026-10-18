@@ -483,7 +483,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   useEffect(() => {
     const controller = new AbortController();
     setRequest({ phase: 'loading', data: null, error: '' });
-    actions.loadSandboxImpl(descriptor.conv, { signal: controller.signal }).then(
+    actions.loadSandboxImpl(descriptor.conv, { signal: controller.signal, ...(descriptor.node ? { node: descriptor.node } : {}) }).then(
       (data) => {
         setRequest({ phase: 'ready', data, error: '' });
         setChoice(String(data?.sandbox_implementation || ''));
@@ -495,20 +495,20 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
       },
     );
     return () => controller.abort();
-  }, [descriptor.conv]);
+  }, [descriptor.conv, descriptor.node]);
 
   const posture = request.data || {};
   const current = String(posture.sandbox_implementation || '');
   const harnessName = posture.harness || descriptor.harness;
-  const options = actions.sandboxImplOptions(harnessName);
+  const options = actions.sandboxImplOptions(harnessName, posture.catalog);
   // The pin is offered only where the launch would actually keep it. Every other
   // implementation DERIVES its harness mode (harness.ResolveSandboxImplementationMode),
   // so a select rendered beside them would be at its most prominent exactly where
   // the server discards what it collects.
   const modes = choice === SANDBOX_IMPL_HARNESS_BUILTIN
-    ? actions.sandboxModes(harnessName)
+    ? actions.sandboxModes(harnessName, posture.catalog)
     : [];
-  const availability = actions.sandboxImplAvailability(harnessName, choice);
+  const availability = actions.sandboxImplAvailability(harnessName, choice, posture.catalog);
   const pinned = modes.length > 0 ? mode : SANDBOX_IMPL_MODE_INHERIT;
   // Dirty only once the operator has actually moved off the recorded posture, so
   // closing a dialog they merely looked at does not raise a discard prompt.
@@ -523,6 +523,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
     try {
       await actions.assignSandboxImpl({
         conv: descriptor.conv,
+        ...(descriptor.node ? { node: descriptor.node } : {}),
         label: descriptor.label,
         implementation: choice,
         sandbox: pinned,

@@ -310,8 +310,9 @@ buttons stop or wake every member under `groups.members.stop` and
 notifications change under `groups.members.manage`, held in every group the
 agent is in; its role and description in a group under that group's grant.
 Its ownership and permissions stay with this node's operator. Removing an
-agent from a group, deleting it, reincarnating it, and switching its remote
-access or fast mode take unrestricted trust. Cloning a group, deleting it (with
+agent from a group, deleting it, reincarnating it, switching its remote
+access or fast mode, assigning its sandbox implementation and downloading its
+debug export take unrestricted trust. Cloning a group, deleting it (with
 retiring its members first) and cleaning up its offline members take
 unrestricted trust: no peer grant covers them. Its export, links, standing
 orders, cron jobs, templates, repositories, worktrees and windows stay on its

@@ -30,14 +30,14 @@ func TestDashboardSandboxImplDialogWiring(t *testing.T) {
 	css := read("dashboard.css")
 
 	for _, probe := range []struct{ file, name, want string }{
-		{state, "action-dialog-state.js", `openSandboxImpl({ conv, label = '', harness = '' })`},
+		{state, "action-dialog-state.js", `openSandboxImpl({ conv, label = '', harness = '', node = '' })`},
 		{state, "action-dialog-state.js", `kind: 'sandbox-impl'`},
 		{controller, "action-dialog-controller.js", `export function openSandboxImplDialog(`},
 		{actions, "action-dialog-actions.js", `openSandboxImpl: state.openSandboxImpl`},
 		{actions, "action-dialog-actions.js", `async loadSandboxImpl(`},
 		{actions, "action-dialog-actions.js", `async assignSandboxImpl(`},
-		{actions, "action-dialog-actions.js", `sandboxImplOptions(harnessName)`},
-		{actions, "action-dialog-actions.js", `sandboxModes(harnessName)`},
+		{actions, "action-dialog-actions.js", `sandboxImplOptions(harnessName, catalog)`},
+		{actions, "action-dialog-actions.js", `sandboxModes(harnessName, catalog)`},
 		{island, "action-dialog-island.js", `descriptor.kind === 'sandbox-impl'`},
 		{components, "small-dialog-components.js", `export function SandboxImplDialog(`},
 		{components, "small-dialog-components.js", `id="sandbox-impl-modal"`},
