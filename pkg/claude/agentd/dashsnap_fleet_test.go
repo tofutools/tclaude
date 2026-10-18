@@ -540,7 +540,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-fused-messages",
 			Title:   "Messages · fused nodes",
-			Caption: "Messages with every node fused: the same panes, filters, bulk bar, pager and reader as one node's Messages. The node chips narrow the view to one node; the fused folders span the nodes in view, and each node lists its own folders under its heading. Rows carry their node's pill, and actions go to that node.",
+			Caption: "Messages with every node fused: the same panes, filters, bulk bar, pager and reader as one node's Messages. The node selector (a dropdown with a checkbox per node) narrows the view to the picked nodes; the fused folders span the nodes in view, and each node lists its own folders under its heading. Rows carry their node's pill, and actions go to that node.",
 			InitJS:  fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -550,9 +550,28 @@ func fleetStates() []dashsnap.State {
   for (var i = 0; i < 80 && !document.querySelector('#fused-mail-list .mail-row'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   var row = document.querySelector('#fused-mail-list .mail-row');
   if (!row) throw new Error('fleet: no rows in fused Messages');
-  if (!document.querySelector('.fused-mail-chip[data-node="inst_hn3cxq7a"]')) throw new Error('fleet: no forge chip in fused Messages');
+  if (!document.querySelector('#fused-mail-nodes .node-select-button')) throw new Error('fleet: no node selector in fused Messages');
   row.click();
   for (var j = 0; j < 30 && !document.querySelector('#fused-mail-reader .mail-headers'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "fleet-fused-messages-node-select",
+			Title:   "Messages · fused nodes, the node selector",
+			Caption: "The shared node selector open in fused Messages: a checkbox per ticked node with its unread notifications and status, \"only\" to show one node, and All nodes. The dock's Nodes filter and the audit tab's node filter use the same dropdown; a long node list gets a filter box.",
+			InitJS:  fleetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('#fused-mail-list .mail-row'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var button = document.querySelector('#fused-mail-nodes .node-select-button');
+  if (!button) throw new Error('fleet: no node selector in fused Messages');
+  button.click();
+  for (var j = 0; j < 30 && !document.querySelector('#fused-mail-nodes .node-select-menu'); j++) await new Promise(function(r){ setTimeout(r, 50); });
+  if (document.querySelectorAll('#fused-mail-nodes [data-node-option]').length < 3) throw new Error('fleet: the node selector lists too few nodes');
 })();`,
 			SettleMS: 400,
 		},

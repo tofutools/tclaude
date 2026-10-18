@@ -17859,29 +17859,6 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
    section's 🔒 when a node keeps it, and each card's node pills — solid
    present, amber ≠ differs, dashed missing. */
 .dock-node-filter { position: relative; padding: 0 2px 8px; font-size: 11px; }
-.dock-node-filter-button {
-  display: flex; align-items: center; gap: 6px; width: 100%; cursor: pointer;
-  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-  color: #c9d1d9; font: inherit; font-size: 11px; padding: 3px 8px; text-align: left;
-}
-.dock-node-filter-button:hover { border-color: #8b949e; }
-.dock-node-filter-label { color: #7d8590; }
-.dock-node-filter-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dock-node-filter-menu {
-  position: absolute; z-index: 20; left: 2px; right: 2px; top: calc(100% - 6px);
-  display: flex; flex-direction: column; padding: 4px;
-  background: #161b22; border: 1px solid #30363d; border-radius: 6px; box-shadow: 0 8px 24px #01040988;
-}
-.dock-node-toggle {
-  display: flex; align-items: center; gap: 6px; cursor: pointer;
-  background: none; border: 0; border-radius: 4px;
-  color: #8b949e; font: inherit; font-size: 11px; padding: 3px 6px; text-align: left;
-}
-.dock-node-toggle:hover { background: #21262d; }
-.dock-node-toggle.is-on { color: #c9d1d9; }
-.dock-node-check { width: 12px; }
-.dock-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--node-color, #6e7681); opacity: .5; }
-.dock-node-toggle.is-on .dock-node-dot { opacity: 1; }
 .dock-section-withheld { display: inline-flex; align-items: center; font-weight: 400; }
 .dock-section-withheld .lock-why::after { white-space: pre-line; }
 .dock-where { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
@@ -20081,12 +20058,25 @@ html.scope-fused #messages-root { display: none !important; }
 .fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
 /* The node chips over the sidebar narrow the view to one node (or all). */
 .fused-mail-scope { display: flex; flex-wrap: wrap; gap: 4px; }
-.fused-mail-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 6px; border-radius: 12px; border: 1px solid #2a3340; background: #0d1117; color: #8b949e; font-size: 11px; cursor: pointer; }
-.fused-mail-chip:hover { color: #d4d4d4; border-color: #58a6ff; }
-.fused-mail-chip.active { color: #f0f6fc; border-color: #1f6feb; background: #1f6feb22; }
-.fused-mail-chip.degraded .scope-pill { opacity: .6; }
-.fused-mail-chip-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fused-mail-chip .mailbox-unread { margin-left: 0; }
+/* node-select.js: the one node selector (tcl-vwuc0b), rows styled like the top bar's node popover. */
+.node-select { position: relative; display: inline-block; max-width: 100%; }
+.node-select-button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; box-sizing: border-box; padding: 3px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #c9d1d9; font-size: 11.5px; cursor: pointer; }
+.node-select-button:hover { border-color: #8b949e; }
+.node-select-button.narrowed { border-color: #1f6feb; background: #1f6feb22; }
+.node-select-button:disabled { opacity: .6; cursor: not-allowed; }
+.node-select-label { color: #7d8590; }
+.node-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-select-button .mailbox-unread { margin-left: 0; }
+.node-select-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px #01040999; }
+.node-select-row { padding: 4px 6px; gap: 6px; }
+.node-select-row.sel { box-shadow: none; }
+.node-select-row input[type=radio] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
+.node-select-row.locked { color: #7d8590; }
+.node-select-row .node-pop-name { flex: 0 1 auto; min-width: 0; }
+.node-select-all { border-bottom: 1px solid #21262d; border-radius: 6px 6px 0 0; margin-bottom: 2px; }
+.node-select-row .node-pop-meta { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.node-select-note { overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.node-select-row .mailbox-unread { margin-left: 0; }
 /* Each node's folders sit under a foldable heading with its pill. */
 .fused-mail-section { margin-top: 8px; padding-top: 6px; border-top: 1px solid #21262d; }
 .fused-mail-section .mailbox-section { text-transform: none; }
