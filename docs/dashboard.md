@@ -917,7 +917,10 @@ the peers in it show what they share with you, so this node's own groups and
 controls work as on its own view. Fusing from a peer's page goes to this
 node's page, and so does an address that names both a peer and a fused set.
 Every other tab shows this node, says so in a strip at the top, and a peer's
-own view opens from its node button. The fused set is part of the address
+own view opens from its node button. On **Config** and **Access**, one
+machine's own settings, the strip also names each ticked peer. An
+unrestricted peer's Access opens on its own view from there. A peer's Config
+is always set on that node itself, so it is shown locked, with the reason. The fused set is part of the address
 (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 
 ### The map
