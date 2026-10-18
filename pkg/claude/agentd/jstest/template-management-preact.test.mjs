@@ -537,3 +537,34 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   assert.ok(host.querySelector('.tpl-word-wizard'));
   cleanups.reverse().forEach((fn) => fn());
 });
+
+test("another node's group saves as a template on that node and opens no editor here", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, nodeAPI] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/node-api.js'),
+  ]);
+  const node = 'inst_abcdefghijklmnop';
+  t.after(nodeAPI.setNodeSnapshotSource((id) => (id === node
+    ? { groups: [{ name: 'crew' }], templates: [{ name: 'crew-tpl' }] } : null)));
+  const calls = [];
+  let refreshes = 0;
+  const state = createManagementState();
+  state.updateTemplates([{ name: 'local-tpl', agents: [] }], []);
+  const actions = createManagementActions({
+    state, confirm: async () => true, notify() {}, refresh: async () => { refreshes += 1; },
+    getSnapshot: () => ({ groups: [{ name: 'here' }], templates: state.templates.value }),
+    templateAPI: { async fromGroup(body, target) { calls.push([body, target]); return { name: body.template_name, agents: [] }; } },
+  });
+  actions.openTemplateFromGroup('crew', node);
+  assert.deepEqual(state.dialog.value.groups, ['crew'], "the node's groups, not the page's");
+  assert.deepEqual(state.dialog.value.templates, [{ name: 'crew-tpl' }]);
+  await actions.snapshotTemplateFromGroup('crew', 'crew-tpl', true, node);
+  assert.deepEqual(calls, [[{ group: 'crew', template_name: 'crew-tpl', update: true }, node]]);
+  assert.equal(state.templateDialog.value, null, "this node's editor would save here");
+  assert.equal(refreshes, 0);
+  actions.openTemplateFromGroup('here');
+  assert.deepEqual(state.dialog.value.groups, ['here']);
+  assert.equal(state.dialog.value.node, undefined);
+});

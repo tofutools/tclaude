@@ -2273,7 +2273,7 @@ function DialogSlot({ state, actions, confirm, confirmDiscard, openProfilePermis
     case 'library-bundle-import':
       return html`<${LibraryBundleImportDialog} descriptor=${descriptor} onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}/>`;
     case 'template-from-group':
-      return html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${{ templates: state.templates.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${{ templates: descriptor.templates || state.templates.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-starters':
       return html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-import':

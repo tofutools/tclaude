@@ -47,8 +47,10 @@ export function openSummonForDrop(templateName, dropGroup) {
   return managementController().openTemplateDeploy(templateName, (dropGroup || '').trim());
 }
 
-export function openFromGroupModal(groupName) {
-  return managementController().openTemplateFromGroup(groupName || '');
+// node names another node's group (blank: the page's): the template is
+// saved on that node.
+export function openFromGroupModal(groupName, node = '') {
+  return managementController().openTemplateFromGroup(groupName || '', node);
 }
 
 // node names another node's group (the fused Groups view); blank is the page's.

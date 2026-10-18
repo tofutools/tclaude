@@ -2068,8 +2068,8 @@ func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
 
 	must(`data-act="template-from-group"`, "the group cog menu carries the save-as-template action")
 	must("⧉ save as template…", "the menu item's label")
-	must("openFromGroupModal(group)", "the action opens the from-group modal with the group preselected")
-	must("openTemplateFromGroup(groupName || '')", "the modal accepts a preset group")
+	must("openFromGroupModal(group, node)", "the action opens the from-group modal with the group preselected")
+	must("openTemplateFromGroup(groupName || '', node)", "the modal accepts a preset group")
 }
 
 // TestDashboardHTML_FromGroupUpdateMode pins the from-group dialog's
