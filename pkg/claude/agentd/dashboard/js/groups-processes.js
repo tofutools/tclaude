@@ -723,7 +723,7 @@ export function GroupsProcessesFocus({
   const focusGroup = findFocusGroup(focusedRun, rosters, groups);
   // A run whose group is gone closes rather than hiding and popping back.
   const strandedRun = status === 'ready' && focusedRun && !focusGroup;
-  useEffect(() => { if (strandedRun) onFocusRun(null); }, [strandedRun]);
+  useEffect(() => { if (strandedRun) onFocusRun(null, { correction: true }); }, [strandedRun]);
   // Closing the focus hands keyboard focus back to the card that opened it.
   const lastRun = useRef(null);
   useEffect(() => {

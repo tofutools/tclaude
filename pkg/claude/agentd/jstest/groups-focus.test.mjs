@@ -203,3 +203,51 @@ test('choosing a lens leaves the Route map, and its Members button announces the
   assert.equal(state.subview.value, 'members', 'the lens choice leaves the Route map even when the focus is unchanged');
   assert.deepEqual(navigated, [{ tab: 'groups', subtab: 'processes' }]);
 });
+
+test('the single-run focus has its own URL: opening, closing and restoring it', async (t) => {
+  const { harness, state, navigated } = await setup(t, { prefs: { 'tclaude.dash.groups.lens': 'agents' } });
+  const { focusRun, chooseGroupsFocus } = await harness.importDashboardModule('js/groups-focus.js');
+  const run = { tab: 'groups', subtab: 'runs', selection: 'infra', item: 'run_1' };
+  await harness.act(() => { chooseGroupsFocus(state, 'processes'); });
+  navigated.length = 0;
+  await harness.act(() => { focusRun(state, { group: 'infra', runId: 'run_1' }); });
+  assert.deepEqual(navigated, [run]);
+  // Switching to Both keeps the run open, so the URL still names it.
+  await harness.act(() => { chooseGroupsFocus(state, 'both'); });
+  assert.deepEqual(navigated.at(-1), run);
+  await harness.act(() => { focusRun(state, null); });
+  assert.deepEqual(navigated.at(-1), { tab: 'groups' });
+  // Restores: a run from the Agents lens opens in Processes; a lens closes it.
+  const restore = (location) => harness.act(() => harness.document.dispatchEvent(
+    new harness.window.CustomEvent('tclaude:restore-location', { detail: { location } }),
+  ));
+  state.setFocus('agents');
+  navigated.length = 0;
+  await restore(run);
+  assert.equal(state.focus.value, 'processes');
+  assert.deepEqual(state.focusedRun.value, { group: 'infra', runId: 'run_1' });
+  await restore({ tab: 'groups', subtab: 'processes' });
+  assert.equal(state.focusedRun.value, null);
+  assert.deepEqual(navigated, [], 'restores never announce a navigation');
+});
+
+test('the Route map group is in the URL', async (t) => {
+  const { harness, state, navigated } = await setup(t);
+  state.publish({ ...state.snapshot.value, groups_route_map_enabled: true, route_map: { routes: [] } });
+  const { GroupsRouteMap } = await harness.importDashboardModule('js/groups-route-map.js');
+  const mapHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  t.after(() => mapHost.remove());
+  const map = await harness.mount(harness.html`<${GroupsRouteMap} state=${state} />`, mapHost);
+  await harness.act(() => harness.fireEvent(getByRole(map.container, 'tab', { name: 'Route map' }), 'click'));
+  const select = map.container.querySelector('select');
+  await harness.act(() => {
+    select.querySelector('option[value="infra"]').selected = true;
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  assert.deepEqual(navigated.at(-1), { tab: 'groups', subtab: 'routes', params: { group: 'infra' } });
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'groups', subtab: 'routes', params: { group: 'webshop' } } },
+  })));
+  assert.equal(state.routeGroup.value, 'webshop');
+  assert.equal(map.container.querySelector('select').getAttribute('value'), 'webshop');
+});

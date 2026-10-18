@@ -14,7 +14,7 @@ import htm from 'htm';
 import { ProcessRunBadge } from './process-kit.js';
 import { groupContextEntry, processContext, withRunKind } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
-import { revealRunsLens } from './groups-focus.js';
+import { focusRun, groupsRunLocation, revealRunsLens, showRunsLens } from './groups-focus.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
 import { useProcessScope } from './groups-process-scope.js';
@@ -62,7 +62,7 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
   if (!groups?.setFocus) return;
   // Tick the clicked kind without unticking the others.
   groups.setProcessFilter?.(withRunKind(groups.processFilter?.value, filter));
-  groups.setFocusedRun?.(null);
+  if (groups.focusedRun) focusRun(groups, null, { doc });
   const fused = revealRunsLens(groups, { doc });
   if (fused) {
     setFusedSectionOpen(groupName, 'processes', true);
@@ -84,8 +84,12 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
 export function openRunInProcesses(groupName, runId, { doc = document } = {}) {
   const groups = featureState('groups');
   if (!groups?.setFocus) return;
-  if (groupName && runId && groups.setFocusedRun) groups.setFocusedRun({ group: groupName, runId });
-  revealRunsLens(groups, { doc });
+  if (!groupName || !runId || !groups.focusedRun) { revealRunsLens(groups, { doc }); return; }
+  showRunsLens(groups);
+  // Already open (behind the Agents lens): the lens change alone is the step.
+  if (!focusRun(groups, { group: groupName, runId }, { doc })) {
+    doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: groupsRunLocation(groups.focusedRun.value) } }));
+  }
 }
 
 function cssString(value) {

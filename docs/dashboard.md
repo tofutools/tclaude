@@ -175,7 +175,8 @@ badges on member rows.
 Processes shows each group's runs as live graph cards with *+ start process*
 (template, params, explicit program-profile authorization); *open ›* focuses
 one run with its graph, a node inspector for decisions, a performer dock to
-drag-reassign agent nodes, and pause (⏸) / resume (⏵).
+drag-reassign agent nodes, and pause (⏸) / resume (⏵). The open run has its
+own address, `/groups/runs/<group>/<run-id>`, so Back closes it.
 
 Both, the default, shows each group's members and runs together as an
 **Agents** and a **Processes** section. Each section's header line carries
