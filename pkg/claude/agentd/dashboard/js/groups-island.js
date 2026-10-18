@@ -66,10 +66,7 @@ export function GroupsControls({ state, actions }) {
   // count what it lists.
   const listed = state.listed.value;
   const current = listed ? { ...state.view.value, ...listed } : state.view.value;
-  // The node-only options are not offered while fused, so their changes do
-  // not count there.
-  const badge = state.deviationCount.value - (listed ? GROUP_VIEW_OPTIONS
-    .filter((option) => option.nodeOnly && state.visibility.value[option.key] !== option.defaultValue).length : 0);
+  const badge = state.deviationCount.value;
   const columns = state.columnOptions.value;
   const wizard = useWizardTheme();
   useGroupsFocusRestore(state);
@@ -169,7 +166,7 @@ export function GroupsControls({ state, actions }) {
         class=${`view-menu${state.viewOpen.value ? ' open' : ''}`}
         role="menu"
       >
-        ${GROUP_VIEW_OPTIONS.filter((option) => !listed || !option.nodeOnly).map((option) => html`
+        ${GROUP_VIEW_OPTIONS.map((option) => html`
           <${ViewOption}
             key=${option.key}
             option=${option}

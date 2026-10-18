@@ -697,10 +697,15 @@ function OnlineDot({ online }) {
 }
 
 function VirtualShell({ group, target, children, summary }) {
+  // In the fused view a node's virtual group names its node, so its rows'
+  // controls reach it; only this node's take drops (dnd.js acts here).
+  const fleet = group.fleet_node;
+  const drops = !fleet || fleet.home;
   return html`<details
     class="group-virtual" data-group-key=${group.key || group.name}
-    data-dnd-target-ungrouped=${target === 'ungrouped' ? '1' : undefined}
-    data-dnd-target-retired=${target === 'retired' ? '1' : undefined}
+    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name} data-fleet-home=${fleet?.home ? '' : undefined}
+    data-dnd-target-ungrouped=${drops && target === 'ungrouped' ? '1' : undefined}
+    data-dnd-target-retired=${drops && target === 'retired' ? '1' : undefined}
     open=${virtualGroupOpen(group, dashPrefs)}
   ><summary>${summary}</summary><div class="subtable">${children}</div></details>`;
 }

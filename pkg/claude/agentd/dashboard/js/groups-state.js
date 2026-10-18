@@ -25,8 +25,6 @@ const PROCESS_FILTER_PREF = 'tclaude.dash.groups.processes.kinds';
 
 const FILTER_KEY = 'tclaude.dash.filter.groups';
 
-// A nodeOnly option adds one of this node's virtual groups, which the fused
-// Groups view (several nodes) does not list.
 export const GROUP_VIEW_OPTIONS = Object.freeze([
   {
     key: 'offline', defaultValue: true, pref: 'tclaude.dash.offline.groups',
@@ -36,28 +34,28 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
     wizardTitle: 'Show slumbering familiars. This is the tab-wide default — each party banner has a per-party override.',
   },
   {
-    key: 'ungrouped', nodeOnly: true, defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
+    key: 'ungrouped', defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
     label: 'show ungrouped',
     wizardLabel: 'show unbound',
     title: `Show the virtual "Ungrouped" group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.`,
     wizardTitle: `Show the ethereal "Unbound" party at the bottom — familiars not bound to any party. Drag them onto a party to bind them; drag party familiars back onto it to release them.`,
   },
   {
-    key: 'retired', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.retired.groups',
+    key: 'retired', defaultValue: false, pref: 'tclaude.dash.retired.groups',
     label: 'show retired',
     wizardLabel: 'show banished',
     title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Click reinstate to bring one back.',
     wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Restore one to bring it back.',
   },
   {
-    key: 'conversations', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.conversations.groups',
+    key: 'conversations', defaultValue: false, pref: 'tclaude.dash.conversations.groups',
     label: 'show conversations',
     wizardLabel: 'show plain scrolls',
     title: `Show the virtual "Conversations" group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.`,
     wizardTitle: `Show the ethereal "Plain scrolls" party — recent scrolls without familiars. Drag one onto a party (or click awaken) to awaken it as a familiar.`,
   },
   {
-    key: 'replaced', nodeOnly: true, defaultValue: false, pref: 'tclaude.dash.replaced.groups',
+    key: 'replaced', defaultValue: false, pref: 'tclaude.dash.replaced.groups',
     label: 'show replaced generations',
     wizardLabel: 'show past incarnations',
     title: 'Show the virtual "Replaced generations" group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.',
@@ -135,6 +133,29 @@ export function distributePendingToGroups(groups, pendingRows) {
   return { groups: withPending, fallback };
 }
 
+// VIRTUAL_KINDS are the virtual groups the view menu shows, in list order.
+const VIRTUAL_KINDS = [
+  ['ungrouped', (s) => virtualUngroupedGroup(s.ungrouped || [])],
+  ['retired', (s) => virtualRetiredGroup(s.retired || [], s.paging?.retired)],
+  ['conversations', (s) => virtualConversationsGroup(s.conversations || [], s.paging?.conversations)],
+  ['replaced', (s) => virtualReplacedGroup(s.replaced || [], s.paging?.replaced)],
+];
+
+// nodeVirtualGroup names one node's virtual group in the fused view, as its
+// real groups are (group@node); its rows name their node, so their controls
+// reach it. Only the home node's lists page (list-paging.js pages this
+// page's own lists); another node's show their first page.
+function nodeVirtualGroup(group, node) {
+  return {
+    ...group,
+    name: `${group.name}@${node.name}`,
+    key: `${node.id}/${group.key}`,
+    fleet_node: node,
+    members: (group.members || []).map((m) => ({ ...m, fleet_node: node })),
+    ...(node.home ? {} : { paging: null }),
+  };
+}
+
 export function buildGroupsView(snapshot, options, query, reorder = sortGroupsByPref) {
   if (!snapshot) return { groups: [], total: 0, shownReal: 0, query: query || '' };
   const realGroups = (snapshot.groups || [])
@@ -142,17 +163,13 @@ export function buildGroupsView(snapshot, options, query, reorder = sortGroupsBy
   const distributed = distributePendingToGroups(realGroups, snapshot.pending || []);
   const list = reorder(distributed.groups.slice());
   if (distributed.fallback.length) list.unshift(virtualPendingGroup(distributed.fallback));
-  if (options.ungrouped) list.push(virtualUngroupedGroup(snapshot.ungrouped || []));
-  if (options.retired) {
-    list.push(virtualRetiredGroup(snapshot.retired || [], snapshot.paging?.retired));
-  }
-  if (options.conversations) {
-    list.push(virtualConversationsGroup(
-      snapshot.conversations || [], snapshot.paging?.conversations,
-    ));
-  }
-  if (options.replaced) {
-    list.push(virtualReplacedGroup(snapshot.replaced || [], snapshot.paging?.replaced));
+  // The fused Groups view lists each node's virtual groups (virtual_nodes,
+  // fleet-merged-model.js) under their group@node names; one node's view
+  // lists its own.
+  const sources = snapshot.virtual_nodes || [{ node: null, lists: snapshot }];
+  for (const [key, make] of VIRTUAL_KINDS) {
+    if (!options[key]) continue;
+    for (const { node, lists } of sources) list.push(node ? nodeVirtualGroup(make(lists), node) : make(lists));
   }
   const groups = filterGroups(list, query || '');
   return {
