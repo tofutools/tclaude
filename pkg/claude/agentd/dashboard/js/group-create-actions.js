@@ -115,8 +115,11 @@ export function createGroupCreateActions({
           failed > 0,
         );
       }
-      try { setExpanded(name); } catch (_) {}
-      recordInteraction(name);
+      // Expansion and recency are keyed by the page's own group names.
+      if (isPageNode(node)) {
+        try { setExpanded(name); } catch (_) {}
+        recordInteraction(name);
+      }
       announceNodeChanged(node);
       refresh();
     },
