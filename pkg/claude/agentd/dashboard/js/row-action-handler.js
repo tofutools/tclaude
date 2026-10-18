@@ -698,13 +698,13 @@ export async function handleRowAction(action) {
       case 'export-paf': {
         // Agent ⚙ → export (PAF)…: a dialog with the history choices and
         // the credential scan, then a file download (tcl-jkmitn).
-        openAgentExport({ agent, label });
+        openAgentExport({ agent, label, node });
         return;
       }
       case 'snapshot-agent': {
         // Agent ⚙ → snapshot…: the Snapshots view with this agent preset
         // in its create panel (tcl-3hjdm1).
-        openSnapshots({ agent });
+        openSnapshots({ agent, node });
         return;
       }
       case 'reincarnate': {
@@ -846,7 +846,7 @@ export async function handleRowAction(action) {
       case 'export-group': {
         // The format dialog (.zip or .paf) fetches the archive, so a
         // flagged export shows its findings instead of saving an error.
-        openGroupExport(group);
+        openGroupExport(group, node);
         return;
       }
       case 'cleanup-group': {

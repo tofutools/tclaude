@@ -4187,6 +4187,15 @@ notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
 
+A file download a peer trusting this node unrestricted serves (a snapshot's
+or an agent's `.paf`, a group archive, a template) crosses the same way.
+`GET /api/peer-download/INSTANCE?path=PATH` (local-only) asks the peer to stage
+`PATH` (`POST /api/peer-downloads {"path"}`, a peer view job there; only the
+download routes stage, and only under unrestricted trust), reads it in 4 MiB
+chunks (`GET /api/peer-downloads/ID?offset=`; a staged file goes away 10
+minutes after its last read), and serves it as an opaque, sandboxed, `nosniff`
+attachment with Range support.
+
 Agent mail's files cross the same way, under the same grant:
 `GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)
 reads the peer's `GET /api/agent-attachment-chunk?message=&attachment=&offset=&length=`.

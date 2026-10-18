@@ -81,8 +81,8 @@ export function openSnapshots(preset = {}) {
   return managementController().openSnapshots(preset);
 }
 
-export function openGroupExport(group) {
-  return managementController().openGroupExport(group);
+export function openGroupExport(group, node = '') {
+  return managementController().openGroupExport(group, node);
 }
 
 export function bindGroupImportModal() {

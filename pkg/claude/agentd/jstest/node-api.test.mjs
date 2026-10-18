@@ -24,3 +24,22 @@ test('nodeFetch addresses the page node, this node from a peer page, and any oth
   await assert.rejects(async () => mod.nodeFetch('inst_forge', { self: 'inst_self', fetchImpl, remote: null })('/static/x.js'));
   await assert.rejects(async () => mod.nodeFetch('inst_forge', { self: 'inst_self', fetchImpl, remote: null })('/api/peer/inst_lab0/groups'));
 });
+
+test('a download from another node comes through this node, read from that node in chunks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/node-api.js');
+  const path = '/api/snapshots/known%20good/export';
+  const via = (node) => `/api/peer-download/${node}?path=${encodeURIComponent(path)}`;
+  // On this node's own page.
+  assert.equal(mod.nodeDownloadPath('', path, { self: 'inst_self', remote: null }), path);
+  assert.equal(mod.nodeDownloadPath('inst_self', path, { self: 'inst_self', remote: null }), path);
+  assert.equal(mod.nodeDownloadPath('inst_forge', path, { self: 'inst_self', remote: null }), via('inst_forge'));
+  // On forge's page, forge's own files come through this node too.
+  const calls = [];
+  const remote = { id: 'inst_forge', localFetch: async (url) => { calls.push(['local', url]); return { ok: true }; } };
+  const fetchImpl = async (url) => { calls.push(['page', url]); return { ok: true }; };
+  await mod.nodeDownload('', path, { self: 'inst_self', remote, fetchImpl });
+  await mod.nodeDownload('inst_self', path, { self: 'inst_self', remote, fetchImpl });
+  assert.deepEqual(calls, [['local', via('inst_forge')], ['local', path]]);
+  assert.throws(() => mod.nodeDownloadPath('inst_x"]', path, { self: 'inst_self', remote: null }));
+});

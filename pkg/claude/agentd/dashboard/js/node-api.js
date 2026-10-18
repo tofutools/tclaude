@@ -52,6 +52,26 @@ export function nodeFetch(node, {
   };
 }
 
+// nodeDownloadPath addresses one of node's file downloads (a snapshot's or
+// an agent's .paf, a group archive, a template). The peer view carries JSON
+// replies only, so another node's file comes through this node's
+// /api/peer-download/{node}, which reads it from that node in chunks; on a
+// peer's page that is the page's own node too. It is a path on this node's
+// daemon, which a peer's page reaches through localFetch (or an anchor).
+export function nodeDownloadPath(node, path, { self = selfNode, remote = globalThis.__tclaudeRemoteNode } = {}) {
+  const target = node || remote?.id || '';
+  if (!target || target === self) return path;
+  if (!NODE_ID.test(target)) throw new Error(`invalid node: ${target}`);
+  return `/api/peer-download/${encodeURIComponent(target)}?path=${encodeURIComponent(path)}`;
+}
+
+// nodeDownload fetches one of node's file downloads (see nodeDownloadPath).
+export function nodeDownload(node, path, {
+  self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+} = {}) {
+  return (remote?.localFetch || fetchImpl)(nodeDownloadPath(node, path, { self, remote }), { credentials: 'same-origin' });
+}
+
 // onNodeChanged tells views polling a node (the fused Groups view) that a
 // control just changed it, so they read it again now. It returns the
 // unsubscribe.

@@ -38,6 +38,9 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/hub/boards", "PATCH /api/federation/hub/boards/{board}", "DELETE /api/federation/hub/boards/{board}",
 	"GET /api/federation/boards/{board}/items", "POST /api/federation/boards/{board}/items", "GET /api/federation/boards/{board}/items/{item}/versions", "PUT /api/federation/boards/{board}/items/{item}/pin", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/fetch", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/contents", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/download", "HEAD /api/federation/boards/{board}/items/{item}/versions/{version}/download", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/preview", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/import", "GET /api/federation/boards/updates", "PUT /api/federation/boards/updates", "GET /api/federation/boards", "POST /api/federation/boards", "POST /api/federation/boards/join", "GET /api/federation/boards/{board}", "DELETE /api/federation/boards/{board}/membership", "GET /api/federation/boards/{board}/members", "PUT /api/federation/boards/{board}/members/{instance}", "DELETE /api/federation/boards/{board}/members/{instance}", "GET /api/federation/boards/{board}/invites", "POST /api/federation/boards/{board}/invites", "DELETE /api/federation/boards/{board}/invites/{token_id}", "POST /api/federation/boards/{board}/rotate-key",
 	"GET /api/agent-bundle/export", "POST /api/agent-bundle/import", "POST /api/paf/redact",
+	// A download staged for the peer to read chunk by chunk
+	// (dashboard_peer_downloads.go).
+	"/api/peer-downloads", "GET /api/peer-downloads/{id}",
 	"POST /api/paf/publish", "GET /api/snapshots", "POST /api/snapshots", "POST /api/snapshots/prune", "GET /api/snapshots/{name}", "DELETE /api/snapshots/{name}", "GET /api/snapshots/{name}/export", "POST /api/snapshots/{name}/spawn", "GET /api/resilience/policies",
 	"GET /api/federation/hub/run",
 	"POST /api/federation/hub/run",
@@ -349,6 +352,7 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /api/peer-attachments/{node}/{message}/{attachment}",
 	"GET /api/peer-agent-attachments/{node}/{message}/{attachment}",
 	"GET /api/peer-message-export/{node}/{message}",
+	"GET /api/peer-download/{node}",
 	"/api/human-messages/",
 	"/api/human-messages/clear",
 	"/api/human-messages/delete",

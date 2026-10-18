@@ -107,6 +107,8 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'queued-spawn-launch': ['feature:local_dashboard'],
   'queued-spawn-edit': ['feature:local_dashboard'],
   'queued-spawn-discard': ['feature:local_dashboard'],
+  // Its archive downloads from its node (dashboard_peer_downloads.go).
+  'export-group': ['feature:local_dashboard'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -176,6 +178,10 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'hide': ['feature:local_dashboard'],
   'perm-edit': ['feature:local_dashboard'],
   'sudo-grant': ['feature:local_dashboard'],
+  // Its node's snapshot library and PAF export; the file downloads from
+  // there (dashboard_peer_downloads.go).
+  'snapshot-agent': ['feature:local_dashboard'],
+  'export-paf': ['feature:local_dashboard'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way

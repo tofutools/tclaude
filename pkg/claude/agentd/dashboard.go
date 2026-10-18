@@ -319,6 +319,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerHarnessOperationsRoutes(mux)
 	registerDashboardPeerRoutes(mux)
 	registerDashboardPeerAttachmentRoutes(mux)
+	registerDashboardPeerDownloadRoutes(mux)
 	registerDashboardEditRoutes(mux)
 }
 
