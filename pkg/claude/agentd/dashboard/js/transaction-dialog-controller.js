@@ -51,7 +51,7 @@ function deleteGroupMemberships(groups, member) {
 // position of those groups) once, before the keyed transaction owner mounts.
 // Later snapshot publishes therefore cannot silently flip a member between the
 // default retire and detach-only cohorts while the destructive plan is open.
-export function buildDeleteGroupDescriptor(snapshot, groupName) {
+export function buildDeleteGroupDescriptor(snapshot, groupName, node = '') {
   const groups = Array.isArray(snapshot?.groups) ? snapshot.groups : [];
   const group = String(groupName || '');
   const target = groups.find((entry) => entry?.name === group);
@@ -76,13 +76,14 @@ export function buildDeleteGroupDescriptor(snapshot, groupName) {
   return {
     kind: 'delete-group',
     group,
+    ...(node ? { node: String(node) } : {}),
     parent: String(target?.parent || ''),
     members,
   };
 }
 
-export function openDeleteGroupDialog(snapshot, group) {
-  return openTransactionDialog(buildDeleteGroupDescriptor(snapshot, group));
+export function openDeleteGroupDialog(snapshot, group, node = '') {
+  return openTransactionDialog(buildDeleteGroupDescriptor(snapshot, group, node));
 }
 
 function uniqueStrings(values) {
@@ -389,7 +390,7 @@ export function buildCleanupDescriptor(
   return {
     kind: 'cleanup',
     mode,
-    ...(mode === 'group' ? { group } : {}),
+    ...(mode === 'group' ? { group, ...(options.node ? { node: String(options.node) } : {}) } : {}),
     tier: mode === 'group' ? 'unjoin'
       : validTiers.has(requestedTier) ? requestedTier : 'delete',
     categories: mode === 'group' ? ['agent'] : cleanupCategories(options.categories),

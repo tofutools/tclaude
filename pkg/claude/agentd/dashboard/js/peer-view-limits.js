@@ -63,6 +63,12 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // prompts every spawn's brief.
   'set-group-environment': ['groups.settings.environment'],
   'set-group-prompts': ['groups.settings', 'groups.members.spawn.prompts'],
+  // A clone's members spawn with the node's launch settings, and delete and
+  // cleanup remove what no peer grant hands out: unrestricted trust only (a
+  // feature no restricted peer shares).
+  'clone-group': ['feature:groups.create.full'],
+  'delete-group': ['feature:groups.manage.full'],
+  'cleanup-group': ['feature:groups.manage.full'],
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group

@@ -25,6 +25,7 @@ import {
   templateRosterRowsHTML,
 } from './template-readback.js';
 import { HelpDisclosure } from './help-field.js';
+import { isPageNode } from './node-api.js';
 
 const html = htm.bind(h);
 const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
@@ -99,6 +100,8 @@ function GroupCreateDialog({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState(false);
+  // Browsing reads the page node's own directories: another node's are typed.
+  const here = isPageNode(current.node);
   const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const nameRef = useRef(null);
   const submitLock = useRef(false);
@@ -159,10 +162,10 @@ function GroupCreateDialog({
     setError('');
     setBusy(true);
     try {
-      const result = await actions.submit(draft, template, current.parentGroup);
+      const result = await actions.submit(draft, template, current.parentGroup, current.node);
       if (!state.isCurrent(current.generation)) return;
       state.close();
-      actions.complete(result, draft.parent);
+      actions.complete(result, draft.parent, current.node);
     } catch (cause) {
       if (state.isCurrent(current.generation)) {
         setError(cause?.message || String(cause));
@@ -218,7 +221,7 @@ function GroupCreateDialog({
     const request = ++templateRefresh.current;
     const generation = current.generation;
     try {
-      const next = await actions.loadTemplates();
+      const next = await actions.loadTemplates(current.node);
       if (
         request !== templateRefresh.current ||
         !state.isCurrent(generation)
@@ -377,7 +380,7 @@ function GroupCreateDialog({
             placeholder="absolute path (~ OK) pre-filled when spawning agents"
             autocomplete="off" spellcheck="false" />
           <button id="group-create-cwd-browse" type="button" class="dir-browse-btn"
-            disabled=${disabled || browseBusy} title="Browse for a directory"
+            disabled=${disabled || browseBusy || !here} title="Browse for a directory"
             onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
         </label>
       ` : html`
@@ -406,7 +409,7 @@ function GroupCreateDialog({
             onKeyDown=${submitOnEnter} placeholder="absolute path (~ OK); missing parent directories are created"
             autocomplete="off" spellcheck="false" />
           <button id="group-create-clone-browse" type="button" class="dir-browse-btn"
-            disabled=${disabled || browseBusy} title="Browse for a clone destination"
+            disabled=${disabled || browseBusy || !here} title="Browse for a clone destination"
             onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
         </label>
         <label class="group-create-attach-repository">

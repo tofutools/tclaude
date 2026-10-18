@@ -1,3 +1,5 @@
+import { announceNodeChanged, nodeFetch } from './node-api.js';
+
 async function responsePayload(response) {
   const text = await response.text();
   if (!text) return {};
@@ -46,6 +48,9 @@ export function createTransactionDialogActions({
   // accidentally replay a completed retire/detach phase after a final DELETE
   // failure. Weak keys release the bookkeeping with the finished dialog.
   const deleteGroupProgress = new WeakMap();
+  // A group's delete and cleanup go to the node whose group it is (the fused
+  // Groups view's other nodes; blank is the page's).
+  const fetchOn = (node) => nodeFetch(node, { fetchImpl });
 
   const report = (message, isError = false) => {
     // Feedback is advisory. A broken injected sink must never strand the
@@ -303,7 +308,7 @@ export function createTransactionDialogActions({
       };
       let response;
       try {
-        response = await fetchImpl(url, {
+        response = await fetchOn(groupMode ? request.node : '')(url, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
@@ -317,10 +322,11 @@ export function createTransactionDialogActions({
       return result;
     },
 
-    async finishCleanup(response) {
+    async finishCleanup(response, node = '') {
       // Accepted cleanup outcomes are a stable, read-only phase. Reconcile the
       // dashboard only after Done/Escape/backdrop dismisses that exact result.
       const result = { kind: 'cleanup', response };
+      announceNodeChanged(node);
       state.handoff();
       try { await refresh(); } finally { state.finish(result); }
       return result;
@@ -359,7 +365,7 @@ export function createTransactionDialogActions({
       if (!progress.retireComplete) {
         let response;
         try {
-          response = await fetchImpl(
+          response = await fetchOn(request.node)(
             `/api/groups/${encodeURIComponent(request.group)}/retire`,
             {
               method: 'POST',
@@ -441,7 +447,7 @@ export function createTransactionDialogActions({
       if (!progress.deleteComplete) {
         let response;
         try {
-          response = await fetchImpl(
+          response = await fetchOn(request.node)(
             `/api/groups/${encodeURIComponent(request.group)}`,
             { method: 'DELETE', credentials: 'same-origin' },
           );
@@ -464,6 +470,7 @@ export function createTransactionDialogActions({
       progress.result = Object.freeze({
         ok: true,
         group: request.group,
+        ...(request.node ? { node: request.node } : {}),
         retired,
         detached: Math.max(0, Number(request.memberCount || 0) - retired),
       });
@@ -471,6 +478,7 @@ export function createTransactionDialogActions({
     },
 
     async finishDeleteGroup(result, notices) {
+      announceNodeChanged(result?.node);
       return finishSuccess(result, words(notices.plain, notices.wizard));
     },
 

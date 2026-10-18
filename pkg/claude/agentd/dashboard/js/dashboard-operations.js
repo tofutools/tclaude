@@ -426,8 +426,10 @@ export function openWindowModal(scope, groupName) {
 // Snapshot launch adapter shared by the group menu and drag-to-banish path.
 // The controller freezes the complete membership plan before the keyed Preact
 // transaction root takes visual and state ownership.
-export function openDeleteGroupModal(group) {
-  return openDeleteGroupDialog(lastSnapshot, group);
+// node names another node's group (the fused Groups view): its snapshot
+// frames the plan, and the plan's requests go there.
+export function openDeleteGroupModal(group, node = '') {
+  return openDeleteGroupDialog(nodeSnapshot(node) || lastSnapshot, group, node);
 }
 
 // ---- 🧹 Cleanup dialog --------------------------------------------
@@ -436,7 +438,7 @@ export function openDeleteGroupModal(group) {
 // then hands one normalized descriptor to the keyed Preact transaction owner.
 // Later polling and list pagination cannot retarget an open cleanup operation.
 export async function openCleanupModal(options = {}) {
-  const snapshot = lastSnapshot;
+  const snapshot = nodeSnapshot(options.node) || lastSnapshot;
   let completeLists = {};
   if (options.mode === 'agents') {
     try {

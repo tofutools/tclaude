@@ -839,7 +839,7 @@ export async function handleRowAction(action) {
       case 'cleanup-group': {
         // Open the bulk-cleanup overlay scoped to this group. The
         // modal manages its own POST + refresh on success.
-        openCleanupModal({ mode: 'group', group });
+        openCleanupModal({ mode: 'group', group, node });
         return;
       }
       case 'pull-repositories-group':
@@ -914,7 +914,7 @@ export async function handleRowAction(action) {
       case 'clone-group': {
         // Open the clone-group modal (new name + with/without agents).
         // The modal owns its POST + toast + refresh.
-        openGroupCloneModal(group);
+        openGroupCloneModal(group, null, node);
         return;
       }
       case 'template-from-group': {
@@ -943,7 +943,7 @@ export async function handleRowAction(action) {
         return;
       }
       case 'delete-group': {
-        openDeleteGroupModal(group);
+        openDeleteGroupModal(group, node);
         return;
       }
       case 'revoke-owner': {

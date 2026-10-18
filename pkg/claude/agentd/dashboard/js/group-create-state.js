@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import { nextGroupCloneName } from './group-create-model.js';
+import { nodeSnapshot } from './node-api.js';
 
 export function createGroupCreateState({ getSnapshot = () => null } = {}) {
   const dialog = signal(null);
@@ -18,8 +19,10 @@ export function createGroupCreateState({ getSnapshot = () => null } = {}) {
     });
   }
 
-  function openClone(groupName, placement = null) {
-    const snapshot = getSnapshot() || {};
+  // node names another node's group (the fused Groups view): the clone is
+  // made there, from that node's snapshot.
+  function openClone(groupName, placement = null, node = '') {
+    const snapshot = nodeSnapshot(node) || getSnapshot() || {};
     const groups = [...(snapshot.groups || [])];
     const source = groups.find((item) => item.name === groupName) || null;
     const currentGeneration = ++generation;
@@ -29,6 +32,7 @@ export function createGroupCreateState({ getSnapshot = () => null } = {}) {
       presetTemplate: '',
       parentGroup: '',
       cloneGroup: String(groupName || ''),
+      ...(node ? { node: String(node) } : {}),
       defaultName: nextGroupCloneName(groups, groupName),
       placement: placement || {
         parent: source?.parent || '', anchor: groupName, before: false,

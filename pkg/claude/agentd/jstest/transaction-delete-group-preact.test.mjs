@@ -477,3 +477,30 @@ test('late delete-group rejection cannot repaint a dialog whose keyed owner was 
   assertAbsent(opened.host.querySelector('#delete-group-modal'));
   assertAbsent(opened.host.querySelector('#delete-group-error'));
 });
+
+test("another node's group: the launcher frames it from that node's snapshot and the plan goes there", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [controller, { createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-controller.js'),
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const descriptor = controller.buildDeleteGroupDescriptor(deleteSnapshot(), 'child', 'inst_forge1234');
+  assert.equal(descriptor.node, 'inst_forge1234');
+  assert.equal(controller.buildDeleteGroupDescriptor(deleteSnapshot(), 'child').node, undefined, "the page's own group names no node");
+
+  const urls = [];
+  const actions = createTransactionDialogActions({
+    state: createTransactionDialogState(),
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return url.endsWith('/retire')
+        ? new Response(JSON.stringify({ members: [{ ...alpha, action: 'retired' }] }), { status: 200 })
+        : new Response(null, { status: 204 });
+    },
+  });
+  const request = Object.freeze({ ...requestFor('child', [{ selector: alpha.agent_id, agent_id: alpha.agent_id, conv_id: alpha.conv_id }]), node: 'inst_forge1234' });
+  const result = await actions.deleteGroupPlan(request);
+  assert.deepEqual(urls, ['/api/peer/inst_forge1234/groups/child/retire', '/api/peer/inst_forge1234/groups/child']);
+  assert.equal(result.node, 'inst_forge1234');
+});
