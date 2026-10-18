@@ -159,3 +159,17 @@ test('rendered terminal tabs expose status markers and update from the roster si
   await mounted.unmount();
   actions.dispose();
 });
+
+test('a peer\'s pane takes its status from the federation sessions catalog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { remoteSessionRoster } = await harness.importDashboardModule('js/remote-session-status.js');
+  const roster = remoteSessionRoster([
+    { instance: 'inst_forge', agent: 'agt_ada1', name: 'ada', state: 'working' },
+    { instance: 'inst_forge', agent: 'agt_old1', name: 'old', state: 'idle', stale: true },
+  ]);
+  const remotePane = (agent) => ({ label: 'ada', seed: { ws: '/x', remote: { peer: 'inst_forge', peerLabel: 'forge', agent } } });
+  assert.equal(terminalTabStatus(remotePane('agt_ada1'), { agents: [] }, roster).key, 'working');
+  assert.equal(terminalTabStatus(remotePane('agt_old1'), { agents: [] }, roster).key, 'unknown', 'a stale catalog row is not trusted');
+  assert.equal(terminalTabStatus(remotePane('agt_ada1'), { agents: [{ agent_id: 'agt_ada1', online: true, state: { status: 'idle' } }] }, null).key, 'unknown',
+    'a peer pane never borrows a same-id row from this node\'s roster');
+});

@@ -494,7 +494,16 @@ agents, plain sessions, and agent or group shells that were minimized or
 whose tab was closed. A counter to the right of the tab strip counts them so
 idle sessions are not left running by mistake. Hovering it peeks a breakdown
 by kind with each session's idle time; clicking pins it open. `Attach` opens
-the session as a normal tab, and `Attach all` opens every one.
+the session as a normal tab, and `Attach all` opens every one. The counter
+always lists this node's sessions, also in a peer's per-node view. A fused
+view, or a peer's per-node view, adds the shown peers' unattached agents
+under each peer's node pill (an unrestricted peer serves that listing);
+`Attach` opens those as remote terminals.
+
+A peer's terminal (a remote terminal) carries the peer's node pill on its tab
+and one chip in its pane header naming the peer and the mode
+(`⌨ interactive` or `👁 watch-only`). Its tab's status glyph follows the
+peer's shared session state from the federation sessions catalog.
 
 With `features.processes` on, a pane whose agent takes part in a process run
 shows a collapsible top-right cluster of run icons (also on its tab). An icon

@@ -779,7 +779,15 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
     await Promise.resolve();
   });
   const tabs = () => [...host.querySelectorAll('.mux-tab')];
-  assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
+  assert.deepEqual(tabs().map((tab) => tab.querySelector('.mux-node-pill')?.textContent ?? null), [null, 'F', 'L'],
+    'a peer\'s tab carries its node pill in an unfused view too');
+  assert.deepEqual(tabs().map((tab) => tab.querySelector('.mux-tab-label').textContent), ['builder-1', 'reviewer-2', 'qa-1'],
+    'the " @ peer" suffix older remote panes were opened with is not shown beside the pill');
+  const { remoteSessionAgents, remoteSessionRoster } = await harness.importDashboardModule('js/remote-session-status.js');
+  await harness.act(() => { remoteSessionAgents.value = remoteSessionRoster([{ instance: 'inst_forge', agent: 'agt_r2', state: 'awaiting_input' }]); });
+  t.after(() => { remoteSessionAgents.value = new Map(); });
+  assert.deepEqual(tabs().map((tab) => tab.dataset.agentStatus), ['unknown', 'awaiting_input', 'unknown'],
+    'a peer\'s tab shows its agent\'s status from the sessions catalog');
   await harness.act(() => { fleetState.setFused(['inst_self', 'inst_forge']); });
   const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
   assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill')?.textContent ?? null), [null, 'F'],
@@ -787,16 +795,19 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   assert.equal(shown[1].querySelector('.mux-node-pill').title, 'On forge');
   assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
   assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
-  const headerPill = (label) => [...host.querySelectorAll('.mux-pane')].find((pane) => pane.textContent.includes(label))
-    .querySelector('.mux-pane-header .mux-node-pill');
-  assert.equal(headerPill('reviewer-2')?.textContent, 'forge', 'a peer\'s pane header names the peer in full');
-  assert.equal(headerPill('builder-1'), null, 'this node\'s pane header carries no node label');
+  const header = (label) => [...host.querySelectorAll('.mux-pane')].find((pane) => pane.textContent.includes(label))
+    .querySelector('.mux-pane-header');
+  assert.equal(header('reviewer-2').querySelector('.term-remote-badge .term-remote-node')?.textContent, 'forge',
+    'a peer\'s pane header names the peer in full, once, in its remote chip');
+  assert.equal(header('reviewer-2').querySelector('.mux-pane-title').textContent, 'reviewer-2');
+  assert.equal(header('reviewer-2').querySelector('.mux-node-pill'), null, 'no separate header pill');
+  assert.equal(header('builder-1').querySelector('.term-remote-badge'), null, 'this node\'s pane header carries no node label');
   // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
   // and forge in one press.
   const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
   await harness.act(() => harness.fireEvent(deskTab, 'keydown', { key: 'ArrowRight', altKey: true, shiftKey: true }));
   assert.deepEqual(tabs().filter((tab) => !tab.classList.contains('scope-hidden')).map((tab) => tab.querySelector('.mux-tab-label').textContent),
-    ['reviewer-2 @ forge', 'builder-1']);
+    ['reviewer-2', 'builder-1']);
   // Unticking the active pane's node hands over quietly: the dashboard stays
   // on the tab the operator is on.
   harness.document.querySelector('nav [data-tab="groups"]').click();

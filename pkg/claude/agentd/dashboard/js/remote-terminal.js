@@ -21,8 +21,8 @@ const SESSIONS_TTL_MS = 10000;
 
 // openRemotePane opens a peer's terminal as a tab in the Terminals tab, like
 // a local web terminal (pop-out and drag-out work the same way).
-export function openRemotePane({ wsPath, label, remote }) {
-  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) });
+export function openRemotePane({ wsPath, label, remote }, options) {
+  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) }, options);
 }
 const SAFE_ID = /^(agt|inst)_[A-Za-z0-9]{4,64}$/;
 const SESSIONS_WAIT_STEP_MS = 1500;
@@ -88,7 +88,7 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
   const name = label || row.name || agent;
   const opened = await open({
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
-    label: `${name} @ ${peer}`,
+    label: name,
     remote: { peer: instance, peerLabel: peer, agent },
   });
   if (!opened) toast('The terminal could not open here (the terminal runtime did not load)', true);
@@ -110,7 +110,7 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
     const mode = remoteTerminalMode(row);
     if (!mode || !SAFE_ID.test(row.agent || '')) return;
     onClose();
-    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: `${row.name || row.agent} @ ${node.name}`, remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
+    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
   };
   const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then(() => toast('Command copied', false)).catch(() => toast(`Run in a terminal: ${cmd}`, false));
   return html`<${Overlay} id="remote-sessions-modal" labelledby="remote-sessions-title" onClose=${onClose}>

@@ -143,8 +143,14 @@ function statusDescription(key, agent) {
 // terminalTabStatus is intentionally a plain object with fixed keys. Preact
 // uses it for both data-* styling and the text-equivalent tab label, while
 // tests can exercise every server state without constructing a DOM.
-export function terminalTabStatus(pane, snapshotValue) {
-  const agent = findTerminalAgent(pane, snapshotValue);
+//
+// A peer's pane is not in this node's roster: remoteAgents (keyed
+// "<instance>/<agent>", remote-session-status.js) stands in for it.
+export function terminalTabStatus(pane, snapshotValue, remoteAgents = null) {
+  const remote = pane?.seed?.remote;
+  const agent = remote?.peer
+    ? remoteAgents?.get(`${remote.peer}/${remote.agent}`) || null
+    : findTerminalAgent(pane, snapshotValue);
   const key = statusKey(agent);
   const description = statusDescription(key, agent);
   const label = pane?.label || 'terminal';

@@ -572,6 +572,7 @@ body.wizard .mux-pane-xterm {
   padding: 3px 12px; color: #8b949e; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.04em;
 }
+.mux-bg-sec-head .mux-node-pill { text-transform: none; letter-spacing: 0; }
 .mux-bg-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
 .mux-bg-row:hover { background: #1b222b; }
 .mux-bg-row .mux-tab-status-shell {

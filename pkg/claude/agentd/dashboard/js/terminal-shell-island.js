@@ -15,7 +15,7 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import {
-  BackgroundTerminalsChip, backgroundTerminals, refreshBackgroundTerminals,
+  BackgroundTerminalsChip, backgroundPeers, backgroundTerminals, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
 } from './background-terminals.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
@@ -26,8 +26,9 @@ import {
 import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
-import { paneScope } from './fleet-scope.js';
-import { nodeColor } from './fleet-model.js';
+import { paneNode, paneScope } from './fleet-scope.js';
+import { nodeColor, remoteNodeID } from './fleet-model.js';
+import { remoteSessionAgents, startRemoteSessionStatusPoll } from './remote-session-status.js';
 import { AgentGearMenu } from './groups-member-table.js';
 import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 import { ProcessPaneOverlay, ProcessTabIcons, processOverlayActions, reassignCandidates } from './process-terminal-overlay.js';
@@ -243,18 +244,20 @@ export function RemoteSharedNotice({ seed, remote, onTakeOver }) {
   </div>`;
 }
 
-// RemoteBadge marks a peer's terminal: whose it is and whether this view can
+// RemoteBadge marks a peer's terminal in its pane header, as one chip in the
+// node's colour: whose it is (the node) and whether this view can
 // type (interactive) or only watch, as the peer granted it.
-function RemoteBadge({ seed, remote }) {
+function RemoteBadge({ seed, remote, node }) {
   if (!seed.remote) return null;
-  const peer = seed.remote.peerLabel || seed.remote.peer;
+  const peer = node?.name || seed.remote.peerLabel || seed.remote.peer;
   const mode = remote?.mode;
-  const text = mode === 'interactive' ? `⌨ interactive · ${peer}` : mode === 'watch' ? `👁 watch-only · ${peer}` : `remote · ${peer}`;
+  const text = mode === 'interactive' ? '⌨ interactive' : mode === 'watch' ? '👁 watch-only' : 'remote';
   const title = mode === 'interactive'
     ? `${peer}'s agent: your keystrokes reach it. The peer shows REMOTE INPUT on the pane and can disconnect you.`
     : mode === 'watch' ? `${peer}'s agent, read-only: you see the pane but cannot type. The peer shows REMOTE WATCH on the pane.`
     : `${peer}'s agent, through this node`;
-  return html`<span class=${`term-remote-badge${mode ? ` ${mode}` : ''}`} title=${title}>${text}</span>`;
+  const style = node?.color ? `--nc:${node.color}` : null;
+  return html`<span class=${`term-remote-badge${mode ? ` ${mode}` : ''}`} style=${style} title=${title}><span class="term-remote-node">${peer}</span>${text}</span>`;
 }
 
 function TerminalPane({
@@ -271,7 +274,7 @@ function TerminalPane({
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
   // dashboard avoids an extra signal subscriber per opaque xterm host.
-  const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value) : null;
+  const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value) : null;
   const headerRef = useRef(null);
   // A solo pop-out has no tab strip to drag out of, so its header is the home
   // region: pull the title off the header and the terminal goes back to the
@@ -321,10 +324,10 @@ function TerminalPane({
             title="Drag off this header — or click ↩ dashboard — to move this terminal back to the dashboard's Terminals tab"
             onDragStart=${startTitleDrag}
             onDragEnd=${endTitleDrag}
-          >${pane.label}</span>
+          >${paneTitle(pane)}</span>
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
-        ` : html`<${NodePill} node=${scope?.node} /><span class="mux-pane-title">${pane.label}</span>`}
-        <${RemoteBadge} seed=${pane.seed} remote=${remote} />
+        ` : html`<span class="mux-pane-title">${paneTitle(pane)}</span>`}
+        <${RemoteBadge} seed=${pane.seed} remote=${remote} node=${scope?.node} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
@@ -540,8 +543,18 @@ function TabGear({ gear, snapshot, menuKey }) {
 
 const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
 
-// NodePill names a remote pane's node in a fused view (fleet-scope.js), in
-// that node's colour. This node's panes go unlabelled: the label is there to
+// paneTitle is the name a tab and its pane header show. A peer's pane is
+// labelled by its NodePill, so the " @ peer" suffix older remote panes were
+// opened with is dropped rather than shown twice.
+export function paneTitle(pane) {
+  const label = pane?.label || '';
+  const peer = pane?.seed?.remote?.peerLabel;
+  const suffix = peer ? ` @ ${peer}` : '';
+  return suffix && label.endsWith(suffix) && label.length > suffix.length ? label.slice(0, -suffix.length) : label;
+}
+
+// NodePill names a remote pane's node (fleet-scope.js), in that node's
+// colour. This node's panes go unlabelled: the label is there to
 // set a peer's panes apart. A tab is short of room for the agent's name, so it
 // gets the compact form, the node's initial, with the full name on hover; the
 // pane header has room for the whole name.
@@ -555,7 +568,7 @@ function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
 }) {
-  const agentStatus = terminalTabStatus(pane, snapshot?.value);
+  const agentStatus = terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
@@ -640,7 +653,7 @@ function PaneTab({
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <${NodePill} node=${scope?.node} compact />
-      <span class="mux-tab-label">${pane.label}</span>
+      <span class="mux-tab-label">${paneTitle(pane)}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${!!snapshot?.value?.processes_enabled} />` : null}
@@ -973,7 +986,13 @@ function TerminalTabs({
   // A fused node scope (fleet-scope.js) shows the ticked nodes' panes, each
   // labelled with its node; the rest stay open, just out of sight.
   const scopeView = scope?.view.value;
-  const scopeOf = (pane) => paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);
+  // A peer's pane carries its node pill in any view, fused or not: the pill is
+  // the one place a tab says whose terminal it is.
+  const scopeOf = (pane) => {
+    const scoped = paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);
+    if (scoped.node || !pane.seed?.remote?.peer) return scoped;
+    return { ...scoped, node: paneNode(scopeView?.fleet || { peers: [] }, pane.seed, nodeColor) };
+  };
   const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
   const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
   // Quietly: unticking a node must not pull the operator into this tab.
@@ -1662,6 +1681,10 @@ function TerminalTabs({
   `;
 }
 
+function hasRemotePane(state) {
+  return state.panes.peek().some((pane) => pane.seed?.remote?.peer);
+}
+
 function TerminalBadge({ state }) {
   const count = state.view.value.count;
   const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
@@ -1711,8 +1734,20 @@ export function mountTerminalShellIsland({
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} scope=${scope} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
-  const stopBackgroundPoll = startBackgroundTerminalsPoll();
+  // A fused view, or a peer's per-node view, also lists the shown peers'
+  // unattached agents; a change of scope re-reads at once.
+  const peers = () => (scope ? backgroundPeers(scope.view.peek(), remoteNodeID()) : []);
+  const stopBackgroundPoll = startBackgroundTerminalsPoll({ peers });
+  const stopRemoteStatusPoll = startRemoteSessionStatusPoll({ hasRemote: () => hasRemotePane(state) });
+  let peerKey = null;
+  const stopPeerWatch = scope ? effect(() => {
+    const next = backgroundPeers(scope.view.value, remoteNodeID()).map((peer) => peer.id).join(',');
+    if (peerKey !== null && next !== peerKey) refreshBackgroundTerminals();
+    peerKey = next;
+  }) : () => {};
   registerCleanup(() => {
+    stopRemoteStatusPoll();
+    stopPeerWatch();
     stopBackgroundPoll();
     unbindNavRouting();
     unbindHandoff();
@@ -1734,6 +1769,7 @@ export function mountStandaloneTerminalShell({
   snapshot = null,
 }) {
   let disposed = false;
+  const stopRemoteStatusPoll = startRemoteSessionStatusPoll({ hasRemote: () => hasRemotePane(state) });
   render(html`
     <${TerminalTabs}
       state=${state}
@@ -1751,6 +1787,7 @@ export function mountStandaloneTerminalShell({
   return () => {
     if (disposed) return;
     disposed = true;
+    stopRemoteStatusPoll();
     render(null, host);
     actions.dispose();
   };
