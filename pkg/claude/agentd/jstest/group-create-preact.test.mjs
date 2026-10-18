@@ -219,6 +219,13 @@ test('group-create state snapshots each open and invalidates closed generations'
   assert.deepEqual(state.dialog.value.placement, {
     parent: '', anchor: 'alpha', before: false,
   });
+  // A subgroup on another node is made there, from its snapshot.
+  const nodeApi = await harness.importDashboardModule('js/node-api.js');
+  const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { templates: [], groups: [{ name: 'build' }] } : null));
+  state.open('', 'build', 'inst_forge');
+  assert.equal(state.dialog.value.node, 'inst_forge');
+  assert.deepEqual(state.dialog.value.groups.map((g) => g.name), ['build']);
+  release();
 });
 
 test('group-create actions preserve HTTP errors, partial outcome toasts, expansion, and refresh', async (t) => {
