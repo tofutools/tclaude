@@ -15,10 +15,8 @@ import (
 // moving its requests to nodeFetch lowers its entry, and none adds a literal
 // one. (A path held in a variable is not counted.)
 var bareAPIFetchBaseline = map[string]int{
-	"dnd.js":                        9,
 	"dock-save-dnd.js":              2,
 	"fleet-admin-island.js":         1,
-	"group-reorder.js":              1,
 	"groups-island.js":              1,
 	"groups-notification-reader.js": 1,
 	"helpers.js":                    1,
@@ -35,7 +33,7 @@ var bareAPIFetchBaseline = map[string]int{
 	"profiles.js":                   1,
 	"refresh.js":                    1,
 	"remote-admin.js":               1,
-	"row-action-handler.js":         13,
+	"row-action-handler.js":         12,
 	"sandbox-profiles.js":           2,
 	"slop-volume.js":                2,
 	"vegas.js":                      3,

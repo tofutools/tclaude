@@ -55,8 +55,8 @@ export function createActionDialogState() {
   return Object.freeze({
     dialog,
     view,
-    openClone({ conv, label = '', cwd = '', node = '' }) {
-      return !!open({ kind: 'clone-agent', conv, label, cwd: cwd || '', ...(node ? { node } : {}) });
+    openClone({ conv, label = '', cwd = '', node = '', group = '' }) {
+      return !!open({ kind: 'clone-agent', conv, label, cwd: cwd || '', ...(node ? { node } : {}), ...(group ? { group } : {}) });
     },
     openReincarnate({ conv, label = '', node = '' }) {
       return !!open({ kind: 'reincarnate-agent', conv, label, ...(node ? { node } : {}) });

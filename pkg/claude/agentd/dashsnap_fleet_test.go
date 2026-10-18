@@ -632,7 +632,7 @@ func fleetStates() []dashsnap.State {
 		{
 			Key:     "fleet-setup-agents",
 			Title:   "Fleet setup guide: let agents use peers",
-			Caption: "Step 4 lists what each trusted peer shares with this node, per group, which of your groups and agents already use it, and gives one access in place: the peer=<peer>/<group> reach merges into their grants, keeping the rest.",
+			Caption: "Step 4 lists what each trusted peer shares with this node, per group, which of your groups and agents already use it, and allows messaging in place, one line per group: the peer=<peer>/<group> reach merges into their grants, keeping the rest. A holder's name opens its Permissions for anything more.",
 			InitJS:  "window.__dashsnapSetupShare = true;" + fleetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });

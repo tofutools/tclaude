@@ -20,6 +20,7 @@ import { openStandingOrderCreateModal } from './jobs-controller.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 import { resolveAgentTitle } from './agent-title.js';
 import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
+import { loadTriggerRules } from './group-triggers.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -121,22 +122,8 @@ export function createGroupsActions({
       }
       return response.json();
     },
-    async loadTriggers() {
-      const response = await fetchImpl('/api/triggers', { credentials: 'same-origin' });
-      if (!response.ok) {
-        throw new Error(`load triggers failed: ${await responseError(response)}`);
-      }
-      const body = await response.json();
-      const rules = Array.isArray(body?.triggers) ? body.triggers : [];
-      return Promise.all(rules.map(async (rule) => {
-        const history = await fetchImpl(
-          `/api/triggers/${encodeURIComponent(rule.id)}/firings?limit=1`,
-          { credentials: 'same-origin' },
-        );
-        if (!history.ok) throw new Error(`load trigger state failed: ${await responseError(history)}`);
-        const ledger = await history.json();
-        return { ...rule, firings: Array.isArray(ledger?.firings) ? ledger.firings : [] };
-      }));
+    loadTriggers() {
+      return loadTriggerRules(fetchImpl);
     },
     async setStandingOrderScope(group, row, assigned) {
       const order = row?.order || {};

@@ -1,5 +1,6 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { loadTriggerRules } from './group-triggers.js';
 import htm from 'htm';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import {
@@ -14,12 +15,15 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantSelectors, peerAction, refusedActsRule, usableActSelectors,
+  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, missingPullGrants, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
-import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
+import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
+import { dndGesture, nodeAllowsActing } from './dnd-ops.js';
+import { FUSED_GROUP_ORDER_KEY, setFusedGroupListing, sortGroupsByPref } from './group-order.js';
+import { dashPrefs } from './prefs.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
-import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
+import { LaunchTargetDialog, createLaunchTargetApi, grantWhy, launchAgent } from './launch-target-dialog.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { featureState } from './feature-state-registry.js';
@@ -60,7 +64,7 @@ export function limitsCSS(nodes, { self, home = '' }) {
     // This node's groups on a peer's page take its group controls directly
     // (node-api.js), as though this node trusted itself unrestricted.
     const usable = id !== self
-      ? usableActSelectors(peerView, ['send-elsewhere'], merged)
+      ? usableActSelectors(peerView, ['send-elsewhere'], merged, { fused: true })
       : [...always.map((a) => `[data-act="${a}"]`), ...grantSelectors({ level: 'unrestricted' })];
     rules.push(refusedActsRule(scope, usable));
   }
@@ -257,9 +261,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
 // out of a listing of several nodes, whatever this node's view shows.
 const NODE_ONLY_OFF = Object.fromEntries(GROUP_VIEW_OPTIONS.filter((o) => o.nodeOnly).map((o) => [o.key, false]));
 
-// keepOrder leaves the merged groups in node order: the remembered group
-// order names one node's own groups.
-const keepOrder = (list) => list;
+// fusedOrder sorts the merged groups by the fused view's own remembered order
+// (group@node names; group-reorder.js keeps it), else node order.
+const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER_KEY);
 
 // MergedGroups is the fused Groups view: the Groups listing (GroupsLensList,
 // as on one node's view, under the same toolbar and its filter, view and
@@ -296,8 +300,12 @@ export function MergedGroups({
   // The capture handlers below are bound once; they read the latest snapshots.
   // snapOf reads a node's snapshot, the page's own node included.
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
+  const groupNames = (id) => (snapOf(id)?.groups || []).map((g) => g.name).filter(Boolean).sort();
+  // relays: a peer that trusts this node unrestricted sends its agent on to a
+  // third node for it (the peer action's "to").
   const snapRef = useRef(snapOf);
   snapRef.current = snapOf;
+  const relays = (id) => id !== state.view.value.fleet?.self?.id && snapRef.current(id)?.peer_view?.level === 'unrestricted';
   // A dialog on another node's group reads that node's snapshot from here.
   useEffect(() => setNodeSnapshotSource((id) => snapRef.current(id)), []);
   // A fold/unfold persisted by refresh.js moves which header owns subgroup
@@ -348,7 +356,40 @@ export function MergedGroups({
   // The toolbar's filter and view menu narrow this listing as they do one
   // node's (renderRevision: a column or order change re-renders).
   groups.renderRevision.value;
-  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, keepOrder);
+  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, fusedOrder);
+  // A group drag here (group-reorder.js) plans against this listing.
+  const mergedRef = useRef(merged);
+  mergedRef.current = merged;
+  useEffect(() => setFusedGroupListing(() => mergedRef.current), []);
+  // Triggers are read from each node that lets this one act there (this
+  // node, or a peer trusting it unrestricted) and has them on; each rule is
+  // tagged with its node, its group under the merged name.
+  const [triggers, setTriggers] = useState([]);
+  const selfID = fleet?.self?.id || '';
+  const triggerNodes = (merged?.fleet_nodes || []).map(({ node }) => node)
+    .filter((node) => snapOf(node.id)?.triggers_enabled === true && (node.id === selfID || snapOf(node.id)?.peer_view?.level === 'unrestricted'));
+  const triggerKey = triggerNodes.map((node) => `${node.id}=${node.name}`).join(',');
+  // Each node is read once while it stays listed (its rules shown as they
+  // arrive), not again as other nodes' snapshots load.
+  const triggerCache = useRef(new Map());
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    const self = state.view.value.fleet?.self?.id || '';
+    const keys = new Set(triggerNodes.map((node) => `${node.id}=${node.name}`));
+    for (const key of [...triggerCache.current.keys()]) if (!keys.has(key)) triggerCache.current.delete(key);
+    const publish = () => setTriggers([...triggerCache.current.values()].flat());
+    publish();
+    for (const node of triggerNodes) {
+      const key = `${node.id}=${node.name}`;
+      if (triggerCache.current.has(key)) continue;
+      triggerCache.current.set(key, []);
+      loadTriggerRules(nodeFetch(node.id, { self, fetchImpl, remote: remote ? { id: remote, localFetch } : null }))
+        .then((rules) => rules.map((rule) => ({ ...rule, fleet_node: node.id, ...(rule.group ? { group: `${rule.group}@${node.name}` } : {}) })))
+        .catch(() => [])
+        .then((rules) => { if (mountedRef.current && triggerCache.current.has(key)) { triggerCache.current.set(key, rules); publish(); } });
+    }
+  }, [triggerKey]);
   const wizard = useWizardTheme();
   const hoveredGroupKey = useGroupsHover(host, view.groups);
   useGroupsTableControls(host, groups, routed.current);
@@ -400,7 +441,9 @@ export function MergedGroups({
       if (instance && instance === homeRef.current) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
-        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
+        // Ctrl/Cmd opens it without switching to it, as on this node.
+        const background = !!(event.ctrlKey || event.metaKey);
+        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast, ...(background ? { background } : {}) });
         return;
       }
       const name = group?.dataset.fleetNodeName || '';
@@ -409,7 +452,8 @@ export function MergedGroups({
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
       if (instance && instance !== state.view.value.fleet?.self?.id) {
-        toast(`${name || 'This node'} does not share this action with you`, true);
+        const missing = grantMissing(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
+        toast(`${name || 'This node'} does not share this action with you${needsSuffix(missing)}`, true);
       } else {
         const where = name ? `${name}'s own dashboard (click @${name})` : "the node's own dashboard";
         toast(`Act on this node's groups from ${where}`, true);
@@ -424,11 +468,17 @@ export function MergedGroups({
     };
     const onContext = (event) => {
       if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
-      if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+      if (!event.target?.closest?.('[data-act]') || !host.contains(event.target)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      // macOS turns Ctrl-click into this event: a peer row's attach still
+      // opens, in the background (row-actions.js does so on this node).
+      if ((event.ctrlKey || event.metaKey) && ATTACH_ACTS.has(actOf(event.target, event)?.dataset.act)) onClick(event);
     };
-    // Drag an agent onto a group on another node to move it there (to or from
-    // this node). These handlers own the gesture here: the per-node Groups
-    // drag-and-drop (dnd.js) never sees it, and nothing else drags.
+    // A member drag is the Groups drag-and-drop (dnd.js) on every node: a
+    // drop on a group on the agent's own node moves, adds or clones it there
+    // as on that node's own Groups view. A drop on a group on another node is
+    // a move between nodes: these handlers take it (the move dialog), and
+    // dnd.js never sees it.
     let dragging = null;
     let marked = null;
     const mark = (el, ok) => {
@@ -448,8 +498,14 @@ export function MergedGroups({
       if (!src && homeRef.current && event.target.closest?.(PROCESS_DRAGS)
         && (event.target.closest('[data-run-dock]')
           || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
-      if (!src) { event.preventDefault(); return; }
-      event.stopPropagation();
+      if (!src) {
+        // A group header drags as on its node's Groups view (group-reorder.js)
+        // where this node may act there.
+        const header = event.target.closest?.('summary[data-group-reorder]');
+        const box = header?.closest('details[data-fleet-node]');
+        if (header && box && nodeAllowsActing(isPageNode(box.dataset.fleetNode) ? '' : box.dataset.fleetNode)) return;
+        event.preventDefault(); return;
+      }
       dragging = src;
       // dragend reaches its source even if a re-render detached it.
       const row = event.target.closest('tr.dnd-draggable');
@@ -460,32 +516,41 @@ export function MergedGroups({
     };
     const onDragOver = (event) => {
       if (!dragging) return;
-      event.stopPropagation();
       const target = dropTarget(event.target);
       if (!target) { unmark(); return; }
       const plan = dropPlan({ source: dragging.source, target, self: self() });
+      // The agent's own node: dnd.js.
+      if (plan.kind === 'same') { unmark(); return; }
+      event.stopPropagation();
+      // dnd.js no longer sees this drag's hover: its clone must not finish.
+      dndGesture.cancelClone();
       if (plan.kind === 'none') { unmark(); return; }
-      // Same-node and third-node drops are accepted only to say why not.
+      // A third-node drop is accepted only to say why not, unless the agent's
+      // node is unrestricted and relays it on; so is an ungranted pull.
       event.preventDefault();
-      const ok = plan.kind === 'push' || plan.kind === 'pull';
+      const ok = plan.kind === 'push' || (plan.kind === 'pull' && !pullMissing(dragging).length) || (plan.kind === 'third' && relays(dragging.source.node));
       if (event.dataTransfer) event.dataTransfer.dropEffect = ok ? 'move' : 'none';
       mark(target.el, ok);
     };
     const onDrop = (event) => {
       if (!dragging) return;
-      event.preventDefault(); event.stopPropagation();
-      const src = dragging; dragging = null; unmark();
       const target = dropTarget(event.target);
+      const plan = target ? dropPlan({ source: dragging.source, target, self: self() }) : { kind: 'none' };
+      if (plan.kind === 'same') { dragging = null; unmark(); return; }
+      event.preventDefault(); event.stopPropagation();
+      dndGesture.cancelClone();
+      const src = dragging; dragging = null; unmark();
       if (!target) return;
-      const plan = dropPlan({ source: src.source, target, self: self() });
-      if (plan.kind === 'same') { toast(`To move ${src.agent.name} between groups on ${src.source.name}, use ${src.source.name}'s own Groups view`, true); return; }
-      if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
-      if (plan.kind === 'push' || plan.kind === 'pull') {
+      if (plan.kind === 'third' && !relays(src.source.node)) { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
+      const missing = plan.kind === 'pull' ? pullMissing(src) : [];
+      if (missing.length) { toast(grantWhy(src.source.name, missing).replace('this agent', src.agent.name), true); return; }
+      if (plan.kind === 'push' || plan.kind === 'pull' || plan.kind === 'third') {
         setLaunch({ mode: 'move', fromDrop: true, target: { node: target.node, name: target.name, group: target.group },
           agent: { id: src.agent.id, conv: '', name: src.agent.name, node: src.source.node, nodeName: src.source.name, group: src.source.group } });
       }
     };
     const onDragEnd = () => { dragging = null; unmark(); };
+    const pullMissing = (src) => missingPullGrants(snapRef.current(src.source.node)?.peer_view, src.agent.id);
     host.addEventListener('click', onClick, true);
     host.addEventListener('keydown', onKey, true);
     host.addEventListener('contextmenu', onContext, true);
@@ -525,7 +590,7 @@ export function MergedGroups({
     <${GroupsProcessScope} value=${processScope.current}>
       <${GroupsInteractionProvider}>
         <${GroupsLensList} state=${groups} groups=${view.groups} rosters=${home ? snapshot.value?.groups : []} snapshot=${merged}
-          actions=${routed.current} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
+          actions=${routed.current} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard} />
       <//>
     <//>
     ${standingOrders && ordersActions && html`<${GroupStandingOrdersDialog}
@@ -533,8 +598,10 @@ export function MergedGroups({
     ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups} snapshot=${snapOf(peerReq.nodeId)}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} ...${openSpawn ? { openSpawn } : {}} />`}
     ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}
+      peerView=${snapOf(launch.agent.node)?.peer_view || null}
       self=${fleet.self} fleet=${fleet} api=${launchApi.current} actions=${fleetActions.current} peerActions=${peerActions} timers=${timers} now=${now}
-      localGroups=${(snapOf(fleet.self.id)?.groups || []).map((g) => g.name).filter(Boolean).sort()}
+      localGroups=${groupNames(fleet.self.id)} relay=${relays(launch.agent.node)}
+      nodeGroups=${Object.fromEntries((fleet.peers || []).map((p) => [p.id, groupNames(p.id)]))}
       onClose=${() => setLaunch(null)}
       onLocalClone=${() => { const a = launch.agent; setLaunch(null); openCloneAgentDialog(a.conv || a.id, a.name, a.cwd || ''); }} />`}
   </div>`;

@@ -118,24 +118,27 @@ export function createActionDialogActions({
           .sort((a, b) => a.localeCompare(b)),
       };
     },
-    async loadWorktrees(repo, { signal } = {}) {
+    async loadWorktrees(repo, { signal, node = '' } = {}) {
       if (!repo?.trim()) return { is_repo: false, empty: true };
-      return requestJSON(fetchImpl, `/api/worktrees?repo=${encodeURIComponent(repo.trim())}`, { signal });
+      return requestJSON(nodeFetch(node, { fetchImpl }), `/api/worktrees?repo=${encodeURIComponent(repo.trim())}`, { signal });
     },
-    async createWorktree({ repo, branch, fromBranch }) {
-      return requestJSON(fetchImpl, '/api/worktrees', {
+    async createWorktree({ repo, branch, fromBranch, node = '' }) {
+      return requestJSON(nodeFetch(node, { fetchImpl }), '/api/worktrees', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo, branch, from_branch: fromBranch || '' }),
       });
     },
-    // node names another node's agent (blank is the page's), whose route
-    // takes the follow-up and the history choice only.
-    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd }, owner) {
+    // node names another node's agent (blank is the page's). full says the
+    // node takes the whole clone (this node, or one trusting it
+    // unrestricted); a peer's grant route takes the follow-up and the
+    // history choice only. group is a group the clone joins as well.
+    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd, full = false, group = '' }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
         const body = { follow_up: normaliseFollowUp(followUp), no_copy_conv: !copyConversation };
-        if (!node && !globalThis.__tclaudeRemoteNode?.id) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
+        if (full) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
+        if (group) body.group = group;
         const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/clone`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),

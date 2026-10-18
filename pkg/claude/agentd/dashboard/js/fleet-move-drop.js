@@ -90,8 +90,10 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
   const okRef = outerOk || ownOk;
   const timer = useRef(null);
   const push = plan.kind === 'push';
+  // third: the source peer (unrestricted) sends it on to another node.
+  const third = plan.kind === 'third';
   const { agent, source, target } = drop;
-  const there = push ? target.name : 'this node';
+  const there = push || third ? target.name : 'this node';
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; if (timer.current) timers.clearTimeout(timer.current); }, []);
 
@@ -132,10 +134,13 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
       const body = { group: target.group, direct_if_allowed: true, ...(allow ? { allow_flagged: true } : {}) };
       const res = push
         ? await actions.moveAgent({ agent: agent.id, peer: target.node, ...body })
+        : third ? await peerActions(source.node).moveDirect(agent.id, { ...body, to: target.node })
         : await pull(body);
       if (!alive.current) return;
       const id = res?.move_id || '';
       setPhase('progress');
+      // The move is the source's own: this node has no record to follow.
+      if (third) { setProgress({ phase: 'relayed' }); return; }
       // A daemon without direct moves answers with no move_id: that is
       // today's offer flow, which always waits for acceptance.
       if (res?.disposition === 'pending_acceptance' || !id) { setProgress({ phase: 'waiting' }); return; }
@@ -144,7 +149,10 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     } catch (e) {
       if (!alive.current) return;
       setPhase('confirm');
-      if (!push && (e?.code === 'flagged_credentials' || e?.status === 422)) {
+      // An older peer refuses the unknown "to" as its body decoder does.
+      if (third && e?.status === 400 && e?.code === 'invalid_arg' && /invalid remote action body/.test(errText(e))) {
+        setError(`${source.name} cannot send ${agent.name} on to another node (an older build): move it from ${source.name}'s dashboard.`);
+      } else if (!push && (e?.code === 'flagged_credentials' || e?.status === 422)) {
         setError(`${agent.name}'s history looks like it contains credentials, and a pulled move cannot override that. Move it from ${source.name}'s dashboard, where you can choose to send it anyway.`);
       } else if (push && e?.code === 'flagged_credentials') {
         setFindings(e.body?.findings || []);
@@ -159,18 +167,21 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. The original on ${source.name} is being retired; ${push ? html`follow that in ${moves}` : `${source.name}'s ⚙ Fleet → Moves shows when it is done`}.</div>`
     : progress.phase === 'waiting' ? html`<div role="status" data-move-drop-state="waiting">⏸ ${push ? `${there} did not take it in directly: it is waiting for ${there} to accept it (in ${there}'s ⚙ Fleet → Offers). ${agent.name} keeps running here until then; follow or abandon it in ` : `It is waiting for you to accept it in this node's `}${moves}.</div>`
     : progress.phase === 'failed' ? html`<div class="fa-danger" role="alert" data-move-drop-state="failed">The move ${progress.state}${progress.error ? `: ${progress.error}` : ''}. ${agent.name} ${push ? 'is still here' : `is still on ${source.name}`}. Details in ${moves}.</div>`
+    : progress.phase === 'relayed' ? html`<div role="status" data-move-drop-state="relayed">✈ ${source.name} is sending ${agent.name} to group ${target.group} on ${target.name}: it lands at once if ${target.name}'s permissions allow, or waits for acceptance there. Follow it in ${source.name}'s ⚙ Fleet → Moves.</div>`
     : progress.phase === 'slow' ? html`<div class="muted" role="status">Still in progress; follow it in ${moves}.</div>`
     : html`<div class="fa-danger" role="alert">Could not follow the move (${progress.error}). Check ${moves}.</div>`;
 
   return html`
-    ${phase !== 'progress' ? html`<p>${push
+    ${phase !== 'progress' ? html`<p>${third
+      ? `${source.name} sends ${agent.name} (${agent.id})'s config and full conversation history (it may hold code or pasted secrets) to group ${target.group} on ${target.name}.`
+      : push
       ? `Sends ${agent.name} (${agent.id})'s config and full conversation history (it may hold code or pasted secrets) to group ${target.group} on ${target.name}.`
       : `${agent.name} (${agent.id}) leaves ${source.name} with its config and full conversation history, to land in group ${target.group} on this node.`}
       ${findings && allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}
-      ${' '}If ${push ? `${target.name}'s` : 'this node\'s'} permissions allow it, it lands at once; otherwise it waits for ${push ? target.name : 'you'} to accept it. Once its copy runs, the original on ${source.name} is retired.</p>
+      ${' '}If ${push || third ? `${target.name}'s` : 'this node\'s'} permissions allow it, it lands at once; otherwise it waits for ${push || third ? target.name : 'you'} to accept it. Once its copy runs, the original on ${source.name} is retired.</p>
       <div class="fa-of-row"><span class="fa-k">from</span> ${source.name} · ${source.group}</div>
       <div class="fa-of-row"><span class="fa-k">to</span> ${target.name} · ${target.group}</div>
-      <div class="fa-of-row"><span class="fa-k">starts in</span> <span class="muted">${push ? target.name : 'this node'} picks it by its landing policy (a matching repo, the agent's own path, or the group's default directory)</span></div>` : ''}
+      <div class="fa-of-row"><span class="fa-k">starts in</span> <span class="muted">${push || third ? target.name : 'this node'} picks it by its landing policy (a matching repo, the agent's own path, or the group's default directory)</span></div>` : ''}
     ${findings && phase !== 'progress' && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleetview-move-drop-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}

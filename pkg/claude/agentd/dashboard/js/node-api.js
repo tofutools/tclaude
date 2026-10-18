@@ -18,6 +18,10 @@ export function setSelfNode(id) {
   selfNode = NODE_ID.test(id || '') ? id : '';
 }
 
+export function selfNodeID() {
+  return selfNode;
+}
+
 // peerPath addresses an /api/ path on a peer through this node's proxy.
 export function peerPath(node, path) {
   const url = new URL(String(path), 'http://node.invalid');

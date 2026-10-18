@@ -17,7 +17,7 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { PRReviewBadge } from './pr-review-badge.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
-import { featureState } from './peer-view-limits.js';
+import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
@@ -69,7 +69,7 @@ function Usage({ state }) {
   // {available:false}), so ask its peer_view metadata, not the payload.
   if (remote && featureState('costs', state.snapshot.value?.peer_view) !== 'shared') {
     const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.slice(0, 13);
-    return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you`}>usage and costs not shared by ${name}</span>`;
+    return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you${needsSuffix([featureNeeds('costs', state.snapshot.value?.peer_view)])}`}>usage and costs not shared by ${name}</span>`;
   }
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
   return html`

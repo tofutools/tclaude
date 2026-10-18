@@ -10,8 +10,9 @@ function requireController() {
   return controller;
 }
 
-export function openGroupCreateModal(presetTemplate, parentGroup) {
-  return requireController().open(presetTemplate, parentGroup);
+// node names another node's group (the fused Groups view); blank is the page's.
+export function openGroupCreateModal(presetTemplate, parentGroup, node = '') {
+  return requireController().open(presetTemplate, parentGroup, node);
 }
 
 // node names another node's group (the fused Groups view); blank is the page's.

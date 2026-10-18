@@ -237,6 +237,9 @@ type peerViewOmission struct {
 	// requests): whether it works is decided on its own channel, so a UI
 	// should not list it as "not shared".
 	Transport bool `json:"transport"`
+	// UnrestrictedOnly marks a feature no grant opens: only unrestricted
+	// trust reaches it, so a UI names that rather than Requires.
+	UnrestrictedOnly bool `json:"unrestricted_only,omitempty"`
 }
 type peerViewMetadata struct {
 	Peer string `json:"peer"`
@@ -318,7 +321,7 @@ func (v *peerView) metadata() peerViewMetadata {
 		} else {
 			_, requestable := requestablePeerPermission(rule.requires)
 			requestable = requestable && !rule.unrestrictedOnly && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && hasAccess
-			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable, Transport: rule.serve == nil && rule.write == nil})
+			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable, Transport: rule.serve == nil && rule.write == nil, UnrestrictedOnly: rule.unrestrictedOnly})
 		}
 	}
 	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)

@@ -521,8 +521,8 @@ function isForce(group) {
   return !!(group.source_template || group.mission || group.process?.phases?.length || group.waves);
 }
 
-// GroupActions is a group's agent controls (spawn agent, create subgroup,
-// power on, shutdown) and its task force card toggle. Both splits them:
+// GroupActions is a group's agent controls (spawn agent, power on,
+// shutdown) and its task force card toggle. Both splits them:
 // `controls` off leaves only the toggle on the section line, `fold` off
 // leaves only the controls for the member table's first header cell.
 function GroupActions({ group, actions, controls = true, fold = true }) {
@@ -531,13 +531,19 @@ function GroupActions({ group, actions, controls = true, fold = true }) {
   const toggle = fold && isForce(group);
   if (!controls && !toggle) return null;
   return html`
-    ${controls && html`<button class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>
-    <button class="spawn-btn subgroup-btn" ...${shared} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>`}
+    ${controls && html`<button class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>`}
     <span class="group-actions">
       ${controls && html`<button ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
       <button class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>`}
       ${toggle ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
     </span>`;
+}
+
+// CreateSubgroupButton heads the Subgroups line; the row action handler
+// opens the create dialog pinned to this group. Like any control on a folded
+// section line, a click unfolds the section, so the new subgroup lands in view.
+function CreateSubgroupButton({ group }) {
+  return html`<button class="spawn-btn subgroup-btn" data-group=${group.name} data-label=${group.name} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>`;
 }
 
 function ForceBlock({ group }) {
@@ -589,7 +595,9 @@ function compactTriggerState(rule) {
 }
 
 function GroupTriggersSection({ group, triggers }) {
-  const rows = (triggers || []).filter((rule) => rule.scope === 'global' ||
+  // In the fused view each rule is its node's (fleet_node): a global rule
+  // covers that node's groups only.
+  const rows = (triggers || []).filter((rule) => (!group.fleet_node || rule.fleet_node === group.fleet_node.id)).filter((rule) => rule.scope === 'global' ||
     (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
@@ -623,7 +631,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // Queued spawns are this node's own drafts, so a peer's group never has any.
   // They ride the member table as its leading rows.
   const queued = fleet ? [] : groupQueuedSpawns(snapshot, group.name);
-  const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null;
+  const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} group=${group.name} /></div>` : null;
   // In Both the agent controls head the member table's first column, which
   // has no title of its own; the section line keeps them only while it is
   // folded (or there is no table), so they never go out of reach.
@@ -645,6 +653,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     after: html`<${GroupTriggersSection} group=${group} triggers=${triggers} />`,
     agents: html`<${ForceBlock} group=${group} />${pending}${members}`,
   } : null;
+  const wizard = isWizardActive();
   // Folded subgroups leave the parent's ↳ subgroup run total on its summary.
   const subgroupsFolded = node.children.length > 0 && !subgroupsSectionOpen(group, dashPrefs);
   return html`<details
@@ -654,10 +663,13 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   >
     <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
-      ${node.children.length ? html`<${FusedSection} group=${group.name} section="subgroups" label=${isWizardActive() ? 'Sub-parties' : 'Subgroups'}
-          count=${node.children.length} auto=${subgroupsSectionAuto(group)} onToggle=${rerenderGroupTree}>
-        <div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>
-      <//>` : null}
+      <${FusedSection} group=${group.name} section="subgroups" label=${wizard ? 'Sub-parties' : 'Subgroups'}
+          count=${node.children.length} auto=${node.children.length > 0 && subgroupsSectionAuto(group)} onToggle=${rerenderGroupTree}
+          actions=${html`<${CreateSubgroupButton} group=${group} />`}>
+        ${node.children.length
+          ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>`
+          : html`<div class="muted gf-empty">${wizard ? '(no sub-parties yet)' : '(no subgroups yet)'}</div>`}
+      <//>
       ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
         ${processes ? null : pending}
         ${processes ? null : html`<div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
@@ -672,8 +684,8 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
 // rerenderGroupTree redraws the whole tree after a Subgroups fold, since the
 // fold moves activity bots onto (or off) the parent's header. The fused
 // island is not the Groups feature; it re-renders on its own event.
-function rerenderGroupTree(event) {
-  const fused = event?.currentTarget?.closest?.('#fleetview-fused-groups-root');
+function rerenderGroupTree(el) {
+  const fused = el?.closest?.('#fleetview-fused-groups-root');
   if (fused) fused.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
   else featureState('groups')?.rerender();
 }
@@ -748,14 +760,16 @@ function ReplacedTable({ rows }) {
   </tbody></table>`;
 }
 
-function PendingTable({ rows }) {
+// group names the real group a pending block sits in (blank in the
+// Pending lens), so its delete addresses that group's node.
+function PendingTable({ rows, group = '' }) {
   return html`<table><${SortHead} table="pending" columns=${PENDING_COLS} /><tbody>
     ${applySort('pending', rows, PENDING_ACCESSORS).map((row) => html`<tr
       key=${row.label} data-key=${row.label} class="dnd-draggable" draggable=${true}
       data-dnd-pending="1" data-dnd-conv=${row.label} data-dnd-label=${row.label}
     ><td><${OnlineDot} online=${row.online} /></td><td class="id" title=${idTooltip(row.agent_id, row.agent_id ? '' : row.label)}>${shortAgentId(row.agent_id, '') || row.label}</td><td><span class="rowname">${row.name || row.role || '(unnamed)'}</span></td><td>${row.group || '(none)'}</td><td><span class="muted" title=${row.cwd || ''}>${row.cwd ? shortCwd(row.cwd) : ''}</span></td><td><span class="last-hook">${row.created_at ? relTime(row.created_at) : ''}</span></td><td><div class="row-actions"><button class="primary" disabled=${!row.online} data-act=${row.online ? 'focus-pending' : undefined} data-label=${row.online ? row.label : undefined} title=${row.online
       ? (isWizardActive() ? "Open this would-be familiar's scrying portal so you can clear its summoning gate. Once cleared, it joins the living roster." : "Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.")
-      : (isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
+      : (isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} data-group=${group || undefined} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
   </tbody></table>`;
 }
 

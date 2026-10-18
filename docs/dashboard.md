@@ -590,8 +590,10 @@ mailbox — agent-to-agent mail and the human-notification channel
 notifications folder, per-group folders expandable to members, and per-agent
 folders. The list is newest-first with direction glyphs, unread and pending
 markers, attachment counts, and bulk actions; the reader renders Markdown,
-offers downloadable agent-published attachments with image preview, and can
-reply (human folder), focus the sender's terminal, or toggle read state.
+offers downloadable attachments with image and video preview — a
+notification's published files, files sent with agent mail, and the uploads a
+startup briefing lists under "Attached files" — and can reply (human folder),
+focus the sender's terminal, or toggle read state.
 
 The open folder and message are in the address: `/messages/human`,
 `/messages/group:ops/42`, `/messages/<conv-id>`. Clicking a folder or a
@@ -943,7 +945,8 @@ and a peer-view pill lists what it shares.
 
 Messages shows the peer's mail when it grants you `node.messages.read`, in
 the same client as this node's: folders, filters, bulk bar, pager, reader and
-attached files. Read state on agent mail needs its `node.messages.manage`. Its
+attached files (agent mail's and startup briefings' too). Read state on agent
+mail needs its `node.messages.manage`. Its
 human notifications carry the same buttons as this node's (reply, focus, mark
 read/unread, download, delete); reply, mark read/unread and the folder's mark
 all read go to the peer when it trusts you unrestricted, and download builds
@@ -965,7 +968,11 @@ profile pickers the peer's `node.spawn.read` (docs/federation.md, "Changing a
 peer's groups").
 
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
-They stay in place so the layout does not jump; hover or click one to see why.
+They stay in place so the layout does not jump; hover or click one to see why,
+including the grant the peer would have to give you (or "unrestricted trust"
+for what no grant opens). The Groups tab shows every group the peer shares
+anything in: a roster, presence or mail grant alone shows its members, and
+`agents.status.read` adds their activity, model, task and context.
 The peer-view pill names both directions of trust and lists what is hidden
 from you, with the grant each needs. Usage
 and costs say when they are not shared.
@@ -1070,8 +1077,22 @@ a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
 the clone dialog), **Morph** into another spawn profile (a dry run previews the
 change and what happens to the history), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
-send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
-onto another node's group opens the same dialog on Move, pre-filled. Nodes a
+send home where it runs: straight to its origin, retaking its home identity). Another
+node's agent offers **move here** and **clone** (on that node), plus **Morph** when that
+node trusts this one unrestricted. Dropping an agent
+onto another node's group opens the same dialog on Move, pre-filled. A peer's
+agent moves here, or, when that peer trusts this node unrestricted, on to a
+third node: the peer sends it, and its own ⚙ Fleet → Moves follows it. In the
+fused view a drop onto a group on the agent's own node works as on that node's
+Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
+open the clone dialog for that group) — for this node always, and for a peer that
+trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
+stuck pending spawn, and the rest its grants cover) act on that peer; the few that
+only its own dashboard runs (export, the links manager, its messages, sudo) are
+greyed out. Each node's links show on its own groups there, and its triggers too
+for this node and peers that trust it unrestricted. Group headers drag the same way there: nest a
+group under another on its node, pull it back out, reorder it (the fused view
+keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. Until this node is connected to a hub with a linked peer, **move
 to…** and **teleport to…** stay in the menu greyed out, saying why (as the

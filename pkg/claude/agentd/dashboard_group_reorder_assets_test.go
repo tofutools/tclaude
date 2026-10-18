@@ -37,7 +37,7 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 		// group-reorder.js: the custom MIME and the persisted pref key.
 		{`'application/x-tclaude-group'`, "group-reorder.js uses a dedicated drag MIME"},
 		{`e.dataTransfer.effectAllowed = 'copyMove';`, "group drags allow the native copy cursor"},
-		{`openGroupCloneModal(dragName, {`, "Ctrl/Cmd group drops delegate to the clone dialog"},
+		{`openGroupCloneModal(ctx.own(dragName), {`, "Ctrl/Cmd group drops delegate to the clone dialog"},
 		{`group-drop-clone`, "clone drops carry distinct green target styling"},
 		{`e.dataTransfer?.dropEffect === 'copy'`,
 			"group clone intent follows the browser's platform-specific native drop operation"},

@@ -135,6 +135,7 @@ func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mailbox/delete", handleDashboardMailboxDelete)
 	mux.HandleFunc("POST /api/mailbox/wipe", handleDashboardMailboxWipe)
 	mux.HandleFunc("POST /api/mailbox/mark-read", handleDashboardMailboxMarkRead)
+	registerDashboardAgentMessageAttachmentRoutes(mux)
 }
 
 // dashboardMailbox is one sidebar entry. Kind is "human" or "agent".
@@ -537,8 +538,10 @@ type mailboxMessage struct {
 	NudgeDiscardedAt string          `json:"nudge_discarded_at,omitempty"`
 	Read             bool            `json:"read"`
 	ParentID         int64           `json:"parent_id,omitempty"`
-	// Attachment is the first published file (single-card surfaces);
-	// Attachments carries every file the notification published.
+	// Attachment is the first file (single-card surfaces); Attachments
+	// carries every file: those a notification published, or for agent mail
+	// its stored attachments and the briefing files its body lists
+	// (dashboard_agent_message_attachments.go).
 	Attachment  *dashboardHumanMessageAttachment   `json:"attachment,omitempty"`
 	Attachments []*dashboardHumanMessageAttachment `json:"attachments,omitempty"`
 	// OperatorAuthored marks mail the human/operator sent to an agent. Those
@@ -945,9 +948,14 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 		return mailboxPage{}, err
 	}
 	dec := newMailboxDecorator().withOperatorMessages(rows)
+	attachments := agentMessageAttachmentViews(rows)
 	msgs := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
-		msgs = append(msgs, dec.toMessage(m, directionFor(forConv, m)))
+		mm := dec.toMessage(m, directionFor(forConv, m))
+		if list := attachments[m.ID]; len(list) > 0 {
+			mm.Attachments, mm.Attachment = list, list[0]
+		}
+		msgs = append(msgs, mm)
 	}
 	return mailboxPage{
 		Messages:        msgs,

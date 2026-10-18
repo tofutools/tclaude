@@ -28,7 +28,7 @@ func TestDashboardHTML_DanglingRetireWired(t *testing.T) {
 	for _, needle := range []string{
 		"await openRetireAgentDialog(conv, label)",
 		"openRetireAgentDialog(a.conv_id, label)",
-		"result = await openRetireAgentDialog(conv, label)",
+		"result = await openRetire(conv, label, ctx.node)",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dangling-capable launcher missing %q", needle)
@@ -47,8 +47,8 @@ func TestDashboardHTML_DanglingRetireWired(t *testing.T) {
 	// drag presentation; successful deletion was already refreshed by actions.
 	retire := dndFuncBody(t, "runDndRetire")
 	for _, needle := range []string{
-		"result = await openRetireAgentDialog(conv, label)",
-		"if (retireResultNeedsReconcile(result)) await refresh()",
+		"result = await openRetire(conv, label, ctx.node)",
+		"if (retireNeedsReconcile(result)) await ctx.done()",
 	} {
 		if !strings.Contains(retire, needle) {
 			t.Errorf("runDndRetire: missing %q", needle)

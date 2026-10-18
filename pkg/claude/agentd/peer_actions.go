@@ -133,6 +133,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	a := &peerActionAuthority{peer: v.peer.InstanceID, sourceConv: target.CurrentConvID, permission: rule.requires}
+	asOperator := r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
 	r = r.WithContext(context.WithValue(r.Context(), peerActionKey{}, a))
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/stop"):
@@ -234,9 +235,31 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			Clone            bool   `json:"clone,omitempty"`
 			Home             bool   `json:"home,omitempty"`
 			CarryPermissions bool   `json:"carry_permissions,omitempty"`
+			// To sends the agent to a third node instead of the requesting
+			// peer: only an unrestricted peer, which acts here as this
+			// node's operator does, and only to a node this one trusts.
+			To string `json:"to,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
 			return
+		}
+		if body.To != "" {
+			if strings.HasSuffix(r.URL.Path, "/teleport") {
+				writeError(w, 400, "invalid_arg", "to is only valid for move")
+				return
+			}
+			if !db.FederationPeerUnrestricted(a.peer) {
+				writeError(w, 403, "permission", "only an unrestricted peer may send an agent to another node")
+				return
+			}
+			third, err := db.GetFederationPeer(body.To)
+			if err != nil || third == nil || body.To == a.peer || body.Home {
+				writeError(w, 400, "invalid_arg", "to must name another node this one trusts")
+				return
+			}
+			v.auditDetail = "to=" + body.To
+			r = asDashboardHumanPeer(asOperator)
+			a = &peerActionAuthority{peer: body.To}
 		}
 		if body.Group == "" {
 			writeError(w, 400, "invalid_arg", "receiving group is required")
@@ -296,6 +319,14 @@ func decodePeerActionLimit(w http.ResponseWriter, r *http.Request, out any, limi
 // automatically under the grant's policy; without one it waits for this
 // node's operator, exactly like an agent's federation spawn-request.
 func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	// An unrestricted peer's dashboard spawns as this node's own spawn dialog
+	// does (agent-spawn-actions.js forNode), marking it ?as=local: the
+	// regular spawn route and body. Without the mark the route keeps the
+	// remote spawn request, which the CLI and request mode send.
+	if r.URL.Query().Get("as") == "local" && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
+		return
+	}
 	g, err := db.GetAgentGroupByName(r.PathValue("name"))
 	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) || !v.allows(rule, g.ID) {
 		writeError(w, 404, "not_found", "object not found")

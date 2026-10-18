@@ -477,10 +477,10 @@ async function loadMessages() {
     // The request lifecycle rejects stale page/search responses; this guard
     // covers a response whose mailbox was switched while it was in flight.
     if (mail.selected !== id) return;
-    // On a peer's page its notification files load through this node's peer
-    // attachment route; the URLs the peer sends name its own routes.
+    // On a peer's page its message files load through this node's peer
+    // attachment routes; the URLs the peer sends name its own routes.
     const remote = remoteNodeID();
-    if (remote && id === HUMAN_ID && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m));
+    if (remote && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m, id !== HUMAN_ID));
     mailState.messageRequest.commitRequest(token, data);
   } catch (error) {
     if (mailState.messageRequest.failRequest(token, error)) clearMessages();

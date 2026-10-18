@@ -15,12 +15,18 @@
  */
 
 /* Tab strip — one tab per open dashboard terminal. The standalone solo shell
-   does not render a tab strip. */
+   does not render a tab strip. Tabs that do not fit wrap onto further rows
+   rather than scrolling sideways; only a strip taller than its cap scrolls,
+   vertically, so a huge tab count cannot push the terminal off screen. */
 .mux-tabs {
-  display: flex; flex: none; gap: 4px;
-  padding: 5px 6px 0; overflow-x: auto;
+  display: flex; flex-wrap: wrap; flex: none; gap: 4px;
+  padding: 5px 6px 0; overflow: hidden auto; max-height: 40vh;
+  scrollbar-width: thin; scrollbar-color: #3d4451 transparent;
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
+.mux-tabs::-webkit-scrollbar { width: 8px; }
+.mux-tabs::-webkit-scrollbar-track { background: transparent; }
+.mux-tabs::-webkit-scrollbar-thumb { background: #3d4451; border-radius: 4px; }
 .mux-tab {
   position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
@@ -89,17 +95,15 @@
   user-select: none;
 }
 /* Match the Groups row's real/WHAT-IF badges. Keep figures intact while
-   long terminal names truncate, and keep the toggle reachable on overflow. */
+   long terminal names truncate. The toggle flows after the last tab, so a
+   wrapping strip carries it onto whichever row that tab lands on. */
 .mux-tab-cost { flex: none; color: #6e9c7d; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mux-tab-cost-whatif { color: #8a8f6e; font-style: italic; display: none; }
 body.cost-whatif .mux-tab-cost-whatif { display: inline; }
 body.terminal-cost-hidden .mux-tab-cost,
 body.hide-costs .mux-tab-cost,
 body.hide-costs .mux-cost-toggle { display: none; }
-.mux-cost-toggle {
-  position: sticky; right: 0; flex: none; align-self: stretch;
-  z-index: 1; background: #161b22; padding: 2px 8px;
-}
+.mux-cost-toggle { flex: none; align-self: stretch; padding: 2px 8px; }
 .mux-tab-cost:focus-visible { outline: 1px solid #58a6ff; outline-offset: 2px; }
 .mux-tab.dragging { opacity: 0.48; cursor: grabbing; }
 .mux-tab.drop-before::before,
@@ -171,7 +175,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
    accents are chosen against the #0d1117 / #161b22 chrome; body.wizard retunes
    the strip around them further down. */
 .mux-tab-group {
-  position: relative; display: flex; align-items: flex-end; gap: 4px; flex: none;
+  position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px;
+  flex: none; max-width: 100%; min-width: 0; box-sizing: border-box;
   padding: 0 5px 0 4px; border-radius: 7px 7px 0 0;
   background: color-mix(in srgb, var(--mux-group-accent) 12%, transparent);
   border-bottom: 2px solid var(--mux-group-accent);
@@ -224,16 +229,19 @@ body.hide-costs .mux-cost-toggle { display: none; }
    beside a stack (ungrouped), the one placement a drop on a tab cannot express.
    The node is always present but collapses to zero width at rest so it neither
    widens the strip nor changes the DOM when a drag begins; only the `active`
-   class (set while a drag is in flight) gives it a hit lane. */
+   class (set while a drag is in flight) gives it a hit lane. That lane is laid
+   out at a net -4px (10px wide, -7px margins) so it cancels its own flex gap:
+   starting a drag must not widen any row, or the wrapping strip would reflow
+   tabs onto other rows under the pointer. */
 .mux-strip-gap {
   flex: none; align-self: stretch; width: 0; border-radius: 4px;
 }
-.mux-strip-gap.active { width: 10px; margin: 0 -3px; }
+.mux-strip-gap.active { width: 10px; margin: 0 -7px; }
 .mux-strip-gap.armed {
   background: #1f6feb;
   box-shadow: 0 0 8px rgba(88, 166, 255, 0.75);
 }
-/* The trailing end-zone grows to fill the strip's empty right margin while a
+/* The trailing end-zone grows to fill the last row's empty right margin while a
    drag is in flight, so releasing anywhere past the last tab or group lands the
    drag at the very end rather than only on that segment's right edge. It
    collapses to nothing at rest and shrinks to zero when the tabs already fill
@@ -244,16 +252,17 @@ body.hide-costs .mux-cost-toggle { display: none; }
 /* At rest the zero-width end-zone would still draw the strip's 4px flex gap
    before it, widening the content box by 4px and, in the exact-fill case, arming
    a phantom horizontal scrollbar. A -4px left margin cancels that one gap so the
-   idle strip measures exactly as it did without an end-zone; .grow.active
-   restores margin:0 for the grown hit lane during a drag. */
+   idle strip measures exactly as it did without an end-zone. .grow.active keeps
+   that margin so the grown lane never adds width either: with nothing left on
+   the last row it stays zero-wide instead of wrapping onto a row of its own. */
 .mux-strip-gap.grow { margin-left: -4px; }
 .mux-strip-gap.grow.active {
-  position: relative; flex: 1 1 0; min-width: 0; width: auto; margin: 0;
+  position: relative; flex: 1 1 0; min-width: 0; width: auto;
   background: none; box-shadow: none;
 }
 .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
 .mux-strip-gap.grow.armed::before {
-  content: ""; position: absolute; left: 0; top: 2px; bottom: 1px; width: 3px;
+  content: ""; position: absolute; left: 2px; top: 2px; bottom: 1px; width: 3px;
   border-radius: 2px; background: #58a6ff; box-shadow: 0 0 7px rgba(88, 166, 255, 0.75);
 }
 
@@ -402,9 +411,6 @@ body.wizard .mux-tabs {
   border-bottom-color: #7a5db0;
   box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.18);
 }
-body.wizard .mux-cost-toggle {
-  background: linear-gradient(180deg, #211832 0%, #171024 100%);
-}
 body.wizard .mux-tab {
   background: #171024; border-color: #4a3a6b; color: #a997ca;
 }
@@ -503,7 +509,7 @@ body.wizard .mux-pane-xterm {
 .mux-node-pill.compact { justify-content: center; min-width: 16px; padding: 0 3px; box-sizing: border-box; }
 .mux-scope-empty { padding: 24px; color: #8b949e; }
 /* A tab's ⚙ (tcl-xy5wkp): the Groups row menu, pinned to the viewport
-   because .mux-tabs scrolls sideways and would clip it. TabGear places it. */
+   because .mux-tabs clips its overflow and would clip it. TabGear places it. */
 /* The wrapper also carries .row-actions, so the menu shares the Groups row
    menu's rules; undo that cluster's hover-to-reveal dimming here. The cog is
    placed like the status light beside it (see .mux-tab-status): a 15px box on
@@ -530,7 +536,7 @@ body.wizard .mux-pane-xterm {
 
 /* Background terminals: tclaude tmux sessions still running with no terminal
    attached (js/background-terminals.js). The counter sits in its own slot to
-   the right of the scrolling tab strip so it neither scrolls away nor has its
+   the right of the wrapping tab strip so it neither scrolls away nor has its
    popover clipped by the strip's overflow. Neutral colours on purpose: it is a
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
