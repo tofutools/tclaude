@@ -32,6 +32,20 @@ func TestPreSplitAgentdReachableDistinguishesNewDaemon(t *testing.T) {
 	assert.False(t, PreSplitAgentdReachable(), "new daemon also binds legacy sockets but canonical wins")
 }
 
+func TestPreSplitAgentdReachableSkipsDialInsidePostSplitDaemon(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	legacy, err := net.Listen("unix", filepath.Join(home, ".tclaude-agentd.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = legacy.Close() })
+	require.True(t, PreSplitAgentdReachable())
+
+	t.Cleanup(func() { postSplitDaemonServing.Store(false) })
+	MarkPostSplitDaemonServing()
+	assert.False(t, PreSplitAgentdReachable(), "the serving post-split daemon never probes for a pre-split one")
+}
+
 func TestTclaudeStatePathKeepsUnmigratedLegacyEntry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

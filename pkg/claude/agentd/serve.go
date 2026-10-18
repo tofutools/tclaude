@@ -435,6 +435,9 @@ func runServe(p *serveParams) error {
 	}
 	defer removeSocketPaths(createdSocketPaths)
 	defer closeListeners(listeners)
+	if p.Socket == "" {
+		common.MarkPostSplitDaemonServing()
+	}
 
 	// Opt-in profiling endpoint. Started before the background loops below so
 	// a capture taken right after startup sees them from their first tick.

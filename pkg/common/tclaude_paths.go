@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -91,6 +92,9 @@ func TclaudeStatePath(name string) string {
 // Unix, but the daemon can subsequently reopen/recreate a sidecar or state file
 // at the old name and split the live state across both layouts.
 func PreSplitAgentdReachable() bool {
+	if postSplitDaemonServing.Load() {
+		return false
+	}
 	root := TclaudeDir()
 	home, err := os.UserHomeDir()
 	if err != nil || root == "" {
@@ -103,6 +107,17 @@ func PreSplitAgentdReachable() bool {
 	return unixSocketReachable(filepath.Join(home, ".tclaude-agentd.sock")) ||
 		unixSocketReachable(filepath.Join(root, "agentd.sock"))
 }
+
+// postSplitDaemonServing is set by MarkPostSplitDaemonServing.
+var postSplitDaemonServing atomic.Bool
+
+// MarkPostSplitDaemonServing records that this process is the post-split
+// daemon and has bound its default sockets. That bind fails while a daemon is
+// live on any legacy endpoint, so for the rest of this process no pre-split
+// daemon is reachable, and PreSplitAgentdReachable answers without dialling.
+// Inside the daemon the dial would only reach the daemon itself, and it ran on
+// every config and state path resolution.
+func MarkPostSplitDaemonServing() { postSplitDaemonServing.Store(true) }
 
 func unixSocketReachable(path string) bool {
 	if path == "" {
