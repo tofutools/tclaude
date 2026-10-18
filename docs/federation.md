@@ -809,7 +809,8 @@ Groups toolbar's 🧠 global default spawn profile, 🛡 global sandbox profile 
 handlers when it shares them, and stay greyed with the reason otherwise.
 
 - `node.spawn.defaults.manage` sets or clears both global defaults, choosing
-  among the peer's existing profiles; the pickers also need `node.spawn.read`
+  among the peer's existing profiles (an operator-only one takes unrestricted
+  trust); the pickers also need `node.spawn.read`
   to list them, and stay greyed without it. With either grant the peer's
   snapshot carries the two current defaults.
 - `node.spawn.profiles.create` saves a new spawn profile from the peer's spawn

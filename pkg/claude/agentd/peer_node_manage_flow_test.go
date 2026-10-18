@@ -105,11 +105,18 @@ func TestPeerViewCreatesSpawnProfiles(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, 201, do(map[string]any{"name": "fast", "harness": "claude", "operator_only": false}))
 	require.True(t, profile("fast").OperatorOnly, "a restricted peer's profile is operator-only")
+	require.Equal(t, 201, do(map[string]any{"name": "sly", "Operator_Only": false, "OPERATOR_ONLY": false}))
+	require.True(t, profile("sly").OperatorOnly, "no spelling of the flag gets past it")
 	require.Equal(t, 409, do(map[string]any{"name": "fast"}), "an existing profile is not replaced")
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeSpawnDefaultsManage})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "PUT", "/api/spawn-profile-default", map[string]any{"name": "fast"})).Code,
+		"an operator-only profile does not become the global default from a restricted peer")
 	require.Equal(t, 400, do([]any{"not", "an", "object"}))
 	require.NotEqual(t, 200, testharness.Serve(h, testharness.JSONRequest(t, "DELETE", "/api/spawn-profiles/fast", nil)).Code, "deleting stays with unrestricted trust")
 
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	require.Equal(t, 201, do(map[string]any{"name": "open", "harness": "claude"}))
 	require.False(t, profile("open").OperatorOnly, "unrestricted trust saves it as sent")
+	require.Equal(t, 200, testharness.Serve(h, testharness.JSONRequest(t, "PUT", "/api/spawn-profile-default", map[string]any{"name": "fast"})).Code)
 }

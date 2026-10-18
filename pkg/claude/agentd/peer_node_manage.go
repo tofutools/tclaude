@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -32,9 +33,8 @@ const (
 )
 
 func addPeerNodeManageRules(rules map[string]peerViewRule) {
-	for _, pattern := range []string{"PUT /api/spawn-profile-default", "DELETE /api/spawn-profile-default"} {
-		rules[pattern] = peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage, write: servePeerGrantedWrite(dashboardSpawnProfilesRoute(handleGlobalDefaultSpawnProfile))}
-	}
+	rules["PUT /api/spawn-profile-default"] = peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage, write: servePeerSetDefaultProfile}
+	rules["DELETE /api/spawn-profile-default"] = peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage, write: servePeerGrantedWrite(dashboardSpawnProfilesRoute(handleGlobalDefaultSpawnProfile))}
 	for _, pattern := range []string{"PUT /api/sandbox-profile-default", "DELETE /api/sandbox-profile-default"} {
 		rules[pattern] = peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage, write: servePeerGrantedWrite(dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))}
 	}
@@ -69,6 +69,35 @@ func servePeerGrantedWrite(next http.HandlerFunc) func(http.ResponseWriter, *htt
 	}
 }
 
+// servePeerSetDefaultProfile sets the global default spawn profile for a
+// peer holding node.spawn.defaults.manage. A restricted peer may not pick an
+// operator-only profile: operator-only stops only agent spawns, and as the
+// default it would apply to every spawn here without its own profile —
+// including one a peer saved itself (servePeerProfileCreate).
+func servePeerSetDefaultProfile(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !v.allows(rule, 0) {
+		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
+		return
+	}
+	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err != nil || json.Unmarshal(raw, &body) != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "expected a JSON object")
+			return
+		}
+		if p, err := db.ResolveSpawnProfile(strings.TrimSpace(body.Name)); err == nil && p != nil && p.OperatorOnly {
+			writeError(w, http.StatusForbidden, "profile_operator_only", "an operator-only profile is set as the default by this node's operator")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		r.ContentLength = int64(len(raw))
+	}
+	dashboardSpawnProfilesRoute(handleGlobalDefaultSpawnProfile)(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+}
+
 // servePeerProfileCreate saves a new spawn profile for a peer holding
 // node.spawn.profiles.create. A restricted peer's profile is operator-only:
 // a profile carries roles, permissions, environment and sandbox modes, and
@@ -85,6 +114,13 @@ func servePeerProfileCreate(w http.ResponseWriter, r *http.Request, v *peerView,
 		if err != nil || json.Unmarshal(raw, &body) != nil || body == nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "expected a JSON object")
 			return
+		}
+		// The profile decode matches keys case-insensitively: drop every
+		// spelling of the flag before setting it.
+		for key := range body {
+			if strings.EqualFold(key, "operator_only") {
+				delete(body, key)
+			}
 		}
 		body["operator_only"] = json.RawMessage("true")
 		raw, _ = json.Marshal(body)
