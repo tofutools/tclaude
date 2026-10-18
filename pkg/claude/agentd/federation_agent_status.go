@@ -75,7 +75,7 @@ func (rt *fedRuntime) pushAgentStatuses() {
 	groups, _ := db.ListAgentGroups()
 	rows := map[int64][]proto.AgentStatus{}
 	active := map[string]bool{}
-	grants := newFedGrantResolver()
+	grants := newFedGrantResolver().seedGroups(groups)
 	rt.agentStatusMu.Lock()
 	defer rt.agentStatusMu.Unlock()
 	if rt.agentStatusSent == nil {

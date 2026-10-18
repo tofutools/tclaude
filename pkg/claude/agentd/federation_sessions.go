@@ -121,7 +121,7 @@ func (rt *fedRuntime) pushSessionTransitions() {
 	}
 	snapshots := map[int64][]proto.CatalogSession{}
 	activeSent := map[string]bool{}
-	grants := newFedGrantResolver()
+	grants := newFedGrantResolver().seedGroups(groups)
 	for _, peer := range peers {
 		if !rt.sessionPeerOnline(peer.InstanceID) {
 			continue
