@@ -8,7 +8,7 @@ import (
 )
 
 func processRoutesEnabled() bool {
-	cfg, err := config.Load()
+	cfg, err := config.LoadShared()
 	return err == nil && cfg.ProcessesEnabled()
 }
 

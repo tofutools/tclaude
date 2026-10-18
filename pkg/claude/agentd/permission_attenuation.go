@@ -233,7 +233,7 @@ func checkGrantAttenuation(granterConvID string, conferee grantConferee, grants 
 	// overrides would otherwise pay a config load plus three queries per slug
 	// for one unchanging caller state.
 	src := loadPermSources(granterConvID)
-	cfg, _ := config.Load()
+	cfg, _ := config.LoadShared()
 	// The owner tier is read once too, and only matters for a slug the
 	// granter holds through ownership alone (see granterScopesForSlug).
 	ownerTier := ownerImpliedTierFor(granterConvID)

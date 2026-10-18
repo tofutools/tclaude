@@ -146,7 +146,7 @@ func (r *fedGrantResolver) grant(peer string, groupID int64, slug string) *db.Fe
 		}
 		if r.maxLive == 0 {
 			r.maxLive = 8
-			cfg, _ := config.Load()
+			cfg, _ := config.LoadShared()
 			if cfg != nil && cfg.Federation != nil && cfg.Federation.UnrestrictedMaxLive > 0 {
 				r.maxLive = cfg.Federation.UnrestrictedMaxLive
 			}

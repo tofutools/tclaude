@@ -3723,7 +3723,11 @@ func saveLocked(config *Config) error {
 	if err := os.Chmod(tmpName, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, target)
+	if err := os.Rename(tmpName, target); err != nil {
+		return err
+	}
+	invalidateShared()
+	return nil
 }
 
 // Validate checks a Config for problems that would make it unsafe or

@@ -1688,7 +1688,7 @@ func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64
 	if decisionGrantID > 0 {
 		return fmt.Sprintf("%s:via-sudo:grant-id=%d", callerConvID, decisionGrantID)
 	}
-	cfg, _ := config.Load()
+	cfg, _ := config.LoadShared()
 	src := loadPermSources(callerConvID)
 	// First resolve without the sudo tier. If standing authority (including a
 	// group grant or the groups.admin umbrella) suffices, sudo was not

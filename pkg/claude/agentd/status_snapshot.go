@@ -296,6 +296,6 @@ func (s *statusSnapshot) contextFor(conv string) (db.ContextSnapshot, string, bo
 }
 
 func statusSnapshotDisabled() bool {
-	cfg, err := config.Load()
+	cfg, err := config.LoadShared()
 	return err == nil && cfg != nil && cfg.StatusSnapshot != nil && cfg.StatusSnapshot.Disabled
 }
