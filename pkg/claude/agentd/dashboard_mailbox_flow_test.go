@@ -1848,3 +1848,57 @@ func TestDashboardMailboxes_EmptyAndRetiredFiltersCompose(t *testing.T) {
 	require.NotNil(t, findMailbox(boxes, mbCarol), "retired shown with both opt-ins")
 	require.NotNil(t, findMailbox(boxes, mbEmpty), "empty shown with both opt-ins")
 }
+
+// Scenario: the polled snapshot carries only unread and recent human
+// notifications, never the whole history, while the Messages folder still
+// pages the full history and can jump straight to an old notification.
+func TestDashboardSnapshot_HumanMessagesBoundedFolderFocus(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+	var ids []int64
+	for i := range 60 {
+		id, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: mbAlice, FromTitle: "alice", Body: fmt.Sprintf("note %d", i)})
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	// Everything is read except the oldest notification.
+	for _, id := range ids[1:] {
+		_, err := db.MarkHumanMessageRead(id)
+		require.NoError(t, err)
+	}
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var snap struct {
+		Messages []struct {
+			ID   int64 `json:"id"`
+			Read bool  `json:"read"`
+		} `json:"messages"`
+		MessagesUnread int `json:"messages_unread"`
+	}
+	testharness.DecodeJSON(t, rec, &snap)
+	require.Len(t, snap.Messages, 21, "the 20 newest plus the old unread one")
+	assert.Equal(t, ids[59], snap.Messages[0].ID, "newest first")
+	assert.Equal(t, ids[0], snap.Messages[20].ID, "the unread notification is kept however old")
+	assert.False(t, snap.Messages[20].Read)
+	assert.Equal(t, 1, snap.MessagesUnread)
+
+	human := findMailbox(getMailboxes(t, dash), "human")
+	require.NotNil(t, human)
+	assert.Equal(t, 60, human.Total, "the folder counts the whole history")
+	assert.Equal(t, 1, human.Unread)
+
+	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?id=human&page_size=25&focus="+strconv.FormatInt(ids[0], 10), nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var page struct {
+		Messages []mailboxMsg `json:"messages"`
+		Page     int          `json:"page"`
+		Total    int          `json:"total"`
+	}
+	testharness.DecodeJSON(t, rec, &page)
+	assert.Equal(t, 3, page.Page, "focus serves the page holding the oldest notification")
+	assert.Equal(t, 60, page.Total)
+	require.NotEmpty(t, page.Messages)
+	assert.Equal(t, ids[0], page.Messages[len(page.Messages)-1].ID)
+}

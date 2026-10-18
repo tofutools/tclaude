@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -427,16 +428,22 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	})
 	// The human.notify channel comes next — it is the operator's own
 	// folder, distinct from the agent-to-agent traffic.
-	humanMsgs, humanUnread := buildHumanMessagesSnapshot()
-	mailboxes = append(mailboxes, dashboardMailbox{
+	humanTotal, humanUnread, humanLastAt, err := db.HumanMessageStats()
+	if err != nil {
+		slog.Warn("mailbox: human message stats failed", "error", err)
+	}
+	humanBox := dashboardMailbox{
 		ID:     humanMailboxID,
 		Kind:   "human",
 		Title:  "Human notifications",
-		In:     len(humanMsgs),
-		Total:  len(humanMsgs),
+		In:     humanTotal,
+		Total:  humanTotal,
 		Unread: humanUnread,
-		LastAt: latestHumanMessageAt(humanMsgs),
-	})
+	}
+	if !humanLastAt.IsZero() {
+		humanBox.LastAt = humanLastAt.Format(time.RFC3339)
+	}
+	mailboxes = append(mailboxes, humanBox)
 	// Final order: [all, human] (pinned), then groups, then the agent page.
 	mailboxes = append(mailboxes, groupBoxes...)
 	for _, conv := range page {
@@ -497,15 +504,6 @@ func agentMailboxEntries(convs []string, counts map[string]db.MailboxCount,
 		out[conv] = mb
 	}
 	return out
-}
-
-// latestHumanMessageAt returns the newest human message's timestamp (the
-// snapshot is already newest-first), or "" when empty.
-func latestHumanMessageAt(msgs []dashboardHumanMessage) string {
-	if len(msgs) == 0 {
-		return ""
-	}
-	return msgs[0].CreatedAt
 }
 
 // mailboxMessage is one message in a mailbox's reading list. Direction
@@ -610,7 +608,7 @@ type mailboxPage struct {
 }
 
 // handleDashboardMailbox serves
-// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size= — one
+// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size=&focus= — one
 // newest-first page of the selected mailbox's messages, server-filtered
 // by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
@@ -631,7 +629,8 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	page, pageSize := mailboxPageParams(r)
 
 	if id == humanMailboxID {
-		p := humanMailboxPage(q, sender, page, pageSize)
+		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
+		p := humanMailboxPage(q, sender, page, pageSize, focus)
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -726,7 +725,11 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 // mailboxMessage shape so the reading pane renders uniformly. Every row
 // is direction "in" — agents notifying the human.
 func humanMailboxMessages() []mailboxMessage {
-	rows, _ := buildHumanMessagesSnapshot()
+	all, err := db.ListHumanMessages()
+	if err != nil {
+		slog.Warn("mailbox: list human messages failed", "error", err)
+	}
+	rows, _ := humanMessageViews(all)
 	out := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, mailboxMessage{
@@ -1070,7 +1073,11 @@ func withRetiredParticipants(members, participants []string, retiredSet map[stri
 // small (the operator's own notifications) and lives in a different
 // table with its own builder, so search + paging happen in Go over the
 // already-loaded, newest-first snapshot rather than in SQL.
-func humanMailboxPage(q, sender string, page, pageSize int) mailboxPage {
+//
+// focus, when it names a row in the filtered list, overrides page with the
+// page holding that row: the snapshot only carries recent and unread
+// notifications, so the browser cannot compute an older row's page itself.
+func humanMailboxPage(q, sender string, page, pageSize int, focus int64) mailboxPage {
 	all := humanMailboxMessages()
 	filtered := all
 	if sender != "" || q != "" {
@@ -1083,6 +1090,11 @@ func humanMailboxPage(q, sender string, page, pageSize int) mailboxPage {
 		}
 	}
 	total := len(filtered)
+	if focus > 0 {
+		if i := slices.IndexFunc(filtered, func(m mailboxMessage) bool { return m.ID == focus }); i >= 0 {
+			page = i/pageSize + 1
+		}
+	}
 	servedPage, offset := clampOffset(page, pageSize, total)
 	end := offset + pageSize
 	if offset > total {

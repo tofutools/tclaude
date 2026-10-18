@@ -276,8 +276,18 @@ func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
 	for _, m := range messages {
 		byID[m.ID] = m
 	}
-	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments ORDER BY message_id, seq, id`)
+	// A bounded slice reads only its own attachments; the full history reads
+	// the whole (smaller) attachment table rather than binding thousands of ids.
+	query := `SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`
+	var args []any
+	if len(messages) <= 500 {
+		query += ` WHERE message_id IN (?` + strings.Repeat(",?", len(messages)-1) + `)`
+		for _, m := range messages {
+			args = append(args, m.ID)
+		}
+	}
+	rows, err := d.Query(query+` ORDER BY message_id, seq, id`, args...)
 	if err != nil {
 		return err
 	}
@@ -301,6 +311,34 @@ func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
 // order. The autoincrement key is unique, so equal created_at instants still
 // have a stable total order.
 func ListHumanMessages() ([]*HumanMessage, error) {
+	return queryHumanMessages(`ORDER BY id DESC`)
+}
+
+// ListUnreadAndRecentHumanMessages returns, newest first, every unread human
+// message plus the newest `recent` ones, capped at limit rows. It is the
+// bounded slice the polled dashboard snapshot carries; the full history is
+// paged through the mailbox endpoint.
+func ListUnreadAndRecentHumanMessages(recent, limit int) ([]*HumanMessage, error) {
+	return queryHumanMessages(`WHERE read_at IS NULL
+		   OR id IN (SELECT id FROM human_messages ORDER BY id DESC LIMIT ?)
+		ORDER BY id DESC LIMIT ?`, recent, limit)
+}
+
+// HumanMessageStats summarizes the human-message history without loading it:
+// the row count, the unread count and the newest created_at (zero when empty).
+func HumanMessageStats() (total, unread int, lastAt time.Time, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, 0, time.Time{}, err
+	}
+	var last dbTimestamp
+	err = d.QueryRow(`SELECT COUNT(*), COUNT(*) - COUNT(read_at),
+		(SELECT created_at FROM human_messages ORDER BY id DESC LIMIT 1)
+		FROM human_messages`).Scan(&total, &unread, &last)
+	return total, unread, last.Time(), err
+}
+
+func queryHumanMessages(tail string, args ...any) ([]*HumanMessage, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -309,7 +347,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
 		       process_run_id, process_node_id, process_command_id
 		FROM human_messages
-		ORDER BY id DESC`)
+		`+tail, args...)
 	if err != nil {
 		return nil, err
 	}

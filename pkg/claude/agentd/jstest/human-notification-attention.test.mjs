@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   groupHasUnreadHumanNotifications,
   hasUnreadHumanNotifications,
-  humanNotificationTargetPage,
   humanNotificationSenderQuery,
   memberUnreadHumanCount,
 } from '../dashboard/js/human-notification-attention.js';
@@ -49,11 +48,3 @@ test('deep-link query uses stable agent id then conversation fallback', () => {
   assert.equal(humanNotificationSenderQuery({ conv_id: 'conv-legacy' }), 'conv-legacy');
 });
 
-test('exact Messages handoff computes the sender-filtered target page', () => {
-  const messages = Array.from({ length: 7 }, (_, index) => ({
-    id: index + 1,
-    from_agent: index === 1 ? 'agt_other' : 'agt_alice',
-  }));
-  assert.equal(humanNotificationTargetPage({ messages }, 'agt_alice', 6, 2), 3);
-  assert.equal(humanNotificationTargetPage({ messages }, 'agt_alice', 99, 2), 1);
-});

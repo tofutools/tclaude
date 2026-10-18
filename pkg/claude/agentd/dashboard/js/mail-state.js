@@ -12,8 +12,8 @@ export function messageDeleteEndpoint(folderID) {
 // an agent in real time. Both snapshot lists have a defined order: pending
 // access requests are oldest-first, while human notifications are
 // newest-first, so scan the latter backwards to find the oldest unread one.
-// Returning the notification's snapshot index also lets the paged mail client
-// jump straight to the page that contains it.
+// The index is into the snapshot's bounded list (unread + recent); the page
+// holding the row is resolved server-side via /api/mailbox?focus=.
 export function nextMessagesAttention(snapshot) {
   const requests = Array.isArray(snapshot?.access_requests) ? snapshot.access_requests : [];
   const access = requests.find((request) => !request.status || request.status === 'pending');
@@ -35,16 +35,6 @@ export function nextMessagesAttention(snapshot) {
 export function prepareMessagesAttention(data) {
   data.messageQuery = '';
   data.selectedMsgs.clear();
-}
-
-// adjacentAttentionPages returns the two places a snapshot-derived target can
-// move during the race before its mailbox page loads. Newer insertions push it
-// to the next page; deletion of newer rows pulls it to the previous page.
-export function adjacentAttentionPages(page, totalPages) {
-  const pages = [];
-  if (page < totalPages) pages.push(page + 1);
-  if (page > 1) pages.push(page - 1);
-  return pages;
 }
 
 // Messages has several coordinated Sets plus server-paged data. Keep the
