@@ -36,7 +36,9 @@ test('the mail dialog notifies a peer operator or sends to agents, and shows the
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await settle();
   assert.match(q('#peer-mail-outbox').textContent, /operator@lab.*pending · 3 tries/s);
-  const body = q('#peer-mail-body'); body.value = 'Freeze at 18:00';
+  const body = q('#peer-mail-body');
+  assert.equal(doc.activeElement, body, 'the body owns initial focus');
+  body.value = 'Freeze at 18:00';
   await harness.act(() => harness.fireEvent(body, 'input'));
   await harness.act(() => q('#peer-mail-send').click());
   await settle();

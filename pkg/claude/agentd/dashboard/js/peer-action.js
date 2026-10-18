@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PEER_ACTION_EVENT } from './peer-view-limits.js';
@@ -66,6 +66,7 @@ function MessageDialog({ req, members, actions, toast, onClose }) {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const bodyRef = useRef(null);
   const bytes = new TextEncoder().encode(body).length;
   const ok = to && body.trim() && bytes <= MESSAGE_MAX && [...subject].length <= SUBJECT_MAX;
   const who = members.find((m) => m.agent === to)?.label || to;
@@ -76,7 +77,7 @@ function MessageDialog({ req, members, actions, toast, onClose }) {
       .catch((e) => toast(`Message failed: ${e?.status === 403 ? `${req.node} refused it — ${errText(e)}` : errText(e)}`, true))
       .finally(() => setBusy(false));
   };
-  return html`<${Overlay} id="peer-message-modal" labelledby="peer-message-title" onClose=${onClose} blocked=${busy}>
+  return html`<${Overlay} id="peer-message-modal" labelledby="peer-message-title" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}>
     <h3 id="peer-message-title">Message ${req.group} on ${req.node}</h3>
     <p class="modal-hint">Delivers one immediate message to a single agent in “${req.group}”, sent by ${req.node} as you, the operator. ${req.node} grants messaging one agent at a time.</p>
     ${members.length === 0 ? html`<div class="cleanup-empty">${req.node} shows no agents in ${req.group} to message.</div>` : html`
@@ -86,7 +87,7 @@ function MessageDialog({ req, members, actions, toast, onClose }) {
       </select></label>
       <label class="cron-create-row"><span class="cron-create-label">Subject</span><input id="peer-message-subject" type="text" value=${subject}
         placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck="false" onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
-      <label class="cron-create-row"><span class="cron-create-label">Body</span><textarea id="peer-message-body" rows="4" value=${body}
+      <label class="cron-create-row"><span class="cron-create-label">Body</span><textarea ref=${bodyRef} id="peer-message-body" rows="4" value=${body}
         placeholder="message text (required)" spellcheck="false" onInput=${(e) => setBody(e.currentTarget.value)}></textarea></label>
       <p class=${bytes > MESSAGE_MAX ? 'cleanup-hint fa-danger' : 'cleanup-hint'}>${bytes} / ${MESSAGE_MAX} bytes</p>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
