@@ -14,8 +14,9 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
 		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
 		"defaults":  "SpawnProfileDefault SandboxProfileDefault",
+		"catalogs":  "Templates Profiles Roles SavedPrompts SandboxProfiles SandboxProfilesRev",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",
-		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfilesRev Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles Roles SavedPrompts QueuedSpawns Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription ShowFinalPRChecks StayOnTerminalsAfterLastClose CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
+		"denied":    "Harnesses AuthSession StaticUnchanged Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs QueuedSpawns Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription ShowFinalPRChecks StayOnTerminalsAfterLastClose CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
@@ -77,6 +78,12 @@ func peerSnapshotGate(fields map[string]bool) map[string]bool {
 // profile names, for a peer that reads the spawn catalogs or manages the
 // defaults: the Groups toolbar shows what it would change.
 var peerDefaultsProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true, "defaults": true}
+
+// peerCatalogProjectionFields adds the catalogs the dock lists -- group
+// templates, spawn profiles, roles, saved prompts and the sandbox profile
+// names -- for a peer that reads the spawn catalogs (node.spawn.read): the
+// fused dashboard's right panel shows what each node holds, read-only.
+var peerCatalogProjectionFields = map[string]bool{"public": true, "projected": true, "identity": true, "roster": true, "presence": true, "status": true, "defaults": true, "catalogs": true}
 
 func filterPeerFields(v reflect.Value, grants map[string]bool) {
 	switch v.Kind() {
