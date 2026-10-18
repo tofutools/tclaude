@@ -19,7 +19,9 @@ import (
 // harness policies, the default model, the harness and sandbox
 // implementation catalogs -- so it pre-fills exactly what this
 // node would apply, and offers this node's profiles and prompts next to the
-// requester's own. Unrestricted trust holds it. Read-only: the routes are GET
+// requester's own. The group templates and the snapshot's copies of these
+// catalogs (peer_snapshot.go) let the fused dashboard's right panel list what
+// this node holds. Unrestricted trust holds it. Read-only: the routes are GET
 // patterns (plus the sandbox enforcement preview, which writes nothing), and
 // every other method on these paths stays local-only.
 const PermNodeSpawnRead = "node.spawn.read"
@@ -31,6 +33,8 @@ var peerSpawnCatalogRoutes = map[string]http.HandlerFunc{
 	"GET /api/spawn-launch-defaults":              dashboardSpawnProfilesRoute(handleSpawnLaunchDefaults),
 	"GET /api/saved-prompts":                      dashboardRolesRoute(handleSavedPrompts),
 	"GET /api/roles":                              dashboardRolesRoute(handleRoles),
+	"GET /api/templates":                          dashboardTemplatesRoute(handleTemplates),
+	"GET /api/templates/{name}":                   dashboardTemplatesRoute(handleTemplateByName),
 	"GET /api/sandbox-profiles":                   dashboardSandboxProfilesRoute(handleSandboxProfiles),
 	"GET /api/sandbox-profile-default":            dashboardSandboxProfilesRoute(handleGlobalSandboxProfile),
 	"GET /api/groups/{group}/sandbox-profile":     dashboardSandboxProfilesRoute(handleGroupSandboxProfile),

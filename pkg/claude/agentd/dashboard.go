@@ -3452,13 +3452,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// of null — the dashboard's JS does .length on members directly,
 	// which would crash on null.
 	out.Groups = []dashboardGroup{}
-	out.SandboxProfiles = []string{}
-	sandboxRev := sha256.New()
-	for _, profile := range sandboxProfiles {
-		out.SandboxProfiles = append(out.SandboxProfiles, profile.Name)
-		fmt.Fprintf(sandboxRev, "%s\x00%s\x00", profile.Name, profile.UpdatedAt.Format(time.RFC3339Nano))
-	}
-	out.SandboxProfilesRev = hex.EncodeToString(sandboxRev.Sum(nil))[:16]
+	out.SandboxProfiles, out.SandboxProfilesRev = sandboxProfileNamesRev(sandboxProfiles)
 	if globalSandboxProfile != nil {
 		out.SandboxProfileDefault = globalSandboxProfile.Name
 	}
@@ -3976,6 +3970,18 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// sandboxProfileNamesRev lists the sandbox profiles' names, and a revision
+// that changes whenever any of them is created, renamed, edited or deleted.
+func sandboxProfileNamesRev(profiles []*db.SandboxProfile) ([]string, string) {
+	names := []string{}
+	rev := sha256.New()
+	for _, profile := range profiles {
+		names = append(names, profile.Name)
+		fmt.Fprintf(rev, "%s\x00%s\x00", profile.Name, profile.UpdatedAt.Format(time.RFC3339Nano))
+	}
+	return names, hex.EncodeToString(rev.Sum(nil))[:16]
 }
 
 // snapshotStaticVersion returns a stable content fingerprint for the registry

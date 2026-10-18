@@ -34,13 +34,20 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	// Normal dashboard clients expect arrays/maps, even for withheld concepts.
 	// Initialize only empty collections; this introduces no values or names.
 	fields := allPeerProjectionFields
-	if peerSpawnCatalogReadable(v) || v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
+	catalogs := peerSpawnCatalogReadable(v)
+	if catalogs || v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
 		fields = peerDefaultsProjectionFields
 		if p := globalDefaultProfile(); p != nil {
 			out.SpawnProfileDefault = p.Name
 		}
 		if p, _ := db.GetGlobalSandboxProfile(); p != nil {
 			out.SandboxProfileDefault = p.Name
+		}
+	}
+	if catalogs {
+		fields = peerCatalogProjectionFields
+		if err := projectPeerCatalogs(&out); err != nil {
+			return snapshotPayload{}, err
 		}
 	}
 	filterPeerFields(reflect.ValueOf(&out).Elem(), peerSnapshotGate(fields))
@@ -345,4 +352,22 @@ func serveLocalNodeSummary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(out.body.Bytes())
 	}
+}
+
+// projectPeerCatalogs fills the catalogs a node.spawn.read peer reads with
+// this node's own snapshot collectors, so the fused dock lists them as this
+// node's dashboard does.
+func projectPeerCatalogs(out *snapshotPayload) error {
+	sandboxProfiles, err := db.ListSandboxProfiles()
+	if err != nil {
+		return err
+	}
+	out.SandboxProfiles, out.SandboxProfilesRev = sandboxProfileNamesRev(sandboxProfiles)
+	out.Templates = collectTemplatesSnapshot()
+	out.Profiles = collectProfilesSnapshot()
+	out.Roles = collectRolesSnapshot()
+	if out.SavedPrompts, err = db.ListSavedPrompts(); err != nil {
+		return err
+	}
+	return nil
 }

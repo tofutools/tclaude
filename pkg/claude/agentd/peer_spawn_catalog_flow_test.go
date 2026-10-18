@@ -144,3 +144,63 @@ func TestUnrestrictedPeerReadsTheCatalogsAndPicksAnyProfile(t *testing.T) {
 	rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/roles", nil))
 	require.Equal(t, 403, rec.Code, "lowering trust takes the catalogs back")
 }
+
+// TestRestrictedPeerReadsTheDockCatalogs: node.spawn.read shares the right
+// panel's catalogs -- templates, profiles, roles, saved prompts and sandbox
+// profile names -- read-only, in the snapshot and over the template routes.
+func TestRestrictedPeerReadsTheDockCatalogs(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("one")
+	_, err := db.CreateGroupTemplate(&db.GroupTemplate{Name: "crew"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "cheap", Harness: "claude"})
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSavedPrompt("", db.SavedPrompt{Name: "house-rules", Body: "Follow the house rules."}))
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "tight"})
+	require.NoError(t, err)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	snapshot := func() map[string]any {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var out map[string]any
+		testharness.DecodeJSON(t, rec, &out)
+		return out
+	}
+	names := func(v any) []string {
+		var out []string
+		for _, item := range v.([]any) {
+			out = append(out, item.(map[string]any)["name"].(string))
+		}
+		return out
+	}
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsRosterRead, "scope": "group=one"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	plain := snapshot()
+	for _, field := range []string{"templates", "profiles", "roles", "saved_prompts", "sandbox_profiles"} {
+		require.Equal(t, []any{}, plain[field], field)
+	}
+	require.Empty(t, plain["sandbox_profiles_rev"])
+	for _, path := range []string{"/api/templates", "/api/templates/crew"} {
+		require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "GET", path, nil)).Code, path)
+	}
+
+	rec = fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeSpawnRead})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	snap := snapshot()
+	require.Equal(t, []string{"crew"}, names(snap["templates"]))
+	require.Contains(t, names(snap["profiles"]), "cheap")
+	require.Contains(t, names(snap["saved_prompts"]), "house-rules")
+	require.NotEmpty(t, snap["roles"])
+	require.Contains(t, snap["sandbox_profiles"], "tight")
+	require.NotEmpty(t, snap["sandbox_profiles_rev"])
+	for _, path := range []string{"/api/templates", "/api/templates/crew"} {
+		rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", path, nil))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	// Read-only: a template's writes stay local-only.
+	require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/templates", map[string]any{"name": "x"})).Code)
+	require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "DELETE", "/api/templates/crew", nil)).Code)
+	require.Equal(t, 403, testharness.Serve(h, testharness.JSONRequest(t, "PATCH", "/api/templates/crew", map[string]any{"name": "crew"})).Code)
+}
