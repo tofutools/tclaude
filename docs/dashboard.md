@@ -853,6 +853,10 @@ address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 strip turns into their switch: **Map** and **⚙ Fleet config**. The right end
 stays the same, with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
+Each ⚙ Fleet config section has its own address (`/fleet-admin/peers`,
+`/fleet-admin/grants`, …) and its own history entry, so Back/Forward step
+between sections and a section can be bookmarked. Bare `/fleet-admin` opens
+the setup guide until setup is done, else Peers.
 
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and

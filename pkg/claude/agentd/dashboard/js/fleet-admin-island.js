@@ -22,7 +22,9 @@ import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
-import { FLEET_PAGE_EVENT, takeFleetPage, takeFleetTarget } from './fleet-move-drop.js';
+import { FLEET_PAGE_EVENT, takeFleetTarget } from './fleet-move-drop.js';
+import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-admin-page.js';
+import { toPath } from './nav-history-core.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -39,7 +41,9 @@ const ADMIN_POLL_MS = 5000;
 
 // SUB_PAGES are the admin sections. The setup guide comes first: it is where
 // the view opens until this node is joined, trusts a peer and shares a group.
-const SUB_PAGES = Object.freeze([
+// Their ids are the /fleet-admin/<section> routes: keep KNOWN_SUBTABS in
+// nav-history-core.js in step.
+export const SUB_PAGES = Object.freeze([
   { id: 'setup', label: 'Setup guide' },
   { id: 'peers', label: 'Peers' },
   { id: 'harnesses', label: 'Harnesses' },
@@ -58,7 +62,7 @@ const SUB_PAGES = Object.freeze([
 ]);
 
 function defaultSwitchHome() {
-  globalThis.location.assign(nodeHref('', { pathname: '/fleet-admin', search: globalThis.location.search }));
+  globalThis.location.assign(nodeHref('', { pathname: toPath(fleetAdminLocation()), search: globalThis.location.search }));
 }
 
 function defaultCopy(text) {
@@ -346,8 +350,16 @@ export function FleetAdmin({
   // With no page asked for, Fleet lands on the guide until setup is done,
   // else on Peers. The landing is decided once, from the first status read,
   // so finishing a step (or a hub blip) never swaps the page under the
-  // operator.
-  const [page, setPage] = useState(() => takeFleetPage() || '');
+  // operator. The section lives in fleetAdminPage so the history router can
+  // read and restore it (/fleet-admin/<section>).
+  const page = fleetAdminPage.value;
+  // setPage is the operator choosing a section: on screen it also becomes a
+  // history entry. Off screen (a section asked for before the tab is shown)
+  // the nav click that follows records it.
+  const setPage = (id) => {
+    if (!setFleetAdminPage(id) || !state.view.peek().adminActive) return;
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: fleetAdminLocation(id) } }));
+  };
   const landing = useRef('');
   const [dialog, setDialog] = useState(null);
   const [grantTarget, setGrantTarget] = useState(() => takeFleetTarget());
@@ -398,13 +410,22 @@ export function FleetAdmin({
   // Other views (a dropped move's progress) can ask for a section.
   useEffect(() => {
     const on = (e) => {
-      takeFleetPage();
       const target = takeFleetTarget();
       if (target && e.detail === 'grants') setGrantTarget(target);
       if (SUB_PAGES.some((p) => p.id === e.detail)) setPage(e.detail);
     };
     document.addEventListener(FLEET_PAGE_EVENT, on);
     return () => document.removeEventListener(FLEET_PAGE_EVENT, on);
+  }, []);
+  // Back/Forward onto a /fleet-admin location shows its section; the bare
+  // path is the landing.
+  useEffect(() => {
+    const restore = (e) => {
+      const loc = e.detail?.location;
+      if (loc?.tab === 'fleet-admin') { setRunPreselect(''); setFleetAdminPage(loc.subtab || ''); }
+    };
+    document.addEventListener('tclaude:restore-location', restore);
+    return () => document.removeEventListener('tclaude:restore-location', restore);
   }, []);
   if (remote) return html`<div class="empty">Opening fleet administration on this node…</div>`;
   if (failure === 'unavailable') return html`<div class="empty">Federation is not available on this daemon. Link nodes with <code>tclaude federation connect</code> (see docs/federation.md).</div>`;
