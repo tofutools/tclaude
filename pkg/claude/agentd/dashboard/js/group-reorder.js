@@ -60,6 +60,7 @@ import { refresh, toast } from './refresh.js';
 import { openDeleteGroupModal } from './dashboard-operations.js';
 import { openGroupCloneModal } from './modal-templates.js';
 import { isWizardActive } from './slop.js';
+import { setFusedSectionOpen } from './groups-fused-sections.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
 // module header: withholding text/plain is what makes dnd.js's member-row
@@ -290,6 +291,8 @@ function applyGroupDrop(dragName, targetName, zone) {
       return;
     }
     toast(plan.desiredParent ? `${dragName}: nested under ${plan.desiredParent}` : `${dragName}: moved to top level`);
+    // Show the moved group, not a folded Subgroups line.
+    if (plan.desiredParent) setFusedSectionOpen(plan.desiredParent, 'subgroups', true);
     refresh();
   }).catch((err) => {
     toast(`nest failed: ${(err && err.message) || err}`, true);

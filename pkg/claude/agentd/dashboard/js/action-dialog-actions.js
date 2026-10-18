@@ -3,6 +3,7 @@ import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js'
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 import { announceNodeChanged, nodeFetch, nodeSnapshot } from './node-api.js';
+import { setFusedSectionOpen } from './groups-fused-sections.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -180,6 +181,9 @@ export function createActionDialogActions({
       });
       state.close(owner);
       notify(parent ? `${group}: nested under ${parent}` : `${group}: moved to top level`);
+      // Show the moved group, not a folded Subgroups line; fold state is keyed
+      // by the page's own group names.
+      if (parent && !node) setFusedSectionOpen(parent, 'subgroups', true);
       announceNodeChanged(node);
       await refresh();
     },

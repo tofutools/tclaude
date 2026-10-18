@@ -172,7 +172,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
         onClick=${() => unpin(group)}>×</button></span>`)}</div>`}
     <div class="dpp-graph">${view ? html`<${ProcessMiniGraph} run=${templateAsRun(view)} compact=${true} />` : !error && html`<span class="dpp-meta">Loading…</span>`}</div>
     <div class="dpp-acts">
-      <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); })}>
+      <select class="dpp-start" aria-label="Start in group" data-dock-process-start onChange=${(event) => pick(event, (group) => { onClose(); requestProcessStart({ group, templateId: row.id }, { prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [], setFocus: (lens) => showRunsLens(groupsState, lens), rerender: groupsState.rerender }); })}>
         <option value="">${wizWord('▶ Start in…', '▶ Begin in…')}</option>
         ${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
       </select>
