@@ -2954,8 +2954,8 @@ travel over the shared authenticated bundle stream, not control frames.
 The receiver validates the pinned attach authority during transfer and before
 and after staging, verifies length/digest/FIN, then applies the existing
 file/count/total caps. An older receiver still accepts PNG/JPEG/WebP only and
-refuses other files with `415`; the dashboard then suggests updating both nodes
-to the same version. It returns paths
+refuses other files with `415`; the dashboard shows that refusal with a hint
+that the remote node may need a newer tclaude. It returns paths
 on the target, including its existing sandbox attachment root where needed.
 Remote `/api/terminal-file` downloads remain refused with `403 not_shared`;
 file download needs a separate future permission.

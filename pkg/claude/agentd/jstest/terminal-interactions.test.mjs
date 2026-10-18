@@ -890,7 +890,7 @@ test('a remote node without file paste gets a concise version hint', async () =>
     const notes = new File(['# n'], 'notes.md', { type: 'text/markdown' });
     harness.host.dispatch('drop', dropEvent({ items: [fileItem(notes)], files: [notes] }));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(statuses.at(-1), 'file paste failed: remote node accepts images only — update both nodes to the same version');
+    assert.equal(statuses.at(-1), 'file paste failed: remote node accepts images only (it may need a newer tclaude)');
   } finally {
     interactions.dispose();
   }

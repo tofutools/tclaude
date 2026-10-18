@@ -45,6 +45,10 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		writeError(w, 400, "terminal", "expected a same-origin remote terminal path")
 		return
 	}
+	if u.Query().Has("shell") {
+		writeError(w, 403, "permission_denied", "file paste is for agent terminals, not shells")
+		return
+	}
 	if u.Query().Get("mode") != "interactive" {
 		writeError(w, 403, "permission_denied", "file paste requires interactive attach")
 		return

@@ -482,7 +482,7 @@ async function uploadFiles(files, signal, terminalPath, anyFile, fetchImpl) {
     try { error = JSON.parse(text); } catch (_) { /* plain-text error */ }
     // A node from before arbitrary file paste refuses non-images this way.
     if (remote && res.status === 415 && error?.code === 'image') {
-      throw new Error('remote node accepts images only — update both nodes to the same version');
+      throw new Error('remote node accepts images only (it may need a newer tclaude)');
     }
     throw new Error(error?.error || text || `HTTP ${res.status}`);
   }
@@ -888,8 +888,8 @@ export function attachTerminalInteractions({
   // the prompt, exactly as a desktop terminal does for a dropped file.
   const uploadAndPaste = async (files) => {
     if (!canInput()) { flash('watch-only: this terminal takes no input'); return; }
-    if (uploadPending) return;
-    const key = files.map(f => `${f.size}|${f.type}`).join(',');
+    if (uploadPending) { flash('an upload is still in progress'); return; }
+    const key = files.map(f => `${f.name || ''}|${f.size}|${f.type}`).join(',');
     const now = performance.now();
     if (key === lastPasteKey && now - lastPasteAt < PASTE_REPEAT_MS) return;
     lastPasteKey = key;
