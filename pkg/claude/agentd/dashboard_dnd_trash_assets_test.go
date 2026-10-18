@@ -34,7 +34,7 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 			"dashboard.html declares the bin as a retire drop target"},
 		// dnd.js: the bin is part of the shared drop-target selector, or no
 		// handler would ever recognise a drop on it.
-		{`,#dnd-trash'`,
+		{`,#dnd-trash,`,
 			"dnd.js includes #dnd-trash in DND_TARGET_SEL"},
 		// dnd.js: show on dragstart (gated on a retireable source — or a
 		// pending spawn, whose only valid target IS the bin) + hide on dragend.
@@ -101,7 +101,7 @@ func TestDashboardJS_PendingDeleteWired(t *testing.T) {
 			"dnd.js reads the pending source flag on dragstart"},
 		{`if (dndSourcePending) return !box.hasAttribute('data-dnd-target-retired');`,
 			"dnd.js makes a pending source inert over every target but the trash"},
-		{`await runDndDeletePending(payload);`,
+		{`await ops.deletePending(payload, ctx);`,
 			"dnd.js routes a pending drop to the delete handler"},
 		{`async function runDndDeletePending(`,
 			"dnd.js defines the pending-delete drop handler"},

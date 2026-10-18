@@ -532,8 +532,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // whether a folded section has anything in it. The label, and the empty
 // rest of the line, fold the section; the choice is remembered per group
 // (see groups-fused-sections.js), and `force` holds it open while a start
-// or edit form inside needs it. `onToggle` runs after a fold changes, for a
-// section whose state matters outside it (Subgroups moves activity bots).
+// or edit form inside needs it. `onToggle(el)` runs after a fold changes,
+// with the clicked element, for a section whose state matters outside it
+// (Subgroups moves activity bots).
 // A button on a folded line unfolds the section too, so what it spawns or
 // starts shows up rather than landing out of sight. That re-render waits for
 // a task, not a microtask: a microtask runs between listeners, and opening
@@ -546,12 +547,13 @@ export function FusedSection({ group, section, label, count = null, auto = true,
     if (force) return;
     setFusedSectionOpen(group, section, !open);
     bump((n) => n + 1);
-    onToggle?.(event);
+    onToggle?.(event.currentTarget);
   };
   const unfold = (event) => {
     if (open || !event.target.closest?.('button')) return;
     setFusedSectionOpen(group, section, true);
-    setTimeout(() => bump((n) => n + 1), 0);
+    const el = event.currentTarget;
+    setTimeout(() => { bump((n) => n + 1); onToggle?.(el); }, 0);
   };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>

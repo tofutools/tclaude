@@ -68,7 +68,12 @@ func TestDashboardContextFeaturesSpawnActionForwarded(t *testing.T) {
 	if start < 0 {
 		t.Fatalf("agent-spawn-actions.js no longer exports createAgentSpawnActions")
 	}
-	head, body, ok := strings.Cut(source[start:], "} = {}) {")
+	// The dependencies are destructured in the signature or, kept whole for
+	// forNode, in its first statement.
+	head, body, ok := strings.Cut(source[start:], "} = dependencies;")
+	if !ok {
+		head, body, ok = strings.Cut(source[start:], "} = {}) {")
+	}
 	if !ok {
 		t.Fatalf("createAgentSpawnActions no longer has a destructured dependency object")
 	}

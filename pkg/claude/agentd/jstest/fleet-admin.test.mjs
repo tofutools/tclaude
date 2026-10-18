@@ -518,6 +518,10 @@ test('the grants page opens on All; the add dialog searches, plans per group and
   assert.match(s.q('[data-grant-slug="groups.roster.read"]').textContent, /held: ops/);
   search.value = '';
   await s.harness.act(() => s.harness.fireEvent(search, 'input'));
+  await s.click(s.q('[data-cat="Routes"]'));
+  assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['routes.consume']);
+  await s.click(s.q('[data-cat="Messaging"]'));
+  assert.ok(!s.q('#fleet-grant-list [data-grant-slug="routes.consume"]'), 'routes are not messaging');
   await s.click(s.q('[data-cat="Terminals"]'));
   assert.deepEqual([...s.q('#fleet-grant-list').querySelectorAll('[data-grant-slug]')].map((x) => x.dataset.grantSlug), ['sessions.watch', 'sessions.attach', 'sessions.takeover']);
   await s.check(s.q('#fleet-grant-hide-sensitive'));
@@ -2317,6 +2321,9 @@ test('setup progress: joining, trusting and sharing are the setup; agents using 
   assert.deepEqual(g.agentSlugs(['sessions_watch', 'sessions_attach', 'jobs']), ['sessions.watch', 'sessions.attach', 'jobs.run'], 'every shared terminal and job cap pairs with an agent grant');
   assert.deepEqual(g.capWords(['sessions_watch', 'presence', 'mail']), ['mail', 'presence', 'watch terminals']);
   assert.deepEqual(g.capWords(['future_cap']), ['future_cap'], 'a cap this build does not know is shown as is');
+  assert.equal(g.sharedAlike([{ caps: ['mail', 'roster'] }, { caps: ['roster', 'mail'] }]), 'mail, roster', 'groups sharing the same are said once');
+  assert.equal(g.sharedAlike([{ caps: ['mail'] }, { caps: [] }]), '');
+  assert.equal(g.sharedAlike([{ caps: ['mail'] }]), '', 'a single group keeps its own column');
 });
 
 test('a node never set up opens Fleet on the setup guide and joins a hub from it', async (t) => {
@@ -2445,7 +2452,8 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.deepEqual([...row.querySelectorAll('[data-holder]')].map((h) => h.dataset.holder), ['group:ops', 'agent:agt_x'], 'who already uses forge/builders, by group or the whole peer');
   assert.match(row.querySelector('[data-holder="agent:agt_x"]').textContent, /all of forge/, 'a whole-peer grant is not removable per group');
-  assert.match(row.textContent, /tclaude agent permissions peer-reach add --group GROUP --peer forge\/builders --slug message\.direct/);
+  assert.equal(row.querySelector('.fs-reach-cli').dataset.cli, 'tclaude agent permissions peer-reach add --group GROUP --peer forge/builders --slug message.direct', 'the guide gives messaging only');
+  assert.equal(row.querySelector('[data-reach-give]').textContent, 'Allow messaging…');
   assert.match(s.q('[data-peer="inst_forge"] [data-remote-group="lobby"]').textContent, /visible only/);
 
   // Give the group build access in place, then take ops's away.
@@ -2459,8 +2467,10 @@ test('the guide trusts from the waiting list, shares a group as presets and show
   assert.match(s.confirms.at(-1).body, /message\.direct, scoped peer=forge\/builders\. Its other grants are kept\./);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'build', slugs: ['message.direct'], peer: 'inst_forge/builders' });
   assert.match(s.toasts.at(-1), /Not every member: ada has its own grant/, 'a member whose own grant wins is named');
-  await s.click(row.querySelector('[data-holder="group:ops"] button'));
+  assert.match(row.querySelector('[data-holder="group:ops"] button').title, /add more, scoped peer=forge\/builders/, 'a holder opens its Permissions for more');
+  await s.click(row.querySelector('[data-holder="group:ops"] [data-reach-take]'));
   assert.equal(s.confirms.at(-1).title, "Stop group ops using forge's builders?");
+  assert.match(s.confirms.at(-1).body, /including any added in its Permissions/, 'stopping removes every reach on the peer group, not only messaging');
   assert.deepEqual(s.log.findLast((l) => l[0] === 'peerReach')[1], { group: 'ops', slugs: ['message.direct'], peer: 'inst_forge/builders', remove: true });
 
   // An agent whose grant is held for local use is refused with the way out.

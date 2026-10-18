@@ -185,7 +185,7 @@ export function slugInfo(slug) {
 
 // GRANT_CATEGORIES group PEER_SLUGS for the add-grants picker, in display
 // order.
-export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Models']);
+export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Models']);
 
 const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
 const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.members.manage', 'node.groups.create']);
@@ -193,7 +193,9 @@ const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', '
 export function slugCategory(slug) {
   if (slug.startsWith('groups.members.spawn') || slug.startsWith('node.spawn.') || slug === 'jobs.run') return 'Spawn & jobs';
   if (slug.startsWith('sessions.') && slug !== 'sessions.read') return 'Terminals';
-  if (slug.startsWith('message.') || slug === 'routes.consume') return 'Messaging';
+  if (slug.startsWith('message.')) return 'Messaging';
+  // Routes carry TCP traffic to a published service, not messages.
+  if (slug.startsWith('routes.')) return 'Routes';
   if (slug.startsWith('models.')) return 'Models';
   if (LIFECYCLE.has(slug)) return 'Agent lifecycle';
   if (GROUP_ADMIN.has(slug)) return 'Group admin';

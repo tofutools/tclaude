@@ -44,7 +44,9 @@ func dndFuncBody(t *testing.T, name string) string {
 	// token earlier in the file can never truncate the slice. The last
 	// runDnd* function is bounded by dnd.js's trailing export block.
 	rest := dashboardAssets[start+1:]
-	endRel := strings.Index(rest, "\nexport {")
+	// The operations live in dnd-ops.js's createDndOps, which ends by
+	// returning them.
+	endRel := strings.Index(rest, "\n  return Object.freeze({")
 	for i, n := range order {
 		if n == name && i+1 < len(order) {
 			if next := strings.Index(rest, "async function "+order[i+1]+"("); next >= 0 {
@@ -61,8 +63,8 @@ func dndFuncBody(t *testing.T, name string) string {
 	// to this function's own closing brace ("\n}" — dnd.js is a native
 	// ES module, so the runDnd* functions sit at column 0; every deeper
 	// brace is indented further, doc comments never are).
-	if i := strings.LastIndex(body, "\n}"); i >= 0 {
-		body = body[:i+len("\n}")]
+	if i := strings.LastIndex(body, "\n  }"); i >= 0 {
+		body = body[:i+len("\n  }")]
 	}
 	return body
 }
@@ -77,20 +79,20 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// and uses the richer keyed retire transaction (asserted separately
 	// below).
 	gated := []string{
-		"runDndClone", "runDndMove", "runDndAddToGroup",
+		"runDndMove", "runDndAddToGroup",
 		"runDndRemoveFromGroup", "runDndPromoteToUngrouped", "runDndReinstate",
 	}
 	for _, name := range gated {
 		body := dndFuncBody(t, name)
 
-		confirm := strings.Index(body, "await confirmModal({")
+		confirm := strings.Index(body, "await confirm({")
 		if confirm < 0 {
-			t.Errorf("%s: missing `await confirmModal({` — operation is not gated", name)
+			t.Errorf("%s: missing `await confirm({` — operation is not gated", name)
 			continue
 		}
 		// The cancel path must bail (refresh + return) without running
 		// the op.
-		cancel := strings.Index(body, "if (!confirmed) { await refresh(); return; }")
+		cancel := strings.Index(body, "if (!confirmed) { await ctx.done(); return; }")
 		if cancel < 0 {
 			t.Errorf("%s: cancel path must `await refresh(); return;` without running the op", name)
 			continue
@@ -99,7 +101,7 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 		// daemon round-trip — checking only confirmModal's position
 		// would still pass a refactor that fetched, then checked
 		// !confirmed.
-		if fetch := strings.Index(body, "await fetch("); fetch >= 0 {
+		if fetch := strings.Index(body, "await ctx.api("); fetch >= 0 {
 			if confirm > fetch {
 				t.Errorf("%s: confirmModal (at %d) must precede the first fetch() (at %d)", name, confirm, fetch)
 			}
@@ -120,7 +122,7 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// lastSnapshot before the round-trip. The confirm must precede that
 	// splice too, or a cancelled move still flickers the UI.
 	move := dndFuncBody(t, "runDndMove")
-	confirm := strings.Index(move, "await confirmModal({")
+	confirm := strings.Index(move, "await confirm({")
 	splice := strings.Index(move, ".splice(")
 	if confirm < 0 || splice < 0 {
 		t.Fatalf("runDndMove: expected both a confirmModal and a .splice( — confirm=%d splice=%d", confirm, splice)
@@ -134,9 +136,9 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// splice check above (confirmModal stays first), yet a cancelled
 	// move would run the optimistic splice and flicker the UI before
 	// bailing.
-	cancel := strings.Index(move, "if (!confirmed) { await refresh(); return; }")
+	cancel := strings.Index(move, "if (!confirmed) { await ctx.done(); return; }")
 	if cancel < 0 {
-		t.Fatalf("runDndMove: cancel guard `if (!confirmed) { await refresh(); return; }` not found")
+		t.Fatalf("runDndMove: cancel guard `if (!confirmed) { await ctx.done(); return; }` not found")
 	}
 	if cancel > splice {
 		t.Errorf("runDndMove: cancel guard (at %d) must precede the optimistic .splice() (at %d) — a cancelled move must not run the splice", cancel, splice)
@@ -146,13 +148,13 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// choices and all), shared with row and palette launchers. It must await the
 	// final result before deciding whether DnD owes a reconciliation refresh.
 	retire := dndFuncBody(t, "runDndRetire")
-	if !strings.Contains(retire, "result = await openRetireAgentDialog(conv, label)") {
+	if !strings.Contains(retire, "result = await openRetire(conv, label, ctx.node)") {
 		t.Error("runDndRetire: must stay gated behind the keyed retire transaction")
 	}
-	if strings.Contains(retire, "await fetch(") {
+	if strings.Contains(retire, "await ctx.api(") {
 		t.Error("runDndRetire: request ownership must stay inside the transaction action")
 	}
-	if !strings.Contains(retire, "retireResultNeedsReconcile(result)") {
+	if !strings.Contains(retire, "retireNeedsReconcile(result)") {
 		t.Error("runDndRetire: cancel/dangling failure must reconcile drag presentation")
 	}
 }
@@ -161,9 +163,14 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 // its new membership succeed or fail together; a second members POST would let
 // a clone exist outside the group it was dropped on.
 func TestDashboardDnDClone_SendsDropGroupInCloneRequest(t *testing.T) {
+	// A Ctrl/Cmd drop opens the clone dialog (its own confirmation) on the
+	// agent's node with the drop group, which its one clone request carries.
 	body := dndFuncBody(t, "runDndClone")
-	if !strings.Contains(body, "JSON.stringify({group: targetGroup})") {
-		t.Fatalf("runDndClone must send the drop group in the clone request:\n%s", body)
+	if !strings.Contains(body, "openClone(sel, label, memberCwd(ctx, conv), ctx.node, ctx.group(targetGroup))") {
+		t.Fatalf("runDndClone must open the clone dialog with the drop group:\n%s", body)
+	}
+	if !strings.Contains(dashboardAssets, "if (group) body.group = group;") {
+		t.Fatalf("the clone dialog's request must carry the drop group")
 	}
 	if strings.Contains(body, "/members") {
 		t.Fatalf("runDndClone must not add the clone to the group in a second request:\n%s", body)

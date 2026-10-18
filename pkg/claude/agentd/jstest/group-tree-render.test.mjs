@@ -82,6 +82,13 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
   assert.equal(activity('child'), '1 working');
   assert.equal(activity('grandchild'), '1 working');
 
+  const leaf = section('grandchild');
+  assert.equal(leaf.querySelector('.gf-count').textContent, '0', 'a group without subgroups still has the line, counting none');
+  assert.equal(leaf.classList.contains('open'), false, 'an empty Subgroups section starts folded');
+  assert.ok(leaf.querySelector(':scope > .gf-section-head [data-act="create-subgroup"]'), 'create subgroup heads the Subgroups line');
+  leaf.querySelector('[data-act="create-subgroup"]').click();
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.subgroups.grandchild'), '1', 'create subgroup opens the section');
+
   const container = [
     { name: 'container', members: [], online: 0 },
     { name: 'inner', parent: 'container', members: [member('inner')], online: 1 },

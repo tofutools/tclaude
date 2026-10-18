@@ -80,7 +80,7 @@ func TestDashboardJS_GroupDragToDeleteWired(t *testing.T) {
 			"group dragover shows the delete intent pill"},
 		{"`↓ disband party ${groupDragName}`",
 			"wizard group dragover uses disband-party wording"},
-		{"openDeleteGroupModal(dragName);",
+		{"if (ctx) openDeleteGroupModal(ctx.own(dragName), ctx.node);",
 			"dropping a group on the overlay opens the delete preview"},
 		{"trash.classList.remove('show', 'dnd-drop-over');",
 			"endGroupDrag hides and disarms the overlay"},

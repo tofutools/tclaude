@@ -11,7 +11,9 @@ import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 
 // TAB_FEATURES maps the per-node tabs to the peer-view feature that serves
-// them. Groups is the snapshot itself; the map is this operator's own fleet
+// them. Groups is the snapshot itself, which shows every group the peer sees
+// (any grant in it), each field as far as its grants reach (roster,
+// presence, agents.status.read, mail; peer_snapshot.go); the map is this operator's own fleet
 // view, and Terminals holds this browser's own terminals (a peer's agent
 // opens there through this node's federation bridge). A tab absent here has
 // no peer route at all. Usage is gated on costs: the peer serves both its
@@ -21,7 +23,7 @@ import { shellToast } from './shell-state.js';
 // Jobs (cron, standing orders, triggers) and Access (this node's pending
 // approvals) have no peer grant of their own: unrestricted trust reaches them
 // as the local operator does (local_dashboard).
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
@@ -122,6 +124,15 @@ export function groupGrantHeld(act, group, peerView) {
     : held.includes(slug)));
 }
 
+// missingGrants lists what a refused control lacks: the grants of need not
+// in held, and for a feature:<name> the grant the peer names for it.
+function missingGrants(need, held, peerView) {
+  const out = need.flatMap((slug) => (slug.startsWith('feature:')
+    ? (featureState(slug.slice('feature:'.length), peerView) === 'shared' ? [] : [featureNeeds(slug.slice('feature:'.length), peerView)])
+    : (held.includes(slug) ? [] : [slug])));
+  return [...new Set(out.filter(Boolean))];
+}
+
 // AGENT_GRANT_ACTS are an agent's controls a peer serves through its
 // peer-granted routes (peer_member_routes.go), with the peer grants they
 // need. An agent's own settings follow it into every group it is in, so the
@@ -210,6 +221,27 @@ export function grantHeld(act, peerView, groupOf = (g) => g) {
   // data-stable-agent.
   if (isAgentGrantAct(name)) return agentGrantHeld(name, act.dataset.stableAgent || act.dataset.agent || '', peerView, act.dataset);
   return null;
+}
+
+// grantMissing lists the grants a refused group or agent control (see
+// grantHeld) lacks on the peer, for the hint that names them; empty for any
+// other control, or when nothing is missing.
+export function grantMissing(act, peerView, groupOf = (g) => g) {
+  const name = act?.dataset?.act;
+  if (unrestricted(peerView)) return [];
+  if (GROUP_GRANT_ACTS[name]) {
+    const group = groupOf(act.dataset.group || '');
+    return missingGrants(GROUP_GRANT_ACTS[name], peerView?.groups?.[group] || [], peerView);
+  }
+  if (!isAgentGrantAct(name)) return [];
+  const need = AGENT_GRANT_ACTS[name] || AGENT_GRANT_VARIANTS[name]?.find(([, test]) => test(act.dataset))?.[2];
+  return need ? missingGrants(need, peerView?.agents?.[act.dataset.stableAgent || act.dataset.agent || ''] || [], peerView) : [];
+}
+
+// groupFieldMissing is grantMissing for a group dialog's field.
+export function groupFieldMissing(act, group, peerView) {
+  if (!peerView || unrestricted(peerView) || !GROUP_GRANT_ACTS[act]) return [];
+  return missingGrants(GROUP_GRANT_ACTS[act], peerView?.groups?.[group] || [], peerView);
 }
 
 // groupFieldHeld is groupGrantHeld for a dialog that may be on this node's
@@ -309,7 +341,8 @@ function managedState(features, peerView) {
 function managedControl(target, peerView) {
   for (const [sel, features] of Object.entries(MANAGED_CONTROLS)) {
     const el = target?.closest?.(sel);
-    if (el) return { el, state: managedState(features, peerView), what: features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults' };
+    const needs = features.filter((f) => featureState(f, peerView) !== 'shared').map((f) => featureNeeds(f, peerView));
+    if (el) return { el, state: managedState(features, peerView), what: features[0] === 'groups.create' ? 'group creation' : 'its global spawn defaults', needs };
   }
   return null;
 }
@@ -334,12 +367,37 @@ export function featureState(feature, peerView) {
   if (omission) return omission?.requires === 'local_only' ? 'local' : 'omitted';
   // Without metadata (an unrestricted peer's full snapshot still carries it;
   // before the first answer there is none) assume the snapshot-backed view.
-  if (!included) return feature === 'agents.status' ? 'shared' : 'omitted';
+  if (!included) return feature === 'groups' ? 'shared' : 'omitted';
   return included.includes(feature) ? 'shared' : 'omitted';
+}
+
+// UNRESTRICTED_TRUST names what a feature no peer grant opens takes.
+const UNRESTRICTED_TRUST = 'unrestricted trust';
+
+// featureNeeds names the grant the peer requires for a feature it does not
+// share (its omission's requires), 'unrestricted trust' for one no grant
+// opens, or '' when there is nothing to name (shared, or no peer route).
+export function featureNeeds(feature, peerView) {
+  if (feature === 'local_dashboard') return unrestricted(peerView) ? '' : UNRESTRICTED_TRUST;
+  const omissions = Array.isArray(peerView?.omitted) ? peerView.omitted : [];
+  const omission = omissions.find((o) => typeof o === 'object' && o?.feature === feature);
+  const requires = typeof omission?.requires === 'string' ? omission.requires : '';
+  if (!requires || requires === 'local_only') return '';
+  return omission.unrestricted_only ? UNRESTRICTED_TRUST : requires;
 }
 
 export function tabState(tab, peerView) {
   return featureState(TAB_FEATURES[tab] || '', peerView);
+}
+
+function tabNeeds(tab, peerView) {
+  return featureNeeds(TAB_FEATURES[tab] || '', peerView);
+}
+
+function subtabNeeds(tab, subtab, peerView) {
+  const subs = SUBTAB_FEATURES[tab];
+  if (!subs || !Object.hasOwn(subs, subtab)) return tabNeeds(tab, peerView);
+  return featureNeeds(subs[subtab], peerView);
 }
 
 export function subtabState(tab, subtab, peerView) {
@@ -382,11 +440,12 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
   return cmds.map((cmd) => {
     let state = 'local';
     let what = 'This command';
+    let needs = '';
     if (cmd.peerView === 'view') state = 'shared';
-    else if (cmd.peerView === 'tab') { state = tabState(cmd.tab, pv); what = tabLabel(cmd.tab); }
-    else if (cmd.peerView === 'messaging') { state = featureState('messaging', pv); what = 'messaging'; }
+    else if (cmd.peerView === 'tab') { state = tabState(cmd.tab, pv); what = tabLabel(cmd.tab); needs = tabNeeds(cmd.tab, pv); }
+    else if (cmd.peerView === 'messaging') { state = featureState('messaging', pv); what = 'messaging'; needs = featureNeeds('messaging', pv); }
     if (state === 'shared') return cmd;
-    return { ...cmd, enabled: false, disabledReason: limitHint(state, what, name) };
+    return { ...cmd, enabled: false, disabledReason: limitHint(state, what, name, [needs]) };
   });
 }
 
@@ -399,10 +458,23 @@ function subtabLabel(subtab) {
   return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : `The ${subtab} view`;
 }
 
-export function limitHint(state, what, node) {
+// limitHint words why a peer view refuses something. needs names what the
+// peer would have to grant (featureNeeds, grantMissing); a refusal that only
+// unrestricted trust lifts reads as not shared rather than unavailable.
+export function limitHint(state, what, node, needs = []) {
   if (state === 'attach') return `${node}'s agent terminal — opens here, watch-only or interactive as ${node} shares it`;
-  if (state === 'omitted') return `${node} does not share ${what} with you`;
+  const named = [...new Set((needs || []).filter(Boolean))];
+  if (state === 'omitted' || named.length) {
+    const subject = what.replace(/^(The|This) /, (m) => m.toLowerCase());
+    return `${node} does not share ${subject} with you${needsSuffix(named)}`;
+  }
   return `${what} is not available in a peer view`;
+}
+
+// needsSuffix is the " (needs a + b)" a hint ends with, or ''.
+export function needsSuffix(needs) {
+  const named = [...new Set((needs || []).filter(Boolean))];
+  return named.length ? ` (needs ${named.join(' + ')})` : '';
 }
 
 // ATTACH_ACTS open an agent's terminal. On a peer view they open the peer's
@@ -511,15 +583,15 @@ export function blockedControl(target, peerView, event = null) {
   const tab = target?.closest?.('nav [data-tab]');
   if (tab) {
     const state = tabState(tab.dataset.tab, peerView);
-    return state === 'shared' ? null : { el: tab, state, what: tabLabel(tab.dataset.tab) };
+    return state === 'shared' ? null : { el: tab, state, what: tabLabel(tab.dataset.tab), needs: [tabNeeds(tab.dataset.tab, peerView)] };
   }
   const sub = target?.closest?.('.activity-subtab');
   if (sub) {
     const state = subtabState('activity', sub.dataset.subtab, peerView);
-    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab) };
+    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('activity', sub.dataset.subtab, peerView)] };
   }
   const managed = managedControl(target, peerView);
-  if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what };
+  if (managed) return managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
   const act = actOf(target, event);
   if (unrestricted(peerView)) {
     if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
@@ -531,7 +603,7 @@ export function blockedControl(target, peerView, event = null) {
   const pa = act && !held && peerAction(act, peerView);
   if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
   if (held !== null) {
-    return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : 'This action' };
+    return held ? null : { el: act, state: 'omitted', what: GROUP_GRANT_ACTS[act.dataset.act] ? "this group's settings" : 'This action', needs: grantMissing(act, peerView) };
   }
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
@@ -579,13 +651,13 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(tab);
-      else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName()));
+      else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName(), [tabNeeds(tab.dataset.tab, peerView)]));
     }
     for (const sub of doc.querySelectorAll('.activity-subtab')) {
       const state = subtabState('activity', sub.dataset.subtab, peerView);
       sub.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(sub);
-      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName()));
+      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('activity', sub.dataset.subtab, peerView)]));
     }
   });
 
@@ -602,7 +674,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       void openTerminal({ instance: remote.id, agent: blocked.agent, peerLabel: nodeName(), toast });
       return;
     }
-    toast(limitHint(blocked.state, blocked.what, nodeName()), true);
+    toast(limitHint(blocked.state, blocked.what, nodeName(), blocked.needs), true);
   };
   // role=button chips open their editors on Enter/Space in their own keydown,
   // without a click; guard the keyboard path the same way.
@@ -614,7 +686,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // Hover explanation for controls (tabs get theirs from the effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView, event);
-    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
+    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab], .activity-subtab')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName(), blocked.needs));
   };
   // Drags spawn, move and reorder on the node: only under unrestricted trust.
   const onDrag = (event) => { if (!unrestricted(peerView)) event.preventDefault(); };
