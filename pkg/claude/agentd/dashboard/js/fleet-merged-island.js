@@ -6,7 +6,8 @@ import { GroupsInteractionProvider } from './groups-interactions.js';
 import {
   BrokerRefusalNotice, GroupsLensList, useGroupsHover, useGroupsTableControls, useWizardTheme,
 } from './groups-island.js';
-import { GROUP_VIEW_OPTIONS, buildGroupsView, groupsState } from './groups-state.js';
+import { buildGroupsView, groupsState } from './groups-state.js';
+import { listLimit } from './list-paging.js';
 import { GroupsProcessScope } from './groups-process-scope.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
@@ -87,10 +88,12 @@ function dragSource(row) {
   return { agent: { id: agent, name: row.getAttribute('data-dnd-label') || agent }, source: { node: group.dataset.fleetNode, name, group: ownGroup(merged, name) || merged } };
 }
 
-// dropTarget reads the group a drag is over (the innermost one).
+// dropTarget reads the group a drag is over (the innermost one). A virtual
+// group (Ungrouped@node, …) is no move target: its node's own drop (dnd.js)
+// takes it there.
 function dropTarget(el) {
   const group = el?.closest?.('details[data-fleet-node]');
-  if (!group) return null;
+  if (!group || group.classList.contains('group-virtual')) return null;
   const name = group.dataset.fleetNodeName || '';
   return { el: group, node: group.dataset.fleetNode, name, group: ownGroup(group.dataset.groupKey || '', name) };
 }
@@ -262,9 +265,44 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
   return entries;
 }
 
-// NODE_ONLY_OFF keeps the node-only virtual groups (Ungrouped, Retired, …)
-// out of a listing of several nodes, whatever this node's view shows.
-const NODE_ONLY_OFF = Object.fromEntries(GROUP_VIEW_OPTIONS.filter((o) => o.nodeOnly).map((o) => [o.key, false]));
+// PEER_LIST_KINDS are the paged virtual-group lists (list-paging.js) a peer's
+// snapshot does not carry; PEER_LISTS_POLL_MS how often a shown one is read.
+const PEER_LIST_KINDS = ['retired', 'conversations', 'replaced'];
+export const PEER_LISTS_POLL_MS = 15000;
+
+// usePeerLists reads each listed peer's shown paged lists (its first page,
+// under the Groups filter) through its peer routes while active. It returns
+// id -> { retired, conversations, replaced }.
+export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = globalThis }) {
+  const [lists, setLists] = useState({});
+  const key = `${peers.join(',')}|${kinds.join(',')}|${query}`;
+  useEffect(() => {
+    if (!active || !peers.length || !kinds.length) return undefined;
+    let live = true;
+    const read = async (id) => {
+      const got = {};
+      await Promise.all(kinds.map(async (kind) => {
+        try {
+          const q = query ? `&q=${encodeURIComponent(query)}` : '';
+          const response = await fetchFor(id)(`/api/${kind}?offset=0&limit=${listLimit(kind)}${q}`, { headers: { Accept: 'application/json' } });
+          if (response.ok) {
+            const body = await response.json();
+            got[kind] = body?.rows || [];
+          }
+        } catch (_) { /* keeps the last page */ }
+      }));
+      if (live) setLists((current) => ({ ...current, [id]: { ...current[id], ...got } }));
+    };
+    let timer = 0;
+    const all = () => {
+      for (const id of peers) void read(id);
+      timer = timers.setTimeout(all, PEER_LISTS_POLL_MS);
+    };
+    all();
+    return () => { live = false; timers.clearTimeout(timer); };
+  }, [active, key]);
+  return lists;
+}
 
 // fusedOrder sorts the merged groups by the fused view's own remembered order
 // (group@node names; group-reorder.js keeps it), else node order.
@@ -375,10 +413,20 @@ export function MergedGroups({
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
   const merged = current.fused && fleet ? mergeSnapshots(nodes, t, snapshot.value) : null;
+  // A peer's shown virtual groups read its paged lists (the page's own come
+  // with its snapshot, refresh.js).
+  const visibility = groups.visibility.value;
+  const listPeers = (merged?.virtual_nodes || []).filter((v) => v.node.id !== pageNode).map((v) => v.node.id);
+  const peerLists = usePeerLists({
+    active, peers: listPeers, kinds: PEER_LIST_KINDS.filter((kind) => visibility[kind]), query: groups.query.value.trim(),
+    fetchFor: (id) => nodeFetch(id, { self: fleet?.self?.id || '', fetchImpl, remote: remote ? { id: remote, localFetch } : null }),
+    timers,
+  });
+  if (merged) merged.virtual_nodes = merged.virtual_nodes.map((v) => (peerLists[v.node.id] ? { ...v, lists: { ...v.lists, ...peerLists[v.node.id] } } : v));
   // The toolbar's filter and view menu narrow this listing as they do one
   // node's (renderRevision: a column or order change re-renders).
   groups.renderRevision.value;
-  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, fusedOrder);
+  const view = buildGroupsView(merged, visibility, groups.query.value, fusedOrder);
   // A group drag here (group-reorder.js) plans against this listing.
   const mergedRef = useRef(merged);
   mergedRef.current = merged;
@@ -585,6 +633,10 @@ export function MergedGroups({
         && (event.target.closest('[data-run-dock]')
           || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
       if (!src) {
+        // A home virtual group's rows (an ungrouped agent, a conversation to
+        // promote) drag as on this node's own view (dnd.js).
+        const virt = event.target.closest?.('details.group-virtual[data-fleet-node]');
+        if (virt && homeRef.current && virt.dataset.fleetNode === homeRef.current) return;
         // A group header drags as on its node's Groups view (group-reorder.js)
         // where this node may act there.
         const header = event.target.closest?.('summary[data-group-reorder]');
@@ -627,6 +679,10 @@ export function MergedGroups({
       const target = dropTarget(event.target);
       const plan = target ? dropPlan({ source: dragging.source, target, self: self() }) : { kind: 'none' };
       if (plan.kind === 'same') { dragging = null; unmark(); return; }
+      // A home member dropped on a home virtual group (remove from its group,
+      // retire) is dnd.js's, as on this node's own view.
+      const virt = event.target.closest?.('details.group-virtual[data-fleet-node]');
+      if (virt && homeRef.current && virt.dataset.fleetNode === homeRef.current && dragging.source.node === homeRef.current) { dragging = null; unmark(); return; }
       event.preventDefault(); event.stopPropagation();
       dndGesture.cancelClone();
       const src = dragging; dragging = null; unmark();

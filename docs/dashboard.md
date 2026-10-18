@@ -1146,9 +1146,12 @@ with. CLI: `tclaude federation access request --node <peer> --permission <slug>
 In a fused view, Groups lists every group on the ticked nodes, named
 `group@node` with the node's colour on the suffix. It is the same Groups view
 under the same toolbar: the filter, the Both / Agents / Processes lens, and
-**▾ view** (offline members, columns) apply to every node's groups, and the
-filter counts them all. This node's virtual groups (Ungrouped, Retired, …)
-are left out. Process runs show on this node's own groups; a peer's runs are
+**▾ view** (offline members, columns, and the virtual groups) apply to every
+node's groups, and the filter counts them all. The virtual groups (Ungrouped,
+Retired, Conversations, Replaced generations) show per node, named
+`Ungrouped@node` and so on: this node's work and page as on its own view,
+and a peer that trusts you unrestricted shows its own (their first page, read
+through its peer routes). A restricted peer's are not shared. Process runs show on this node's own groups; a peer's runs are
 not shared across nodes, so its groups say so instead. On a peer's rows, the
 controls that peer shares with you run through its peer routes, exactly as on
 its per-node view: the status dot (stop, or wake a stopped agent), restart,

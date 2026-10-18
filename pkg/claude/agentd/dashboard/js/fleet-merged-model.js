@@ -69,13 +69,18 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
   const queued = [];
   const seenAgents = new Set();
   const status = [];
+  const virtualNodes = [];
   for (const { node, entry } of nodes) {
     const snap = entry?.snapshot;
     const st = nodeState(node, entry, now);
     status.push({ node, ...st, failure: entry?.failure || null });
     if (!snap) continue;
+    const fleetNode = { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label };
+    // A node's virtual groups (Ungrouped, Retired, …): the page's own, and a
+    // peer's that trusts this node unrestricted (a restricted snapshot keeps
+    // them). A peer's paged lists join later (fleet-merged-island.js).
+    if (!snap.peer_view || snap.peer_view.level === 'unrestricted') virtualNodes.push({ node: fleetNode, lists: snap });
     for (const g of snap.groups || []) {
-      const fleetNode = { id: node.id, name: node.name, color: node.color, local: !!node.local, home: !!node.home, stale: st.stale, label: st.label };
       groups.push({
         ...g,
         name: suffix(g.name, node),
@@ -110,6 +115,7 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     groups,
     agents,
     ungrouped: [],
+    virtual_nodes: virtualNodes,
     pending,
     links,
     queued_spawns: queued,

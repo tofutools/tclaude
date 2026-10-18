@@ -327,6 +327,16 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   await drag(row('agt_r1'), groupEl('builders@desk'));
   assert.match(toasts.at(-1), /forge does not let you bring reviewer-1 here \(needs groups\.members\.retire\)/, 'the drop names the missing grant');
   assert.equal(harness.document.querySelector('#launch-target'), null);
+  // A home member dropped on this node's Ungrouped is the Groups drag-and-drop's
+  // (remove from its group), as on this node's own view.
+  const homeUngrouped = groupEl('inst_self/ ungrouped-virtual');
+  assert.ok(homeUngrouped, "this node's Ungrouped is listed");
+  const seen = [];
+  const listen = (event) => seen.push(event.type);
+  harness.document.addEventListener('drop', listen);
+  await drag(row('agt_b1'), homeUngrouped);
+  harness.document.removeEventListener('drop', listen);
+  assert.deepEqual(seen, ['drop'], 'the drop reaches dnd.js');
   await mounted.unmount(); state.dispose();
 });
 
@@ -444,7 +454,7 @@ test("this node's groups run the Groups actions under their own names; a peer's 
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [ops], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" groupsActions=${() => live} />`);
   await harness.act(async () => { await timers.queue.shift().fn(); });
   const homes = [...mounted.container.querySelectorAll('details[data-fleet-home]')].map((d) => d.dataset.groupKey);
-  assert.deepEqual(homes, ['ops@desk'], "only this node's groups are home");
+  assert.deepEqual(homes, ['ops@desk', 'inst_self/ ungrouped-virtual'], "only this node's groups are home, its Ungrouped too; a restricted peer's virtual groups are not listed");
 
   const routed = island.homeActions(() => live, (g) => (g.name === 'ops@desk' ? ops : null));
   routed.openAddMember({ name: 'ops@desk', fleet_node: { id: 'inst_self', home: true } });
@@ -492,11 +502,12 @@ async function mountFusedLens(t, { focus = 'agents', query = '' } = {}) {
 test('fused Groups is driven by the Groups toolbar: its filter narrows every node, and the counts are the fused ones', async (t) => {
   const { harness, groups, root, toolbar } = await mountFusedLens(t);
   const keys = () => [...root.querySelectorAll('details[data-group-key]')].map((d) => d.dataset.groupKey);
-  assert.deepEqual(keys(), ['frontend-squad@desk', 'frontend-squad@forge', 'ops@forge']);
+  assert.deepEqual(keys(), ['frontend-squad@desk', 'frontend-squad@forge', 'ops@forge', 'inst_self/ ungrouped-virtual', 'inst_forge/ ungrouped-virtual'],
+    "each node's Ungrouped follows the real groups");
   await harness.act(() => { groups.setQuery('far-away'); });
   assert.deepEqual(keys(), ['frontend-squad@forge'], 'the filter matches a peer group by its member');
   assert.equal(toolbar.querySelector('#filter-groups-count').textContent, '1 / 3', 'the toolbar counts the fused listing');
-  assert.equal(toolbar.querySelector('#filter-groups-ungrouped'), null, "this node's virtual groups are not offered while fused");
+  for (const key of ['ungrouped', 'retired', 'conversations', 'replaced']) assert.ok(toolbar.querySelector(`#filter-groups-${key}`), `show ${key} is offered while fused`);
   assert.ok(toolbar.querySelector('#filter-groups-offline'));
   assert.ok(toolbar.querySelector('[data-groups-focus="processes"]'), 'the lens switch is there');
 });
@@ -627,4 +638,48 @@ test("the Groups toolbar follows the node of the fused group last clicked, and r
   await harness.act(() => { activeTab.value = 'usage'; });
   assert.equal(toolbar.toolbarNode.value, null, 'leaving the fused Groups view gives the toolbar back to the page');
   await mounted.unmount(); state.dispose();
+});
+
+test('fused Groups lists each node\'s virtual groups; a peer\'s paged lists come through its routes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, groupsStateMod] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
+    harness.importDashboardModule('js/groups-state.js'),
+  ]);
+  const values = new Map();
+  const prefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
+  const groups = groupsStateMod.createGroupsState({ prefs, resetOffsets: () => {}, reorder: (g) => g,
+    columns: { list: () => [], hidden: () => false, setHidden: () => {}, deviationCount: () => 0 } });
+  groups.initialize();
+  groups.setVisible('retired', true);
+  groups.publish({ groups: [group('ops')], agents: [], ungrouped: [{ agent_id: 'agt_loose', conv_id: 'cl', title: 'loose', online: true }],
+    retired: [{ conv_id: 'cr', title: 'old-hand' }], paging: { retired: { offset: 0, limit: 50, total: 1, total_unfiltered: 1 } } });
+  const fleet = stateMod.createFleetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  fleet.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab00', label: 'lab', trusted: true, online: true }] });
+  const fetched = [];
+  const fetchImpl = async (url) => {
+    fetched.push(url);
+    if (url.startsWith('/api/peer/inst_forge/retired?')) return { ok: true, status: 200, json: async () => ({ rows: [{ conv_id: 'cf', title: 'forge-veteran' }], total: 1 }) };
+    if (url.startsWith('/api/peer/inst_forge/')) return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], ungrouped: [], peer_view: { level: 'unrestricted' } }) };
+    return { ok: true, status: 200, json: async () => ({ groups: [group('qa')], agents: [], ungrouped: [], peer_view: { level: 'restricted', included: [] } }) };
+  };
+  const timers = fakeTimers();
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${fleet} host=${host} snapshot=${groups.snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" groups=${groups} />`, host);
+  for (const first of timers.queue.splice(0)) await harness.act(async () => { await first.fn(); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  const virtuals = () => [...mounted.container.querySelectorAll('details.group-virtual')].map((d) => `${d.dataset.groupKey}:${d.dataset.fleetNode}`);
+  assert.deepEqual(virtuals(), ['inst_self/ ungrouped-virtual:inst_self', 'inst_forge/ ungrouped-virtual:inst_forge',
+    'inst_self/ retired-virtual:inst_self', 'inst_forge/ retired-virtual:inst_forge'], 'per node, the restricted lab left out');
+  const retiredForge = mounted.container.querySelector('details[data-group-key="inst_forge/ retired-virtual"]');
+  assert.match(retiredForge.querySelector('summary').textContent, /Retired@forge/);
+  assert.match(retiredForge.textContent, /forge-veteran/);
+  assert.ok(fetched.some((u) => /^\/api\/peer\/inst_forge\/retired\?offset=0&limit=\d+$/.test(u)), "forge's first page, through its peer route");
+  assert.equal(fetched.some((u) => u.startsWith('/api/peer/inst_lab00/retired')), false);
+  const home = mounted.container.querySelector('details[data-group-key="inst_self/ ungrouped-virtual"]');
+  assert.equal(home.dataset.dndTargetUngrouped, '1', "this node's Ungrouped takes drops");
+  assert.equal(mounted.container.querySelector('details[data-group-key="inst_forge/ ungrouped-virtual"]').dataset.dndTargetUngrouped, undefined);
+  assert.match(home.textContent, /loose/);
+  await mounted.unmount(); fleet.dispose();
 });
