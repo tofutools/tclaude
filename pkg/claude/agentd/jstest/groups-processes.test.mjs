@@ -489,6 +489,15 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(section(fe, 'agents').querySelector('table'), null, 'Agents folds too');
   assert.ok(head(fe, 'agents').querySelector('.gf-section-actions [data-act="spawn-agent"]'), 'folded Agents keeps its controls on the line');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '0');
+  // A control on the folded line unfolds its section, so what it spawns shows.
+  await harness.act(() => harness.fireEvent(head(fe, 'agents').querySelector('[data-act="spawn-agent"]'), 'click'));
+  assert.ok(section(fe, 'agents').querySelector('table'), 'spawning from the folded line unfolds Agents');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '1');
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-toggle'), 'click'));
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '0', 'Processes folded again');
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'click'));
+  assert.ok(section(infra, 'processes').classList.contains('open'), 'a process control on the folded line unfolds Processes');
+  assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1');
 });
 
 for (const status of ['idle', 'unavailable']) {

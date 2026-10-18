@@ -531,11 +531,18 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // row already shows (its member bots and process graphs). The label, and the empty
 // rest of the line, fold the section; the choice is remembered per group
 // (see groups-fused-sections.js), and `force` holds it open while a start
-// or edit form inside needs it.
+// or edit form inside needs it. A button on a folded line unfolds the
+// section too, so what it spawns or starts shows up rather than landing out
+// of sight; the click itself still reaches the button's handler.
 export function FusedSection({ group, section, label, auto = true, force = false, attrs = {}, actions = null, closedActions = null, children }) {
   const [, bump] = useState(0);
   const open = force || fusedSectionOpen(group, section, auto);
   const toggle = () => { if (!force) { setFusedSectionOpen(group, section, !open); bump((n) => n + 1); } };
+  const unfold = (event) => {
+    if (open || !event.target.closest?.('button')) return;
+    setFusedSectionOpen(group, section, true);
+    bump((n) => n + 1);
+  };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
     <div class="gf-section-head">
@@ -543,7 +550,7 @@ export function FusedSection({ group, section, label, auto = true, force = false
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
       </button>
-      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions">${!open && closedActions}${actions}</span>`}
+      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions" onClickCapture=${unfold}>${!open && closedActions}${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
     </div>
     ${open && children}
