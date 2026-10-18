@@ -4177,6 +4177,10 @@ or `{conv:CONV,read:true}` under the separate, off-by-default instance-wide
 `node.messages.manage` grant. It changes agent mail read state only. Delete,
 wipe and human message mutations are not shared through these routes; a
 human notification's read state is `node.messages.mark-read`'s (above).
+Deleting agent mail (`/api/mailbox/delete`, `/api/mailbox/wipe`) and human
+notifications (`/api/human-messages/delete`, `/api/human-messages/clear`) has
+no peer grant: a peer that trusts you unrestricted serves them as it does its
+own operator.
 
 A human notification's files are part of the mail `node.messages.read` shows.
 `GET /api/peer-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only) reads one

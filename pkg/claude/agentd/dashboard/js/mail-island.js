@@ -29,6 +29,7 @@ function openPeerMail(detail) {
   document.dispatchEvent(new CustomEvent(PEER_MAIL_EVENT, { detail }));
 }
 import { TTL_CHOICES, ttlText } from './peer-access.js';
+import { LockReason, trustLock } from './lock-reason.js';
 import { slugInfo } from './fleet-admin-model.js';
 import { RemoteInboxSection } from './remote-inbox.js';
 
@@ -67,8 +68,9 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
       ? `${mailbox.unread || 0} pending · ${mailbox.total} total access request${mailbox.total === 1 ? '' : 's'}`
       : `${mailbox.in} received · ${mailbox.out} sent`;
   let lead = null;
-  // Wiping is this node's own: a peer never serves it.
-  if (mailbox.kind === 'agent' && !nested && !remoteNodeID()) {
+  // Wiping is this node's operator's: a peer serves it under unrestricted
+  // trust only.
+  if (mailbox.kind === 'agent' && !nested && operatorHere()) {
     lead = html`<input type="checkbox" class="mail-box-check" data-conv=${mailbox.id}
       checked=${current.selectedBoxes.has(mailbox.id)} disabled=${current.busy} title="Select for bulk wipe"
       onChange=${(event) => controller.toggleBoxSelection(mailbox.id, event.currentTarget.checked)} />`;
@@ -140,7 +142,7 @@ function MailSidebar({ current, controller }) {
       : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
           label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
-      ${!remoteNodeID() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
+      ${operatorHere() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
       ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
@@ -178,7 +180,7 @@ function MessageRow({ message, current, aggregate, controller }) {
     onCheck=${(checked) => controller.toggleMessageSelection(message.id, checked)}
     onSelect=${() => controller.selectMessage(message.id, { navigate: true })}
     onDelete=${() => controller.deleteOneMessage(message.id)}
-    canDelete=${!remoteNodeID()} deleteTitle=${remoteNodeID() ? 'Only this node’s operator can delete its messages' : 'Delete this message'} />`;
+    canDelete=${operatorHere()} deleteTitle=${trustLock('', 'deleting its messages') || 'Delete this message'} />`;
 }
 
 function MessageList({ current, controller, model }) {
@@ -261,11 +263,18 @@ function FolderActions({ current, controller, solo = false }) {
       shellToast(`marked ${res?.marked || 0} message(s) read on ${name}`);
       controller.reloadMail();
     }, (e) => shellToast(`Mark all read failed: ${e?.message || e}`, true));
+    const clearLock = trustLock('', 'deleting its notifications');
+    const clearRead = () => shellConfirm({
+      title: 'Delete read messages?', body: `Permanently deletes every notification on ${name} that has been marked read. Unread ones are kept.`,
+      okLabel: 'Delete read', busyLabel: 'Deleting…', action: () => postPeerJSON('/api/human-messages/clear', {}),
+    }).then((res) => { if (res) { shellToast(`Deleted read notifications on ${name}`); controller.reloadMail(); } },
+      (e) => shellToast(`Delete failed: ${e?.message || e}`, true));
     return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
       <button id="mail-mark-all" disabled=${!canMark} onClick=${markAll}
-        title=${canMark ? `Mark every human notification on ${name} read` : `${name} shares its notifications for reading only (marking them read needs its node.messages.mark-read)`}>✓ mark all read</button>
+        title=${canMark ? `Mark every human notification on ${name} read` : undefined}>✓ mark all read</button><${LockReason} why=${canMark ? '' : `${name} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.`} />
       <button id="mail-peer-compose" disabled title="Message a peer's operator from this node's own Messages">✉ peer</button>
-      <button class="danger" id="mail-clear-read" disabled title=${`Only ${name}'s own operator deletes its notifications`}>🗑 delete read</button>
+      <button class="danger" id="mail-clear-read" disabled=${!!clearLock} onClick=${clearRead}
+        title=${clearLock ? undefined : `Delete every human notification on ${name} that has been marked read`}>🗑 delete read</button><${LockReason} why=${clearLock} />
     </span>`;
   }
   return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
@@ -284,7 +293,6 @@ function FolderActions({ current, controller, solo = false }) {
 function MessageBulkBar({ current, controller, model }) {
   // "All agent messages" and group folders span many inboxes, so no
   // folder-wide action applies there.
-  const remote = remoteNodeID();
   const folderActions = !model.access && current.selected !== 'all' && !current.selected.startsWith('group:');
   if (model.access) return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
   if (current.busy && current.progress?.where === 'bulk') {
@@ -299,7 +307,8 @@ function MessageBulkBar({ current, controller, model }) {
   }
   const count = current.selectedMsgs.size;
   const allChecked = model.messages.every(message => current.selectedMsgs.has(message.id));
-  // Deleting a peer's mail is its own operator's call.
+  // Deleting a peer's mail is its operator's: unrestricted trust only.
+  const deleteLock = trustLock('', 'deleting its messages');
   return html`<div id="mail-bulk-bar" class="mail-bulk-bar">
     <${SelectAll} checked=${allChecked} onChange=${controller.togglePageSelection} />
     <span class="grow">${count ? `${count} selected` : ''}</span>
@@ -307,9 +316,9 @@ function MessageBulkBar({ current, controller, model }) {
       onClick=${() => controller.setMessagesRead([...current.selectedMsgs], true)}>✓ read</button>
       <button disabled=${count === 0} title="Mark the selected messages unread"
         onClick=${() => controller.setMessagesRead([...current.selectedMsgs], false)}>○ unread</button></${Fragment}>`}
-    <button class="danger" disabled=${count === 0 || !!remote}
-      title=${remote ? `Only ${remoteNodeName(remote)}'s own operator deletes its messages` : 'Delete the selected messages'}
-      onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button>
+    <button class="danger" disabled=${count === 0 || !!deleteLock}
+      title=${deleteLock ? undefined : 'Delete the selected messages'}
+      onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button><${LockReason} why=${deleteLock} />
     ${folderActions && html`<${FolderActions} current=${current} controller=${controller} />`}
   </div>`;
 }
@@ -490,6 +499,16 @@ function senderHarness(message) {
   return sender?.state?.harness || '';
 }
 
+// operatorHere reports whether this operator deletes and wipes the mail this
+// page shows: this node's own, or a peer's that trusts it unrestricted.
+function operatorHere() {
+  return !remoteNodeID() || featureState('local_dashboard', dashboardState.snapshot.value?.peer_view) === 'shared';
+}
+
+// openRemote opens a peer agent's terminal here, through the federation
+// bridge (remote-terminal.js), loaded on first use.
+const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+
 // remoteNodeName is how this page names the peer it shows.
 function remoteNodeName(remote) {
   return document.documentElement.dataset.remoteNodeName || remote.slice(0, 13);
@@ -506,9 +525,15 @@ async function postPeerJSON(url, body) {
 // peerHumanActions answer a notification on the peer this page shows: the
 // page's fetch sends /api/human-inbox to that peer.
 function peerHumanActions(remote, peerView) {
+  const name = remoteNodeName(remote);
   return {
-    name: remoteNodeName(remote), exportNode: remote,
+    name, exportNode: remote,
     canAnswer: featureState('human.inbox.answer', peerView) === 'shared', canMark: humanReadShared(peerView),
+    // Deleting has no peer grant: unrestricted trust reaches the peer's own
+    // route, as its operator does.
+    canDelete: operatorHere(),
+    remove: (id) => postPeerJSON('/api/human-messages/delete', { id }),
+    focus: (m) => openRemote({ instance: remote, agent: m.from_agent, peerLabel: name, label: m.from_title || '', toast: shellToast }),
     mark: (id, read) => postPeerJSON('/api/human-inbox/read', read ? { id } : { id, read: false }),
     reply: (id, body) => postPeerJSON('/api/human-inbox/reply', { id, body }),
   };
@@ -544,12 +569,13 @@ function MessageReader({ current, controller, model }) {
       harness=${remote ? '' : senderHarness(message)} toast=${shellToast} onDone=${controller.reloadMail} before=${lead}
       peer=${remote ? peerHumanActions(remote, dashboardState.snapshot.value?.peer_view) : null} />`;
   } else {
+    const deleteLock = trustLock('', 'deleting its messages');
     actions = html`<div class="mail-reader-actions">
       <button onClick=${() => controller.setMessagesRead([message.id], !message.read)}
         data-id=${message.id} title=${message.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}>${message.read ? 'mark unread' : 'mark read'}</button>
       <span class="spacer"></span>
-      <button class="danger" data-id=${message.id} disabled=${!!remote}
-        onClick=${() => controller.deleteOneMessage(message.id)} title=${remote ? `Only ${remoteNodeName(remote)}'s own operator deletes its messages` : 'Permanently delete this message'}>delete</button>
+      <button class="danger" data-id=${message.id} disabled=${!!deleteLock}
+        onClick=${() => controller.deleteOneMessage(message.id)} title=${deleteLock ? undefined : 'Permanently delete this message'}>delete</button><${LockReason} why=${deleteLock} />
     </div>`;
   }
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}

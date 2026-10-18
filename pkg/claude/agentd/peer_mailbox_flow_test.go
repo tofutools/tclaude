@@ -93,6 +93,15 @@ func TestPeerMailboxReadGrantPagingAndLiveRevocation(t *testing.T) {
 	// Deleting mail has no peer grant: unrestricted trust reaches it as the
 	// local operator does.
 	require.NotEqual(t, 403, serve("POST", "/api/mailbox/delete", body).Code)
+	// So does deleting human notifications, one or every read one.
+	note, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: mbAlice, Body: "delete me"})
+	require.NoError(t, err)
+	rec = serve("POST", "/api/human-messages/delete", map[string]any{"id": note})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	gone, err := db.GetHumanMessage(note)
+	require.True(t, gone == nil || err != nil, "the notification is deleted")
+	rec = serve("POST", "/api/human-messages/clear", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 }
 
 // node.messages.mark-read is the grantable part of a human notification's

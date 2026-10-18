@@ -981,9 +981,14 @@ human notifications carry the same buttons as this node's (reply, focus, mark
 read/unread, download, delete). Opening one marks it read on the peer, and
 mark read/unread and the folder's mark all read go to the peer, when it grants
 you `node.messages.mark-read`; reply needs its unrestricted trust. Download builds
-the Markdown or zip from the peer under `node.messages.read`. Focus, deleting
-and wiping stay with the peer's own operator and are greyed, and its access
-requests are answered in the fused Messages view.
+the Markdown or zip from the peer under `node.messages.read`. Focus opens the
+sending agent's terminal here through the federation bridge (as its Groups
+row's attach does, so the peer's `sessions.watch` / `sessions.attach` decide),
+never a window on the peer's host, and marks the notification read. Deleting
+(a message, the selection, delete read) and wiping work when the peer trusts
+you unrestricted. A control the peer withholds stays in place, disabled, with
+a 🔒 whose hover names what it needs. Its access requests are answered in the
+fused Messages view.
 
 A group's quick options — description, default directory (typed: the folder
 browser reads this machine), member cap, default profile, sandbox profile and
@@ -1181,16 +1186,17 @@ with its age; a node no longer trusted drops it. Bodies are shown as text.
 
 Actions go to the node that owns the message. Mark read/unread on agent
 messages (one, the selection, or an agent folder's mark all read) needs that
-node's `node.messages.manage`; only this node's messages can be deleted from
-here. A reply to an agent goes through its `operator-message` route
+node's `node.messages.manage`; deleting needs the node to be this one or to
+trust you unrestricted. A reply to an agent goes through its `operator-message` route
 (`message.direct`). This node's human notifications have the same buttons as
 in its own Messages (reply, focus, mark read/unread, download, delete), and
 so do a peer's: reply opens the same dialog (text only) and goes to the peer
 when it trusts you unrestricted. Opening a notification marks it read on its
 node, as in each node's own Messages, wherever mark read/unread is allowed:
 on this node, and on a peer that grants you `node.messages.mark-read`
-(unrestricted trust holds it). What a peer withholds is greyed, the
-notification read-only. Their files preview, play and
+(unrestricted trust holds it). Focus on a peer's notification opens the sending
+agent's terminal here through the federation bridge. What a node withholds
+stays in place, disabled, with a 🔒 saying what it needs. Their files preview, play and
 download as usual, read from the peer under the same `node.messages.read`.
 Access requests (approve once, deny) are answered here on this node and on
 peers that trust you unrestricted; approving says exactly what it lets
