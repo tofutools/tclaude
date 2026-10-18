@@ -54,6 +54,9 @@ const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRe
 export const MAIL_POLL_MS = 5000;
 const ROSTER_EVERY = 3; // mailboxes refresh every third page read
 const MAX_IN_FLIGHT = 4;
+// MISSES_BEFORE_UNCOUNTED is how many reads in a row a node may miss before
+// its count stops counting toward the merged totals.
+const MISSES_BEFORE_UNCOUNTED = 3;
 const SEARCH_DEBOUNCE_MS = 300;
 
 // The fused view keeps its own sticky choices, apart from this node's mail
@@ -156,6 +159,9 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
   const merged = !folder.node && scoped.length > 1;
   // sig names what a page shows; a page read for another folder is never shown.
   const sig = `${folderKey(folder)}:${scopeKey}:${q}:${page}:${pageSize}:${merged ? cursorKey(cursors) : ''}:${retired}`;
+  // countKey names what a node's count counts: the folder and filters, not
+  // the page on screen, so a count outlives the page it was read with.
+  const countKey = `${folderKey(folder)}:${scopeKey}:${q}:${retired}`;
   const rosterKey = JSON.stringify(rosters);
   useEffect(() => {
     if (!active || !nodes.length) return undefined;
@@ -187,7 +193,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
         const mode = !readers.includes(node) || (accessFolder && !answers) ? 'roster' : accessFolder ? 'requests' : 'page';
         if (mode === 'requests') {
           const data = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
-          commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, at: now() });
+          commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, misses: 0, at: now() });
           // Its folders still follow the sidebar filter and toggles.
           const url = rosterURL(node, rosters[node.id]);
           if (ref.current[node.id]?.rosterURL !== url) {
@@ -211,7 +217,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
               agentsUnread: Number.isFinite(roster?.agents_unread) ? roster.agents_unread : 0,
               // What a peer shares from here rides on its reads.
               peerView: roster?.peer_view || null,
-              ...(mode === 'roster' ? { status: null, at: now() } : {}),
+              ...(mode === 'roster' ? { status: null, misses: 0, at: now() } : {}),
             });
             // An unrestricted peer's access requests keep the sidebar count
             // current in every folder.
@@ -241,7 +247,8 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
                 totalUnfiltered: data?.total_unfiltered ?? data?.total ?? 0,
                 hasMore: !!data?.has_more, legacy: old,
               },
-              status: null, at: now(),
+              count: { key: countKey, total: data?.total || 0, totalUnfiltered: data?.total_unfiltered ?? data?.total ?? 0 },
+              misses: 0, status: null, at: now(),
             });
           }
         }
@@ -250,7 +257,9 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
         const f = readFailure(e.status || 0, e.body);
         // What it shares is heard again from its roster (a refusal may be a
         // trust change), so a refused human-inbox read is not repeated.
-        commit(node.id, f.kind === 'gone' || f.kind === 'not_shared' ? { status: f, mailboxes: [], page: null, requests: [], peerView: null } : { status: f });
+        commit(node.id, f.kind === 'gone' || f.kind === 'not_shared'
+          ? { status: f, mailboxes: [], page: null, requests: [], peerView: null, count: null }
+          : { status: f, misses: (ref.current[node.id]?.misses || 0) + 1 });
       } finally {
         inflight.delete(node.id);
       }
@@ -265,7 +274,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
   // This node's pending access requests come with the page's own snapshot.
   const local = nodes.find((n) => n.local);
   const localRequests = !remote && local ? (snapshot.value?.access_requests || []) : [];
-  return { entries, sig, merged, localRequests };
+  return { entries, sig, countKey, merged, localRequests };
 }
 
 function AccessReader({ item, node, peerView, busy, run, actions, confirm, toast, onDone }) {
@@ -487,7 +496,7 @@ export function FusedMail({
   const known = vectors.key === vectorKey ? vectors.list : [{}];
   const willMerge = !folder.node && scoped.length > 1;
   const shown = willMerge ? walkTarget(page, known) : page;
-  const { entries, sig, merged, localRequests } = useFusedMail({
+  const { entries, sig, countKey, merged, localRequests } = useFusedMail({
     active, nodes, scoped, folder, q, page: shown, pageSize, cursors: known[shown - 1] || {}, rosters, retired: toggles.retired, fetchImpl, localFetch, timers, now, snapshot, remote, reload,
   });
   // Recorded after the render that merged it (set below, past the early
@@ -508,9 +517,18 @@ export function FusedMail({
   const pageNodes = folder.node ? nodes.filter((n) => n.id === folder.node) : scoped;
   const nodeRequests = (node) => (node.local ? localRequests : canActOnHuman(node, entries[node.id]?.peerView) ? entries[node.id]?.requests : []) || [];
   const requestRows = mergeRequests(scoped.map((node) => ({ node, requests: nodeRequests(node) })));
-  const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig ? entries[n.id].page : null));
-  const total = pages.reduce((s, p) => s + (p?.total || 0), 0);
-  const totalUnfiltered = pages.reduce((s, p) => s + (p?.totalUnfiltered || 0), 0);
+  // In a merged folder a node's page and count hold while its page for this
+  // view is on the way, and through a slow or missed read: they are dropped
+  // only once the node misses MISSES_BEFORE_UNCOUNTED reads in a row or is
+  // reported offline, so the totals and page count do not flicker with one
+  // slow tick. (One node's own folder keeps its last page under its status.)
+  const counted = (n) => !merged || ((entries[n.id]?.misses || 0) < MISSES_BEFORE_UNCOUNTED && !(!n.local && n.online === false));
+  const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig && counted(n) ? entries[n.id].page : null));
+  const counts = pageNodes.map((n, i) => pages[i] || (entries[n.id]?.count?.key === countKey && counted(n) ? entries[n.id].count : null));
+  const total = counts.reduce((s, p) => s + (p?.total || 0), 0);
+  const totalUnfiltered = counts.reduce((s, p) => s + (p?.totalUnfiltered || 0), 0);
+  // A counted node whose page has not come yet may still have rows past it.
+  const awaited = pageNodes.some((n, i) => !pages[i] && counts[i]);
   // A peer's message files load through this node's peer attachment routes.
   const pageMessages = (node, i) => {
     const list = pages[i]?.messages || [];
@@ -532,7 +550,7 @@ export function FusedMail({
     ? mergedPage.rows.map(({ node, row }) => ({ ...row, key: messageKey(node, kind, row.id), node: nodeByID[node], kind }))
     : mergeMessages(pageNodes.map((node, i) => ({ node, kind, messages: pageMessages(node, i) })));
   const pageCount = isAccess ? 1 : mergedPage
-    ? (mergedPage.more ? Math.max(mergedPageCount(total, pageSize), shown + 1) : shown)
+    ? (mergedPage.more || awaited ? Math.max(mergedPageCount(total, pageSize), shown + (mergedPage.more ? 1 : 0)) : shown)
     : Math.max(1, Math.ceil(total / pageSize));
   const rows = allRows;
   const item = rows.find((r) => r.key === selected) || null;
@@ -544,8 +562,12 @@ export function FusedMail({
   // cursor vector: record it so Next (and a walk to a deeper page) can read
   // it. A node that is down gives no rows and no cursor, so the vectors are
   // only good while the same nodes are down; they are recorded with that set.
-  const absent = pageNodes.filter((n, i) => !pages[i] && entries[n.id]?.status).map((n) => n.id).join(',');
-  const answered = pageNodes.every((n, i) => pages[i] || entries[n.id]?.status);
+  // A node is down for the walk once it no longer counts (three misses in a
+  // row, or reported offline) or has gone or stopped sharing; one missed read
+  // keeps it in, as it keeps its count.
+  const down = (n) => !!entries[n.id]?.status && (!counted(n) || ['gone', 'not_shared'].includes(entries[n.id].status.kind));
+  const absent = pageNodes.filter((n, i) => !pages[i] && down(n)).map((n) => n.id).join(',');
+  const answered = pageNodes.every((n, i) => pages[i] || down(n));
   pendingVector.current = mergedPage && answered
     ? { key: vectorKey, absent, page: shown, next: mergedPage.next, more: mergedPage.more } : null;
 
