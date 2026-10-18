@@ -503,6 +503,14 @@ Groups. A tab attached to an agent on another node offers moving it here.
 Plain shells have no ⚙, and opening or using it never switches or closes the
 tab.
 
+An agent's terminal takes files: paste them (Ctrl/Cmd+V) or drag them in
+from a file manager. The dashboard uploads them next to the session (inside
+its sandbox where it has one) and types their paths into the prompt, quoted
+when a name needs it, as a desktop terminal does for a dropped file. Folders
+are skipped. This works the same in a remote agent's terminal attached
+interactively; a watch-only view takes nothing. A plain shell accepts pasted
+PNG, JPEG, and WebP images only.
+
 
 The Terminals tab is the in-dashboard terminal multiplexer. It is always
 shown, even with nothing open; its badge counts live panes, plus `+N`

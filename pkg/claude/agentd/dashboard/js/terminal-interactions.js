@@ -1,5 +1,5 @@
 // terminal-interactions.js — shared native-terminal affordances for every
-// dashboard xterm surface: selection/copy, safe links, and clipboard images.
+// dashboard xterm surface: selection/copy, safe links, and pasted/dropped files.
 
 import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
 import {
@@ -404,44 +404,75 @@ async function writeClipboard(text) {
   return legacyCopy(text);
 }
 
-function clipboardImages(e) {
-  const dt = e.clipboardData;
-  if (!dt) return { files: [], unsupported: false };
+// Arbitrary file paste and drop are for agent terminals only: the agent reads
+// the pasted path as an attachment. A plain shell keeps image paste but takes
+// no other files (agentd enforces the same split).
+export function isAgentTerminalPath(path) {
+  if (typeof path !== 'string') return false;
+  if (path.startsWith('/api/open-window-ws/') || path.startsWith('/api/spawn-focus-ws/')) return true;
+  if (!path.startsWith('/api/federation/terminal?')) return false;
+  const query = new URLSearchParams(path.slice(path.indexOf('?') + 1));
+  return query.has('agent') && !query.has('shell');
+}
+
+// terminalPathToken quotes an uploaded path the way a desktop terminal quotes
+// a dropped file, so a name with spaces or quotes stays one argument.
+export function terminalPathToken(path) {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+// transferFiles collects the files a paste or drop carries. Without anyFile
+// only PNG/JPEG/WebP images count; other image types report unsupported.
+// Folders cannot be uploaded and are reported, not read.
+export function transferFiles(dt, anyFile) {
   const files = [];
-  const seen = new Set();
   let unsupported = false;
-  const add = (file) => {
-    if (!file || !String(file.type || '').startsWith('image/')) return;
-    if (!IMAGE_TYPES.has(file.type)) { unsupported = true; return; }
+  let folders = false;
+  if (!dt) return { files, unsupported, folders };
+  const seen = new Set();
+  const add = (file, entry) => {
+    if (!file) return;
     const key = `${file.name || ''}|${file.size}|${file.type}`;
     if (seen.has(key)) return;
     seen.add(key);
+    if (entry && entry.isDirectory) { folders = true; return; }
+    if (!anyFile) {
+      if (!String(file.type || '').startsWith('image/')) return;
+      if (!IMAGE_TYPES.has(file.type)) { unsupported = true; return; }
+    }
     files.push(file);
   };
-  if (dt.files) {
-    for (let i = 0; i < dt.files.length; i++) add(dt.files[i]);
-  }
+  // Items first: only an item reveals that a dropped entry is a folder.
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
       const item = dt.items[i];
-      if (item.kind === 'file' && String(item.type || '').startsWith('image/')) add(item.getAsFile());
+      if (item.kind === 'file') add(item.getAsFile(), item.webkitGetAsEntry?.());
     }
   }
-  return { files, unsupported };
+  if (dt.files) {
+    for (let i = 0; i < dt.files.length; i++) add(dt.files[i]);
+  }
+  return { files, unsupported, folders };
 }
 
-async function uploadImages(files, signal, terminalPath) {
+// A clipboard screenshot arrives as a generic "image.png"; give it a unique
+// name. A named file keeps its own name on an agent terminal, while a shell
+// terminal's image-only endpoint wants the extension to match the MIME type.
+function uploadName(file, i, stamp, anyFile) {
+  const ext = IMAGE_TYPES.get(file.type);
+  if (ext && (!anyFile || !file.name || /^image\.\w+$/i.test(file.name))) return `pasted-image-${stamp}-${i + 1}.${ext}`;
+  return file.name || `pasted-file-${stamp}-${i + 1}`;
+}
+
+async function uploadFiles(files, signal, terminalPath, anyFile, fetchImpl) {
   const fd = new FormData();
   const stamp = Date.now();
-  files.forEach((file, i) => {
-    const ext = IMAGE_TYPES.get(file.type);
-    fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
-  });
+  files.forEach((file, i) => fd.append('file', file, uploadName(file, i, stamp, anyFile)));
   // A remote terminal's upload is proxied to the peer under /api/federation/,
   // which a peer-view page keeps local (remote-node.js rewrites other /api/).
   const base = terminalPath.startsWith('/api/federation/terminal?') ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
   const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
-  const res = await fetch(endpoint, {
+  const res = await fetchImpl(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
   if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
@@ -459,7 +490,7 @@ export function attachTerminalInteractions({
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
   downloadFile = null,
-  // A watch-only remote terminal takes no input, so no image upload either;
+  // A watch-only remote terminal takes no input, so no file upload either;
   // file downloads from a remote node are not offered (a separate grant).
   canInput = () => true,
   fileDownloads = true,
@@ -841,14 +872,11 @@ export function attachTerminalInteractions({
     return false;
   });
 
-  const onPaste = async (event) => {
-    const { files, unsupported } = clipboardImages(event);
-    if (!files.length) {
-      if (unsupported) { event.preventDefault(); flash('unsupported image type — use PNG, JPEG, or WebP'); }
-      return; // ordinary text paste remains xterm's responsibility
-    }
-    event.preventDefault();
-    event.stopPropagation();
+  const acceptsFiles = isAgentTerminalPath(terminalPath);
+
+  // uploadAndPaste stages files next to the session and types their paths into
+  // the prompt, exactly as a desktop terminal does for a dropped file.
+  const uploadAndPaste = async (files) => {
     if (!canInput()) { flash('watch-only: this terminal takes no input'); return; }
     if (uploadPending) return;
     const key = files.map(f => `${f.size}|${f.type}`).join(',');
@@ -860,19 +888,20 @@ export function attachTerminalInteractions({
     const myGeneration = generation;
     const controller = new AbortController();
     uploadController = controller;
-    flash(files.length === 1 ? 'uploading image…' : `uploading ${files.length} images…`, 30000);
+    const noun = files.every(f => IMAGE_TYPES.has(f.type)) ? 'image' : 'file';
+    flash(files.length === 1 ? `uploading ${noun}…` : `uploading ${files.length} ${noun}s…`, 30000);
     try {
-      const paths = await uploadImages(files, controller.signal, terminalPath);
+      const paths = await uploadFiles(files, controller.signal, terminalPath, acceptsFiles, fetchImpl);
       // Session changes invalidate pending uploads, so an old upload cannot
       // paste its path through a replacement session's WebSocket.
       if (controller.signal.aborted || generation !== myGeneration) return;
       if (!paths.length) throw new Error('upload returned no file path');
-      term.paste(paths.join(' ') + ' ');
-      flash(paths.length === 1 ? 'image pasted' : `${paths.length} images pasted`);
+      term.paste(paths.map(terminalPathToken).join(' ') + ' ');
+      flash(paths.length === 1 ? `${noun} pasted` : `${paths.length} ${noun}s pasted`);
     } catch (error) {
       if (controller.signal.aborted || error && error.name === 'AbortError') return;
       const detail = String(error && error.message || error).replace(/\s+/g, ' ').slice(0, 120);
-      flash(`image paste failed: ${detail}`, 5000);
+      flash(`${noun} paste failed: ${detail}`, 5000);
     } finally {
       if (uploadController === controller) {
         uploadController = null;
@@ -881,9 +910,56 @@ export function attachTerminalInteractions({
       }
     }
   };
-  // Capture on the host so image data is claimed before xterm's textarea paste
+
+  const onPaste = (event) => {
+    const { files, unsupported } = transferFiles(event.clipboardData, acceptsFiles);
+    if (!files.length) {
+      if (unsupported) { event.preventDefault(); flash('unsupported image type — use PNG, JPEG, or WebP'); }
+      return; // ordinary text paste remains xterm's responsibility
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    uploadAndPaste(files);
+  };
+  // Capture on the host so file data is claimed before xterm's textarea paste
   // listener; text-only events are untouched and continue into xterm normally.
   host.addEventListener('paste', onPaste, true);
+
+  // Dropping files from a file manager. Every file drag over the terminal is
+  // claimed, so a refused drop never falls through to the browser opening the
+  // file in place of the dashboard. Tab drags carry no Files and pass through.
+  const draggingFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+  const dropAllowed = () => acceptsFiles && canInput();
+  const setDropActive = (on) => host.classList?.toggle('terminal-file-drop', on);
+  const onDragEnter = (event) => {
+    if (!draggingFiles(event)) return;
+    if (!acceptsFiles) flash('file drop works in agent terminals only');
+    else if (!canInput()) flash('watch-only: this terminal takes no input');
+  };
+  const onDragOver = (event) => {
+    if (!draggingFiles(event)) return;
+    event.preventDefault();
+    const allowed = dropAllowed();
+    event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+    setDropActive(allowed);
+  };
+  const onDragLeave = (event) => {
+    if (!host.contains(event.relatedTarget)) setDropActive(false);
+  };
+  const onDrop = (event) => {
+    if (!draggingFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropActive(false);
+    if (!dropAllowed()) return;
+    const { files, folders } = transferFiles(event.dataTransfer, true);
+    if (!files.length) { flash(folders ? 'folders cannot be pasted — drop files instead' : 'no files to paste'); return; }
+    uploadAndPaste(files);
+  };
+  host.addEventListener('dragenter', onDragEnter);
+  host.addEventListener('dragover', onDragOver);
+  host.addEventListener('dragleave', onDragLeave);
+  host.addEventListener('drop', onDrop);
 
   function invalidate() {
     generation++;
@@ -910,6 +986,11 @@ export function attachTerminalInteractions({
       ownerDocument.removeEventListener('mousemove', onTmuxMouseMove, true);
       ownerDocument.removeEventListener('mouseup', onTmuxMouseUp, true);
       host.removeEventListener('paste', onPaste, true);
+      host.removeEventListener('dragenter', onDragEnter);
+      host.removeEventListener('dragover', onDragOver);
+      host.removeEventListener('dragleave', onDragLeave);
+      host.removeEventListener('drop', onDrop);
+      setDropActive(false);
       if (copyButton) copyButton.removeEventListener('click', copySelection);
       for (const d of disposables) { try { d.dispose(); } catch (_) { /* already disposed */ } }
     },

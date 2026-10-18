@@ -176,7 +176,18 @@ func handleDashboardTerminalAttachments(w http.ResponseWriter, r *http.Request) 
 	}
 	sweepStalePrivateAttachmentRoots()
 	sweepStaleAttachmentBatches(base)
-	storeDashboardAttachments(w, r, base, createBase)
+	storeDashboardAttachmentBatch(w, r, base, createBase, !isAgentTerminalPath(r.URL.Query().Get("terminal")))
+}
+
+// isAgentTerminalPath reports whether a validated terminal path attaches an
+// agent's own pane. Any file may be pasted or dropped there for the agent to
+// read; a plain shell terminal takes pasted images only.
+func isAgentTerminalPath(raw string) bool {
+	u, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(u.Path, "/api/open-window-ws/") || strings.HasPrefix(u.Path, "/api/spawn-focus-ws/")
 }
 
 // handleDashboardTerminalFile turns a host-local file hyperlink rendered by a

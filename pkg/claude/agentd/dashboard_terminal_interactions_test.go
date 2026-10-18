@@ -75,7 +75,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"host.addEventListener('paste', onPaste, true)",
 		"`${base}?terminal=${encodeURIComponent(terminalPath)}`",
 		"'/api/federation/terminal-attachments' : '/api/terminal-attachments'",
-		"term.paste(paths.join(' ') + ' ')",
+		"term.paste(paths.map(terminalPathToken).join(' ') + ' ')",
+		"host.addEventListener('drop', onDrop)",
+		"const acceptsFiles = isAgentTerminalPath(terminalPath)",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
 		"Option-drag to select on macOS; Shift-drag on Linux/Windows",
@@ -188,7 +190,7 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 	_, err = db.SetAgentGroupDefaultCwd("terminal-downloads", t.TempDir())
 	require.NoError(t, err)
 
-	r := newSpawnAttachUpload(t, []uploadPart{{filename: "pasted-image.png", data: []byte("png")}})
+	r := newSpawnAttachUpload(t, []uploadPart{{filename: "pasted-image.png", contentType: "image/png", data: []byte("\x89PNG\r\n\x1a\npng")}})
 	r.URL.Path = "/api/terminal-attachments"
 	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/group-term-ws/terminal-downloads")
 	mux := http.NewServeMux()
@@ -200,6 +202,28 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "pasted-image.png") {
 		t.Errorf("terminal attachment response missing stored file: %s", w.Body.String())
+	}
+
+	// A plain shell terminal takes pasted images only; arbitrary files are for
+	// agent terminals.
+	r = newSpawnAttachUpload(t, []uploadPart{{filename: "notes.md", data: []byte("# notes")}})
+	r.URL.Path = "/api/terminal-attachments"
+	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/group-term-ws/terminal-downloads")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusUnsupportedMediaType, w.Code, w.Body.String())
+}
+
+func TestIsAgentTerminalPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/api/open-window-ws/agt_1":            true,
+		"/api/spawn-focus-ws/label":            true,
+		"/api/term-ws/agt_1?which=current":     false,
+		"/api/group-term-ws/team":              false,
+		"/api/federation/terminal?agent=agt_1": false,
+		"not a path":                           false,
+	} {
+		assert.Equal(t, want, isAgentTerminalPath(path), path)
 	}
 }
 

@@ -352,6 +352,17 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-pane-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
 .mux-pane-xterm .xterm-scrollable-element > .scrollbar { display: none; }
 
+/* Files dragged over an agent terminal: say what releasing does. */
+.terminal-file-drop { position: relative; }
+.terminal-file-drop::after {
+  content: 'Drop to paste file paths';
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed #1f6feb; border-radius: 6px;
+  background: rgba(31, 111, 235, 0.14);
+  color: #c9d1d9; font-size: 13px; font-weight: 600;
+}
+
 /* A settled terminal disconnect needs a stronger cue than the small status
    label in the header. Keep the curtain inside the xterm host so the pane's
    header — especially its Reconnect control — stays available. The same pane

@@ -2946,13 +2946,15 @@ Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
 `limit`. A stalled connection can be aborted without delaying viewer cleanup.
 Detach closes the viewer and never stops the agent.
 
-Image paste uses local-only `POST /api/federation/terminal-attachments?terminal=`
+File paste and drop use local-only `POST /api/federation/terminal-attachments?terminal=`
 with the encoded remote socket path and the same multipart `file` fields and
-JSON response as local terminal uploads. It requires interactive attach. Image
-bodies travel over the shared authenticated bundle stream, not control frames.
+JSON response as local terminal uploads. It requires interactive attach, which
+already types freely into the agent, so any file type is accepted. Bodies
+travel over the shared authenticated bundle stream, not control frames.
 The receiver validates the pinned attach authority during transfer and before
-and after staging, verifies length/digest/FIN, then reapplies PNG/JPEG/WebP MIME
-and extension checks and the existing file/count/total caps. It returns paths
+and after staging, verifies length/digest/FIN, then applies the existing
+file/count/total caps. An older receiver still accepts PNG/JPEG/WebP only and
+refuses other files with `415`. It returns paths
 on the target, including its existing sandbox attachment root where needed.
 Remote `/api/terminal-file` downloads remain refused with `403 not_shared`;
 file download needs a separate future permission.

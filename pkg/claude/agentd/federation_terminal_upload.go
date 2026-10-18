@@ -46,7 +46,7 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		return
 	}
 	if u.Query().Get("mode") != "interactive" {
-		writeError(w, 403, "permission_denied", "image paste requires interactive attach")
+		writeError(w, 403, "permission_denied", "file paste requires interactive attach")
 		return
 	}
 	peer, p, err := resolveFedTerminalTarget(u.Query().Get("agent")+"@"+u.Query().Get("peer"), false)
@@ -139,7 +139,7 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		err = conn.CloseWrite()
 	}
 	if err != nil {
-		writeError(w, 502, "upload", "image transfer failed")
+		writeError(w, 502, "upload", "file transfer failed")
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(conn, 64<<10))
@@ -153,7 +153,7 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		writeError(w, 403, "permission_denied", "peer no longer trusted")
 		return
 	}
-	fedTerminalAudit("sessions.attach.upload", "", peer.InstanceID, p.Agent, p.Group, "image paste", reply.Status)
+	fedTerminalAudit("sessions.attach.upload", "", peer.InstanceID, p.Agent, p.Group, "file paste", reply.Status)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "sandbox")
@@ -261,7 +261,9 @@ func (rt *fedRuntime) receiveTerminalUpload(peer *db.FederationPeer, env *proto.
 	} else {
 		r := &http.Request{Method: "POST", Header: make(http.Header), Body: io.NopCloser(&terminalUploadReader{ctx: ctx, r: file})}
 		r.Header.Set("Content-Type", req.ContentType)
-		storeDashboardAttachmentBatch(rec, r, base, create, true)
+		// The pinned target is an interactive agent attach, which already
+		// types freely into the agent, so any file may land in its root.
+		storeDashboardAttachmentBatch(rec, r, base, create, req.Target.Shell != "")
 	}
 	if rec.status == 200 && !pin.authorized(peer.InstanceID, req.Target) {
 		var staged spawnAttachmentsResponse
@@ -271,7 +273,7 @@ func (rt *fedRuntime) receiveTerminalUpload(peer *db.FederationPeer, env *proto.
 		}
 		return
 	}
-	recordFederationAudit("sessions.attach.upload", peerDisplay(peer), pin.conv, req.Target.Group, "image paste", rec.status)
+	recordFederationAudit("sessions.attach.upload", peerDisplay(peer), pin.conv, req.Target.Group, "file paste", rec.status)
 	raw, err := json.Marshal(fedTerminalUploadReply{Status: rec.status, Body: rec.body.Bytes()})
 	if err == nil {
 		_, err = conn.Write(raw)

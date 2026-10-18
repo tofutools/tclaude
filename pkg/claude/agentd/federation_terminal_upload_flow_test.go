@@ -9,6 +9,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,16 +25,23 @@ import (
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
+const terminalTestPNG = "\x89PNG\r\n\x1a\nimage-data"
+
 func terminalImageMultipart(t *testing.T, mimeType string) ([]byte, string) {
+	t.Helper()
+	return terminalFileMultipart(t, "paste.png", mimeType, terminalTestPNG)
+}
+
+func terminalFileMultipart(t *testing.T, filename, mimeType, data string) ([]byte, string) {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	header := textproto.MIMEHeader{}
-	header.Set("Content-Disposition", `form-data; name="file"; filename="paste.png"`)
+	header.Set("Content-Disposition", `form-data; name="file"; filename="`+filename+`"`)
 	header.Set("Content-Type", mimeType)
 	part, err := writer.CreatePart(header)
 	require.NoError(t, err)
-	_, err = part.Write([]byte("\x89PNG\r\n\x1a\nimage-data"))
+	_, err = part.Write([]byte(data))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	return body.Bytes(), writer.FormDataContentType()
@@ -104,11 +112,17 @@ func TestDashboardFederationTerminalImageUploadProxy(t *testing.T) {
 	}
 }
 
-func TestFederationTerminalImageUploadTargetAuthorityAndMime(t *testing.T) {
+// An interactive attach may paste any file into the agent, not only images;
+// watch may paste nothing.
+func TestFederationTerminalFileUploadTargetAuthority(t *testing.T) {
 	for _, test := range []struct {
-		name, slug, mimeType string
-		status               int
-	}{{"watch", agentd.PermSessionsWatch, "image/png", 403}, {"attach", agentd.PermSessionsAttach, "image/png", 200}, {"mime", agentd.PermSessionsAttach, "text/html", 415}} {
+		name, slug, filename, mimeType, data string
+		status                               int
+	}{
+		{"watch", agentd.PermSessionsWatch, "paste.png", "image/png", terminalTestPNG, 403},
+		{"attach image", agentd.PermSessionsAttach, "paste.png", "image/png", terminalTestPNG, 200},
+		{"attach file", agentd.PermSessionsAttach, "notes.md", "text/markdown", "# notes\n", 200},
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			fh := newFedHarness(t)
 			f, p := fh.f, fh.peer
@@ -128,7 +142,7 @@ func TestFederationTerminalImageUploadTargetAuthorityAndMime(t *testing.T) {
 			incarnation := terminalCatalogIncarnation(t, fh, aid)
 			rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": test.slug, "scope": "group=team"})
 			require.Equal(t, 200, rec.Code)
-			raw, contentType := terminalImageMultipart(t, test.mimeType)
+			raw, contentType := terminalFileMultipart(t, test.filename, test.mimeType, test.data)
 			d := bundletransfer.New(bundletransfer.Type{Name: "terminal-image"}, raw, "", time.Now().Add(time.Minute))
 			d.Inline = nil
 			fedGrantConfig(t, fh)
@@ -192,7 +206,8 @@ func TestFederationTerminalImageUploadTargetAuthorityAndMime(t *testing.T) {
 				require.Len(t, result.Body.Files, 1)
 				stored, err := os.ReadFile(result.Body.Files[0].Path)
 				require.NoError(t, err)
-				require.Equal(t, []byte("\x89PNG\r\n\x1a\nimage-data"), stored)
+				require.Equal(t, test.data, string(stored))
+				require.Equal(t, test.filename, filepath.Base(result.Body.Files[0].Path))
 				require.True(t, strings.HasPrefix(result.Body.Dir, root+string(os.PathSeparator)))
 			} else {
 				entries, err := os.ReadDir(root)
