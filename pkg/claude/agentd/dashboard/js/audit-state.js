@@ -17,6 +17,8 @@ export function createAuditState({ activeTab = dashboardState.activeTab, activit
     retainPayloadOnError: false,
     onBegin() { lastFetchedAt = now(); },
     onCommit(data) {
+      // The merged view's page is synthetic: keep the operator's sort.
+      if (data.merged) return;
       if (typeof data.page === 'number') page.value = data.page;
       if (typeof data.page_size === 'number') pageSize.value = data.page_size;
       if (data.sort) sort.value = data.sort;
