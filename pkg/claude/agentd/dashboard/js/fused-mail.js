@@ -613,7 +613,8 @@ export function FusedMail({
       body: `This permanently deletes ${mine.length === 1 ? 'it' : 'them'} on ${[...groups.keys()].map((n) => n.name).join(', ')}.${skipped ? ` ${skipped} on other nodes stay: only their operators can delete them.` : ''}`,
       okLabel: 'Delete', busyLabel: 'Deleting…',
       action: async () => { for (const [node, rs] of groups) await acts.current.deleteLocal(node, isHuman ? 'human' : 'all', rs.map((r) => r.id)); },
-    }).catch((e) => { toast(`Delete failed: ${errText(e)}`, true); return false; });
+    // One node failing leaves the ones before it deleted: re-read either way.
+    }).catch((e) => { toast(`Delete failed: ${errText(e)}`, true); setReload((r) => r + 1); return false; });
     if (ok) { toast(`Deleted ${mine.length}`, false); setChecked(new Set()); setSelected(''); setReload((r) => r + 1); }
   };
   const folderNode = folder.node ? nodes.find((n) => n.id === folder.node) : null;
