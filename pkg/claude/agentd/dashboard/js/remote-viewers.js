@@ -116,12 +116,14 @@ export function openViewers(agentId, doc = globalThis.document) {
 
 // ViewersBadge marks an agent that a peer is watching (👁) or typing into (⌨)
 // right now, naming the peer. Peer labels and instance IDs are rendered as
-// text only.
-export function ViewersBadge({ agentId: selector, session = '', rows = remoteViewers.value, label = peerLabel, open = openViewers, className = '' }) {
+// text only. compact (an agent row) shows the glyph alone, like the row's
+// other indicators: a long peer name would widen the row, and the hover and
+// aria-label name every viewer.
+export function ViewersBadge({ agentId: selector, session = '', rows = remoteViewers.value, label = peerLabel, open = openViewers, className = '', compact = false }) {
   const agentId = agentIDOf(selector);
   const s = viewerSummary(viewersOf(rows, agentId, session), label);
   if (!s) return null;
   const onClick = (e) => { e.preventDefault(); e.stopPropagation(); open(agentId || session); };
   return html`<button type="button" class=${`remote-viewers-badge${s.typing ? ' typing' : ''}${className ? ` ${className}` : ''}`}
-    data-viewers=${agentId || session} title=${s.title} aria-label=${s.title} onClick=${onClick}>${s.typing ? '⌨' : '👁'} ${s.text}</button>`;
+    data-viewers=${agentId || session} title=${s.title} aria-label=${s.title} onClick=${onClick}>${s.typing ? '⌨' : '👁'}${compact ? '' : ` ${s.text}`}</button>`;
 }

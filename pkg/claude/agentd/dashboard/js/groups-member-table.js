@@ -208,7 +208,7 @@ export function HarnessLine({ member, snapshot, local = true }) {
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
   // A peer watching or typing into this agent's pane right now (federation).
   const viewed = local && member.online && member.agent_id ? viewersOf(remoteViewers.value, member.agent_id).length > 0 : false;
-  const viewers = viewed ? html`<${ViewersBadge} agentId=${member.agent_id} />` : null;
+  const viewers = viewed ? html`<${ViewersBadge} agentId=${member.agent_id} compact />` : null;
   const drive = driveTooltip(state);
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
