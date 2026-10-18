@@ -255,7 +255,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // A spawn into a peer's group (agent-spawn-remote.js) keeps this dialog
   // but sends a remote spawn request and never touches this node's state.
   const remote = current.remote || null;
-  const actions = useMemo(() => (remote ? createRemoteSpawnActions(localActions, remote, { notify }) : localActions), [remote, localActions]);
+  // A spawn on another node under unrestricted trust (current.target) runs
+  // as that node's own dialog would, through its routes (actions.forNode).
+  const target = current.target || null;
+  const actions = useMemo(() => (remote ? createRemoteSpawnActions(localActions, remote, { notify })
+    : target ? localActions.forNode(target) : localActions), [remote, target, localActions]);
+  const away = !!target;
+  const awayHint = away ? `${target.name || 'That node'}'s folders are browsed from its own dashboard; type the path` : '';
   // Disable what the remote request cannot carry, for as long as the dialog
   // lives (see watchRemoteSpawnLocks): fail-closed for controls added later too.
   useLayoutEffect(() => (remote
@@ -1183,7 +1189,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   >
     <h3 id="agent-spawn-title">${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
-      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : ''}</h3>
+      : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new familiar" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
@@ -1206,8 +1212,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <button id="agent-spawn-clear" type="button" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
           onClick=${() => changeProfile('')}>Clear</button>
-        <button id="agent-spawn-save-profile" type="button" disabled=${busy}
-          title="Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)"
+        <button id="agent-spawn-save-profile" type="button" disabled=${busy || !actions.canSaveProfile}
+          title=${actions.canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)" : `Save a profile from ${target?.name || 'that node'}'s own dashboard`}
           onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as pattern…" /></button>
       </div></div>
     </label>
@@ -1247,7 +1253,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           hint=${remotePromptsOpen
             ? `${remote.node}'s prompts are applied by ${remote.node}; this node's are written into the brief.`
             : `Prompts ${remote.node} does not apply itself are written into the brief.`}/>`
-        : html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []}
+        : html`<${SavedPromptChips} id="agent-spawn-prompt-refs" value=${draft.promptRefs || []} node=${target?.node || ''}
           onChange=${(refs) => update('promptRefs', refs)} disabled=${busy} confirmDiscard=${confirmDiscard}/>`}
     </div>
     <div class="cron-create-row" id="agent-spawn-attachments-row"
@@ -1575,8 +1581,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <input id="agent-spawn-cwd" type="text" value=${draft.cwd} disabled=${busy}
         onInput=${(event) => { touched.current.add('cwd'); operatorSet.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
         placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
-      <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
-        title="Browse for a directory" onClick=${() => { void browse('cwd'); }}>
+      <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
+        title=${awayHint || 'Browse for a directory'} onClick=${() => { void browse('cwd'); }}>
         ${browseBusy === 'cwd' ? 'Opening…' : 'Browse…'}
       </button>
     </label>
@@ -1588,8 +1594,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <datalist id="agent-spawn-subrepo-list">
         ${(worktrees.subRepos || []).map((repo) => html`<option key=${repo.path} value=${repo.path}>${repo.rel}</option>`)}
       </datalist>
-      <button id="agent-spawn-wt-repo-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
-        title="Browse for a directory" onClick=${() => { void browse('repo'); }}>
+      <button id="agent-spawn-wt-repo-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
+        title=${awayHint || 'Browse for a directory'} onClick=${() => { void browse('repo'); }}>
         ${browseBusy === 'repo' ? 'Opening…' : 'Browse…'}
       </button>
     </label>
