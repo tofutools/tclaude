@@ -1,7 +1,8 @@
 // launch-target-dialog.js — one dialog for sending an agent elsewhere
 // (tcl-o9d5d9): Move, Teleport, Clone, Morph and Recall home. The ⚙ menu's
 // "Send elsewhere" items open it on a mode; a drop in "Groups · all nodes"
-// opens it on Move with the node and group pre-filled. Each mode shows only
+// opens it on Move with the node and group pre-filled, any mode a pick away.
+// Each mode shows only
 // the fields it needs, says what carries over, and lists unavailable targets
 // with the reason instead of hiding them.
 import { h } from 'preact';
@@ -19,27 +20,30 @@ const html = htm.bind(h);
 // reason, and out of the ⚙ menu; it stays a switch for tests and rollbacks.
 export const TELEPORT_ROUTES = true;
 
+// Each mode's hint says in plain words what it does, under the mode tabs.
 export const MODES = Object.freeze([
-  { key: 'move', label: 'Move' },
-  { key: 'teleport', label: 'Teleport' },
-  { key: 'clone', label: 'Clone' },
-  { key: 'morph', label: 'Morph' },
-  { key: 'home', label: 'Recall home' },
+  { key: 'move', label: 'Move', hint: 'Relocates it for good: it becomes an agent of the target node and leaves here.' },
+  { key: 'teleport', label: 'Teleport', hint: 'Sends it on a visit: it works there but keeps its home here, so it can be recalled.' },
+  { key: 'clone', label: 'Clone', hint: 'Copies it: a new agent starts with its history; the original keeps running.' },
+  { key: 'morph', label: 'Morph', hint: 'Keeps it here as the same agent, on another harness, model or profile.' },
+  { key: 'home', label: 'Recall home', hint: 'Brings a teleported agent back to its home node.' },
 ]);
 
 const NOT_YET = 'Needs the operator teleport routes, which this dashboard does not have yet.';
 
 // modeState says whether a mode can be used for this agent from this
 // dashboard. local: the agent runs on this node. presence: its presenceKind.
-export function modeState(mode, { local, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES }) {
+// pull: a peer's agent can be asked here through that peer's action routes,
+// which teleport or clone it to this node only.
+export function modeState(mode, { local, presence = '', homeIsSelf = false, source = 'its node', teleport = TELEPORT_ROUTES, pull = false }) {
   const there = `Do this from ${source}'s dashboard.`;
   switch (mode) {
     case 'move': return { ok: true };
-    case 'clone':
+    case 'clone': return local || (pull && teleport) ? { ok: true } : { ok: false, why: there };
     case 'morph': return local ? { ok: true } : { ok: false, why: there };
     case 'teleport':
       if (!teleport) return { ok: false, why: NOT_YET };
-      return local ? { ok: true } : { ok: false, why: there };
+      return local || pull ? { ok: true } : { ok: false, why: there };
     case 'home':
       if (!teleport) return { ok: false, why: NOT_YET };
       // From its home (the away placeholder, or its visiting row in a fused
@@ -61,7 +65,7 @@ export function receivingGroups(status, peer, mode) {
 
 // nodeTargets lists every node with whether this mode may send the agent
 // there, and why not. self is this node; source is where the agent runs.
-export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES }) {
+export function nodeTargets({ mode, fleet, self, source, status, localGroups = [], teleport = TELEPORT_ROUTES, pull = false }) {
   const nodes = [self, ...(fleet?.peers || [])].filter((n) => n?.id);
   return nodes.map((n) => {
     const here = n.id === source.node;
@@ -71,8 +75,10 @@ export function nodeTargets({ mode, fleet, self, source, status, localGroups = [
     if (here) return { ...row, ok: mode === 'clone', why: mode === 'clone' ? '' : 'it is already here — drag it onto another group to move it within this node', groups: [] };
     if (!isSelf && n.online === false) return { ...row, ok: false, why: 'offline' };
     if (source.node !== self.id) {
-      // A peer's agent can only be pulled here, and only by a move.
-      if (!isSelf || mode !== 'move') return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
+      // A peer's agent can only be pulled here: by a move, or through the
+      // peer's teleport route (a clone too).
+      const pulls = mode === 'move' || (pull && teleport && (mode === 'teleport' || mode === 'clone'));
+      if (!isSelf || !pulls) return { ...row, ok: false, why: `do this from ${source.name}'s dashboard` };
       return { ...row, groups: localGroups };
     }
     if (mode === 'clone' && !teleport) return { ...row, ok: false, why: 'a peer clone needs the operator teleport routes (not on this dashboard yet)' };
@@ -323,7 +329,8 @@ export function followMove({ id, actions, timers = globalThis, now = () => Date.
 
 // TeleportPanel sends it (Teleport, Clone to a peer, Recall home), then closes;
 // followMove reports how the move ends.
-function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, onPhase, toast = shellToast }) {
+// pullActions, set for a peer's agent, asks that peer to send it here.
+function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, pullActions = null, onPhase, toast = shellToast }) {
   const [note, setNote] = useState('');
   const [phase, setPhase] = useState('confirm');
   useEffect(() => { onPhase?.(phase); }, [phase]);
@@ -336,14 +343,16 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
     try {
       let res;
       if (mode === 'home' && viaPeer) res = await api.recall(agent.id);
+      else if (pullActions) res = await pullActions.teleport(agent.id, { group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
       else res = await api.teleport(agent.conv || agent.id, mode === 'home'
         ? { home: true, ...(note ? { note } : {}) }
         : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
       // Close once it is sent; the outcome arrives as toasts, even when the
-      // dialog was cancelled while sending. A return to a
+      // dialog was cancelled while sending. A pulled move's record lives on
+      // the peer, so there is none here to follow. A return to a
       // paused home backup answers 202 {state: "returning"} with no move
       // record: its home presence is what to watch then.
-      if (res?.move_id && !viaPeer) {
+      if (res?.move_id && !viaPeer && !pullActions) {
         toast(`${verb}: sent. Waiting for ${dest} to run its copy…`);
         followMove({ id: res.move_id, actions, timers, now, onProgress: (p) => { const t = progressToast(p); if (t) toast(t.text, t.error); } });
       } else {
@@ -358,18 +367,21 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
     : p.phase === 'waiting' ? { text: `⏸ ${agent.name} waits for ${dest} to accept it; it keeps running here until then.` }
     : p.phase === 'failed' ? { text: `${verb} ${p.state}${p.error ? `: ${p.error}` : ''}. ${agent.name} is still here.`, error: true }
     : p.phase === 'returning' ? { text: `${agent.name} is returning to its paused copy on ${home || 'its home'}; its home row shows it back when it runs.` }
+    : p.phase === 'offered' && pullActions ? { text: `${agent.nodeName} offered ${agent.name}'s copy to this node: it starts here once this node takes it in (⚙ Fleet → Offers).` }
     : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet → Offers).` }
+    : p.phase === 'sent' && pullActions ? { text: `${verb}: requested from ${agent.nodeName}. ${agent.name} shows up in ${target.group} here once its copy runs; if it waits for acceptance, see ⚙ Fleet → Offers.` }
     : p.phase === 'sent' ? { text: `${verb}: requested. Its row here turns back into ${agent.name} when it arrives.` }
     : p.phase === 'checking' ? null
     : { text: `${verb} is still in progress; follow it in ⚙ Fleet → Moves.` };
-  const dest = mode === 'home' ? home : target.name;
+  const dest = mode === 'home' ? home : pullActions ? 'this node' : target.name;
+  const from = pullActions ? `on ${agent.nodeName}` : 'here';
   const verb = mode === 'home' ? (viaPeer ? 'Recall home' : 'Send home') : mode === 'clone' ? `Clone to ${target.name}` : `Teleport to ${target.name}`;
   return html`
     ${html`<p class="lt-consequence">${mode === 'home'
       ? `${agent.name} goes straight home to ${home}, not back through the nodes it visited. It leaves at once: it keeps running ${viaPeer ? `on ${agent.nodeName}` : 'here'} until its copy runs at home, then that copy is retired.`
       : mode === 'clone'
-        ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${target.name}. The original keeps running here.`
-        : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${target.name}. It leaves at once: it keeps running here until its copy runs there, then stops here; its groups keep a placeholder row.`}</p>
+        ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. The original keeps running ${from}.`
+        : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. It leaves at once: it keeps running ${from} until its copy runs ${pullActions ? 'here' : 'there'}, then stops ${pullActions ? 'there' : 'here'}; its groups keep a placeholder row.`}</p>
       ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
@@ -386,7 +398,9 @@ export function LaunchTargetDialog({
   api = createLaunchTargetApi(), actions, peerActions, localGroups = [], onClose, onLocalClone,
   timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES, toast = shellToast,
 }) {
-  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
+  // A peer's agent is pulled here through that peer's action routes.
+  const pull = agent.node !== self.id && !!peerActions;
+  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport, pull };
   // A mode this agent cannot use here never opens: fall back to the first
   // one it can (Move always can).
   const [mode, setMode] = useState(modeState(initialMode, firstCtx).ok ? initialMode : (MODES.find((m) => modeState(m.key, firstCtx).ok)?.key || 'move'));
@@ -401,14 +415,14 @@ export function LaunchTargetDialog({
   const okRef = useRef(null);
   const local = agent.node === self.id;
   const source = { node: agent.node, name: agent.nodeName || self.name, group: agent.group };
-  const ctx = { local, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport };
+  const ctx = { local, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: source.name, teleport, pull };
   useEffect(() => {
     let live = true;
     if (local) api.status().then((s) => { if (live) setStatus(s); }).catch(() => { if (live) setStatus({}); });
     return () => { live = false; };
   }, []);
   const needsNode = mode === 'move' || mode === 'teleport' || mode === 'clone';
-  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport }) : [];
+  const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport, pull }) : [];
   const picked = targets.find((n) => n.id === node && n.ok) || null;
   const pick = (id) => { setNode(id); if (id !== node) setGroup(''); };
   const switchMode = (key) => { if (locked) return; setMode(key); setCarry(null); };
@@ -426,7 +440,8 @@ export function LaunchTargetDialog({
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
       <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
   else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull')) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
-  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
+  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase}
+    pullActions=${local ? null : peerActions(source.node)} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
 
@@ -435,9 +450,10 @@ export function LaunchTargetDialog({
     <h3 id="launch-target-title">${title}</h3>
     <div class="lt-modes" role="tablist" aria-label="What to do">
       ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
-        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? '' : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
+        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? m.hint : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
     </div>
-    ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled.</div>`}
+    <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
+    ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled; pick another mode above to teleport or clone it instead.</div>`}
     <div class="lt-body">
       <div class="lt-fields">
         ${needsNode && html`<div class="lt-row"><span class="lt-k">Target node</span><${NodePicker} targets=${targets} value=${node} onPick=${pick} locked=${locked} /></div>`}

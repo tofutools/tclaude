@@ -42,6 +42,15 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.equal(m.nodeTargets({ mode: 'clone', fleet, self, source, status: STATUS })[1].ok, true, 'a peer clone goes through teleport');
   const pull = m.nodeTargets({ mode: 'move', fleet, self, source: { node: 'inst_forge', name: 'forge' }, status: STATUS, localGroups: ['builders'] });
   assert.deepEqual(pull.find((n) => n.id === 'inst_a').groups, ['builders'], 'a peer agent is pulled into this node\'s groups');
+  const forge = { node: 'inst_forge', name: 'forge' };
+  assert.match(m.nodeTargets({ mode: 'teleport', fleet, self, source: forge, status: STATUS }).find((n) => n.id === 'inst_a').why, /forge's dashboard/, 'no peer routes, no pulled teleport');
+  for (const mode of ['teleport', 'clone']) {
+    const pulled = m.nodeTargets({ mode, fleet, self, source: forge, status: STATUS, localGroups: ['builders'], pull: true });
+    assert.equal(pulled.find((n) => n.id === 'inst_a').ok, true, `a peer agent can be pulled here by ${mode}`);
+    assert.equal(pulled.find((n) => n.id === 'inst_forge').ok, false, `a pulled ${mode} only lands here`);
+    assert.equal(m.modeState(mode, { local: false, pull: true }).ok, true);
+  }
+  assert.equal(m.modeState('morph', { local: false, pull: true }).ok, false, 'morph stays with the agent\'s own node');
 
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });
@@ -189,6 +198,27 @@ test('a peer agent opens on a mode it can use, and a sent move locks the target'
   assert.equal(s.q('#lt-group').disabled, true, 'the group is frozen once the move is sent');
   assert.equal(s.q('[data-lt-node="inst_forge"]').disabled, true);
   assert.equal(s.q('[data-lt-mode="clone"]').disabled, true);
+});
+
+test('a dropped peer agent can be teleported or cloned here through the peer\'s routes', async (t) => {
+  const sent = [];
+  const peerAgent = { ...AGENT, node: 'inst_forge', nodeName: 'forge' };
+  const s = await mountDialog(t, {
+    agent: peerAgent, initialMode: 'move', fromDrop: true, target: { node: 'inst_a', name: 'node-a', group: 'builders' }, localGroups: ['builders'],
+    api: { status: async () => ({}) },
+    peerActions: (node) => ({ teleport: async (id, body) => { sent.push({ node, id, body }); return { move_id: 'mv_p', teleport_state: 'offered' }; } }),
+    actions: { moveDetail: async () => { throw new Error('a pulled move has no record here'); } },
+  });
+  assert.match(s.q('[data-lt-hint]').textContent, /Relocates it for good/, 'each mode says in plain words what it does');
+  assert.match(s.q('[data-lt-mode="teleport"]').title, /visit/);
+  await s.click(s.q('[data-lt-mode="clone"]'));
+  assert.match(s.q('[data-lt-hint]').textContent, /original keeps running/);
+  assert.equal(s.q('#lt-group').value, 'builders', 'the dropped group stays picked');
+  assert.match(s.q('#launch-target').textContent, /original keeps running on forge/);
+  await s.click(s.q('#lt-ok'));
+  assert.deepEqual(sent, [{ node: 'inst_forge', id: 'agt_b1', body: { group: 'builders', clone: true } }]);
+  assert.match(s.toasts[0], /forge offered builder-1's copy to this node/);
+  assert.equal(s.closed(), 1);
 });
 
 test('large morph cut confirms once and waits visibly for the source summary; cancellation leaves the dialog responsive', async (t) => {
