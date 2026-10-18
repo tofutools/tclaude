@@ -98,6 +98,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
   'add-member': ['feature:local_dashboard'],
+  // A subgroup, through the regular create dialog on the group's node.
+  'create-subgroup': ['feature:groups.create'],
+  // A pending spawn's 🗑, on the group it is pending in.
+  'delete-pending': ['feature:local_dashboard'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -539,8 +543,11 @@ export function peerAction(act, peerView, groupOf = (g) => g) {
 // really runs: the view-only ones, the terminal attach, the granted ones
 // (grantSelectors) and the PEER_ACTS the peer shares. The
 // greying below is built from it, so it can never disagree with the guard.
-export function usableActSelectors(peerView, extra = [], groupName = (g) => g) {
-  if (unrestricted(peerView)) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
+// fused: the fused Groups view, whose guard (fleet-merged-island.js) runs
+// only the tables' controls on another node, unrestricted or not; a peer's
+// own page runs every control there under unrestricted trust.
+export function usableActSelectors(peerView, extra = [], groupName = (g) => g, { fused = false } = {}) {
+  if (unrestricted(peerView) && !fused) return [`[data-act]:not(${[...OWN_NODE_ACTS].map((a) => `[data-act="${a}"]`).join(', ')})`];
   const out = [...READ_ONLY_ACTS, ...ATTACH_ACTS, ...extra].map((a) => `[data-act="${a}"]`);
   out.push(...grantSelectors(peerView, groupName));
   const shared = (feature) => featureState(feature, peerView) === 'shared';

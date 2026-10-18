@@ -629,7 +629,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   // Queued spawns are this node's own drafts, so a peer's group never has any.
   // They ride the member table as its leading rows.
   const queued = fleet ? [] : groupQueuedSpawns(snapshot, group.name);
-  const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null;
+  const pending = group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} group=${group.name} /></div>` : null;
   // In Both the agent controls head the member table's first column, which
   // has no title of its own; the section line keeps them only while it is
   // folded (or there is no table), so they never go out of reach.
@@ -758,14 +758,16 @@ function ReplacedTable({ rows }) {
   </tbody></table>`;
 }
 
-function PendingTable({ rows }) {
+// group names the real group a pending block sits in (blank in the
+// Pending lens), so its delete addresses that group's node.
+function PendingTable({ rows, group = '' }) {
   return html`<table><${SortHead} table="pending" columns=${PENDING_COLS} /><tbody>
     ${applySort('pending', rows, PENDING_ACCESSORS).map((row) => html`<tr
       key=${row.label} data-key=${row.label} class="dnd-draggable" draggable=${true}
       data-dnd-pending="1" data-dnd-conv=${row.label} data-dnd-label=${row.label}
     ><td><${OnlineDot} online=${row.online} /></td><td class="id" title=${idTooltip(row.agent_id, row.agent_id ? '' : row.label)}>${shortAgentId(row.agent_id, '') || row.label}</td><td><span class="rowname">${row.name || row.role || '(unnamed)'}</span></td><td>${row.group || '(none)'}</td><td><span class="muted" title=${row.cwd || ''}>${row.cwd ? shortCwd(row.cwd) : ''}</span></td><td><span class="last-hook">${row.created_at ? relTime(row.created_at) : ''}</span></td><td><div class="row-actions"><button class="primary" disabled=${!row.online} data-act=${row.online ? 'focus-pending' : undefined} data-label=${row.online ? row.label : undefined} title=${row.online
       ? (isWizardActive() ? "Open this would-be familiar's scrying portal so you can clear its summoning gate. Once cleared, it joins the living roster." : "Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.")
-      : (isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
+      : (isWizardActive() ? 'This would-be familiar’s portal has vanished and will soon fade from the summoning gate.' : "This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.")}>${isWizardActive() ? 'open portal' : 'focus'}</button><button class="danger" data-act="delete-pending" data-label=${row.label} data-group=${group || undefined} title=${isWizardActive() ? 'Dispel this failed summoning and close its portal. It never became a familiar, so no conversation scroll is lost.' : 'Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.'}>${isWizardActive() ? '🪄 dispel' : '🗑 delete'}</button></div></td></tr>`)}
   </tbody></table>`;
 }
 

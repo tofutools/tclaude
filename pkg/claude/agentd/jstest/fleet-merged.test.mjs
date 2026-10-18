@@ -206,6 +206,23 @@ test('limitsCSS greys exactly the controls a click refuses', async (t) => {
   for (const id of ['f-stop', 'f-restart', 'loose']) assert.equal(greyed(id), true, `${id} is refused`);
 });
 
+test('limitsCSS greys an unrestricted peer\'s controls that only its own dashboard runs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const island = await harness.importDashboardModule('js/fleet-merged-island.js');
+  const css = island.limitsCSS([
+    { id: 'inst_self', peerView: null },
+    { id: 'inst_forge', peerView: { level: 'unrestricted' } },
+  ], { self: 'inst_self', home: 'inst_self' });
+  const doc = harness.document;
+  doc.body.innerHTML = `<div id="fleetview-fused-groups-root"><div class="fleet-merged">
+    <details data-fleet-node="inst_forge"><summary><b id="sub" data-act="create-subgroup" data-group="build@forge"></b><b id="pend" data-act="delete-pending" data-group="build@forge"></b>
+      <b id="restart" data-act="restart" data-agent="agt_a"></b><b id="export" data-act="export-group" data-group="build@forge"></b><b id="links" data-act="links-manage"></b></summary></details></div></div>`;
+  const selectors = css.split('\n').map((r) => r.replace(/ \{[^}]*\}$/, ''));
+  const greyed = (id) => selectors.some((sel) => doc.getElementById(id).matches(sel));
+  for (const id of ['sub', 'pend', 'restart']) assert.equal(greyed(id), false, `${id} runs on forge from here`);
+  for (const id of ['export', 'links']) assert.equal(greyed(id), true, `${id} is forge's own dashboard's, and looks it`);
+});
+
 test('dragging an agent onto another node\'s group opens the move; a same-node drop is the Groups drag-and-drop\'s', async (t) => {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js')]);

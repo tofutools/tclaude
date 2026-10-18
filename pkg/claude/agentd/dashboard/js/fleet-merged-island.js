@@ -63,7 +63,7 @@ export function limitsCSS(nodes, { self, home = '' }) {
     // This node's groups on a peer's page take its group controls directly
     // (node-api.js), as though this node trusted itself unrestricted.
     const usable = id !== self
-      ? usableActSelectors(peerView, ['send-elsewhere'], merged)
+      ? usableActSelectors(peerView, ['send-elsewhere'], merged, { fused: true })
       : [...always.map((a) => `[data-act="${a}"]`), ...grantSelectors({ level: 'unrestricted' })];
     rules.push(refusedActsRule(scope, usable));
   }

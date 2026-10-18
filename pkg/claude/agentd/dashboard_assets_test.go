@@ -270,7 +270,7 @@ func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
 		"return { ...group, pending: rows };",
 		"if (distributed.fallback.length) list.unshift(virtualPendingGroup(distributed.fallback));",
 		"list.unshift(virtualPendingGroup(distributed.fallback));",
-		"function PendingTable({ rows })",
+		"function PendingTable({ rows, group = '' })",
 		"group.pending?.length ? html`<span class=\"group-pending-chip\"",
 		"group.pending?.length ? html`<div class=\"group-pending-block\"",
 		"open=${realGroupOpen(group, dashPrefs)}",
