@@ -677,7 +677,8 @@ test('a remote terminal never writes the clipboard from its output, even right a
 });
 
 // screenOf is an xterm buffer of rows; a row given as [text] soft-wraps
-// the one above, and a character after \x08 is concealed (SGR 8).
+// the one above, a character after \x08 is concealed (SGR 8), and one
+// after \x07 is drawn in its background colour.
 const screenOf = (rows) => ({ active: {
   length: rows.length, viewportY: 0,
   getLine: (i) => {
@@ -689,7 +690,11 @@ const screenOf = (rows) => ({ active: {
     for (let k = 0; k < text.length; k++) {
       const hidden = text[k] === '\x08';
       if (hidden) k++;
-      cells.push({ getWidth: () => 1, isInvisible: () => hidden, getChars: () => text[k] });
+      // \x07 marks a cell whose foreground equals its background.
+      const same = text[k] === '\x07';
+      if (same) k++;
+      cells.push({ getWidth: () => 1, isInvisible: () => hidden, getChars: () => text[k],
+        getFgColorMode: () => (same ? 2 : 0), getBgColorMode: () => (same ? 2 : 0), getFgColor: () => 0, getBgColor: () => 0 });
     }
     return { isWrapped: wrapped, getCell: (x) => cells[x] || { getWidth: () => 1, isInvisible: () => false, getChars: () => '' } };
   },
@@ -705,6 +710,16 @@ test('selectedText reads the selected cells: rows, soft wraps, multi-clicks, nev
   assert.equal(selectedText(term, { row: 3, col: 0 }, { row: 3, col: 9 }), 'run    now', 'concealed cells read as blanks');
   assert.equal(selectedText(term, { row: 0, col: 1 }, { row: 0, col: 1 }, 2), null, 'a double-click on a blank selects nothing');
   assert.equal(selectedText({}, { row: 0, col: 0 }, { row: 0, col: 1 }), null);
+  const hidden = { cols: 12, rows: 1, buffer: screenOf(['ls \x07;\x07r\x07m']) };
+  assert.equal(selectedText(hidden, { row: 0, col: 0 }, { row: 0, col: 0 }, 3), 'ls', 'text in its background colour reads as blanks');
+});
+
+test('selectedText expands a double-click over columns, not string offsets', () => {
+  const cell = (chars, width = 1) => ({ getWidth: () => width, isInvisible: () => false, getChars: () => chars });
+  const row = [cell('a\u0301\u0301\u0301\u0301'), cell(' '), cell('l'), cell('s'), cell(' '), cell('漢', 2), cell('', 0), cell('字', 2), cell('', 0), cell(' '), cell('x')];
+  const term = { cols: row.length, rows: 1, buffer: { active: { length: 1, viewportY: 0, getLine: () => ({ isWrapped: false, getCell: (x) => row[x] }) } } };
+  assert.equal(selectedText(term, { row: 0, col: 2 }, { row: 0, col: 2 }, 2), 'ls', 'combining marks earlier in the row do not shift the word');
+  assert.equal(selectedText(term, { row: 0, col: 6 }, { row: 0, col: 6 }, 2), '漢字', 'a wide character\'s spacer column belongs to its word');
 });
 
 test('a remote terminal copies the selected cells when its tmux signals a copy, never the peer\'s text', async () => {

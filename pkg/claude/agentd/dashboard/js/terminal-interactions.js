@@ -190,16 +190,23 @@ export function cellAt(term, host, clientX, clientY) {
   return { row: row + (term.buffer?.active?.viewportY || 0), col };
 }
 
-// rowCells is a buffer row's text from start to end (exclusive), as drawn:
-// a concealed (SGR 8) cell reads as a space, a wide character's spacer as
-// nothing.
+// hiddenCell reports whether a cell is drawn so it cannot be read: concealed
+// (SGR 8), or a foreground set to exactly its background colour.
+function hiddenCell(cell) {
+  if (cell.isInvisible()) return true;
+  const mode = cell.getFgColorMode?.();
+  return !!mode && mode === cell.getBgColorMode?.() && cell.getFgColor() === cell.getBgColor();
+}
+
+// rowCells is a buffer row's cells from start to end (exclusive), one string
+// per column as drawn: a hidden cell reads as a space, a wide character's
+// spacer column as nothing.
 function rowCells(line, start, end) {
-  let out = '';
+  const out = [];
   for (let x = start; x < end; x++) {
     const cell = line.getCell(x);
     if (!cell) break;
-    if (cell.getWidth() === 0) continue;
-    out += cell.isInvisible() ? ' ' : (cell.getChars() || ' ');
+    out.push(cell.getWidth() === 0 ? '' : hiddenCell(cell) ? ' ' : (cell.getChars() || ' '));
   }
   return out;
 }
@@ -217,19 +224,24 @@ export function selectedText(term, from, to, clicks = 1) {
   if (clicks >= 2) {
     const line = buffer.getLine(b.row);
     if (!line) return null;
-    const text = rowCells(line, 0, width);
-    if (clicks >= 3) return text.replace(/ +$/, '') || null;
-    if (/\s/.test(text[b.col] || ' ')) return null;
-    let l = b.col; let r = b.col;
-    while (l > 0 && !/\s/.test(text[l - 1])) l--;
-    while (r < text.length - 1 && !/\s/.test(text[r + 1])) r++;
-    return text.slice(l, r + 1);
+    const cols = rowCells(line, 0, width);
+    if (clicks >= 3) return cols.join('').replace(/ +$/, '') || null;
+    // Words span columns, not string offsets: a cell may hold several code
+    // points, and a wide character's spacer column holds none.
+    const blank = (c) => c !== '' && /^\s+$/.test(c);
+    let at = b.col;
+    while (at > 0 && cols[at] === '') at--;
+    if (at >= cols.length || blank(cols[at])) return null;
+    let l = at; let r = at;
+    while (l > 0 && !blank(cols[l - 1])) l--;
+    while (r < cols.length - 1 && !blank(cols[r + 1])) r++;
+    return cols.slice(l, r + 1).join('');
   }
   let out = '';
   for (let y = a.row; y <= b.row; y++) {
     const line = buffer.getLine(y);
     if (!line) return null;
-    const row = rowCells(line, y === a.row ? a.col : 0, y === b.row ? b.col + 1 : width);
+    const row = rowCells(line, y === a.row ? a.col : 0, y === b.row ? b.col + 1 : width).join('');
     const next = y < b.row ? buffer.getLine(y + 1) : null;
     out += next?.isWrapped ? row : row.replace(/ +$/, '') + (y < b.row ? '\n' : '');
   }
