@@ -126,9 +126,10 @@ export function createJobsActions({
         { method: 'DELETE', refreshAfter: false },
       ));
     },
-    explainCron: (expr) => requestMutation('/api/cron/explain', {
-      body: { expr }, refreshAfter: false,
-    }),
+    // Another node's job is explained by that node, in its own timezone.
+    explainCron: (expr, node = '') => (node
+      ? requestOnNode(node, '/api/cron/explain', { method: 'POST', body: { expr } })
+      : requestMutation('/api/cron/explain', { body: { expr }, refreshAfter: false })),
     loadCronLogs: async (id) => {
       const response = await requestMutation(`/api/cron/${encodeURIComponent(id)}/logs?limit=25`, {
         method: 'GET', refreshAfter: false,

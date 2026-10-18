@@ -191,7 +191,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
     const timer = setTimeout(async () => {
       setExplain({ loading: true, result: null });
       try {
-        const result = await actions.explainCron(expr);
+        const result = await actions.explainCron(expr, descriptor.node || '');
         if (!active || seq !== explainSeq.current) return;
         setExplain({ loading: false, result: result.valid
           ? { valid: true, description: result.description || '', next: result.next || [], tz: result.tz || 'local' }
