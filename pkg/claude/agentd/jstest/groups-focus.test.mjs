@@ -249,5 +249,12 @@ test('the Route map group is in the URL', async (t) => {
     detail: { location: { tab: 'groups', subtab: 'routes', params: { group: 'webshop' } } },
   })));
   assert.equal(state.routeGroup.value, 'webshop');
+  // The exact list view is in the URL too.
+  await harness.act(() => harness.fireEvent(getByRole(map.container, 'button', { name: 'Exact list' }), 'click'));
+  assert.deepEqual(navigated.at(-1), { tab: 'groups', subtab: 'routes', params: { group: 'webshop', view: 'list' } });
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'groups', subtab: 'routes' } },
+  })));
+  assert.equal(state.routeView.value, 'graph');
   assert.equal(map.container.querySelector('select').getAttribute('value'), 'webshop');
 });

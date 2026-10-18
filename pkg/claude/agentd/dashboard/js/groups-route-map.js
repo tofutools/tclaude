@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo } from 'preact/hooks';
 import htm from 'htm';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 
@@ -120,9 +120,11 @@ function RouteDetail({ route, onClose }) {
   </aside>`;
 }
 
-// routesLocation is a Route map location: /groups/routes[/<route-id>][?group=].
-function routesLocation(routeID, group) {
-  return { tab: 'groups', subtab: 'routes', ...(routeID ? { selection: routeID } : {}), ...(group ? { params: { group } } : {}) };
+// routesLocation is a Route map location:
+// /groups/routes[/<route-id>][?group=<name>][&view=list].
+function routesLocation(routeID, group, view = 'graph') {
+  const params = { ...(group ? { group } : {}), ...(view === 'list' ? { view } : {}) };
+  return { tab: 'groups', subtab: 'routes', ...(routeID ? { selection: routeID } : {}), ...(Object.keys(params).length ? { params } : {}) };
 }
 
 export function GroupsRouteMap({ state }) {
@@ -137,14 +139,19 @@ export function GroupsRouteMap({ state }) {
   const picked = state.routeGroup.value;
   const groupName = (picked && groups.some((group) => group.name === picked) && picked)
     || selectedByID?.group || groups[0]?.name || '';
-  const [mode, setMode] = useState('graph');
+  const mode = state.routeView.value;
+  const setMode = (next) => {
+    if (next === mode) return;
+    state.setRouteView(next);
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation(state.routeSelection.value, state.routeGroup.value, next) } }));
+  };
   useEffect(() => {
     const restore = (event) => {
       const location = event.detail?.location;
       if (location?.tab !== 'groups') return;
       const routes = enabled && location.subtab === 'routes';
       state.setSubview(routes ? 'routes' : 'members', enabled ? (location.selection || '') : '');
-      if (routes) state.setRouteGroup(location.params?.group || '');
+      if (routes) { state.setRouteGroup(location.params?.group || ''); state.setRouteView(location.params?.view); }
     };
     document.addEventListener('tclaude:restore-location', restore);
     return () => document.removeEventListener('tclaude:restore-location', restore);
@@ -177,20 +184,20 @@ export function GroupsRouteMap({ state }) {
   }, [isRoutes]);
   const navigateRoute = (routeID) => {
     state.setSubview('routes', routeID || '');
-    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation(routeID, state.routeGroup.value) } }));
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation(routeID, state.routeGroup.value, state.routeView.value) } }));
   };
   const changeSubview = (next) => {
     state.setSubview(next);
     // Members shows whichever Agents | Processes lens is remembered.
     const location = next === 'routes'
-      ? routesLocation('', state.routeGroup.value)
+      ? routesLocation('', state.routeGroup.value, state.routeView.value)
       : groupsFocusLocation(effectiveGroupsFocus(state));
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
   };
   const selectGroup = (event) => {
     state.setRouteGroup(event.currentTarget.value);
     state.setSubview('routes', '');
-    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation('', state.routeGroup.value) } }));
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation('', state.routeGroup.value, state.routeView.value) } }));
   };
   if (!enabled) return null;
   return html`<div class=${`groups-route-map-surface${isRoutes ? ' is-routes' : ''}`}>
