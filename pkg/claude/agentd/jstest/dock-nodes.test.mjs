@@ -66,6 +66,7 @@ function section(calls) {
     chips: (item) => [{ text: item.model, more: false }],
     drag: true,
     itemPath: (name) => `/api/spawn-profiles/${name}`,
+    listPath: '/api/spawn-profiles',
     onManageItem: (item) => calls.push(['edit', item.name]),
     onCloneItem: (item) => calls.push(['clone', item.name]),
     onDeleteItem: (item) => calls.push(['delete', item.name]),
@@ -117,7 +118,7 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   assert.deepEqual([...opus.querySelectorAll('.dock-where-pill')].map((pill) => `${pill.textContent}:${pill.className.match(/is-(present|differs|missing)/)[1]}`),
     ['brain:present', 'herc3:present'], 'a withheld node gets no pill');
   const luna = host.querySelector('[data-dock-name="luna"]');
-  assert.equal(luna.querySelector('.is-missing').textContent, 'brain');
+  assert.equal(luna.querySelector('.is-missing').textContent, '+ brain');
   assert.match(luna.querySelector('.dock-grip').title, /coming soon/, 'only the page node copy drags onto a group');
   assert.equal(opus.querySelector('.dock-grip').title, 'drag onto a group to spawn');
 
@@ -161,6 +162,78 @@ test('The fused dock lists every shown node, with where pills, a node filter and
   assert.equal(host.querySelector('.dock-node-filter'), null);
   assert.equal(host.querySelector('.dock-where'), null);
   assert.deepEqual(names(), ['opus', 'sol']);
+  await mounted.unmount();
+  host.remove();
+});
+
+test('copyRoute copies directly to a trusting node, offers this node own item to another, else says why', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { copyRoute } = await harness.importDashboardModule('js/dock-nodes.js');
+  const entry = { byNode: { inst_brain1: { name: 'opus' } } };
+  const herc = NODES[1];
+  const mac = NODES[2];
+  assert.equal(copyRoute(entry, herc, { peer_view: { level: 'unrestricted' } }, 'inst_brain1', 'roles').mode, 'direct');
+  assert.equal(copyRoute(entry, mac, { peer_view: { level: 'restricted' } }, 'inst_brain1', 'roles').mode, 'offer');
+  const none = copyRoute({ byNode: { inst_herc31: {} } }, mac, { peer_view: { level: 'restricted' } }, '', 'roles');
+  assert.equal(none.mode, '');
+  assert.match(none.why, /only this node's own roles can be offered/);
+});
+
+test('A dashed pill and the card menu copy an item to another node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  const { signal } = harness.signals;
+  const state = createDockState();
+  state.publish({ profiles: [{ name: 'opus', model: 'opus' }] });
+  const calls = [];
+  const fused = signal({
+    page: 'inst_brain1',
+    self: 'inst_brain1',
+    nodes: NODES,
+    snapshots: {
+      inst_herc31: { peer_view: { level: 'unrestricted' }, profiles: [{ name: 'luna', model: 'gpt' }] },
+      inst_mac111: { peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'] }, profiles: [{ name: 'luna', model: 'gpt' }] },
+    },
+    fetchFor: (id) => id,
+  });
+  const ops = {
+    open: () => {}, rename: () => {}, remove: () => {},
+    copy: (sec, item, { to, direct, self }) => calls.push([item.name, to.id, to.fetch, direct, self.id]),
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
+  const mounted = await harness.mount(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[section([])]} isSectionOpen=${() => true} setSectionOpen=${() => {}}
+      fusedState=${fused} hiddenState=${signal([])} nodeOps=${ops} />
+  `, host);
+  const opus = host.querySelector('[data-dock-name="opus"]');
+  await harness.act(() => harness.fireEvent(opus.querySelector('[data-dock-node="inst_herc31"]'), 'click'));
+  assert.deepEqual(calls.at(-1), ['opus', 'inst_herc31', 'inst_herc31', true, 'inst_brain1'], 'an unrestricted node gets it directly');
+  await harness.act(() => harness.fireEvent(opus.querySelector('[data-dock-node="inst_mac111"]'), 'click'));
+  assert.deepEqual(calls.at(-1), ['opus', 'inst_mac111', 'inst_mac111', false, 'inst_brain1'], 'a restricted node gets an offer');
+  await harness.act(() => harness.fireEvent(getByRole(opus, 'button', { name: 'Actions for opus' }), 'click'));
+  assert.ok(getByRole(opus, 'menuitem', { name: 'Copy to herc3…' }));
+  await harness.act(() => harness.fireEvent(getByRole(opus, 'menuitem', { name: 'Offer to mac…' }), 'click'));
+  assert.equal(calls.length, 3);
+
+  // herc3's own item cannot be offered from here to a restricted node.
+  const luna = host.querySelector('[data-dock-name="luna"]');
+  assert.deepEqual([...luna.querySelectorAll('.dock-where-pill')].map((pill) => pill.textContent.replace('🔒', '').trim()), ['+ brain', 'herc3', 'mac']);
+  await harness.act(() => harness.fireEvent(luna.querySelector('[data-dock-node="inst_brain1"]'), 'click'));
+  assert.deepEqual(calls.at(-1), ['luna', 'inst_brain1', 'inst_brain1', true, 'inst_brain1'], 'this node takes it directly');
+
+  // A node the filter hides is not offered a copy it may already hold.
+  await mounted.rerender(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[section([])]} isSectionOpen=${() => true} setSectionOpen=${() => {}}
+      fusedState=${fused} hiddenState=${signal(['inst_herc31'])} nodeOps=${ops} />
+  `);
+  const shown = host.querySelector('[data-dock-name="opus"]');
+  await harness.act(() => harness.fireEvent(getByRole(shown, 'button', { name: 'Actions for opus' }), 'click'));
+  assert.equal([...shown.querySelectorAll('[role="menuitem"]')].some((el) => /herc3/.test(el.textContent)), false);
+  assert.ok(getByRole(shown, 'menuitem', { name: 'Offer to mac…' }));
   await mounted.unmount();
   host.remove();
 });

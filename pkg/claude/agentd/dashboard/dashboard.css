@@ -17841,6 +17841,8 @@ button.dock-where-pill { cursor: pointer; }
 .dock-where-pill.is-differs { color: #f2cc60; border-color: #f2cc6088; background: #2a2208; }
 .dock-where-pill.is-differs.is-picked { border-color: #f2cc60; box-shadow: 0 0 0 1px #f2cc6066; }
 .dock-where-pill.is-missing { color: #6e7681; border-style: dashed; border-color: #484f58; background: none; }
+button.dock-where-pill.is-missing:hover, button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
+.dock-where-pill.is-missing.is-locked { opacity: .7; }
 .dock-where-pill.is-head { cursor: default; }
 .dock-where-pill.is-withheld { color: #d29922; border-color: #d2992266; background: none; }
 .dock-where-pill.is-loading { opacity: .5; }
