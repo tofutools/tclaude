@@ -48,12 +48,16 @@ import { openTemplateEditor } from './modal-templates.js';
 // TDZ-safe, exactly like dnd.js reading lastSnapshot.
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
+import { nodeFetch } from './node-api.js';
 
 // The two reverse-source drag MIMEs (authoritative payload read on drop; browsers
 // gate getData to the drop event, so dragover can't read them — it keys off the
 // active flags instead). Kept in lockstep with dnd.js / group-reorder.js.
 const MEMBER_MIME = 'application/x-tclaude-member';
 const GROUP_MIME = 'application/x-tclaude-group';
+// A fused view's group also carries {node, group}: its node (blank: the
+// page's) and its own name there (group-reorder.js).
+const GROUP_NODE_MIME = 'application/x-tclaude-group-node';
 
 // The dock drop target: the open panel (#agent-dock) AND its edge tab
 // (#dock-toggle). The tab rides the collapse translate to the viewport's right
@@ -167,6 +171,9 @@ function bindDockSaveDnd() {
     const types = e.dataTransfer.types;
     // A group reorder carries the bare group name under GROUP_MIME.
     if (types.includes(GROUP_MIME)) {
+      let on = null;
+      try { on = JSON.parse(e.dataTransfer.getData(GROUP_NODE_MIME) || 'null'); } catch (_) { on = null; }
+      if (on?.group) { saveGroupAsTemplate(on.group, on.node || ''); return; }
       const group = e.dataTransfer.getData(GROUP_MIME);
       if (group) saveGroupAsTemplate(group);
       return;
@@ -180,7 +187,7 @@ function bindDockSaveDnd() {
       if (!payload || !payload.conv) return;
       // Route by the rotation-immune agent_id (conv-id fallback), the same
       // selector dnd.js's endpoint calls resolve server-side.
-      saveAgentAsProfile(payload.agent || payload.conv, payload.label || payload.conv);
+      saveAgentAsProfile(payload.agent || payload.conv, payload.label || payload.conv, payload.sourceNode || '');
     }
   });
 
@@ -198,9 +205,11 @@ function bindDockSaveDnd() {
 // launch shape + context WITHOUT persisting) and opens the template editor
 // pre-filled in CREATE mode, so the human previews + edits before Save creates
 // it. The template name seeds from the group's name as a starting suggestion.
-async function saveGroupAsTemplate(group) {
+// node is another node's group (the fused view): its snapshot is read there,
+// and the template is this dashboard's, as the dock is.
+async function saveGroupAsTemplate(group, node = '') {
   try {
-    const r = await fetch('/api/templates/from-group', {
+    const r = await nodeFetch(node)('/api/templates/from-group', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ group, template_name: group, preview: true }),
@@ -217,9 +226,10 @@ async function saveGroupAsTemplate(group) {
 // — traces its observable harness/model/effort/sandbox + granted permissions
 // WITHOUT persisting) and opens the profile editor pre-filled in CREATE mode, so
 // the human previews + names the new profile before Save creates it.
-async function saveAgentAsProfile(sel, label) {
+// node is another node's agent (its seed is read there).
+async function saveAgentAsProfile(sel, label, node = '') {
   try {
-    const r = await fetch('/api/spawn-profiles/from-agent', {
+    const r = await nodeFetch(node)('/api/spawn-profiles/from-agent', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent: sel }),
