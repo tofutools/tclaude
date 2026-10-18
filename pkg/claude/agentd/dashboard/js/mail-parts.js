@@ -353,9 +353,12 @@ export function MessageHeaders({ message, extra = null }) {
 }
 
 // MessageBody is the reader's body: links clickable, everything else text.
-export function MessageBody({ message }) {
-  return html`<div class="mail-reader-body">${bodilessNotice(message)
-    ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
+// agentMail swaps the notification's bodiless notice for agent mail's: a
+// message sent with only a file attached.
+export function MessageBody({ message, agentMail = false }) {
+  const notice = bodilessNotice(message) && (agentMail ? 'No message text — see the attached file.' : bodilessNotice(message));
+  return html`<div class="mail-reader-body">${notice
+    ? html`<span class="notification-bodiless">${notice}</span>`
     : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>`;
 }
 

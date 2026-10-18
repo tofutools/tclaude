@@ -554,7 +554,7 @@ function MessageReader({ current, controller, model }) {
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
     role="region" aria-label="Message reader" tabindex="0">
     <${MessageHeaders} message=${message} />
-    <${MessageBody} message=${message} />
+    <${MessageBody} message=${message} agentMail=${!human} />
     ${human ? html`<${MessageAttachments} message=${message} />` : html`<${AgentMailAttachments} message=${message} />`}
     ${actions}
   </div>`;

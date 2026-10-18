@@ -273,7 +273,7 @@ function Reader({ item, remote, snapshot, timers, actions, confirm, toast, openO
     const target = replyTarget(item);
     const human = item.kind === 'human';
     const headers = html`<${MessageHeaders} message=${item} extra=${html`<${HeaderRow} label="Node"><${NodePill} node=${node} /></${HeaderRow}>`} />
-      <${MessageBody} message=${item} />`;
+      <${MessageBody} message=${item} agentMail=${!human} />`;
     if (human) {
       // The same buttons as each node's own Messages. This node's are run by
       // the page's action handlers, and the view re-reads once they act. A
