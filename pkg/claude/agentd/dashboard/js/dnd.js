@@ -18,7 +18,7 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
-import { createDndOps, dndNode, targetGroupOf } from './dnd-ops.js';
+import { createDndOps, dndGesture, dndNode, targetGroupOf } from './dnd-ops.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -171,6 +171,7 @@ function hideDndTrash() {
 }
 function bindDnd() {
   const removers = [];
+  dndGesture.cancelClone = () => { dndCloneHoverTarget = null; };
   const listen = (target, type, listener, options) => {
     target.addEventListener(type, listener, options);
     removers.push(() => target.removeEventListener(type, listener, options));

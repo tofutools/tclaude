@@ -17,6 +17,7 @@ import {
   ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
+import { dndGesture } from './dnd-ops.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -468,6 +469,8 @@ export function MergedGroups({
       // The agent's own node: dnd.js.
       if (plan.kind === 'same') { unmark(); return; }
       event.stopPropagation();
+      // dnd.js no longer sees this drag's hover: its clone must not finish.
+      dndGesture.cancelClone();
       if (plan.kind === 'none') { unmark(); return; }
       // Same-node and third-node drops are accepted only to say why not.
       event.preventDefault();
@@ -481,6 +484,7 @@ export function MergedGroups({
       const plan = target ? dropPlan({ source: dragging.source, target, self: self() }) : { kind: 'none' };
       if (plan.kind === 'same') { dragging = null; unmark(); return; }
       event.preventDefault(); event.stopPropagation();
+      dndGesture.cancelClone();
       const src = dragging; dragging = null; unmark();
       if (!target) return;
       if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }

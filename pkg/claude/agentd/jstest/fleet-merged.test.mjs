@@ -224,7 +224,13 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
   };
   assert.ok(row('agt_b1') && groupEl('reviewers@forge'), 'rows and groups render');
   assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, true, 'group headers do not drag here');
+  // dnd.js's pending Ctrl/Cmd clone hover must not finish under a move
+  // between nodes this view takes.
+  const dndOps = await harness.importDashboardModule('js/dnd-ops.js');
+  let cancelled = 0;
+  dndOps.dndGesture.cancelClone = () => { cancelled += 1; };
   const over = await drag(row('agt_b1'), groupEl('reviewers@forge'));
+  assert.ok(cancelled >= 2, 'its dragover and drop cancel the clone hover');
   assert.equal(over.defaultPrevented, true, 'another node\'s group accepts the drop');
   const dialog = harness.document.querySelector('#launch-target');
   assert.ok(dialog, 'the drop opens the launch-target dialog');

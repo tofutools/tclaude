@@ -20,6 +20,11 @@ export function dndNode(el) {
   return { node: id && !isPageNode(id) ? id : '', name };
 }
 
+// dndGesture lets the fused view's own drop handling (a move between nodes)
+// cancel the member drag's pending Ctrl/Cmd clone hover, which dnd.js would
+// otherwise finish at dragend: dnd.js registers cancelClone.
+export const dndGesture = { cancelClone: () => {} };
+
 // createDndOps binds the operations to the page: confirm, toast and refresh
 // (refresh.js), render (the Groups tab), the page snapshot, and the clone and
 // retire dialogs.

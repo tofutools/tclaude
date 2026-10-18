@@ -1067,8 +1067,8 @@ keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
 send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
 onto another node's group opens the same dialog on Move, pre-filled. In the
 fused view a drop onto a group on the agent's own node works as on that node's
-Groups view (move, add, remove, retire to the bin, and Ctrl/Cmd-drop to open
-the clone dialog for that group) — for this node always, and for a peer that
+Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
+open the clone dialog for that group) — for this node always, and for a peer that
 trusts this one unrestricted. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. Until this node is connected to a hub with a linked peer, **move
