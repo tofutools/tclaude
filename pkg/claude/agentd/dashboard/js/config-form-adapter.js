@@ -595,6 +595,10 @@ function populateConfigForm(cfg) {
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
 
+  // Closing the last terminal moves to Groups by default (unchecked); only an
+  // explicit dashboard.stay_on_terminals_after_last_close true checks it.
+  $('#cfg-dashboard-stay-on-terminals').checked = !!(cfg.dashboard && cfg.dashboard.stay_on_terminals_after_last_close);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -950,6 +954,8 @@ function assembleConfig() {
   // show_group_description: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
+  // stay_on_terminals_after_last_close: false is the default; store only true.
+  if ($('#cfg-dashboard-stay-on-terminals').checked) dashboard.stay_on_terminals_after_last_close = true; else delete dashboard.stay_on_terminals_after_last_close;
   // show_debug_tab is retired: the poll-performance view (Activity ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;

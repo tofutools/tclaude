@@ -602,6 +602,12 @@ type DashboardConfig struct {
 	// dashboard reads the resolved value off the snapshot each poll and toggles
 	// body.show-group-description. See (*Config).ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description,omitempty"`
+	// StayOnTerminalsAfterLastClose keeps the dashboard on the Terminals tab
+	// when its last open terminal closes. By default the dashboard moves to
+	// the Groups tab instead, since an empty Terminals tab has nothing to act
+	// on. Flip this on to keep the old stay-put behavior. Default false. See
+	// (*Config).StayOnTerminalsAfterLastClose.
+	StayOnTerminalsAfterLastClose bool `json:"stay_on_terminals_after_last_close,omitempty"`
 }
 
 // Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
@@ -1696,6 +1702,14 @@ func (c *Config) ShowAgentHideButton() bool {
 // back. Nil-safe on the receiver.
 func (c *Config) ShowGroupDescription() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowGroupDescription
+}
+
+// StayOnTerminalsAfterLastClose reports whether the dashboard should stay on
+// the Terminals tab when its last open terminal closes — config
+// dashboard.stay_on_terminals_after_last_close. Default false: the dashboard
+// moves to the Groups tab. Nil-safe on the receiver.
+func (c *Config) StayOnTerminalsAfterLastClose() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.StayOnTerminalsAfterLastClose
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

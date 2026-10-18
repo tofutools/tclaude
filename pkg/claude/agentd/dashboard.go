@@ -1182,6 +1182,12 @@ type snapshotPayload struct {
 	// off this each poll; CSS drops the chip unless the class is present. See
 	// Config.ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description"`
+	// StayOnTerminalsAfterLastClose mirrors config
+	// dashboard.stay_on_terminals_after_last_close — whether closing the last
+	// open terminal leaves the operator on the Terminals tab (true) or moves
+	// them to Groups (false, the default). refresh.js hands it to
+	// terminal-close-nav.js each poll. See Config.StayOnTerminalsAfterLastClose.
+	StayOnTerminalsAfterLastClose bool `json:"stay_on_terminals_after_last_close"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -3403,16 +3409,17 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			RepairDelayMS:        terminalRepairDelay,
 			PreAttachDelayMS:     terminalPreAttachDelay,
 		},
-		DefaultDirectoryPicker:   cfg.DefaultDirectoryPicker(),
-		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
-		ShowGroupDescription:     cfg.ShowGroupDescription(),
-		ProcessesEnabled:         cfg.ProcessesEnabled(),
-		TriggersEnabled:          triggersEnabled,
-		GroupsRouteMapEnabled:    groupsRouteMapEnabled,
-		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
-		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
-		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
-		AgentRosterAuthoritative: agentRosterErr == nil,
+		DefaultDirectoryPicker:        cfg.DefaultDirectoryPicker(),
+		ShowAgentHideButton:           cfg.ShowAgentHideButton(),
+		ShowGroupDescription:          cfg.ShowGroupDescription(),
+		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
+		ProcessesEnabled:              cfg.ProcessesEnabled(),
+		TriggersEnabled:               triggersEnabled,
+		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
+		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),
+		TerminalPaletteShortcut:       cfg.TerminalCommandPaletteShortcutEnabled(),
+		RecordedSandboxDetails:        cfg.RecordedSandboxDetailsEnabled(),
+		AgentRosterAuthoritative:      agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:         defaults,
 			Grants:           map[string][]string{},

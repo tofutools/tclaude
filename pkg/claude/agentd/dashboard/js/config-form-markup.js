@@ -415,6 +415,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
 
+      <${Group} title="Terminals tab">
+        <${Setting} title="Stay after last close" forId="cfg-dashboard-stay-on-terminals" k="dashboard.stay_on_terminals_after_last_close"
+          summary="stay on the Terminals tab when its last terminal closes"
+          more=${html`Closing the last open terminal while the Terminals tab is showing moves the dashboard to the <strong>Groups</strong> tab <em>by default</em>, since an empty Terminals tab has nothing to act on. <strong>Checked</strong> keeps you on the empty Terminals tab instead (the original behavior). Terminals closed while another tab is showing never switch tabs. Off by default. Stored as <code>dashboard.stay_on_terminals_after_last_close</code> (the default is omitted; checked writes <code>true</code>).`}>
+          <${Toggle} id="cfg-dashboard-stay-on-terminals" />
+        </${Setting}>
+      </${Group}>
+
       <${Group} title="Web terminal attachment">
         <div class="cfg-field cfg-row cfg-row-wide cfg-terminal-attach-field" data-cfg-key="dashboard.terminal_attach">
           <div class="cfg-row-text">
