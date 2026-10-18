@@ -381,8 +381,9 @@ export function JobsCronDialogRoot({ state, actions, confirmDiscard }) {
   const current = state.view.value;
   const descriptor = current.dialog;
   if (!descriptor) return null;
-  // Another node's job reads that node's snapshot, never the page's.
-  const snapshot = descriptor.node ? nodeSnapshot(descriptor.node) || {} : current.dashboard || {};
+  // Another node's job reads that node's snapshot, never the page's (a null
+  // means the node is the page's own).
+  const snapshot = (descriptor.node && nodeSnapshot(descriptor.node)) || current.dashboard || {};
   return html`<${CronDialog} key=${descriptor.launchID} descriptor=${descriptor}
     snapshot=${snapshot} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
 }

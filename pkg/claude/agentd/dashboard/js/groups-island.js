@@ -354,7 +354,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
       actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard}
       focus=${state.listed.value ? 'agents' : focus} />
-    ${state.standingOrdersDialog.value && !document.documentElement.classList.contains('scope-fused') && html`
+    ${state.standingOrdersDialog.value && !state.standingOrdersDialog.value.node && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
         descriptor=${state.standingOrdersDialog.value}

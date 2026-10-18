@@ -355,8 +355,9 @@ export function JobsStandingOrderDialogRoot({ state, actions, confirmDiscard }) 
   const current = state.view.value;
   const descriptor = current.orderDialog;
   if (!descriptor) return null;
-  // Another node's order reads that node's snapshot, never the page's.
-  const snapshot = descriptor.node ? nodeSnapshot(descriptor.node) || {} : current.dashboard || {};
+  // Another node's order reads that node's snapshot, never the page's (a
+  // null means the node is the page's own).
+  const snapshot = (descriptor.node && nodeSnapshot(descriptor.node)) || current.dashboard || {};
   return html`<${StandingOrderDialog} key=${descriptor.launchID} descriptor=${descriptor}
     snapshot=${snapshot} actions=${actions} confirmDiscard=${confirmDiscard} />`;
 }
