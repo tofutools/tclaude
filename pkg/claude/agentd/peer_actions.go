@@ -213,9 +213,8 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		dashboardSandboxRestartAgent(w, r, target.CurrentConvID)
 	case strings.HasSuffix(r.URL.Path, "/retire"):
 		// The retire dialog names whether to shut the session down; its
-		// worktree deletion stays local, unless the peer is trusted
-		// unrestricted and retires as this node's operator would.
-		if q := r.URL.Query(); !db.FederationPeerUnrestricted(a.peer) && (len(q) > 1 || len(q) == 1 && !q.Has("shutdown")) {
+		// worktree deletion stays local.
+		if q := r.URL.Query(); len(q) > 1 || len(q) == 1 && !q.Has("shutdown") {
 			writeError(w, 400, "invalid_arg", "remote retire does not accept destructive worktree options")
 			return
 		}

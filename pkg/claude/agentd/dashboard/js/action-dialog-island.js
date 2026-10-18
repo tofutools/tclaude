@@ -174,8 +174,8 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
     setBusy(true);
     try {
       let cwd = '';
-      if (worktree.startsWith('wt:')) cwd = worktree.slice(3);
-      if (worktree === WT_NEW) {
+      if (full && worktree.startsWith('wt:')) cwd = worktree.slice(3);
+      if (full && worktree === WT_NEW) {
         const cleanBranch = branch.trim();
         if (!cleanBranch) throw new Error('enter a branch name for the new worktree');
         const created = await actions.createWorktree({ repo: descriptor.cwd, branch: cleanBranch, fromBranch: base, node: descriptor.node || '' });

@@ -1514,7 +1514,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
       controller.abort();
       if (probeAbort.current === controller) probeAbort.current = null;
     };
-  }, [descriptor.conv]);
+  }, [descriptor.conv, worktreeLock]);
 
   const locked = !!submittedChoice;
   const changeShutdown = (event) => {
@@ -1526,7 +1526,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
   const submit = async () => {
     if (busy) return;
-    const deleting = !!worktree?.removable && shutdown && deleteWorktree;
+    const deleting = !worktreeLock && !!worktree?.removable && shutdown && deleteWorktree;
     // Freeze the whole probed identity alongside the choice — path AND branch,
     // exactly what this row showed the operator. Retire force-deletes the
     // branch too, and an agent can `git switch` in place without ever leaving

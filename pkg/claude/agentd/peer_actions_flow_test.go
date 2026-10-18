@@ -323,9 +323,9 @@ func TestPeerLifecycleTakesTheRegularDialogs(t *testing.T) {
 	code, body = post("stop", map[string]any{"force": false})
 	require.Equal(t, 200, code, body)
 	require.Contains(t, body, `"action"`)
-	// Unrestricted trust retires as this node's operator does: the worktree
-	// options reach the retire route, whose frozen-probe check refuses a
-	// worktree nobody reviewed.
+	// Unrestricted trust retires as this node's operator does (served as
+	// local): the worktree options reach the retire route, whose frozen-probe
+	// check refuses a worktree nobody reviewed.
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	code, body = post("retire?shutdown=0&delete_worktree=1&expected_worktree=/not-reviewed&expected_branch=x", nil)
 	require.Equal(t, 409, code, body)
