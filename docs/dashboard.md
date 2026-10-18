@@ -874,8 +874,11 @@ stays the same, with ⌘ Fleet lit.
 `[` / `]` step back to the tab you came from.
 Each ⚙ Fleet config section has its own address (`/fleet-admin/peers`,
 `/fleet-admin/grants`, …) and its own history entry, so Back/Forward step
-between sections and a section can be bookmarked. Bare `/fleet-admin` opens
-the setup guide until setup is done, else Peers.
+between sections and a section can be bookmarked. Peer grants narrowed to
+one peer or pool is `/fleet-admin/grants/<id>`. Bare `/fleet-admin` opens
+the setup guide until setup is done, else Peers. The map's shortcuts into
+Fleet config (⚙, grants…, trust…, Hub page…) are links, so a middle-click
+opens the section in a new browser tab.
 
 The map draws this node and each peer as a card joined by link edges (solid:
 reachable; dashed: unreachable or stale). A card shows the shared agents and

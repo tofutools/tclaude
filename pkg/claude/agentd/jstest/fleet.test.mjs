@@ -305,6 +305,7 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
 test('a link names its trust in each direction; the popover spells out who can do what', async (t) => {
   const { harness, stateMod, island, model } = await load(t);
   const drop = await harness.importDashboardModule('js/fleet-move-drop.js');
+  const fleetPage = await harness.importDashboardModule('js/fleet-admin-page.js');
   const link = model.linkView('desk', { name: 'lab', level: 'unrestricted' }, { theirLevel: 'restricted', omitted: ['costs', 'spawn'] });
   assert.deepEqual([link.in.from, link.in.to, link.in.short], ['lab', 'desk', 'full access']);
   assert.deepEqual([link.out.from, link.out.to, link.out.short], ['desk', 'lab', 'limited · 2 hidden']);
@@ -337,20 +338,21 @@ test('a link names its trust in each direction; the popover spells out who can d
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(mounted.container.querySelector('.fleet-link-pop'), null, 'Escape closes the popover');
   await harness.act(() => harness.fireEvent(badge, 'click'));
-  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'Change in Fleet config…' }), 'click'));
+  await harness.act(() => getByRole(mounted.container, 'link', { name: 'Change in Fleet config…' }).click());
   assert.deepEqual(nav, ['fleet-admin']);
   const forge = getByRole(mounted.container, 'button', { name: 'Trust between forge and desk' });
   assert.match(forge.textContent, /→not reported/, 'no summary yet: the other direction is unknown');
   // A restricted peer's card links to its grants, preselected, and its trust level.
   const pages = [];
-  const onPage = (e) => pages.push([e.detail, drop.takeFleetTarget()]);
+  const onPage = (e) => pages.push([e.detail, fleetPage.fleetGrantTarget.value]);
   harness.document.addEventListener(drop.FLEET_PAGE_EVENT, onPage);
   const forgeCard = mounted.container.querySelector('[aria-label="forge node"]');
-  await harness.act(() => harness.fireEvent(forgeCard.querySelector('[data-fleet="grants"]'), 'click'));
-  await harness.act(() => harness.fireEvent(forgeCard.querySelector('[data-fleet="trust-level"]'), 'click'));
-  await harness.act(() => harness.fireEvent(getByRole(forgeCard, 'button', { name: 'forge in Fleet config' }), 'click'));
+  assert.equal(forgeCard.querySelector('[data-fleet="grants"]').getAttribute('href'), '/fleet-admin/grants/inst_forge', 'a real link: middle-click opens it in a tab');
+  await harness.act(() => forgeCard.querySelector('[data-fleet="grants"]').click());
+  await harness.act(() => forgeCard.querySelector('[data-fleet="trust-level"]').click());
+  await harness.act(() => getByRole(forgeCard, 'link', { name: 'forge in Fleet config' }).click());
   harness.document.removeEventListener(drop.FLEET_PAGE_EVENT, onPage);
-  assert.deepEqual(pages, [['grants', 'inst_forge'], ['peers', ''], ['peers', '']]);
+  assert.deepEqual(pages, [['grants', 'inst_forge'], ['peers', 'inst_forge'], ['peers', 'inst_forge']], 'Peer grants keeps the target it was sent to');
   assert.deepEqual(nav, ['fleet-admin', 'fleet-admin', 'fleet-admin', 'fleet-admin']);
   await mounted.unmount(); state.dispose();
 });
@@ -390,7 +392,7 @@ test('a connected node with no peers gets a map of itself; the top bar counts on
   assert.match(hub.textContent, /space-a/);
   await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
   assert.match(hub.textContent, /★ hub admin/);
-  await harness.act(() => harness.fireEvent(getByRole(hub, 'button', { name: 'Manage hub…' }), 'click'));
+  await harness.act(() => getByRole(hub, 'link', { name: 'Manage hub…' }).click());
   assert.deepEqual(nav, ['fleet-admin'], 'Manage hub opens Fleet config');
   nav.length = 0;
   const showHub = mounted.container.querySelector('[data-fleet="show-hub"]');
