@@ -4183,6 +4183,14 @@ notification: the peer's `GET /api/human-message-export-parts?message=` (same
 grant) returns the Markdown its own export serves, and this node zips it with
 the files read in chunks.
 
+Agent mail's files cross the same way, under the same grant:
+`GET /api/peer-agent-attachments/INSTANCE/MESSAGE/ATTACHMENT` (local-only)
+reads the peer's `GET /api/agent-attachment-chunk?message=&attachment=&offset=&length=`.
+An agent-mail attachment id is a stored attachment's row id, or for a file a
+startup briefing lists under "Attached files" the negative of its position in
+that list. The peer serves a briefing file only from inside its own
+spawn-attachment directories.
+
 Neither grant authorizes replies or approval decisions. Reply delivery to an
 agent uses the existing `operator-message` route and its group-scoped
 `message.direct` permission. Human notification replies, marking human

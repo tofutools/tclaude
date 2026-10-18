@@ -195,3 +195,65 @@ func TestDashboardPeerMessageExportMatchesThePeersOwn(t *testing.T) {
 	require.Equal(t, "hello from forge", entries["attachments/notes.txt"])
 	require.Contains(t, entries["message.md"], "[notes.txt](<attachments/notes.txt>)")
 }
+
+// Agent mail's files reach a restricted peer under the same node.messages.read
+// grant that shows it the mailbox: a stored attachment by its row id and a
+// startup briefing's listed file by its negative id.
+func TestDashboardPeerAgentAttachmentUnderMessagesRead(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	previousStaging := spawnAttachmentsBase
+	spawnAttachmentsBase = testutil.CanonicalTempDir(t)
+	t.Cleanup(func() { spawnAttachmentsBase = previousStaging })
+	id, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: id.ID(), PubKey: id.Pub, Label: "forge", Name: "forge", TrustLevel: db.FederationTrustRestricted}))
+
+	batch := filepath.Join(spawnAttachmentsBase, "batch-1")
+	require.NoError(t, os.MkdirAll(batch, 0o700))
+	shot := filepath.Join(batch, "shot.png")
+	require.NoError(t, os.WriteFile(shot, []byte("png bytes"), 0o600))
+	briefing, err := db.InsertAgentMessage(&db.AgentMessage{ToConv: "conv-a", Subject: db.StartupContextSubject,
+		Body: "brief\n\n---\n\nAttached files:\n\n- " + shot, ToRecipients: []string{"conv-a"}})
+	require.NoError(t, err)
+	notes := filepath.Join(testutil.CanonicalTempDir(t), "notes.txt")
+	require.NoError(t, os.WriteFile(notes, []byte("stored"), 0o600))
+	stored, err := db.InsertAgentMessageWithAttachments(&db.AgentMessage{ToConv: "conv-a", Subject: "with file", Body: "see", ToRecipients: []string{"conv-a"}},
+		[]db.AgentMessageAttachment{{Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 6, StoragePath: notes}})
+	require.NoError(t, err)
+	rows, err := db.ListAgentMessageAttachments(stored)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	previous := fetchPeerAgentAttachmentChunk
+	t.Cleanup(func() { fetchPeerAgentAttachmentChunk = previous })
+	fetchPeerAgentAttachmentChunk = func(_ context.Context, peer *db.FederationPeer, message, attachment, offset, length int64) (humanAttachmentChunk, int, error) {
+		uri := "/api/agent-attachment-chunk?message=" + strconv.FormatInt(message, 10) + "&attachment=" + strconv.FormatInt(attachment, 10) +
+			"&offset=" + strconv.FormatInt(offset, 10) + "&length=" + strconv.FormatInt(length, 10)
+		rec := httptest.NewRecorder()
+		PeerViewHandler(peer.InstanceID).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, uri, nil))
+		if rec.Code != http.StatusOK {
+			return humanAttachmentChunk{}, rec.Code, io.ErrUnexpectedEOF
+		}
+		var c humanAttachmentChunk
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &c))
+		return c, http.StatusOK, nil
+	}
+	mux := http.NewServeMux()
+	registerDashboardPeerAttachmentRoutes(mux)
+	briefingURL := "/api/peer-agent-attachments/" + id.ID() + "/" + strconv.FormatInt(briefing, 10) + "/-1"
+	storedURL := "/api/peer-agent-attachments/" + id.ID() + "/" + strconv.FormatInt(stored, 10) + "/" + strconv.FormatInt(rows[0].ID, 10)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, dashboardRequest(http.MethodGet, briefingURL, ""))
+	require.Equal(t, http.StatusForbidden, rec.Code, "without node.messages.read the peer refuses: %s", rec.Body.String())
+
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: id.ID(), Slug: PermNodeMessagesRead}))
+	for url, want := range map[string]string{briefingURL: "png bytes", storedURL: "stored"} {
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, dashboardRequest(http.MethodGet, url, ""))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Equal(t, want, rec.Body.String())
+		require.Contains(t, rec.Header().Get("Content-Security-Policy"), "sandbox")
+	}
+}
