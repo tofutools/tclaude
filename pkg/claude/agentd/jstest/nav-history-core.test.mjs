@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_TAB, defaultLocation, normalizeLocation, locEquals,
   initialState, current, push, go, indexOf,
-  toPath, fromPath, resolveStale, resolvePopstate,
+  toPath, toQuery, fromPath, resolveStale, resolvePopstate,
   serializeStack, reviveState, NAV_STATE_VERSION, replaceCurrent,
 } from '../dashboard/js/nav-history-core.js';
 
@@ -300,6 +300,17 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(normalizeLocation({ tab: 'messages', item: '3' }), { tab: 'messages' });
   assert.deepEqual(fromPath('/terminals/agt_a/extra'), { tab: 'terminals', selection: 'agt_a' });
   assert.deepEqual(resolveStale({ tab: 'messages', selection: 'gone', item: '3' }, () => false), { tab: 'messages' });
+  // A search, sender, page and folder filter ride on the location as params.
+  const searched = { tab: 'messages', selection: 'human', params: { q: 'deploy failed', from: 'agt_1', page: '3', box: 'ops' } };
+  assert.equal(toPath(searched), '/messages/human');
+  assert.equal(toQuery(searched), 'q=deploy+failed&from=agt_1&page=3&box=ops');
+  assert.deepEqual(fromPath('/messages/human', '?box=ops&page=3&q=deploy+failed&from=agt_1&slop=1'), searched);
+  assert.deepEqual(fromPath('/messages/human?q=x'), { tab: 'messages', selection: 'human', params: { q: 'x' } });
+  // Page 1, empty values and other tabs' params are not part of a location.
+  assert.deepEqual(normalizeLocation({ tab: 'messages', params: { page: '1', q: '' } }), { tab: 'messages' });
+  assert.deepEqual(fromPath('/config/daemon', '?q=x'), { tab: 'config', subtab: 'daemon' });
+  assert.equal(locEquals(searched, { ...searched, params: { ...searched.params, page: '4' } }), false);
+  assert.equal(locEquals({ tab: 'messages', params: { page: 1 } }, { tab: 'messages' }), true);
   // Fleet config sections; the bare tab is its landing.
   assert.equal(toPath({ tab: 'fleet-admin', subtab: 'grants' }), '/fleet-admin/grants');
   assert.deepEqual(fromPath('/fleet-admin'), { tab: 'fleet-admin' });

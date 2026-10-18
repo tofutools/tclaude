@@ -94,7 +94,7 @@ import {
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
-import { fromPath, normalizeLocation, toPath } from './nav-history-core.js';
+import { fromPath, locEquals, normalizeLocation } from './nav-history-core.js';
 
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
@@ -272,9 +272,8 @@ function currentSearch() {
 // roster: agent folders are filtered server-side (the client holds only a
 // page of them), while the few pinned / group rows filter on paint.
 function setBoxQuery(value) {
-  mail.boxQuery = String(value ?? '');
-  if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
-  else dashPrefs.removeItem(BOX_FILTER_KEY);
+  storeBoxQuery(value);
+  announceFilterEdit('box');
   mail.agentsLimit = AGENTS_PAGE;
   mail.groupLimits.clear();
   paintSidebar();
@@ -304,12 +303,26 @@ function loadMoreMembers(name) {
   refreshRoster();
 }
 
-function setMessageQuery(value) {
-  mail.senderFilter = '';
+function storeBoxQuery(value) {
+  mail.boxQuery = String(value ?? '');
+  if (mail.boxQuery) dashPrefs.setItem(BOX_FILTER_KEY, mail.boxQuery);
+  else dashPrefs.removeItem(BOX_FILTER_KEY);
+}
+
+function storeMessageQuery(value) {
   mail.messageQuery = String(value ?? '');
   const key = 'tclaude.dash.filter.messages';
   if (mail.messageQuery) dashPrefs.setItem(key, mail.messageQuery);
   else dashPrefs.removeItem(key);
+}
+
+function setMessageQuery(value) {
+  mail.senderFilter = '';
+  storeMessageQuery(value);
+  // The search starts over on page 1; say so in the URL before anything
+  // repaints (a repaint would correct the entry the edit should push past).
+  mail.page = 1;
+  announceFilterEdit('q');
   // Pass the authoritative value through to the search hook. In particular,
   // the clear button updates state before the DOM-controlled input has
   // repainted; rereading the input there would restore the old query.
@@ -636,6 +649,7 @@ function goToPage(n) {
   const target = Math.min(Math.max(n, 1), pageCount());
   if (target === mail.page) return;
   mail.page = target;
+  announceMailLocation(false);
   reloadMessagesPage();
 }
 
@@ -952,10 +966,13 @@ function paintReader() { mailState.touch(); }
 
 // --- selection ------------------------------------------------------
 
-// --- history (/messages/<folder>[/<message-id>]) --------------------
+// --- history (/messages/<folder>[/<message-id>][?q=&from=&page=&box=]) --
 //
 // A folder or message the operator CLICKS is a navigation: it pushes a
-// history entry (options.navigate). Everything else that moves the selection
+// history entry (options.navigate), and so does a page step. Editing the
+// message search or the folder filter pushes one entry when the edit starts
+// and then corrects it keystroke by keystroke (announceFilterEdit), so Back
+// undoes a whole search at once. Everything else that moves the selection
 // — arrow keys, a jump from another tab (openMailbox, the attention badge,
 // an access-request link), a folder snapped away because it vanished, a
 // deleted message — only corrects the current entry, via syncMailUrl after
@@ -969,11 +986,27 @@ function isFused() {
 
 function mailLocation() {
   if (isFused()) return { tab: 'messages' };
-  return normalizeLocation({ tab: 'messages', selection: mail.selected, item: mail.selectedMsgId ?? undefined });
+  return normalizeLocation({
+    tab: 'messages', selection: mail.selected, item: mail.selectedMsgId ?? undefined,
+    params: { q: currentSearch(), from: mail.senderFilter, page: mail.page, box: (mail.boxQuery || '').trim() },
+  });
 }
 
+// editing names the filter ('q' or 'box') whose edit pushed the current
+// entry; further edits of it only correct that entry. Any other navigation
+// or a history restore ends the edit.
+let editing = null;
+
 function announceMailLocation(correction) {
+  if (!correction) editing = null;
   document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: mailLocation(), correction } }));
+}
+
+function announceFilterEdit(kind) {
+  if (isFused() || !mailTabActive()) return;
+  const continuing = editing === kind;
+  announceMailLocation(continuing);
+  editing = kind;
 }
 
 // restoring holds syncMailUrl off while a history location is being loaded,
@@ -987,25 +1020,47 @@ let restoring = 0;
 // entry, and the router's push that follows reads the new folder anyway.
 function syncMailUrl() {
   if (restoring || isFused() || !mailTabActive()) return;
-  const path = globalThis.location?.pathname;
-  if (fromPath(path).tab !== 'messages') return;
-  if (toPath(mailLocation()) !== path) announceMailLocation(true);
+  const shown = fromPath(globalThis.location?.pathname, globalThis.location?.search || '');
+  if (shown.tab !== 'messages') return;
+  if (!locEquals(mailLocation(), shown)) announceMailLocation(true);
 }
 
 // restoreLocation shows a history location: Back/Forward or a deep link. A
-// bare /messages keeps the open folder; a folder without a message closes the
-// reader. A message is looked for on the folder's loaded page — a message
-// that is gone (or on another page after a reload) leaves just the folder,
-// and the URL is corrected to say so.
+// bare /messages keeps the open folder and its search; a location naming a
+// folder also names its search, sender, page and folder filter, absent ones
+// meaning none (page 1). A folder without a message closes the reader. A
+// message is looked for on the named page — a message that is gone leaves
+// just the folder, and the URL is corrected to say so.
 async function restoreLocation(loc) {
+  editing = null;
   if (isFused() || !loc?.selection) { syncMailUrl(); return; }
   restoring++;
   try {
+    const params = loc.params || {};
+    const page = Number(params.page) > 0 ? Number(params.page) : 1;
+    const boxChanged = (params.box || '') !== (mail.boxQuery || '').trim();
+    if (boxChanged) {
+      storeBoxQuery(params.box || '');
+      mail.agentsLimit = AGENTS_PAGE;
+      mail.groupLimits.clear();
+      if (mail.boxTimer) { clearTimeout(mail.boxTimer); mail.boxTimer = null; }
+    }
+    const searchChanged = (params.q || '') !== currentSearch() || (params.from || '') !== mail.senderFilter;
+    if (searchChanged) {
+      if (mail.searchTimer) { clearTimeout(mail.searchTimer); mail.searchTimer = null; }
+      storeMessageQuery(params.q || '');
+      mail.senderFilter = params.from || '';
+      mail.selectedMsgs.clear();
+    }
     if (loc.selection !== mail.selected) {
       await loadMailboxes();
-      if (!await selectMailbox(loc.selection)) return;
-    } else if (!mail.messages.length && loc.selection !== ACCESS_ID) {
+      if (!await selectMailbox(loc.selection, { page, preserveSenderFilter: true })) return;
+    } else if (loc.selection !== ACCESS_ID && (searchChanged || page !== mail.page || !mail.messages.length)) {
+      mail.page = page;
       await loadMessages();
+      if (boxChanged) await loadMailboxes();
+    } else if (boxChanged) {
+      await loadMailboxes();
     }
     if (!loc.item) {
       mail.selectedMsgId = null;

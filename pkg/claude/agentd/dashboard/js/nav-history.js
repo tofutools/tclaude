@@ -23,7 +23,7 @@ import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from
 import { fleetAdminLocation, setFleetAdminPage } from './fleet-admin-page.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
-  push, replaceCurrent, toPath, fromPath, resolvePopstate,
+  push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
@@ -363,9 +363,11 @@ function preservedQuery() {
   return s ? '?' + s : '';
 }
 
-// urlFor builds the full URL (path + preserved query) for a location.
+// urlFor builds the full URL for a location: its path, then the page-global
+// preserved query, then the location's own params (a Messages search).
 function urlFor(loc) {
-  return toPath(loc) + preservedQuery();
+  const query = [preservedQuery().slice(1), toQuery(loc)].filter(Boolean).join('&');
+  return toPath(loc) + (query ? '?' + query : '');
 }
 
 // record pushes a user-initiated location onto the stack + browser history.
@@ -451,7 +453,7 @@ function onPopstate(e) {
   // Decide the target from the popped URL + its stamped index. The core
   // validates the index against the URL (a reload leaves older entries carrying
   // stale, cross-instance indices) and falls back to URL relocation/reseed.
-  const loc = fromPath(window.location.pathname);
+  const loc = fromPath(window.location.pathname, window.location.search);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
   // Stale target: a popped tab may have been hidden while it sat in the
@@ -482,7 +484,7 @@ export function initNavHistory() {
   if (/^\/fleet\/?$/.test(window.location.pathname) && !document.documentElement.dataset.scopeNodes) {
     document.documentElement.dataset.scopeNodes = new URLSearchParams(window.location.search).get('nodes') || 'all';
   }
-  const urlLoc = fromPath(window.location.pathname);
+  const urlLoc = fromPath(window.location.pathname, window.location.search);
   // On a RELOAD, history.state still holds the stack we persisted for this
   // entry — reconstruct it (full depth) so native browser navigation retains
   // the same location mapping. reviveState validates the payload against the
