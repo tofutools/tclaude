@@ -485,7 +485,7 @@ export function MergedGroups({
       // dnd.js no longer sees this drag's hover: its clone must not finish.
       dndGesture.cancelClone();
       if (plan.kind === 'none') { unmark(); return; }
-      // Same-node, third-node and ungranted pulls are accepted only to say
+      // Third-node drops and ungranted pulls are accepted only to say
       // why not.
       event.preventDefault();
       const ok = plan.kind === 'push' || (plan.kind === 'pull' && !pullMissing(dragging).length);
