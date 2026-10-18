@@ -346,6 +346,7 @@ func (w *peerViewResponse) Write(b []byte) (int, error) {
 	}
 	return w.body.Write(b)
 }
+
 // Flush lets a streaming handler run against the buffer (a peer view job);
 // its reply goes out whole.
 func (w *peerViewResponse) Flush() {}
