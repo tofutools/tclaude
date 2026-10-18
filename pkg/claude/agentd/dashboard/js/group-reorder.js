@@ -68,6 +68,7 @@ import { setFusedSectionOpen } from './groups-fused-sections.js';
 // module header: withholding text/plain is what makes dnd.js's member-row
 // drop handler bail on a group-reorder drop.
 const GROUP_DRAG_MIME = 'application/x-tclaude-group';
+const GROUP_NODE_MIME = 'application/x-tclaude-group-node';
 
 // Live routing state shared with reverse dock capture. Keyed Preact group
 // nodes survive snapshot publishes during the gesture.
@@ -414,6 +415,9 @@ function bindGroupReorder() {
     // withheld. copyMove lets Ctrl/Cmd switch the native cursor to the clone
     // operation while a plain drag remains a reorder.
     e.dataTransfer.setData(GROUP_DRAG_MIME, name);
+    // A fused view's group (named group@node) names its node and its own
+    // name there, for a drop on the dock (dock-save-dnd.js).
+    if (ctx.fused) e.dataTransfer.setData(GROUP_NODE_MIME, JSON.stringify({ node: ctx.node, group: ctx.own(name) }));
     e.dataTransfer.effectAllowed = 'copyMove';
     const details = handle.closest('details[data-group-key]');
     if (details) details.classList.add('group-reorder-source');

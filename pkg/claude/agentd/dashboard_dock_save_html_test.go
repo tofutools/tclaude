@@ -44,6 +44,12 @@ func TestDashboardHTML_DockSaveDrag(t *testing.T) {
 	must("openProfileEditor(seed, { editExisting: false })", "an agent drop opens the profile editor in create mode")
 	must("preview: true", "a group drop captures a non-persisting template preview")
 	must("openTemplateEditor(tmpl, { asNew: true })", "a group drop opens the template editor in create mode")
+	// The fused view's groups and agents read their seed on their own node.
+	must("const GROUP_NODE_MIME = 'application/x-tclaude-group-node';", "a fused group drag names its node")
+	must("if (ctx.fused) e.dataTransfer.setData(GROUP_NODE_MIME, JSON.stringify({ node: ctx.node, group: ctx.own(name) }));", "group-reorder writes the node payload")
+	must("await nodeFetch(node)('/api/templates/from-group'", "a group's template seed is read on its node")
+	must("await nodeFetch(node)('/api/spawn-profiles/from-agent'", "an agent's profile seed is read on its node")
+	must("payload.sourceNode || ''", "a member drop passes its source node")
 
 	// The Preact template editor's create-mode-with-prefill option (asNew) exists.
 	must("const editing = descriptor.seed && !descriptor.options?.asNew;", "asNew keeps the editor in create mode while pre-filling")

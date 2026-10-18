@@ -15,7 +15,6 @@ import (
 // moving its requests to nodeFetch lowers its entry, and none adds a literal
 // one. (A path held in a variable is not counted.)
 var bareAPIFetchBaseline = map[string]int{
-	"dock-save-dnd.js":              2,
 	"fleet-admin-island.js":         1,
 	"groups-island.js":              1,
 	"groups-notification-reader.js": 1,
