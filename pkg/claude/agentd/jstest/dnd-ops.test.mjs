@@ -66,3 +66,27 @@ test('a box names its node and the group it lists', async (t) => {
   assert.deepEqual(ops.dndNode(doc.getElementById('local')), { node: '', name: '' });
   assert.equal(ops.targetGroupOf(doc.getElementById('local')), 'ops');
 });
+
+test("a group drag acts on the dragged group's node under its own names", async (t) => {
+  const { harness, ops, toasts } = await setup(t);
+  const doc = harness.document;
+  doc.body.innerHTML = `<div id="fleetview-fused-groups-root">
+    <details id="peer" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="build@forge"><summary id="ph" data-group-reorder="build@forge">b</summary></details>
+    <details id="peer2" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="ops@forge"><summary>o</summary></details>
+    <details id="home" data-fleet-node="inst_desk0001" data-fleet-node-name="desk" data-group-key="ops@desk"><summary>o</summary></details></div>
+    <details id="local" data-group-key="ops"><summary id="lh" data-group-reorder="ops">o</summary></details>`;
+  const calls = []; let refreshed = 0;
+  const ctx = ops.groupDragContext(doc.getElementById('ph'), { refresh: () => { refreshed += 1; }, fetchImpl: async (url) => { calls.push(url); return { ok: true }; } });
+  assert.deepEqual([ctx.node, ctx.fused, ctx.own('build@forge'), ctx.own('ops')], [FORGE, true, 'build', 'ops']);
+  await ctx.api(`/api/groups/${ctx.own('build@forge')}/parent`, { method: 'PUT' });
+  assert.deepEqual(calls, [`/api/peer/${FORGE}/groups/build/parent`]);
+  ctx.done();
+  assert.equal(refreshed, 1);
+  assert.equal(ops.sameGroupTree(ctx, doc.getElementById('peer2')), true, "forge's other group");
+  assert.equal(ops.sameGroupTree(ctx, doc.getElementById('home')), false, "never another node's group");
+  assert.equal(ops.sameGroupTree(ctx, doc.getElementById('local')), false, "never this page's own Groups view");
+  const local = ops.groupDragContext(doc.getElementById('lh'));
+  assert.deepEqual([local.node, local.fused, local.own('ops')], ['', false, 'ops'], 'the local Groups view as before');
+  assert.equal(ops.nodeAllowsActing(FORGE), true);
+  assert.deepEqual(toasts, []);
+});

@@ -223,7 +223,8 @@ test('dragging an agent onto another node\'s group opens the move; a same-node d
     return over;
   };
   assert.ok(row('agt_b1') && groupEl('reviewers@forge'), 'rows and groups render');
-  assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, true, 'group headers do not drag here');
+  assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, false, "this node's group headers drag (group-reorder.js)");
+  assert.equal(harness.fireEvent(groupEl('reviewers@forge').querySelector('summary'), 'dragstart').defaultPrevented, true, 'a peer trusting this node restricted keeps its groups');
   // dnd.js's pending Ctrl/Cmd clone hover must not finish under a move
   // between nodes this view takes.
   const dndOps = await harness.importDashboardModule('js/dnd-ops.js');

@@ -1,9 +1,12 @@
 import { dashPrefs } from './prefs.js';
 
 export const GROUP_ORDER_KEY = 'tclaude.dash.groupOrder';
+// The fused Groups view keeps its own order of the groups it lists (by their
+// group@node names), so reordering there never rewrites one node's order.
+export const FUSED_GROUP_ORDER_KEY = 'tclaude.dash.fusedGroupOrder';
 
-export function groupOrderPref(prefs = dashPrefs) {
-  const raw = prefs.getItem(GROUP_ORDER_KEY);
+export function groupOrderPref(prefs = dashPrefs, key = GROUP_ORDER_KEY) {
+  const raw = prefs.getItem(key);
   if (!raw) return null;
   try {
     const names = JSON.parse(raw);
@@ -13,8 +16,21 @@ export function groupOrderPref(prefs = dashPrefs) {
   }
 }
 
-export function setGroupOrderPref(names, prefs = dashPrefs) {
-  prefs.setItem(GROUP_ORDER_KEY, JSON.stringify(names));
+export function setGroupOrderPref(names, prefs = dashPrefs, key = GROUP_ORDER_KEY) {
+  prefs.setItem(key, JSON.stringify(names));
+}
+
+// The fused view's listing (its merged snapshot, groups named group@node),
+// which a group drag there plans against.
+let fusedListing = () => null;
+
+export function setFusedGroupListing(source) {
+  fusedListing = source;
+  return () => { if (fusedListing === source) fusedListing = () => null; };
+}
+
+export function fusedGroupListing() {
+  try { return fusedListing() || null; } catch (_) { return null; }
 }
 
 export function insertGroupBeside(names, groupName, anchorName, before = false) {
@@ -28,8 +44,8 @@ export function insertGroupBeside(names, groupName, anchorName, before = false) 
   return order;
 }
 
-export function sortGroupsByPref(groups, prefs = dashPrefs) {
-  const order = groupOrderPref(prefs);
+export function sortGroupsByPref(groups, prefs = dashPrefs, key = GROUP_ORDER_KEY) {
+  const order = groupOrderPref(prefs, key);
   if (!order?.length) return groups;
   const rank = new Map();
   order.forEach((name, index) => {

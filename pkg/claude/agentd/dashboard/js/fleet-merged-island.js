@@ -16,8 +16,10 @@ import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } 
 import {
   ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantMissing, grantSelectors, needsSuffix, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
-import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
-import { dndGesture } from './dnd-ops.js';
+import { announceNodeChanged, isPageNode, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
+import { dndGesture, nodeAllowsActing } from './dnd-ops.js';
+import { FUSED_GROUP_ORDER_KEY, setFusedGroupListing, sortGroupsByPref } from './group-order.js';
+import { dashPrefs } from './prefs.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 import { dropPlan } from './fleet-move-drop.js';
 import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
@@ -258,9 +260,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
 // out of a listing of several nodes, whatever this node's view shows.
 const NODE_ONLY_OFF = Object.fromEntries(GROUP_VIEW_OPTIONS.filter((o) => o.nodeOnly).map((o) => [o.key, false]));
 
-// keepOrder leaves the merged groups in node order: the remembered group
-// order names one node's own groups.
-const keepOrder = (list) => list;
+// fusedOrder sorts the merged groups by the fused view's own remembered order
+// (group@node names; group-reorder.js keeps it), else node order.
+const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER_KEY);
 
 // MergedGroups is the fused Groups view: the Groups listing (GroupsLensList,
 // as on one node's view, under the same toolbar and its filter, view and
@@ -349,7 +351,11 @@ export function MergedGroups({
   // The toolbar's filter and view menu narrow this listing as they do one
   // node's (renderRevision: a column or order change re-renders).
   groups.renderRevision.value;
-  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, keepOrder);
+  const view = buildGroupsView(merged, { ...groups.visibility.value, ...NODE_ONLY_OFF }, groups.query.value, fusedOrder);
+  // A group drag here (group-reorder.js) plans against this listing.
+  const mergedRef = useRef(merged);
+  mergedRef.current = merged;
+  useEffect(() => setFusedGroupListing(() => mergedRef.current), []);
   const wizard = useWizardTheme();
   const hoveredGroupKey = useGroupsHover(host, view.groups);
   useGroupsTableControls(host, groups, routed.current);
@@ -452,7 +458,14 @@ export function MergedGroups({
       if (!src && homeRef.current && event.target.closest?.(PROCESS_DRAGS)
         && (event.target.closest('[data-run-dock]')
           || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
-      if (!src) { event.preventDefault(); return; }
+      if (!src) {
+        // A group header drags as on its node's Groups view (group-reorder.js)
+        // where this node may act there.
+        const header = event.target.closest?.('summary[data-group-reorder]');
+        const box = header?.closest('details[data-fleet-node]');
+        if (header && box && nodeAllowsActing(isPageNode(box.dataset.fleetNode) ? '' : box.dataset.fleetNode)) return;
+        event.preventDefault(); return;
+      }
       dragging = src;
       // dragend reaches its source even if a re-render detached it.
       const row = event.target.closest('tr.dnd-draggable');
