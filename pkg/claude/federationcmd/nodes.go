@@ -193,9 +193,11 @@ func watchNodes(p *nodesParams, stdout, stderr io.Writer) int {
 }
 
 type nodeHealthParams struct {
-	Peer    string `long:"peer" optional:"true" help:"Trusted peer label or instance ID; omit for defaults"`
-	Set     string `long:"set" optional:"true" help:"Replace this policy with a JSON object (operator only)"`
-	Silence bool   `long:"silence" optional:"true" help:"Stop offline reminders for --peer's current disconnection (operator only)"`
+	Peer     string `long:"peer" optional:"true" help:"Trusted peer label or instance ID; omit for defaults"`
+	Set      string `long:"set" optional:"true" help:"Replace this policy with a JSON object (operator only)"`
+	Silence  bool   `long:"silence" optional:"true" help:"Stop offline reminders for --peer's current disconnection (operator only)"`
+	PartTime bool   `long:"part-time" optional:"true" help:"Mark --peer part-time: no offline/back notices, rest of its policy kept (operator only)"`
+	AlwaysOn bool   `long:"always-on" optional:"true" help:"Undo --part-time: offline/back notices for --peer again (operator only)"`
 }
 
 func nodeHealthCmd() *cobra.Command {
@@ -205,7 +207,14 @@ func nodeHealthCmd() *cobra.Command {
 		}
 		path := "/v1/federation/nodes/health?peer=" + url.QueryEscape(p.Peer)
 		var result any
-		if p.Silence {
+		if p.PartTime || p.AlwaysOn {
+			if p.Peer == "" || p.Set != "" || p.Silence || p.PartTime && p.AlwaysOn {
+				os.Exit(fail(os.Stderr, fmt.Errorf("--part-time / --always-on require --peer and take no other action flag")))
+			}
+			if err := agent.DaemonPost("/v1/federation/nodes/health/presence?peer="+url.QueryEscape(p.Peer), map[string]any{"presence": p.AlwaysOn}, &result); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+		} else if p.Silence {
 			if p.Peer == "" || p.Set != "" {
 				os.Exit(fail(os.Stderr, fmt.Errorf("--silence requires --peer and cannot be combined with --set")))
 			}

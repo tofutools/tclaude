@@ -108,7 +108,7 @@ func remindOffline(peer string, signal *fleetSignal, now time.Time) {
 		return
 	}
 	next := signal.offlineSince.Add(offlineNoticeDelay(signal.notices)).Sub(now)
-	message := fmt.Sprintf("Node has been offline for %s (since %s). Next reminder in %s unless it reconnects. Silence this disconnection from the node's card in the Fleet map, or with `tclaude federation nodes health --peer <name> --silence`.",
+	message := fmt.Sprintf("Node has been offline for %s (since %s). Next reminder in %s unless it reconnects. Silence this disconnection from the node's card in the Fleet map, or with `tclaude federation nodes health --peer <name> --silence`. If the node is often off on purpose, mark it part-time there (or with `--part-time`) to stop these notices for it.",
 		offlineFor(now.Sub(signal.offlineSince)), signal.offlineSince.Local().Format(time.RFC1123), offlineFor(next))
 	notifyFleetHuman(peer, proto.SafeName(peerDisplay(p), true), "offline", message)
 }
@@ -273,45 +273,88 @@ func fleetPolicy(peer string) (config.FederationHealthPolicy, bool) {
 	if err != nil {
 		return config.FederationHealthPolicy{}, false
 	}
-	p := config.FederationHealthPolicy{}
-	if cfg.Federation != nil && cfg.Federation.Health != nil {
-		h := cfg.Federation.Health
-		p = h.Defaults
-		if override, ok := h.Peers[peer]; ok {
-			p = override
-
-		} else if peer != "" && len(h.Peers) > 0 {
-			// Walk accepted continuation links backwards so the closest explicit
-			// ancestor override wins across repeated rotations. Labels never match.
-			rows, e := db.ListFederationIdentityRotations()
-			if e != nil {
-				return config.FederationHealthPolicy{}, false
-			}
-			previous := map[string]string{}
-			for _, row := range rows {
-				if row.State == "accepted" || row.State == "recovered" {
-					previous[row.Statement.NewID] = row.Statement.OldID
-				}
-			}
-			seen := map[string]bool{peer: true}
-			for id := previous[peer]; id != ""; id = previous[id] {
-				if seen[id] {
-					return config.FederationHealthPolicy{}, false
-				}
-				seen[id] = true
-				if override, ok := h.Peers[id]; ok {
-					p = override
-					break
-				}
-			}
-
-		}
-	}
-	if p.Validate() != nil {
+	p, err := configuredFleetPolicy(cfg, peer, fleetRotationParents)
+	if err != nil || p.Validate() != nil {
 		return config.FederationHealthPolicy{}, false
 	}
 	return effectiveFleetPolicy(p), true
 }
+
+// fleetRotationParents maps each accepted identity successor to its predecessor.
+func fleetRotationParents() (map[string]string, error) {
+	rows, err := db.ListFederationIdentityRotations()
+	if err != nil {
+		return nil, err
+	}
+	previous := map[string]string{}
+	for _, row := range rows {
+		if row.State == "accepted" || row.State == "recovered" {
+			previous[row.Statement.NewID] = row.Statement.OldID
+		}
+	}
+	return previous, nil
+}
+
+// configuredFleetPolicy is peer's policy as configured, before built-in
+// defaults: its own override, the nearest accepted ancestor's, or the defaults.
+// parents is only read when an ancestor walk is needed.
+func configuredFleetPolicy(cfg *config.Config, peer string, parents func() (map[string]string, error)) (config.FederationHealthPolicy, error) {
+	if cfg.Federation == nil || cfg.Federation.Health == nil {
+		return config.FederationHealthPolicy{}, nil
+	}
+	h := cfg.Federation.Health
+	if override, ok := h.Peers[peer]; ok {
+		return override, nil
+	}
+	if peer == "" || len(h.Peers) == 0 {
+		return h.Defaults, nil
+	}
+	// Walk accepted continuation links backwards so the closest explicit
+	// ancestor override wins across repeated rotations. Labels never match.
+	previous, err := parents()
+	if err != nil {
+		return config.FederationHealthPolicy{}, err
+	}
+	seen := map[string]bool{peer: true}
+	for id := previous[peer]; id != ""; id = previous[id] {
+		if seen[id] {
+			return config.FederationHealthPolicy{}, fmt.Errorf("identity rotation cycle at %s", id)
+		}
+		seen[id] = true
+		if override, ok := h.Peers[id]; ok {
+			return override, nil
+		}
+	}
+	return h.Defaults, nil
+}
+
+// fleetPartTime reports which trusted peers are part-time: their policy turns
+// offline/back notices off, so their disconnections never reach Messages.
+func fleetPartTime(peers []db.FederationPeer) map[string]bool {
+	out := map[string]bool{}
+	cfg, err := config.Load()
+	if err != nil {
+		return out
+	}
+	var parents map[string]string
+	var parentsErr error
+	loaded := false
+	cached := func() (map[string]string, error) {
+		if !loaded {
+			parents, parentsErr = fleetRotationParents()
+			loaded = true
+		}
+		return parents, parentsErr
+	}
+	for _, p := range peers {
+		policy, err := configuredFleetPolicy(cfg, p.InstanceID, cached)
+		if err == nil && policy.Presence != nil && !*policy.Presence {
+			out[p.InstanceID] = true
+		}
+	}
+	return out
+}
+
 func (s *fleetHealthState) signal(peer, kind, message string, value bool, now time.Time) {
 	key := peer + "/" + kind
 	old := s.signals[key]
@@ -596,6 +639,60 @@ func handleFleetOfflineSilence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, rt.offlineNotices()[p.InstanceID])
+}
+
+// handleFleetPresenceNotices turns one peer's offline/back notices on or off
+// (off marks it part-time) and keeps the rest of its policy. A peer without
+// its own override gets one copied from the policy it follows today.
+func handleFleetPresenceNotices(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "configure fleet health") {
+		return
+	}
+	p, err := resolveFederationPeer(r.URL.Query().Get("peer"))
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	var body struct {
+		Presence *bool `json:"presence"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || body.Presence == nil {
+		writeError(w, 400, "invalid_arg", `body must be {"presence": true|false}`)
+		return
+	}
+	_, err = config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		policy, err := configuredFleetPolicy(c, p.InstanceID, fleetRotationParents)
+		if err != nil {
+			return err
+		}
+		policy.Presence = body.Presence
+		if c.Federation == nil {
+			c.Federation = &config.FederationConfig{}
+		}
+		if c.Federation.Health == nil {
+			c.Federation.Health = &config.FederationHealthConfig{}
+		}
+		if c.Federation.Health.Peers == nil {
+			c.Federation.Health.Peers = map[string]config.FederationHealthPolicy{}
+		}
+		c.Federation.Health.Peers[p.InstanceID] = policy
+		return nil
+	})
+	if err != nil {
+		writeError(w, 500, "config", err.Error())
+		return
+	}
+	policy, ok := fleetPolicy(p.InstanceID)
+	if !ok {
+		writeError(w, 500, "config", "cannot read fleet health policy")
+		return
+	}
+	writeJSON(w, 200, policy)
 }
 
 // Optional progress frame: older peers ignore it. It never settles a spawn

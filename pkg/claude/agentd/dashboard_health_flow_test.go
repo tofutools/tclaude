@@ -58,3 +58,61 @@ func TestDashboardFederationHealthPolicy(t *testing.T) {
 	rec = testharness.Serve(agentd.PeerViewHandler(peer.InstanceID), testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/silence?peer=bob", map[string]any{}))
 	require.Equal(t, 403, rec.Code, rec.Body.String())
 }
+
+func TestDashboardFederationPartTimePeer(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	h := agentd.BuildDashboardHandlerForTest()
+	partTime := func() bool {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/federation/status", nil))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var st struct {
+			Peers []struct {
+				InstanceID string `json:"instance_id"`
+				PartTime   bool   `json:"part_time"`
+			} `json:"peers"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+		for _, p := range st.Peers {
+			if p.InstanceID == fh.peer.id.ID() {
+				return p.PartTime
+			}
+		}
+		t.Fatalf("peer missing from status: %s", rec.Body.String())
+		return false
+	}
+	presence := func(on bool) config.FederationHealthPolicy {
+		t.Helper()
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/presence?peer=bob", map[string]any{"presence": on}))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var p config.FederationHealthPolicy
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p))
+		return p
+	}
+	require.False(t, partTime())
+
+	// Marking a peer part-time copies the policy it follows and turns only
+	// offline/back notices off.
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/nodes/health?peer=", map[string]any{"resources": true}))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	p := presence(false)
+	require.False(t, *p.Presence)
+	require.True(t, p.Resources, "the rest of the followed policy is kept")
+	require.True(t, partTime())
+	p = presence(true)
+	require.True(t, *p.Presence)
+	require.True(t, p.Resources)
+	require.False(t, partTime())
+
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/presence?peer=bob", map[string]any{}))
+	require.Equal(t, 400, rec.Code, rec.Body.String())
+
+	// A peer view never changes this node's notices.
+	peer, err := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	rec = testharness.Serve(agentd.PeerViewHandler(peer.InstanceID), testharness.JSONRequest(t, "POST", "/api/federation/nodes/health/presence?peer=bob", map[string]any{"presence": false}))
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+}

@@ -415,17 +415,32 @@ function OfflineNoticeRow({ notice, now, onSilence }) {
   return html`<div class="fleet-card-notice" title="Offline notices go to Messages after 5 min, 30 min, 4 h, then daily">🔔 ${sent}${next && ` · ${next}`}${onSilence && html` <button type="button" class="fleet-link" data-fleet="silence-offline" onClick=${onSilence}>silence</button>`}</div>`;
 }
 
-function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, onSilence, now, cardRef, shown }) {
+// OfflineAlertsRow switches a peer's offline/back notices: "notify" escalates
+// to Messages, "part-time" never does, for a node that is often off on purpose.
+function OfflineAlertsRow({ node, onOfflineAlerts }) {
+  const seg = (on, label, title) => {
+    const active = node.partTime !== on;
+    return html`<button type="button" class=${active ? 'on' : ''} aria-pressed=${active ? 'true' : 'false'} title=${title}
+      data-fleet=${on ? 'offline-alerts-notify' : 'offline-alerts-part-time'} onClick=${() => { if (!active) onOfflineAlerts(on); }}>${label}</button>`;
+  };
+  return html`<dl class="fleet-card-body fleet-card-alerts">
+    <dt>Offline alerts</dt><dd><span class="fleet-card-seg" role="group" aria-label=${`Offline alerts for ${node.name}`}>${seg(true, '🔔 notify', 'Messages after 5 min, 30 min, 4 h offline, then daily, and when it is back')}${seg(false, '💤 part-time', 'Often off on purpose: no offline or back-online messages')}</span></dd>
+  </dl>`;
+}
+
+function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onTerminals, onSilence, onOfflineAlerts, now, cardRef, shown }) {
   const kind = node.local ? 'this node' : 'peer';
-  const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
-  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
+  const asleep = node.partTime && card.presence === 'offline';
+  const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : asleep ? 'asleep' : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
+  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${node.partTime ? ' part-time' : ''}${focused ? ' focused' : ''}`}
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
-      <span class="fleet-card-kind">${kind}</span>
-      <span class=${`fleet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
+      <span class="fleet-card-kind">${kind}</span>${node.partTime && html`<span class="fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
+      <span class=${`fleet-card-presence ${asleep ? 'asleep' : card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
     ${!node.local && html`<${TrustRows} node=${node} card=${card} selfName=${selfName} />`}
-    ${!node.local && node.offlineNotice && !node.online && html`<${OfflineNoticeRow} notice=${node.offlineNotice} now=${now ?? Date.now()} onSilence=${onSilence} />`}
+    ${!node.local && onOfflineAlerts && html`<${OfflineAlertsRow} node=${node} onOfflineAlerts=${onOfflineAlerts} />`}
+    ${!node.local && !node.partTime && node.offlineNotice && !node.online && html`<${OfflineNoticeRow} notice=${node.offlineNotice} now=${now ?? Date.now()} onSilence=${onSilence} />`}
     ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
     ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="fleet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
@@ -661,6 +676,9 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const silence = (peer) => (remote || !actions.silenceOffline ? undefined : async () => {
     try { await actions.silenceOffline(peer.id); toast(`Offline notices for ${peer.name} silenced until it reconnects`, false); actions.loadStatus?.(); } catch (e) { toast(`Silence ${peer.name}: ${e?.message || e}`, true); }
   });
+  const offlineAlerts = (peer) => (remote || !actions.setOfflineAlerts ? undefined : async (on) => {
+    try { await actions.setOfflineAlerts(peer.id, on); toast(on ? `Offline alerts for ${peer.name} on` : `${peer.name} is part-time: no offline or back-online messages`, false); actions.loadStatus?.(); } catch (e) { toast(`Offline alerts for ${peer.name}: ${e?.message || e}`, true); }
+  });
   const asking = strangers.filter((s) => s.request).length;
   return html`<div class="fleet-map" ref=${mapRef}>
     <svg class="fleet-edges" aria-hidden="true">
@@ -670,7 +688,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
       onToggle=${() => setLinkOpen(linkOpen === e.id ? '' : e.id)} onConfigure=${() => { setLinkOpen(''); navigate('fleet-admin'); }} />`; })}
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
     <div class="fleet-map-hub"><${HubCard} hub=${fleet.hub} now=${t} /></div>
-    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} onSilence=${silence(peer)} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
+    <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} onSilence=${silence(peer)} onOfflineAlerts=${offlineAlerts(peer)} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
       <h4>On the hub, not trusted <span class="muted">${strangers.length}</span>${asking > 0 && html` <span class="fleet-map-asking">· ${asking} asking to be trusted</span>`}</h4>
       <div class="fleet-map-strangers-cards">${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} onAsk=${ask(row)} onDismiss=${dismiss(row)} />`)}</div>
     </div>`}</div>

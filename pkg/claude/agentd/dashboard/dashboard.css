@@ -20104,6 +20104,14 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-key.conflict { color: #f85149; }
 .fleet-card-notice { padding: 0 12px 8px; font-size: 12px; color: #d29922; }
 .fleet-card-notice.silenced { color: #8b949e; }
+.fleet-card-alerts { padding-top: 0; }
+.fleet-card-seg { display: inline-flex; border: 1px solid #30363d; border-radius: 5px; overflow: hidden; }
+.fleet-card-seg button { border: 0; background: none; color: #8b949e; padding: 1px 8px; font: 11.5px system-ui, sans-serif; cursor: pointer; }
+.fleet-card-seg button + button { border-left: 1px solid #30363d; }
+.fleet-card-seg button.on { background: rgba(31, 111, 235, .2); color: #f0f6fc; cursor: default; }
+.fleet-card-kind.part-time { color: #a5d6ff; border-color: rgba(31, 111, 235, .4); }
+.fleet-card.part-time.stale { opacity: .65; }
+.fleet-card-presence.asleep i { background: none; border: 1.5px solid currentColor; width: 6px; height: 6px; }
 .fleet-legend { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: #7d8590; font-size: 11px; }
 .fleet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
 .fleet-legend i.stale { border-top: 2px dashed #6e7681; }

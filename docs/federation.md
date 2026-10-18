@@ -2537,6 +2537,8 @@ tclaude federation nodes health
 tclaude federation nodes health --peer bob --set '{"resources":true,"failures":true}'
 tclaude federation nodes health --peer bob --set '{"presence":false}'
 tclaude federation nodes health --peer bob --silence
+tclaude federation nodes health --peer bob --part-time
+tclaude federation nodes health --peer bob --always-on
 ```
 
 These commands are operator-only. `--watch` prints the current node list, then
@@ -2559,7 +2561,14 @@ operator silences the current disconnection with `nodes health --peer <name>
 --silence` or the silence button on the node's Fleet map card. A silenced
 disconnection ends without a back-online notice, and the next disconnection
 notifies again. Offline nodes' cards show the notices sent and when the next is
-due. Resource and repeated-failure signals are off by default. Enabled notices use the same operator Messages inbox and desktop
+due. A node that is often off on purpose, such as a laptop or a machine only
+powered up now and then, can be marked part-time: its offline/back notices are
+off for good, not just for one disconnection. Use the "Offline alerts: notify |
+part-time" switch on its Fleet map card, or `nodes health --peer <name>
+--part-time` (`--always-on` undoes it). This sets only `presence: false` in the
+peer's own policy, copying the rest from the policy it followed; a peer without
+an override therefore gets one. The card then shows a "part-time" tag and a grey
+"asleep" instead of "offline". Hub-unreachable notices are unaffected. Resource and repeated-failure signals are off by default. Enabled notices use the same operator Messages inbox and desktop
 notification channel as `agent notify-human`. Identity rotation observations and
 acceptances, teleport lease loss requiring recovery, and successful backup
 resumption also appear in watch. Identity notices retain their existing inbox
