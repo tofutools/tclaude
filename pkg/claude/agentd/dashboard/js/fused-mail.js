@@ -193,7 +193,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
         const mode = !readers.includes(node) || (accessFolder && !answers) ? 'roster' : accessFolder ? 'requests' : 'page';
         if (mode === 'requests') {
           const data = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
-          commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, at: now() });
+          commit(node.id, { requests: Array.isArray(data?.access_requests) ? data.access_requests : [], status: null, misses: 0, at: now() });
           // Its folders still follow the sidebar filter and toggles.
           const url = rosterURL(node, rosters[node.id]);
           if (ref.current[node.id]?.rosterURL !== url) {
@@ -217,7 +217,7 @@ function useFusedMail({ active, nodes, scoped, folder, q, page, pageSize, cursor
               agentsUnread: Number.isFinite(roster?.agents_unread) ? roster.agents_unread : 0,
               // What a peer shares from here rides on its reads.
               peerView: roster?.peer_view || null,
-              ...(mode === 'roster' ? { status: null, at: now() } : {}),
+              ...(mode === 'roster' ? { status: null, misses: 0, at: now() } : {}),
             });
             // An unrestricted peer's access requests keep the sidebar count
             // current in every folder.
@@ -562,8 +562,12 @@ export function FusedMail({
   // cursor vector: record it so Next (and a walk to a deeper page) can read
   // it. A node that is down gives no rows and no cursor, so the vectors are
   // only good while the same nodes are down; they are recorded with that set.
-  const absent = pageNodes.filter((n, i) => !pages[i] && entries[n.id]?.status).map((n) => n.id).join(',');
-  const answered = pageNodes.every((n, i) => pages[i] || entries[n.id]?.status);
+  // A node is down for the walk once it no longer counts (three misses in a
+  // row, or reported offline) or has gone or stopped sharing; one missed read
+  // keeps it in, as it keeps its count.
+  const down = (n) => !!entries[n.id]?.status && (!counted(n) || ['gone', 'not_shared'].includes(entries[n.id].status.kind));
+  const absent = pageNodes.filter((n, i) => !pages[i] && down(n)).map((n) => n.id).join(',');
+  const answered = pageNodes.every((n, i) => pages[i] || down(n));
   pendingVector.current = mergedPage && answered
     ? { key: vectorKey, absent, page: shown, next: mergedPage.next, more: mergedPage.more } : null;
 

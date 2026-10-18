@@ -613,6 +613,7 @@ test('a merged folder keeps its counts through a slow or missed read, and drops 
   const once = async () => { for (let i = 0; i < 3; i++) { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); } };
   const count = () => c.querySelector('#fused-mail-filter-count').textContent;
   const pos = () => c.querySelector('#fused-mail-pager .mail-pager-pos')?.textContent || '';
+  const tick = async () => { for (const x of timers.queue.splice(0)) await harness.act(async () => { await x.fn(); }); };
   await once();
   assert.equal(count(), '150 messages'); assert.match(pos(), /Page 1 \/ 3/);
 
@@ -626,9 +627,18 @@ test('a merged folder keeps its counts through a slow or missed read, and drops 
   assert.match(pos(), /Page 2 \/ 3/);
   await harness.act(async () => { held.splice(0).forEach((r) => r()); await new Promise((r) => setTimeout(r, 0)); });
 
+  // One missed read, then Next: the walk goes on, and forge is read again
+  // below its cursor rather than restarting the walk every tick.
+  forge = 'fail'; await tick(); forge = 'ok';
+  await harness.act(() => harness.fireEvent(c.querySelector('#fused-mail-pager button[title="Next page"]'), 'click'));
+  const steps = [];
+  for (let i = 0; i < 4; i++) { await tick(); steps.push(pos()); }
+  assert.ok(steps.every((p) => /^Page 3 \/ 3/.test(p)), `the walk holds: ${steps.join(' | ')}`);
+  await harness.act(() => harness.fireEvent(c.querySelector('#fused-mail-pager button[title="First page"]'), 'click'));
+  await once();
+
   // Two missed reads in a row keep it counted; the third drops it.
   forge = 'fail';
-  const tick = async () => { for (const x of timers.queue.splice(0)) await harness.act(async () => { await x.fn(); }); };
   await tick(); await tick();
   assert.equal(count(), '150 messages', 'two misses in a row are not enough');
   for (let i = 0; i < 4 && count() !== '60 messages'; i++) await tick();
