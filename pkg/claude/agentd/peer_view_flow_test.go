@@ -198,6 +198,8 @@ func TestPeerUnrestrictedReachesTheLocalDashboard(t *testing.T) {
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	code, body = call("GET", "/api/groups/crew/standing-orders", nil)
 	require.Equal(t, 200, code, body)
+	code, body = call("PATCH", "/api/groups/crew", map[string]any{"default_spawn_group": true})
+	require.Contains(t, body, "invalid_default_spawn_group", "unrestricted trust reaches what no peer grant covers (code %d)", code)
 	code, body = call("POST", "/api/agents/"+aid+"/retire?shutdown=0", nil)
 	require.Equal(t, 200, code, body)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))

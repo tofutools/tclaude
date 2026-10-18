@@ -77,10 +77,19 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cleanup-group': ['feature:groups.manage.full'],
   // Removing a member from the group: unrestricted trust only.
   'remove-member': ['feature:agents.manage.full'],
+  // What no peer grant covers, which unrestricted trust reaches as this
+  // node's operator does (the local_dashboard routes): its process, force
+  // and ownership controls and the auto-join default.
+  'advance-phase': ['feature:local_dashboard'],
+  'rebrief-force': ['feature:local_dashboard'],
+  'stand-down-force': ['feature:local_dashboard'],
+  'grant-owner': ['feature:local_dashboard'],
+  'revoke-owner': ['feature:local_dashboard'],
+  'set-default-spawn-group': ['feature:local_dashboard'],
   // Not listed, so local to their own node: links, standing orders, cron,
-  // messages, templates, repositories and worktrees, windows and terminals,
-  // member permissions and the auto-join default; and export, whose binary
-  // archive the JSON peer view does not carry.
+  // messages, templates, repositories and worktrees, terminals and showing a
+  // window (hiding one is an agent control), and member permissions; and export, whose binary archive the JSON peer
+  // view does not carry.
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group
@@ -122,6 +131,11 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'restart': ['groups.members.stop', 'groups.members.resume'],
   'retire-agent': ['groups.members.retire'],
   'clone': ['groups.members.clone'],
+  // Unrestricted trust only (the local_dashboard routes).
+  'promote-agent': ['feature:local_dashboard'],
+  'reinstate-agent': ['feature:local_dashboard'],
+  'delete-generation': ['feature:local_dashboard'],
+  'hide': ['feature:local_dashboard'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way

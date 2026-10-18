@@ -110,7 +110,7 @@ export async function handleRowAction(action) {
           okLabel: 'Advance',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/process/advance`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/process/advance`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: '{}',
@@ -119,7 +119,7 @@ export async function handleRowAction(action) {
         const res = await r.json().catch(() => null);
         if (res && res.to) toast(`${group}: → ${res.to} (${res.notified || 0} nudged)`);
         else toast(`${group}: process advanced`);
-        refresh();
+        changed();
         return;
       }
       case 'rebrief-force': {
@@ -135,7 +135,7 @@ export async function handleRowAction(action) {
           okLabel: 'Re-brief',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/rebrief`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/rebrief`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: '{}',
@@ -143,7 +143,7 @@ export async function handleRowAction(action) {
         if (!r.ok) { toast(`Re-brief failed: ${await r.text()}`, true); return; }
         const res = await r.json().catch(() => null);
         toast(res ? `${group}: re-briefed (${res.pattern_delivered || 0} delivered)` : `${group}: re-briefed`);
-        refresh();
+        changed();
         return;
       }
       case 'stand-down-force': {
@@ -159,7 +159,7 @@ export async function handleRowAction(action) {
           okLabel: 'Stand down',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/stand-down`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/stand-down`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: '{}',
@@ -172,7 +172,7 @@ export async function handleRowAction(action) {
         } else {
           toast(`${group}: stood down`);
         }
-        refresh();
+        changed();
         return;
       }
       case 'remove-member': {
@@ -196,7 +196,7 @@ export async function handleRowAction(action) {
       case 'grant-owner': {
         // Granting owner is non-destructive; skip the confirm
         // modal but still re-fetch on success.
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/owners`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ conv: agent }),
@@ -378,7 +378,7 @@ export async function handleRowAction(action) {
         // running, so no confirm modal and no dashboard-state change.
         // Idempotent server-side: an already-detached agent reports
         // detached:0 — a clean no-op, toasted as "already hidden".
-        const r = await fetch(`/api/hide/${encodeURIComponent(agent)}`, {
+        const r = await api(`/api/hide/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) { toast(`Hide failed: ${await r.text()}`, true); return; }
@@ -563,7 +563,7 @@ export async function handleRowAction(action) {
         // Conversations list → roster. Backend PromoteAgent also
         // reinstates a retired conv, so this one button covers
         // both "never an agent" and "was retired".
-        const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/promote`, {
+        const r = await api(`/api/agents/${encodeURIComponent(conv)}/promote`, {
           method: 'POST', credentials: 'same-origin',
         });
         ok = r.ok;
@@ -593,7 +593,7 @@ export async function handleRowAction(action) {
         return;
       }
       case 'reinstate-agent': {
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/reinstate`, {
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/reinstate`, {
           method: 'POST', credentials: 'same-origin',
         });
         ok = r.ok;
@@ -643,13 +643,13 @@ export async function handleRowAction(action) {
         })) {
           return;
         }
-        const r = await fetch(`/api/agent-generations/${encodeURIComponent(conv)}`, {
+        const r = await api(`/api/agent-generations/${encodeURIComponent(conv)}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         ok = r.ok;
         if (!ok) { toast(`Delete failed: ${await r.text()}`, true); break; }
         toast(`deleted generation: ${label}`);
-        refresh();
+        changed();
         return;
       }
       case 'dot-toggle': {
@@ -809,7 +809,7 @@ export async function handleRowAction(action) {
       }
       case 'set-default-spawn-group': {
         const enabled = data.enabled !== '1';
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}`, {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ default_spawn_group: enabled }),
@@ -818,7 +818,7 @@ export async function handleRowAction(action) {
         toast(enabled
           ? `${group}: directory auto-join default selected`
           : `${group}: directory auto-join default cleared`);
-        refresh();
+        changed();
         return;
       }
       // 'set-group-model' was retired with the per-group default_model
@@ -966,7 +966,7 @@ export async function handleRowAction(action) {
           okLabel: 'Revoke',
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(agent)}`, {
+        const r = await api(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(agent)}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         ok = r.ok;

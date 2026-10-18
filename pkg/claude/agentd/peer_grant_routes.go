@@ -182,6 +182,12 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for group:%s", rule.requires, g.Name))
 		return
 	}
+	// Unrestricted trust acts as this node's operator does, every option of
+	// the route included, rather than within the peer grants' bounds.
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+		return
+	}
 	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID)}
 	if rule.invoke.extra != nil {
 		for _, slug := range rule.invoke.extra(v.peer.InstanceID, g) {

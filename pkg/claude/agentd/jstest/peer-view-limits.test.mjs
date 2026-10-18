@@ -210,6 +210,8 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.groupGrantHeld('set-group-dir', 'build', restricted), false, 'another group holds nothing');
   assert.equal(mod.groupGrantHeld('retire-agent', 'ops', restricted), false, 'only group controls are grant-gated');
   assert.equal(mod.groupGrantHeld('set-group-dir', 'anything', { level: 'unrestricted' }), true);
+  assert.equal(mod.groupGrantHeld('advance-phase', 'ops', restricted), false, 'what no peer grant covers takes unrestricted trust');
+  assert.equal(mod.groupGrantHeld('stand-down-force', 'anything', { level: 'unrestricted' }), true);
   assert.equal(mod.groupGrantHeld('group-settings', 'ops', restricted), true, "the ⚙ menu's settings items ride on groups.settings");
   assert.equal(mod.groupGrantHeld('nest-group', 'build', restricted), false);
   for (const act of ['clone-group', 'delete-group', 'cleanup-group']) {
