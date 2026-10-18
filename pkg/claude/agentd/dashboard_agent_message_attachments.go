@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -36,18 +37,23 @@ import (
 // daemon's spawn-attachment roots and through an os.Root, which refuses a
 // symlink that leads out of it. Anything else stays plain text.
 
+//
+// One id names either kind: a stored attachment by its positive row id, a
+// briefing file by the negative of its 1-based position among the body's
+// listed paths (briefingFileID). A peer granted node.messages.read reads both
+// through /api/agent-attachment-chunk (dashboard_peer_attachments.go), the
+// same way it reads a notification's files.
+
 func registerDashboardAgentMessageAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent-messages/{message}/attachments/{attachment}", handleDashboardAgentMessageAttachment)
-	mux.HandleFunc("GET /api/agent-messages/{message}/files/{index}", handleDashboardAgentMessageBriefingFile)
 }
 
 func agentMessageAttachmentURL(messageID, attachmentID int64) string {
 	return fmt.Sprintf("/api/agent-messages/%d/attachments/%d", messageID, attachmentID)
 }
 
-func agentMessageBriefingFileURL(messageID int64, index int) string {
-	return fmt.Sprintf("/api/agent-messages/%d/files/%d", messageID, index)
-}
+// briefingFileID is the attachment id of the body's index-th listed path.
+func briefingFileID(index int) int64 { return -int64(index + 1) }
 
 // agentMessageAttachmentViews builds the reader's attachment list for each
 // message on a mailbox page: stored attachments first, then the briefing
@@ -78,11 +84,8 @@ func agentMessageAttachmentViews(rows []*db.AgentMessage) map[int64][]*dashboard
 			}
 			_ = f.Close()
 			view := dashboardHumanMessageAttachmentView(m.ID, a)
-			// Briefing files have no row id. A negative position keeps the
-			// frontend's per-file element ids unique without colliding with a
-			// row id, and reads as "no peer route" to withPeerAttachments.
-			view.ID = int64(-(i + 1))
-			view.URL = agentMessageBriefingFileURL(m.ID, i)
+			view.ID = briefingFileID(i)
+			view.URL = agentMessageAttachmentURL(m.ID, view.ID)
 			out[m.ID] = append(out[m.ID], view)
 		}
 	}
@@ -180,63 +183,60 @@ func briefingFile(path string) (*os.File, *db.HumanMessageAttachment) {
 	}
 }
 
+// openAgentMessageAttachment opens one file of an agent message by its
+// attachment id (see briefingFileID). status is the HTTP status to answer with
+// when f is nil.
+func openAgentMessageAttachment(messageID, attachmentID int64) (f *os.File, a *db.HumanMessageAttachment, status int, err error) {
+	missing := errors.New("this attachment is no longer available")
+	if attachmentID > 0 {
+		row, err := db.GetAgentMessageAttachment(messageID, attachmentID)
+		if err != nil {
+			return nil, nil, http.StatusInternalServerError, errors.New("read attachment")
+		}
+		if row == nil {
+			return nil, nil, http.StatusNotFound, errors.New("no such attachment")
+		}
+		f, err := os.Open(row.StoragePath)
+		if err != nil {
+			return nil, nil, http.StatusGone, missing
+		}
+		return f, &db.HumanMessageAttachment{
+			ID: row.ID, MessageID: messageID, Filename: row.Filename, ContentType: row.ContentType,
+			SizeBytes: row.SizeBytes, StoragePath: row.StoragePath,
+		}, http.StatusOK, nil
+	}
+	m, err := db.GetAgentMessage(messageID)
+	if err != nil {
+		return nil, nil, http.StatusInternalServerError, errors.New("read message")
+	}
+	index := -attachmentID - 1
+	var paths []string
+	if m != nil {
+		paths = briefingAttachmentPaths(m.Body)
+	}
+	if attachmentID == 0 || index >= int64(len(paths)) {
+		return nil, nil, http.StatusNotFound, errors.New("no such attachment")
+	}
+	f, a = briefingFile(paths[index])
+	if f == nil {
+		return nil, nil, http.StatusGone, missing
+	}
+	return f, a, http.StatusOK, nil
+}
+
 func handleDashboardAgentMessageAttachment(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
 	messageID, err1 := strconv.ParseInt(r.PathValue("message"), 10, 64)
 	attachmentID, err2 := strconv.ParseInt(r.PathValue("attachment"), 10, 64)
-	if err1 != nil || err2 != nil || messageID <= 0 || attachmentID <= 0 {
+	if err1 != nil || err2 != nil || messageID <= 0 {
 		http.NotFound(w, r)
 		return
 	}
-	a, err := db.GetAgentMessageAttachment(messageID, attachmentID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if a == nil {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(a.StoragePath)
-	if err != nil {
-		writeError(w, http.StatusGone, "missing", "this attachment is no longer available")
-		return
-	}
-	defer func() { _ = f.Close() }()
-	serveMessageAttachmentFile(w, r, f, &db.HumanMessageAttachment{
-		Filename: a.Filename, ContentType: a.ContentType, SizeBytes: a.SizeBytes, StoragePath: a.StoragePath,
-	})
-}
-
-func handleDashboardAgentMessageBriefingFile(w http.ResponseWriter, r *http.Request) {
-	if !checkDashboardAuth(w, r) {
-		return
-	}
-	messageID, err1 := strconv.ParseInt(r.PathValue("message"), 10, 64)
-	index, err2 := strconv.Atoi(r.PathValue("index"))
-	if err1 != nil || err2 != nil || messageID <= 0 || index < 0 {
-		http.NotFound(w, r)
-		return
-	}
-	m, err := db.GetAgentMessage(messageID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if m == nil {
-		http.NotFound(w, r)
-		return
-	}
-	paths := briefingAttachmentPaths(m.Body)
-	if index >= len(paths) {
-		http.NotFound(w, r)
-		return
-	}
-	f, a := briefingFile(paths[index])
+	f, a, status, err := openAgentMessageAttachment(messageID, attachmentID)
 	if f == nil {
-		writeError(w, http.StatusGone, "missing", "this attachment is no longer available")
+		writeError(w, status, "attachment", err.Error())
 		return
 	}
 	defer func() { _ = f.Close() }()

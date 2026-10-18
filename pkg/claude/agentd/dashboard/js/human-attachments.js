@@ -22,27 +22,22 @@ export function attachmentHrefByID(messageID, attachment) {
   return attachment?.url || `/api/human-messages/${encodeURIComponent(messageID)}/attachment`;
 }
 
-// withPeerAttachments points a peer's notification files at this node's peer
-// attachment route (dashboard_peer_attachments.go). The URLs the peer sends
-// name its own routes, which on this origin would read this node's files.
-export function withPeerAttachments(nodeID, message) {
+// withPeerAttachments points a peer's message files at this node's peer
+// attachment routes (dashboard_peer_attachments.go): a notification's, or with
+// agentMail an agent message's, whose briefing files carry negative ids. The
+// URLs the peer sends name its own routes, which on this origin would read
+// this node's files.
+export function withPeerAttachments(nodeID, message, agentMail = false) {
   const list = messageAttachments(message);
   if (!nodeID || !list.length) return message;
+  const route = agentMail ? 'peer-agent-attachments' : 'peer-attachments';
   // A file without an ID has no peer route; it is left out rather than
   // falling back to a local URL.
-  const attachments = list.filter((a) => Number(a?.id) > 0).map((a) => ({
-    ...a, url: `/api/peer-attachments/${encodeURIComponent(nodeID)}/${encodeURIComponent(message.id)}/${encodeURIComponent(a.id)}`,
+  const routable = (a) => Number.isInteger(Number(a?.id)) && (agentMail ? Number(a.id) !== 0 : Number(a.id) > 0);
+  const attachments = list.filter(routable).map((a) => ({
+    ...a, url: `/api/${route}/${encodeURIComponent(nodeID)}/${encodeURIComponent(message.id)}/${encodeURIComponent(a.id)}`,
   }));
   return { ...message, attachments, attachment: attachments[0] || null };
-}
-
-// withoutAttachments drops the file list from agent mail read from a peer. Its
-// URLs name the peer's own /api/agent-messages routes, which on this origin
-// would read this node's files, and there is no peer route for agent mail
-// files; the paths stay readable in the body.
-export function withoutAttachments(message) {
-  if (!messageAttachments(message).length) return message;
-  return { ...message, attachments: [], attachment: null };
 }
 
 // bodilessNotice is what a reader shows where the body would be when a

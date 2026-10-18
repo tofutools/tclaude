@@ -34,7 +34,7 @@ import {
   AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
-import { withoutAttachments, withPeerAttachments } from './human-attachments.js';
+import { withPeerAttachments } from './human-attachments.js';
 import { senderOnline } from './mail-bridge.js';
 import {
   FUSED_FOLDERS, PAGE_SIZE, ROSTER_PAGE, apiBase, canActOnHuman, folderMatches, folderURL, mergeMessages, mergeRequests,
@@ -372,12 +372,10 @@ export function FusedMail({
   const pages = pageNodes.map((n) => (entries[n.id]?.page?.sig === sig ? entries[n.id].page : null));
   const total = pages.reduce((s, p) => s + (p?.total || 0), 0);
   const totalUnfiltered = pages.reduce((s, p) => s + (p?.totalUnfiltered || 0), 0);
-  // A peer's notification files load through this node's peer attachment
-  // route; its agent mail files have no peer route and are left out.
+  // A peer's message files load through this node's peer attachment routes.
   const pageMessages = (node, i) => {
     const list = pages[i]?.messages || [];
-    if (node.local) return list;
-    return list.map((m) => (isHuman ? withPeerAttachments(node.id, m) : withoutAttachments(m)));
+    return node.local ? list : list.map((m) => withPeerAttachments(node.id, m, !isHuman));
   };
   const allRows = isAccess ? requestRows : mergeMessages(pageNodes.map((node, i) => ({ node, kind: isHuman ? 'human' : 'agent', messages: pageMessages(node, i) })));
   const pageCount = isAccess ? 1 : merged ? mergedPages(total, pageSize) : Math.max(1, Math.ceil(total / pageSize));

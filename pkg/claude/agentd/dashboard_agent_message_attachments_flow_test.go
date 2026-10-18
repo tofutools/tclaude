@@ -80,22 +80,25 @@ func TestDashboardMailbox_StartupBriefingFilesAreServed(t *testing.T) {
 	assert.Equal(t, "image/png", got.ContentType)
 	assert.Equal(t, int64(len(pngBytes)), got.SizeBytes)
 	assert.True(t, got.Previewable)
-	assert.Equal(t, fmt.Sprintf("/api/agent-messages/%d/files/1", id), got.URL, "the route takes the path's position in the body")
+	assert.Equal(t, int64(-2), got.ID, "a briefing file's id is the negative of its 1-based position in the body")
+	assert.Equal(t, fmt.Sprintf("/api/agent-messages/%d/attachments/-2", id), got.URL)
 
 	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, got.URL, nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, pngBytes, rec.Body.Bytes())
 	assert.Equal(t, "image/png", rec.Header().Get("Content-Type"))
 
-	for _, index := range []int{0, 2} {
+	for _, attachment := range []int{-1, -3} {
 		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
-			fmt.Sprintf("/api/agent-messages/%d/files/%d", id, index), nil))
-		assert.Equal(t, http.StatusGone, rec.Code, "path %d is outside the attachment roots", index)
+			fmt.Sprintf("/api/agent-messages/%d/attachments/%d", id, attachment), nil))
+		assert.Equal(t, http.StatusGone, rec.Code, "file %d is outside the attachment roots", attachment)
 		assert.NotContains(t, rec.Body.String(), "secret")
 	}
-	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
-		fmt.Sprintf("/api/agent-messages/%d/files/3", id), nil))
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	for _, attachment := range []int{-4, 0} {
+		rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+			fmt.Sprintf("/api/agent-messages/%d/attachments/%d", id, attachment), nil))
+		assert.Equal(t, http.StatusNotFound, rec.Code, "attachment %d", attachment)
+	}
 }
 
 // Scenario: mail stored with attachment rows (operator mail, federated mail)

@@ -587,8 +587,10 @@ mailbox — agent-to-agent mail and the human-notification channel
 notifications folder, per-group folders expandable to members, and per-agent
 folders. The list is newest-first with direction glyphs, unread and pending
 markers, attachment counts, and bulk actions; the reader renders Markdown,
-offers downloadable agent-published attachments with image preview, and can
-reply (human folder), focus the sender's terminal, or toggle read state.
+offers downloadable attachments with image and video preview — a
+notification's published files, files sent with agent mail, and the uploads a
+startup briefing lists under "Attached files" — and can reply (human folder),
+focus the sender's terminal, or toggle read state.
 
 The open folder and message are in the address: `/messages/human`,
 `/messages/group:ops/42`, `/messages/<conv-id>`. Clicking a folder or a
@@ -929,7 +931,8 @@ and a peer-view pill lists what it shares.
 
 Messages shows the peer's mail when it grants you `node.messages.read`, in
 the same client as this node's: folders, filters, bulk bar, pager, reader and
-attached files. Read state on agent mail needs its `node.messages.manage`. Its
+attached files (agent mail's and startup briefings' too). Read state on agent
+mail needs its `node.messages.manage`. Its
 human notifications carry the same buttons as this node's (reply, focus, mark
 read/unread, download, delete); reply, mark read/unread and the folder's mark
 all read go to the peer when it trusts you unrestricted, and download builds
