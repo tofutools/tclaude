@@ -1112,6 +1112,12 @@ func TestShowAgentHideButton(t *testing.T) {
 	assert.True(t, loaded.ShowAgentHideButton(), "true survives round-trip")
 }
 
+func TestShowFinalPRChecks(t *testing.T) {
+	assert.False(t, (*Config)(nil).ShowFinalPRChecks(), "nil → hidden")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).ShowFinalPRChecks(), "absent key → hidden")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{ShowFinalPRChecks: true}}).ShowFinalPRChecks(), "explicit true → shown")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")

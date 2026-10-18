@@ -1162,6 +1162,10 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    pointer onto the panel to read or scroll it keeps the panel open —
    the same arrangement .activity-hover uses in the header. */
 .ci-hover { position: relative; display: inline-block; }
+/* A merged/closed PR's CI result is history: PRChecksBadge tags a terminal
+   PR's non-failing pill .ci-final and it stays hidden unless config
+   dashboard.show_final_pr_checks → body.show-final-pr-checks opts back in. */
+body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 .presented-pr { display: inline-block; }
 /* A member row's PR link and its badges (.pr-chain) sit at one spacing in
    every layout: the CI pill a little further from the number, the reviewer
