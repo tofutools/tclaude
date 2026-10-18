@@ -511,6 +511,12 @@ are skipped. This works the same in a remote agent's terminal attached
 interactively; a watch-only view takes nothing. A plain shell accepts pasted
 PNG, JPEG, and WebP images only.
 
+An upload that takes more than a moment shows a progress card, one row per
+file, with Cancel and ▁ to minimise it to a small pill. A terminal's card sits
+over that terminal; spawn and message attachments show theirs in the top-right
+corner, above the dialog. For a remote node the bar tracks the bytes reaching
+this node, then shows the hop to the node without a percentage.
+
 
 The Terminals tab is the in-dashboard terminal multiplexer. It is always
 shown, even with nothing open; its badge counts live panes, plus `+N`

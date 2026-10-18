@@ -363,6 +363,51 @@ body.hide-costs .mux-cost-toggle { display: none; }
   color: #c9d1d9; font-size: 13px; font-weight: 600;
 }
 
+/* Upload progress cards (transfer-card.js): over a terminal for its pasted or
+   dropped files, and in a page-level tray for spawn and message attachments,
+   which stays above the dialogs that started them. */
+.transfer-cards {
+  position: absolute; top: 10px; right: 10px; z-index: 4;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  max-width: calc(100% - 20px);
+}
+.transfer-tray { position: fixed; top: 16px; right: 16px; z-index: 10100; }
+.transfer-card {
+  width: 280px; max-width: 100%;
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  color: #c9d1d9; font-size: 12px;
+}
+.transfer-top {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; border-bottom: 1px solid #30363d; font-weight: 600;
+}
+.transfer-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-cancel { padding: 2px 8px; font-size: 11px; }
+.transfer-min {
+  border: none; background: none; color: #8b949e; cursor: pointer;
+  font-size: 12px; padding: 0 3px; line-height: 1;
+}
+.transfer-min:hover { color: #c9d1d9; }
+.transfer-file { padding: 7px 10px; }
+.transfer-file + .transfer-file { border-top: 1px solid #21262d; }
+.transfer-name { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.transfer-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.transfer-name em { font-style: normal; color: #8b949e; white-space: nowrap; }
+.transfer-name em.transfer-ok { color: #3fb950; }
+.transfer-bar { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
+.transfer-bar i { display: block; height: 100%; background: #1f6feb; transition: width 0.15s linear; }
+.transfer-bar.full i { background: #3fb950; }
+/* After the last byte the wait (a remote node's hop) has no byte count. */
+.transfer-finishing .transfer-bar i { background: linear-gradient(90deg, #1f6feb, #58a6ff, #1f6feb); background-size: 200% 100%; animation: transfer-wait 1.2s linear infinite; }
+@keyframes transfer-wait { from { background-position: 200% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .transfer-finishing .transfer-bar i { animation: none; } }
+.transfer-pill {
+  border: 1px solid #1f6feb66; background: #0f1d33; color: #c9d1d9;
+  border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
 /* A settled terminal disconnect needs a stronger cue than the small status
    label in the header. Keep the curtain inside the xterm host so the pane's
    header — especially its Reconnect control — stays available. The same pane

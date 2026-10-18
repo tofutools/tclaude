@@ -55,14 +55,14 @@ test('operator message uploads its frozen attachment batch before posting the ta
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const calls = [];
-  const actions = createMessageAccessDialogActions({
-    fetchImpl: async (url, options) => {
-      calls.push({ url, options });
-      return url === '/api/spawn-attachments'
-        ? response(200, { token: 'batch-token' })
-        : response(200, { id: 7 });
-    },
-  });
+  const handle = async (url, options) => {
+    calls.push({ url, options });
+    return url === '/api/spawn-attachments'
+      ? response(200, { token: 'batch-token' })
+      : response(200, { id: 7 });
+  };
+  // Attachments go through the progress-tracked transport, the rest through fetch.
+  const actions = createMessageAccessDialogActions({ fetchImpl: handle, uploadTransport: handle });
   const file = new Blob(['proof']);
   Object.defineProperty(file, 'name', { value: 'proof.txt' });
   await actions.sendOperatorMessage(Object.freeze({
@@ -79,14 +79,14 @@ test('human reply uploads attachments before posting the reply token', async (t)
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const calls = [];
-  const actions = createMessageAccessDialogActions({
-    fetchImpl: async (url, options) => {
-      calls.push({ url, options });
-      return url === '/api/spawn-attachments'
-        ? response(200, { token: 'reply-batch' })
-        : response(200, { queued: true });
-    },
-  });
+  const handle = async (url, options) => {
+    calls.push({ url, options });
+    return url === '/api/spawn-attachments'
+      ? response(200, { token: 'reply-batch' })
+      : response(200, { queued: true });
+  };
+  // Attachments go through the progress-tracked transport, the rest through fetch.
+  const actions = createMessageAccessDialogActions({ fetchImpl: handle, uploadTransport: handle });
   const file = new Blob(['screenshot']);
   Object.defineProperty(file, 'name', { value: 'shot.png' });
   await actions.replyHuman({ id: 17, body: '', files: [file], label: 'worker' });

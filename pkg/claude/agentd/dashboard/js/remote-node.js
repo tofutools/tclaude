@@ -59,8 +59,12 @@
   }
 
   // localFetch reaches this node's own API from a peer's page: the fused
-  // Groups view reads this node's snapshot alongside the peers'.
-  window.__tclaudeRemoteNode = Object.freeze({ id, health, localFetch: nativeFetch });
+  // Groups view reads this node's snapshot alongside the peers'. route maps a
+  // URL the way the fetch wrapper below does, for XMLHttpRequest uploads.
+  window.__tclaudeRemoteNode = Object.freeze({
+    id, health, localFetch: nativeFetch,
+    route: (raw) => rewrite(new URL(String(raw), window.location.href)) || raw,
+  });
   document.documentElement.classList.add('remote-node');
 
   window.fetch = async (input, init) => {

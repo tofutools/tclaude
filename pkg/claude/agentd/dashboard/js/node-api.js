@@ -77,16 +77,20 @@ export function nodeDownload(node, path, {
 // nodeUpload posts a file upload (a spawn's attachments) to node: this node's
 // route directly, another node's (the page's own on a peer's page) through
 // this node's /api/peer-upload/{node}, which sends it on in chunks (the peer
-// view carries 32 KiB requests otherwise).
+// view carries 32 KiB requests otherwise). upload, when given, posts instead
+// of fetch: a progress-tracked upload (transfers.js), which like localFetch
+// never goes through a peer page's rerouting fetch.
 export function nodeUpload(node, path, init = {}, {
   self = selfNode, remote = globalThis.__tclaudeRemoteNode, fetchImpl = (...args) => globalThis.fetch(...args),
+  upload = null,
 } = {}) {
   const target = node || remote?.id || '';
-  const local = remote?.localFetch || fetchImpl;
+  const local = upload || remote?.localFetch || fetchImpl;
   const options = { credentials: 'same-origin', ...init, method: 'POST' };
   if (!target || target === self) return local(path, options);
   if (!NODE_ID.test(target)) throw new Error(`invalid node: ${target}`);
-  return local(`/api/peer-upload/${encodeURIComponent(target)}?path=${encodeURIComponent(path)}`, options);
+  return local(`/api/peer-upload/${encodeURIComponent(target)}?path=${encodeURIComponent(path)}`,
+    { finishing: 'sending to the node…', ...options });
 }
 
 // onNodeChanged tells views polling a node (the fused Groups view) that a

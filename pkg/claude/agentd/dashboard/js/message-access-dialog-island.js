@@ -2,6 +2,7 @@ import { SavedPromptPicker } from './saved-prompts.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { TransferTray } from './transfer-card.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -1064,7 +1065,7 @@ export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot,
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'context-features') parent = html`<${ContextFeaturesDialog} key=${`context-features:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
   return html`<${Fragment}>${parent}${current.picker && html`<${AgentPicker} key=${`picker:${current.picker.launchID}`}
-    descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}</${Fragment}>`;
+    descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}<${TransferTray} /></${Fragment}>`;
 }
 
 export function mountMessageAccessDialogIsland({
