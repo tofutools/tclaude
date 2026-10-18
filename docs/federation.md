@@ -335,6 +335,13 @@ worktree, and so on. A few things stay with this node even then:
 
 Each change is in this node's federation audit as `federation.peer_view`.
 
+A peer view request is one exchange of at most 15 seconds. Longer operations,
+a repository pull or sync and a worktree cleanup, run as jobs instead: the
+peer starts the work and the requesting node waits on it, so the dialog sees
+its usual answer (a pull or sync shows its results when the batch is done
+rather than one repository at a time). A peer runs at most two at once for
+one node.
+
 Catalogs go directly to each trusted peer and are never published to the hub.
 They refresh when grants change, when the peer connects, and every few minutes
 for presence. Untrusting a peer deletes its grants.

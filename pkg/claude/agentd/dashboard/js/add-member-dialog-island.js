@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import htm from 'htm';
 import { shortId } from './helpers.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { isPageNode, nodeSnapshot } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -96,14 +97,18 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   const listRef = useRef(null);
   const poolRequest = useRef(0);
   const poolBusyRef = useRef(false);
-  const currentSnapshot = state.snapshot.value;
+  // Another node's group lists that node's agents, never the page's.
+  const currentSnapshot = isPageNode(descriptor.node) ? state.snapshot.value : nodeSnapshot(descriptor.node);
+  // Who was added to another node's group here, until its next snapshot
+  // shows them (this dialog does not re-render on that node's polls).
+  const [added, setAdded] = useState(() => new Set());
   const candidates = useMemo(() => buildAddMemberCandidates({
     snapshot: currentSnapshot,
     promotionPool,
     group: descriptor.group,
     includeOffline,
     query,
-  }), [currentSnapshot, promotionPool, descriptor.group, includeOffline, query]);
+  }).filter((candidate) => !added.has(candidate.conv_id)), [currentSnapshot, promotionPool, descriptor.group, includeOffline, query, added]);
   const selectedIndex = candidates.findIndex(
     (candidate) => candidate.conv_id === highlightConv);
   const dirty = query !== '' || includeOffline;
@@ -115,7 +120,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     setPoolLoading(true);
     setPoolError('');
     try {
-      const rows = await actions.loadAddMemberPromotionPool();
+      const rows = await actions.loadAddMemberPromotionPool(descriptor);
       if (request === poolRequest.current) setPromotionPool(rows);
     } catch (error) {
       if (request === poolRequest.current) {
@@ -165,6 +170,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
     setFailedCandidate(null);
     try {
       await actions.addExistingMember(descriptor, candidate);
+      if (!isPageNode(descriptor.node)) setAdded((current) => new Set(current).add(candidate.conv_id));
     } catch (error) {
       setAddError((error && error.message) || String(error));
       setFailedCandidate(candidate);

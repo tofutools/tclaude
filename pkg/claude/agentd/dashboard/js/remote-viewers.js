@@ -4,6 +4,7 @@ import htm from 'htm';
 import { remoteNodeID } from './fleet-model.js';
 import { dashboardState } from './snapshot-store.js';
 import { fleetState } from './fleet-state.js';
+import { setFleetAdminPage } from './fleet-admin-page.js';
 
 const html = htm.bind(h);
 
@@ -109,6 +110,7 @@ export function viewerSummary(views, label = peerLabel) {
 export function openViewers(agentId, doc = globalThis.document) {
   viewersFocus.value = agentId || '';
   viewersOpened.value += 1;
+  setFleetAdminPage('peers');
   doc?.querySelector('nav [data-tab="fleet-admin"]')?.click();
 }
 

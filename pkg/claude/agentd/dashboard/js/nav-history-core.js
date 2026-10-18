@@ -59,6 +59,9 @@ export const KNOWN_TABS = new Set([
 //   - Activity: audit / logs / performance (formerly three top-level tabs).
 //   - Config: the settings rail's sections. Keep in step with CONFIG_PANELS
 //     in config-form-markup.js.
+//   - Fleet config (fleet-admin): its sections; the bare tab is the landing
+//     (the setup guide until setup is done, else Peers). Keep in step with
+//     SUB_PAGES in fleet-admin-island.js.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
@@ -71,6 +74,10 @@ export const KNOWN_SUBTABS = {
   config: new Set([
     'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
     'assistants', 'daemon', 'logs', 'experimental', 'advanced',
+  ]),
+  'fleet-admin': new Set([
+    'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models',
+    'profiles', 'offers', 'jobs', 'moves', 'boards', 'audit', 'hub',
   ]),
 };
 

@@ -40,6 +40,28 @@ func PeerViewHandler(instanceID string) http.Handler {
 			}
 			out := &peerViewResponse{header: make(http.Header)}
 			view := &peerView{peer: p}
+			if rule.write != nil && peerViewJobRoute(pattern, r) && view.allows(rule, 0) {
+				// Its work outlasts one exchange: it runs as a job, audited
+				// when it is done (peer_view_jobs.go).
+				id, ok := startPeerViewJob(instanceID, r, func(job *peerViewResponse, req *http.Request) {
+					jobView := &peerView{peer: p}
+					rule.write(job, req, jobView, rule)
+					label := r.Method + " " + pattern
+					if jobView.auditDetail != "" {
+						label += " " + jobView.auditDetail
+					}
+					recordFederationAudit("federation.peer_view", "operator@"+instanceID, jobView.targetConv, jobView.groupName, label, job.statusCode())
+				})
+				if !ok {
+					writeError(w, http.StatusServiceUnavailable, "peer_busy", "this peer already runs its maximum of long operations here")
+					return
+				}
+				// Audited when it starts too: work a restart cuts short
+				// still leaves its trail.
+				recordFederationAudit("federation.peer_view", "operator@"+instanceID, "", "", r.Method+" "+pattern+" (started)", http.StatusAccepted)
+				writeJSON(w, http.StatusAccepted, map[string]string{"peer_job": id})
+				return
+			}
 			if rule.serve == nil && rule.write == nil {
 				writeError(out, 403, "peer_view_local_only", "endpoint is local-only")
 			} else if r.Method != http.MethodGet && r.Method != http.MethodHead && rule.write == nil {
@@ -190,6 +212,8 @@ func peerViewRules() map[string]peerViewRule {
 	addPeerMailboxRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
+	// A long operation's job, read by the peer that started it.
+	rules["GET /api/peer-view-jobs/{id}"] = peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true, serve: servePeerViewJob}
 	return rules
 }
 
@@ -322,6 +346,11 @@ func (w *peerViewResponse) Write(b []byte) (int, error) {
 	}
 	return w.body.Write(b)
 }
+
+// Flush lets a streaming handler run against the buffer (a peer view job);
+// its reply goes out whole.
+func (w *peerViewResponse) Flush() {}
+
 func (w *peerViewResponse) statusCode() int {
 	if w.status == 0 {
 		return 200

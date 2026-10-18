@@ -128,6 +128,10 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.equal(state.fused.value, null, 'opening it turns on no fused view');
   await harness.act(() => harness.fireEvent(fuse(), 'click'));
   assert.equal(mounted.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'map', 'connected without peers: ⌘ Fleet opens the map, showing this node alone');
+  const fleetChip = () => mounted.container.querySelector('[data-fleet-entry]');
+  assert.ok(fleetChip().classList.contains('connected'), 'a connected hub lights ⌘ Fleet up');
+  assert.ok(fleetChip().querySelector('.node-chip-dot'));
+  assert.match(fleetChip().title, /hub connected/);
   await harness.act(() => { activeTab.value = 'fleet-admin'; });
   await harness.act(() => harness.fireEvent(home(), 'click'));
   assert.deepEqual(nav, ['access'], 'with no peers ⌂ still leaves Fleet administration');
@@ -154,6 +158,8 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'refused', last_error: 'hub refused: shutting_down: hub shutting down' } }); });
   assert.match(home().title, /shutting down/, 'a refusal shows the hub\'s reason');
   assert.equal(mounted.container.querySelector('[data-fleet-entry]').dataset.fleetTarget, 'fleet-admin', 'with the hub down ⌘ Fleet opens Fleet config');
+  assert.ok(!fleetChip().classList.contains('connected'), 'a hub drop dims ⌘ Fleet');
+  assert.equal(fleetChip().disabled, false, 'but it stays clickable: Fleet config is where the hub is fixed');
   await mounted.unmount(); state.dispose();
 });
 

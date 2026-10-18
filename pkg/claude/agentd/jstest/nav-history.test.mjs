@@ -581,3 +581,46 @@ test('a Messages deep link reaches the controller once it registers, and wins ov
   assert.equal(bridge.focusNextMessagesAttention({}), undefined, 'the jump is suppressed for the deep link');
   assert.deepEqual(jumps, []);
 });
+
+test('Fleet config sections deep-link, push on the tab click, and restore on Back', async (t) => {
+  const harness = await createPreactHarness(t);
+  harness.document.body.innerHTML = `
+    <nav>
+      <button data-tab="groups"></button>
+      <button data-tab="fleet-admin"></button>
+    </nav>
+    <main><section id="tab-fleet-admin"></section></main>`;
+  const tabs = [...harness.document.querySelectorAll('nav [data-tab]')];
+  for (const b of tabs) {
+    b.addEventListener('click', () => { for (const o of tabs) o.classList.toggle('active', o === b); });
+  }
+  const browsing = installBrowsingContext(t, harness, '/fleet-admin/grants');
+  const [{ initNavHistory }, page] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/fleet-admin-page.js'),
+  ]);
+  initNavHistory();
+  assert.equal(page.fleetAdminPage.value, 'grants', 'the deep link is in place before the island mounts');
+  assert.equal(tabs[1].classList.contains('active'), true);
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/fleet-admin/grants' }]);
+  browsing.calls.length = 0;
+
+  tabs[0].click();
+  // A section asked for from elsewhere is recorded by the tab click.
+  page.setFleetAdminPage('boards');
+  tabs[1].click();
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/' }, { kind: 'push', url: '/fleet-admin/boards' }]);
+  // The island announces an on-screen section switch.
+  page.setFleetAdminPage('hub');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: page.fleetAdminLocation() } }));
+  assert.deepEqual(browsing.calls.at(-1), { kind: 'push', url: '/fleet-admin/hub' });
+  const atHub = browsing.history.state;
+
+  browsing.history.replaceState({ ...atHub, navIndex: 2 }, '', '/fleet-admin/boards');
+  browsing.calls.length = 0;
+  const back = new harness.window.Event('popstate');
+  back.state = browsing.history.state;
+  harness.window.dispatchEvent(back);
+  assert.equal(page.fleetAdminPage.value, 'boards', 'Back restores the previous section');
+  assert.deepEqual(browsing.calls.map((call) => call.kind), ['replace']);
+});
