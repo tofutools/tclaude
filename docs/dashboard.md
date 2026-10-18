@@ -1008,7 +1008,9 @@ quick options, rename and the ⚙ menu's settings items), which go to that
 node's own group. Under unrestricted trust a peer's rows also take what no peer
 grant covers: advancing a process, re-briefing or standing down a force, group
 ownership, the auto-join default, promoting, reinstating, hiding a window,
-deleting a past generation, member permissions, sudo, new cron jobs and links
+deleting a past generation, member permissions, sudo, new cron jobs, standing
+orders, saving as a template (edited afterwards on that node's own dashboard),
+pulling, syncing and cleaning up its repositories and worktrees, and links
 (within that node: a link from its group offers no cross-node targets). Each
 opens the dialog it opens here, reading and saving on that node. This node's groups work as on its own view; on a peer's
 page their group settings still go straight to this node. Everything else stays an overview: click a group's `@node`

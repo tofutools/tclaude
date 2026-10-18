@@ -95,9 +95,12 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cron-new': ['feature:local_dashboard'],
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
+  // Long operations, which run as peer view jobs (peer_view_jobs.go).
+  'pull-repositories-group': ['feature:local_dashboard'],
+  'sync-repositories-group': ['feature:local_dashboard'],
+  'cleanup-worktrees-group': ['feature:local_dashboard'],
   // Not listed, so local to their own node: the links manager,
-  // messages, the template manager, repositories and worktrees (their long-running
-  // batches outlast a peer exchange), terminals and showing a
+  // messages, the template manager, terminals and showing a
   // window (hiding one is an agent control); and export, whose binary archive the JSON peer
   // view does not carry.
 });
