@@ -29,6 +29,7 @@ import { LaunchTargetDialog, createLaunchTargetApi, grantWhy, launchAgent } from
 import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { featureState } from './feature-state-registry.js';
+import { featureState as peerFeatureState } from './peer-view-limits.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { publishFusedDock } from './dock-nodes.js';
 import { pickToolbarNode, setToolbarNodes } from './toolbar-node.js';
@@ -304,6 +305,50 @@ export function usePeerLists({ active, peers, kinds, query, fetchFor, timers = g
   return lists;
 }
 
+// PEER_NOTIFICATIONS_POLL_MS paces each peer's unread-notification read;
+// PEER_NOTIFICATIONS_PAGE is how many of its newest unread ones it reads.
+export const PEER_NOTIFICATIONS_POLL_MS = 15000;
+const PEER_NOTIFICATIONS_PAGE = 100;
+
+// peerSharesNotifications reports whether a peer lets this operator read its
+// human notifications: under node.messages.read, which unrestricted trust
+// holds. Its snapshot never carries them.
+export function peerSharesNotifications(snapshot) {
+  const view = snapshot?.peer_view;
+  return !!view && (view.level === 'unrestricted' || peerFeatureState('node.messages', view) === 'shared');
+}
+
+// usePeerNotifications reads each listed peer's unread human notifications
+// from its Messages mailbox (the human folder) while active, and again at
+// once when a control here changes that peer. It returns id -> messages.
+export function usePeerNotifications({ active, peers, fetchFor, timers = globalThis }) {
+  const [lists, setLists] = useState({});
+  const key = peers.join(',');
+  useEffect(() => {
+    if (!active || !peers.length) return undefined;
+    let live = true;
+    const read = async (id) => {
+      try {
+        const response = await fetchFor(id)(`/api/mailbox?id=human&unread=1&page=1&page_size=${PEER_NOTIFICATIONS_PAGE}`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) return;
+        const body = await response.json();
+        // An older peer ignores unread=1 and sends its newest page.
+        const messages = (Array.isArray(body?.messages) ? body.messages : []).filter((m) => m && !m.read);
+        if (live) setLists((current) => ({ ...current, [id]: messages }));
+      } catch (_) { /* keeps the last list */ }
+    };
+    let timer = 0;
+    const all = () => {
+      for (const id of peers) void read(id);
+      timer = timers.setTimeout(all, PEER_NOTIFICATIONS_POLL_MS);
+    };
+    all();
+    const stopChanged = onNodeChanged((node) => { if (peers.includes(node)) void read(node); });
+    return () => { live = false; timers.clearTimeout(timer); stopChanged(); };
+  }, [active, key]);
+  return lists;
+}
+
 // fusedOrder sorts the merged groups by the fused view's own remembered order
 // (group@node names; group-reorder.js keeps it), else node order.
 const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER_KEY);
@@ -342,7 +387,20 @@ export function MergedGroups({
   if (!launchApi.current) launchApi.current = createLaunchTargetApi({ fetchImpl: localFetch });
   // The capture handlers below are bound once; they read the latest snapshots.
   // snapOf reads a node's snapshot, the page's own node included.
-  const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
+  // A peer's unread notifications (its snapshot has none) join its snapshot
+  // here, so a reader on another node's agent finds them (nodeSnapshot).
+  const notifyPeers = polled.filter((n) => !n.local && peerSharesNotifications(entries[n.id]?.snapshot)).map((n) => n.id);
+  const notifications = usePeerNotifications({
+    active, peers: notifyPeers,
+    fetchFor: (id) => nodeFetch(id, { self: fleet?.self?.id || '', fetchImpl, remote: remote ? { id: remote, localFetch } : null }),
+    timers,
+  });
+  const snapOf = (id) => {
+    if (id === pageNode) return snapshot.value || null;
+    const snap = entries[id]?.snapshot;
+    if (!snap) return null;
+    return notifications[id] ? { ...snap, messages: notifications[id] } : snap;
+  };
   const groupNames = (id) => (snapOf(id)?.groups || []).map((g) => g.name).filter(Boolean).sort();
   // relays: a peer that trusts this node unrestricted sends its agent on to a
   // third node for it (the peer action's "to").
@@ -412,7 +470,7 @@ export function MergedGroups({
     node: node.id === home ? { ...node, home: true } : node,
     entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
   }));
-  const merged = current.fused && fleet ? mergeSnapshots(nodes, t, snapshot.value) : null;
+  const merged = current.fused && fleet ? mergeSnapshots(nodes, t, snapshot.value, notifications) : null;
   // A peer's shown virtual groups read its paged lists (the page's own come
   // with its snapshot, refresh.js).
   const visibility = groups.visibility.value;

@@ -41,7 +41,9 @@ export function HumanNotificationReader({
   const closeRef = useRef(null);
   const show = (next, { replace = false } = {}) => {
     const id = next && (typeof next.sender === 'string' ? next.sender : next.sender?.agent || next.sender?.conv);
-    const value = id ? `${id}:${next.messageId}` : '';
+    // Another node's notification keeps its node: sender@node:message.
+    const node = typeof next?.sender === 'object' && next.sender?.node ? `@${next.sender.node}` : '';
+    const value = id ? `${id}${node}:${next.messageId}` : '';
     if (value === shown.current) return;
     shown.current = value;
     announceOverlay({ closed: !value, replace: replace && !!value });
@@ -85,9 +87,9 @@ export function HumanNotificationReader({
         if (at > 0) {
           // The URL keeps one id, the stable agent id (or, for a legacy
           // sender, its conversation); either matches the sender's messages.
-          const id = want.slice(0, at);
+          const [id, node = ''] = want.slice(0, at).split('@');
           document.dispatchEvent(new CustomEvent(OPEN_HUMAN_NOTIFICATION_EVENT, {
-            detail: { sender: { agent: id, conv: id }, messageId: Number(want.slice(at + 1)) || want.slice(at + 1) },
+            detail: { sender: { agent: id, conv: id, ...(node ? { node } : {}) }, messageId: Number(want.slice(at + 1)) || want.slice(at + 1) },
           }));
         } else {
           closeRef.current?.(false);
