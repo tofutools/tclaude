@@ -164,8 +164,8 @@ export function createManagementActions({
         return {};
       }
     },
-    async fromGroup(body) {
-      const response = await fetch('/api/templates/from-group', {
+    async fromGroup(body, node = '') {
+      const response = await nodeFetch(node)('/api/templates/from-group', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -500,8 +500,10 @@ export function createManagementActions({
     anchor.click();
     anchor.remove();
   }
-  function openTemplateFromGroup(presetGroup = '') {
-    const groups = (getSnapshot()?.groups || []).map((group) => group.name);
+  function openTemplateFromGroup(presetGroup = '', node = '') {
+    // Another node's group snapshots into that node's templates.
+    const snap = (node && nodeSnapshot(node)) || getSnapshot();
+    const groups = (snap?.groups || []).map((group) => group.name);
     if (!groups.length) {
       notify('no groups to snapshot', true);
       return;
@@ -510,6 +512,7 @@ export function createManagementActions({
       kind: 'template-from-group',
       presetGroup: groups.includes(presetGroup) ? presetGroup : '',
       groups,
+      ...(node ? { node, templates: snap?.templates || [] } : {}),
     });
   }
   function openTemplateImport() {
@@ -567,12 +570,12 @@ export function createManagementActions({
     await refresh();
     return result;
   }
-  async function snapshotTemplateFromGroup(group, name, update) {
+  async function snapshotTemplateFromGroup(group, name, update, node = '') {
     const result = await templates.fromGroup({
       group,
       template_name: name,
       update,
-    });
+    }, node);
     state.closeDialog();
     const blank = result.blank_briefs || 0;
     const blankNote = blank
@@ -593,6 +596,9 @@ export function createManagementActions({
     // That is invisible in the template it just opened, so it is appended here
     // as well; this used to hang off the `updated` branch only.
     else notify(`template created from ${group}: ${name}${blankNote}${droppedNote}`);
+    // Another node's template is edited on its own dashboard: this node's
+    // editor saves here.
+    if (node) { announceNodeChanged(node); return result; }
     await refresh();
     if (result.name || result.agents) openTemplateEditor(result);
     return result;

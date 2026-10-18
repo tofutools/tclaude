@@ -933,7 +933,7 @@ export async function handleRowAction(action) {
         // Open the save-group-as-template modal with this group
         // preselected — the quick "turn this working group into a
         // reusable blueprint" path. The modal owns submit + refresh.
-        openFromGroupModal(group);
+        openFromGroupModal(group, node);
         return;
       }
       case 'nest-group': {

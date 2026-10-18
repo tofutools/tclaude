@@ -562,7 +562,7 @@ export function TemplateFromGroupDialog({
     }
     setBusy(true);
     try {
-      await actions.snapshotTemplateFromGroup(group, name.trim(), updating);
+      await actions.snapshotTemplateFromGroup(group, name.trim(), updating, descriptor.node || '');
     } catch (err) {
       setError(message(err));
     } finally {
