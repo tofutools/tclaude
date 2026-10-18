@@ -182,7 +182,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
 
 test("another node's group settings lock this machine's pickers with the reason", async (t) => {
   const snapshot = { value: { groups: [{ name: 'alpha', default_cwd: '/repo' }], peer_view: { level: 'unrestricted' } } };
-  const mounted = await mountDialogs(t, 'group-settings', { group: 'alpha' }, {}, async () => true, snapshot);
+  const mounted = await mountDialogs(t, 'group-settings', { group: 'alpha', node: 'inst_forge7' }, {}, async () => true, snapshot);
   const { host } = mounted;
   assert.equal(host.querySelector('#group-settings-default-cwd-browse').disabled, true);
   assert.match(host.querySelector('#group-settings-default-cwd-browse-lock').dataset.why, /this machine's folder picker/);
