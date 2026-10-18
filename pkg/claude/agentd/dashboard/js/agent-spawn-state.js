@@ -2,6 +2,17 @@ import { signal } from '@preact/signals';
 import { remoteSpawnContext } from './agent-spawn-remote.js';
 import { nodeSnapshot } from './node-api.js';
 
+// normalizesNames is whether the dialog fixes up an unsafe name as typed: the
+// name is this operator's input, so it follows the page's own node setting
+// (agent.spawn_name_normalize) for every spawn, local, remote or on another
+// node, never the target's. A peer page's snapshot withholds the setting
+// (peer_snapshot_fields.go), so there it is the default, on; a normalised
+// name is valid whatever the target's own setting.
+export function normalizesNames(snapshot) {
+  if (!snapshot || snapshot.peer_view) return true;
+  return snapshot.spawn_name_normalize !== false;
+}
+
 export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
   const dialog = signal(null);
   let generation = 0;
@@ -51,7 +62,7 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
       // operator changes the preference while this dialog is open, this spawn
       // should still execute the choice the form was opened under.
       defaultTerminal: snapshot.default_terminal === 'web' ? 'web' : 'native',
-      normalizeNames: snapshot.spawn_name_normalize !== false,
+      normalizeNames: normalizesNames(getSnapshot()),
       sandboxRevision: 0,
     });
   }

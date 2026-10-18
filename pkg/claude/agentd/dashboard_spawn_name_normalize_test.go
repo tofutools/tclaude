@@ -26,8 +26,10 @@ func TestDashboardHTML_SpawnNameNormalizeWired(t *testing.T) {
 	must("export function spawnNameHint(", "controlled live preview of the normalized name")
 	must("export function prepareSpawnDraft(", "applies the normalized name on blur/submit")
 
-	// The flag the front-end gates on is the snapshot field the daemon sets.
-	must("normalizeNames: snapshot.spawn_name_normalize !== false", "open snapshots the daemon-provided flag")
+	// The flag the front-end gates on is the snapshot field the daemon sets,
+	// read from the page's own node (a peer's snapshot withholds it).
+	must("normalizeNames: normalizesNames(getSnapshot())", "open snapshots the page node's flag")
+	must("return snapshot.spawn_name_normalize !== false;", "the daemon-provided flag")
 
 	// Wiring: live preview on input, commit on blur.
 	must("onInput=${(event) => updateName(event.currentTarget.value)}",
