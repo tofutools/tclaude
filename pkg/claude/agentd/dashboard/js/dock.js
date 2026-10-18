@@ -48,9 +48,9 @@ import { syncChromeTopInset } from './chrome-inset.js';
 import { refresh, confirmModal, toast } from './refresh.js';
 import { deleteSavedPrompt } from './saved-prompts-actions.js';
 import { openSavedPromptsManager as openSavedPrompts } from './modal-saved-prompts.js';
-import { profileSummary, profileDetailChips, createProfile } from './profiles.js';
+import { profileSummary, profileDetailChips, createProfile, profilesVia } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
-import { roleSummary, createRole } from './roles.js';
+import { roleSummary, createRole, rolesVia } from './roles.js';
 import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.js';
 import { templateReadbackBadgeModels } from './template-readback.js';
 import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
@@ -350,6 +350,16 @@ function summaryChips(summary, max = 4) {
   return chips;
 }
 
+// Another node's item (dock-island.js passes {id, name, fetch}) is edited
+// and cloned in place, through that node's catalogs: catalogOn's actions,
+// or for a name-only clone its create bound to the node's fetch.
+const catalogOn = (node) => managementController().catalogOn(node.id);
+const createOn = (node, create) => async (body) => {
+  const result = await create(body);
+  announceNodeChanged(node.id);
+  return result;
+};
+
 // SECTIONS — the whole dock is three instances of this one shape. To add a
 // fourth item kind (a future editor / work-graph node), add an entry here;
 // the renderer + the delegated click handler are already generic.
@@ -362,8 +372,10 @@ function summaryChips(summary, max = 4) {
 //   name(item)  the card's display name
 //   chips(item) the card's chip HTML (already escaped)
 //   drag        true → cards are drag SOURCES (draggable, wired by dock-dnd.js)
-//   onManageItem(item)  jump to that item's editor / manager overlay (⚙ → Edit)
-//   onCloneItem(item)   open the "clone under a new name" dialog (⚙ → Clone)
+//   onManageItem(item, node)  jump to that item's editor / manager overlay
+//                       (⚙ → Edit); node, another node's item: edit it there
+//   onCloneItem(item, node)   open the "clone under a new name" dialog
+//                       (⚙ → Clone); node: the copy is made on that node
 //   onDeleteItem(item)  confirm + delete the item (⚙ → Delete), then refresh
 //   onManageAll()       jump to the whole-kind manager overlay
 //   itemPath(name)      the item's own route, which deletes it on another
@@ -377,6 +389,7 @@ function summaryChips(summary, max = 4) {
 // data-dock-kind): all three kinds drop onto a group — profiles + roles open
 // the spawn dialog prefilled (JOH-375 2/4), templates open the unified summon
 // dialog with a drop-mode chooser (JOH-377 4/4).
+
 export const dockSections = Object.freeze([
   {
     key: 'profiles',
@@ -401,10 +414,11 @@ export const dockSections = Object.freeze([
       ...profileDetailChips(p).map((text) => ({ text, more: false })),
     ],
     drag: true,
-    onManageItem: (p) => openProfileEditor(p),
+    onManageItem: (p, node) => (node ? catalogOn(node).openProfileEditor(p) : openProfileEditor(p)),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
     // under the new name through the Preact-owned action-dialog host.
-    onCloneItem: (p) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
+    onCloneItem: (p, node) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p,
+      create: node ? createOn(node, profilesVia(node.fetch).createProfile) : createProfile }),
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
@@ -430,9 +444,10 @@ export const dockSections = Object.freeze([
     name: (rl) => rl.name,
     chips: (rl) => summaryChips(roleSummary(rl)),
     drag: true,
-    onManageItem: (rl) => openRoleEditor(rl),
+    onManageItem: (rl, node) => (node ? catalogOn(node).openRoleEditor(rl) : openRoleEditor(rl)),
     // Clone → the generic name dialog, cloning via createRole (see profiles).
-    onCloneItem: (rl) => openPresetCloneDialog({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
+    onCloneItem: (rl, node) => openPresetCloneDialog({ kind: 'role', kindWizard: 'class', source: rl,
+      create: node ? createOn(node, rolesVia(node.fetch).createRole) : createRole }),
     // Delete → removeRole's confirm + delete + toast (incl. the 409 role_in_use
     // surfacing), then a dashboard refresh so the dock card leaves at once.
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
@@ -454,8 +469,8 @@ export const dockSections = Object.freeze([
     // Not a drag source: a prompt is added through the spawn dialog, a
     // profile or the group settings rather than dropped onto a group.
     drag: false,
-    onManageItem: (p) => openSavedPrompts({ initial: p.name }),
-    onCloneItem: (p) => openSavedPrompts({ initial: p.name, clone: true }),
+    onManageItem: (p, node) => openSavedPrompts({ initial: p.name, node: node?.id || '' }),
+    onCloneItem: (p, node) => openSavedPrompts({ initial: p.name, clone: true, node: node?.id || '' }),
     onDeleteItem: (p) => removeSavedPrompt(p.name),
     onManageAll: () => openSavedPrompts(),
     onNew: () => openSavedPrompts(),
@@ -479,11 +494,11 @@ export const dockSections = Object.freeze([
     // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
     // matching the profiles/roles cards — it used to fall back to the whole-kind
     // manager, which ignored the item.
-    onManageItem: (t) => openTemplateEditor(t),
+    onManageItem: (t, node) => (node ? catalogOn(node).openTemplateEditor(t) : openTemplateEditor(t)),
     // Clone → templates reuse their OWN richer duplicate dialog (a template
     // carries a whole roster, so its bespoke blurb is worth keeping) rather than
     // the generic action-dialog name shell profiles/roles use. Both are name dialogs.
-    onCloneItem: (t) => openDuplicateModal(t.name),
+    onCloneItem: (t, node) => (node ? catalogOn(node).openTemplateDuplicate(t.name) : openDuplicateModal(t.name)),
     // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
     onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {
@@ -516,8 +531,12 @@ export const dockSections = Object.freeze([
     fullChips: (p) => summaryChips(sandboxProfileSummary(p), 99).map((chip) => ({ ...chip, more: false })),
     // A sandbox profile is assigned through the 🛡 pickers, not dropped.
     drag: false,
-    onManageItem: (p) => managementController().openSandboxProfileEditor(p),
-    onCloneItem: (p) => managementController().openSandboxProfileClone(p),
+    onManageItem: (p, node) => (node ? catalogOn(node).openSandboxEditor(p) : managementController().openSandboxProfileEditor(p)),
+    // A clone's suggested name dodges that node's own profiles, so its list
+    // loads first.
+    onCloneItem: (p, node) => (node
+      ? (async () => { const on = catalogOn(node); await on.load('sandbox'); on.openSandboxClone(p); })()
+      : managementController().openSandboxProfileClone(p)),
     onDeleteItem: (p) => removeSandboxProfile(p),
     onManageAll: () => managementController().openSandboxProfilesManageModal(),
     onNew: () => managementController().openSandboxProfileEditor(),

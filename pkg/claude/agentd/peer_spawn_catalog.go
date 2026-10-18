@@ -135,8 +135,12 @@ func peerCatalogEffectiveSandboxDir(r *http.Request, v *peerView) bool {
 // peerCatalogEnforcementDraft: the enforcement preview of a draft names
 // every group using the stored profile the draft's id points at, and the
 // context group's policy. A peer previews a draft as a new profile, in a
-// group it can see.
+// group it can see; an unrestricted peer, which edits this node's profiles
+// in place, previews them as this node's operator does.
 func peerCatalogEnforcementDraft(r *http.Request, v *peerView) bool {
+	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+		return true
+	}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		return false

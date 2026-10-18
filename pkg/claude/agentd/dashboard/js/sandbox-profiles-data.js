@@ -26,28 +26,43 @@ export async function loadSandboxProfiles(fetchImpl = undefined) { const value =
 // The filesystem-editor feed: audited deny presets the editor may insert as
 // ordinary rows, plus provenance-rich harness-global rows it renders read-only.
 // The endpoint keeps its historical read-exclusions path.
-export function loadSandboxCommonRules() { return request('/api/sandbox-profile-read-exclusions'); }
-export function predictSandboxProfile(draft, targets = [], context = {}) {
+export function loadSandboxCommonRules(fetchImpl = undefined) { return request('/api/sandbox-profile-read-exclusions', {}, fetchImpl); }
+export function predictSandboxProfile(draft, targets = [], context = {}, fetchImpl = undefined) {
   return request('/api/sandbox-profile-enforcement', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ draft: sandboxProfileForWire(draft), targets, context }),
-  });
+  }, fetchImpl);
 }
-export async function previewSandboxProfile(name, body) {
+export async function previewSandboxProfile(name, body, fetchImpl = undefined) {
   const target = name ? `${API}/${encodeURIComponent(name)}` : API;
-  return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fetchImpl);
 }
-export async function saveSandboxProfile(name, body, revision = '') {
+export async function saveSandboxProfile(name, body, revision = '', fetchImpl = undefined) {
   const target = name ? `${API}/${encodeURIComponent(name)}?revision=${encodeURIComponent(revision)}` : API;
-  return request(target, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return request(target, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fetchImpl);
 }
-export function deleteSandboxProfile(name) { return request(`${API}/${encodeURIComponent(name)}`, { method: 'DELETE' }); }
+export function deleteSandboxProfile(name, fetchImpl = undefined) { return request(`${API}/${encodeURIComponent(name)}`, { method: 'DELETE' }, fetchImpl); }
 export async function exportSandboxProfiles(names) { const query = new URLSearchParams(); names.forEach((name) => query.append('name', name)); return request(`${API}/export?${query}`); }
 export function inspectSandboxImport(envelope) { return request(`${API}/import/inspect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) }); }
 export function importSandboxProfiles(envelope, onConflict) { return request(`${API}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...envelope, on_conflict: onConflict, apply_assignments: false }) }); }
-export function inspectSandboxDirectories(body) { return request('/api/sandbox-profile-directories/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
-export function createSandboxDirectories(body) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+export function inspectSandboxDirectories(body, fetchImpl = undefined) { return request('/api/sandbox-profile-directories/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fetchImpl); }
+export function createSandboxDirectories(body, fetchImpl = undefined) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fetchImpl); }
+
+// sandboxVia is the sandbox editor's operations through another node's fetch
+// (node-api.js nodeFetch), for editing that node's profiles in place.
+export function sandboxVia(fetchImpl) {
+  return {
+    loadSandboxProfiles: () => loadSandboxProfiles(fetchImpl),
+    loadSandboxCommonRules: () => loadSandboxCommonRules(fetchImpl),
+    predictSandboxProfile: (draft, targets, context) => predictSandboxProfile(draft, targets, context, fetchImpl),
+    previewSandboxProfile: (name, body) => previewSandboxProfile(name, body, fetchImpl),
+    saveSandboxProfile: (name, body, revision) => saveSandboxProfile(name, body, revision, fetchImpl),
+    deleteSandboxProfile: (name) => deleteSandboxProfile(name, fetchImpl),
+    inspectSandboxDirectories: (body) => inspectSandboxDirectories(body, fetchImpl),
+    createSandboxDirectories: (body) => createSandboxDirectories(body, fetchImpl),
+  };
+}
 
 export function sandboxProfileSummary(profile) {
   const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || []; const pre = profile.pre_launch || [];

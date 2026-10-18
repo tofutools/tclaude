@@ -224,8 +224,8 @@ function DockCard({
   // Every kind's menu, in one order; a kind without a hook leaves its row out.
   const menuItem = (act, label, onRun, danger = false) => html`<${DockMenuItem} key=${act} act=${act}
     kind=${section.key} name=${name} danger=${danger} onRun=${onRun} setOpenMenu=${setOpenMenu}>${label}</${DockMenuItem}>`;
-  // Another node's copy: its editors stay on its own dashboard; renaming
-  // and deleting reach it where it lets this operator act as its own.
+  // Another node's copy: editing, cloning, renaming and deleting reach it
+  // where it lets this operator act as its own; Open on goes to its page.
   const remote = pickNode && !onPage ? { id: pickNode.id, name: pickNode.name, fetch: fused.fetchFor(pickNode.id) } : null;
   const lock = remote ? nodeTrustLock(remote, snapshot, `its ${section.title().toLowerCase()}`) : '';
   const lockedItem = (act, label, onRun, danger = false) => (lock
@@ -255,6 +255,8 @@ function DockCard({
             data-dock-act="copy-to-node">${label} <${LockReason} why=${route.why} /></span>`;
     }) : [];
   const menuItems = remote ? [
+    section.onManageItem && lockedItem('edit-item', 'Edit', () => section.onManageItem(item, remote)),
+    section.onCloneItem && lockedItem('clone-item', wizWord('Clone', 'Mirror'), () => section.onCloneItem(item, remote)),
     menuItem('open-node', `Open on ${remote.name}`, () => nodeOps.open(remote)),
     section.itemPath && lockedItem('rename-item', 'Rename…', () => nodeOps.rename(section, name, remote)),
     menuItem('pin-item', pinned ? 'Unpin' : 'Pin to top', () => onTogglePin(name)),

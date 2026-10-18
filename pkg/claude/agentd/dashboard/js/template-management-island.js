@@ -2261,6 +2261,7 @@ function AgentRow({
         ><button
           type="button"
           class="tool ta-profile-manage"
+          hidden=${!!actions.catalogNode}
           onClick=${() => actions.openManager('profiles')}
         >
           ⧉ manage…
@@ -2948,6 +2949,7 @@ export function TemplateEditor({
         ><button
           id="scribe-editor-open"
           type="button"
+          hidden=${!!actions.catalogNode}
           disabled=${saving}
           onClick=${handoff}
         >

@@ -333,7 +333,28 @@ function profileDetailChips(p) {
   return parts;
 }
 
+// profilesVia is this module's profile operations through another node's
+// fetch (node-api.js nodeFetch): uncached, since the cache above is the page
+// node's list.
+function profilesVia(fetchImpl) {
+  const send = async (path, method, body) => {
+    const r = await fetchImpl(path, {
+      method, credentials: 'same-origin',
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    });
+    if (!r.ok && r.status !== 204) throw new Error((await r.text()) || `HTTP ${r.status}`);
+    return r;
+  };
+  return {
+    async loadProfiles() { const list = await (await send(API, 'GET')).json(); return Array.isArray(list) ? list : []; },
+    createProfile: async (body) => (await send(API, 'POST', body)).json().catch(() => ({})),
+    updateProfile: async (name, body) => (await send(`${API}/${encodeURIComponent(name)}`, 'PATCH', body)).json().catch(() => ({})),
+    deleteProfile: async (name) => { await send(`${API}/${encodeURIComponent(name)}`, 'DELETE'); },
+  };
+}
+
 export {
+  profilesVia,
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
   findProfileByHandle, profileChoices, profileAliasesLabel,
   createProfile, updateProfile, deleteProfile,
