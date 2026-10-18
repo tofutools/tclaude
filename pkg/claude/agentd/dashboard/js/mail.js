@@ -86,7 +86,7 @@ import { confirmModal, toast } from './refresh.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, wz } from './mail-labels.js';
 import { humanNotificationTargetPage } from './human-notification-attention.js';
-import { withPeerAttachments } from './human-attachments.js';
+import { withoutAttachments, withPeerAttachments } from './human-attachments.js';
 import { remoteNodeID } from './fleet-model.js';
 import { featureState } from './peer-view-limits.js';
 import {
@@ -467,7 +467,10 @@ async function loadMessages() {
     // On a peer's page its notification files load through this node's peer
     // attachment route; the URLs the peer sends name its own routes.
     const remote = remoteNodeID();
-    if (remote && id === HUMAN_ID && Array.isArray(data?.messages)) data.messages = data.messages.map(m => withPeerAttachments(remote, m));
+    // Its agent mail files have no peer route, so they are left out.
+    if (remote && Array.isArray(data?.messages)) {
+      data.messages = data.messages.map(m => (id === HUMAN_ID ? withPeerAttachments(remote, m) : withoutAttachments(m)));
+    }
     mailState.messageRequest.commitRequest(token, data);
   } catch (error) {
     if (mailState.messageRequest.failRequest(token, error)) clearMessages();

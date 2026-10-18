@@ -36,6 +36,15 @@ export function withPeerAttachments(nodeID, message) {
   return { ...message, attachments, attachment: attachments[0] || null };
 }
 
+// withoutAttachments drops the file list from agent mail read from a peer. Its
+// URLs name the peer's own /api/agent-messages routes, which on this origin
+// would read this node's files, and there is no peer route for agent mail
+// files; the paths stay readable in the body.
+export function withoutAttachments(message) {
+  if (!messageAttachments(message).length) return message;
+  return { ...message, attachments: [], attachment: null };
+}
+
 // bodilessNotice is what a reader shows where the body would be when a
 // notification deliberately has none: `tclaude agent notify-human --subject …
 // --attach …` lets the published file BE the message. Without it the reader is

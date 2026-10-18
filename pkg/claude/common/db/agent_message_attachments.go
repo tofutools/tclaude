@@ -188,3 +188,64 @@ func insertAgentMessageAttachments(tx *sql.Tx, id int64, attachments []AgentMess
 	}
 	return nil
 }
+
+// GetAgentMessageAttachment returns one attachment of one message, or nil when
+// the pair does not exist. Keying on both ids keeps a download URL from
+// reaching another message's file by swapping the attachment id.
+func GetAgentMessageAttachment(messageID, attachmentID int64) (*AgentMessageAttachment, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var a AgentMessageAttachment
+	err = d.QueryRow(`SELECT id, message_id, ordinal, filename, content_type, size_bytes, storage_path
+		FROM agent_message_attachments WHERE message_id = ? AND id = ?`, messageID, attachmentID).
+		Scan(&a.ID, &a.MessageID, &a.Ordinal, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// ListAgentMessageAttachmentsBatch loads the attachments of a page of messages
+// in ordinal order, keyed by message id. Messages without attachments are
+// absent from the map.
+func ListAgentMessageAttachmentsBatch(messageIDs []int64) (map[int64][]AgentMessageAttachment, error) {
+	out := make(map[int64][]AgentMessageAttachment)
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkInt64s(messageIDs, batchChunkSize) {
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := d.Query(`SELECT id, message_id, ordinal, filename, content_type, size_bytes, storage_path
+			FROM agent_message_attachments WHERE message_id IN (`+sqlPlaceholders(len(chunk))+`)
+			ORDER BY message_id, ordinal`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var a AgentMessageAttachment
+			if err := rows.Scan(&a.ID, &a.MessageID, &a.Ordinal, &a.Filename, &a.ContentType, &a.SizeBytes, &a.StoragePath); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[a.MessageID] = append(out[a.MessageID], a)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
