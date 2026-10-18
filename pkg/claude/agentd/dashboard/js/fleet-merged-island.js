@@ -143,7 +143,7 @@ export function homeActions(live, ownOf, forNode = () => null) {
     get: (_, key) => (...args) => {
       const real = live();
       const group = args.find((a) => a && typeof a === 'object' && a.fleet_node);
-      if (group && !group.fleet_node.home && VIEW_ACTIONS.has(key)) return real?.[key]?.(...args);
+      if (group && VIEW_ACTIONS.has(key)) return real?.[key]?.(...args);
       if (group && !group.fleet_node.home) {
         const actions = forNode(group.fleet_node);
         if (!actions) return Promise.resolve();

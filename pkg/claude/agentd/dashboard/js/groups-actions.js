@@ -19,7 +19,7 @@ import { openGroupAttachmentDialog } from './action-dialog-controller.js';
 import { openStandingOrderCreateModal } from './jobs-controller.js';
 import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 import { resolveAgentTitle } from './agent-title.js';
-import { announceNodeChanged, nodeFetch } from './node-api.js';
+import { announceNodeChanged, isPageNode, nodeFetch } from './node-api.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -178,8 +178,9 @@ export function createGroupsActions({
       });
       // Another node's group is that node's: re-read it rather than adding
       // the member to the page's same-named group.
-      if (descriptor.node || node) announceNodeChanged(descriptor.node || node);
-      else state.optimisticAddMember(descriptor.group, candidate);
+      const target = descriptor.node || node;
+      if (isPageNode(target)) state.optimisticAddMember(descriptor.group, candidate);
+      else announceNodeChanged(target);
       notify(`added ${candidate.title || candidate.conv_id} to ${descriptor.group}`);
       return true;
     },
