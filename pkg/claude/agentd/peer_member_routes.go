@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
@@ -42,18 +43,55 @@ func addPeerMemberRules(rules map[string]peerViewRule) {
 	// from a group and its permanent delete reach what no peer grant hands
 	// out: only unrestricted trust holds these, through this node's own
 	// handlers. One feature names one slug, so the metadata is stable.
-	full := func(next http.HandlerFunc) peerViewRule {
-		return peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerGrantedWrite(next)}
+	full := peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, write: servePeerFullAgent}
+	for _, pattern := range []string{
+		"POST /api/agents/{id}/remote-control",
+		"POST /api/agents/{id}/fast-mode/{direction}",
+		"POST /api/agents/{id}/reincarnate",
+		"DELETE /api/agents/{id}",
+	} {
+		rules[pattern] = full
 	}
-	rules["POST /api/agents/{id}/remote-control"] = full(handleDashboardAgentsAPI)
-	rules["POST /api/agents/{id}/fast-mode/{direction}"] = full(handleDashboardAgentsAPI)
-	rules["POST /api/agents/{id}/reincarnate"] = full(handleDashboardAgentsAPI)
-	rules["DELETE /api/agents/{id}"] = full(handleDashboardAgentsAPI)
-	rules["DELETE /api/groups/{name}/members/{conv}"] = full(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	// The delete dialog reads the agent's worktree first.
+	read := full
+	read.write, read.serve = nil, servePeerFullAgent
+	rules["GET /api/agents/{id}/worktree"] = read
+	full.write = servePeerFullGroup(groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardRemoveMember(w, g, r.PathValue("conv"))
 	}))
-	// The delete dialog reads the agent's worktree first.
-	rules["GET /api/agents/{id}/worktree"] = peerViewRule{feature: "agents.manage.full", requires: PermGroupsMembersDelete, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardAgentsAPI)}
+	rules["DELETE /api/groups/{name}/members/{conv}"] = full
+}
+
+// servePeerFullAgent runs an agent route for unrestricted trust on exactly the
+// agent its path names: the handler re-reads the path, so it gets that
+// agent's conversation and the route's own verb (an escaped slash in the ID
+// names no agent), and the audit names the agent.
+func servePeerFullAgent(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !v.allows(rule, 0) {
+		writeError(w, http.StatusForbidden, "permission", "requires unrestricted trust")
+		return
+	}
+	id := r.PathValue("id")
+	target, err := db.GetAgent(id)
+	if err != nil || target == nil || target.CurrentConvID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "object not found")
+		return
+	}
+	v.targetConv = target.CurrentConvID
+	req := r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
+	req.URL.Path = "/api/agents/" + url.PathEscape(target.CurrentConvID) + strings.TrimPrefix(r.URL.Path, "/api/agents/"+id)
+	req.URL.RawPath = ""
+	handleDashboardAgentsAPI(w, req)
+}
+
+// servePeerFullGroup is servePeerGrantedWrite for a route on one group,
+// recorded in the audit.
+func servePeerFullGroup(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *peerView, peerViewRule) {
+	write := servePeerGrantedWrite(next)
+	return func(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+		v.groupName = r.PathValue("name")
+		write(w, r, v, rule)
+	}
 }
 
 // servePeerAgentInvoke runs an agent-scoped dashboard route for a peer that

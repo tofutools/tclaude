@@ -42,7 +42,7 @@ func addPeerNodeManageRules(rules map[string]peerViewRule) {
 	// offline members remove what no peer grant hands out: only unrestricted
 	// trust holds these.
 	manage := func(next http.HandlerFunc) peerViewRule {
-		return peerViewRule{feature: "groups.manage.full", requires: PermGroupsDelete, unrestrictedOnly: true, write: servePeerGrantedWrite(next)}
+		return peerViewRule{feature: "groups.manage.full", requires: PermGroupsDelete, unrestrictedOnly: true, write: servePeerFullGroup(next)}
 	}
 	rules["DELETE /api/groups/{name}"] = manage(groupRoute(func(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
 		dashboardDeleteGroup(w, g)

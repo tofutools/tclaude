@@ -484,6 +484,9 @@ func TestPeerAgentManagementUnderUnrestrictedTrust(t *testing.T) {
 
 	code, body := call("GET", "/api/agents/"+gone+"/worktree", nil)
 	require.Equal(t, 200, code, body)
+	// An escaped slash names no agent: it never reaches another verb.
+	code, body = call("DELETE", "/api/agents/"+gone+"%2Fexports", nil)
+	require.Equal(t, 404, code, body)
 	code, body = call("DELETE", "/api/agents/"+gone, nil)
 	require.Less(t, code, 300, body)
 	require.Equal(t, 1, members())
