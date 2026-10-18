@@ -1004,7 +1004,7 @@ export function buildCommands(snapshot) {
       // resolve, so a stable agent_id would silently demote a dangling
       // orphan instead of offering to remove it (JOH-322).
       // On a peer's page its route takes the stable agent_id only.
-      run: () => openRetireAgentDialog(globalThis.__tclaudeRemoteNode?.id ? (a.agent_id || a.conv_id) : a.conv_id, label),
+      run: () => (globalThis.__tclaudeRemoteNode?.id && a.agent_id ? openRetireAgentDialog(a.agent_id, label) : openRetireAgentDialog(a.conv_id, label)),
     });
   }
 
