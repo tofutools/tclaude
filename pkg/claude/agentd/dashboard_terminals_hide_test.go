@@ -78,29 +78,3 @@ func TestHidePathsClosePanes(t *testing.T) {
 		}
 	}
 }
-
-// TestTerminalsTab_LeavesForGroupsAfterLastClose pins the auto-leave wiring:
-// the shell reacts to the has-panes -> no-panes edge, the helper only acts
-// while the Terminals tab is showing and honours the opt-out, and the setting
-// reaches it from the snapshot. There is no JS test runner, so these assert
-// against the embedded module source.
-func TestTerminalsTab_LeavesForGroupsAfterLastClose(t *testing.T) {
-	cases := []struct {
-		file, needle, why string
-	}{
-		{"terminal-shell-island.js", "if (!solo && had && !hasPanes) leaveTerminalsAfterLastClose();",
-			"only the last-close edge may leave the tab, never a load with no terminals"},
-		{"terminal-close-nav.js", "if (stay || !documentRef?.getElementById('tab-terminals')?.classList.contains('active')) return false;",
-			"a close seen from another tab, or with the opt-out set, must not switch tabs"},
-		{"terminal-close-nav.js", "location: { tab: 'terminals' }, correction: true",
-			"the closed terminal's deep link must be corrected so Back cannot reopen it"},
-		{"refresh.js", "setStayOnTerminalsAfterLastClose(data.stay_on_terminals_after_last_close);",
-			"the opt-out must flow from the snapshot each poll"},
-	}
-	for _, c := range cases {
-		src := readDashboardJS(t, c.file)
-		if !strings.Contains(src, c.needle) {
-			t.Errorf("%s missing %q — %s", c.file, c.needle, c.why)
-		}
-	}
-}

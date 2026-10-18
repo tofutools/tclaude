@@ -466,9 +466,10 @@ experimental Copilot API and Codex app-server drives.
 
 ## Terminals
 
-Closing the last open terminal while the Terminals tab is showing moves the
-dashboard to the Groups tab. Terminals that close while another tab is showing
-never switch tabs. Set `dashboard.stay_on_terminals_after_last_close: true`
+When the last open terminal closes while the Terminals tab is showing, the
+dashboard moves to the Groups tab. That includes a terminal the dashboard
+closes itself because its agent retired. Terminals that close while another
+tab is showing never switch tabs. Set `dashboard.stay_on_terminals_after_last_close: true`
 (Config › Terminals & windows › **Stay after last close**) to stay on the
 empty Terminals tab instead.
 

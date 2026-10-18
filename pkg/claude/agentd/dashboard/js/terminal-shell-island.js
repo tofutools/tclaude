@@ -1486,12 +1486,18 @@ function TerminalTabs({
   // The last open terminal closing leaves an empty tab behind; move on to
   // Groups unless config says to stay (terminal-close-nav.js). Only the
   // has-panes -> no-panes edge counts, so loading with no terminals or
-  // unticking a node in a fused scope never switches tabs.
+  // unticking a node in a fused scope never switches tabs. It waits a task and
+  // re-checks: a pop-out reattach closes and reopens the same pane, and must
+  // not bounce through Groups on the way.
   const hadPanesRef = useRef(hasPanes);
   useEffect(() => {
     const had = hadPanesRef.current;
     hadPanesRef.current = hasPanes;
-    if (!solo && had && !hasPanes) leaveTerminalsAfterLastClose();
+    if (solo || !had || hasPanes) return undefined;
+    const timer = setTimeout(() => {
+      if (!state.panes.value.length) leaveTerminalsAfterLastClose();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [hasPanes, solo]);
 
   useEffect(() => {
