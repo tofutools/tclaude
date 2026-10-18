@@ -26,6 +26,8 @@ import {
 } from './template-readback.js';
 import { HelpDisclosure } from './help-field.js';
 import { LockReason, machineLock } from './lock-reason.js';
+import { effect } from '@preact/signals';
+import { toolbarNode, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
 
 const html = htm.bind(h);
 const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
@@ -527,13 +529,39 @@ export function mountGroupCreateIsland({
   const controller = Object.freeze({ open: state.open, openClone: state.openClone });
   const unregister = registerGroupCreateController(controller);
   const toolbar = document.querySelector('#group-create-open');
-  const openFromToolbar = () => openGroupCreateModal();
+  // In a fused Groups view the button creates on the toolbar's node
+  // (toolbar-node.js), gated by that node's grants; data-node takes it out of
+  // the page's own peer-view gating.
+  const ownTitle = toolbar?.getAttribute('title') || '';
+  const refusal = () => toolbarRefusal(toolbarNode.value, '#group-create-open');
+  const stopMarking = effect(() => {
+    if (!toolbar) return;
+    const node = toolbarNode.value;
+    const target = toolbarTarget(node);
+    const why = refusal();
+    if (target) toolbar.setAttribute('data-node', target); else toolbar.removeAttribute('data-node');
+    toolbar.classList.toggle('toolbar-node-refused', Boolean(why));
+    if (why) toolbar.setAttribute('aria-disabled', 'true'); else toolbar.removeAttribute('aria-disabled');
+    const on = node ? ` on ${node.name}` : '';
+    toolbar.setAttribute('title', why ? `${why}\n\n${ownTitle}${on}` : `${ownTitle}${on}`);
+  });
+  const openFromToolbar = () => {
+    if (refusal()) return;
+    openGroupCreateModal(undefined, undefined, toolbarTarget());
+  };
   toolbar?.addEventListener('click', openFromToolbar);
   render(html`<${GroupCreateApp}
     state=${state} actions=${actions} confirmDiscard=${confirmDiscard} words=${words}
   />`, host);
   registerCleanup(() => {
     toolbar?.removeEventListener('click', openFromToolbar);
+    stopMarking();
+    if (toolbar) {
+      toolbar.removeAttribute('data-node');
+      toolbar.removeAttribute('aria-disabled');
+      toolbar.classList.remove('toolbar-node-refused');
+      toolbar.setAttribute('title', ownTitle);
+    }
     unregister();
     state.dispose();
     render(null, host);

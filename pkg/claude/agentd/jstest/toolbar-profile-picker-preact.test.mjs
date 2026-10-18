@@ -231,3 +231,58 @@ test('profile mutation starts and awaits a newer poll generation before repaint'
     'a non-awaited editor callback is converted into visible feedback');
   delete globalThis.__toolbarProfileTestEvents;
 });
+
+test('in a fused view the toolbar names its node and shows, loads and sets that node\'s defaults', async (t) => {
+  const calls = [];
+  const picker = await mountPicker(t, {
+    load: async (kind, node) => { calls.push(['load', kind, node]); return { choices: [{ value: 'forge-b', label: 'forge-b' }] }; },
+    commit: async (kind, name, node, nodeName) => { calls.push(['commit', kind, name, node, nodeName]); return true; },
+  });
+  const toolbar = await picker.harness.importDashboardModule('js/toolbar-node.js');
+  t.after(() => toolbar.setToolbarNodes([]));
+  await picker.harness.act(() => {
+    picker.state.update('profile', 'mine');
+    toolbar.setToolbarNodes([
+      { id: 'inst_self', name: 'desk', color: '#58a6ff', local: true, page: true },
+      { id: 'inst_forge', name: 'forge', color: '#f0883e', page: false, profile: 'forge-a', sandbox: '', peerView: { included: ['spawn.catalog', 'spawn.defaults'] } },
+    ]);
+  });
+  const chip = picker.profileHost.querySelector('.toolbar-node-select');
+  assert.ok(chip, 'a fused view shows whose defaults these are');
+  assert.equal(picker.profileHost.querySelector('#dashboard-default-profile').textContent, '🧠 mine', "the page's node shows its own value");
+  await picker.harness.act(() => toolbar.pickToolbarNode('inst_forge'));
+  const button = picker.profileHost.querySelector('#dashboard-default-profile');
+  assert.equal(button.textContent, '🧠 forge-a');
+  assert.equal(button.dataset.node, 'inst_forge', 'the page\'s peer-view limits leave another node\'s control to it');
+  assert.match(button.getAttribute('aria-label'), /on forge: forge-a/);
+  assert.equal(picker.harness.document.querySelector('.toolbar-node').classList.contains('flash'), true, 'moving to another node flashes the chip');
+
+  await picker.harness.act(() => picker.state.open({ kind: 'profile', current: 'forge-a' }));
+  await picker.harness.act(async () => {});
+  const select = picker.profileHost.querySelector('.toolbar-profile-select');
+  assertAbsent(select.querySelector('option[value="/new-profile"]'), 'profiles are created on their own node');
+  Object.defineProperty(select, 'value', { configurable: true, writable: true, value: 'forge-b' });
+  await picker.harness.act(() => picker.harness.fireEvent(select, 'change'));
+  await picker.harness.act(async () => {});
+  assert.deepEqual(calls, [['load', 'profile', 'inst_forge'], ['commit', 'profile', 'forge-b', 'inst_forge', 'forge']]);
+  picker.cleanup();
+});
+
+test("a node that does not share its defaults keeps the toolbar control inert, with the reason", async (t) => {
+  const picker = await mountPicker(t);
+  const toolbar = await picker.harness.importDashboardModule('js/toolbar-node.js');
+  t.after(() => toolbar.setToolbarNodes([]));
+  await picker.harness.act(() => {
+    toolbar.setToolbarNodes([
+      { id: 'inst_self', name: 'desk', local: true, page: true },
+      { id: 'inst_lab', name: 'lab', page: false, profile: '', sandbox: '', peerView: { included: ['groups'], omitted: [{ feature: 'spawn.defaults', requires: 'node.spawn.defaults.manage' }, { feature: 'spawn.catalog', requires: 'node.spawn.read' }] } },
+    ]);
+    toolbar.pickToolbarNode('inst_lab');
+  });
+  const button = picker.sandboxHost.querySelector('#dashboard-default-sandbox-profile');
+  assert.equal(button.textContent, '🛡 ?', 'its value is not shared either');
+  assert.equal(button.getAttribute('aria-disabled'), 'true');
+  assert.equal(button.dataset.act, undefined, 'nothing opens it');
+  assert.match(button.title, /lab does not share its global spawn defaults with you \(needs node\.spawn\.defaults\.manage \+ node\.spawn\.read\)/);
+  picker.cleanup();
+});

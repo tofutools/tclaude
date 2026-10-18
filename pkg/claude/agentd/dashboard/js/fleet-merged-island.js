@@ -30,6 +30,7 @@ import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { featureState } from './feature-state-registry.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { publishFusedDock } from './dock-nodes.js';
+import { pickToolbarNode, setToolbarNodes } from './toolbar-node.js';
 
 const html = htm.bind(h);
 
@@ -424,6 +425,27 @@ export function MergedGroups({
     syncBotAnimations();
     syncWizardOrbit();
   });
+
+  // The Groups toolbar's node-wide controls (global defaults, + new group)
+  // follow one of the listed nodes (toolbar-node.js): each node's defaults as
+  // its snapshot carries them, and the node of the group last clicked,
+  // right-clicked or dropped onto. Hover, focus and polls do not move it.
+  const toolbarList = active && merged ? merged.fleet_nodes.map(({ node }) => {
+    const snap = snapOf(node.id);
+    return {
+      id: node.id, name: node.name, color: node.color, local: !!node.local, page: node.id === pageNode,
+      profile: snap?.spawn_profile_default || '', sandbox: snap?.sandbox_profile_default || '', peerView: snap?.peer_view || null,
+    };
+  }) : [];
+  useEffect(() => setToolbarNodes(toolbarList));
+  useEffect(() => () => setToolbarNodes([]), []);
+  useEffect(() => {
+    if (!host) return undefined;
+    const follow = (event) => pickToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
+    const kinds = ['click', 'contextmenu', 'drop'];
+    for (const kind of kinds) host.addEventListener(kind, follow, true);
+    return () => { for (const kind of kinds) host.removeEventListener(kind, follow, true); };
+  }, [host]);
 
   // Reasons put on refused controls (hover/focus), re-decided after each
   // render, as polls change what each node shares.

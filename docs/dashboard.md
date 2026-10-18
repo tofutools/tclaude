@@ -1092,6 +1092,14 @@ The Groups toolbar's global default spawn profile, global sandbox profile and
 both), and are greyed with the reason otherwise. See docs/federation.md,
 "Managing a peer's node".
 
+In a fused view those three controls act on one of the listed nodes, which a
+chip in front of them names in the node's colour. It starts on the page's own
+node and follows the node of the group you last click, right-click or drop
+onto (hovering does not move it); the chip flashes when it moves, and picking
+another node in it moves it by hand. Another node's controls show and set that
+node's defaults and create the group there, as far as it shares them with you
+(the same grants as on its page); new profiles are made on their own node.
+
 A peer's agent terminal opens in the browser as a remote terminal (watch-only
 or interactive, as the peer's `sessions.*` grants allow; see above).
 `tclaude federation attach <agent-id>@<instance-id>` attaches from your own

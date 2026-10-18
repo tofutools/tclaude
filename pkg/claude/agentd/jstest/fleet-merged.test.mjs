@@ -592,3 +592,39 @@ test("another node's group controls run through actions bound to that node, as f
   assert.equal(harness.fireEvent(mine.firstElementChild, 'click').defaultPrevented, false, "on forge's page this node's own group settings still run");
   await mounted.unmount(); state.dispose();
 });
+
+test("the Groups toolbar follows the node of the fused group last clicked, and returns to the page's node after", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island, toolbar] = await Promise.all([
+    harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
+    harness.importDashboardModule('js/toolbar-node.js'),
+  ]);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createFleetState({ activeTab, search: '' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [], spawn_profile_default: 'mine' });
+  const timers = fakeTimers();
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({
+    groups: [group('build')], agents: [], spawn_profile_default: 'forge-prof', sandbox_profile_default: 'forge-box',
+    peer_view: { included: ['spawn.catalog', 'spawn.defaults'] },
+  }) });
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" />`);
+  assert.equal(toolbar.toolbarNode.value, null, 'one node shown: the toolbar is the page\'s');
+  await harness.act(() => { state.setFused('all'); });
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.deepEqual(toolbar.toolbarNodes.value.map((n) => [n.id, n.page]), [['inst_self', true], ['inst_forge', false]]);
+  assert.equal(toolbar.toolbarNode.value.id, 'inst_self', 'a fused view starts on the page\'s node');
+  const d = harness.document.createElement('div');
+  d.innerHTML = '<details data-fleet-node="inst_forge" data-fleet-node-name="forge"><summary><span class="x">build</span></summary></details>';
+  host.appendChild(d);
+  harness.fireEvent(d.querySelector('.x'), 'pointerover');
+  assert.equal(toolbar.toolbarNode.value.id, 'inst_self', 'hovering does not move it');
+  await harness.act(() => harness.fireEvent(d.querySelector('.x'), 'click'));
+  const node = toolbar.toolbarNode.value;
+  assert.deepEqual([node.id, node.profile, node.sandbox], ['inst_forge', 'forge-prof', 'forge-box']);
+  assert.equal(toolbar.toolbarTarget(), 'inst_forge');
+  await harness.act(() => { activeTab.value = 'usage'; });
+  assert.equal(toolbar.toolbarNode.value, null, 'leaving the fused Groups view gives the toolbar back to the page');
+  await mounted.unmount(); state.dispose();
+});
