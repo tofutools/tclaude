@@ -411,7 +411,7 @@ export function limitHint(state, what, node) {
 // (term-dir opens a shell in a directory, not the agent: never on a peer.)
 // The ⚙ "terminals & windows…" chooser goes straight to that attach, the only
 // one of its options a peer can serve.
-const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
+export const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
 
 // OWN_NODE_ACTS work on the node's own machine (a shell or window there, its
 // desktop folder picker): never from a peer view, even under unrestricted

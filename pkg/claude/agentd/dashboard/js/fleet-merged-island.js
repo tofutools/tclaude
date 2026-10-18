@@ -14,7 +14,7 @@ import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } fr
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots, uniqueNodeNames } from './fleet-merged-model.js';
 import {
-  READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantSelectors, peerAction, refusedActsRule, usableActSelectors,
+  ATTACH_ACTS, READ_ONLY_ACTS as VIEW_ONLY_ACTS, actOf, grantHeld, grantSelectors, peerAction, refusedActsRule, usableActSelectors,
 } from './peer-view-limits.js';
 import { announceNodeChanged, nodeFetch, onNodeChanged, setNodeSnapshotSource } from './node-api.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -29,15 +29,12 @@ const html = htm.bind(h);
 
 // VIEW_ONLY_ACTS (peer-view-limits.js) open menus or show data already on
 // screen. This node's own groups (home) run every control as on its own
-// Groups view. On a peer's rows the controls the peer shares (peerAction:
-// stop or wake, restart, sandbox restart, retire, clone, spawn, message) open
-// the peer action dialog against that node's peer routes, as on its per-node
-// view; what it does not share stays out of reach, as there.
-
-// TERMINAL_ACTS open an agent's terminal; on a peer's row they open the peer's
-// agent in the browser terminal (remote-terminal.js), as the peer shares it.
-// The ⚙ "terminals & windows…" chooser opens that attach directly there.
-const TERMINAL_ACTS = new Set(['web-open-window', 'jump', 'terminal-chooser']);
+// Groups view. On a peer's rows a control whose grant the peer holds
+// (GROUP_GRANT_ACTS, AGENT_GRANT_ACTS) runs its regular dialog against that
+// node (node-api.js); without it, a spawn or message the peer's action routes
+// take (peerAction) opens the peer action dialog; anything else stays out of
+// reach, as on its per-node view. ATTACH_ACTS on a peer's row open the peer's
+// agent in the browser terminal (remote-terminal.js).
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
 const MOVE_MIME = 'application/x-tclaude-fleet-move';
@@ -402,7 +399,7 @@ export function MergedGroups({
       // document's data-act handler maps its group@node names back).
       if (instance && instance === homeRef.current) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (TERMINAL_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
+      if (ATTACH_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
         void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
         return;
       }
