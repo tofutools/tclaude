@@ -74,14 +74,14 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
     openHumanReply(context = {}) {
       return open({ kind: 'human-reply', context: { ...context } });
     },
-    openSudoGrant({ agentID = '' } = {}) {
-      return open({ kind: 'sudo-grant', agentID: String(agentID || '') });
+    openSudoGrant({ agentID = '', node = '' } = {}) {
+      return open({ kind: 'sudo-grant', agentID: String(agentID || ''), node: String(node || '') });
     },
-    openAgentPermissions({ conv, label = '' }) {
-      return open({ kind: 'permissions', mode: 'agent', conv, label });
+    openAgentPermissions({ conv, label = '', node = '' }) {
+      return open({ kind: 'permissions', mode: 'agent', conv, label, node: String(node || '') });
     },
-    openGroupPermissions({ group, grants = [], scopes = {}, unreadable = [], ownerScopes = {} }) {
-      return open({ kind: 'permissions', mode: 'group', group, grants: [...grants], scopes: { ...scopes }, unreadable: [...unreadable], ownerScopes: { ...ownerScopes } });
+    openGroupPermissions({ group, grants = [], scopes = {}, unreadable = [], ownerScopes = {}, node = '' }) {
+      return open({ kind: 'permissions', mode: 'group', group, grants: [...grants], scopes: { ...scopes }, unreadable: [...unreadable], ownerScopes: { ...ownerScopes }, node: String(node || '') });
     },
     openBufferedPermissions(options = {}) {
       return open({ kind: 'permissions', ...options, mode: 'buffer', overrides: { ...(options.overrides || {}) } });

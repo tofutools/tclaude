@@ -17,12 +17,14 @@ export function openLinksManager() {
   return requireController().openManager();
 }
 
-export function openLinkCreate(preset = {}) {
-  return requireController().openCreate({ preset });
+// node names another node's group (blank: the page's): the editor lists that
+// node's groups and saves there.
+export function openLinkCreate(preset = {}, node = '') {
+  return requireController().openCreate({ preset, node });
 }
 
-export function openLinkEdit({ id, from, to, mode }) {
-  return requireController().openEdit({ id, from, to, mode });
+export function openLinkEdit({ id, from, to, mode, node = '' }) {
+  return requireController().openEdit({ id, from, to, mode, node });
 }
 
 export function deleteLink(value) {

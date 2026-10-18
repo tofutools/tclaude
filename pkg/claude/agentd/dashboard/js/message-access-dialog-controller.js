@@ -31,16 +31,18 @@ export function openHumanReplyModal(context = {}) {
   return requireController().openHumanReply(context);
 }
 
-export function openSudoGrantModal(prefillAgentID = '') {
-  return requireController().openSudoGrant({ agentID: prefillAgentID || '' });
+// node names another node's agent or group (blank: the page's): the dialog
+// reads that node's snapshot and saves there.
+export function openSudoGrantModal(prefillAgentID = '', node = '') {
+  return requireController().openSudoGrant({ agentID: prefillAgentID || '', node });
 }
 
-export function openPermEditModal(conv, label = '') {
-  return requireController().openAgentPermissions({ conv, label });
+export function openPermEditModal(conv, label = '', node = '') {
+  return requireController().openAgentPermissions({ conv, label, node });
 }
 
-export function openGroupPermEditor(group, grants = [], scopes = {}, unreadable = [], ownerScopes = {}) {
-  return requireController().openGroupPermissions({ group, grants, scopes, unreadable, ownerScopes });
+export function openGroupPermEditor(group, grants = [], scopes = {}, unreadable = [], ownerScopes = {}, node = '') {
+  return requireController().openGroupPermissions({ group, grants, scopes, unreadable, ownerScopes, node });
 }
 
 export function openSpawnPermEditor(options = {}) {

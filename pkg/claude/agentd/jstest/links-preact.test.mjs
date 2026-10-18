@@ -196,7 +196,7 @@ test('Links create form validates, controls bidirectional payload and exposes bu
   bidir.checked = true;
   await harness.act(() => harness.fireEvent(bidir, 'change'));
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
-  assert.deepEqual(payloads[0], { from: 'alpha', to: 'beta', mode: 'owners->members', bidir: true });
+  assert.deepEqual(payloads[0], { from: 'alpha', to: 'beta', mode: 'owners->members', bidir: true, node: '' });
   assert.equal(host.querySelector('#link-modal-submit').disabled, true);
   assert.match(host.querySelector('#link-modal-submit .theme-copy-regular').textContent, /Creating/);
   assert.equal(from.disabled, true);
@@ -258,7 +258,7 @@ test('Links edit form is immutable except for mode and submits the exact row ide
   assertSameNode(harness.document.activeElement, host.querySelector('#link-modal-mode'));
   await choose(harness, host.querySelector('#link-modal-mode'), 'members->members');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-submit'), 'click'));
-  assert.deepEqual(calls[0], ['update', { id: '2', from: 'gamma', to: 'alpha', mode: 'members->members' }]);
+  assert.deepEqual(calls[0], ['update', { id: '2', from: 'gamma', to: 'alpha', mode: 'members->members', node: '' }]);
   await mounted.cleanup();
 });
 
@@ -409,6 +409,15 @@ test('plain Links actions preserve mutation payloads, refresh and deletion feedb
   assert.equal(confirms[0].title, 'wiz:Sever this arcane channel?');
   assert.equal(refreshes, 3);
   assert.match(notices.at(-1)[0], /channel severed/);
+
+  // A link on another node's group goes to that node.
+  const node = 'inst_abcdefghijklmnop';
+  await actions.createLink({ from: 'alpha', to: 'beta', mode: 'members->members', node });
+  await actions.updateLink({ id: 2, from: 'alpha', to: 'beta', mode: 'owners->members', node });
+  await actions.deleteLink({ id: 3, from: 'alpha', to: 'beta', node });
+  assert.deepEqual(requests.slice(3).map(([url]) => url), [
+    `/api/peer/${node}/groups/alpha/links`, `/api/peer/${node}/groups/alpha/links/2`, `/api/peer/${node}/groups/alpha/links/3`,
+  ]);
 });
 
 const crossTargets = {
@@ -465,7 +474,7 @@ test('a cross-node link picks a shared peer group and says auto vs request', asy
   assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /Needs bob's approval.*24 hours/);
   assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Send link request');
   await harness.act(() => dialog.querySelector('#link-modal-submit').click());
-  assert.deepEqual(calls.at(-1), ['create', { from: 'alpha', mode: 'members->members', bidir: false,
+  assert.deepEqual(calls.at(-1), ['create', { from: 'alpha', mode: 'members->members', bidir: false, node: '',
     peer: { id: 'inst_bob', label: 'bob', groupID: 'grp_b2', groupName: 'docs' } }]);
   await view.cleanup();
 });

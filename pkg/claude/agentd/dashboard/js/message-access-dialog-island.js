@@ -7,6 +7,7 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
+import { nodeSnapshot } from './node-api.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
   permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
@@ -513,7 +514,7 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     if (!selected.size) { setError('Pick at least one slug.'); return; }
     busyRef.current = true;
     setBusy(true);
-    try { await actions.grantSudo({ agentID: agentID.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim() }); state.close(); }
+    try { await actions.grantSudo({ agentID: agentID.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim(), node: descriptor.node }); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -1009,9 +1010,12 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
   </${Overlay}>`;
 }
 
-export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscard }) {
+export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot, confirmDiscard }) {
   const current = state.view.value;
   const descriptor = current.dialog;
+  // A dialog on another node's agent or group reads that node's snapshot,
+  // never the page's (whose same-named group is another one).
+  const snapshot = descriptor?.node ? nodeSnapshot(descriptor.node) : pageSnapshot;
   let parent = null;
   if (descriptor?.kind === 'operator-message') parent = html`<${OperatorMessageDialog} key=${`operator:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'message') parent = html`<${MessageDialog} key=${`message:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;

@@ -6,6 +6,7 @@ import {
   useGuardedOverlayClose,
 } from './management-overlay.js';
 import { registerLinksController } from './links-controller.js';
+import { nodeSnapshot } from './node-api.js';
 import { relTime } from './helpers.js';
 import { LINK_COLS } from './sort.js';
 import { LINK_MODES, composeItems, composerSummary, modeText } from './proposals-model.js';
@@ -240,7 +241,10 @@ function PeerOutcome({ peer, group, connected, reason }) {
 function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const edit = descriptor.kind === 'edit';
-  const targets = useLinkTargets(actions, !edit);
+  // Cross-node targets are this node's federation: another node's group
+  // (descriptor.node, or any group on a peer's page) links within its node.
+  const node = descriptor.node || '';
+  const targets = useLinkTargets(actions, !edit && !node && !globalThis.__tclaudeRemoteNode?.id);
   const peers = usablePeers(targets);
   const connected = !!targets?.hub_connected;
   const [target, setTarget] = useState('local');
@@ -285,7 +289,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         }
         setBusy(true);
         await actions.createLink({
-          from, mode, bidir,
+          from, mode, bidir, node,
           peer: { id: peer.peer, label: peer.label || peer.peer, groupID: peerGroup.id, groupName: peerGroup.name },
         });
         return;
@@ -299,8 +303,8 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         return;
       }
       setBusy(true);
-      if (edit) await actions.updateLink({ id: descriptor.id, from, to, mode });
-      else await actions.createLink({ from, to, mode, bidir });
+      if (edit) await actions.updateLink({ id: descriptor.id, from, to, mode, node });
+      else await actions.createLink({ from, to, mode, bidir, node });
     } catch (cause) { setError(errorMessage(cause)); }
     finally {
       submitGuard.current = false;
@@ -509,13 +513,21 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   `;
 }
 
+// editorGroups are the groups a link editor offers: its node's (another
+// node's group) or the page's.
+function editorGroups(current) {
+  const node = current.editor?.node;
+  const snap = node && nodeSnapshot(node);
+  return snap ? (snap.groups || []).map((group) => group.name) : current.groups;
+}
+
 export function LinksApp({ state, actions, confirmDiscard }) {
   const current = state.view.value;
   return html`
     ${current.managerOpen && html`<${LinksManager} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`}
     ${current.editor?.kind === 'propose'
     ? html`<${ProposalComposer} key=${current.editor.key} descriptor=${current.editor} groups=${current.groupInfo || []} actions=${actions} confirmDiscard=${confirmDiscard} />`
-    : current.editor && html`<${LinkEditor} key=${current.editor.key} descriptor=${current.editor} groups=${current.groups} actions=${actions} confirmDiscard=${confirmDiscard} />`}
+    : current.editor && html`<${LinkEditor} key=${current.editor.key} descriptor=${current.editor} groups=${editorGroups(current)} actions=${actions} confirmDiscard=${confirmDiscard} />`}
   `;
 }
 

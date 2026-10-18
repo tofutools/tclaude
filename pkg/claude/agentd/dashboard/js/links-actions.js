@@ -1,3 +1,4 @@
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 async function responseError(response) {
   return (await response.text()) || `HTTP ${response.status}`;
 }
@@ -35,6 +36,10 @@ export function createLinksActions({
   words = (plain) => plain,
 }) {
   if (!state) throw new TypeError('links actions require state');
+  // A link on another node's group (node) is saved there, and that node's
+  // copy is re-read too.
+  const on = (node) => nodeFetch(node || '', { fetchImpl });
+  const changed = (node) => { if (node) announceNodeChanged(node); return refresh(); };
   return Object.freeze({
     openManager: state.openManager,
     closeManager: state.closeManager,
@@ -53,11 +58,11 @@ export function createLinksActions({
       return response.json();
     },
 
-    async createLink({ from, to, mode, bidir, peer }) {
+    async createLink({ from, to, mode, bidir, peer, node = '' }) {
       const body = peer
         ? { to_peer: peer.id, to_group_id: peer.groupID, mode, bidir: !!bidir }
         : { to, mode, bidir: !!bidir };
-      const out = await request(fetchImpl, `/api/groups/${encodeURIComponent(from)}/links`, {
+      const out = await request(on(node), `/api/groups/${encodeURIComponent(from)}/links`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -65,7 +70,7 @@ export function createLinksActions({
       state.closeEditor();
       if (peer) notify(crossNodeLinkNotice(from, peer, out?.edges));
       else notify(`linked: ${from} → ${to}${bidir ? ' (+reverse)' : ''}`);
-      await refresh();
+      await changed(node);
     },
 
     // createProposal sends a multi-item peer proposal (tcl-hj04jt). Nothing
@@ -81,19 +86,19 @@ export function createLinksActions({
       await refresh();
     },
 
-    async updateLink({ id, from, to, mode }) {
+    async updateLink({ id, from, to, mode, node = '' }) {
       const scope = from || to;
-      await request(fetchImpl, `/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
+      await request(on(node), `/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
       });
       state.closeEditor();
       notify(`link #${id} mode → ${mode}`);
-      await refresh();
+      await changed(node);
     },
 
-    async deleteLink({ id, from = '', to = '', scope = '', peerLabel = '', pending = false }) {
+    async deleteLink({ id, from = '', to = '', scope = '', peerLabel = '', pending = false, node = '' }) {
       const accepted = await confirm(peerLabel ? {
         title: pending ? 'Cancel this link request?' : 'Remove this cross-node link?',
         body: pending
@@ -113,11 +118,11 @@ export function createLinksActions({
       if (!accepted) return false;
       try {
         const group = scope || from || to;
-        await request(fetchImpl, `/api/groups/${encodeURIComponent(group)}/links/${encodeURIComponent(id)}`, {
+        await request(on(node), `/api/groups/${encodeURIComponent(group)}/links/${encodeURIComponent(id)}`, {
           method: 'DELETE',
         });
         notify(words(`link removed: #${id}`, `channel severed: #${id}`));
-        await refresh();
+        await changed(node);
         return true;
       } catch (error) {
         notify(`${words('Remove link', 'Sever channel')} failed: ${error?.message || String(error)}`, true);

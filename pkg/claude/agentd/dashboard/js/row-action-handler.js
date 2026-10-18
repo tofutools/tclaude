@@ -541,14 +541,14 @@ export async function handleRowAction(action) {
         // "+ Grant sudo" button uses, pre-filled with this stable agent id.
         // Modal handles the rest (validation, POST /api/sudo,
         // refresh).
-        openSudoGrantModal(agent);
+        openSudoGrantModal(agent, node);
         return;
       }
       case 'perm-edit': {
         // Per-row affordance: open the permanent-permission editor
         // for this agent. Distinct from sudo-grant — that elevation
         // is time-bounded, these overrides persist.
-        openPermEditModal(conv, label);
+        openPermEditModal(conv, label, node);
         return;
       }
       case 'sudo-manage': {
@@ -777,12 +777,12 @@ export async function handleRowAction(action) {
         return;
       }
       case 'set-group-permissions': {
-        const snapshot = (lastSnapshot?.groups || []).find(g => g.name === group);
+        const snapshot = ((nodeSnapshot(node) || lastSnapshot)?.groups || []).find(g => g.name === group);
         // owner_scopes rides along so the editor can show (and round-trip) the
         // group's owner-bypass narrowing next to its grants — the two are the
         // same PATCH and the same permission pair.
         openGroupPermEditor(group, snapshot?.permissions || [], snapshot?.permission_scopes || {},
-          snapshot?.unreadable_permission_scopes || [], snapshot?.owner_scopes || {});
+          snapshot?.unreadable_permission_scopes || [], snapshot?.owner_scopes || {}, node);
         return;
       }
       case 'set-group-remote-control': {
@@ -1018,7 +1018,7 @@ export async function handleRowAction(action) {
         // From per-group "+ link" button: preset FROM to the
         // current group so the user only has to pick TO.
         const from = data.from || '';
-        openLinkCreate({ from });
+        openLinkCreate({ from }, node);
         return;
       }
       case 'links-manage': {
@@ -1032,7 +1032,7 @@ export async function handleRowAction(action) {
         const from = data.from || '';
         const to = data.to || '';
         const mode = data.mode || '';
-        openLinkEdit({ id, from, to, mode });
+        openLinkEdit({ id, from, to, mode, node });
         return;
       }
       case 'link-delete': {
@@ -1044,7 +1044,7 @@ export async function handleRowAction(action) {
         // available, otherwise fall back to the explicit data-group
         // attribute.
         const scope = data.group || from || to;
-        await deleteLink({ id, from, to, scope });
+        await deleteLink({ id, from, to, scope, node });
         return;
       }
       case 'msg-focus': {

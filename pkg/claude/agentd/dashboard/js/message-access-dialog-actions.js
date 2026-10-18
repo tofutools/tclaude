@@ -1,3 +1,5 @@
+import { announceNodeChanged, nodeFetch } from './node-api.js';
+
 function errorMessage(body, status) {
   if (body && typeof body === 'object') return body.error || body.message || `HTTP ${status}`;
   return String(body || `HTTP ${status}`);
@@ -102,8 +104,12 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function grantSudo({ agentID, slugs, duration, reason }) {
-    const response = await requestJSON(fetchImpl, '/api/sudo', {
+  // A save on another node (node) goes there and re-reads its copy too.
+  const on = (node) => nodeFetch(node || '', { fetchImpl });
+  const changedOn = (node) => { if (node) announceNodeChanged(node); return refresh(); };
+
+  async function grantSudo({ agentID, slugs, duration, reason, node = '' }) {
+    const response = await requestJSON(on(node), '/api/sudo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent_id: agentID, slugs, duration, reason }),
     });
@@ -113,7 +119,7 @@ export function createMessageAccessDialogActions({
       (failed > 0 ? ` (${failed} failed)` : ''));
     // Match the legacy close-before-refresh behavior. Grant completion is
     // independent from the next dashboard snapshot arriving.
-    void refresh();
+    void changedOn(node);
     return response;
   }
 
@@ -122,13 +128,13 @@ export function createMessageAccessDialogActions({
   // from the scopes attached to the group's explicit grants.
   async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null) {
     if (descriptor.mode === 'agent') {
-      const response = await requestJSON(fetchImpl, '/api/permissions', {
+      const response = await requestJSON(on(descriptor.node), '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
       });
       const changed = response.changed || 0;
       notify(`Permissions saved — ${changed} change${changed === 1 ? '' : 's'}`);
-      await refresh();
+      await changedOn(descriptor.node);
       return response;
     }
     if (descriptor.mode === 'group') {
@@ -144,7 +150,7 @@ export function createMessageAccessDialogActions({
       // why the test is against null rather than truthiness.
       const body = { permissions };
       if (ownerScopes !== null && ownerScopes !== undefined) body.owner_scopes = ownerScopes;
-      const response = await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(descriptor.group)}`, {
+      const response = await requestJSON(on(descriptor.node), `/api/groups/${encodeURIComponent(descriptor.group)}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -152,7 +158,7 @@ export function createMessageAccessDialogActions({
         `${descriptor.group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`,
         `${descriptor.group}: ${permissions.length} party boon${permissions.length === 1 ? '' : 's'} bound`,
       ));
-      await refresh();
+      await changedOn(descriptor.node);
       return response;
     }
     const kept = {};
