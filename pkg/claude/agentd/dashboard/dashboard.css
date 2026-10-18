@@ -20069,6 +20069,7 @@ html.scope-fused #messages-root { display: none !important; }
 .node-select-button .mailbox-unread { margin-left: 0; }
 .node-select-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px #01040999; }
 .node-select-row { padding: 4px 6px; gap: 6px; }
+.node-select-row.sel { box-shadow: none; }
 .node-select-row input[type=radio] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
 .node-select-row.locked { color: #7d8590; }
 .node-select-row .node-pop-name { flex: 0 1 auto; min-width: 0; }
