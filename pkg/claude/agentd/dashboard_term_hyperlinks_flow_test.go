@@ -58,6 +58,10 @@ func TestWebTermWSRequestsHyperlinkPassthrough(t *testing.T) {
 	require.GreaterOrEqual(t, flagAt, 0, "no hyperlink opt-in in %q", command)
 	assert.Less(t, flagAt, strings.Index(command, "new-session"),
 		"client flags must precede the tmux command word: %q", command)
+	// A bare shell has no scrollback of its own: tmux mouse mode makes the
+	// wheel scroll the pane instead of cycling command history.
+	assert.True(t, strings.HasSuffix(command, ` \; set-option -t '=`+agentd.TermSessionNameForTest(spawned.ConvID, "start")+`:' mouse on`),
+		"web shell must chain tmux mouse mode: %q", command)
 }
 
 func TestWebTermWSIncludesClickedGroupEnvironment(t *testing.T) {

@@ -134,8 +134,8 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		defer cleanupScript()
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand)
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(name))
 	runPTYOverWS(w, r, cmd, name, "", nil, config.TerminalTabAgentTerminal)
 }
 
@@ -244,8 +244,8 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand)
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(sessName))
 	runPTYOverWS(w, r, cmd, sessName, "", nil, config.TerminalTabGroupTerminal)
 }
 
@@ -578,6 +578,19 @@ func winchProcessGroup(proc *os.Process) {
 // webTerminalAttachCmd instead.
 func webTerminalTmuxFlags() string {
 	return "-T " + clcommon.TmuxHyperlinksFeature
+}
+
+// webShellMouseScrollback is the tmux command chained after a web shell's
+// `new-session -A` (per-agent and group shells alike) to turn on mouse mode
+// for that session. A bare shell renders no scrollback of its own and tmux
+// runs it on the alternate screen, so without mouse mode xterm.js turns each
+// wheel or two-finger scroll into Up/Down arrow keys, which walk the shell's
+// command history. With it on, the wheel enters tmux copy mode and scrolls
+// the pane's history, the same as runNewShell's plain shell sessions.
+// Chained rather than passed at creation so a re-attach to a shell opened
+// before this existed gets it too.
+func webShellMouseScrollback(sessionName string) string {
+	return " \\; set-option -t " + shellSingleQuote(clcommon.ExactTarget(sessionName)+":") + " mouse on"
 }
 
 // webTerminalAttachCmd carries the same OSC 8 opt-in across the one process hop
