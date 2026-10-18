@@ -12,6 +12,8 @@ function requireController() {
   return controller;
 }
 
-export function openWorktreeCleanup(group = '') {
-  return requireController().open(group);
+// node names another node's group (blank: the page's): its worktrees are
+// scanned and cleaned there.
+export function openWorktreeCleanup(group = '', node = '') {
+  return requireController().open(group, node);
 }

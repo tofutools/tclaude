@@ -91,8 +91,8 @@ test('palette exposes all/group Git commands in plain and wizard modes', async (
     git.forEach((command) => command.run());
   }
   assert.deepEqual(calls, [
-    ['pull', ''], ['sync', ''], ['pull', 'tclaude'], ['sync', 'tclaude'],
-    ['pull', ''], ['sync', ''], ['pull', 'tclaude'], ['sync', 'tclaude'],
+    ['pull', '', ''], ['sync', '', ''], ['pull', 'tclaude', ''], ['sync', 'tclaude', ''],
+    ['pull', '', ''], ['sync', '', ''], ['pull', 'tclaude', ''], ['sync', 'tclaude', ''],
   ]);
 });
 
@@ -228,4 +228,18 @@ test('palette opens a web terminal in a group home dir only when the group has o
   await new Promise((resolve) => setTimeout(resolve, 0));
   const want = ['/api/group-term-ws/tclaude', 'tclaude', 'groupterm:tclaude'];
   assert.deepEqual(opened, [want, want]);
+});
+
+test("another node's group scans and cleans its checkouts and worktrees there", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createGitRepositoriesActions } = await harness.importDashboardModule('js/git-repositories-actions.js');
+  const { createWorktreeCleanupActions } = await harness.importDashboardModule('js/worktree-cleanup-actions.js');
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return new Response('{"repos":[],"issues":[]}', { status: 200 }); };
+  const node = 'inst_abcdefghijklmnop';
+  await createGitRepositoriesActions({ fetchImpl }).scan('crew', undefined, node);
+  const worktrees = createWorktreeCleanupActions({ fetchImpl });
+  await worktrees.scan('crew', node);
+  await worktrees.scan('crew');
+  assert.deepEqual(urls, [`/api/peer/${node}/git-repositories?group=crew`, `/api/peer/${node}/groups/crew/worktrees`, '/api/groups/crew/worktrees']);
 });

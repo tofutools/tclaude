@@ -103,7 +103,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 	for _, adjacent := range []string{
 		"function openDeleteGroupModal(group, node = '')",
 		"export async function openCleanupModal(options = {})",
-		"function openWorktreeCleanup(group = '')",
+		"function openWorktreeCleanup(group = '', node = '')",
 	} {
 		if !strings.Contains(operations, adjacent) {
 			t.Errorf("adjacent imperative owner changed during delete-retired cutover: %q", adjacent)

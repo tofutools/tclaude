@@ -1,4 +1,5 @@
 import { worktreeCleanupSummary } from './worktree-cleanup-model.js';
+import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 async function responsePayload(response) {
   const text = await response.text();
@@ -19,13 +20,15 @@ export function createWorktreeCleanupActions({
   refresh = async () => {},
   notify = () => {},
 } = {}) {
+  // node is another node's group: its worktrees are that node's.
+  const on = (node) => nodeFetch(node || '', { fetchImpl });
   return Object.freeze({
-    async scan(group = '') {
+    async scan(group = '', node = '') {
       const normalizedGroup = String(group || '');
       const url = normalizedGroup
         ? `/api/groups/${encodeURIComponent(normalizedGroup)}/worktrees`
         : '/api/worktrees/cleanup';
-      const response = await fetchImpl(url, { credentials: 'same-origin' });
+      const response = await on(node)(url, { credentials: 'same-origin' });
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload, 'scan failed');
       return Object.freeze({
@@ -39,8 +42,8 @@ export function createWorktreeCleanupActions({
       });
     },
 
-    async cleanup(request) {
-      const response = await fetchImpl('/api/worktrees/cleanup', {
+    async cleanup(request, node = '') {
+      const response = await on(node)('/api/worktrees/cleanup', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -76,6 +79,7 @@ export function createWorktreeCleanupActions({
       // The destructive response is authoritative. Never keep its result UI
       // or close paths behind an ordinary snapshot refresh that may be slow or
       // unavailable; reconcile the background dashboard independently.
+      if (node) announceNodeChanged(node);
       void Promise.resolve().then(refresh).catch(() => {});
       return result;
     },
