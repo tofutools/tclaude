@@ -103,21 +103,27 @@ func (v *peerView) agentGrants(groups []*db.AgentGroup) map[string][]string {
 // change them: an editor that started blank would replace values the peer
 // never saw (tags are a replace-set). The description is the group's
 // (groupHeld), the tags and notification override the agent's own
-// (agentHeld).
-func projectPeerMemberSettings(row *dashboardMember, descr string, groupHeld, agentHeld []string) {
+// (agentHeld). A failed read fails the projection: a blank start is what this
+// prevents. The effective notification state the toggle shows also tells
+// whether one of the agent's groups is muted.
+func projectPeerMemberSettings(row *dashboardMember, descr string, groupHeld, agentHeld []string) error {
 	if slices.Contains(groupHeld, PermGroupsMembersManage) {
 		row.Descr = descr
 	}
 	if !slices.Contains(agentHeld, PermGroupsMembersManage) {
-		return
+		return nil
 	}
-	if tags, err := db.ListAgentTags(row.AgentID); err == nil {
-		row.Tags = tags
+	tags, err := db.ListAgentTags(row.AgentID)
+	if err != nil {
+		return err
 	}
-	if mode, err := db.GetAgentNotifyPref(row.AgentID); err == nil {
-		row.Notify = mode
+	mode, err := db.GetAgentNotifyPref(row.AgentID)
+	if err != nil {
+		return err
 	}
+	row.Tags, row.Notify = tags, mode
 	row.NotifyEffective = notify.AllowedForConv(row.ConvID)
+	return nil
 }
 
 // peerAgentGrants names, per agent in a group the peer can see, the grants of

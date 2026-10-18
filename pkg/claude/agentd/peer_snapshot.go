@@ -206,7 +206,9 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		}
 		for i := range row.Members {
 			if m := &row.Members[i]; slices.Contains(settings[g.Name], PermGroupsMembersManage) || len(agentHeld[m.AgentID]) > 0 {
-				projectPeerMemberSettings(m, descrs[m.AgentID], settings[g.Name], agentHeld[m.AgentID])
+				if err := projectPeerMemberSettings(m, descrs[m.AgentID], settings[g.Name], agentHeld[m.AgentID]); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 		out = append(out, row)
