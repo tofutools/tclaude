@@ -8337,7 +8337,8 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 5px 10px; font-size: 12px; color: #c9d1d9;
   font-family: inherit; cursor: pointer;
 }
-.cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+.cron-create-target .cron-target-input-row button:hover:not(:disabled) { background: #2d333b; }
+.cron-create-target .cron-target-input-row button:disabled { opacity: .5; cursor: not-allowed; }
 /* Saved-prompt picker: one line — the insert select takes the width and the
    Manage button stays its natural size beside it. */
 .saved-prompts-controls > button { flex: 0 0 auto; white-space: nowrap; }
@@ -21448,6 +21449,7 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
   background: #0b1520; color: #d4d4d4; font-size: 11.5px; font-weight: 400; line-height: 1.4;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .6);
 }
+.lock-why-end:hover::after, .lock-why-end:focus::after { left: auto; right: -4px; }
 .locked-field { opacity: .45; cursor: not-allowed; }
 .dialog-node-chip {
   display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 10px; vertical-align: 2px;
