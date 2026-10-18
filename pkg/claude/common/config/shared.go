@@ -24,10 +24,11 @@ var shared struct {
 // callers and must be treated as read-only; use Load or Update to change it.
 func LoadShared() (*Config, error) {
 	shared.mu.Lock()
-	defer shared.mu.Unlock()
 	if shared.watchers == 0 {
+		shared.mu.Unlock()
 		return Load()
 	}
+	defer shared.mu.Unlock()
 	if shared.cfg == nil {
 		reloadSharedLocked()
 	}
@@ -75,7 +76,9 @@ func invalidateShared() {
 
 func sharedStaleLocked() bool {
 	path := ConfigPath()
-	if path != shared.path {
+	// A failed read (fd pressure, a half-written edit) is retried every poll
+	// rather than serving defaults until the file next changes.
+	if path != shared.path || shared.err != nil {
 		return true
 	}
 	info, err := os.Stat(path)
