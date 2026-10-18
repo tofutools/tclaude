@@ -123,8 +123,8 @@ and ⌘ Fleet opens the Map / ⚙ Fleet config views; see
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog. On a
-peer's page it runs on that peer: everything but this machine's own windows,
-terminals and files under unrestricted trust, or what the peer's grants cover.
+peer's page it runs on that peer: everything but window focus/hide and terminals
+under unrestricted trust, or what the peer's grants cover.
 Type `spawn luna` to find saved profiles by partial name or alias. Add `fast`
 to select a fast-mode shortcut for a supporting harness (for example,
 `spawn luna fast`). Selecting a result opens the spawn dialog with the profile

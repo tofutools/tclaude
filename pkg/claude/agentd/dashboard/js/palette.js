@@ -350,7 +350,7 @@ export function buildCommands(snapshot) {
   //     cleanup actions below so a broad "cleanup" / "tidy" query opens the
   //     all-categories tool.
   cmds.push({
-    peerView: 'own', icon: wiz('⤒', '📜'), label: wiz('Import an agent or group…', 'Unseal a party archive…'),
+    icon: wiz('⤒', '📜'), label: wiz('Import an agent or group…', 'Unseal a party archive…'),
     hint: wiz('preview and import an agent .paf, or recreate an exported group with its agents, permissions, messages, and conversations',
       'unseal an exported party archive with its familiars, wards, missives, and scrolls'),
     keywords: 'import group agent paf archive zip restore recreate upload'
@@ -767,7 +767,7 @@ export function buildCommands(snapshot) {
     const n = `${online} window${online === 1 ? '' : 's'}`;
     const nPortals = `${online} scrying portal${online === 1 ? '' : 's'}`;
     cmds.push({
-      icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil party: ${g.name}`),
+      peerView: 'own', icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil party: ${g.name}`),
       hint: wiz(`hide ${n}`, `draw the veil over ${nPortals}`),
       keywords: 'hide unfocus group windows ' + g.name
         + ' veil conceal cloak portal scrying party',
@@ -777,7 +777,7 @@ export function buildCommands(snapshot) {
         { webTerminal: preferWebTerminal, targets: groupWebWindowTargets }); },
     });
     cmds.push({
-      icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
+      peerView: 'own', icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
       hint: wiz(`raise ${n}`, `conjure ${nPortals}`),
       keywords: 'focus show group windows ' + g.name
         + ' reveal behold conjure portal scrying party',
@@ -1003,7 +1003,8 @@ export function buildCommands(snapshot) {
       // recovery only triggers for a UUID-shaped selector that fails to
       // resolve, so a stable agent_id would silently demote a dangling
       // orphan instead of offering to remove it (JOH-322).
-      run: () => openRetireAgentDialog(a.conv_id, label),
+      // On a peer's page its route takes the stable agent_id only.
+      run: () => openRetireAgentDialog(globalThis.__tclaudeRemoteNode?.id ? (a.agent_id || a.conv_id) : a.conv_id, label),
     });
   }
 
