@@ -1428,6 +1428,14 @@ delivery; the header bell is the master toggle with per-type switches, and
 groups have 🔔/🔕 mutes with per-agent overrides. The footer shows the daemon
 version, refresh time, and the Open PRs popover.
 
+**Addresses and history**: every tab view has its own address, so Back and
+Forward step through what you looked at and any view can be bookmarked or
+linked. Two overlays that open over any tab are in the address too: a
+library manager (`?manage=profiles`, `roles`, `sandbox` or `templates`) and
+the human-notification quick reader (`?notification=<agent>:<message-id>`).
+Opening one is a history step and Back closes it; an editor open on top of a
+manager keeps the manager open.
+
 ### The library panel
 
 The right edge holds the library, top to bottom: spawn profiles, roles,

@@ -13,6 +13,7 @@ import htm from 'htm';
 import { GroupsNotificationReader } from './groups-notification-reader.js';
 import { OPEN_HUMAN_NOTIFICATION_EVENT } from './human-notification-attention.js';
 import { applyChromeTopInset } from './chrome-inset.js';
+import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 
 const html = htm.bind(h);
 
@@ -34,6 +35,17 @@ export function HumanNotificationReader({
   const [closing, setClosing] = useState(false);
   const closeTimer = useRef(null);
   const openCount = useRef(0);
+  // shown mirrors what the reader shows, synchronously, for the URL
+  // (?notification=<sender>:<message-id>): state updates land a render later.
+  const shown = useRef('');
+  const closeRef = useRef(null);
+  const show = (next) => {
+    const id = next && (typeof next.sender === 'string' ? next.sender : next.sender?.agent || next.sender?.conv);
+    const value = id ? `${id}:${next.messageId}` : '';
+    if (value === shown.current) return;
+    shown.current = value;
+    announceOverlay({ closed: !value });
+  };
 
   useEffect(() => {
     const open = (event) => {
@@ -62,15 +74,34 @@ export function HumanNotificationReader({
         launcher: detail.launcher || null,
         returnFocus: detail.returnFocus || null,
       });
+      show(detail);
     };
     document.addEventListener(OPEN_HUMAN_NOTIFICATION_EVENT, open);
+    // Back/Forward or a link opens the named notification, or closes it.
+    const unregister = registerOverlayRoute('notification', {
+      value: () => shown.current,
+      restore: (want) => {
+        const at = want.lastIndexOf(':');
+        if (at > 0) {
+          // The URL keeps one id, the stable agent id (or, for a legacy
+          // sender, its conversation); either matches the sender's messages.
+          const id = want.slice(0, at);
+          document.dispatchEvent(new CustomEvent(OPEN_HUMAN_NOTIFICATION_EVENT, {
+            detail: { sender: { agent: id, conv: id }, messageId: Number(want.slice(at + 1)) || want.slice(at + 1) },
+          }));
+        } else {
+          closeRef.current?.(false);
+        }
+      },
+    });
     return () => {
+      unregister();
       document.removeEventListener(OPEN_HUMAN_NOTIFICATION_EVENT, open);
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
   }, []);
 
-  if (!descriptor) return null;
+  if (!descriptor) { closeRef.current = null; return null; }
   // Focus returns to whatever raised the drawer, but only when the drawer still
   // holds focus. The operator may well have clicked into a terminal while the
   // reader stayed open, and yanking focus back to a tab-strip button would
@@ -80,6 +111,7 @@ export function HumanNotificationReader({
     // landing in one batch would both read closing === false, and the second
     // would orphan the first timer to fire after a later reopen.
     if (closeTimer.current) return;
+    show(null);
     const drawer = document.querySelector('.human-notification-drawer');
     const held = Boolean(drawer && document.activeElement
       && drawer.contains(document.activeElement));
@@ -99,13 +131,14 @@ export function HumanNotificationReader({
       queueMicrotask(() => focusTarget.focus({ preventScroll: true }));
     }
   };
+  closeRef.current = close;
   return html`<${GroupsNotificationReader}
     descriptor=${descriptor}
     closing=${closing}
     snapshot=${state.snapshot.value}
     state=${state}
     actions=${actions}
-    onSelect=${(messageId) => setDescriptor({ ...descriptor, messageId })}
+    onSelect=${(messageId) => { setDescriptor({ ...descriptor, messageId }); show({ sender: descriptor.sender, messageId }); }}
     onClose=${close}
   />`;
 }

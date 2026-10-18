@@ -21,8 +21,9 @@ import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './ac
 import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
+import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
 import {
-  DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
+  DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
@@ -347,9 +348,37 @@ function activate(loc, { traversal = false } = {}) {
         detail: { location: normalizeLocation(loc) },
       }));
     }
+    // A dialog or drawer over the tab opens or closes to match. One that
+    // refuses to close (an editor open on top of a manager) keeps its value
+    // in the URL.
+    restoreOverlays(loc.params);
+    const shown = withOverlays(loc);
+    if (!locEquals(shown, loc)) correct(shown);
   } finally {
     applying = false;
   }
+}
+
+// withOverlays is `loc` with the overlays on screen now (overlay-routes.js)
+// in place of whatever overlay params it carried: an overlay stays in the URL
+// across the tab navigation it sits over.
+function withOverlays(loc) {
+  const params = { ...(loc.params || {}) };
+  for (const key of OVERLAY_PARAMS) delete params[key];
+  return normalizeLocation({ ...loc, params: { ...params, ...overlayParams() } });
+}
+
+// onOverlay records an overlay opening or changing as a history step. A
+// close that leaves exactly the entry before this one is a step back, so the
+// close and Back are one gesture rather than two entries; any other close
+// rewrites the current entry.
+function onOverlay(event) {
+  if (!ready || applying) return;
+  const loc = withOverlays(current(stack));
+  if (locEquals(loc, current(stack))) return;
+  if (!event?.detail?.closed) { record(loc); return; }
+  if (stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) { history.back(); return; }
+  correct(loc);
 }
 
 // preservedQuery is the view-state query carried across a path push. Theme is
@@ -424,7 +453,7 @@ function correct(loc) {
 function recordCurrentLocation(event) {
   if (!ready) return;
   const announced = event?.detail?.location;
-  const loc = announced ? normalizeLocation(announced) : activeLocationFromDOM();
+  const loc = withOverlays(announced ? normalizeLocation(announced) : activeLocationFromDOM());
   if (event?.detail?.correction) { correct(loc); return; }
   if (applying) return;
   record(loc);
@@ -439,7 +468,7 @@ function recordCurrentLocation(event) {
 // A non-routable active tab (Vegas) is left alone.
 function reconcileLocation() {
   if (!ready || applying) return;
-  const loc = activeLocationFromDOM();
+  const loc = withOverlays(activeLocationFromDOM());
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   if (locEquals(loc, current(stack)) && locationAvailable(current(stack))) return; // no drift
   // Reconcile ONLY an involuntary re-location: the entry we're on points at a
@@ -560,6 +589,9 @@ export function initNavHistory() {
     if (isModifiedClick(e)) return;
     recordCurrentLocation();
   });
+
+  // A library manager or the notification reader opened or closed.
+  document.addEventListener(OVERLAY_EVENT, onOverlay);
 
   window.addEventListener('popstate', onPopstate);
 

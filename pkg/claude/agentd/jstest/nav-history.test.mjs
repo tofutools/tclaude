@@ -29,6 +29,7 @@ function installBrowsingContext(t, harness, startPath = '/') {
     state: null,
     pushState(state, _title, url) { this.state = state; current = url; calls.push({ kind: 'push', url }); },
     replaceState(state, _title, url) { this.state = state; current = url; calls.push({ kind: 'replace', url }); },
+    back() { calls.push({ kind: 'back' }); },
   };
   const previous = ['history', 'location'].map((name) => [
     name, Object.getOwnPropertyDescriptor(globalThis, name),
@@ -667,4 +668,42 @@ test('Back from a run opened in Both closes it on bare Groups', async (t) => {
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
   assert.deepEqual(restores, [{ tab: 'groups' }]);
   assert.equal(focusedRun.value, null);
+});
+
+test('an overlay over any tab is in the URL: opening pushes, closing steps back, Back closes it', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/automations?manage=roles');
+  const [{ initNavHistory }, overlays] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/overlay-routes.js'),
+  ]);
+  initNavHistory();
+  assert.equal(browsing.at(), '/automations?manage=roles', 'kept while the manager island has not registered');
+  // The island registers late and is handed the deep link's manager.
+  let open = '';
+  const restored = [];
+  t.after(overlays.registerOverlayRoute('manage', { value: () => open, restore: (want) => { restored.push(want); open = want; } }));
+  assert.deepEqual(restored, ['roles']);
+  // Closing it right after the deep link has nothing to step back to: the entry is rewritten.
+  browsing.calls.length = 0;
+  open = '';
+  overlays.announceOverlay({ closed: true, doc: harness.document });
+  assert.deepEqual(browsing.calls.map((c) => c.kind + ' ' + (c.url || '')), ['replace /automations']);
+  // Opening pushes, and the overlay stays in the URL across a tab switch under it.
+  open = 'templates';
+  overlays.announceOverlay({ doc: harness.document });
+  assert.equal(browsing.calls.at(-1).kind, 'push');
+  assert.equal(browsing.at(), '/automations?manage=templates');
+  // Closing it right after opening is one gesture with Back.
+  open = '';
+  overlays.announceOverlay({ closed: true, doc: harness.document });
+  assert.equal(browsing.calls.at(-1).kind, 'back');
+  // Back onto an entry with the overlay reopens it; one without closes it.
+  restored.length = 0;
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?manage=templates');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.deepEqual(restored, ['templates', '']);
 });

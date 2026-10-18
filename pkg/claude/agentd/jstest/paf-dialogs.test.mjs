@@ -221,3 +221,32 @@ test('a dropped .paf opens the import dialog unless a drop zone took it or a dia
   assert.deepEqual(opened, ['reviewer.paf'], 'an open dialog is not replaced');
   dialog.remove();
 });
+
+test('a library manager is in the URL (?manage=): opening announces it, Back closes it', async (t) => {
+  const opened = [];
+  const { harness, state } = await mountManagement(t, {
+    openManager: async (kind) => { opened.push(kind); state.openManager(kind); },
+    openTemplateManager: () => state.openTemplateManager(),
+  }, null);
+  const overlays = await harness.importDashboardModule('js/overlay-routes.js');
+  const announced = [];
+  const on = (e) => announced.push(e.detail);
+  harness.document.addEventListener(overlays.OVERLAY_EVENT, on);
+  t.after(() => harness.document.removeEventListener(overlays.OVERLAY_EVENT, on));
+  await harness.act(() => state.openManager('roles'));
+  assert.equal(overlays.overlayParams().manage, 'roles');
+  assert.deepEqual(announced, [{ closed: false }]);
+  await harness.act(() => overlays.restoreOverlays({ manage: 'templates' }));
+  assert.equal(state.manager.value, '');
+  assert.equal(state.templateManager.value, true);
+  await harness.act(() => overlays.restoreOverlays({}));
+  assert.equal(overlays.overlayParams().manage, '');
+  // An editor open on top keeps the manager under it.
+  await harness.act(() => overlays.restoreOverlays({ manage: 'profiles' }));
+  assert.deepEqual(opened, ['profiles']);
+  state.dialog.value = { kind: 'unrendered-editor' };
+  await harness.act(() => overlays.restoreOverlays({}));
+  assert.equal(state.manager.value, 'profiles');
+  state.dialog.value = null;
+  await harness.act(() => state.closeManager());
+});

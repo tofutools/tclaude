@@ -145,17 +145,26 @@ export const TAB_PARAMS = {
   groups: ['group'],
 };
 
-// normalizeParams keeps the tab's known params with a non-empty value, as
-// strings, in TAB_PARAMS order; undefined when none survive.
+// OVERLAY_PARAMS are params any tab's location can carry: an overlay that
+// opens over whatever tab is showing (overlay-routes.js), so Back closes it
+// and a link opens it. Written after the tab's own params.
+//   - manage: the library manager open (MANAGE_KINDS).
+//   - notification: the human-notification reader, as <sender>:<message-id>.
+export const OVERLAY_PARAMS = ['manage', 'notification'];
+export const MANAGE_KINDS = new Set(['profiles', 'roles', 'sandbox', 'templates']);
+
+// normalizeParams keeps the tab's known params (and the overlay params) with
+// a valid non-empty value, as strings, in order; undefined when none survive.
 function normalizeParams(tab, params) {
-  const keys = TAB_PARAMS[tab];
-  if (!keys || !params || typeof params !== 'object') return undefined;
+  if (!params || typeof params !== 'object') return undefined;
+  const keys = [...(TAB_PARAMS[tab] || []), ...OVERLAY_PARAMS];
   const out = {};
   for (const key of keys) {
     const value = params[key];
     if (value == null) continue;
     const str = String(value);
     if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
+    if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
   }
   return Object.keys(out).length ? out : undefined;
@@ -196,6 +205,16 @@ export function normalizeLocation(loc) {
   const params = normalizeParams(tab, loc && loc.params);
   if (params) out.params = params;
   return out;
+}
+
+// withoutOverlays drops the overlay params, for a view comparing its own
+// location with the URL (an overlay over it is not its business).
+export function withoutOverlays(loc) {
+  const l = normalizeLocation(loc);
+  if (!l.params) return l;
+  const params = { ...l.params };
+  for (const key of OVERLAY_PARAMS) delete params[key];
+  return normalizeLocation({ ...l, params });
 }
 
 // locEquals is structural equality on the canonical location model. It backs

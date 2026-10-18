@@ -94,7 +94,7 @@ import {
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
-import { fromPath, locEquals, normalizeLocation } from './nav-history-core.js';
+import { fromPath, locEquals, normalizeLocation, withoutOverlays } from './nav-history-core.js';
 
 const ALL_ID = 'all';
 // The synthetic "access requests" folder — in-flight human-approval requests
@@ -1013,7 +1013,7 @@ function announceFilterEdit(kind) {
   // An edit the URL already says (a trailing space, clearing an empty
   // search) records nothing, and so does not start an edit either: the next
   // real change must push past the entry rather than overwrite it.
-  if (locEquals(mailLocation(), fromPath(globalThis.location?.pathname, globalThis.location?.search || ''))) return;
+  if (locEquals(mailLocation(), withoutOverlays(fromPath(globalThis.location?.pathname, globalThis.location?.search || '')))) return;
   const continuing = editing?.kind === kind && editing.entry === navEntry();
   announceMailLocation(continuing);
   editing = { kind, entry: navEntry() };
@@ -1032,7 +1032,7 @@ function syncMailUrl() {
   if (restoring || isFused() || !mailTabActive()) return;
   const shown = fromPath(globalThis.location?.pathname, globalThis.location?.search || '');
   if (shown.tab !== 'messages') return;
-  if (!locEquals(mailLocation(), shown)) announceMailLocation(true);
+  if (!locEquals(mailLocation(), withoutOverlays(shown))) announceMailLocation(true);
 }
 
 // restoreLocation shows a history location: Back/Forward or a deep link. A

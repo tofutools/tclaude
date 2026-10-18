@@ -183,6 +183,8 @@ test('the quick reader mounts on its own body-level host and answers every surfa
   const drawer = mounted.container.querySelector('.human-notification-drawer');
   assert.ok(drawer, 'the event alone opens the reader — no Groups row involved');
   assert.equal(drawer.dataset.messageId, '42');
+  const overlays = await harness.importDashboardModule('js/overlay-routes.js');
+  assert.deepEqual(overlays.overlayParams().notification, 'agt_one:42', 'the URL can name it (?notification=)');
 
   await harness.act(() => {
     harness.fireEvent(drawer.querySelector('.human-notification-drawer-close'), 'click');
@@ -306,4 +308,22 @@ test('the reader ignores an open request that names no message', async (t) => {
     sender: null, messageID: 42, documentRef: harness.document,
   }), false);
   assert.equal(seen.length, 0);
+});
+
+test('a link or Back opens the quick reader on the notification the URL names, and closes it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HumanNotificationReader } = await harness.importDashboardModule('js/human-notification-reader-island.js');
+  const overlays = await harness.importDashboardModule('js/overlay-routes.js');
+  const snapshot = { value: { messages_unread: 2, messages: [notification, older] } };
+  const state = { snapshot, publish(next) { snapshot.value = next; } };
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true });
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const mounted = await harness.mount(harness.html`
+    <${HumanNotificationReader} state=${state} actions=${{ reportError: () => {} }} closeAnimationMs=${10} />`);
+  await harness.act(() => overlays.restoreOverlays({ notification: 'agt_one:42' }));
+  assert.equal(mounted.container.querySelector('.human-notification-drawer')?.dataset.messageId, '42');
+  await harness.act(() => overlays.restoreOverlays({}));
+  await harness.act(async () => { await new Promise((done) => setTimeout(done, 40)); });
+  assertAbsent(mounted.container.querySelector('.human-notification-drawer'));
 });
